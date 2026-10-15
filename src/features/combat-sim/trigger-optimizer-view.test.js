@@ -384,3 +384,34 @@ describe('triggerChipOptionsHtml', () => {
         expect(html).toContain('value="consumables"');
     });
 });
+
+describe('condition changes stopped before the all-together check', () => {
+    const condChange = {
+        key: 'abilities|1',
+        slotType: 'abilities',
+        itemName: 'Fireball',
+        fromRows: [],
+        toRows: [],
+        deltaScore: 2,
+        se: 0.5,
+    };
+    const run = (conditions) =>
+        renderTriggerResultsHtml(
+            { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 10, conditions },
+            gameData
+        );
+
+    test('are flagged as not yet confirmed together', () => {
+        const html = run({ changes: [condChange], stopped: true, combined: null });
+        expect(html).toContain('data-csim-condition-unconfirmed');
+    });
+
+    test('carry no such flag once the all-together check ran', () => {
+        const html = run({
+            changes: [condChange],
+            reliable: true,
+            combined: { deltaScore: 2, se: 0.4, seeds: 8 },
+        });
+        expect(html).not.toContain('data-csim-condition-unconfirmed');
+    });
+});

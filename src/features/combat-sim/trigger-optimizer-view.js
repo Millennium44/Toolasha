@@ -176,6 +176,11 @@ export function conditionResultsHtml(conditions, gameData) {
         body +=
             `<div style="font-size:12px; margin-top:6px;"><b>All new conditions together</b> (fresh seeds, ${esc(c.seeds)} runs): ` +
             `<span style="color:${good ? '#4caf50' : '#ff9800'};">Δscore ${esc(fmtScore(c.deltaScore))} ± ${esc(fmtSe(c.se))}</span></div>`;
+    } else if (changes.length > 0) {
+        // Stopped after slots passed one at a time but before the all-together check: not yet recommendations
+        body +=
+            '<div style="font-size:11px; color:#ff9800; margin-top:6px;" data-csim-condition-unconfirmed>Stopped before ' +
+            'the all-together check ran; these passed one at a time and may not hold together.</div>';
     }
     if (conditions.capped) {
         body +=
