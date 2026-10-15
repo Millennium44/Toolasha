@@ -1162,6 +1162,55 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         }
     });
 
+    test('a key of the selection whose write failed is written again by the next save', async () => {
+        const storageModule = (await import('../../core/storage.js')).default;
+        const set = vi.spyOn(storageModule, 'set').mockResolvedValueOnce(false);
+        try {
+            const roomLevels = ui.panel.querySelector('#mwi-labsim-upgrade-room-levels');
+            roomLevels.checked = !roomLevels.checked;
+            await ui._saveUpgradeSelection();
+            await ui._saveUpgradeSelection();
+
+            const writes = set.mock.calls.filter(([key]) => key === 'labSimUpgradeRoomLevels_me');
+            expect(writes).toHaveLength(2);
+        } finally {
+            set.mockRestore();
+        }
+    });
+
+    test('the restore notes what it read, not what the controls are asked for afterwards', async () => {
+        storage.values = { labSimUpgradeTargetFloor_me: 12 };
+        const values = vi.spyOn(ui, '_upgradeSelectionValues').mockReturnValue({ labSimUpgradeTargetFloor: 999 });
+        try {
+            await ui._restoreUpgradeSelection();
+            expect(ui._storedValues.differs('labSimUpgradeTargetFloor_me', 12)).toBe(false);
+        } finally {
+            values.mockRestore();
+            storage.values = {};
+        }
+    });
+
+    test('a pulled remembered result is not drawn into a running analysis, or once one has run', async () => {
+        const restore = vi.spyOn(ui, '_restoreUpgradeResults').mockResolvedValue(undefined);
+        const pulled = { combatExport: ['labSimUpgradeResults-fullkit_me'] };
+        try {
+            ui._upgradeRunning = true;
+            await ui._adoptPulledSettings(pulled);
+            ui._upgradeRunning = false;
+            ui._upgradeRunStarted = true;
+            await ui._adoptPulledSettings(pulled);
+            expect(restore).not.toHaveBeenCalled();
+
+            ui._upgradeRunStarted = false;
+            await ui._adoptPulledSettings(pulled);
+            expect(restore).toHaveBeenCalledTimes(1);
+        } finally {
+            ui._upgradeRunning = false;
+            ui._upgradeRunStarted = false;
+            restore.mockRestore();
+        }
+    });
+
     test('a pull of another character’s selection leaves the controls alone', async () => {
         storage.values = { labSimUpgradeScope_alt: { mode: 'selected', monsters: [] } };
         try {

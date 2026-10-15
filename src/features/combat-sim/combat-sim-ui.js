@@ -140,7 +140,12 @@ import {
     DEFAULT_OBJECTIVE,
 } from './trigger-tuning.js';
 import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
-import { loadTriggerResult, saveTriggerResult, triggerRunSignature } from './trigger-result-cache.js';
+import {
+    TRIGGER_LAST_RESULT_KEY,
+    loadTriggerResult,
+    saveTriggerResult,
+    triggerRunSignature,
+} from './trigger-result-cache.js';
 import storage from '../../core/storage.js';
 import {
     createPricingQuickSettings,
@@ -5193,38 +5198,37 @@ class CombatSimUI {
             const total = values[BESTIARY_PLAN_TOTAL_KEY];
             const tolerance = values[BESTIARY_PLAN_TOLERANCE_KEY];
             const dungeons = values[ALL_ZONES_DUNGEONS_KEY];
+            // Each changed key is noted as stored while its write holds; a failed one is tried again next save
+            const memo = this._storedValues;
             await Promise.all([
-                this._noteIfChanged(BESTIARY_PLAN_HOURS_KEY, hours) &&
-                    storage.set(BESTIARY_PLAN_HOURS_KEY, hours, 'settings'),
-                this._noteIfChanged(BESTIARY_PLAN_MODE_KEY, mode) &&
-                    storage.set(BESTIARY_PLAN_MODE_KEY, mode, 'settings'),
-                this._noteIfChanged(BESTIARY_PLAN_POINTS_KEY, points) &&
-                    storage.set(BESTIARY_PLAN_POINTS_KEY, points, 'settings'),
-                this._noteIfChanged(BESTIARY_PLAN_TOTAL_KEY, total) &&
-                    storage.set(BESTIARY_PLAN_TOTAL_KEY, total, 'settings'),
-                this._noteIfChanged(BESTIARY_PLAN_TOLERANCE_KEY, tolerance) &&
-                    storage.set(BESTIARY_PLAN_TOLERANCE_KEY, tolerance, 'settings'),
-                this._noteIfChanged(ALL_ZONES_DUNGEONS_KEY, dungeons) &&
-                    storage.set(ALL_ZONES_DUNGEONS_KEY, dungeons, 'settings'),
+                memo.differs(BESTIARY_PLAN_HOURS_KEY, hours) &&
+                    memo.track(BESTIARY_PLAN_HOURS_KEY, hours, storage.set(BESTIARY_PLAN_HOURS_KEY, hours, 'settings')),
+                memo.differs(BESTIARY_PLAN_MODE_KEY, mode) &&
+                    memo.track(BESTIARY_PLAN_MODE_KEY, mode, storage.set(BESTIARY_PLAN_MODE_KEY, mode, 'settings')),
+                memo.differs(BESTIARY_PLAN_POINTS_KEY, points) &&
+                    memo.track(
+                        BESTIARY_PLAN_POINTS_KEY,
+                        points,
+                        storage.set(BESTIARY_PLAN_POINTS_KEY, points, 'settings')
+                    ),
+                memo.differs(BESTIARY_PLAN_TOTAL_KEY, total) &&
+                    memo.track(BESTIARY_PLAN_TOTAL_KEY, total, storage.set(BESTIARY_PLAN_TOTAL_KEY, total, 'settings')),
+                memo.differs(BESTIARY_PLAN_TOLERANCE_KEY, tolerance) &&
+                    memo.track(
+                        BESTIARY_PLAN_TOLERANCE_KEY,
+                        tolerance,
+                        storage.set(BESTIARY_PLAN_TOLERANCE_KEY, tolerance, 'settings')
+                    ),
+                memo.differs(ALL_ZONES_DUNGEONS_KEY, dungeons) &&
+                    memo.track(
+                        ALL_ZONES_DUNGEONS_KEY,
+                        dungeons,
+                        storage.set(ALL_ZONES_DUNGEONS_KEY, dungeons, 'settings')
+                    ),
             ]);
         } catch (error) {
             console.error('[CombatSimUI] Failed to save the Bestiary plan preferences:', error);
         }
-    }
-
-    /**
-     * Whether one key of a grouped save differs from what this page last saw stored (read by
-     * `_loadBestiaryPlanPrefs`, or written by the save); noted as stored when it does, since
-     * the caller then writes it.
-     * @param {string} key - Storage key in `settings`
-     * @param {*} value - The value in memory
-     * @returns {boolean} True when the key is to be written
-     * @private
-     */
-    _noteIfChanged(key, value) {
-        if (!this._storedValues.differs(key, value)) return false;
-        this._storedValues.remember(key, value);
-        return true;
     }
 
     /**
@@ -9372,6 +9376,8 @@ class CombatSimUI {
         // arriving character's own remembered analysis from ever restoring —
         // silently, and for the rest of the session.
         this._upgradeResultsData = null;
+        // The runs it counts were the departing panel's
+        this._upgradeRunStarted = false;
         this._restoredUpgradeAt = null;
         this._restoredUpgradeMeta = null;
         // The confirming run is keyed to the plan it confirmed (see
@@ -9933,9 +9939,13 @@ class CombatSimUI {
             const minGain = parseFloat(read(TRIGGER_CHOICE_IDS.minGain));
             const objective = read(TRIGGER_CHOICE_IDS.objective);
             // A select that is not on the panel keeps its remembered value untouched. Folded in one
-            // transaction against the newest value, a queued write or a sync pull's included
+            // transaction against the newest value, a queued write or a sync pull's included.
+            // The key is resolved first, and a legacy bare value adopted into it the way the restore
+            // adopts it, so the fold below starts from that value rather than from nothing
+            const scopedKey = characterKey(TRIGGER_CHOICES_KEY);
+            await readScoped(TRIGGER_CHOICES_KEY, 'settings', null);
             await storage.update(
-                characterKey(TRIGGER_CHOICES_KEY),
+                scopedKey,
                 (saved) => ({
                     ...(saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}),
                     ...(scope !== undefined ? { scope } : {}),
@@ -10031,6 +10041,30 @@ class CombatSimUI {
     }
 
     /**
+     * Draw the Bestiary planner again from memory, after a sync pull changed its inputs.
+     * @private
+     */
+    _redrawBestiaryPlannerWhenIdle() {
+        const box = this.panel?.querySelector('#mwi-csim-bestiary-plan');
+        if (!box?.parentElement) return;
+        // Not under the cursor: a redraw while one of its inputs has focus would throw away what is being
+        // typed. It waits until focus leaves the planner, and then draws from memory as it stands
+        if (box.contains(document.activeElement)) {
+            if (box.dataset.redrawOnBlur === '1') return;
+            box.dataset.redrawOnBlur = '1';
+            const onFocusOut = (event) => {
+                if (box.contains(event.relatedTarget)) return;
+                box.removeEventListener('focusout', onFocusOut);
+                delete box.dataset.redrawOnBlur;
+                if (box.isConnected && box.parentElement) this._renderBestiaryPlanner(box.parentElement);
+            };
+            box.addEventListener('focusout', onFocusOut);
+            return;
+        }
+        this._renderBestiaryPlanner(box.parentElement);
+    }
+
+    /**
      * Re-read whatever of this panel's remembered choices a sync pull wrote into memory and
      * the controls. The keys are registered live-safe in `sim-sync-keys.js`; without this the
      * page would keep showing — and the next save would write back — the copy from before
@@ -10043,16 +10077,15 @@ class CombatSimUI {
         if (!this.panel) return;
         try {
             const scoped = new Set(['upgradeModes', 'triggerChoices', 'swapAuraOnly', 'shrineCapToGuild']);
-            const settings = pulledNames(
-                written,
-                'settings',
-                Object.fromEntries(
+            const settings = pulledNames(written, 'settings', {
+                ...Object.fromEntries(
                     Object.entries(COMBAT_SIM_KEYS).map(([name, base]) => [
                         name,
                         scoped.has(name) ? characterKey(base) : base,
                     ])
-                )
-            );
+                ),
+                triggerLastResult: characterKey(TRIGGER_LAST_RESULT_KEY),
+            });
             const results = pulledNames(written, 'combatExport', {
                 upgradeResults: characterKey(UPGRADE_RESULTS_KEY),
             });
@@ -10092,8 +10125,7 @@ class CombatSimUI {
                     (async () => {
                         await this._loadBestiaryPlanPrefs();
                         // The planner draws its inputs from memory, so it is drawn again where it is shown
-                        const box = this.panel?.querySelector('#mwi-csim-bestiary-plan');
-                        if (box?.parentElement) this._renderBestiaryPlanner(box.parentElement);
+                        this._redrawBestiaryPlannerWhenIdle();
                     })()
                 );
             }
@@ -10107,8 +10139,15 @@ class CombatSimUI {
                     })()
                 );
             }
-            // Draws only where no result set is in hand; one already shown is display, never saved back
-            if (results.has('upgradeResults')) work.push(this._restoreUpgradeResults());
+            // Draws only where no result set is in hand; one already shown is display, never saved back. Never
+            // while a run is going or once one has run here: the remembered set would land in its place
+            if (results.has('upgradeResults') && !this._isBusy() && !this._upgradeRunStarted) {
+                work.push(this._restoreUpgradeResults());
+            }
+            // A remembered trigger result for the setup on screen is offered where the box shows one
+            if (has('triggerLastResult') && !has('upgradeModes', 'triggerChoices')) {
+                work.push(this._refreshCachedTriggerResult());
+            }
             await Promise.all(work);
         } catch (error) {
             console.error('[CombatSimUI] Adopting pulled settings failed:', error);
@@ -10178,6 +10217,8 @@ class CombatSimUI {
         // until that await completes, so without this latch a rapid second
         // click can launch a fully independent analysis against the same UI.
         this._upgradeRunning = true;
+        // A remembered result a sync pull brings is no longer drawn over this panel's own runs
+        this._upgradeRunStarted = true;
 
         // Get player DTOs (edited or live)
         let playerDTOs;
@@ -10226,6 +10267,7 @@ class CombatSimUI {
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
         this._upgradeRunning = true;
+        this._upgradeRunStarted = true;
         let analysisFailed = false;
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
