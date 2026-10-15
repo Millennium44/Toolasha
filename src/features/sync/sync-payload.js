@@ -776,6 +776,9 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
     // back over the queued edit, just like merging a history from a stale base.
     /** This device's key-migration records, as they were before the pull forgot any */
     let migrationRecords = null;
+    /** What the pull wrote and deleted, told to the pull listeners once the restore hold has ended */
+    let announcement = null;
+    let result;
     try {
         await storage.beginRestore?.();
 
@@ -945,9 +948,11 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         if ((failed || []).some((entry) => entry.store === SETTINGS_STORE)) {
             await restoreMigrationRecords(migrationRecords);
         }
-        // The records that took the pull under a running page re-read what it wrote
-        announceSyncPullApplied(imported.writtenKeys ?? payloadKeys, deletedKeys);
-        return {
+        // Announced once the hold below has ended, not here: a write a live-safe record queued during the pull is
+        // not latched, so the final `endRestore` lands it after the import, and a listener re-reading before
+        // that would show (and later write back) a value storage no longer holds
+        announcement = { written: imported.writtenKeys ?? payloadKeys, deleted: deletedKeys };
+        result = {
             restored,
             expected,
             failed,
@@ -969,6 +974,9 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         // unload flush. Ending an already-ended hold is a no-op.
         await storage.endRestore?.();
     }
+    // The records that took the pull under a running page re-read what it wrote
+    if (announcement) announceSyncPullApplied(announcement.written, announcement.deleted);
+    return result;
 }
 
 /**
