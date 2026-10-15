@@ -39,6 +39,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Tune triggers now always names the best setting it measured for each loadout, with its margin, even when nothing beat the current setting (labeled as not a recommendation).
 - The condition search always pairs its top three conditions and tries "current trigger AND X" directly, so setups like Toughness inactive AND Mimic's Frenzy active can be found.
 
+### Lab Sim: Check a swap takes abilities and ability order
+
+- Check a swap accepts an ability and level (e.g. "Critical Aura 7"): it tries it in each slot it may take (auras and other special abilities only in the first slot, always-ready spells kept last) and shows the best per loadout with what it replaced and the ability-book cost.
+- An "Ability order" check tries every order of each loadout's abilities and reports the best one.
+
 ### Market History: follows the item under a game window
 
 - The History chart now switches to the item the popout marketplace opens even while a game window is still open underneath it; before, it stayed on the previous item until that window closed.
