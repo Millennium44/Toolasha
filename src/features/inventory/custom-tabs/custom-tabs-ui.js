@@ -30,9 +30,11 @@ function getLoadoutSnapshot() {
 import { formatKMB } from '../../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../../utils/panel-z-index.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../../utils/init-ownership.js';
+import { onSyncPullApplied } from '../../../utils/sync-merge-registry.js';
 import {
     loadConfig,
     saveConfig,
+    pullWroteConfig,
     addTab,
     removeTab,
     clearAllTabs,
@@ -684,6 +686,8 @@ export default class CustomTabsUI {
         this._tileObserver = null; // MutationObserver for instant tile visibility on React swaps
         this._observedContainer = null; // Container currently being observed by _tileObserver
         this._dragBoundTiles = new WeakSet();
+        this._unlistenPulls = null; // Unsubscribe from sync pulls, while initialized
+        this._relayoutAfterDrag = false; // A pulled config arrived mid-drag; redraw once the drag ends
         // Clicking a native collapsed-category toggle schedules a React render. Keep that
         // exact button latched until its label changes so tile-observer passes fired by the
         // same render cannot click it a second time and toggle the category closed again.
@@ -738,6 +742,7 @@ export default class CustomTabsUI {
         if (!stillOurs(ticket)) return;
         this._configCharId = charId;
         this._storedNativeTabPending = true;
+        this._unlistenPulls = onSyncPullApplied((written) => this._adoptPulledConfig(written));
 
         // Inject CSS
         this._styleEl = document.createElement('style');
@@ -908,6 +913,8 @@ export default class CustomTabsUI {
             if (typeof unreg === 'function') unreg();
         }
         this._unregisterHandlers = [];
+        this._unlistenPulls?.();
+        this._unlistenPulls = null;
 
         this._tabBtn?.remove();
         this._actionBtnsEl?.remove();
@@ -940,6 +947,48 @@ export default class CustomTabsUI {
      */
     _isConfigForCurrentCharacter() {
         return this._configCharId === dataManager.getCurrentCharacterId();
+    }
+
+    /**
+     * A sync pull wrote this character's tab config: take it in, and redraw only if it changed.
+     *
+     * The held config has to be replaced BEFORE any later edit saves, or that save would write the stale copy back
+     * over the pulled one (the record trusts memory once loaded). The redraw waits out a drag, since rebuilding the
+     * headers under one cancels it.
+     * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+     * @returns {Promise<void>}
+     */
+    async _adoptPulledConfig(written) {
+        const charId = this._configCharId;
+        if (!charId || !this._isConfigForCurrentCharacter() || !pullWroteConfig(charId, written)) return;
+        const generation = this._reloadGeneration;
+        let loaded;
+        try {
+            loaded = await loadConfig(charId);
+        } catch (error) {
+            console.error('[CustomTabs] Reading the pulled tabs failed; keeping the tabs in hand:', error);
+            return;
+        }
+        if (generation !== this._reloadGeneration || this._configCharId !== charId) return;
+        if (JSON.stringify(loaded) === JSON.stringify(this._config)) return;
+        this._config = loaded;
+        this._boundBaseHrids = null;
+        if (!this._isActive) return;
+        if (this._dragInProgress || this._tileDragData) {
+            this._relayoutAfterDrag = true;
+            return;
+        }
+        this._removeInjectedEls();
+        await this._applyLayout();
+    }
+
+    /** Redraw a pulled config that arrived mid-drag, now the drag has ended. */
+    _flushPullRelayout() {
+        if (!this._relayoutAfterDrag || this._dragInProgress || this._tileDragData) return;
+        this._relayoutAfterDrag = false;
+        if (!this._isActive) return;
+        this._removeInjectedEls();
+        this._applyLayout();
     }
 
     /**
@@ -2857,6 +2906,7 @@ export default class CustomTabsUI {
             // (before the event queue clears) is still suppressed by the flag.
             setTimeout(() => {
                 this._dragInProgress = false;
+                this._flushPullRelayout();
             }, 0);
         });
         header.addEventListener('dragover', (e) => {
@@ -3186,6 +3236,7 @@ export default class CustomTabsUI {
         tile.addEventListener('dragend', () => {
             tile.classList.remove('toolasha-ct-tile-dragging');
             this._tileDragData = null;
+            this._flushPullRelayout();
             // Clean up all drop indicators
             if (this._invContainer) {
                 for (const el of this._invContainer.querySelectorAll(

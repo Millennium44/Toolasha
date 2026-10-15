@@ -19,12 +19,15 @@ const MAX_KEYS = 400;
 
 /**
  * A key with its per-character suffix removed (`watchlist_30404` → `watchlist`).
- * `character-key.js` builds `${base}_${characterId}` (or `_default` before login).
+ * `character-key.js` builds `${base}_${characterId}` (or `_default` before login). A few records lead with the
+ * id instead (`603281_inventoryTabs_config`), so a leading `<digits>_` is removed too.
  * @param {string} key - Storage key
  * @returns {string} The base
  */
 export function stripCharacterSuffix(key) {
-    return String(key).replace(/_(?:default|[0-9]+)$/, '');
+    return String(key)
+        .replace(/_(?:default|[0-9]+)$/, '')
+        .replace(/^[0-9]+_/, '');
 }
 
 /**
