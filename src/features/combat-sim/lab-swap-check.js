@@ -416,7 +416,8 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
  * (its own speed or efficiency, or the generic skilling ones). A tool for another
  * skill, or a combat piece, reaches none of the kits. A kit already wearing the
  * item at that level or higher is left out, and a skill outside the run's scope is
- * never looked at. Each member names its skill, so `applyToEquipment` writes it
+ * never reached. Its kit still counts for what the character holds: a copy it wears at
+ * the level asked for is owned, and a piece it wears is kept rather than sold. Each member names its skill, so `applyToEquipment` writes it
  * into that kit alone, and into a kit of its own for a skill that was running in
  * the base one.
  *
@@ -437,16 +438,20 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
     // any skill at all: a piece with no skilling stats moves no room
     const allLoadouts = Boolean(options.allLoadouts);
     if (allLoadouts && !ALL_SKILLS.some((skill) => affectsSkill(detail, skill))) return null;
+    const kitOf = (skill) => skillEquipmentMap[skill] || dto?.equipment || {};
+    // Every kit the character has, the skills outside this run's scope included: a kit
+    // the filter or a skipped room leaves out still holds its pieces
+    const everySkill = [...new Set([...ALL_SKILLS, ...skills, ...Object.keys(skillEquipmentMap)])];
+    // One physical piece serves every kit (they are alternatives), so a copy worn at
+    // exactly this level in any kit, or in the base equipment, is owned
+    const owned = [...everySkill.map((skill) => kitOf(skill)[slot]), dto?.equipment?.[slot]].some((piece) =>
+        wornExactly(piece, swap)
+    );
     const reached = [];
-    let owned = false;
     for (const skill of skills) {
-        const kit = skillEquipmentMap[skill] || dto?.equipment || {};
-        const piece = kit[slot];
-        if (wornAtLeast(piece, swap)) {
-            // Already that good here; only an exact-level copy can be moved to the others
-            if (wornExactly(piece, swap)) owned = true;
-            continue;
-        }
+        const piece = kitOf(skill)[slot];
+        // Already that good here; only an exact-level copy can be moved to the others
+        if (wornAtLeast(piece, swap)) continue;
         if (!allLoadouts && !affectsSkill(detail, skill)) continue;
         reached.push({ skill, piece });
     }
@@ -480,9 +485,9 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         description: route.description,
         type: route.type,
     };
-    const unreachedPieces = skills
+    const unreachedPieces = everySkill
         .filter((skill) => !reached.some((entry) => entry.skill === skill))
-        .map((skill) => (skillEquipmentMap[skill] || dto?.equipment || {})[slot]);
+        .map((skill) => kitOf(skill)[slot]);
     const replaced = replacedPieces(swap, route.route, worn, unreachedPieces);
     if (replaced) {
         // Combat armor is never sold to fund a skilling piece; it goes back in its loadout
