@@ -46,6 +46,7 @@ import {
     zoneEnemyHp,
     MIN_GAIN,
 } from './trigger-tuning.js';
+import { getItemPrice } from '../../utils/market-data.js';
 
 /** Ceiling on simultaneous sims, whatever the thread setting says (matches the upgrade advisor) */
 const MAX_CONCURRENCY = 6;
@@ -451,7 +452,13 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     const tuned = Object.fromEntries((result.changes || []).map((c) => [c.key, c.to]));
     const startDtos = tunables.length > 0 ? applyTriggerValues(playerDTOs, tunables, tuned) : playerDTOs;
     const startDto = startDtos[playerIndex];
-    const slots = conditionSlots(startDto, gameData, include);
+    // A food or drink with no market price is never searched: a new condition that makes it fire would
+    // add a cost nothing can value, and the objective would judge it on XP and damage alone (the threshold
+    // tuner refuses the same thing through its own-item check)
+    const slots = conditionSlots(startDto, gameData, include).filter(
+        (slot) =>
+            slot.slotType === 'abilities' || getItemPrice(slot.itemHrid, { context: 'profit', side: 'buy' }) != null
+    );
     const hoursPerSeed = precision.pointHours / precision.seeds;
     const confirmHours = hoursPerSeed * ROUND_GROWTH * ROUND_GROWTH;
     const hoursFor = { screen: hoursPerSeed, pair: hoursPerSeed, confirm: confirmHours, final: confirmHours };
