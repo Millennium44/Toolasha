@@ -2,7 +2,7 @@
  * Tests for Upgrade Advisor candidate generation
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const guild = vi.hoisted(() => ({
@@ -7014,6 +7014,12 @@ describe('one skilling purchase is one row, raised to one level for every kit', 
             crateHrids: [],
             skillEquipmentMap: kits,
         });
+
+    // The overrides mock is shared by the whole file; leave it as the next block expects
+    afterEach(async () => {
+        const { buildOverridesForSkill } = await import('./skilling-sim-helpers.js');
+        buildOverridesForSkill.mockReset();
+    });
 
     const philoRows = (results) => results.filter((r) => r.candidate.upgradeHrid === PHILO);
 
