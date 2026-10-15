@@ -245,17 +245,20 @@ export function mirrorCostColumn(costs, basePrice, mirrorPrice, toLevel = costs.
         }
         return { levels, mirrorStartLevel: null, totalSavings: 0, toLevel: cap };
     }
+    // A level whose conventional cost is unpriced (null: its protection has no quote) has nothing to be
+    // weighed against, so it is never called mirror-cheaper and no saving is quoted from it
+    const comparable = (level) => Number.isFinite(costs[level - 1]);
     // best[L]: the cheapest way to hold a +L, its base item included
     const ordinary = [basePrice];
     for (let level = 1; level <= costs.length; level++) {
-        ordinary[level] = basePrice + costs[level - 1];
+        ordinary[level] = comparable(level) ? basePrice + costs[level - 1] : Infinity;
     }
     const { mirrorTotals } = cheapestWithMirror(ordinary, mirrorPrice, blessedChance);
 
     let mirrorStartLevel = null;
     for (let level = 3; level <= costs.length; level++) {
         const mirrorCost = mirrorTotals[level] - basePrice;
-        const isMirrorCheaper = mirrorCost < costs[level - 1];
+        const isMirrorCheaper = comparable(level) && mirrorCost < costs[level - 1];
         levels[level - 1] = { mirrorCost, isMirrorCheaper };
         if (isMirrorCheaper && mirrorStartLevel === null && level <= cap) mirrorStartLevel = level;
     }
@@ -400,7 +403,7 @@ function generateCostsByLevelTable(
         // What the mirror route is weighed against. With the slot empty a protect-from setting
         // protects nothing, so the protected chain's attempts at no protection cost are a route
         // that does not exist; the unprotected chain is the real alternative
-        let mirrorFootingCost = totalCost;
+        let mirrorFootingCost = protectionUnpriced ? null : totalCost;
         if (effectiveProtect && !protectionItemHrid) {
             const bare = calculateEnhancement({ ...chainArgs, protectFrom: 0 });
             mirrorFootingCost = calc.attempts > 0 ? (materialCost / calc.attempts) * bare.attempts : 0;
@@ -475,6 +478,10 @@ function generateCostsByLevelTable(
         ),
         mirrorStartLevel,
         totalSavings,
+        // Levels up to the target whose protection has no quote: the mirror is not weighed at those
+        unpricedLevels: costData.flatMap((data, index) =>
+            data.protectionUnpriced && index + 1 <= column.toLevel ? [index + 1] : []
+        ),
         targetLevel: column.toLevel,
         savingsLevel: column.savingsLevel,
         isPhilosopherMirror,
@@ -940,7 +947,9 @@ export function mirrorSummaryLine(summary, coins) {
     if (!summary.priced) {
         text = "Philosopher's Mirror: no quote — the base item or the mirror has no market price.";
     } else if (summary.mirrorStartLevel === null) {
-        return '';
+        // Nothing found cheaper is only a finding when every level was weighed
+        if (!(summary.unpricedLevels || []).length) return '';
+        text = `Philosopher's Mirror: no quote — protection has no market price at ${levelRanges(summary.unpricedLevels)}, so it cannot be weighed there.`;
     } else {
         const levels = summary.cheaperLevels || [];
         const contiguous = levels.length > 0 && levels.every((level, i) => level === levels[0] + i);
