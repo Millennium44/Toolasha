@@ -12981,6 +12981,13 @@ Object.assign(combatSimUI, {
     upgradeRowPurchase,
     upgradeRowActionsHtml,
     wireUpgradeRowActions,
+    applyScoreScale,
+    DEFAULT_LEVEL_SCORE_SCALE,
+    scoreScaleTitle,
+    scoreDepthLabel,
+    scoreValueColor,
+    formatScore,
+    formatCompactHours,
 });
 
 export default combatSimUI;
