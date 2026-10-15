@@ -5590,12 +5590,21 @@ class GuildTrials {
             const heldTier = Number.isFinite(held)
                 ? tierFromWorkTarget({ target, baseWork: held, participants: scaledBy, kind })
                 : null;
+            // A grafted pool carries the tier the stream stated with it. When
+            // the analysis has moved past it — the floor or the badge on T+1
+            // while the newest whole pool is still T's, because T+1's first
+            // pool was partial and refused — the pair describes two tiers and
+            // teaches nothing at all
+            const poolTier =
+                bossReading?.source === 'pool' && Number.isFinite(bossReading.tier) ? bossReading.tier : null;
+            if (poolTier !== null && poolTier !== analysis.tier) return;
+
             // Only a tier stated for this very bar may overrule a held base: the
-            // socket's statement for this pool, or the graft (stream reading
-            // and tier from one message). The stream's floor alone is not —
-            // at a tier clear it names T+1 while the DOM bar still shows T's
-            // pool, and relearning off that pair is a base ~9% wrong
-            const statedForBar = analysis.tierMatchesBar === true || bossReading?.source === 'pool';
+            // socket's statement for this pool, or a graft whose own stated tier
+            // is the analysed one. The stream's floor alone is not — at a tier
+            // clear it names T+1 while the DOM bar still shows T's pool, and
+            // relearning off that pair is a base ~9% wrong
+            const statedForBar = analysis.tierMatchesBar === true || poolTier === analysis.tier;
             if (heldTier !== null && (!statedForBar || heldTier === analysis.tier)) return;
 
             const baseWork = baseWorkFromObservations([{ tier: analysis.tier, total: target }], scaledBy, kind);
@@ -5682,6 +5691,9 @@ class GuildTrials {
                     source: 'pool',
                     ...(slots !== null ? { slots } : {}),
                     ...(waveCount !== null ? { waveCount } : {}),
+                    // The tier the stream stated with this very pool, so a
+                    // later reader can tell it from the tier the analysis is on
+                    ...(Number.isFinite(pool.tier) ? { tier: pool.tier } : {}),
                 },
             ],
             spectatedTier: Number.isFinite(pool.tier) ? pool.tier : null,
