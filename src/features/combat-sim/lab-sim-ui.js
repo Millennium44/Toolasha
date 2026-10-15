@@ -100,15 +100,7 @@ import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } fro
 // Through the default export rather than as named imports: this file is reached
 // by a bundle that does not own the combat sim panel, and a cross-bundle named
 // import compiles to a property read off a global that carries only the default.
-import combatSimUI, {
-    applyScoreScale,
-    DEFAULT_LEVEL_SCORE_SCALE,
-    scoreScaleTitle,
-    scoreDepthLabel,
-    scoreValueColor,
-    formatScore,
-    formatCompactHours,
-} from './combat-sim-ui.js';
+import combatSimUI from './combat-sim-ui.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import {
@@ -6171,7 +6163,7 @@ class LabSimUI {
      */
     _sortedLevelRows(levelResults) {
         if (!levelResults?.length) return [];
-        applyScoreScale(levelResults, DEFAULT_LEVEL_SCORE_SCALE, {
+        combatSimUI.applyScoreScale(levelResults, combatSimUI.DEFAULT_LEVEL_SCORE_SCALE, {
             metrics: LEVEL_SCORE_METRICS,
             keys: LEVEL_SCORE_METRICS.map((metric) => metric.key),
         });
@@ -6220,8 +6212,10 @@ class LabSimUI {
         };
         const label = (skill) => skill.charAt(0).toUpperCase() + skill.slice(1);
         const scoreTitle =
-            scoreScaleTitle(DEFAULT_LEVEL_SCORE_SCALE, 'Hours per attempt saved and Avg \u0394Win') +
-            ' Both columns count equally.';
+            combatSimUI.scoreScaleTitle(
+                combatSimUI.DEFAULT_LEVEL_SCORE_SCALE,
+                'Hours per attempt saved and Avg \u0394Win'
+            ) + ' Both columns count equally.';
         const primaryNames = [...new Set(levelRows.flatMap((r) => r.primarySkills || []))];
         const primaryNote = primaryNames.length
             ? ` Your weapon trains ${primaryNames.map(label).join(' / ')} with 30% of all combat XP whatever charm is worn, so each row also shows where that skill lands by the time the grind is done \u2014 the \u0394 columns are for both together.`
@@ -6243,7 +6237,7 @@ class LabSimUI {
                 ${th('hoursPer', 'Hours / attempt saved', 'Level Time divided by the attempts saved. Lower is better; a dash where the levels save nothing.')}
                 ${th('rooms', 'Rooms', 'How many fights this reaches. A combat level is every fight.')}
                 ${th('avgWinDelta', 'Avg \u0394Win', 'Average win rate change across the rooms it reaches')}
-                <th data-af-level-sort="score" style="${thStyle} cursor:pointer; user-select:none; color:${ACCENT};" title="${scoreTitle}">Score<br>${scoreDepthLabel(DEFAULT_LEVEL_SCORE_SCALE)}${arrow('score')}</th>
+                <th data-af-level-sort="score" style="${thStyle} cursor:pointer; user-select:none; color:${ACCENT};" title="${scoreTitle}">Score<br>${combatSimUI.scoreDepthLabel(combatSimUI.DEFAULT_LEVEL_SCORE_SCALE)}${arrow('score')}</th>
             </tr></thead><tbody>`;
 
         levelRows.forEach((r, i) => {
@@ -6279,7 +6273,7 @@ class LabSimUI {
             const deltaTitle = along.length
                 ? `\u0394 is for both together: ${r.candidate.description}, ${along.map((a) => `${a.label} ${a.currentLevel} \u2192 ${a.upgradeLevel}`).join(', ')}`
                 : '';
-            const scoreColor = scoreValueColor(r.score);
+            const scoreColor = combatSimUI.scoreValueColor(r.score);
             const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-level-row="${i}">
@@ -6287,10 +6281,10 @@ class LabSimUI {
                 <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
                 <td style="${tdStyle} color:${measured ? attemptsDeltaColor(r.attemptsDelta) : '#666'}; ${isBest && measured ? 'font-weight:700;' : ''}"
                     title="${measured ? deltaTitle : 'Smaller than the simulation\u2019s own error \u2014 not a measured gain'}">${fmtAttemptsDelta(r.attemptsDelta)}${noise}</td>
-                <td style="${tdStyle}" data-level-hours-per>${formatCompactHours(hoursPer)}</td>
+                <td style="${tdStyle}" data-level-hours-per>${combatSimUI.formatCompactHours(hoursPer)}</td>
                 <td style="${tdStyle} color:${reach === total ? '#888' : '#8ab4f8'};">${reach} / ${total}</td>
                 <td style="${tdStyle} color:${deltaColor(r.avgWinDelta)};">${deltaPct(r.avgWinDelta)}</td>
-                <td style="${tdStyle}${scoreColor ? ` color:${scoreColor};` : ''}" data-level-score>${formatScore(r.score)}</td>
+                <td style="${tdStyle}${scoreColor ? ` color:${scoreColor};` : ''}" data-level-score>${combatSimUI.formatScore(r.score)}</td>
             </tr>
             <tr data-allfights-level-detail="${i}" style="display:none;">
                 <td colspan="7" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">

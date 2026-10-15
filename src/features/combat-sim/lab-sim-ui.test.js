@@ -247,17 +247,27 @@ vi.mock('./sim-editor.js', () => ({
 // turn up here without this file being told about it.
 // The score helpers the Combat levels table borrows stay real: what is worth
 // asserting there is their arithmetic, not a stand-in for it.
-vi.mock('./combat-sim-ui.js', async (importOriginal) => ({
-    ...(await importOriginal()),
-    default: {
-        upgradeRowPurchase: () => null,
-        upgradeRowActionsHtml: (result) =>
-            `<button data-shared-action="${result?.candidate?.description || ''}">buttons</button>`,
-        wireUpgradeRowActions: (container) => {
-            rowActions.wired.push(container);
+vi.mock('./combat-sim-ui.js', async (importOriginal) => {
+    const original = await importOriginal();
+    return {
+        ...original,
+        default: {
+            applyScoreScale: original.applyScoreScale,
+            DEFAULT_LEVEL_SCORE_SCALE: original.DEFAULT_LEVEL_SCORE_SCALE,
+            scoreScaleTitle: original.scoreScaleTitle,
+            scoreDepthLabel: original.scoreDepthLabel,
+            scoreValueColor: original.scoreValueColor,
+            formatScore: original.formatScore,
+            formatCompactHours: original.formatCompactHours,
+            upgradeRowPurchase: () => null,
+            upgradeRowActionsHtml: (result) =>
+                `<button data-shared-action="${result?.candidate?.description || ''}">buttons</button>`,
+            wireUpgradeRowActions: (container) => {
+                rowActions.wired.push(container);
+            },
         },
-    },
-}));
+    };
+});
 
 // A CSV export reaches the browser's download; the text it would save is what
 // is worth reading back.
