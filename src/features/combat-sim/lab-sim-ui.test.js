@@ -102,6 +102,15 @@ vi.mock('../../core/storage.js', () => ({
             delete storage.written[key];
             return true;
         },
+        // One transaction against the newest value: a write already made, else what is stored
+        update: async (key, mutate) => {
+            const found = key in storage.written || key in storage.values;
+            const current = key in storage.written ? storage.written[key] : storage.values[key];
+            const value = mutate(current, found);
+            if (value === undefined) return { written: false, value: current };
+            storage.written[key] = value;
+            return { written: true, value };
+        },
     },
 }));
 
@@ -3360,6 +3369,19 @@ describe('the Skilling tab’s per-character loadout assignments', () => {
 
         expect(storage.written.labSimSkillingLoadouts_me['/skills/foraging']).toBe('Alt WC');
         expect(storage.written.labSimSkillingLoadouts_me['/skills/woodcutting']).toBe('Alt WC');
+    });
+
+    test('two quick edits both survive: each save folds into the newest value, not a stale read', async () => {
+        await ui._renderSkillLoadoutTable();
+        storage.values.labSimSkillingLoadouts_me = { '/skills/woodcutting': 'Main WC', '/skills/foraging': 'Main WC' };
+
+        await Promise.all([
+            ui._saveSkillLoadout('/skills/woodcutting', 'Alt WC'),
+            ui._saveSkillLoadout('/skills/foraging', 'Alt WC'),
+        ]);
+
+        expect(storage.written.labSimSkillingLoadouts_me['/skills/woodcutting']).toBe('Alt WC');
+        expect(storage.written.labSimSkillingLoadouts_me['/skills/foraging']).toBe('Alt WC');
     });
 });
 
