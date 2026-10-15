@@ -9866,6 +9866,26 @@ describe('the Triggers option', () => {
         expect(checked).toEqual(['triggers']);
     });
 
+    test('a pulled set naming no offered mode puts the defaults back over the pre-pull picks', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        ui.buildPanel();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const boxes = () => [...ui.panel.querySelectorAll('[data-upgrade-mode]')];
+        const defaults = boxes()
+            .filter((box) => box.defaultChecked)
+            .map((box) => box.getAttribute('data-upgrade-mode'));
+        for (const box of boxes()) box.checked = !box.defaultChecked;
+
+        await writeScoped('combatSimUpgradeModes', ['a-mode-this-build-removed']);
+        await ui._restoreUpgradeModes();
+
+        expect(
+            boxes()
+                .filter((box) => box.checked)
+                .map((box) => box.getAttribute('data-upgrade-mode'))
+        ).toEqual(defaults);
+    });
+
     describe('remembered choices', () => {
         const choices = () => ({
             scope: ui.panel.querySelector('#mwi-csim-trigger-scope').value,
