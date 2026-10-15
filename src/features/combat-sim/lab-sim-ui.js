@@ -82,14 +82,19 @@ import { scopeEquipmentToSkill } from './skilling-gear-candidates.js';
 import {
     MAX_SWAP_LEVEL,
     MAX_QUEUED_SWAPS,
+    buildCombatAbilityCandidates,
     buildCombatSwapCandidate,
     checkedSwapKey,
-    clampSwapLevel,
+    clampLevelFor,
     describeCheckedSwap,
     evaluateSkillingSwaps,
+    isAbilitySwap,
+    mergeCheckedAbilityRows,
     resolveEquipmentHrid,
+    resolveSwapHrid,
     sanitizeSwapOptions,
     sanitizeSwapQueues,
+    searchAbilities,
     searchEquipmentItems,
 } from './lab-swap-check.js';
 import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } from './skilling-sim-helpers.js';
@@ -3301,7 +3306,8 @@ class LabSimUI {
             kind === 'combat'
                 ? 'Put any piece of equipment, at the level you choose, into every fight loadout that uses its slot, ' +
                   'and see what it does. Owned or not. Add queues it; Check runs the queue with this tab’s ' +
-                  'precision, hours and target scope.'
+                  'precision, hours and target scope. An ability works too (e.g. Critical Aura, level 7): it is ' +
+                  'tried in place of each ability a loadout casts and in a free slot, and the best is shown per loadout.'
                 : 'Put any piece of equipment, at the level you choose, into every skill kit that can feel it, and see ' +
                   'what it does to the clear rate. Owned or not. Add queues it; Check runs the queue.';
         bar.innerHTML = `
@@ -3314,11 +3320,11 @@ class LabSimUI {
             <div id="mwi-labsim-swap-body-${kind}" style="display:none; margin-top:4px;">
             <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px;">
                 <input id="mwi-labsim-swap-item-${kind}" list="mwi-labsim-swap-items-${kind}" type="text" autocomplete="off"
-                    placeholder="Item name, e.g. Sinister Cape" style="${inputStyle} width:210px; max-width:100%;">
+                    placeholder="${kind === 'combat' ? 'Item or ability, e.g. Sinister Cape' : 'Item name, e.g. Sinister Cape'}" style="${inputStyle} width:210px; max-width:100%;">
                 <datalist id="mwi-labsim-swap-items-${kind}"></datalist>
                 <span style="color:#888; font-size:12px;">+</span>
                 <input id="mwi-labsim-swap-level-${kind}" type="number" min="0" max="${MAX_SWAP_LEVEL}" step="1"
-                    placeholder="Lv" title="Enhancement level to check" style="${inputStyle} width:46px; text-align:center;">
+                    placeholder="Lv" title="${kind === 'combat' ? 'Enhancement level to check (the ability level, for an ability)' : 'Enhancement level to check'}" style="${inputStyle} width:46px; text-align:center;">
                 <button id="mwi-labsim-swap-add-${kind}" style="${buttonStyle}" title="Queue this swap">Add</button>
                 <button id="mwi-labsim-swap-check-${kind}" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Check</button>
                 <button id="mwi-labsim-swap-clear-${kind}" style="${buttonStyle}" title="Hide and empty the checked swaps table. The queue stays.">Clear</button>
@@ -3832,6 +3838,8 @@ class LabSimUI {
         if (!list) return;
         const gameData = buildGameDataPayload();
         const matches = gameData ? searchEquipmentItems(gameData, typed, 30) : [];
+        // Abilities are only checked on the combat side; the skilling kits have no ability bar
+        if (gameData && kind === 'combat') matches.push(...searchAbilities(gameData, typed, 15));
         // Value only: Firefox shows an option's label in place of its value, so a slot label
         // there listed "off hand", "hands"... instead of the item names
         list.innerHTML = matches.map((item) => `<option value="${escapeHtmlAttribute(item.name)}"></option>`).join('');
@@ -3847,18 +3855,21 @@ class LabSimUI {
         const levelBox = this.panel?.querySelector(`#mwi-labsim-swap-level-${kind}`);
         if (!itemBox) return;
         const gameData = buildGameDataPayload();
-        const hrid = gameData ? resolveEquipmentHrid(gameData, itemBox.value) : null;
+        const resolve = kind === 'combat' ? resolveSwapHrid : resolveEquipmentHrid;
+        const hrid = gameData ? resolve(gameData, itemBox.value) : null;
         if (!hrid) {
             this._setSwapNote(
                 kind,
                 itemBox.value.trim()
-                    ? 'No single piece of equipment matches. Pick one from the suggestions.'
+                    ? kind === 'combat'
+                        ? 'No single piece of equipment or ability matches. Pick one from the suggestions.'
+                        : 'No single piece of equipment matches. Pick one from the suggestions.'
                     : 'Type an item name first.',
                 true
             );
             return;
         }
-        const swap = { hrid, level: clampSwapLevel(levelBox?.value) };
+        const swap = { hrid, level: clampLevelFor(hrid, levelBox?.value) };
         const queue = this._checkedSwaps[kind];
         if (queue.some((queued) => checkedSwapKey(queued) === checkedSwapKey(swap))) {
             this._setSwapNote(kind, 'Already queued.', true);
@@ -4106,7 +4117,19 @@ class LabSimUI {
 
             const candidates = [];
             const unreached = [];
+            const alreadyEquipped = [];
+            const fightDTOs = fights.map((fight) => fight.dto);
             for (const swap of queue) {
+                if (isAbilitySwap(swap)) {
+                    // One candidate per way onto the bar; the rows are folded back into one afterwards
+                    const built = buildCombatAbilityCandidates(swap, fightDTOs, gameData, isSelf, {
+                        allLoadouts: this._swapOptions.all.combat,
+                    });
+                    if (built?.candidates.length) candidates.push(...built.candidates);
+                    else if (built?.alreadyEquipped) alreadyEquipped.push(swap);
+                    else unreached.push(swap);
+                    continue;
+                }
                 const candidate = buildCombatSwapCandidate(
                     swap,
                     fights.map((fight) => fight.dto),
@@ -4117,20 +4140,30 @@ class LabSimUI {
                 if (candidate && candidate.reach > 0) candidates.push(candidate);
                 else unreached.push(swap);
             }
+            const describeAll = (list) => list.map((swap) => describeCheckedSwap(swap, gameData)).join(', ');
             if (!candidates.length) {
                 resultsEl.style.display = 'none';
                 this._setStatus(
-                    `Not in any loadout: ${unreached.map((swap) => describeCheckedSwap(swap, gameData)).join(', ')}.`
+                    [
+                        alreadyEquipped.length
+                            ? `Already equipped at that level or higher: ${describeAll(alreadyEquipped)}.`
+                            : '',
+                        unreached.length ? `Not in any loadout: ${describeAll(unreached)}.` : '',
+                    ]
+                        .filter(Boolean)
+                        .join(' ')
                 );
                 return;
             }
 
             const eta = createEtaTracker();
+            // An ability is several candidates (one per slot option) but one swap
+            const swapCount = new Set(candidates.map((candidate) => candidate.checkedAbilityKey || candidate)).size;
             this._setStatus(
-                `Checking ${candidates.length} swap${candidates.length === 1 ? '' : 's'} across ${fights.length} fights. Stop cancels at any point.`
+                `Checking ${swapCount} swap${swapCount === 1 ? '' : 's'} across ${fights.length} fights. Stop cancels at any point.`
             );
 
-            const analysisResult = await runLabyrinthAllFightsAnalysis(
+            const rawAnalysis = await runLabyrinthAllFightsAnalysis(
                 {
                     fights,
                     crates,
@@ -4157,6 +4190,7 @@ class LabSimUI {
             );
 
             if (!isCurrent() || this._upgradeAborted) return;
+            const analysisResult = rawAnalysis?.baseline ? mergeCheckedAbilityRows(rawAnalysis, gameData) : rawAnalysis;
             if (!analysisResult?.baseline || !analysisResult.results?.length) {
                 resultsEl.style.display = 'none';
                 this._setStatus('Checking the swaps produced no results.');
@@ -4166,9 +4200,10 @@ class LabSimUI {
             this._renderAllFightsResults(analysisResult, resultsEl, { checked: true });
             this._setStatus(
                 `Checked ${analysisResult.results.length} swap${analysisResult.results.length === 1 ? '' : 's'} across ${fights.length} fights` +
-                    (unreached.length
-                        ? `. Not in any loadout: ${unreached.map((swap) => describeCheckedSwap(swap, gameData)).join(', ')}`
+                    (alreadyEquipped.length
+                        ? `. Already equipped at that level or higher: ${describeAll(alreadyEquipped)}`
                         : '') +
+                    (unreached.length ? `. Not in any loadout: ${describeAll(unreached)}` : '') +
                     '.'
             );
         } catch (error) {
@@ -6026,7 +6061,7 @@ class LabSimUI {
                 // list looks like a fight that was not run
                 const outcome =
                     fight.applied === false
-                        ? `<span style="color:#666;">not in this loadout — ${pct(base.winRate)} unchanged</span>`
+                        ? `<span style="color:#666;">${fight.skipReason || 'not in this loadout'} — ${pct(base.winRate)} unchanged</span>`
                         : `${pct(base.winRate)} → ${pct(fight.winRate)}
                         <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span>
                         <span style="color:#666;">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries` +

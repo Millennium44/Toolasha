@@ -5852,7 +5852,7 @@ function communityBuffCowbellCost(candidate) {
 const ATTEMPT_WIN_RATE_FLOOR = 0.001;
 
 /** How many standard errors a gain has to clear before it is called a gain */
-const SIGNIFICANCE_Z = 1.96;
+export const SIGNIFICANCE_Z = 1.96;
 
 /**
  * The sampling error on "attempts saved across the run".
@@ -6490,7 +6490,7 @@ function analysisConcurrency() {
 const ANALYSIS_MAX_CONCURRENCY = 6;
 
 /** Expected labyrinth attempts to clear one fight (retry until win) */
-function expectedFightAttempts(winRate) {
+export function expectedFightAttempts(winRate) {
     return 1 / Math.max(winRate, ATTEMPT_WIN_RATE_FLOOR);
 }
 
@@ -6513,6 +6513,9 @@ const WEAPON_SLOTS = new Set([MAIN_HAND_SLOT, OFF_HAND_SLOT, TWO_HAND_SLOT]);
  * @returns {string} Pool key
  */
 function allFightsPoolKey(candidate) {
+    // A hand-checked ability names its own pool slot: two checked levels of one
+    // ability replacing the same ability are two questions, not one decision
+    if (candidate.poolKey) return candidate.poolKey;
     if (candidate.type === 'ability_swap' && candidate.replacesHrid) {
         return `ability_swap:${candidate.replacesHrid}->${candidate.upgradeHrid}`;
     }
@@ -7755,6 +7758,8 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
         return true;
     }
 
+    if (candidate.checkedAbility) return checkedAbilityAppliesToDTO(candidate, dto, gameData);
+
     if (candidate.slot?.startsWith('ability_')) {
         const abilities = dto.abilities || [];
         if (candidate.type === 'ability_level') {
@@ -7941,6 +7946,112 @@ export function checkedSwapAppliesToDTO(candidate, dto, gameData) {
 }
 
 /**
+ * The ability bar index a hand-checked ability would go into when the bar has a
+ * free slot for it. The special slot (0) holds only special abilities (auras) and
+ * the rest only ordinary ones, the rule the swap generator follows.
+ * @param {Array} abilities - A loadout's ability bar
+ * @param {boolean} special - Whether the ability is a special (slot 0) ability
+ * @returns {number} Index, or -1 when the bar has none free for it
+ */
+function freeSlotForAbility(abilities, special) {
+    if (special) return abilities.length > 0 && !abilities[0] ? 0 : -1;
+    return abilities.findIndex((ability, index) => index > 0 && !ability);
+}
+
+/**
+ * Whether a hand-checked ability option reaches a loadout.
+ *
+ * A checked ability is built as one option per way it could go onto a bar: in
+ * place of one named ability (`replacesHrid`), into a free slot
+ * (`fillsFreeSlot`), or as a level-up of the copy already equipped below the
+ * level (`levelUp`). An option reaches a loadout when that way is open there. A
+ * loadout already casting the ability at the level asked for or higher is reached
+ * by no option. Slot kind is honored: a special ability only ever replaces or
+ * fills slot 0, an ordinary one never does.
+ *
+ * @param {Object} candidate - `{ upgradeHrid, upgradeLevel, specialAbility, replacesHrid?, fillsFreeSlot?, levelUp? }`
+ * @param {Object} dto - The loadout
+ * @param {Object|null} [gameData] - For the ability's slot kind and style
+ * @returns {boolean}
+ */
+export function checkedAbilityAppliesToDTO(candidate, dto, gameData = null) {
+    if (!candidate?.upgradeHrid || !dto) return false;
+    const abilities = dto.abilities || [];
+    const existing = abilities.find((ability) => ability?.hrid === candidate.upgradeHrid);
+    if (candidate.levelUp) return Boolean(existing) && (existing.level || 0) < candidate.upgradeLevel;
+    if (existing) return false;
+    // An ordinary ability goes only into loadouts whose weapon it suits, unless
+    // "All loadouts" waived that
+    if (!candidate.allLoadouts && gameData && !abilityFitsLoadout(candidate.upgradeHrid, dto, gameData)) return false;
+    const special = Boolean(candidate.specialAbility);
+    if (candidate.fillsFreeSlot) return freeSlotForAbility(abilities, special) >= 0;
+    const index = abilities.findIndex((ability) => ability?.hrid === candidate.replacesHrid);
+    return index >= 0 && (special ? index === 0 : index > 0);
+}
+
+/**
+ * Put a hand-checked ability option into a (copied) loadout, at the level asked
+ * for. A level-up keeps the equipped copy's triggers; a swap or fill brings the
+ * ability in with default triggers.
+ * @param {Object} dto - A private copy of the loadout
+ * @param {Object} candidate - See `checkedAbilityAppliesToDTO`
+ * @returns {Object} The same dto
+ */
+export function applyCheckedAbilityToDTO(dto, candidate) {
+    if (!Array.isArray(dto.abilities)) dto.abilities = [];
+    const abilities = dto.abilities;
+    if (candidate.levelUp) {
+        const index = abilities.findIndex((ability) => ability?.hrid === candidate.upgradeHrid);
+        if (index >= 0) abilities[index] = { ...abilities[index], level: candidate.upgradeLevel };
+        return dto;
+    }
+    const newcomer = { hrid: candidate.upgradeHrid, level: candidate.upgradeLevel, triggers: null };
+    if (candidate.specialAbility) {
+        const special = candidate.fillsFreeSlot ? freeSlotForAbility(abilities, true) : 0;
+        if (special >= 0) abilities[special] = newcomer;
+        return dto;
+    }
+    // Ordinary slots: the game casts the first ready ability in slot order, so an
+    // ability with no cooldown (always ready) must come after every one that has
+    // one. The newcomer takes the replaced ability's place, or the end for a fill,
+    // and is moved to the nearest position that keeps that rule.
+    const zero = new Set(candidate.zeroCooldownHrids || []);
+    const sequence = abilities.slice(1).filter(Boolean);
+    const at = candidate.fillsFreeSlot ? -1 : sequence.findIndex((ability) => ability.hrid === candidate.replacesHrid);
+    if (!candidate.fillsFreeSlot && at < 0) return dto;
+    if (at >= 0) sequence[at] = newcomer;
+    else sequence.push(newcomer);
+    const position = sequence.indexOf(newcomer);
+    if (zero.has(newcomer.hrid)) {
+        sequence.splice(position, 1);
+        sequence.push(newcomer);
+    } else {
+        const firstZero = sequence.findIndex((ability) => zero.has(ability.hrid));
+        if (firstZero >= 0 && firstZero < position) {
+            sequence.splice(position, 1);
+            sequence.splice(firstZero, 0, newcomer);
+        }
+    }
+    for (let i = 1; i < abilities.length; i++) abilities[i] = sequence[i - 1] || null;
+    return dto;
+}
+
+/**
+ * Whether an ordinary ability suits a loadout's weapon. Special abilities (auras)
+ * always do: the style heuristic misreads universal auras.
+ * @param {string} abilityHrid - The ability
+ * @param {Object} dto - The loadout
+ * @param {Object} gameData - Game data payload
+ * @returns {boolean}
+ */
+export function abilityFitsLoadout(abilityHrid, dto, gameData) {
+    const detail = gameData?.abilityDetailMap?.[abilityHrid];
+    if (!detail || detail.isSpecialAbility) return true;
+    const style = getPlayerCombatStyle(dto, gameData);
+    return style === 'unknown' || isAbilityCompatible(getAbilityCombatStyle(detail), style);
+}
+
+/**
  * Whether buying this piece would improve the slot a loadout has filled.
  *
  * A tier upgrade is one purchase that every loadout can share, and matching on
@@ -8021,6 +8132,8 @@ function tierAppliesToWorn(candidate, worn, equipment, gameData) {
  */
 export function applyCandidateToDTO(playerDTO, candidate) {
     const dto = JSON.parse(JSON.stringify(playerDTO));
+
+    if (candidate.checkedAbility) return applyCheckedAbilityToDTO(dto, candidate);
 
     if (candidate.slot?.startsWith('ability_')) {
         // Levelling an ability follows the ability, not the slot number it
