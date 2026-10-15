@@ -2539,6 +2539,33 @@ describe('the remembered upgrade analysis across a character switch', () => {
             expect(restored).toEqual(fresh);
         });
 
+        test('a scroll that loses gold keeps its Score but dims it and says why; Gain is per hour', async () => {
+            const rows = [
+                {
+                    ...row('Add Scroll of Attack Speed (+15%)', { cost: null, type: 'scroll', profitGain: 100_000 }),
+                    cost: null,
+                    deltas: { dps: 4, xp: 4, profit: 1, deaths: 0, encounters: 0 },
+                },
+                {
+                    ...row('Add Scroll of Combat Drop (+15%)', { cost: null, type: 'scroll', profitGain: 1_200_000 }),
+                    cost: null,
+                    deltas: { dps: 0, xp: 0, profit: 12, deaths: 0, encounters: 0 },
+                },
+            ];
+            const container = await restoreWith({ scrollTokenRate: stored }, rows);
+            const byName = (name) =>
+                [...container.querySelectorAll('[data-scroll-row]')].find((tr) => tr.textContent.includes(name));
+
+            const loss = byName('Attack Speed').querySelector('[data-scroll-score]');
+            expect(loss.hasAttribute('data-scroll-loss')).toBe(true);
+            expect(loss.getAttribute('title')).toContain('not for gold');
+            expect(loss.style.opacity).toBe('0.45');
+            const win = byName('Combat Drop').querySelector('[data-scroll-score]');
+            expect(win.hasAttribute('data-scroll-loss')).toBe(false);
+            expect(byName('Combat Drop').textContent).toContain('/hr');
+            expect(byName('Combat Drop').textContent).not.toContain('per 30 min');
+        });
+
         test('a scroll already carried shows and sorts what it adds, not the loss of dropping it', async () => {
             const carried = {
                 ...scrollRow,

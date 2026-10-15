@@ -84,6 +84,8 @@ export function priceScrollRow(row, rate, baseline) {
             ? `Net ${signed(priced.netPerHour)}/hr over the tokens' value`
             : `Net loss ${signed(priced.netPerHour)}/hr: the same tokens buy more as ${rate.itemName}`,
         gainText: `${signed(gainPerScroll)} per ${SCROLL_BUFF_MINUTES} min`,
+        // The table's Gain column, per hour so it lines up with Net / hr beside it
+        gainHourText: `${signed(priced.gainPerHour)}/hr`,
         netText: `${signed(netPerScroll)} per scroll`,
     };
 }

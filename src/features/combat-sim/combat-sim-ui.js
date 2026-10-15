@@ -11884,6 +11884,11 @@ class CombatSimUI {
             scoreScaleTitle(scaleKey, 'Gold/hr per 0.01%') +
             ' Use ⚙ Columns to choose what counts and the scale.';
 
+        // The Score ranks stat bought per gold, not whether the scroll pays for itself; a loss row says so
+        const lossScoreTitle =
+            'Ranks well on stats for its token cost, but costs more than the profit it adds: worth it for a ' +
+            'DPS or EXP push, not for gold.';
+
         let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
             <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Scrolls, priced by their tokens</div>
             <div style="color:#666; font-size:10px; margin-bottom:6px;">
@@ -11902,7 +11907,7 @@ class CombatSimUI {
                 <th style="${thStyle} color:${ACCENT};" data-scroll-sort-key="gXp" title="${goldPerTitle('EXP/hr')}">Gold/hr per 0.01% EXP${arrow('gXp')}</th>
                 <th style="${thStyle}" data-scroll-sort-key="profit">ΔProfit${arrow('profit')}</th>
                 <th style="${thStyle} color:${ACCENT};" data-scroll-sort-key="gProfit" title="${goldPerTitle('Profit/hr')}">Gold/hr per 0.01% Profit${arrow('gProfit')}</th>
-                <th style="${thStyle}" data-scroll-sort-key="gain">Gain${arrow('gain')}</th>
+                <th style="${thStyle}" data-scroll-sort-key="gain">Gain / hr${arrow('gain')}</th>
                 <th style="${thStyle}" data-scroll-sort-key="net">Net / hr${arrow('net')}</th>
                 <th style="${thStyle} color:${ACCENT};" data-scroll-sort-key="score" title="${scoreTitle}">Score<br>${scoreDepthLabel(scaleKey)}${arrow('score')}</th>
             </tr></thead><tbody>`;
@@ -11921,9 +11926,11 @@ class CombatSimUI {
                 <td style="${tdStyle}" data-scroll-gold-per="xp">${goldPerCell(r, 'xp')}</td>
                 <td style="${tdStyle}">${cell(r, 'profit')}</td>
                 <td style="${tdStyle}" data-scroll-gold-per="profit">${goldPerCell(r, 'profit')}</td>
-                <td style="${tdStyle}">${p.gainText}</td>
+                <td style="${tdStyle}">${p.gainHourText}</td>
                 <td style="${tdStyle} color:${netColor};" title="${p.verdict}">${p.worthIt ? '+' : '−'}${formatKMB(Math.abs(p.netPerHour))}${p.worthIt ? '' : ' loss'}</td>
-                <td style="${tdStyle}${color ? ` color:${color};` : ''}" data-scroll-score>${formatScore(r.score)}</td>
+                <td style="${tdStyle}${color ? ` color:${color};` : ''}${p.worthIt ? '' : ' opacity:0.45;'}" data-scroll-score${
+                    p.worthIt ? '' : ` data-scroll-loss title="${lossScoreTitle}"`
+                }>${formatScore(r.score)}</td>
             </tr>
             <tr data-scroll-detail="${i}" data-row-key="${rowKey}" style="display:none;">
                 <td colspan="11" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
