@@ -3320,8 +3320,45 @@ describe('the Skilling tab’s per-character loadout assignments', () => {
         const select = ui.panel.querySelector('[data-skill-loadout="/skills/woodcutting"]');
         select.value = 'Alt WC';
         select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await vi.waitFor(() => expect(storage.written.labSimSkillingLoadouts_me).toBeDefined());
 
         expect(storage.written.labSimSkillingLoadouts_alt).toBeUndefined();
+        expect(storage.written.labSimSkillingLoadouts_me['/skills/woodcutting']).toBe('Alt WC');
+    });
+
+    test('a pull of the map replaces what the table holds and redraws it', async () => {
+        await ui._renderSkillLoadoutTable();
+        storage.values.labSimSkillingLoadouts_me = { '/skills/woodcutting': 'Alt WC' };
+
+        await ui._adoptPulledSkillLoadouts({ settings: ['labSimSkillingLoadouts_me'] });
+
+        expect(ui._skillLoadouts['/skills/woodcutting']).toBe('Alt WC');
+        const select = ui.panel.querySelector('[data-skill-loadout="/skills/woodcutting"]');
+        expect(select.querySelector('option[selected]').value).toBe('Alt WC');
+    });
+
+    test('a pull of someone else’s key leaves the table alone', async () => {
+        await ui._renderSkillLoadoutTable();
+        storage.values.labSimSkillingLoadouts_me = { '/skills/woodcutting': 'Alt WC' };
+
+        await ui._adoptPulledSkillLoadouts({ settings: ['labSimSkillingLoadouts_alt'] });
+
+        expect(ui._skillLoadouts['/skills/woodcutting']).toBe('Main WC');
+    });
+
+    test('a change after a pull keeps the pulled assignments instead of writing the stale map over them', async () => {
+        await ui._renderSkillLoadoutTable();
+        // A pull landed in storage and the hook has not run yet
+        storage.values.labSimSkillingLoadouts_me = {
+            '/skills/woodcutting': 'Main WC',
+            '/skills/foraging': 'Alt WC',
+        };
+        const select = ui.panel.querySelector('[data-skill-loadout="/skills/woodcutting"]');
+        select.value = 'Alt WC';
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await vi.waitFor(() => expect(storage.written.labSimSkillingLoadouts_me).toBeDefined());
+
+        expect(storage.written.labSimSkillingLoadouts_me['/skills/foraging']).toBe('Alt WC');
         expect(storage.written.labSimSkillingLoadouts_me['/skills/woodcutting']).toBe('Alt WC');
     });
 });
