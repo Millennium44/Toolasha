@@ -13,6 +13,7 @@
 import storage from '../core/storage.js';
 import { characterKey, readScoped } from './character-key.js';
 import { currentBuildEntries, fromCurrentBuild, scriptVersion } from './script-version.js';
+import { registerSyncMerge } from './sync-merge-registry.js';
 
 /** Where a finished all-zones run is kept, for anything that ranks zones later */
 export const ALL_ZONES_SNAPSHOT_KEY = 'allZonesSnapshot';
@@ -324,24 +325,84 @@ export async function loadZoneSimRates() {
 export async function saveZoneSimRate(storageKey, entry) {
     try {
         if (!storageKey || !entry?.zoneHrid) return false;
-        const saved = await storage.getJSON(storageKey, ALL_ZONES_SNAPSHOT_STORE, null);
-        const rates = { ...(saved && typeof saved.rates === 'object' && saved.rates !== null ? saved.rates : {}) };
-        rates[zoneSimRateKey(entry.zoneHrid, entry.difficultyTier, entry.loadoutId)] = {
-            ...entry,
-            scriptVersion: scriptVersion(),
-        };
-
-        const keys = Object.keys(rates);
-        if (keys.length > ZONE_SIM_RATES_LIMIT) {
-            keys.sort((a, b) => (rates[a]?.savedAt || 0) - (rates[b]?.savedAt || 0));
-            for (const key of keys.slice(0, keys.length - ZONE_SIM_RATES_LIMIT)) delete rates[key];
-        }
-        return await storage.setJSON(storageKey, { version: 1, rates }, ALL_ZONES_SNAPSHOT_STORE, true);
+        const stamped = { ...entry, scriptVersion: scriptVersion() };
+        // One transaction against the newest value, a queued write included: a read and then a
+        // separate write would put back a copy older than a sync pull that landed in between
+        const result = await storage.update(
+            storageKey,
+            (current) => {
+                const saved = storage.parseJSON(current ?? null, storageKey, null);
+                const rates = {
+                    ...(saved && typeof saved.rates === 'object' && saved.rates !== null ? saved.rates : {}),
+                };
+                rates[zoneSimRateKey(entry.zoneHrid, entry.difficultyTier, entry.loadoutId)] = stamped;
+                const keys = Object.keys(rates);
+                if (keys.length > ZONE_SIM_RATES_LIMIT) {
+                    keys.sort((a, b) => (rates[a]?.savedAt || 0) - (rates[b]?.savedAt || 0));
+                    for (const key of keys.slice(0, keys.length - ZONE_SIM_RATES_LIMIT)) delete rates[key];
+                }
+                return { version: 1, rates };
+            },
+            ALL_ZONES_SNAPSHOT_STORE
+        );
+        return Boolean(result);
     } catch (error) {
         console.error('[AllZonesSnapshot] Saving a single-zone rate failed:', error);
         return false;
     }
 }
+
+/**
+ * Fold two devices' single-zone rate records `{version, rates}` for a sync.
+ *
+ * Each rate is filed under its zone, tier and loadout and says when it was saved, so the
+ * two maps are joined: an entry only one side has is kept, the later save wins one both
+ * have (a tie goes to the incoming side), and the oldest go first past
+ * {@link ZONE_SIM_RATES_LIMIT}, as `saveZoneSimRate` trims. Nothing removes a rate but
+ * that cap, so a join cannot bring back one that was taken out on purpose.
+ * @param {*} local - This device's stored value (an object, or JSON text from an old write)
+ * @param {*} incoming - The other side's value
+ * @returns {*} The joined record, or whichever side is readable
+ */
+export function mergeZoneSimRates(local, incoming) {
+    const read = (value) => {
+        let parsed = value;
+        if (typeof value === 'string') {
+            try {
+                parsed = JSON.parse(value);
+            } catch {
+                return null;
+            }
+        }
+        return parsed && typeof parsed === 'object' && parsed.rates && typeof parsed.rates === 'object'
+            ? parsed.rates
+            : null;
+    };
+    const mine = read(local);
+    const theirs = read(incoming);
+    if (!theirs) return mine ? local : incoming;
+    if (!mine) return incoming;
+    const rates = { ...mine };
+    for (const [key, entry] of Object.entries(theirs)) {
+        if (!(Number(rates[key]?.savedAt) > Number(entry?.savedAt))) rates[key] = entry;
+    }
+    const keys = Object.keys(rates);
+    if (keys.length > ZONE_SIM_RATES_LIMIT) {
+        keys.sort((a, b) => (rates[a]?.savedAt || 0) - (rates[b]?.savedAt || 0));
+        for (const key of keys.slice(0, keys.length - ZONE_SIM_RATES_LIMIT)) delete rates[key];
+    }
+    return { version: 1, rates };
+}
+
+// Live-safe: `loadZoneSimRates` reads storage every time it is asked (the queue display polls it), and
+// `saveZoneSimRate` folds into what is stored rather than writing a copy it holds
+registerSyncMerge({
+    store: ALL_ZONES_SNAPSHOT_STORE,
+    base: ZONE_SIM_RATES_KEY,
+    merge: mergeZoneSimRates,
+    label: 'Single-zone sim rates',
+    liveSafe: true,
+});
 
 /**
  * How many players a stored single-zone rate was simulated with, if it recorded it.

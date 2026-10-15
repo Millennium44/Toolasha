@@ -1121,6 +1121,8 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         // selection, a combination neither of them ever chose.
         setScope('all');
         storage.written = {};
+        // Nothing noted as stored, so every key of the group is written and each one's owner shows
+        ui._storedValues.clear();
         const saving = ui._saveUpgradeSelection();
         game.characterId = 'alt';
         try {
@@ -1138,6 +1140,37 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
             'labSimUpgradeScope_me',
             'labSimUpgradeTargetFloor_me',
         ]);
+    });
+
+    test('a pulled key of the selection is not written back by the next change to another one', async () => {
+        // A sync pull lands a new scope; the hook has not redrawn the controls yet
+        storage.values = { labSimUpgradeScope_me: { mode: 'selected', monsters: [] } };
+        try {
+            const roomLevels = ui.panel.querySelector('#mwi-labsim-upgrade-room-levels');
+            roomLevels.checked = !roomLevels.checked;
+            roomLevels.dispatchEvent(new window.Event('change', { bubbles: true }));
+            await settle();
+
+            expect(Object.keys(storage.written)).toEqual(['labSimUpgradeRoomLevels_me']);
+
+            // ...and the pull hook then puts the pulled scope on screen
+            await ui._adoptPulledSettings({ settings: ['labSimUpgradeScope_me'] });
+            expect(ui.panel.querySelector('#mwi-labsim-upgrade-scope').value).toBe('selected');
+            expect(storage.written.labSimUpgradeScope_me).toBeUndefined();
+        } finally {
+            storage.values = {};
+        }
+    });
+
+    test('a pull of another character’s selection leaves the controls alone', async () => {
+        storage.values = { labSimUpgradeScope_alt: { mode: 'selected', monsters: [] } };
+        try {
+            const before = ui.panel.querySelector('#mwi-labsim-upgrade-scope').value;
+            await ui._adoptPulledSettings({ settings: ['labSimUpgradeScope_alt'] });
+            expect(ui.panel.querySelector('#mwi-labsim-upgrade-scope').value).toBe(before);
+        } finally {
+            storage.values = {};
+        }
     });
 
     test('a switch mid-restore does not restore half of one character over half of another', async () => {

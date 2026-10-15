@@ -1232,7 +1232,10 @@ describe('what the scan can read', () => {
         // `writeScoped` / `readScoped`. Both families land in an object store of
         // their own rather than in `settings`, so neither is filtered by key
         // today — they are found so that the next one, which might be, is too.
+        // `_writeScopedIfChanged` forwards a Lab Sim base into `writeScoped` for the
+        // panel's grouped saves, which write only the key that changed.
         expect([...analysis.discovered].sort()).toEqual([
+            '_writeScopedIfChanged',
             'collectionRecord',
             'loadUpgradeResults',
             'saveUpgradeResults',

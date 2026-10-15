@@ -10,6 +10,7 @@ import storage from '../../core/storage.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { SKILLING_LOADOUTS_KEY } from './lab-skilling-loadouts.js';
+import { LAB_SIM_KEYS, StoredValueMemo, pulledNames } from './sim-sync-keys.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -40,6 +41,8 @@ import {
     MAX_GUILD_SHRINE_LEVEL,
 } from './upgrade-advisor.js';
 import {
+    LAB_COMPARISON_BASELINE_KEY,
+    LAB_COMPARISON_KEY,
     LabComparisonStore,
     makeLabRunEntry,
     renderLabComparisonPanel,
@@ -744,6 +747,10 @@ class LabSimUI {
         this._loadoutsCollapsed = true;
         // The singleton lives for the page, so this is never unsubscribed
         onSyncPullApplied((written) => this._adoptPulledSkillLoadouts(written));
+        // The rest of the panel's remembered choices, re-read when a pull brings them
+        onSyncPullApplied((written) => this._adoptPulledSettings(written));
+        // What the grouped saves last saw stored, so each writes only the key that changed
+        this._storedValues = new StoredValueMemo();
         this._upgradeSortHandler = null;
         this._skillingSortHandler = null;
         // Recorded single-target runs, so a fight can be read against the last
@@ -2127,35 +2134,143 @@ class LabSimUI {
             // the arriving character keeping their own checked sets while
             // inheriting the departing character's target scope, which is a
             // combination neither of them ever chose.
+            // Only the keys whose value moved are written (see `_writeScopedIfChanged`).
+            const values = this._upgradeSelectionValues();
             await Promise.all([
-                writeScoped(UPGRADE_DIMENSIONS_KEY, this._getUpgradeDimensions(), 'settings'),
-                writeScoped(
-                    UPGRADE_SCOPE_KEY,
-                    { mode: this._getUpgradeScopeMode(), monsters: this._getChosenTargets() },
-                    'settings'
-                ),
-                writeScoped(UPGRADE_LEVEL_SOURCE_KEY, this._getLevelSource(), 'settings'),
-                // The box's own state, not the gated answer below: unchecking
-                // Ability Swaps would otherwise save a false over the tick and
-                // lose it the moment the set is checked again
-                writeScoped(
-                    UPGRADE_SWAP_AURA_KEY,
-                    Boolean(this.panel?.querySelector('#mwi-labsim-swap-aura-only')?.checked),
-                    'settings'
-                ),
-                // The box's own state too — gating it on whether Guild Shrine is
-                // checked would save a stale true over an unchecking that happened
-                // while the set itself was off
-                writeScoped(
-                    SHRINE_CAP_GUILD_KEY,
-                    Boolean(this.panel?.querySelector('#mwi-labsim-shrine-cap-guild')?.checked),
-                    'settings'
-                ),
-                writeScoped(UPGRADE_ROOM_LEVELS_KEY, this._getRankByRoomLevels(), 'settings'),
-                writeScoped(UPGRADE_TARGET_FLOOR_KEY, this._getTargetFloor(), 'settings'),
+                this._writeScopedIfChanged(UPGRADE_DIMENSIONS_KEY, values[UPGRADE_DIMENSIONS_KEY]),
+                this._writeScopedIfChanged(UPGRADE_SCOPE_KEY, values[UPGRADE_SCOPE_KEY]),
+                this._writeScopedIfChanged(UPGRADE_LEVEL_SOURCE_KEY, values[UPGRADE_LEVEL_SOURCE_KEY]),
+                this._writeScopedIfChanged(UPGRADE_SWAP_AURA_KEY, values[UPGRADE_SWAP_AURA_KEY]),
+                this._writeScopedIfChanged(SHRINE_CAP_GUILD_KEY, values[SHRINE_CAP_GUILD_KEY]),
+                this._writeScopedIfChanged(UPGRADE_ROOM_LEVELS_KEY, values[UPGRADE_ROOM_LEVELS_KEY]),
+                this._writeScopedIfChanged(UPGRADE_TARGET_FLOOR_KEY, values[UPGRADE_TARGET_FLOOR_KEY]),
             ]);
         } catch (error) {
             console.error('[LabSimUI] Failed to save upgrade selection:', error);
+        }
+    }
+
+    /**
+     * What the Upgrade tab's controls hold, by the unscoped key each is saved under.
+     * @returns {Record<string, *>}
+     * @private
+     */
+    _upgradeSelectionValues() {
+        return {
+            [UPGRADE_DIMENSIONS_KEY]: this._getUpgradeDimensions(),
+            [UPGRADE_SCOPE_KEY]: { mode: this._getUpgradeScopeMode(), monsters: this._getChosenTargets() },
+            [UPGRADE_LEVEL_SOURCE_KEY]: this._getLevelSource(),
+            // The box's own state, not the gated answer below: unchecking
+            // Ability Swaps would otherwise save a false over the tick and
+            // lose it the moment the set is checked again
+            [UPGRADE_SWAP_AURA_KEY]: Boolean(this.panel?.querySelector('#mwi-labsim-swap-aura-only')?.checked),
+            // The box's own state too — gating it on whether Guild Shrine is
+            // checked would save a stale true over an unchecking that happened
+            // while the set itself was off
+            [SHRINE_CAP_GUILD_KEY]: Boolean(this.panel?.querySelector('#mwi-labsim-shrine-cap-guild')?.checked),
+            [UPGRADE_ROOM_LEVELS_KEY]: this._getRankByRoomLevels(),
+            [UPGRADE_TARGET_FLOOR_KEY]: this._getTargetFloor(),
+        };
+    }
+
+    /**
+     * Note what the controls hold, just restored from storage, as what each key stores.
+     *
+     * The controls are the stored values as read — or the defaults a missing or retired value
+     * reads as, which is the same thing to every reader — so a save after this writes only
+     * what the player then changes, and never a default over a value a sync pull brings.
+     * @param {Record<string, *>} values - From `_upgradeSelectionValues` or `_skillingGoalValues`
+     * @param {Record<string, string>} keys - Unscoped key → the scoped key it was read from
+     * @private
+     */
+    _rememberRestored(values, keys) {
+        for (const [base, value] of Object.entries(values)) {
+            if (keys[base]) this._storedValues.remember(keys[base], value);
+        }
+    }
+
+    /**
+     * Write one key of a grouped save, if its value differs from what this page last saw stored.
+     *
+     * A group save reads every control, so writing them all put this page's copy of every
+     * other key back over one a sync pull had just changed. Only the key the player changed
+     * differs from what was last read or written, so only it is written. The key is resolved
+     * as this is called, so the calls of one save, made together, cannot split across a
+     * character switch.
+     * @param {string} base - Unscoped key
+     * @param {*} value - The value the controls hold
+     * @returns {Promise<*>} The write, or nothing when there is none
+     * @private
+     */
+    _writeScopedIfChanged(base, value) {
+        const scopedKey = characterKey(base);
+        if (!this._storedValues.differs(scopedKey, value)) return Promise.resolve();
+        this._storedValues.remember(scopedKey, value);
+        return writeScoped(base, value, 'settings');
+    }
+
+    /**
+     * Re-read whatever of this panel's remembered choices a sync pull wrote, for the
+     * character on screen, into memory and the controls. The keys are registered live-safe
+     * in `sim-sync-keys.js`; without this the page would keep showing — and the next save
+     * would write back — the copy from before the pull.
+     * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _adoptPulledSettings(written) {
+        if (!this.panel) return;
+        try {
+            const settings = pulledNames(written, 'settings', {
+                ...Object.fromEntries(Object.entries(LAB_SIM_KEYS).map(([name, base]) => [name, characterKey(base)])),
+                comparisonRuns: characterKey(LAB_COMPARISON_KEY),
+                comparisonBaseline: characterKey(LAB_COMPARISON_BASELINE_KEY),
+            });
+            const results = pulledNames(written, 'combatExport', {
+                upgradeResults: characterKey(LAB_UPGRADE_RESULTS_KEY),
+            });
+            const has = (...names) => names.some((name) => settings.has(name));
+            const work = [];
+            if (
+                has(
+                    'upgradeDimensions',
+                    'upgradeScope',
+                    'upgradeLevelSource',
+                    'swapAuraOnly',
+                    'shrineCapToGuild',
+                    'upgradeRoomLevels',
+                    'upgradeTargetFloor',
+                    'legacyUpgradeMode'
+                )
+            ) {
+                work.push(this._restoreUpgradeSelection());
+            }
+            // Only once the Skilling tab has put them on screen; until then its first showing reads them
+            if (
+                has('skillingRoomLevels', 'skillingTargetClear', 'skillingTargetFloor') &&
+                this._skillingGoalKey === characterKey(SKILLING_ROOM_LEVELS_KEY)
+            ) {
+                this._skillingGoalKey = null;
+                work.push(this._restoreSkillingGoalInputs());
+            }
+            if (has('tokenBuffLevels')) work.push(this._restoreTokenBuffLevels());
+            if (has('checkedSwaps')) work.push(this._restoreCheckedSwaps({ replace: true }));
+            if (has('comparisonRuns', 'comparisonBaseline')) {
+                work.push(
+                    (async () => {
+                        await this._comparison.reload();
+                        // Drawn only where a table already is: the section appears with a run
+                        if (this.panel?.querySelector('#mwi-labsim-comparison')?.childElementCount) {
+                            this._renderComparisonSection();
+                        }
+                    })()
+                );
+            }
+            // Draws only where no table is on screen; a table already shown is display, never saved back
+            if (results.has('upgradeResults')) work.push(this._restoreUpgradeResults());
+            await Promise.all(work);
+        } catch (error) {
+            console.error('[LabSimUI] Adopting pulled settings failed:', error);
         }
     }
 
@@ -2215,6 +2330,19 @@ class LabSimUI {
         let savedShrineCapGuild = true;
         let savedRoomLevels = false;
         let savedTargetFloor = 0;
+        let readOk = false;
+        // The scoped keys this restore reads, resolved before the first await
+        const keys = Object.fromEntries(
+            [
+                UPGRADE_DIMENSIONS_KEY,
+                UPGRADE_SCOPE_KEY,
+                UPGRADE_LEVEL_SOURCE_KEY,
+                UPGRADE_SWAP_AURA_KEY,
+                SHRINE_CAP_GUILD_KEY,
+                UPGRADE_ROOM_LEVELS_KEY,
+                UPGRADE_TARGET_FLOOR_KEY,
+            ].map((base) => [base, characterKey(base)])
+        );
         try {
             // Every key resolved before the first await, for the same reason
             // the save issues its writes together: read one at a time, a switch
@@ -2247,6 +2375,7 @@ class LabSimUI {
                     ? await readScoped(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
                     : null;
             selection = sanitizeLabUpgradeSelection(savedDimensions ?? legacyMode, savedScope);
+            readOk = true;
         } catch (error) {
             console.error('[LabSimUI] Failed to restore upgrade selection:', error);
             selection = sanitizeLabUpgradeSelection(null, null);
@@ -2280,6 +2409,9 @@ class LabSimUI {
         this._refreshRoomLevelControls();
         this._populateUpgradeTargets(selection.monsters);
         this._onUpgradeSelectionChanged();
+        // What the controls now hold is what storage reads as; a failed read noted nothing, so the next save
+        // writes the whole group as it always did
+        if (readOk) this._rememberRestored(this._upgradeSelectionValues(), keys);
     }
 
     /**
@@ -3325,9 +3457,11 @@ class LabSimUI {
     /**
      * Bring this character's queues back, unless one has already been started by
      * hand while the read was in flight.
+     * @param {{replace?: boolean}} [options] - `replace`: take the stored queues even over ones in memory, for a
+     *   sync pull that brought them (the queues on screen are then the pre-pull copy)
      * @private
      */
-    async _restoreCheckedSwaps() {
+    async _restoreCheckedSwaps({ replace = false } = {}) {
         const ownerId = dataManager.getCurrentCharacterId();
         let saved = null;
         try {
@@ -3340,7 +3474,7 @@ class LabSimUI {
         const restored = sanitizeSwapQueues(saved);
         this._swapOptions = sanitizeSwapOptions(saved?.options);
         for (const kind of ['combat', 'skilling']) {
-            if (!this._checkedSwaps[kind].length) this._checkedSwaps[kind] = restored[kind];
+            if (replace || !this._checkedSwaps[kind].length) this._checkedSwaps[kind] = restored[kind];
             this._renderSwapChips(kind);
         }
     }
@@ -4397,15 +4531,30 @@ class LabSimUI {
         try {
             // Issued together for the same reason the Upgrade tab's are: a
             // character switch landing between awaited writes would split one
-            // selection across two characters
+            // selection across two characters. Only the changed one is written, so a
+            // pulled value of the others is not put back (see `_writeScopedIfChanged`)
+            const values = this._skillingGoalValues();
             await Promise.all([
-                writeScoped(SKILLING_ROOM_LEVELS_KEY, this._getSkillingRoomLevelsOn(), 'settings'),
-                writeScoped(SKILLING_TARGET_CLEAR_KEY, Math.round(this._getSkillingTargetClear() * 100), 'settings'),
-                writeScoped(SKILLING_TARGET_FLOOR_KEY, this._getSkillingTargetFloor(), 'settings'),
+                this._writeScopedIfChanged(SKILLING_ROOM_LEVELS_KEY, values[SKILLING_ROOM_LEVELS_KEY]),
+                this._writeScopedIfChanged(SKILLING_TARGET_CLEAR_KEY, values[SKILLING_TARGET_CLEAR_KEY]),
+                this._writeScopedIfChanged(SKILLING_TARGET_FLOOR_KEY, values[SKILLING_TARGET_FLOOR_KEY]),
             ]);
         } catch (error) {
             console.error('[LabSimUI] Failed to save skilling goal inputs:', error);
         }
+    }
+
+    /**
+     * What the Skilling tab's goal inputs hold, by the unscoped key each is saved under.
+     * @returns {Record<string, *>}
+     * @private
+     */
+    _skillingGoalValues() {
+        return {
+            [SKILLING_ROOM_LEVELS_KEY]: this._getSkillingRoomLevelsOn(),
+            [SKILLING_TARGET_CLEAR_KEY]: Math.round(this._getSkillingTargetClear() * 100),
+            [SKILLING_TARGET_FLOOR_KEY]: this._getSkillingTargetFloor(),
+        };
     }
 
     /**
@@ -4418,6 +4567,12 @@ class LabSimUI {
         const key = characterKey(SKILLING_ROOM_LEVELS_KEY);
         if (this._skillingGoalKey === key) return;
         this._skillingGoalKey = key;
+        const keys = Object.fromEntries(
+            [SKILLING_ROOM_LEVELS_KEY, SKILLING_TARGET_CLEAR_KEY, SKILLING_TARGET_FLOOR_KEY].map((base) => [
+                base,
+                characterKey(base),
+            ])
+        );
         let saved;
         try {
             saved = await Promise.all([
@@ -4441,6 +4596,8 @@ class LabSimUI {
         const floorBox = this.panel.querySelector('#mwi-labsim-skilling-target-floor');
         const floor = Math.max(0, Math.floor(Number(targetFloor) || 0));
         if (floorBox) floorBox.value = floor ? String(floor) : '';
+        // What the inputs now hold is what storage reads as (see `_rememberRestored`)
+        this._rememberRestored(this._skillingGoalValues(), keys);
     }
 
     /**
@@ -7843,6 +8000,8 @@ class LabSimUI {
         this._skillingAnalysis = null;
         this._skillingChecked = [];
         this._skillingGoalKey = null;
+        // The next build reads every grouped key back and notes it again
+        this._storedValues.clear();
         // Queued swaps belong to the character being torn down; the arriving one
         // reads its own back from storage
         this._checkedSwaps = { combat: [], skilling: [] };

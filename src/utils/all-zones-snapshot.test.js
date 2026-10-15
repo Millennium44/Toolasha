@@ -9,6 +9,12 @@ vi.mock('../core/storage.js', () => ({
             return true;
         },
         getJSON: async (key, _store, fallback) => (memory.has(key) ? structuredClone(memory.get(key)) : fallback),
+        parseJSON: (raw, _key, fallback) => (raw === null ? fallback : typeof raw === 'string' ? JSON.parse(raw) : raw),
+        update: async (key, mutate) => {
+            const next = mutate(memory.has(key) ? structuredClone(memory.get(key)) : undefined, memory.has(key));
+            if (next !== undefined) memory.set(key, structuredClone(next));
+            return { written: next !== undefined, value: next };
+        },
     },
 }));
 vi.mock('./character-key.js', () => ({
