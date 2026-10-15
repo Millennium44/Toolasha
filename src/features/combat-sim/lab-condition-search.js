@@ -505,7 +505,8 @@ export async function runConditionSearch({
     if (changes.length === 0 || stopped()) return done();
 
     // 4. Everything accepted, together, against the starting rows on seeds nothing above has seen
-    if (!fits(finalReserve, 0)) return done({ rejected: changes, changes: [] });
+    // No budget check here: every batch above was only launched with this check's room kept, so it
+    // runs even after a later slot hit the cap — otherwise reaching the cap would discard confirmed changes
     progress('Conditions: confirming all changes together');
     const [before, after] = await Promise.all([
         measure({}, { stream: 'cfinal', count: confirmSeeds, stage: 'final' }),

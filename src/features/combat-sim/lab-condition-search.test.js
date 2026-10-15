@@ -415,6 +415,31 @@ describe('the staged search', () => {
         expect(capped.screened).toBe(0);
     });
 
+    test('changes confirmed before the cap still get their all-together check and are kept', async () => {
+        const gainOf = (rows) => {
+            const f = has2(rows, frenzyOn);
+            const t = has2(rows, toughOff);
+            if (f && t && rows.length === 2) return 0.6;
+            return (f ? 0.05 : 0) + (t ? 0.05 : 0);
+        };
+        const { measure, calls } = stubMeasure(gainOf);
+        const second = { ...slot, key: 'drinks|1', slotIndex: 1 };
+        const result = await runConditionSearch({
+            slots: [slot, second],
+            candidatesFor: () => candidates,
+            measure,
+            precision: PRECISIONS.standard,
+            minGain: 0.02,
+            // The budget runs out as soon as the second slot has screened its current rows
+            overBudget: () => calls.some((c) => c.stream === 'cscreen:drinks|1'),
+        });
+        expect(result.capped).toBe(true);
+        expect(result.changes).toHaveLength(1);
+        expect(result.changes[0].key).toBe('drinks|0');
+        expect(result.reliable).toBe(true);
+        expect(calls.some((c) => c.stage === 'final')).toBe(true);
+    });
+
     test('the estimate covers the screen, the pairing, the confirmation and the final check', () => {
         const perFight = estimateConditionSimsPerFight([30, 10], PRECISIONS.standard);
         // (32 + 32*... ) screen + 10 pair entries × 4 seeds + 2 × 8 confirm, per slot; + 2 × 8 final
