@@ -267,6 +267,45 @@ export function canEquip(itemDetail, levels) {
 }
 
 /**
+ * A skilling upgrade row's label, built from the candidate's own fields.
+ *
+ * Every part is read off data: the piece given up and the level it is worn at,
+ * the piece bought or enhanced and the level it is quoted at, and which rooms it
+ * is for. The analysis raises a row's level after it is generated, and patching
+ * the old text with a pattern left rows ending in "(crafting)" still saying +5
+ * after they were quoted at +9.
+ *
+ * `from` overrides the given-up side when several kits give up different pieces
+ * (a merged row): `[{ hrid, level }]`, one entry per distinct piece.
+ *
+ * @param {Object} candidate - `{ currentHrid, currentLevel, upgradeHrid, upgradeLevel }`
+ * @param {Object} [itemDetailMap] - For item names
+ * @param {string} [scope] - Rooms, e.g. `crafting` or `brewing, cooking`; omitted when empty
+ * @param {Array<{hrid: string, level: number}>} [from] - The pieces given up, when there are several
+ * @returns {string}
+ */
+export function describeSkillingUpgrade(candidate, itemDetailMap = {}, scope = '', from = null) {
+    const name = (hrid) => itemDetailMap?.[hrid]?.name || String(hrid).split('/').pop();
+    const { currentHrid, currentLevel = 0, upgradeHrid, upgradeLevel = 0 } = candidate;
+    const pieces = from || (currentHrid ? [{ hrid: currentHrid, level: currentLevel || 0 }] : []);
+    let text;
+    if (pieces.length && pieces.every((piece) => piece.hrid === upgradeHrid)) {
+        // Enhancing what is already worn
+        const levels = [...new Set(pieces.map((piece) => `+${piece.level || 0}`))].join('/');
+        text = `${name(upgradeHrid)} ${levels} → +${upgradeLevel}`;
+    } else {
+        const byHrid = new Map();
+        for (const piece of pieces) {
+            if (!byHrid.has(piece.hrid)) byHrid.set(piece.hrid, new Set());
+            byHrid.get(piece.hrid).add(`+${piece.level || 0}`);
+        }
+        const given = [...byHrid].map(([hrid, levels]) => `${name(hrid)} ${[...levels].join('/')}`).join(' / ');
+        text = `${given ? `${given} → ` : ''}${name(upgradeHrid)} +${upgradeLevel}`;
+    }
+    return scope ? `${text} (${scope})` : text;
+}
+
+/**
  * The best piece for one skill in each slot, where it beats what is worn.
  *
  * One candidate per slot rather than every item that would help: the analysis
@@ -310,8 +349,6 @@ export function bestGearForSkill({ skill, equipment = {}, itemDetailMap = {}, le
         const wornScore = worn ? skillScore(itemDetailMap[worn.hrid], stats) : 0;
         if (wornScore >= winner.score) continue;
 
-        const name = winner.detail.name || winner.hrid.split('/').pop();
-        const from = worn ? `${itemDetailMap[worn.hrid]?.name || worn.hrid.split('/').pop()} → ` : '';
         const candidate = {
             skillKey: skill,
             slot,
@@ -322,9 +359,9 @@ export function bestGearForSkill({ skill, equipment = {}, itemDetailMap = {}, le
             currentLevel: worn?.enhancementLevel || 0,
             upgradeHrid: winner.hrid,
             upgradeLevel: NEW_GEAR_LEVEL,
-            description: `${from}${name} +${NEW_GEAR_LEVEL} (${skillName(skill)})`,
             type: 'skilling_gear',
         };
+        candidate.description = describeSkillingUpgrade(candidate, itemDetailMap, skillName(skill));
 
         // A skilling piece never pays for itself out of combat armour.
         //

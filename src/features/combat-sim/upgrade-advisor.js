@@ -19,7 +19,7 @@ import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
 import { generateLabArmorCandidates, getWeaponStyleFamily, labelItemWithLevel } from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
-import { bestGearForSkill } from './skilling-gear-candidates.js';
+import { bestGearForSkill, describeSkillingUpgrade } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
@@ -7788,6 +7788,16 @@ export function applyCandidateToDTO(playerDTO, candidate) {
  * @param {string|null} targetSkill - The skill being analysed, when only one is
  */
 export function applyToEquipment(candidate, payload, dto, equipMap, targetSkill) {
+    // One purchase serving several kits: each part goes into the kits it was
+    // generated for, at its own level (always the merged row's level)
+    if (Array.isArray(candidate.members)) {
+        for (const member of candidate.members) {
+            const memberPayload = { hrid: member.upgradeHrid, enhancementLevel: member.upgradeLevel };
+            applyToEquipment(member, memberPayload, dto, equipMap, targetSkill);
+        }
+        return;
+    }
+
     const { skillKey, slot, currentHrid, currentLevel = 0 } = candidate;
 
     if (skillKey) {
@@ -7815,6 +7825,350 @@ export function applyToEquipment(candidate, payload, dto, equipMap, targetSkill)
     }
 }
 
+/** Equipment candidate types that buy or enhance one piece for a slot. */
+const SKILLING_ACQUISITION_TYPES = new Set(['skilling_gear', 'enhancement', 'tier']);
+
+/**
+ * Which kit a skilling equipment candidate was generated for: its skill, or for
+ * a candidate with none (it goes wherever the exact piece is worn), that piece.
+ * Two candidates with the same identity are alternatives for one kit, not parts
+ * of one purchase.
+ * @param {Object} candidate
+ * @returns {string}
+ */
+function skillingKitIdentity(candidate) {
+    return candidate.skillKey || `${candidate.currentHrid}+${candidate.currentLevel || 0}`;
+}
+
+/**
+ * Collect the skilling equipment candidates that are one purchase.
+ *
+ * The generators list one physical piece several times: a gear row per skill
+ * (each with a `skillKey`), a tier row per distinct worn piece and level, an
+ * enhancement row per worn copy. Grouped by slot and the item bought, with no
+ * level in the key: the level is what the analysis is about to search for, and
+ * searching it per row first left the parts of one purchase at different levels
+ * where nothing could join them again.
+ *
+ * @param {Array<Object>} candidates - From `generateSkillingEquipmentCandidates`
+ * @returns {Array<Object|{group: Array<Object>}>} Single candidates, and `{ group }` for
+ *   each set of two or more parts for different kits, in first-seen order
+ */
+export function groupSkillingAcquisitions(candidates) {
+    const out = [];
+    const groups = new Map();
+    for (const candidate of candidates || []) {
+        if (!candidate?.slot || !candidate.upgradeHrid || !SKILLING_ACQUISITION_TYPES.has(candidate.type)) {
+            out.push(candidate);
+            continue;
+        }
+        const key = `${candidate.slot}|${candidate.upgradeHrid}`;
+        if (!groups.has(key)) {
+            const entry = { group: [] };
+            groups.set(key, entry);
+            out.push(entry);
+        }
+        groups.get(key).group.push(candidate);
+    }
+    return out
+        .map((entry) => {
+            if (!entry?.group) return entry;
+            // A lone part, or parts that are all for the same kit, stay as they were
+            if (new Set(entry.group.map(skillingKitIdentity)).size < 2) {
+                return entry.group.length === 1 ? entry.group[0] : entry.group;
+            }
+            return entry;
+        })
+        .flat();
+}
+
+/**
+ * The skills whose kit an equipment candidate actually changes.
+ *
+ * Read off the kits rather than the parts: a part with no skill on it goes into
+ * every kit wearing the exact piece it replaces, so only applying it says which.
+ *
+ * @param {Object} candidate - A candidate (merged or not)
+ * @param {Object} dto - The editor's player
+ * @param {Object} equipMap - Per-skill equipment overrides
+ * @param {string|null} targetSkill
+ * @param {number|Object} roomLevel - Skipped rooms are not listed
+ * @returns {string[]} Skill hrids
+ */
+function skillsReachedBy(candidate, dto, equipMap, targetSkill, roomLevel) {
+    const afterDTO = JSON.parse(JSON.stringify(dto));
+    const afterMap = JSON.parse(JSON.stringify(equipMap || {}));
+    applyToEquipment(
+        candidate,
+        { hrid: candidate.upgradeHrid, enhancementLevel: candidate.upgradeLevel },
+        afterDTO,
+        afterMap,
+        targetSkill
+    );
+    const slot = candidate.slot;
+    const same = (a, b) =>
+        (a?.hrid || '') === (b?.hrid || '') && (a?.enhancementLevel || 0) === (b?.enhancementLevel || 0);
+    return (targetSkill ? [targetSkill] : LABYRINTH_SKILLS).filter((skill) => {
+        if (resolveSkillRoomLevel(roomLevel, skill) <= 0) return false;
+        const before = (equipMap?.[skill] || dto.equipment || {})[slot];
+        const after = (afterMap[skill] || afterDTO.equipment || {})[slot];
+        return !same(before, after);
+    });
+}
+
+/**
+ * A group of parts as one candidate at one level.
+ *
+ * Every part is set to the same level, so the row, its breakdown and anything
+ * that later re-applies it (`applySkillingCandidate` applies the parts one by
+ * one, at their own levels) all mean the same piece. A part that enhances a
+ * copy already at or above that level is not an upgrade for its kit and is left
+ * out.
+ *
+ * @param {Array<Object>} group - The parts
+ * @param {number} level - Enhancement level to quote
+ * @param {Object} context - `{ dto, equipMap, targetSkill, roomLevel, itemDetailMap }`
+ * @returns {Object|null} The merged candidate, or null when no part is an upgrade at that level
+ */
+function combinedSkillingCandidate(group, level, context) {
+    const { dto, equipMap, targetSkill, roomLevel, itemDetailMap } = context;
+    const members = group
+        .filter((part) => part.currentHrid !== part.upgradeHrid || (part.currentLevel || 0) < level)
+        .map((part) => {
+            const { cost: _cost, costDetail: _detail, ...rest } = part;
+            const member = { ...rest, upgradeLevel: level };
+            member.description = describeSkillingUpgrade(
+                member,
+                itemDetailMap,
+                member.skillKey ? String(member.skillKey).replace('/skills/', '') : ''
+            );
+            return member;
+        });
+    if (!members.length) return null;
+
+    const first = members[0];
+    const type = members.every((m) => m.type === 'enhancement')
+        ? 'enhancement'
+        : members.some((m) => m.type === 'skilling_gear')
+          ? 'skilling_gear'
+          : first.type;
+    const candidate = {
+        ...first,
+        type,
+        skillKey: undefined,
+        members,
+        merged: true,
+    };
+    const reached = skillsReachedBy(candidate, dto, equipMap, targetSkill, roomLevel);
+    candidate.skillKeys = reached;
+    const from = [];
+    for (const member of members) {
+        if (!member.currentHrid) continue;
+        const piece = { hrid: member.currentHrid, level: member.currentLevel || 0 };
+        if (!from.some((f) => f.hrid === piece.hrid && f.level === piece.level)) from.push(piece);
+    }
+    const scope = reached.length
+        ? reached.map((skill) => skill.replace('/skills/', '')).join(', ')
+        : `${members.length} kits`;
+    candidate.description = describeSkillingUpgrade(candidate, itemDetailMap, scope, from);
+    return candidate;
+}
+
+/**
+ * Cap the resale credit for replaced pieces at the copies actually owned.
+ *
+ * Kits are alternatives, so one physical piece can be worn in all of them — and
+ * kits can read that one piece at different levels (a saved loadout's stale
+ * level, an edited kit). Counting every distinct (item, level) the kits report
+ * sold the same necklace twice. Here the reports for one item are matched to
+ * the copies held, inventory and worn alike, highest owned first, and credited
+ * at the owned level. An item the inventory knows nothing about (an edited kit,
+ * or no inventory loaded) is left as the kits report it.
+ *
+ * @param {Array<{item: Object, skills: string[], reserved: boolean}>} entries - Distinct by
+ *   item and level. `reserved` pieces are kept (the copy being enhanced) and take an owned copy first.
+ * @param {Object} gameData - For item names in the notes
+ * @returns {{items: Array<Object>, notes: string[]}} The pieces to credit, and a note per disagreement
+ */
+function capCreditsToOwnedCopies(entries, gameData) {
+    const inventory = dataManager.getInventory?.();
+    const notes = [];
+    if (!Array.isArray(inventory)) {
+        return { items: entries.filter((e) => !e.reserved).map((e) => e.item), notes };
+    }
+    const byHrid = new Map();
+    for (const entry of entries) {
+        if (!byHrid.has(entry.item.hrid)) byHrid.set(entry.item.hrid, []);
+        byHrid.get(entry.item.hrid).push(entry);
+    }
+    const items = [];
+    for (const [hrid, group] of byHrid) {
+        const owned = [];
+        for (const held of inventory) {
+            if (held?.itemHrid !== hrid || held.count === 0) continue;
+            const copies = Math.min(Number(held.count) || 1, group.length);
+            for (let i = 0; i < copies; i++) owned.push(held.enhancementLevel || 0);
+        }
+        if (!owned.length) {
+            items.push(...group.filter((e) => !e.reserved).map((e) => e.item));
+            continue;
+        }
+        owned.sort((a, b) => b - a);
+        // The copy being enhanced is one of the owned copies, and is not sold
+        for (const entry of group.filter((e) => e.reserved)) {
+            const level = entry.item.enhancementLevel || 0;
+            const at = owned.indexOf(level);
+            owned.splice(at >= 0 ? at : 0, 1);
+        }
+        const name = gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
+        const ownedText = (levels) =>
+            `you own ${levels.length === 1 ? 'one' : levels.length} at ${levels.map((l) => `+${l}`).join(', ')}`;
+        const heldLevels = [...owned];
+        const sold = group
+            .filter((e) => !e.reserved)
+            .sort((a, b) => (b.item.enhancementLevel || 0) - (a.item.enhancementLevel || 0));
+        sold.forEach((entry, i) => {
+            const read = entry.item.enhancementLevel || 0;
+            const where = entry.skills.length
+                ? ` in ${entry.skills.map((s) => String(s).replace('/skills/', '')).join(', ')}`
+                : '';
+            if (i < owned.length) {
+                items.push({ ...entry.item, enhancementLevel: owned[i] });
+                if (owned[i] !== read) notes.push(`${name} read at +${read}${where} but ${ownedText(heldLevels)}`);
+            } else {
+                notes.push(
+                    `${name} read at +${read}${where} but ${heldLevels.length ? ownedText(heldLevels) : 'you own no other copy'}; not credited twice`
+                );
+            }
+        });
+    }
+    return { items, notes };
+}
+
+/**
+ * One purchase serving several kits, priced once.
+ *
+ * Buy route: the target piece at its level, net of the resale of each distinct
+ * piece the kits give up — capped at the copies owned (`capCreditsToOwnedCopies`)
+ * — priced by `calculateUpgradeCost` on a single combined candidate. Pieces a
+ * part marks as kept (combat gear that stays in its loadout) are not sold.
+ * Own-copy route: a part that enhances a copy already held is priced by the
+ * advisor already, and one copy serves every kit, so the cheapest finite route
+ * wins. No finite route means no price.
+ *
+ * @param {Array<{candidate: Object, cost: number|null, costDetail: Object|null}>} members - The parts,
+ *   all at the level being quoted; `cost` is only read for enhancement parts
+ * @param {Object} gameData
+ * @param {Object} [pricing] - `{ price, explain }`, defaulting to `calculateUpgradeCost` and
+ *   `explainUpgradeCost`; a caller in another module passes its own imports of them
+ * @returns {{cost: number|null, costDetail: Object|null}}
+ */
+export function priceMergedAcquisition(members, gameData, pricing = {}) {
+    const { price = calculateUpgradeCost, explain = explainUpgradeCost } = pricing;
+    const first = members[0].candidate;
+    const displacedBy = (c) =>
+        c.removedItems || (c.currentHrid ? [{ hrid: c.currentHrid, enhancementLevel: c.currentLevel }] : []);
+    const notes = [];
+    /** The distinct pieces a set of parts give up, minus any in `except`, at most one sale per copy owned */
+    const distinct = (candidates, except = []) => {
+        const entries = [];
+        const add = (item, skill, reserved) => {
+            if (!item?.hrid) return;
+            const level = item.enhancementLevel || 0;
+            const found = entries.find((e) => e.item.hrid === item.hrid && (e.item.enhancementLevel || 0) === level);
+            if (found) {
+                if (reserved) found.reserved = true;
+                if (skill && !found.skills.includes(skill)) found.skills.push(skill);
+                return;
+            }
+            entries.push({ item: { ...item, enhancementLevel: level }, skills: skill ? [skill] : [], reserved });
+        };
+        for (const item of except) add(item, null, true);
+        for (const c of candidates) for (const item of displacedBy(c)) add(item, c.skillKey, false);
+        const capped = capCreditsToOwnedCopies(entries, gameData);
+        for (const note of capped.notes) if (!notes.includes(note)) notes.push(note);
+        return capped.items;
+    };
+    const withNotes = (detail) => (detail && notes.length ? { ...detail, ownershipNotes: [...notes] } : detail);
+    const removedItems = distinct(members.map((r) => r.candidate));
+    const keptItems = members.flatMap((r) => r.candidate.keptItems || []);
+    const { members: _parts, skillKeys: _skills, merged: _merged, ...rest } = first;
+    const buy = {
+        ...rest,
+        type: 'skilling_gear',
+        currentHrid: '',
+        currentLevel: 0,
+        removedItems,
+        keptItems,
+    };
+    const routes = [];
+    const bought = price(buy, gameData);
+    if (Number.isFinite(bought))
+        routes.push({
+            cost: bought,
+            detail: () => {
+                const detail = explain(buy, gameData);
+                const kept = members.flatMap((r) => r.costDetail?.kept || []);
+                if (kept.length) {
+                    detail.kept = kept.filter(
+                        (k, i) =>
+                            kept.findIndex((o) => o.hrid === k.hrid && o.enhancementLevel === k.enhancementLevel) === i
+                    );
+                    detail.keptValue = detail.kept.reduce((sum, entry) => sum + (entry.price || 0), 0);
+                }
+                return withNotes(detail);
+            },
+        });
+    for (const row of members) {
+        if (row.candidate.type !== 'enhancement' || !Number.isFinite(row.cost)) continue;
+        // Enhancing the copy already held still frees the other kits' pieces. They
+        // are credited by the same helper as on the buy route: the difference
+        // between pricing the purchase with and without them
+        const owned = displacedBy(row.candidate);
+        const others = distinct(
+            members.filter((m) => m !== row).map((m) => m.candidate),
+            owned
+        );
+        const without = price({ ...buy, removedItems: [] }, gameData);
+        const withOthers = price({ ...buy, removedItems: others }, gameData);
+        const credit = Number.isFinite(without) && Number.isFinite(withOthers) ? without - withOthers : 0;
+        routes.push({
+            cost: row.cost - credit,
+            detail: () => {
+                const base = row.costDetail;
+                if (!base || !(credit !== 0)) return withNotes(base ?? null);
+                // The enhancement lines as priced, plus a sale line per freed piece. Each
+                // piece's credit is its own marginal effect on the purchase price; the last
+                // line takes the remainder so the lines total exactly what the row charged
+                const lines = others.map((item) => {
+                    const alone = price({ ...buy, removedItems: [item] }, gameData);
+                    const marginal = Number.isFinite(alone) && Number.isFinite(without) ? without - alone : 0;
+                    const info = gameData?.itemDetailMap?.[item.hrid];
+                    return {
+                        hrid: item.hrid,
+                        name: info?.name || item.hrid.split('/').pop().replace(/_/g, ' '),
+                        enhancementLevel: item.enhancementLevel || 0,
+                        price: marginal,
+                    };
+                });
+                if (lines.length) {
+                    lines[lines.length - 1].price += credit - lines.reduce((sum, line) => sum + line.price, 0);
+                }
+                return withNotes({
+                    ...base,
+                    credits: [...(base.credits || []), ...lines],
+                    credit: (base.credit || 0) + credit,
+                    net: row.cost - credit,
+                    creditApplied: true,
+                });
+            },
+        });
+    }
+    if (!routes.length) return { cost: null, costDetail: null };
+    const cheapest = routes.reduce((best, r) => (r.cost < best.cost ? r : best));
+    return { cost: cheapest.cost, costDetail: cheapest.detail() };
+}
+
 /**
  * Run skilling upgrade analysis from editor state.
  * @param {Object} params
@@ -7834,7 +8188,12 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
 
     const tokenUpgrades = editorDTO.tokenUpgrades || {};
     const buffCandidates = generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades);
-    const equipCandidates = generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap, targetSkill);
+    // One purchase listed by several generators (a gear row per skill, a tier row
+    // per worn copy) is one entry from here on, so its level is searched once
+    // for every kit it serves
+    const equipCandidates = groupSkillingAcquisitions(
+        generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap, targetSkill)
+    );
     const guildCandidates = generateGuildShrineCandidates(editorDTO, { combat: false }).map((candidate) => ({
         ...candidate,
         cost: calculateUpgradeCost(candidate, gameData),
@@ -7976,38 +8335,51 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         onProgress?.({ current, total, description: candidate.description });
     }
 
-    for (const candidate of equipCandidates) {
+    const itemDetailMap = gameData.itemDetailMap || {};
+    const combineContext = { dto: editorDTO, equipMap: skillEquipmentMap, targetSkill, roomLevel, itemDetailMap };
+    /** A single candidate re-quoted at another level, its label rebuilt from its fields */
+    const singleAt = (candidate, level) => {
+        const moved = { ...candidate, upgradeLevel: level };
+        moved.description = describeSkillingUpgrade(
+            moved,
+            itemDetailMap,
+            moved.skillKey ? String(moved.skillKey).replace('/skills/', '') : ''
+        );
+        return moved;
+    };
+    const clearRateWith = (evalCandidate) => {
+        const dto = JSON.parse(JSON.stringify(editorDTO));
+        const equipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
+        const payload = { hrid: evalCandidate.upgradeHrid, enhancementLevel: evalCandidate.upgradeLevel };
+        applyToEquipment(evalCandidate, payload, dto, equipMap, targetSkill);
+        return computeAverageSkillingClearRateFromEditor(roomLevel, dto, crateHrids, gameData, {
+            skillEquipmentMap: equipMap,
+            targetSkill,
+        });
+    };
+    const MAX_ENHANCEMENT = 20;
+
+    for (const entry of equipCandidates) {
         await new Promise((resolve) => setTimeout(resolve, 0));
         if (abortSignal?.()) break;
 
-        onProgress?.({ current, total, description: `Evaluating: ${candidate.description}` });
+        // A group is several parts of one purchase, raised together: one level
+        // for every kit it serves, searched on the clear rate across all of them
+        const group = entry.group || null;
+        const upgradeHrid = group ? group[0].upgradeHrid : entry.upgradeHrid;
+        const at = (level) =>
+            group ? combinedSkillingCandidate(group, level, combineContext) : singleAt(entry, level);
+        let level = group ? Math.min(...group.map((part) => part.upgradeLevel || 0)) : entry.upgradeLevel;
+        let evalCandidate = group ? at(level) : entry;
+        while (!evalCandidate && level < MAX_ENHANCEMENT) evalCandidate = at(++level);
+        if (!evalCandidate) {
+            current++;
+            continue;
+        }
 
-        const modifiedDTO = JSON.parse(JSON.stringify(editorDTO));
-        const modifiedSkillEquipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
-        const upgradePayload = { hrid: candidate.upgradeHrid, enhancementLevel: candidate.upgradeLevel };
+        onProgress?.({ current, total, description: `Evaluating: ${evalCandidate.description}` });
 
-        applyToEquipment(candidate, upgradePayload, modifiedDTO, modifiedSkillEquipMap, targetSkill);
-
-        const evaluate = (evalCandidate, dto, equipMap) => {
-            const payload = { hrid: evalCandidate.upgradeHrid, enhancementLevel: evalCandidate.upgradeLevel };
-            applyToEquipment(evalCandidate, payload, dto, equipMap, targetSkill);
-            return computeAverageSkillingClearRateFromEditor(roomLevel, dto, crateHrids, gameData, {
-                skillEquipmentMap: equipMap,
-                targetSkill,
-            });
-        };
-
-        let evalCandidate = candidate;
-        let modifiedClearRate = computeAverageSkillingClearRateFromEditor(
-            roomLevel,
-            modifiedDTO,
-            crateHrids,
-            gameData,
-            {
-                skillEquipmentMap: modifiedSkillEquipMap,
-                targetSkill,
-            }
-        );
+        let modifiedClearRate = clearRateWith(evalCandidate);
         let clearRateDelta = modifiedClearRate - baselineClearRate;
 
         // A breakpoint jump sometimes lands between improvement thresholds —
@@ -8016,8 +8388,7 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         // items the clear-rate model can see at all: an experience-only piece
         // (a Philosopher's accessory) never moves it at any level, and walking
         // it upward requoted the row at +20 for a delta that stayed zero.
-        const MAX_ENHANCEMENT = 20;
-        const escalatable = canMoveSkillingClearRate(gameData.itemDetailMap?.[candidate.upgradeHrid]);
+        const escalatable = canMoveSkillingClearRate(itemDetailMap[upgradeHrid]);
         while (
             escalatable &&
             clearRateDelta <= 1e-9 &&
@@ -8026,21 +8397,29 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         ) {
             await new Promise((resolve) => setTimeout(resolve, 0));
             if (abortSignal?.()) break;
-            const nextLevel = evalCandidate.upgradeLevel + 1;
-            const bumped = {
-                ...evalCandidate,
-                upgradeLevel: nextLevel,
-                description: evalCandidate.description.replace(/\+\d+$/, `+${nextLevel}`),
-            };
-            bumped.cost = calculateUpgradeCost(bumped, gameData);
-            // Re-explained at the level it was bumped to, or the expansion would
-            // itemise a purchase the row is no longer quoting
-            bumped.costDetail = explainLabCandidateCost(bumped, gameData);
-            const freshDTO = JSON.parse(JSON.stringify(editorDTO));
-            const freshEquipMap = JSON.parse(JSON.stringify(skillEquipmentMap));
-            modifiedClearRate = evaluate(bumped, freshDTO, freshEquipMap);
+            const bumped = at(evalCandidate.upgradeLevel + 1);
+            if (!bumped) break;
+            modifiedClearRate = clearRateWith(bumped);
             clearRateDelta = modifiedClearRate - baselineClearRate;
             evalCandidate = bumped;
+        }
+
+        // Priced once, at the level the row quotes. A group is one acquisition:
+        // the piece bought once, each owned copy it frees sold once
+        if (group) {
+            const parts = evalCandidate.members.map((member) => ({
+                candidate: member,
+                cost: member.type === 'enhancement' ? calculateUpgradeCost(member, gameData) : null,
+                costDetail: member.type === 'enhancement' ? explainLabCandidateCost(member, gameData) : null,
+            }));
+            const priced = priceMergedAcquisition(parts, gameData);
+            evalCandidate.cost = priced.cost;
+            evalCandidate.costDetail = priced.costDetail;
+        } else if (evalCandidate !== entry) {
+            evalCandidate.cost = calculateUpgradeCost(evalCandidate, gameData);
+            // Re-explained at the level it was raised to, or the expansion would
+            // itemise a purchase the row is no longer quoting
+            evalCandidate.costDetail = explainLabCandidateCost(evalCandidate, gameData);
         }
 
         results.push({

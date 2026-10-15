@@ -21,7 +21,13 @@
  */
 
 import { labyrinthFloorClearLevel, labyrinthFloorForLevel } from '../combat/labyrinth-formulas.js';
-import { applyCandidateToDTO, applyToEquipment, calculateUpgradeCost, explainUpgradeCost } from './upgrade-advisor.js';
+import {
+    applyCandidateToDTO,
+    applyToEquipment,
+    calculateUpgradeCost,
+    explainUpgradeCost,
+    priceMergedAcquisition,
+} from './upgrade-advisor.js';
 
 /** Lowest skilling room level the search will probe. */
 export const SKILLING_ROOM_LEVEL_MIN = 1;
@@ -381,6 +387,9 @@ export function mergeMultiSkillGearRows({
         const c = row.candidate;
         if (row.costType !== 'gold' || !c?.upgradeHrid || !c.slot) continue;
         if (c.type !== 'skilling_gear' && c.type !== 'enhancement' && c.type !== 'tier') continue;
+        // Already one purchase: the analysis groups the parts before searching
+        // their level, so a merged row is never a part of another
+        if (Array.isArray(c.members)) continue;
         const key = `${c.slot}|${c.upgradeHrid}|${c.upgradeLevel}`;
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(row);
@@ -415,7 +424,7 @@ export function mergeMultiSkillGearRows({
         const after = evaluate(applySkillingCandidate(baseSetup, candidate, targetSkill), roomLevel);
         const clearRateDelta = after.clearRate - baseline.clearRate;
         const { cost, costDetail } = gameData
-            ? priceMergedAcquisition(members, gameData)
+            ? priceMergedAcquisition(members, gameData, { price: calculateUpgradeCost, explain: explainUpgradeCost })
             : {
                   cost: members.some((r) => r.cost === null || r.cost === undefined) ? null : pricey.cost,
                   costDetail: pricey.costDetail ?? null,
@@ -437,117 +446,6 @@ export function mergeMultiSkillGearRows({
         added++;
     }
     return added;
-}
-
-/**
- * One purchase serving several kits, priced once.
- *
- * Buy route: the target piece at its level, net of the resale of each distinct
- * piece the kits give up, priced by `calculateUpgradeCost` on a single
- * combined candidate. Pieces a part marks as kept (combat gear that stays in its
- * loadout) are not sold. Own-copy route: a part that enhances a copy already held
- * is priced by the advisor already, and one copy serves every kit, so the
- * cheapest finite route wins. No finite route means no price.
- *
- * @param {Array<Object>} members - The rows being merged
- * @param {Object} gameData
- * @returns {{cost: number|null, costDetail: Object|null}}
- */
-function priceMergedAcquisition(members, gameData) {
-    const first = members[0].candidate;
-    const displacedBy = (c) =>
-        c.removedItems || (c.currentHrid ? [{ hrid: c.currentHrid, enhancementLevel: c.currentLevel }] : []);
-    /** The distinct pieces a set of parts give up, minus any in `except` */
-    const distinct = (candidates, except = []) => {
-        const seen = new Set(except.map((item) => `${item.hrid}+${item.enhancementLevel || 0}`));
-        const out = [];
-        for (const c of candidates) {
-            for (const item of displacedBy(c)) {
-                const key = `${item?.hrid}+${item?.enhancementLevel || 0}`;
-                if (item?.hrid && !seen.has(key)) {
-                    seen.add(key);
-                    out.push(item);
-                }
-            }
-        }
-        return out;
-    };
-    const removedItems = distinct(members.map((r) => r.candidate));
-    const keptItems = members.flatMap((r) => r.candidate.keptItems || []);
-    const buy = {
-        ...first,
-        type: 'skilling_gear',
-        currentHrid: '',
-        currentLevel: 0,
-        removedItems,
-        keptItems,
-    };
-    const routes = [];
-    const bought = calculateUpgradeCost(buy, gameData);
-    if (Number.isFinite(bought))
-        routes.push({
-            cost: bought,
-            detail: () => {
-                const detail = explainUpgradeCost(buy, gameData);
-                const kept = members.flatMap((r) => r.costDetail?.kept || []);
-                if (kept.length) {
-                    detail.kept = kept.filter(
-                        (k, i) =>
-                            kept.findIndex((o) => o.hrid === k.hrid && o.enhancementLevel === k.enhancementLevel) === i
-                    );
-                    detail.keptValue = detail.kept.reduce((sum, entry) => sum + (entry.price || 0), 0);
-                }
-                return detail;
-            },
-        });
-    for (const row of members) {
-        if (row.candidate.type !== 'enhancement' || !Number.isFinite(row.cost)) continue;
-        // Enhancing the copy already held still frees the other kits' pieces. They
-        // are credited by the same helper as on the buy route: the difference
-        // between pricing the purchase with and without them
-        const owned = displacedBy(row.candidate);
-        const others = distinct(
-            members.filter((m) => m !== row).map((m) => m.candidate),
-            owned
-        );
-        const without = calculateUpgradeCost({ ...buy, removedItems: [] }, gameData);
-        const withOthers = calculateUpgradeCost({ ...buy, removedItems: others }, gameData);
-        const credit = Number.isFinite(without) && Number.isFinite(withOthers) ? without - withOthers : 0;
-        routes.push({
-            cost: row.cost - credit,
-            detail: () => {
-                const base = row.costDetail;
-                if (!base || !(credit !== 0)) return base ?? null;
-                // The enhancement lines as priced, plus a sale line per freed piece. Each
-                // piece's credit is its own marginal effect on the purchase price; the last
-                // line takes the remainder so the lines total exactly what the row charged
-                const lines = others.map((item) => {
-                    const alone = calculateUpgradeCost({ ...buy, removedItems: [item] }, gameData);
-                    const marginal = Number.isFinite(alone) && Number.isFinite(without) ? without - alone : 0;
-                    const info = gameData?.itemDetailMap?.[item.hrid];
-                    return {
-                        hrid: item.hrid,
-                        name: info?.name || item.hrid.split('/').pop().replace(/_/g, ' '),
-                        enhancementLevel: item.enhancementLevel || 0,
-                        price: marginal,
-                    };
-                });
-                if (lines.length) {
-                    lines[lines.length - 1].price += credit - lines.reduce((sum, line) => sum + line.price, 0);
-                }
-                return {
-                    ...base,
-                    credits: [...(base.credits || []), ...lines],
-                    credit: (base.credit || 0) + credit,
-                    net: row.cost - credit,
-                    creditApplied: true,
-                };
-            },
-        });
-    }
-    if (!routes.length) return { cost: null, costDetail: null };
-    const cheapest = routes.reduce((best, r) => (r.cost < best.cost ? r : best));
-    return { cost: cheapest.cost, costDetail: cheapest.detail() };
 }
 
 /**

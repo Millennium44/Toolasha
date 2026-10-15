@@ -24,12 +24,15 @@ const character = vi.hoisted(() => ({ characterAbilities: [] }));
  */
 const token = vi.hoisted(() => ({ goldPerToken: null }));
 
+/** What the character holds, worn and loose; empty unless a test says otherwise */
+const held = vi.hoisted(() => ({ items: [] }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getGuildBuildingLevel: (hrid) => guild.shrineLevels[hrid] || 0,
         // What the forced armor candidates read to price a piece at the level
-        // you already own it at; nothing in these tests owns anything
-        getInventory: () => [],
+        // you already own it at, and what merged skilling rows cap resale at
+        getInventory: () => held.items,
         // Read by the shared params resolver, to ask whether the piece being costed could be
         // bought finished from anybody. Nothing in this suite is untradable, so the sweeps here
         // all run on whichever bench the simulator settings resolve to.
@@ -182,6 +185,8 @@ const {
     generateSkillingEquipmentCandidates,
     canMoveSkillingClearRate,
     runSkillingUpgradeAnalysis,
+    priceMergedAcquisition,
+    computeSkillingClearRatesFromEditor,
     generateLabyrinthBuffCandidates,
     generateLabyrinthBuffCandidatesFromEditor,
     generateGuildShrineCandidates,
@@ -239,6 +244,7 @@ const config = (await import('../../core/config.js')).default;
 // only worked while some earlier test's `mockImplementation` was still
 // installed, and threw on destructuring as soon as it ran first.
 beforeEach(() => {
+    held.items = [];
     perAttemptMaterialCost.mockReturnValue({ cost: 0, hasCost: false, hasMissingPrices: true });
     resolveItemPrice.mockReturnValue({ price: 0, custom: false, missing: true, estimated: false });
 });
@@ -6935,5 +6941,239 @@ describe('runLabyrinthUpgradeAnalysis ranked by room levels', () => {
 
         expect(searches).toBe(2);
         expect(result.roomLevels.aborted).toBe(true);
+    });
+});
+
+/**
+ * One Philosopher's Necklace upgrade used to come out of the Skilling tab as
+ * three rows: a gear row per skill and a tier row per worn copy, each raised to
+ * its own level before anything merged them, with the raised per-skill rows
+ * still labelled "+5" because the relabel pattern needed the text to end in the
+ * level and theirs ends in "(crafting)".
+ */
+describe('one skilling purchase is one row, raised to one level for every kit', () => {
+    const NECK = '/equipment_types/neck';
+    const SPEED = '/items/necklace_of_speed';
+    const PHILO = '/items/philosophers_necklace';
+    const BREWING = '/skills/brewing';
+    const CRAFTING = '/skills/crafting';
+
+    /** The level of Philosopher's Necklace each room needs before it clears more often */
+    let needs;
+
+    const itemDetailMap = {
+        [SPEED]: {
+            name: 'Necklace Of Speed',
+            itemLevel: 60,
+            isTradable: true,
+            equipmentDetail: { type: NECK, noncombatStats: { skillingSpeed: 0.05 } },
+        },
+        // The real necklace moves the clear rate (it carries skilling speed);
+        // an experience-only fixture could not reproduce the escalation at all
+        [PHILO]: {
+            name: "Philosopher's Necklace",
+            itemLevel: 90,
+            isTradable: true,
+            equipmentDetail: { type: NECK, noncombatStats: { skillingSpeed: 0.1, skillingExperience: 0.05 } },
+        },
+    };
+
+    const worn = (hrid, enhancementLevel) => ({ [NECK]: { hrid, enhancementLevel } });
+
+    beforeEach(async () => {
+        needs = { brewing: 7, crafting: 9 };
+        const { buildOverridesForSkill } = await import('./skilling-sim-helpers.js');
+        buildOverridesForSkill.mockImplementation((state) => ({ equipment: state.equipment }));
+        clearRate.impl = {
+            getSkillingMetricsFromOverrides: (skillId, _type, overrides) => ({
+                skillId,
+                neck: overrides?.equipment?.[NECK] || null,
+            }),
+            computeSkillingClearWithParams: (metrics) => {
+                const neck = metrics.neck;
+                const level = neck?.hrid === PHILO ? neck.enhancementLevel || 0 : -1;
+                return { clearChance: level >= (needs[metrics.skillId] ?? Infinity) ? 0.8 : 0.5, xpPerRoom: 1000 };
+            },
+            computeEnhancingClearWithParams: () => ({ clearChance: 0.5, xpPerRoom: 1000 }),
+        };
+        buildGameDataPayload.mockReturnValue({ actionDetailMap: {}, itemDetailMap });
+        // Distinct prices by item and level, so a credit at the wrong level or a
+        // credit taken twice changes the figure
+        const priceOf = (hrid, level = 0) => (hrid === PHILO ? 1_000_000 : hrid === SPEED ? 100_000 : 0) * (1 + level);
+        resolveItemPrice.mockImplementation((hrid, options = {}) => {
+            const price = priceOf(hrid, options.enhancementLevel || 0);
+            return { price, custom: false, missing: !price, estimated: false };
+        });
+        getItemPrices.mockImplementation((hrid, level) => ({ ask: priceOf(hrid, level), bid: priceOf(hrid, level) }));
+    });
+
+    const analyse = (kits, roomSkills = [BREWING, CRAFTING], equipment = worn(SPEED, 5)) =>
+        runSkillingUpgradeAnalysis({
+            editorDTO: { equipment, houseRooms: {}, tokenUpgrades: {}, communityBuffLevels: {} },
+            roomLevel: Object.fromEntries(roomSkills.map((skill) => [skill, 100])),
+            crateHrids: [],
+            skillEquipmentMap: kits,
+        });
+
+    const philoRows = (results) => results.filter((r) => r.candidate.upgradeHrid === PHILO);
+
+    /** One kit's part of a merged necklace purchase, for the pricing tests */
+    const part = (skillKey, level) => ({
+        candidate: {
+            skillKey,
+            slot: NECK,
+            currentHrid: SPEED,
+            currentLevel: level,
+            upgradeHrid: PHILO,
+            upgradeLevel: 5,
+            type: 'skilling_gear',
+        },
+        cost: null,
+        costDetail: null,
+    });
+
+    test('a raised per-skill row is labelled with the level it is quoted at', async () => {
+        // Nothing worn in the neck, so the crafting gear row is the only Philosopher
+        // row: it is raised from +5 to the +9 crafting needs
+        const { results } = await analyse({ [CRAFTING]: {} }, [CRAFTING], {});
+        const rows = philoRows(results);
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0].candidate.upgradeLevel).toBe(9);
+        expect(rows[0].candidate.description).toBe("Philosopher's Necklace +9 (crafting)");
+    });
+
+    test('the gear row names the level of the piece it replaces', async () => {
+        needs = { crafting: 5 };
+        const { results } = await analyse({ [CRAFTING]: worn(SPEED, 5) }, [CRAFTING], {});
+        const [row] = philoRows(results);
+
+        expect(row.candidate.description).toBe("Necklace Of Speed +5 → Philosopher's Necklace +5 (crafting)");
+    });
+
+    test('kits whose own searches would stop at different levels get one row at one level', async () => {
+        // Brewing alone would stop at +7, crafting alone at +9: separate rows before
+        const kits = { [BREWING]: worn(SPEED, 5), [CRAFTING]: worn(SPEED, 5) };
+        const { results } = await analyse(kits);
+        const rows = philoRows(results);
+
+        expect(rows).toHaveLength(1);
+        const [row] = rows;
+        expect(row.candidate.upgradeLevel).toBe(7);
+        expect(row.candidate.members.every((m) => m.upgradeLevel === 7)).toBe(true);
+        expect(row.candidate.skillKeys).toEqual([BREWING, CRAFTING]);
+        expect(row.candidate.description).toBe("Necklace Of Speed +5 → Philosopher's Necklace +7 (brewing, crafting)");
+        // Brewing clears more at +7, crafting does not yet: the average of the two
+        expect(row.clearRateDelta).toBeCloseTo(0.15, 9);
+
+        // Priced as one purchase at that level: the necklace bought once, the one
+        // Necklace of Speed sold once
+        const once = calculateUpgradeCost(
+            {
+                slot: NECK,
+                upgradeHrid: PHILO,
+                upgradeLevel: 7,
+                currentHrid: '',
+                currentLevel: 0,
+                type: 'skilling_gear',
+                removedItems: [{ hrid: SPEED, enhancementLevel: 5 }],
+                keptItems: [],
+            },
+            { actionDetailMap: {}, itemDetailMap }
+        );
+        expect(Number.isFinite(once)).toBe(true);
+        expect(row.cost).toBe(once);
+    });
+
+    test('a tier row and a gear row for the same necklace are one row', async () => {
+        // Brewing's kit wears the same Necklace of Speed: the Philosopher tier row
+        // (no skill on it) and brewing's gear row are the same purchase
+        needs = { brewing: 5 };
+        const { results } = await analyse({ [BREWING]: worn(SPEED, 5) }, [BREWING]);
+        const rows = philoRows(results);
+
+        expect(rows).toHaveLength(1);
+        // Gear rows come for every labyrinth skill; the row reaches the one room run
+        const types = new Set(rows[0].candidate.members.map((m) => m.type));
+        expect(types).toEqual(new Set(['skilling_gear', 'tier']));
+        expect(rows[0].candidate.skillKeys).toEqual([BREWING]);
+    });
+
+    test('the Rooms, Tries and per-skill breakdown read the merged row at its level', async () => {
+        const kits = { [BREWING]: worn(SPEED, 5), [CRAFTING]: worn(SPEED, 5) };
+        const { results } = await analyse(kits);
+        const [row] = philoRows(results);
+        // The combined row, at the one level all its parts are applied at
+        expect(row.candidate.members?.map((m) => m.upgradeLevel)).toEqual(
+            row.candidate.members?.map(() => row.candidate.upgradeLevel)
+        );
+        expect(row.candidate.members?.length).toBeGreaterThan(1);
+        const { createSkillingEvaluator, annotateRoomsReached } = await import('./lab-skilling-goals.js');
+        const evaluate = createSkillingEvaluator({
+            computeRates: computeSkillingClearRatesFromEditor,
+            gameData: { actionDetailMap: {}, itemDetailMap },
+            crateHrids: [],
+        });
+        const roomLevel = { [BREWING]: 100, [CRAFTING]: 100 };
+        const baseSetup = {
+            dto: { equipment: worn(SPEED, 5), houseRooms: {}, tokenUpgrades: {}, communityBuffLevels: {} },
+            skillEquipmentMap: kits,
+        };
+        await annotateRoomsReached({ rows: [row], baseSetup, evaluate, roomLevel, yieldFn: async () => {} });
+
+        expect(row.rooms).toEqual({ affected: 1, total: 2 });
+        const brewing = row.breakdownLines.find((l) => l.skillHrid === BREWING);
+        const crafting = row.breakdownLines.find((l) => l.skillHrid === CRAFTING);
+        expect(brewing).toMatchObject({ before: 0.5, after: 0.8, affected: true });
+        expect(crafting).toMatchObject({ before: 0.5, after: 0.5, affected: false });
+        expect(row.triesDelta).toBeCloseTo(1 / 0.8 - 1 / 0.5, 9);
+    });
+
+    test('one owned Necklace of Speed read at +0 and +5 in two kits is sold once, at +5', () => {
+        // Worn, so it sits in characterItems at its slot
+        held.items = [{ itemHrid: SPEED, enhancementLevel: 5, count: 1, itemLocationHrid: '/item_locations/neck' }];
+        const priced = [];
+        const { cost, costDetail } = priceMergedAcquisition(
+            [part(BREWING, 0), part(CRAFTING, 5)],
+            { itemDetailMap },
+            {
+                price: (candidate) => {
+                    priced.push(candidate.removedItems);
+                    return 1000 - 100 * candidate.removedItems.length;
+                },
+                explain: () => ({}),
+            }
+        );
+
+        expect(priced[0]).toEqual([{ hrid: SPEED, enhancementLevel: 5 }]);
+        expect(cost).toBe(900);
+        expect(costDetail.ownershipNotes).toEqual([
+            'Necklace Of Speed read at +0 in brewing but you own one at +5; not credited twice',
+        ]);
+    });
+
+    test('two copies owned at the two levels the kits read are both sold', () => {
+        held.items = [
+            { itemHrid: SPEED, enhancementLevel: 5, count: 1, itemLocationHrid: '/item_locations/neck' },
+            { itemHrid: SPEED, enhancementLevel: 0, count: 1, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        const priced = [];
+        const { costDetail } = priceMergedAcquisition(
+            [part(BREWING, 0), part(CRAFTING, 5)],
+            { itemDetailMap },
+            {
+                price: (candidate) => {
+                    priced.push(candidate.removedItems);
+                    return 1000;
+                },
+                explain: () => ({}),
+            }
+        );
+
+        expect(priced[0]).toEqual([
+            { hrid: SPEED, enhancementLevel: 5 },
+            { hrid: SPEED, enhancementLevel: 0 },
+        ]);
+        expect(costDetail.ownershipNotes).toBeUndefined();
     });
 });

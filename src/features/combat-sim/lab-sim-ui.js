@@ -6539,6 +6539,10 @@ class LabSimUI {
             );
         }
 
+        // Kits that read one owned piece at different levels: each copy is sold
+        // once, at the level it is owned at, and the row says where they disagreed
+        for (const note of detail.ownershipNotes || []) parts.push(line(note, '#ff9800'));
+
         return parts.join('');
     }
 
@@ -7829,7 +7833,10 @@ class LabSimUI {
                         upgrade: r.candidate?.description || '',
                         // Gear bought for one skill says which; an enhancement of
                         // something worn everywhere has no one skill to name
-                        skill: (r.candidate?.skillKey || '').replace('/skills/', ''),
+                        // a merged piece names every skill it serves
+                        skill: (r.candidate?.skillKey ? [r.candidate.skillKey] : r.candidate?.skillKeys || [])
+                            .map((key) => String(key).replace('/skills/', ''))
+                            .join(', '),
                         paidIn: CSV_PAID_IN[r.costType] || 'gold',
                         cost: r.costType === 'token' ? null : (r.cost ?? null),
                         tokenCost: r.costType === 'gold' || r.costType === 'community' ? null : (r.tokenCost ?? null),
