@@ -57,6 +57,12 @@ export const MAX_CONDITION_SIMS = 12000;
 /** Which ability targets land on the caster's own side; any other target is the other side */
 const OWN_SIDE_TARGETS = new Set(['self', 'allAllies', 'lowestHpAlly', 'deadAlly']);
 
+/**
+ * What Lab trigger tuning considers. The labyrinth allows no food or drink (the worker nulls them), so a
+ * food or drink row could only ever measure sim noise: the Lab tunes abilities, whatever was stored.
+ */
+export const LAB_TRIGGER_SCOPE = 'abilities';
+
 const SLOT_TYPES = { both: ['abilities', 'food', 'drinks'], abilities: ['abilities'], consumables: ['food', 'drinks'] };
 
 /**

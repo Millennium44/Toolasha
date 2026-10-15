@@ -3,21 +3,14 @@
  * the panel stays a thin wire-up and the markup can be tested without one.
  */
 
-import { PRECISIONS, DEFAULT_PRECISION, TUNABLE_SCOPES, DEFAULT_TUNABLE_SCOPE, describeRow } from './trigger-tuning.js';
+import { PRECISIONS, DEFAULT_PRECISION, describeRow } from './trigger-tuning.js';
 import { esc } from './trigger-optimizer-view.js';
-import { describeTriggerRows } from './lab-condition-search.js';
+import { LAB_TRIGGER_SCOPE, describeTriggerRows } from './lab-condition-search.js';
 
 const ACCENT = '#4a9eff';
 
 /** The one condition whose threshold is a percentage (`describeRow` puts the % on the old value) */
 const LOWEST_HP_PCT = '/combat_trigger_conditions/lowest_hp_percentage';
-
-/** The include choices, worded as the Combat Sim's Triggers chip words them */
-export const LAB_TRIGGER_INCLUDE_LABELS = {
-    both: 'Abilities + food',
-    abilities: 'Abilities only',
-    consumables: 'Food & drinks only',
-};
 
 /**
  * The remembered choices, cleaned: anything unknown falls back to its default.
@@ -28,7 +21,8 @@ export function sanitizeLabTriggerChoices(saved) {
     const record = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
     return {
         open: record.open === true,
-        include: TUNABLE_SCOPES.includes(record.include) ? record.include : DEFAULT_TUNABLE_SCOPE,
+        // Abilities only: the labyrinth allows no food or drink, so any stored consumables choice is dropped
+        include: LAB_TRIGGER_SCOPE,
         precision: PRECISIONS[record.precision] ? record.precision : DEFAULT_PRECISION,
         // Loadouts unticked, so a loadout saved later starts ticked
         skipped: Array.isArray(record.skipped) ? record.skipped.filter((k) => typeof k === 'string').slice(0, 50) : [],
@@ -38,24 +32,20 @@ export function sanitizeLabTriggerChoices(saved) {
 }
 
 /**
- * The include and precision selects.
+ * The abilities note and the precision select.
  * @param {Object} choices - From `sanitizeLabTriggerChoices`
  * @param {string} selectStyle - Inline style for the selects
  * @returns {string} HTML
  */
 export function labTriggerOptionsHtml(choices, selectStyle) {
-    const include = TUNABLE_SCOPES.map(
-        (key) =>
-            `<option value="${key}"${key === choices.include ? ' selected' : ''}>${esc(LAB_TRIGGER_INCLUDE_LABELS[key])}</option>`
-    ).join('');
     const precision = Object.values(PRECISIONS)
         .map(
             (p) => `<option value="${p.key}"${p.key === choices.precision ? ' selected' : ''}>${esc(p.label)}</option>`
         )
         .join('');
     return (
-        `<select class="toolasha-select" id="mwi-labsim-trigger-include" style="${selectStyle}" ` +
-        `title="Which triggers to tune: ability enemy-HP gates, food and drink HP/MP thresholds, or both.">${include}</select>` +
+        `<span style="color:#aaa; font-size:12px;" id="mwi-labsim-trigger-scope" ` +
+        `title="The labyrinth allows no food or drink, so only ability triggers are tuned.">Abilities</span>` +
         `<select class="toolasha-select" id="mwi-labsim-trigger-precision" style="${selectStyle}" ` +
         `title="How many attempts each candidate value is simulated for. Quick is a rough pass; Precise tightens the error bars and takes several times longer.">${precision}</select>` +
         `<label style="display:inline-flex; align-items:center; gap:4px; color:#aaa; font-size:12px; cursor:pointer;" ` +
@@ -104,7 +94,7 @@ export function describeLabTriggerEstimate(estimate) {
     const conditions =
         conditionSims > 0
             ? `Condition search: up to ${conditionSims.toLocaleString('en-US')} more fight sims ` +
-              `(${slots} abilit${slots === 1 ? 'y or consumable' : 'ies and consumables'}).`
+              `(${slots} abilit${slots === 1 ? 'y' : 'ies'}).`
             : '';
     if (tunable === 0) return conditions || 'No tunable trigger rows in the ticked loadouts.';
     return (

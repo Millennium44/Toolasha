@@ -5295,9 +5295,8 @@ describe('Tune triggers', () => {
 
     test('the choices are remembered per character, and a pull brings them back', async () => {
         ui.panel.querySelector('#mwi-labsim-trigger-header').click();
-        const include = ui.panel.querySelector('#mwi-labsim-trigger-include');
-        include.value = 'abilities';
-        include.dispatchEvent(new window.Event('change', { bubbles: true }));
+        // No food/drink choice any more: the labyrinth allows none, so only abilities are tuned
+        expect(ui.panel.querySelector('#mwi-labsim-trigger-include')).toBeNull();
         const box = ui.panel.querySelector('[data-lab-trigger-group="current"]');
         box.checked = false;
         box.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -5310,7 +5309,8 @@ describe('Tune triggers', () => {
 
         storage.values['labSimTriggerChoices_me'] = { open: true, include: 'consumables', precision: 'precise' };
         await ui._adoptPulledSettings({ settings: ['labSimTriggerChoices_me'] });
-        expect(ui.panel.querySelector('#mwi-labsim-trigger-include').value).toBe('consumables');
+        // A stored consumables choice (older versions) is ignored: tuning stays abilities only
+        expect(ui._triggerChoices.include).toBe('abilities');
         expect(ui.panel.querySelector('#mwi-labsim-trigger-precision').value).toBe('precise');
         expect(ui.panel.querySelector('[data-lab-trigger-group="current"]').checked).toBe(true);
     });

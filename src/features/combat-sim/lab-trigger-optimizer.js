@@ -18,6 +18,7 @@ import Monster from './engine/monster.js';
 import { getGameData, setGameData } from './engine/game-data.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import {
+    LAB_TRIGGER_SCOPE,
     MAX_CONDITION_SIMS,
     applyTriggerRows,
     buildConditionCandidates,
@@ -124,13 +125,12 @@ function withHrid(dto) {
  * of the group shares (the same saved loadout builds the same slots).
  * @param {Object} group - From `groupFightsByLoadout`
  * @param {Object} gameData - Game data payload
- * @param {string} include - 'both', 'abilities' or 'consumables'
  * @returns {Array<Object>}
  */
-export function groupTunables(group, gameData, include = 'both') {
+export function groupTunables(group, gameData) {
     const dto = group?.fights?.[0]?.dto;
     if (!dto) return [];
-    return collectTunables({ playerDTOs: [withHrid(dto)], playerIndices: [0], gameData, include });
+    return collectTunables({ playerDTOs: [withHrid(dto)], playerIndices: [0], gameData, include: LAB_TRIGGER_SCOPE });
 }
 
 /**
@@ -138,14 +138,13 @@ export function groupTunables(group, gameData, include = 'both') {
  * pools are not known before the run; any positive figure yields the same number of rows.
  * @param {Object} group - From `groupFightsByLoadout`
  * @param {Object} gameData - Game data payload
- * @param {string} include - 'both', 'abilities' or 'consumables'
  * @returns {Array<number>} One count per searchable slot
  */
-export function groupConditionCounts(group, gameData, include = 'both') {
+export function groupConditionCounts(group, gameData) {
     const dto = group?.fights?.[0]?.dto;
     if (!dto) return [];
     const monsterHrids = [...new Set(group.fights.map((f) => f.monsterHrid))];
-    return conditionSlots(dto, gameData, include).map(
+    return conditionSlots(dto, gameData, LAB_TRIGGER_SCOPE).map(
         (slot) =>
             buildConditionCandidates({
                 slot,
@@ -165,25 +164,18 @@ export function groupConditionCounts(group, gameData, include = 'both') {
  * @param {Object} params
  * @param {Array<Object>} params.groups - From `groupFightsByLoadout`, the ones to tune
  * @param {Object} params.gameData - Game data payload
- * @param {string} [params.include] - 'both', 'abilities' or 'consumables'
  * @param {string} [params.precision] - A PRECISIONS key
  * @param {boolean} [params.searchConditions] - Whether the condition search runs too
  * @returns {{groups: Array<{key: string, tunables: number, fights: number, sims: number, conditionSlots: number,
  *   conditionSims: number}>, sims: number, conditionSims: number, trials: {first: number, confirm: number}}}
  */
-export function estimateLabTriggerRun({
-    groups,
-    gameData,
-    include = 'both',
-    precision = DEFAULT_PRECISION,
-    searchConditions = false,
-}) {
+export function estimateLabTriggerRun({ groups, gameData, precision = DEFAULT_PRECISION, searchConditions = false }) {
     const p = PRECISIONS[precision] || PRECISIONS[DEFAULT_PRECISION];
     const hoursPerSeed = p.pointHours / p.seeds;
     const perGroup = (groups || []).map((group) => {
-        const tunables = groupTunables(group, gameData, include).length;
+        const tunables = groupTunables(group, gameData).length;
         const fights = group.fights.length;
-        const counts = searchConditions ? groupConditionCounts(group, gameData, include) : [];
+        const counts = searchConditions ? groupConditionCounts(group, gameData) : [];
         return {
             key: group.key,
             tunables,
@@ -325,7 +317,6 @@ function pooledWinRates(samples, count) {
  * @param {Object} [params.communityBuffs] - Community buffs
  * @param {Array<Object>} [params.labyrinthCombatBuffs] - Labyrinth token buffs
  * @param {string} [params.precision] - A PRECISIONS key
- * @param {string} [params.include] - 'both', 'abilities' or 'consumables'
  * @param {number} [params.minGain] - Smallest gain worth offering, in attempts
  * @param {boolean} [params.searchConditions] - Also search new trigger conditions (slow)
  * @param {number} [params.maxConditionSims] - Ceiling on the condition search's fight sims for the run
@@ -346,7 +337,6 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
         communityBuffs,
         labyrinthCombatBuffs = [],
         precision: precisionKey = DEFAULT_PRECISION,
-        include = 'both',
         minGain = LAB_MIN_GAIN,
         searchConditions = false,
         maxConditionSims = MAX_CONDITION_SIMS,
@@ -357,7 +347,7 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
     const zoneHrid =
         Object.keys(gameData?.actionDetailMap || {}).find((k) => k.includes('/actions/combat/')) ||
         '/actions/combat/fly';
-    const estimate = estimateLabTriggerRun({ groups, gameData, include, precision: precision.key, searchConditions });
+    const estimate = estimateLabTriggerRun({ groups, gameData, precision: precision.key, searchConditions });
     const total = Math.max(1, estimate.sims + estimate.conditionSims);
     const limit = createLimiter(concurrency());
     const hpOf = labMonsterMaxHpReader(gameData);
@@ -371,7 +361,7 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
         if (stopped()) break;
         const fights = group.fights.map((fight) => ({ ...fight, dto: withHrid(fight.dto) }));
         const hrid = fights[0]?.dto?.hrid;
-        const tunables = groupTunables(group, gameData, include);
+        const tunables = groupTunables(group, gameData);
         const meta = fights.map((f) => ({
             monsterHrid: f.monsterHrid,
             monsterName: f.monsterName,
@@ -502,7 +492,13 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
                 key: group.key,
                 name: group.name,
                 fights: meta.map((m, i) => ({ ...m, winRate: before[i], tunedWinRate: after[i] })),
-                result: { ...result, minGain, precision: precision.key, include, tunableCount: tunables.length },
+                result: {
+                    ...result,
+                    minGain,
+                    precision: precision.key,
+                    include: LAB_TRIGGER_SCOPE,
+                    tunableCount: tunables.length,
+                },
                 baselineAttempts: meanAttempts(finalOrig || baseline),
                 tunedAttempts: finalTuned ? meanAttempts(finalTuned) : null,
             };
@@ -513,7 +509,7 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
             const tuned = Object.fromEntries((result.changes || []).map((c) => [c.key, c.to]));
             const startDto = (fight) =>
                 tunables.length ? applyTriggerValues([fight.dto], tunables, tuned)[0] : fight.dto;
-            const slots = conditionSlots(startDto(fights[0]), gameData, include);
+            const slots = conditionSlots(startDto(fights[0]), gameData, LAB_TRIGGER_SCOPE);
             const monsterHrids = [...new Set(fights.map((f) => f.monsterHrid))];
             const enemyHp = Math.max(0, ...fights.map((f) => hpOf(f.monsterHrid, f.roomLevel)));
             const confirmHours = hoursPerSeed * ROUND_GROWTH * ROUND_GROWTH;
@@ -581,7 +577,7 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
         conditionSimCount: tally.conditionSims,
         stopped: stopped(),
         precision: precision.key,
-        include,
+        include: LAB_TRIGGER_SCOPE,
         minGain,
         searchConditions,
     };

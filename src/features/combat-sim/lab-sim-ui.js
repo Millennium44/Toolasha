@@ -3384,8 +3384,7 @@ class LabSimUI {
         const body = this.panel.querySelector('#mwi-labsim-trigger-body');
         body?.addEventListener('change', (event) => {
             const target = event.target;
-            if (target?.id === 'mwi-labsim-trigger-include') this._triggerChoices.include = target.value;
-            else if (target?.id === 'mwi-labsim-trigger-precision') this._triggerChoices.precision = target.value;
+            if (target?.id === 'mwi-labsim-trigger-precision') this._triggerChoices.precision = target.value;
             else if (target?.id === 'mwi-labsim-trigger-conditions') this._triggerChoices.conditions = target.checked;
             else if (target?.dataset?.labTriggerGroup) {
                 const skipped = new Set(this._triggerChoices.skipped);
@@ -3410,8 +3409,6 @@ class LabSimUI {
         if (body) body.style.display = open ? 'block' : 'none';
         const toggle = this.panel?.querySelector('#mwi-labsim-trigger-toggle');
         if (toggle) toggle.textContent = open ? '▼' : '▶';
-        const include = this.panel?.querySelector('#mwi-labsim-trigger-include');
-        if (include) include.value = this._triggerChoices.include;
         const precision = this.panel?.querySelector('#mwi-labsim-trigger-precision');
         if (precision) precision.value = this._triggerChoices.precision;
         const conditions = this.panel?.querySelector('#mwi-labsim-trigger-conditions');
@@ -3469,7 +3466,6 @@ class LabSimUI {
                       estimateLabTriggerRun({
                           groups: this._chosenTriggerGroups(),
                           gameData,
-                          include: this._triggerChoices.include,
                           precision: this._triggerChoices.precision,
                           searchConditions: this._triggerChoices.conditions,
                       })
@@ -3550,8 +3546,8 @@ class LabSimUI {
                 );
                 return;
             }
-            const { include, precision, conditions: searchConditions } = this._triggerChoices;
-            const estimate = estimateLabTriggerRun({ groups, gameData, include, precision, searchConditions });
+            const { precision, conditions: searchConditions } = this._triggerChoices;
+            const estimate = estimateLabTriggerRun({ groups, gameData, precision, searchConditions });
             if (estimate.sims === 0 && !(estimate.conditionSims > 0)) {
                 this._setStatus('No tunable trigger rows in the ticked loadouts.');
                 return;
@@ -3577,7 +3573,6 @@ class LabSimUI {
                     communityBuffs: getCommunityBuffs(),
                     labyrinthCombatBuffs: this._labyrinthCombatBuffs(),
                     precision,
-                    include,
                     searchConditions,
                 },
                 ({ current, total, description }) => {

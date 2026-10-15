@@ -155,15 +155,15 @@ describe('the cost estimate', () => {
             fight('gobbo', 3, 'Mage'),
             fight('jerry', 7, 'Tank', { dto: loadoutDTO({ food: true }) }),
         ]);
+        // Food is never counted, even when a caller still passes the old 'both'
         const estimate = estimateLabTriggerRun({ groups, gameData, include: 'both', precision: 'quick' });
         expect(estimate.groups.map((g) => [g.tunables, g.fights])).toEqual([
             [1, 2],
-            [2, 1],
+            [1, 1],
         ]);
-        expect(estimate.sims).toBe(estimateTriggerSims(1, 'quick') * 2 + estimateTriggerSims(2, 'quick'));
+        expect(estimate.sims).toBe(estimateTriggerSims(1, 'quick') * 3);
         expect(estimate.trials.first).toBe(labTrials(PRECISIONS.quick.pointHours / PRECISIONS.quick.seeds));
-        // Abilities only leaves the food out
-        expect(estimateLabTriggerRun({ groups, gameData, include: 'abilities' }).groups[1].tunables).toBe(1);
+        expect(estimateLabTriggerRun({ groups, gameData, include: 'consumables' }).groups[1].tunables).toBe(1);
     });
 });
 
@@ -363,6 +363,8 @@ describe('runLabTriggerOptimization with the condition search', () => {
             },
         },
     };
+    const BURST = '/abilities/test_burst';
+    condGameData.abilityDetailMap[BURST] = { name: 'Burst', defaultCombatTriggers: [] };
     const coffeeGroups = () =>
         groupFightsByLoadout([
             {
@@ -371,13 +373,17 @@ describe('runLabTriggerOptimization with the condition search', () => {
                 roomLevel: 100,
                 loadoutId: 3,
                 loadoutName: 'Mage',
-                dto: { ...loadoutDTO(), drinks: [{ hrid: COFFEE, triggers: null }, null, null] },
+                dto: {
+                    ...loadoutDTO({ food: true }),
+                    abilities: [null, { hrid: BURST, level: 30, triggers: null }, null, null, null],
+                    drinks: [{ hrid: COFFEE, triggers: null }, null, null],
+                },
             },
         ]);
-    /** A stub labyrinth where the coffee pays off only when drunk while the wasp is frenzied */
+    /** A stub labyrinth where the ability pays off only when drunk while the wasp is frenzied */
     const frenzyCoffee = (params) => {
         const base = labyrinth(() => 0)(params);
-        const rows = params.playerDTOs[0].drinks[0].triggers || [];
+        const rows = params.playerDTOs[0].abilities[1].triggers || [];
         const frenzied = rows.some(
             (r) =>
                 r.dependencyHrid === TARGET &&
@@ -395,7 +401,6 @@ describe('runLabTriggerOptimization with the condition search', () => {
         const estimate = estimateLabTriggerRun({
             groups,
             gameData: condGameData,
-            include: 'consumables',
             precision: 'quick',
             searchConditions: true,
         });
@@ -405,17 +410,18 @@ describe('runLabTriggerOptimization with the condition search', () => {
         const run = await runLabTriggerOptimization({
             gameData: condGameData,
             groups,
-            include: 'consumables',
             precision: 'quick',
             searchConditions: true,
         });
         const [group] = run.groups;
-        // Nothing for the threshold tuner: the coffee's only row is an is_inactive one
+        // Nothing for the threshold tuner: the ability has no rows to tune
         expect(group.result.noTunables).toBe(true);
         const { conditions } = group;
         expect(conditions.reliable).toBe(true);
         expect(conditions.changes).toHaveLength(1);
-        expect(conditions.changes[0].itemHrid).toBe(COFFEE);
+        expect(conditions.changes[0].itemHrid).toBe(BURST);
+        // The coffee and the donut are never searched: the labyrinth allows no food or drink
+        for (const call of sims.calls) expect(call.playerDTOs[0].drinks[0].triggers ?? null).toBeNull();
         expect(conditions.changes[0].toRows).toContainEqual(FRENZY_ON);
         expect(conditions.fights[0].tunedWinRate - conditions.fights[0].winRate).toBeGreaterThan(0.15);
         // Within the stated ceiling, and every sim a fixed attempt count
@@ -428,7 +434,6 @@ describe('runLabTriggerOptimization with the condition search', () => {
         const run = await runLabTriggerOptimization({
             gameData: condGameData,
             groups: coffeeGroups(),
-            include: 'consumables',
             precision: 'quick',
             searchConditions: true,
             maxConditionSims: 1,
@@ -444,7 +449,6 @@ describe('runLabTriggerOptimization with the condition search', () => {
             const run = await runLabTriggerOptimization({
                 gameData: condGameData,
                 groups: coffeeGroups(),
-                include: 'consumables',
                 precision: 'quick',
                 searchConditions: true,
                 maxConditionSims: cap,
@@ -459,7 +463,6 @@ describe('runLabTriggerOptimization with the condition search', () => {
         const run = await runLabTriggerOptimization({
             gameData: condGameData,
             groups: coffeeGroups(),
-            include: 'consumables',
         });
         expect(run.groups[0].conditions).toBeUndefined();
         expect(sims.calls).toHaveLength(0);
