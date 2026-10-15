@@ -97,15 +97,18 @@ export function sanitizeSwapQueues(raw) {
 /**
  * Bring the remembered Check a swap options back into shape: for each tab, whether
  * "All loadouts" is ticked and whether the section was left open (null when it was
- * never toggled, so the default applies).
+ * never toggled, so the default applies), and whether each tab's generated Upgrades
+ * results are shown (true unless left collapsed).
  * @param {*} raw - The stored `options`
- * @returns {{all: {combat: boolean, skilling: boolean}, open: {combat: boolean|null, skilling: boolean|null}}}
+ * @returns {{all: {combat: boolean, skilling: boolean}, open: {combat: boolean|null, skilling: boolean|null}, upgradesOpen: {combat: boolean, skilling: boolean}}}
  */
 export function sanitizeSwapOptions(raw) {
     const flag = (value) => (typeof value === 'boolean' ? value : null);
     return {
         all: { combat: raw?.all?.combat === true, skilling: raw?.all?.skilling === true },
         open: { combat: flag(raw?.open?.combat), skilling: flag(raw?.open?.skilling) },
+        // The generated Upgrades results beside the section: open unless left closed
+        upgradesOpen: { combat: raw?.upgradesOpen?.combat !== false, skilling: raw?.upgradesOpen?.skilling !== false },
     };
 }
 

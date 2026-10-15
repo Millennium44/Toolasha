@@ -669,12 +669,18 @@ describe('combat: who a checked swap reaches', () => {
         expect(sanitizeSwapOptions(null)).toEqual({
             all: { combat: false, skilling: false },
             open: { combat: null, skilling: null },
+            upgradesOpen: { combat: true, skilling: true },
         });
         expect(
             sanitizeSwapOptions({ all: { combat: true, skilling: 'x' }, open: { combat: false, skilling: 3 } })
         ).toEqual({
             all: { combat: true, skilling: false },
             open: { combat: false, skilling: null },
+            upgradesOpen: { combat: true, skilling: true },
+        });
+        expect(sanitizeSwapOptions({ upgradesOpen: { combat: false, skilling: 'x' } }).upgradesOpen).toEqual({
+            combat: false,
+            skilling: true,
         });
     });
 

@@ -4306,6 +4306,65 @@ describe('Check a swap', () => {
         expect(chips('combat')).toEqual(['Sinister Cape +7']);
     });
 
+    test('Clear empties and hides the checked results, keeps the chips and gives the generated results the room', async () => {
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        const swapResults = ui.panel.querySelector('#mwi-labsim-swap-results');
+        swapResults.style.display = 'block';
+        swapResults.innerHTML = '<table><tr><td>Checked swaps</td></tr></table>';
+        ui.panel.querySelector('#mwi-labsim-swap-clear-combat').click();
+        expect(swapResults.innerHTML).toBe('');
+        expect(swapResults.style.display).toBe('none');
+        expect(chips('combat')).toEqual(['Sinister Cape +7']);
+        expect(ui._checkedSwaps.combat).toHaveLength(1);
+        expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').style.flex).toBe('1 1 auto');
+
+        const skillingResults = ui.panel.querySelector('#mwi-labsim-skilling-swap-results');
+        skillingResults.style.display = 'block';
+        skillingResults.innerHTML = '<table></table>';
+        ui.panel.querySelector('#mwi-labsim-swap-clear-skilling').click();
+        expect(skillingResults.innerHTML).toBe('');
+        expect(skillingResults.style.display).toBe('none');
+    });
+
+    test('Clear does nothing while a check is running', () => {
+        const swapResults = ui.panel.querySelector('#mwi-labsim-swap-results');
+        swapResults.style.display = 'block';
+        swapResults.innerHTML = '<table></table>';
+        ui._upgradeRunning = true;
+        ui.panel.querySelector('#mwi-labsim-swap-clear-combat').click();
+        expect(swapResults.innerHTML).toBe('<table></table>');
+        ui._upgradeRunning = false;
+    });
+
+    test('the Upgrades section collapses from its header and remembers the choice', async () => {
+        const results = () => ui.panel.querySelector('#mwi-labsim-upgrade-results');
+        const toggle = () => ui.panel.querySelector('#mwi-labsim-upgrades-toggle-combat').textContent;
+        results().innerHTML = '<table></table>';
+        expect(results().style.display).not.toBe('none');
+        expect(toggle()).toBe('▼');
+        ui.panel.querySelector('#mwi-labsim-upgrades-header-combat').click();
+        expect(results().style.display).toBe('none');
+        expect(toggle()).toBe('▶');
+        await settle();
+        const saved = storage.written['labSimCheckedSwaps_me'];
+        expect(saved.options.upgradesOpen).toEqual({ combat: false, skilling: true });
+
+        ui.destroy();
+        storage.values['labSimCheckedSwaps_me'] = saved;
+        ui.buildPanel();
+        await settle();
+        expect(results().style.display).toBe('none');
+        expect(toggle()).toBe('▶');
+
+        // The Skilling tab has its own, independent header
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-results').style.display).not.toBe('none');
+        ui.panel.querySelector('#mwi-labsim-upgrades-header-skilling').click();
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-results').style.display).toBe('none');
+        ui.panel.querySelector('#mwi-labsim-upgrades-header-combat').click();
+        expect(results().style.display).toBe('');
+    });
+
     test('All loadouts is remembered per character and reaches the candidates', async () => {
         const box = () => ui.panel.querySelector('#mwi-labsim-swap-all-combat');
         expect(box().checked).toBe(false);

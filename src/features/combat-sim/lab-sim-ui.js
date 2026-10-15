@@ -1214,6 +1214,7 @@ class LabSimUI {
         upgradeContent.appendChild(swapBarCombat);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(swapResultsCombat);
+        upgradeContent.appendChild(this._buildUpgradesHeader('combat'));
         upgradeContent.appendChild(upgradeResults);
 
         // ── Skilling tab ──
@@ -1411,6 +1412,7 @@ class LabSimUI {
         skillingContent.appendChild(swapBarSkilling);
         skillingContent.appendChild(skillingProgress);
         skillingContent.appendChild(swapResultsSkilling);
+        skillingContent.appendChild(this._buildUpgradesHeader('skilling'));
         skillingContent.appendChild(skillingResults);
         skillingContent.appendChild(skillingGoalResults);
 
@@ -3057,6 +3059,7 @@ class LabSimUI {
                     placeholder="Lv" title="Enhancement level to check" style="${inputStyle} width:46px; text-align:center;">
                 <button id="mwi-labsim-swap-add-${kind}" style="${buttonStyle}" title="Queue this swap">Add</button>
                 <button id="mwi-labsim-swap-check-${kind}" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Check</button>
+                <button id="mwi-labsim-swap-clear-${kind}" style="${buttonStyle}" title="Hide and empty the checked swaps table. The queue stays.">Clear</button>
                 <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
                     title="${kind === 'combat' ? 'Put the item in every loadout that has the slot, even ones of another attack style. Without this, a ranged item skips melee loadouts and so on.' : 'Put the item in every skill kit in scope, not only the skills it is made for.'}">
                     <input type="checkbox" id="mwi-labsim-swap-all-${kind}" style="margin:0; cursor:pointer;">
@@ -3101,6 +3104,14 @@ class LabSimUI {
                 ?.addEventListener('click', () =>
                     kind === 'combat' ? this._onCheckSwapsCombat() : this._onCheckSwapsSkilling()
                 );
+            this.panel
+                .querySelector(`#mwi-labsim-swap-clear-${kind}`)
+                ?.addEventListener('click', () => this._onClearCheckedResults(kind));
+            this.panel.querySelector(`#mwi-labsim-upgrades-header-${kind}`)?.addEventListener('click', () => {
+                this._swapOptions.upgradesOpen[kind] = !this._swapOptions.upgradesOpen[kind];
+                this._applySwapSectionState(kind);
+                void this._saveCheckedSwaps();
+            });
             this.panel.querySelector(`#mwi-labsim-swap-chips-${kind}`)?.addEventListener('click', (event) => {
                 const remove = event.target.closest('[data-swap-remove]');
                 if (!remove) return;
@@ -3141,6 +3152,56 @@ class LabSimUI {
         if (count) count.textContent = n ? `${n} queued` : '';
         const all = this.panel?.querySelector(`#mwi-labsim-swap-all-${kind}`);
         if (all) all.checked = this._swapOptions.all[kind];
+        const upgradesOpen = this._swapOptions.upgradesOpen[kind];
+        const upgradesToggle = this.panel?.querySelector(`#mwi-labsim-upgrades-toggle-${kind}`);
+        if (upgradesToggle) upgradesToggle.textContent = upgradesOpen ? '▼' : '▶';
+        const upgradesResults = this.panel?.querySelector(
+            kind === 'combat' ? '#mwi-labsim-upgrade-results' : '#mwi-labsim-skilling-results'
+        );
+        if (upgradesResults) upgradesResults.style.display = upgradesOpen ? '' : 'none';
+    }
+
+    /**
+     * The clickable "Upgrades" header above a tab's generated results. Collapsing it
+     * hides everything the generated run drew (budget row, baseline and table).
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @returns {HTMLElement}
+     * @private
+     */
+    _buildUpgradesHeader(kind) {
+        const header = document.createElement('div');
+        header.id = `mwi-labsim-upgrades-header-${kind}`;
+        header.style.cssText =
+            'display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; padding:6px 14px; ' +
+            'border-bottom:1px solid #222; flex-shrink:0;';
+        header.title = 'Show or hide the generated upgrade results.';
+        header.innerHTML =
+            `<span id="mwi-labsim-upgrades-toggle-${kind}" style="font-size:10px; color:#888;">▼</span>` +
+            `<span style="color:${ACCENT}; font-weight:700; font-size:12px;">Upgrades</span>`;
+        return header;
+    }
+
+    /**
+     * Clear a tab's checked swaps table: hide and empty it, leaving the queued chips
+     * alone. Does nothing while a run is going (the button is a no-op then, with a
+     * note), so it never races a check that is about to draw into the same table.
+     * Checked results are never stored, so there is nothing else to forget.
+     * @param {'combat'|'skilling'} kind - Which tab
+     * @private
+     */
+    _onClearCheckedResults(kind) {
+        if (this._upgradeRunning || this._skillingRunning) {
+            this._setSwapNote(kind, 'Stop the running check first.', true);
+            return;
+        }
+        const resultsEl = this.panel?.querySelector(
+            kind === 'combat' ? '#mwi-labsim-swap-results' : '#mwi-labsim-skilling-swap-results'
+        );
+        if (resultsEl) {
+            resultsEl.innerHTML = '';
+            resultsEl.style.display = 'none';
+        }
+        this._setSwapNote(kind, '');
     }
 
     /**
