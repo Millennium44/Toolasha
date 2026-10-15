@@ -9836,6 +9836,26 @@ describe('a refine row hands off the refinement material', () => {
         expect(market.title).toContain('philosophers mirror');
     });
 
+    test('a mirror route that builds its copies with mirrors bills every one of them', () => {
+        const row = refineRow();
+        row.costDetail.ladder.refine.mirror = {
+            baseCost: 44_900_000,
+            mirrorPrice: 1_000_000,
+            heldLevels: [],
+            mirrorCount: 12,
+        };
+        const market = render(row).querySelector('[data-buy-action="market"]');
+        expect(JSON.parse(market.getAttribute('data-buy-materials'))).toEqual([
+            { itemHrid: SHARD, count: 89 },
+            { itemHrid: '/items/philosophers_mirror', count: 12 },
+        ]);
+        expect(market.title).toContain('12 × philosophers mirror');
+        // A Blessed Tea chain spends a fraction of a step's mirror: the bill rounds up
+        row.costDetail.ladder.refine.mirror.mirrorCount = 2.4;
+        const blessed = render(row).querySelector('[data-buy-action="market"]');
+        expect(JSON.parse(blessed.getAttribute('data-buy-materials'))[1].count).toBe(3);
+    });
+
     test('a refine priced for another player still gets the shard buttons', () => {
         const row = refineRow();
         row.costDetail.ladder.isSelf = false;

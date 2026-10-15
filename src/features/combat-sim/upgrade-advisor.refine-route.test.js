@@ -282,6 +282,20 @@ describe('refined target priced from a held base', () => {
             expect(detail.ladder.refine.materials).toEqual([{ itemHrid: SHARD, count: 100 }]);
         });
 
+        test('a mirrored base with no held copies counts every mirror its built copies spend', () => {
+            // Every level from +3 up is mirrored here, so the +7 is built from a built +6 and a built +5:
+            // +3 spends 1, +4 2, +5 4, +6 7, and the +7 7 + 4 + its own 1 = 12
+            const detail = explainUpgradeCost(tier(7), gameData);
+            expect(detail.ladder.refine.mirror.mirrorCount).toBe(12);
+            const ordinary = Array.from({ length: 8 }, (_, k) => 0.3 + (2 ** k - 1)).map((m) => m * 1e6);
+            expect(cheapestWithMirror(ordinary, 1_000_000).mirrorTotalCounts[7]).toBe(12);
+        });
+
+        test('held inputs spend no mirrors of their own: spare +6 and +5 leave one', () => {
+            state.items = [stack(BASE, 6), stack(BASE, 5)];
+            expect(explainUpgradeCost(tier(7), gameData).ladder.refine.mirror.mirrorCount).toBe(1);
+        });
+
         test('spare +6 and +5 bases are the mirror inputs of a refined +7: shards plus the mirror', () => {
             state.items = [stack(BASE, 6), stack(BASE, 5)];
             const detail = explainUpgradeCost(tier(7), gameData);
