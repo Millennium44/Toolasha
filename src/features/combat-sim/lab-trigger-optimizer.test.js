@@ -20,6 +20,8 @@ vi.mock('./combat-sim-runner.js', () => ({
 }));
 vi.mock('./combat-sim-adapter.js', () => ({ calculateSimRevenue: () => ({ netPerHour: 0 }) }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
+// A fixed run seed, so a stub whose luck comes from the seed answers the same way every run
+vi.mock('./engine/rng.js', async (importOriginal) => ({ ...(await importOriginal()), randomSeed: () => 12345 }));
 
 const {
     groupFightsByLoadout,
@@ -239,6 +241,22 @@ describe('runLabTriggerOptimization', () => {
         expect(gobbo.tunedWinRate).toBeCloseTo(gobbo.winRate, 2);
         expect(group.tunedAttempts).toBeLessThan(group.baselineAttempts);
         expect(run.stopped).toBe(false);
+    });
+
+    test('the shown before and after totals differ by exactly the saving, even with a seed that never won', async () => {
+        // At the current threshold the Cyclops is nearly unwinnable: some seeds win it 0 times
+        sims.respond = labyrinth(
+            (monster, threshold) => (monster === '/monsters/cyclops' ? (threshold >= 200 ? 0.5 : 0.02) : 0.8),
+            { seedLuck: 4 }
+        );
+        const zeroWinSeeds = () =>
+            sims.calls.some((c) => c.monsterHrid === '/monsters/cyclops' && sims.respond(c).encounters === 0);
+        const run = await runLabTriggerOptimization({ gameData, groups: twoFights(), precision: 'quick' });
+        const [group] = run.groups;
+        expect(zeroWinSeeds()).toBe(true);
+        // The all-together check ran (whether or not it then believed the change)
+        expect(group.result.combined).not.toBeNull();
+        expect(group.baselineAttempts - group.tunedAttempts).toBeCloseTo(group.result.combined.deltaScore, 6);
     });
 
     test('a "gain" inside the noise is rejected', async () => {

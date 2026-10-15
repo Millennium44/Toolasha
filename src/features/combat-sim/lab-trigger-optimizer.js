@@ -410,14 +410,20 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
         const baseline = await kept.get(`baseline|${signature({})}`);
         const before = pooledWinRates(finalOrig || baseline, fights.length);
         const after = finalTuned ? pooledWinRates(finalTuned, fights.length) : fights.map(() => null);
-        const sum = (rates) => rates.reduce((s, r) => s + expectedAttempts(r ?? 0), 0);
+        // The totals are what the search scored: the mean over seeds of each seed's attempts, on its
+        // half-win floor, so "before − after" is the saving the all-together check reports. The
+        // per-fight win rates above are pooled, which suits a rate but not this figure.
+        const meanAttempts = (samples) =>
+            samples?.length
+                ? samples.reduce((s, sample) => s + (Number(sample?.attempts) || 0), 0) / samples.length
+                : null;
         out.push({
             key: group.key,
             name: group.name,
             fights: meta.map((m, i) => ({ ...m, winRate: before[i], tunedWinRate: after[i] })),
             result: { ...result, minGain, precision: precision.key, include, tunableCount: tunables.length },
-            baselineAttempts: sum(before),
-            tunedAttempts: finalTuned ? sum(after) : null,
+            baselineAttempts: meanAttempts(finalOrig || baseline),
+            tunedAttempts: finalTuned ? meanAttempts(finalTuned) : null,
         });
         if (result.stopped) break;
     }
