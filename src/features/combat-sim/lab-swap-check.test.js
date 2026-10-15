@@ -621,7 +621,7 @@ describe('combat: who a checked swap reaches', () => {
             expect(both.keptItems).toBeUndefined();
         });
 
-        test('skilling: a kit outside the run scope still owns a copy and still wears a replaced piece', () => {
+        test('skilling: a kit outside the run scope still wears a replaced piece', () => {
             const TOOL = '/equipment_types/milking_tool';
             ITEM_DETAIL_MAP['/items/old_milking_tool'] = {
                 hrid: '/items/old_milking_tool',
@@ -646,13 +646,21 @@ describe('combat: who a checked swap reaches', () => {
             expect(kept.removedItems).toEqual([]);
             expect(kept.keptItems).toEqual([{ hrid: '/items/old_milking_tool', enhancementLevel: 3 }]);
             expect(kept.keptUnreached).toBe(true);
+        });
 
-            // Foraging wears the very piece asked for: it is owned, nothing is bought
-            const owned = buildSkillingSwapCandidate(
-                { hrid: MILKING_TOOL, level: 7 },
-                scoped(piece(MILKING_TOOL, 7)),
-                gameData
-            );
+        test('skilling: a copy worn by a kit outside the run scope is owned, nothing is bought', () => {
+            const TOOL = '/equipment_types/milking_tool';
+            // The skill filter is on milking; the foraging kit wears the very piece asked for
+            const context = {
+                dto: { equipment: {} },
+                skillEquipmentMap: {
+                    '/skills/milking': { [TOOL]: piece(MILKING_TOOL, 2) },
+                    '/skills/foraging': { [TOOL]: piece(MILKING_TOOL, 7) },
+                },
+                skills: ['/skills/milking'],
+            };
+            const owned = buildSkillingSwapCandidate({ hrid: MILKING_TOOL, level: 7 }, context, gameData);
+            expect(owned.skillKeys).toEqual(['/skills/milking']);
             expect(owned.cost).toBe(0);
             expect(owned.noPurchase).toBe(true);
         });
