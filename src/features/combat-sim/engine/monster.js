@@ -30,6 +30,8 @@ class Monster extends CombatUnit {
         }
 
         this.enrageTime = gameMonster.enrageTime;
+        // What a "Boss Status" trigger reads: the game marks its bosses in the monster's own detail
+        this.isBoss = gameMonster.isBoss === true;
 
         // Labyrinth scaling: ability levels scale by roomLevel / 100
         const labyrinthScaleFactor = this.roomLevel > 0 ? this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL : 1;

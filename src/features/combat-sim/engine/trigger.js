@@ -231,6 +231,9 @@ class Trigger {
                 return source.isBlinded || source.blindExpireTime === currentTime;
             case '/combat_trigger_conditions/silence_status':
                 return source.isSilenced || source.silenceExpireTime === currentTime;
+            case '/combat_trigger_conditions/boss_status':
+                // A monster the game's detail marks `isBoss` (see Monster); a player never is
+                return source.isBoss === true;
             default:
                 recordUnknown('combat trigger condition', this.conditionHrid);
                 return UNKNOWN;
