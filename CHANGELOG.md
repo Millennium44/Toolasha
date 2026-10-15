@@ -26,6 +26,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A single-boss guild trial's Party DPS, time to clear and pace no longer go blank and restart when you switch between the Trials tab and the fight view.
 
+### Audit round: sync without a reload
+
+- After a sync pull, panels now re-read their settings only once every write held during the pull has landed, so a Lab Sim comparison run deleted mid-pull can no longer come back; and a Lab Sim upgrade-selection restore interrupted by a character switch no longer carries one character's choices onto the other.
+
 <!-- shipped in 3.70.0 -->
 
 ### Settings: reset to defaults turns off device-wide switches
