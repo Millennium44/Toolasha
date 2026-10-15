@@ -10,9 +10,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Forecast calibration tags (like "−13% over 64 runs") now count only the last 30 days and, for combat, only runs whose sim forecast was made in the gear actually worn, so an old setup no longer skews today's tag. Refine rows in the upgrade tables get Market and Watch buttons for the refinement shards they need.
 
-### Sync: guild member skills and inventory tabs
+### Sync: guild member skills
 
-- A GitHub sync pull that changes guild member skills or custom inventory tabs now applies live instead of asking for a reload; the tabs wait for a drag in progress to finish before redrawing.
+- A GitHub sync pull that changes guild member skills now applies live instead of asking for a reload, and a redo request or rename no longer undoes what the pull brought in.
 
 ### Check a swap: item names in Firefox
 
