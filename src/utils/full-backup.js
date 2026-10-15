@@ -426,8 +426,13 @@ export async function importEverything(payload, options = {}) {
 
     // How many keys now refuse writes until a reload; a restore that latched none asks for none
     let latched = 0;
-    for (const keys of written.values()) latched += keys.size;
-    return { restored, expected, failed, complete: failed.length === 0, writtenKeys, latched };
+    /** The keys that latched, for the pull summary's report */
+    const latchedKeys = [];
+    for (const [storeName, keys] of written) {
+        latched += keys.size;
+        for (const key of keys) latchedKeys.push({ store: storeName, key });
+    }
+    return { restored, expected, failed, complete: failed.length === 0, writtenKeys, latched, latchedKeys };
 }
 
 export default {

@@ -55,6 +55,8 @@ let lastSummary = null;
  * @property {Array<{key: string}>} wholeRecords - Keys written whole, when the result named them (empty otherwise,
  *   including for a result from an older caller: the count above is then all there is)
  * @property {Array<{key: string, label: string}>} heldRecords - Held keys and their registration
+ * @property {Array<{key: string}>} latchedRecords - Keys the pull latched against writes until a reload, when the
+ *   result named them (empty otherwise)
  * @property {Array<{key: string, label: string}>} overwrittenRecords - Failed folds and their registration
  */
 
@@ -71,11 +73,14 @@ let lastSummary = null;
  * @param {Array<{store: string, key: string, label: string}>} [result.mergeHeld] - Records held back
  * @param {Array<{store: string, key: string}>} [result.writtenWholeKeys] - Keys the import wrote that no fold
  *   produced, by store
+ * @param {Array<{store: string, key: string}>} [result.latchedKeys] - Keys the import latched (the ones that
+ *   forced "Reload now"), by store
+ * @param {number|null} [result.latched] - How many keys the import latched; null when not reported
  * @param {Record<string, number>} [result.expected] - Keys each store was asked to write
  * @param {Record<string, number>|null} [result.unchanged] - Keys each store left as they were; null or
  *   missing when not reported
  * @param {string|null} [result.at] - When the pull landed, ISO
- * @returns {{at: string|null, combined: number, writtenWhole: number, writtenWholePartial: boolean,
+ * @returns {{at: string|null, latched: number|null, combined: number, writtenWhole: number, writtenWholePartial: boolean,
  *   held: number, overwritten: number, unchanged: number|null, stores: Array<PullStoreSummary>}}
  */
 export function buildPullSummary({
@@ -83,6 +88,8 @@ export function buildPullSummary({
     mergeFailed = [],
     mergeHeld = [],
     writtenWholeKeys = [],
+    latchedKeys = [],
+    latched = null,
     expected = {},
     unchanged = null,
     at = null,
@@ -104,6 +111,7 @@ export function buildPullSummary({
                 unchanged: reported ? 0 : null,
                 combinedRecords: [],
                 wholeRecords: [],
+                latchedRecords: [],
                 heldRecords: [],
                 overwrittenRecords: [],
             });
@@ -133,6 +141,11 @@ export function buildPullSummary({
     for (const entry of writtenWholeKeys || []) {
         if (!entry?.store) continue;
         row(entry.store).wholeRecords.push({ key: entry.key });
+    }
+
+    for (const entry of latchedKeys || []) {
+        if (!entry?.store) continue;
+        row(entry.store).latchedRecords.push({ key: entry.key });
     }
 
     // A held key was deleted from the payload before the import, so it is not in
@@ -166,6 +179,7 @@ export function buildPullSummary({
 
     return {
         at,
+        latched: Number.isFinite(latched) ? latched : null,
         combined: sum((store) => store.combined),
         writtenWhole: sum((store) => store.writtenWhole ?? 0),
         // True when at least one store never reported an expected count, so the

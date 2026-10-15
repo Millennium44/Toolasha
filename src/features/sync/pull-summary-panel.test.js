@@ -4,7 +4,7 @@
  * named, the way a folded one is, so a report of "1 written whole" says which.
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const shell = vi.hoisted(() => ({ draw: null }));
 
@@ -20,7 +20,7 @@ vi.mock('../../utils/simple-panel.js', async (importOriginal) => {
 });
 
 const { buildPullSummary, rememberPullSummary, clearPullSummary } = await import('./pull-summary.js');
-const { openPullSummaryPanel } = await import('./pull-summary-panel.js');
+const { openPullSummaryPanel, copyPullReport } = await import('./pull-summary-panel.js');
 
 /** The panel's text after one draw */
 const drawn = () => {
@@ -57,5 +57,64 @@ describe('the pull summary panel', () => {
         expect(text).toContain('k_29 — written whole');
         expect(text).not.toContain('k_30 — written whole');
         expect(text).toContain('and 5 more written whole');
+    });
+});
+
+describe('the Copy report button', () => {
+    const SENTINEL = 'SECRET-VALUE-9f3a';
+
+    /** Draw the panel and return its body */
+    const draw = () => {
+        openPullSummaryPanel();
+        const body = document.createElement('div');
+        shell.draw(body);
+        return body;
+    };
+
+    beforeEach(() => {
+        rememberPullSummary(
+            buildPullSummary({
+                expected: { settings: 1 },
+                writtenWholeKeys: [{ store: 'settings', key: 'script_settingsMap' }],
+                latchedKeys: [{ store: 'settings', key: 'script_settingsMap' }],
+                latched: 1,
+                payload: { v: SENTINEL },
+            })
+        );
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    test('writes the report to the clipboard from the click and says Copied', async () => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        vi.stubGlobal('navigator', { clipboard: { writeText } });
+        const body = draw();
+        const button = body.querySelector('button.toolasha-pull-report-copy');
+        expect(button.textContent).toBe('Copy report');
+
+        button.click();
+        await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+
+        const text = writeText.mock.calls[0][0];
+        expect(text).toContain('Contains key names and counts only, no saved values.');
+        expect(text).toContain('script_settingsMap');
+        expect(text).not.toContain(SENTINEL);
+        expect(draw().querySelector('button.toolasha-pull-report-copy').textContent).toBe('Copied');
+    });
+
+    test('falls back to a selectable textarea when the clipboard rejects', async () => {
+        const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+        vi.stubGlobal('navigator', { clipboard: { writeText } });
+        const body = draw();
+
+        body.querySelector('button.toolasha-pull-report-copy').click();
+        await vi.waitFor(() => expect(body.querySelector('textarea.toolasha-pull-report-text')).not.toBeNull());
+
+        const area = body.querySelector('textarea.toolasha-pull-report-text');
+        expect(area.value).toContain('script_settingsMap');
+        expect(area.value).not.toContain(SENTINEL);
+        expect(await copyPullReport()).toBe(false);
     });
 });

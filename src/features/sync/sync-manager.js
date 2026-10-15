@@ -1554,6 +1554,7 @@ class SyncManager {
             unchanged,
             writtenWholeKeys,
             latched,
+            latchedKeys,
         } = await applyPayload(payload, {
             mode: silent ? 'merge' : 'pull',
             baseline,
@@ -1686,6 +1687,8 @@ class SyncManager {
             mergeFailed,
             mergeHeld,
             writtenWholeKeys,
+            latchedKeys,
+            latched,
             expected,
             unchanged,
             at: new Date().toISOString(),
