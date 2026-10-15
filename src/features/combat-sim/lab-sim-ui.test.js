@@ -4486,6 +4486,42 @@ describe('Check a swap', () => {
         game.skipLevels = {};
     });
 
+    test('a saved loadout no fight wears still counts as owned and claims its pieces', async () => {
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = { '/monsters/mimic': 130 };
+        game.loadoutByMonster = { '/monsters/mimic': 1 };
+        // Loadout 2 is saved but assigned to no monster, and it wears the +7 cape being checked
+        game.loadoutNames = { 1: 'Low Lab', 2: 'Spare Lab' };
+        game.loadoutEquipment = {
+            1: { [BACK]: { hrid: CAPE, enhancementLevel: 5 } },
+            2: { [BACK]: { hrid: CAPE, enhancementLevel: 7 } },
+        };
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        scope.value = 'all';
+        scope.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const allSpy = vi.spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis');
+
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        await ui._onCheckSwapsCombat();
+
+        const params = allSpy.mock.calls[0][0];
+        expect(params.fights).toHaveLength(1);
+        expect(params.claimLoadouts.map((entry) => entry.loadoutId).sort()).toEqual([1, 2]);
+        // Already worn by the unassigned saved loadout, so nothing is bought
+        expect(params.extraCandidates[0]).toMatchObject({ noPurchase: true, cost: 0 });
+        allSpy.mockRestore();
+        game.loadoutByMonster = {};
+        game.loadoutNames = {};
+        game.loadoutEquipment = {};
+        game.monsters = [];
+        game.skipLevels = {};
+    });
+
     test('the section collapses from its header, starts open with a queue and remembers what was chosen', async () => {
         const body = () => ui.panel.querySelector('#mwi-labsim-swap-body-combat');
         const toggle = () => ui.panel.querySelector('#mwi-labsim-swap-toggle-combat').textContent;

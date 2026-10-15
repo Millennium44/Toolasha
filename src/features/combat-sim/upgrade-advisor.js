@@ -2697,7 +2697,10 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
     // The unrefined +(L-2): a spare of exactly that level, else the cheaper of buying it and building it
     const copyLevel = level - 2;
     const spares = mirrorHeldInputs(baseHrid, { isSelf, candidate }).filter((copy) => !copy.piece);
-    const spare = spares.find((copy) => copy.level === copyLevel);
+    // The cheapest matching copy: a free duplicate beats a claimed one that costs its resale
+    const spare = spares
+        .filter((copy) => copy.level === copyLevel)
+        .sort((left, right) => left.forfeit - right.forfeit)[0];
     // A spare another loadout wears costs its resale
     let copyCost = spare ? spare.forfeit : 0;
     let copyMirrors = 0;
@@ -3362,7 +3365,7 @@ function claimKey(hrid, level) {
  * analysis builds it once and hands it to each row it prices with {@link withLoadoutClaims}; nothing is
  * kept between analyses, and the single-fight Combat Sim has no other loadouts and never builds one.
  *
- * @param {Array<{dto: Object, loadoutName: string}>|null} [fights] - The analysis's fights
+ * @param {Array<{dto: Object, loadoutName: string, loadoutId?: number}>|null} [fights] - The loadouts to claim
  * @returns {Map<string, number>|null} Worn copies by item and level, or null when there are none
  */
 export function buildOtherLoadoutClaims(fights = null) {
@@ -3370,10 +3373,12 @@ export function buildOtherLoadoutClaims(fights = null) {
     const claims = new Map();
     const seen = new Set();
     for (const fight of fights) {
-        const name = fight?.loadoutName;
-        if (name != null) {
-            if (seen.has(name)) continue;
-            seen.add(name);
+        // Distinct saved loadouts can share a name, so the id is the identity when the fight has one
+        const id = fight?.loadoutId;
+        const identity = id != null ? `id:${id}` : fight?.loadoutName != null ? `name:${fight.loadoutName}` : null;
+        if (identity != null) {
+            if (seen.has(identity)) continue;
+            seen.add(identity);
         }
         for (const equip of Object.values(fight?.dto?.equipment || {})) {
             if (!equip?.hrid) continue;
@@ -6692,8 +6697,10 @@ export function labAllFightsTrialBudget(sims, hours) {
  *
  * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel,
  *   combatLevelTargets, auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel,
- *   guildShrineTargets, guildShrineCapToGuild, tokenLevels }
- *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
+ *   guildShrineTargets, guildShrineCapToGuild, tokenLevels, claimLoadouts }
+ *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]; `claimLoadouts` is every
+ *   saved loadout the character has (`[{ dto, loadoutName, loadoutId }]`), so a run scoped to some fights
+ *   still knows which bag copies the others wear (default: `fights`)
  * @param {Function} onProgress - Called with { current, total, description }, and
  *   once before anything runs with a `plan` of what the run comes to
  * @param {Object} [options] - { abortSignal: () => boolean }
@@ -6721,6 +6728,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         guildShrineCapToGuild = false,
         tokenLevels = null,
         extraCandidates = [],
+        claimLoadouts = null,
     } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
@@ -6814,7 +6822,9 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // costume change, not an upgrade, and drags the aggregate with it.
     // Every loadout the run simulates, so a bag copy another of them wears is not priced as a free spare.
     // Handed to each row below rather than kept anywhere, so overlapping analyses cannot see each other's
-    const loadoutClaims = buildOtherLoadoutClaims(fights);
+    const loadoutClaims = buildOtherLoadoutClaims(
+        Array.isArray(claimLoadouts) && claimLoadouts.length ? claimLoadouts : fights
+    );
     const candidates = [...candidatesByKey.values()]
         .map((pooled) => {
             const candidate = withLoadoutClaims(pooled, loadoutClaims);
