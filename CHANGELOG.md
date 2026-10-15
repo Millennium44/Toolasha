@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Forecast calibration tags (like "−13% over 64 runs") now count only the last 30 days and, for combat, only runs whose sim forecast was made in the gear actually worn, so an old setup no longer skews today's tag. Refine rows in the upgrade tables get Market and Watch buttons for the refinement shards they need.
 
+### Check a swap: item names in Firefox
+
+- The Check a swap item picker lists item names again in Firefox, where it was showing equipment slots ("off hand", "hands") instead.
+
 <!-- shipped in 3.70.0 -->
 
 ### Settings: reset to defaults turns off device-wide switches

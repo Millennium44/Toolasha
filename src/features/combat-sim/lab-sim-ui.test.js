@@ -4278,7 +4278,8 @@ describe('Check a swap', () => {
         type('combat', 'sinis', '');
         const options = [...ui.panel.querySelectorAll('#mwi-labsim-swap-items-combat option')];
         expect(options.map((option) => option.value)).toEqual(['Sinister Cape']);
-        expect(options[0].getAttribute('label')).toBe('back');
+        // No label: Firefox shows a label instead of the value, which listed slot names
+        expect(options[0].hasAttribute('label')).toBe(false);
     });
 
     test('Add queues a chip, which can be removed, and a repeat or an unknown name is refused', () => {

@@ -3383,14 +3383,9 @@ class LabSimUI {
         if (!list) return;
         const gameData = buildGameDataPayload();
         const matches = gameData ? searchEquipmentItems(gameData, typed, 30) : [];
-        list.innerHTML = matches
-            .map(
-                (item) =>
-                    `<option value="${escapeHtmlAttribute(item.name)}" label="${escapeHtmlAttribute(
-                        item.slot.replace('/equipment_types/', '').replace(/_/g, ' ')
-                    )}"></option>`
-            )
-            .join('');
+        // Value only: Firefox shows an option's label in place of its value, so a slot label
+        // there listed "off hand", "hands"... instead of the item names
+        list.innerHTML = matches.map((item) => `<option value="${escapeHtmlAttribute(item.name)}"></option>`).join('');
     }
 
     /**
