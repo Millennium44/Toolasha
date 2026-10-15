@@ -455,6 +455,49 @@ describe('the staged search', () => {
         expect(result.bestMeasured.map((b) => b.key)).toEqual(['drinks|0']);
     });
 
+    test('"always" does not displace one of the three real singles from the pairing stage', async () => {
+        const gains = new Map([
+            [rowSignature(frenzyOn), 0.1],
+            [rowSignature(toughOff), 0.09],
+            [rowSignature(berserkOn), 0.08],
+        ]);
+        const gainOf = (rows) =>
+            rows.length === 0 ? 0.3 : rows.length === 1 ? gains.get(rowSignature(rows[0])) || 0 : 0;
+        const { measure, calls } = stubMeasure(gainOf);
+        await runConditionSearch({
+            slots: [slot],
+            candidatesFor: () => candidates,
+            measure,
+            precision: PRECISIONS.standard,
+            minGain: 0.02,
+        });
+        const pairSizes = calls.filter((c) => c.stage === 'pair').map((c) => c.edits['drinks|0']);
+        const pairsWithBerserk = pairSizes.filter(
+            (rows) => rows.length === 2 && has2(rows, berserkOn) && !has2(rows, current[0])
+        );
+        expect(pairsWithBerserk.length).toBeGreaterThan(0);
+        expect(pairSizes.some((rows) => rows.length === 0)).toBe(true);
+    });
+
+    test('a slot rejected by the all-together check reports its confirmation figure, not the pairing pick', async () => {
+        const base = stubMeasure((rows) => (has2(rows, berserkOn) && rows.length === 1 ? 0.5 : 0));
+        const measure = async (edits, opts) => {
+            const samples = await base.measure(edits, opts);
+            if (opts.stage !== 'final' || Object.keys(edits).length === 0) return samples;
+            return samples.map((x) => ({ ...x, attempts: x.attempts + 5 }));
+        };
+        const result = await runConditionSearch({
+            slots: [slot],
+            candidatesFor: () => candidates,
+            measure,
+            precision: PRECISIONS.standard,
+            minGain: 0.02,
+        });
+        expect(result.reliable).toBe(false);
+        expect(result.bestMeasured).toHaveLength(1);
+        expect(result.bestMeasured[0].stage).toBe('confirm');
+    });
+
     test('a slot whose every candidate is worse still reports its best, not above zero by much', async () => {
         const { measure } = stubMeasure((rows) =>
             rows.length === 1 && rowSignature(rows[0]) === rowSignature(current[0]) ? 0 : -0.3
@@ -547,9 +590,9 @@ describe('the staged search', () => {
 
     test('the estimate covers the screen, the pairing, the confirmation and the final check', () => {
         const perFight = estimateConditionSimsPerFight([30, 10], PRECISIONS.standard);
-        // Per slot: (reference + singles + always + current-AND-single) × 2 seeds, 13 pairing entries × 4 seeds,
+        // Per slot: (reference + singles + always + current-AND-single) × 2 seeds, 14 pairing entries × 4 seeds,
         // 2 × 8 confirm; plus 2 × 8 for the final check
-        expect(perFight).toBe(62 * 2 + 52 + 16 + (22 * 2 + 52 + 16) + 16);
+        expect(perFight).toBe(62 * 2 + 56 + 16 + (22 * 2 + 56 + 16) + 16);
         expect(estimateConditionSimsPerFight([], PRECISIONS.standard)).toBe(0);
     });
 });

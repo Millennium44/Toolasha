@@ -341,9 +341,9 @@ export function combineSurvivors(survivors, currentRows) {
 export function estimateConditionSimsPerFight(candidateCounts, precision) {
     const seeds = precision?.seeds || 4;
     const confirmSeeds = Math.max(CONFIRM_SEEDS_MIN, seeds);
-    // The reference, the survivors, their pairs, each survivor with the current rows, and the screen's best
+    // The reference, the survivors, "always", their pairs, each survivor with the current rows, and the screen's best
     // current-AND-X entries
-    const pairEntries = 1 + SCREEN_KEEP + (SCREEN_KEEP * (SCREEN_KEEP - 1)) / 2 + SCREEN_KEEP + SCREEN_KEEP;
+    const pairEntries = 1 + SCREEN_KEEP + 1 + (SCREEN_KEEP * (SCREEN_KEEP - 1)) / 2 + SCREEN_KEEP + SCREEN_KEEP;
     let total = 0;
     for (const count of candidateCounts) {
         // Screen: the current rows, each single, "always", and (at most) the current rows with each single
@@ -487,17 +487,22 @@ export async function runConditionSearch({
             .sort((a, b) => b.diff.mean - a.diff.mean);
         if (ranked.length === 0) continue;
         noteBest(slot, ranked[0].rows, ranked[0].kind, ranked[0].diff, 'screen');
-        const survivors = ranked
-            .filter((c) => c.kind !== 'and-current')
+        // "Always" competes for a place in the pairing stage but never displaces one of the top real singles,
+        // the only rows the AND-pairs are built from
+        const replaceRanked = ranked.filter((c) => c.kind !== 'and-current');
+        const survivors = replaceRanked
+            .filter((c) => c.kind !== 'always')
             .slice(0, SCREEN_KEEP)
             .map((c) => c.rows);
+        const alwaysEntry = replaceRanked.slice(0, SCREEN_KEEP).find((c) => c.kind === 'always');
         const topAndCurrent = ranked.filter((c) => c.kind === 'and-current').slice(0, SCREEN_KEEP);
 
         // 2. Pairing: the survivors again, their AND-pairs and each with the current rows, on new seeds
         progress(`Conditions: combining for ${slot.itemName}`);
         const pairStream = `cpair:${slot.key}`;
         const entries = [
-            ...survivors.map((rows) => ({ rows, kind: rows.length === 0 ? 'always' : 'replace' })),
+            ...survivors.map((rows) => ({ rows, kind: 'replace' })),
+            ...(alwaysEntry ? [{ rows: alwaysEntry.rows, kind: 'always' }] : []),
             ...combineSurvivors(survivors, reference),
         ];
         // The best current-AND-X entries of the screen compete on their own merit
@@ -552,6 +557,9 @@ export async function runConditionSearch({
             continue;
         }
 
+        // Recorded now so a slot the all-together check later rejects reports this fresh-seed figure, not the
+        // pairing stage's selection-biased one
+        noteBest(slot, best.rows, best.kind, diff, 'confirm');
         accepted[slot.key] = best.rows;
         changes.push({
             key: slot.key,
