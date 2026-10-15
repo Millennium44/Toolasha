@@ -4491,6 +4491,51 @@ function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid
 }
 
 /**
+ * What grinding a combat-level candidate costs, over a set of labyrinth fights.
+ *
+ * Level time is `estimateCombatLevelTime` — the Combat Sim's own helper — fed
+ * the XP rates pooled from the baseline sims. The weapon trains its primary
+ * skill with 30% of the XP whatever is worn, so each fight's loadout also gets
+ * the primary skill's level the same hours would earn (`primaryLevelsAlongside`);
+ * a loadout whose primary skill is the one being ground gets nothing extra.
+ * Loadouts can wield different weapons, so this is per fight.
+ *
+ * Speedup is left at 1: the labyrinth passes do not measure how much faster the
+ * levels make the grind, and "at your current rates" is the honest reading.
+ *
+ * @param {Object} candidate - combat_level candidate
+ * @param {Array<{dto: Object}>} fights - The fights being analyzed
+ * @param {Object} gameData - Game data payload
+ * @param {{simulatedTime: number, experienceGained: Object}} pooledXp - Pooled baseline XP
+ * @returns {{levelTimeHours: number, primarySkills: string[], isMainSkill: boolean,
+ *   alongside: Array<Object>, alongByFight: Array<Object|null>}}
+ */
+function planLevelGrind(candidate, fights, gameData, pooledXp) {
+    const levelTimeHours = estimateCombatLevelTime(candidate, pooledXp, gameData, 'player1');
+    const primaryPerFight = fights.map((fight) => getPrimaryTrainingSkill(fight.dto, gameData));
+    const alongByFight = fights.map((fight, i) => {
+        const primary = primaryPerFight[i];
+        if (candidate.skillKey === `${primary}Level`) return null;
+        const along = primaryLevelsAlongside(candidate, primary, pooledXp, gameData, 'player1', fight.dto);
+        return along && along.upgradeLevel > along.currentLevel ? along : null;
+    });
+    const alongside = [];
+    for (const along of alongByFight) {
+        if (!along) continue;
+        const known = alongside.find((a) => a.skillKey === along.skillKey && a.upgradeLevel === along.upgradeLevel);
+        if (known) known.fights++;
+        else alongside.push({ ...along, fights: 1 });
+    }
+    return {
+        levelTimeHours,
+        primarySkills: [...new Set(primaryPerFight)],
+        isMainSkill: primaryPerFight.length > 0 && primaryPerFight.every((p) => candidate.skillKey === `${p}Level`),
+        alongside,
+        alongByFight,
+    };
+}
+
+/**
  * How far the weapon's primary training skill gets while another skill is
  * ground to its target.
  *
@@ -6707,7 +6752,28 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         });
         const attempts = simResult.labyAttemptCount || 1;
         if (!rule) pairedRules.set(fightIndex, pairedTrialRule(simResult));
-        return { winRate: (simResult.encounters || 0) / attempts, trials: attempts };
+        return {
+            winRate: (simResult.encounters || 0) / attempts,
+            trials: attempts,
+            experienceGained: simResult.experienceGained,
+            simulatedTime: simResult.simulatedTime,
+        };
+    };
+
+    // Experience the character earns per skill while fighting, pooled over the
+    // baseline pass of every fight. Not kept on the baseline rows: it exists to
+    // time combat-level candidates, and nothing else reads it.
+    const pooledXp = { simulatedTime: 0, experienceGained: { player1: {} } };
+    const poolBaselineXp = (simResult) => {
+        const time = Number(simResult?.simulatedTime);
+        if (!(time > 0)) return;
+        pooledXp.simulatedTime += time;
+        for (const skills of Object.values(simResult.experienceGained || {})) {
+            for (const [skill, amount] of Object.entries(skills || {})) {
+                pooledXp.experienceGained.player1[skill] =
+                    (pooledXp.experienceGained.player1[skill] || 0) + (Number(amount) || 0);
+            }
+        }
     };
 
     const fightMeta = (fight) => ({
@@ -6723,7 +6789,13 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     onProgress?.({ current: progress.current, total, description: `Baseline: ${fights.length} fights` });
     const baselineFights = await mapConcurrent(fights, async (fight, i) => {
         if (abortSignal?.()) return { ...fightMeta(fight), winRate: 0, trials: 1 };
-        const { winRate, trials } = await simFightWinRate(fight, null, fightSeed(i), i);
+        const { winRate, trials, experienceGained, simulatedTime } = await simFightWinRate(
+            fight,
+            null,
+            fightSeed(i),
+            i
+        );
+        poolBaselineXp({ experienceGained, simulatedTime });
         progress.current++;
         onProgress?.({ current: progress.current, total, description: `Baseline: ${fight.monsterName}` });
         return { ...fightMeta(fight), winRate, trials };
@@ -6741,6 +6813,12 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         // the whole thing a labyrinth's worth of times
         const tokenBuffs = isToken ? buildModifiedCombatBuffs(labyrinthCombatBuffs, candidate) : null;
         let aborted = false;
+        // A combat level is graded by how long the grind takes at the XP rates
+        // the baseline earned, and by where the weapon's own skill lands in the
+        // same hours. That skill rides in the same sim as the level — the
+        // grind ends with both — so the row's win-rate change is for the pair.
+        const levelGrind =
+            candidate.type === 'combat_level' ? planLevelGrind(candidate, fights, gameData, pooledXp) : null;
         const fightResults = await mapConcurrent(fights, async (fight, i) => {
             if (abortSignal?.()) {
                 aborted = true;
@@ -6757,6 +6835,8 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 };
             }
             const boostedDTO = isToken ? null : applyCandidateToDTO(fight.dto, candidate);
+            const along = levelGrind?.alongByFight[i];
+            if (along && boostedDTO) boostedDTO[along.skillKey] = along.upgradeLevel;
             const { winRate, trials } = await simFightWinRate(fight, boostedDTO, fightSeed(i), i, tokenBuffs);
             progress.current++;
             onProgress?.({
@@ -6831,6 +6911,14 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             avgWinDelta,
             cost,
             attemptsSavedPerMillion: perGold,
+            ...(levelGrind
+                ? {
+                      levelTimeHours: levelGrind.levelTimeHours,
+                      primarySkills: levelGrind.primarySkills,
+                      isMainSkill: levelGrind.isMainSkill,
+                      alongside: levelGrind.alongside,
+                  }
+                : {}),
         });
     }
 
