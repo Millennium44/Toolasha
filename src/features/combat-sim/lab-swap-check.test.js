@@ -581,6 +581,34 @@ describe('combat: who a checked swap reaches', () => {
             expect(withUnreached.cost).toBe(price([entry(PLAIN_CAPE, 3)]));
         });
 
+        test('combat: ownership reads every loadout the character has, not only the simulated fights', () => {
+            const chosen = wearing({ [MAIN]: piece(SWORD, 3), [BACK]: piece(PLAIN_CAPE, 3) });
+            const notChosen = wearing({ [MAIN]: piece(MACE, 3), [BACK]: piece(CAPE, 7) });
+            const sameWornElsewhere = wearing({ [MAIN]: piece(MACE, 3), [BACK]: piece(PLAIN_CAPE, 3) });
+            const swap = { hrid: CAPE, level: 7 };
+
+            // Worn in a loadout that was not chosen: owned, not bought
+            const bought = buildCombatSwapCandidate(swap, [chosen], gameData);
+            const owned = buildCombatSwapCandidate(swap, [chosen], gameData, true, {
+                ownershipDtos: [chosen, notChosen],
+            });
+            expect(bought.cost).toBeGreaterThan(0);
+            expect(owned.cost).toBe(0);
+            expect(owned.noPurchase).toBe(true);
+            // The swap still reaches only the chosen fights
+            expect(owned.reach).toBe(1);
+
+            // A piece replaced in the chosen fights but worn in a non-chosen loadout is kept, not sold
+            const resold = buildCombatSwapCandidate(swap, [chosen], gameData);
+            const kept = buildCombatSwapCandidate(swap, [chosen], gameData, true, {
+                ownershipDtos: [chosen, sameWornElsewhere],
+            });
+            expect(resold.removedItems).toEqual([{ hrid: PLAIN_CAPE, enhancementLevel: 3 }]);
+            expect(kept.removedItems).toEqual([]);
+            expect(kept.keptItems).toEqual([{ hrid: PLAIN_CAPE, enhancementLevel: 3 }]);
+            expect(kept.cost).toBeGreaterThan(resold.cost);
+        });
+
         test('skilling: every distinct piece replaced across the reached kits is credited once', () => {
             const TOOL = '/equipment_types/milking_tool';
             ITEM_DETAIL_MAP['/items/tool_a'] = {

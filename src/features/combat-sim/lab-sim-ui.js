@@ -4029,6 +4029,8 @@ class LabSimUI {
                 return;
             }
             let fights;
+            // Every loadout the character has, for owned / still-worn checks; null = just the fights
+            let ownershipDtos = null;
             // Whose spare copies price the swap: the live character's, unless the
             // Configure fight is a party member's (as the single-fight analysis reads it)
             let isSelf = true;
@@ -4087,7 +4089,10 @@ class LabSimUI {
             } else {
                 const useSkipLevels = this.panel.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
                 const chosen = new Set(plan.monsterHrids);
-                fights = this._collectLabyrinthFights(useSkipLevels).filter((fight) => chosen.has(fight.monsterHrid));
+                const everyFight = this._collectLabyrinthFights(useSkipLevels);
+                fights = everyFight.filter((fight) => chosen.has(fight.monsterHrid));
+                // What the character holds is every loadout, not only the chosen fights'
+                ownershipDtos = everyFight.map((fight) => fight.dto);
             }
             if (!fights.length) {
                 this._setStatus(
@@ -4104,7 +4109,7 @@ class LabSimUI {
                     fights.map((fight) => fight.dto),
                     gameData,
                     isSelf,
-                    { allLoadouts: this._swapOptions.all.combat }
+                    { allLoadouts: this._swapOptions.all.combat, ownershipDtos: ownershipDtos || undefined }
                 );
                 if (candidate && candidate.reach > 0) candidates.push(candidate);
                 else unreached.push(swap);
