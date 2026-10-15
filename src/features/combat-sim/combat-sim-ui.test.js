@@ -9875,6 +9875,30 @@ describe('a refine row hands off the refinement material', () => {
         expect(JSON.parse(blessed.getAttribute('data-buy-materials'))[1].count).toBe(3);
     });
 
+    test('a mirror route that buys enhanced base copies bills them at their levels', () => {
+        const row = refineRow();
+        row.costDetail.ladder.refine.mirror = {
+            baseCost: 44_900_000,
+            mirrorPrice: 1_000_000,
+            heldLevels: [],
+            mirrorCount: 2,
+            boughtCopies: [
+                { itemHrid: '/items/sinister_cape', enhancementLevel: 6, count: 1 },
+                { itemHrid: '/items/sinister_cape', enhancementLevel: 0, count: 5 },
+            ],
+        };
+        const market = render(row).querySelector('[data-buy-action="market"]');
+        // A level-0 line carries no level; the +6 does, so its tab opens the +6 listing
+        expect(JSON.parse(market.getAttribute('data-buy-materials'))).toEqual([
+            { itemHrid: SHARD, count: 89 },
+            { itemHrid: '/items/philosophers_mirror', count: 2 },
+            { itemHrid: '/items/sinister_cape', enhancementLevel: 6, count: 1 },
+            { itemHrid: '/items/sinister_cape', count: 5 },
+        ]);
+        expect(market.title).toContain('1 × sinister cape +6');
+        expect(market.getAttribute('data-buy-hrid')).toBe(SHARD);
+    });
+
     test('a refine priced for another player still gets the shard buttons', () => {
         const row = refineRow();
         row.costDetail.ladder.isSelf = false;
