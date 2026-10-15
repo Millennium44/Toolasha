@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.71.1 -->
+
 ### House: upgrade window no longer freezes the tab
 
 - Opening a house room to upgrade it could freeze the tab and climb in memory until it crashed (since 3.65.0): the cost column's own redraw looked like a room switch to its watcher and redrew forever. It now redraws only on a real room change, once per inventory, room or price update.
@@ -5419,16 +5421,14 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.71.1](https://github.com/Millennium44/Toolasha/compare/v3.71.0...v3.71.1) (2026-10-15)
 
-
 ### Bug Fixes
 
-* a native same-room re-render that drops the house cost column restores it ([9c7e636](https://github.com/Millennium44/Toolasha/commit/9c7e63635974ce5d3879be24302315c30f5e5c93))
-* house room modal no longer re-renders itself in an endless loop that crashes the tab ([386f34c](https://github.com/Millennium44/Toolasha/commit/386f34c23289f39f44b8ed578985c8046548f175))
-
+- a native same-room re-render that drops the house cost column restores it ([9c7e636](https://github.com/Millennium44/Toolasha/commit/9c7e63635974ce5d3879be24302315c30f5e5c93))
+- house room modal no longer re-renders itself in an endless loop that crashes the tab ([386f34c](https://github.com/Millennium44/Toolasha/commit/386f34c23289f39f44b8ed578985c8046548f175))
 
 ### Documentation
 
-* changelog for the house upgrade window freeze ([0f387a4](https://github.com/Millennium44/Toolasha/commit/0f387a4078bda386af3a10177342724d8fbeca48))
+- changelog for the house upgrade window freeze ([0f387a4](https://github.com/Millennium44/Toolasha/commit/0f387a4078bda386af3a10177342724d8fbeca48))
 
 ## [3.71.0](https://github.com/Millennium44/Toolasha/compare/v3.70.0...v3.71.0) (2026-10-15)
 
