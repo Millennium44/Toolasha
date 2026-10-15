@@ -2,7 +2,7 @@
  * Refined (star) targets in the upgrade advisor: a held base copy is refined, not re-enhanced from a fresh base.
  */
 
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const state = vi.hoisted(() => ({
     /** `characterItems`, inventory and equipped together, as init_character_data sends them */
@@ -151,7 +151,11 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
-const { calculateUpgradeCost, explainUpgradeCost, setOtherLoadoutClaims } = await import('./upgrade-advisor.js');
+const { calculateUpgradeCost, explainUpgradeCost, buildOtherLoadoutClaims, withLoadoutClaims } =
+    await import('./upgrade-advisor.js');
+
+/** A row as the Lab's all-fights analysis prices it: carrying what its fights' loadouts wear */
+const claimedBy = (row, fights) => withLoadoutClaims(row, buildOtherLoadoutClaims(fights));
 const { cheapestWithMirror } = await import('../../utils/mirror-route.js');
 
 function stack(itemHrid, level, location = '/item_locations/inventory', count = 1) {
@@ -202,18 +206,16 @@ describe('refined target priced from a held base', () => {
 
     test('a base another loadout wears is refined at its resale, not free', () => {
         state.items = [stack(BASE, 5)];
-        setOtherLoadoutClaims([
+        const row = claimedBy(tier(7), [
             { loadoutName: 'A', dto: { equipment: {} } },
             {
                 loadoutName: 'B',
                 dto: { equipment: { '/equipment_types/back': { hrid: BASE, enhancementLevel: 5 } } },
             },
         ]);
-        try {
-            expect(calculateUpgradeCost(tier(7), gameData)).toBe(SHARDS + 2_000_000 + state.baseSell);
-        } finally {
-            setOtherLoadoutClaims(null);
-        }
+        expect(calculateUpgradeCost(row, gameData)).toBe(SHARDS + 2_000_000 + state.baseSell);
+        // The same row without the claims is the old free refine
+        expect(calculateUpgradeCost(tier(7), gameData)).toBe(SHARDS + 2_000_000);
     });
 
     test('no base held: the old fresh-base route is unchanged', () => {
@@ -472,23 +474,21 @@ describe('refined target priced from a held base', () => {
                         dto: { equipment: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: level } } },
                     },
                 ];
-                afterEach(() => setOtherLoadoutClaims(null));
 
                 test('is an input at its resale, not free', () => {
                     state.swordSell = 5_000_000;
                     state.items = [stack(SWORD, 6)];
-                    setOtherLoadoutClaims(fightsWhereBWears(6));
-                    const detail = explainUpgradeCost(sword(7), gameData);
+                    const row = claimedBy(sword(7), fightsWhereBWears(6));
+                    const detail = explainUpgradeCost(row, gameData);
                     expect(detail.source).toBe('mirror');
                     expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000 + 5_000_000, 0);
-                    expect(calculateUpgradeCost(sword(7), gameData)).toBeCloseTo(detail.net, 0);
+                    expect(calculateUpgradeCost(row, gameData)).toBeCloseTo(detail.net, 0);
                 });
 
                 test('a spare beyond the claimed copies stays free', () => {
                     state.swordSell = 5_000_000;
                     state.items = [stack(SWORD, 6, '/item_locations/inventory', 2)];
-                    setOtherLoadoutClaims(fightsWhereBWears(6));
-                    const detail = explainUpgradeCost(sword(7), gameData);
+                    const detail = explainUpgradeCost(claimedBy(sword(7), fightsWhereBWears(6)), gameData);
                     expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
                 });
 
@@ -496,21 +496,47 @@ describe('refined target priced from a held base', () => {
                     // A wears the +6 right now (equipped); B wearing one too needs a second, which the bag lacks
                     state.swordSell = 5_000_000;
                     state.items = [wornSword(6), stack(SWORD, 6)];
-                    setOtherLoadoutClaims([
+                    const row = claimedBy(sword(7), [
                         {
                             loadoutName: 'A',
                             dto: { equipment: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: 6 } } },
                         },
                         fightsWhereBWears(6)[1],
                     ]);
-                    const detail = explainUpgradeCost(sword(7), gameData);
+                    const detail = explainUpgradeCost(row, gameData);
                     expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000 + 5_000_000, 0);
                 });
 
-                test('nothing is claimed outside an analysis', () => {
+                test('nothing is claimed outside an analysis, even while one is in flight', async () => {
+                    state.swordSell = 5_000_000;
                     state.items = [stack(SWORD, 6)];
-                    const detail = explainUpgradeCost(sword(7), gameData);
-                    expect(detail.buys[0].price).toBeCloseTo(best[5] + 1_000_000, 0);
+                    const inFlight = claimedBy(sword(7), fightsWhereBWears(6));
+                    const price = (row) => explainUpgradeCost(row, gameData).buys[0].price;
+                    expect(price(inFlight)).toBeCloseTo(best[5] + 1_000_000 + 5_000_000, 0);
+                    await Promise.resolve();
+                    // A plain row priced between the analysis's awaits carries no claims
+                    expect(price(sword(7))).toBeCloseTo(best[5] + 1_000_000, 0);
+                    expect(price(inFlight)).toBeCloseTo(best[5] + 1_000_000 + 5_000_000, 0);
+                });
+
+                test('two analyses with different loadouts, interleaved, price only their own claims', async () => {
+                    state.swordSell = 5_000_000;
+                    state.items = [stack(SWORD, 6), stack(SWORD, 5)];
+                    const a = claimedBy(sword(7), fightsWhereBWears(6));
+                    const b = claimedBy(sword(7), fightsWhereBWears(4));
+                    const price = (row) => explainUpgradeCost(row, gameData).buys[0].price;
+                    // Start A, start B, let A finish, then B: neither run's claims reach the other's rows
+                    const aFirst = price(a);
+                    await Promise.resolve();
+                    const bFirst = price(b);
+                    await Promise.resolve();
+                    const aLast = price(a);
+                    const bLast = price(b);
+                    expect(aFirst).toBeCloseTo(aLast, 0);
+                    expect(bFirst).toBeCloseTo(bLast, 0);
+                    // A claims the bag +6, B wears something else: only A pays its resale
+                    expect(aFirst).not.toBeCloseTo(bFirst, 0);
+                    expect(price(sword(7))).toBe(1_000_000);
                 });
             });
 
