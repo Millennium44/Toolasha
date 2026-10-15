@@ -10797,9 +10797,11 @@ class CombatSimUI {
             });
             this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext);
             if (result && !result.stopped && !this._upgradeAborted) await saveTriggerResult(runSignature, result);
+            // Condition wins count too: a loadout with no numeric thresholds can still gain a new condition
+            const foundCount = (result?.changes?.length || 0) + (result?.conditions?.changes?.length || 0);
             this._setStatus(
-                result?.changes?.length
-                    ? `Trigger tuning ${this._upgradeAborted ? 'stopped' : 'complete'}: ${result.changes.length} change(s) found.`
+                foundCount
+                    ? `Trigger tuning ${this._upgradeAborted ? 'stopped' : 'complete'}: ${foundCount} change(s) found.`
                     : this._upgradeAborted
                       ? 'Trigger tuning stopped.'
                       : 'Trigger tuning complete: nothing clearly better found.'

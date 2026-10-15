@@ -196,6 +196,9 @@ describe('Combat Sim condition search', () => {
         // (it ran shorter than the baseline) and call the difference a win
         expect(result.conditions.changes).toHaveLength(0);
         for (const best of result.conditions.bestMeasured) expect(best.deltaScore).toBeLessThan(0.5);
+        // …and the results say profit was left out, naming the item, so the footer does not claim it averaged in
+        expect(result.profitLeftOut).toBe(true);
+        expect(result.unpriced).toContain('/items/mystery');
     });
 
     test('enemy-HP candidates use the zone HP at each spawn tier plus the selected tier', async () => {

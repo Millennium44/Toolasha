@@ -1,7 +1,0 @@
-fix: Combat Sim condition search scores each comparison under one profit rule and reads tier-aware enemy HP
-
-The condition search scored a candidate and its reference one sample at a time, so a candidate with
-an unpriced drop dropped the profit term while its fully priced reference kept it, and the gap could
-read as a win. The search now takes a scoreSets hook that sees both sides of a comparison (the Lab
-default is unchanged), and the Combat Sim decides profit completeness across the pair. Enemy HP for
-HP-threshold candidates now comes from zoneEnemyHp, which adds each spawn tier to the selected tier.

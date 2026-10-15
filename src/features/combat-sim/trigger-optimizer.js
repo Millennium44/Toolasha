@@ -508,8 +508,18 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
             // One rule per comparison: profit counts only when the baseline and BOTH sides valued completely,
             // as the threshold search's scoreSets does, so a candidate is never judged on a different objective
             // from its reference
+            // A comparison scored without profit is remembered, so the results warn that profit was left out
+            const conditionUnpriced = new Set();
+            let conditionProfitLeftOut = false;
+            let conditionValuationFailed = false;
             const scoreSets = (sets) => {
-                const withProfit = baseComplete && profitValuation(sets, scopeHrids).complete;
+                const valuation = profitValuation(sets, scopeHrids);
+                const withProfit = baseComplete && valuation.complete;
+                if (!valuation.complete) {
+                    conditionProfitLeftOut = true;
+                    for (const item of valuation.unpriced) conditionUnpriced.add(item);
+                    if (valuation.failed) conditionValuationFailed = true;
+                }
                 return sets.map((set) =>
                     set.map((s) => objectiveScore(scopeMetrics(s, scopeHrids), baseScope, objective, { withProfit }))
                 );
@@ -544,6 +554,11 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
             // The samples are only for scoring; the result keeps the figures
             const { finalSamples: _samples, ...rest } = search;
             conditions = rest;
+            if (conditionProfitLeftOut && objective !== 'profit') {
+                out.profitLeftOut = true;
+                out.unpriced = [...new Set([...(out.unpriced || []), ...conditionUnpriced])].sort();
+                if (conditionValuationFailed) out.valuationFailed = true;
+            }
         }
     }
     return {
