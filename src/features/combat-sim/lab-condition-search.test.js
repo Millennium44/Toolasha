@@ -357,13 +357,97 @@ describe('the staged search', () => {
         expect(result.combined.deltaScore).toBeGreaterThan(0.5);
         // The screen ran cheap, every candidate plus "always" against the current rows
         const screen = calls.filter((c) => c.stage === 'screen');
-        expect(screen).toHaveLength(1 + candidates.length + 1);
+        // ... plus the current rows ANDed with each candidate
+        expect(screen).toHaveLength(1 + candidates.length + 1 + candidates.length);
         expect(screen.every((c) => c.count === SCREEN_SEEDS)).toBe(true);
         // Selection and confirmation never share seeds
         const streamsOf = (stage) => new Set(calls.filter((c) => c.stage === stage).map((c) => c.stream));
         for (const s of streamsOf('confirm')) {
             expect(streamsOf('screen').has(s) || streamsOf('pair').has(s)).toBe(false);
         }
+    });
+
+    test('finds current AND X when X alone, replacing the current rows, is worse', async () => {
+        // The Toughness-on-a-Mimic shape: "Frenzy active" alone is worse than the default, the default
+        // plus it is clearly better
+        const gainOf = (rows) => {
+            const f = has2(rows, frenzyOn);
+            const keepsCurrent = has2(rows, current[0]);
+            if (f && keepsCurrent && rows.length === 2) return 0.5;
+            return f ? -0.2 : 0;
+        };
+        const { measure } = stubMeasure(gainOf);
+        const result = await runConditionSearch({
+            slots: [slot],
+            candidatesFor: () => candidates,
+            measure,
+            precision: PRECISIONS.standard,
+            minGain: 0.02,
+        });
+        expect(result.changes).toHaveLength(1);
+        expect(result.changes[0].kind).toBe('and-current');
+        expect(result.changes[0].toRows.map(rowSignature).sort()).toEqual(
+            [...current, frenzyOn].map(rowSignature).sort()
+        );
+    });
+
+    test('pairs the top few even when every one alone is worse than the current rows', async () => {
+        // Each half alone loses 0.1; the two together save 0.6
+        const gainOf = (rows) => {
+            const f = has2(rows, frenzyOn);
+            const t = has2(rows, toughOff);
+            if (f && t && rows.length === 2) return 0.6;
+            return (f ? -0.1 : 0) + (t ? -0.1 : 0) + (has2(rows, berserkOn) ? -0.1 : 0);
+        };
+        const { measure } = stubMeasure(gainOf);
+        const result = await runConditionSearch({
+            slots: [slot],
+            candidatesFor: () => candidates,
+            measure,
+            precision: PRECISIONS.standard,
+            minGain: 0.02,
+        });
+        expect(result.reliable).toBe(true);
+        expect(result.changes).toHaveLength(1);
+        expect(result.changes[0].kind).toBe('pair');
+        expect(result.changes[0].toRows.map(rowSignature).sort()).toEqual(
+            [frenzyOn, toughOff].map(rowSignature).sort()
+        );
+    });
+
+    test('keeps the best measured candidate of a slot that changed nothing', async () => {
+        const { measure } = stubMeasure((rows) => (has2(rows, berserkOn) && rows.length === 1 ? 0.01 : 0));
+        const result = await runConditionSearch({
+            slots: [slot],
+            candidatesFor: () => candidates,
+            measure,
+            precision: PRECISIONS.standard,
+            minGain: 0.02,
+        });
+        expect(result.changes).toEqual([]);
+        expect(result.bestMeasured).toHaveLength(1);
+        const best = result.bestMeasured[0];
+        expect(best.key).toBe('drinks|0');
+        expect(best.fromRows).toEqual(current);
+        expect(Number.isFinite(best.deltaScore)).toBe(true);
+        expect(Number.isFinite(best.se)).toBe(true);
+        expect(['screen', 'pair', 'confirm']).toContain(best.stage);
+    });
+
+    test('a slot whose every candidate is worse still reports its best, not above zero by much', async () => {
+        const { measure } = stubMeasure((rows) =>
+            rows.length === 1 && rowSignature(rows[0]) === rowSignature(current[0]) ? 0 : -0.3
+        );
+        const result = await runConditionSearch({
+            slots: [slot],
+            candidatesFor: () => candidates,
+            measure,
+            precision: PRECISIONS.standard,
+            minGain: 0.02,
+        });
+        expect(result.changes).toEqual([]);
+        expect(result.bestMeasured).toHaveLength(1);
+        expect(result.bestMeasured[0].deltaScore).toBeLessThanOrEqual(0.05);
     });
 
     test('rejects noise: nothing changes when no condition does anything', async () => {
@@ -442,8 +526,9 @@ describe('the staged search', () => {
 
     test('the estimate covers the screen, the pairing, the confirmation and the final check', () => {
         const perFight = estimateConditionSimsPerFight([30, 10], PRECISIONS.standard);
-        // (32 + 32*... ) screen + 10 pair entries × 4 seeds + 2 × 8 confirm, per slot; + 2 × 8 final
-        expect(perFight).toBe(32 * 2 + 40 + 16 + (12 * 2 + 40 + 16) + 16);
+        // Per slot: (reference + singles + always + current-AND-single) × 2 seeds, 13 pairing entries × 4 seeds,
+        // 2 × 8 confirm; plus 2 × 8 for the final check
+        expect(perFight).toBe(62 * 2 + 52 + 16 + (22 * 2 + 52 + 16) + 16);
         expect(estimateConditionSimsPerFight([], PRECISIONS.standard)).toBe(0);
     });
 });
