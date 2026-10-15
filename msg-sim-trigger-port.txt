@@ -1,9 +1,0 @@
-feat: Combat Sim trigger tuning can search new trigger conditions
-
-An opt-in "Search new conditions (slow)" box in the Triggers chip, off by default and remembered
-with the chip choices. After the threshold tuner it tries single conditions and AND-pairs on the
-selected player abilities and food/drinks, built from the zone monsters, the player kit and HP/MP
-readings, scored on the chosen objective with paired seeds, confirmed on fresh seeds and checked
-together. It has a sim cap, a cost estimate beside the box, and its results (game wording, was:,
-score points, best found when none pass) are show-only. The shared condition search takes an
-optional score function; the Lab Sim keeps its attempts score.
