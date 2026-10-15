@@ -459,6 +459,8 @@ export class LabComparisonStore {
          * @type {{runs: string, baseline: string}|null}
          */
         this._keys = null;
+        /** @type {Object[]|null} Runs recorded while a `reload()` read is out */
+        this._addedDuringReload = null;
     }
 
     /**
@@ -498,7 +500,27 @@ export class LabComparisonStore {
      */
     async reload() {
         this._loaded = false;
-        return this.load();
+        // A run recorded while the read is out was pushed onto the list the read then replaces, and its
+        // own write (queued, so the read cannot see it) would land later with the pre-pull list around it.
+        // It is laid back on top of what was read, and the result written, which supersedes that write
+        const added = [];
+        this._addedDuringReload = added;
+        try {
+            await this.load();
+        } finally {
+            if (this._addedDuringReload === added) this._addedDuringReload = null;
+        }
+        const missing = added.filter((entry) => !this.runs.some((run) => run.id === entry.id));
+        if (missing.length > 0) {
+            this.runs.push(...missing);
+            while (this.runs.length > MAX_LAB_COMPARISON_RUNS) {
+                const evicted = this.runs.shift();
+                if (evicted.id === this.baselineId) this.baselineId = null;
+            }
+            if (!this.baselineId && this.runs.length > 1) this.baselineId = this.runs[0].id;
+            await this._persist();
+        }
+        return this.runs;
     }
 
     /**
@@ -509,6 +531,7 @@ export class LabComparisonStore {
     async add(entry) {
         if (!entry) return this.runs;
         this.runs.push(entry);
+        this._addedDuringReload?.push(entry);
         while (this.runs.length > MAX_LAB_COMPARISON_RUNS) {
             const evicted = this.runs.shift();
             if (evicted.id === this.baselineId) this.baselineId = null;

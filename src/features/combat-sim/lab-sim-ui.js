@@ -2205,8 +2205,8 @@ class LabSimUI {
     _writeScopedIfChanged(base, value) {
         const scopedKey = characterKey(base);
         if (!this._storedValues.differs(scopedKey, value)) return Promise.resolve();
-        this._storedValues.remember(scopedKey, value);
-        return writeScoped(base, value, 'settings');
+        // Noted as stored only while the write holds: one that fails is tried again by the next save
+        return this._storedValues.track(scopedKey, value, writeScoped(base, value, 'settings'));
     }
 
     /**
@@ -2267,7 +2267,10 @@ class LabSimUI {
                 );
             }
             // Draws only where no table is on screen; a table already shown is display, never saved back
-            if (results.has('upgradeResults')) work.push(this._restoreUpgradeResults());
+            // and never while a run is going or once one has run here: the remembered set would land in its place
+            if (results.has('upgradeResults') && !this._upgradeRunning && !this._upgradeRunStarted) {
+                work.push(this._restoreUpgradeResults());
+            }
             await Promise.all(work);
         } catch (error) {
             console.error('[LabSimUI] Adopting pulled settings failed:', error);
@@ -2383,35 +2386,50 @@ class LabSimUI {
 
         if (!this.panel) return;
         const wanted = new Set(selection.dimensions);
+        const appliedDimensions = [];
         this.panel.querySelectorAll('[data-lab-upgrade-dimension]').forEach((box) => {
-            box.checked = wanted.has(box.getAttribute('data-lab-upgrade-dimension'));
+            const dimension = box.getAttribute('data-lab-upgrade-dimension');
+            box.checked = wanted.has(dimension);
+            if (box.checked) appliedDimensions.push(dimension);
         });
         const scopeSelect = this.panel.querySelector('#mwi-labsim-upgrade-scope');
         if (scopeSelect) scopeSelect.value = selection.scopeMode;
         // Nothing saved falls to the rule rather than to a fixed option: a Level
         // box left on its default means Sim max, a Level box that was typed into
         // means the number that was typed
+        const levelSource = sanitizeLabLevelSource(savedLevelSource, this._configureLevel());
         const levelSourceSelect = this.panel.querySelector('#mwi-labsim-level-source');
-        if (levelSourceSelect) {
-            levelSourceSelect.value = sanitizeLabLevelSource(savedLevelSource, this._configureLevel());
-        }
+        if (levelSourceSelect) levelSourceSelect.value = levelSource;
         const signatureBox = this.panel.querySelector('#mwi-labsim-swap-aura-only');
         if (signatureBox) signatureBox.checked = savedAuraOnly;
         const shrineCapBox = this.panel.querySelector('#mwi-labsim-shrine-cap-guild');
         if (shrineCapBox) shrineCapBox.checked = savedShrineCapGuild;
         const roomLevelsBox = this.panel.querySelector('#mwi-labsim-upgrade-room-levels');
         if (roomLevelsBox) roomLevelsBox.checked = Boolean(savedRoomLevels);
+        const floor = Math.max(0, Math.floor(Number(savedTargetFloor) || 0));
         const targetFloorInput = this.panel.querySelector('#mwi-labsim-upgrade-target-floor');
-        if (targetFloorInput) {
-            const floor = Math.max(0, Math.floor(Number(savedTargetFloor) || 0));
-            targetFloorInput.value = floor ? String(floor) : '';
-        }
+        if (targetFloorInput) targetFloorInput.value = floor ? String(floor) : '';
         this._refreshRoomLevelControls();
         this._populateUpgradeTargets(selection.monsters);
         this._onUpgradeSelectionChanged();
-        // What the controls now hold is what storage reads as; a failed read noted nothing, so the next save
-        // writes the whole group as it always did
-        if (readOk) this._rememberRestored(this._upgradeSelectionValues(), keys);
+        // What this restore read and put on the controls — the stored values, or the defaults a missing or
+        // retired value reads as — is noted as what each key stores. The targets are the ones the grid just
+        // drawn from the read selection offers. A failed read noted nothing, so the next save writes the
+        // whole group as it always did
+        if (readOk) {
+            this._rememberRestored(
+                {
+                    [UPGRADE_DIMENSIONS_KEY]: appliedDimensions,
+                    [UPGRADE_SCOPE_KEY]: { mode: selection.scopeMode, monsters: this._getChosenTargets() },
+                    [UPGRADE_LEVEL_SOURCE_KEY]: levelSource,
+                    [UPGRADE_SWAP_AURA_KEY]: savedAuraOnly,
+                    [SHRINE_CAP_GUILD_KEY]: savedShrineCapGuild,
+                    [UPGRADE_ROOM_LEVELS_KEY]: Boolean(savedRoomLevels),
+                    [UPGRADE_TARGET_FLOOR_KEY]: floor,
+                },
+                keys
+            );
+        }
     }
 
     /**
@@ -3806,6 +3824,8 @@ class LabSimUI {
         // the first run's results.
         if (this._upgradeRunning || this._skillingRunning || this._runStarting || this.isRunning) return;
         this._upgradeRunning = true;
+        // A remembered result a sync pull brings is no longer drawn over this panel's own runs
+        this._upgradeRunStarted = true;
         const startToken = ++this._runStartToken;
 
         // Captured before the first await — see `_stillSameCharacter`
@@ -4596,8 +4616,19 @@ class LabSimUI {
         const floorBox = this.panel.querySelector('#mwi-labsim-skilling-target-floor');
         const floor = Math.max(0, Math.floor(Number(targetFloor) || 0));
         if (floorBox) floorBox.value = floor ? String(floor) : '';
-        // What the inputs now hold is what storage reads as (see `_rememberRestored`)
-        this._rememberRestored(this._skillingGoalValues(), keys);
+        // What this restore read and applied is noted as stored (see `_rememberRestored`). A missing or
+        // out-of-range clear % leaves the box on what it shows, which is then what the key reads as
+        const clearApplied = clear >= 1 && clear <= 100;
+        this._rememberRestored(
+            {
+                [SKILLING_ROOM_LEVELS_KEY]: Boolean(roomLevelsOn),
+                [SKILLING_TARGET_CLEAR_KEY]: clearApplied
+                    ? clear
+                    : this._skillingGoalValues()[SKILLING_TARGET_CLEAR_KEY],
+                [SKILLING_TARGET_FLOOR_KEY]: floor,
+            },
+            keys
+        );
     }
 
     /**
@@ -8002,6 +8033,7 @@ class LabSimUI {
         this._skillingGoalKey = null;
         // The next build reads every grouped key back and notes it again
         this._storedValues.clear();
+        this._upgradeRunStarted = false;
         // Queued swaps belong to the character being torn down; the arriving one
         // reads its own back from storage
         this._checkedSwaps = { combat: [], skilling: [] };

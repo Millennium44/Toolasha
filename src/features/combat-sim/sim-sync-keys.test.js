@@ -158,6 +158,45 @@ describe('a pull of the simulator keys', () => {
         expect(comparison.runs.map((run) => run.id)).toEqual(['a', 'b']);
         expect(comparison.baselineId).toBe('b');
     });
+
+    test('a run recorded while a reload reads is kept, on screen and in the last write', async () => {
+        const run = (id, timestamp) => ({ id, timestamp, settings: {}, metrics: { winRate: 0.5 } });
+        db.get('settings').set('labSimComparisonRuns_123', [run('old', 1)]);
+        const comparison = new LabComparisonStore();
+        await comparison.load();
+
+        // The pull has landed; the reload's read is held open while a run is recorded
+        db.get('settings').set('labSimComparisonRuns_123', [run('old', 1), run('pulled', 2)]);
+        const writes = [];
+        const realGet = storageMock.get;
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        storageMock.get = async (...args) => {
+            await gate;
+            return realGet(...args);
+        };
+        // A queued write: the read cannot see it, and it lands in order after everything before it
+        storageMock.set = async (key, value) => {
+            writes.push([key, value]);
+            return true;
+        };
+        try {
+            const reloading = comparison.reload();
+            await comparison.add(run('mine', 3));
+            release();
+            await reloading;
+        } finally {
+            storageMock.get = realGet;
+            delete storageMock.set;
+        }
+
+        const ids = (list) => list.map((entry) => entry.id);
+        expect(ids(comparison.runs)).toEqual(['old', 'pulled', 'mine']);
+        const lastRuns = writes.filter(([key]) => key === 'labSimComparisonRuns_123').at(-1)[1];
+        expect(ids(lastRuns)).toEqual(['old', 'pulled', 'mine']);
+    });
 });
 
 describe('the folds', () => {

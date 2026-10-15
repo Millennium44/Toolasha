@@ -210,6 +210,36 @@ export class StoredValueMemo {
         return this._seen.get(key) !== stableStringify(value ?? null);
     }
 
+    /**
+     * Take back a note made for a write that then failed, so the next save tries it again. A note
+     * made since, for another value, is left alone.
+     * @param {string} key - Full storage key
+     * @param {*} value - The value whose write failed
+     */
+    forget(key, value) {
+        if (this._seen.get(key) === stableStringify(value ?? null)) this._seen.delete(key);
+    }
+
+    /**
+     * Note a value as stored as its write starts, and take the note back if the write fails.
+     *
+     * Noted before the write lands, not after: a debounced write resolves only when it fires,
+     * seconds later, and a save in between would otherwise write the same value again.
+     * @param {string} key - Full storage key
+     * @param {*} value - The value being written
+     * @param {Promise<boolean|*>} write - The write; `false` or a rejection is a failure
+     * @returns {Promise<void>} Settles with the write; rethrows its error
+     */
+    async track(key, value, write) {
+        this.remember(key, value);
+        let ok = false;
+        try {
+            ok = (await write) !== false;
+        } finally {
+            if (!ok) this.forget(key, value);
+        }
+    }
+
     /** Forget everything, e.g. on a character switch */
     clear() {
         this._seen.clear();

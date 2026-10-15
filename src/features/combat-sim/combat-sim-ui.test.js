@@ -10443,3 +10443,115 @@ describe('the Triggers option', () => {
         delete navigator.clipboard;
     });
 });
+
+describe('a sync pull of the panel’s remembered keys', () => {
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const pulledResults = { combatExport: ['combatSimUpgradeResults_char1'] };
+
+    afterEach(() => {
+        ui._upgradeRunning = false;
+        ui._upgradeRunStarted = false;
+        vi.restoreAllMocks();
+        ui.destroy();
+    });
+
+    test('does not draw remembered upgrade results into a running analysis', async () => {
+        ui.buildPanel();
+        await settle();
+        const restore = vi.spyOn(ui, '_restoreUpgradeResults');
+        ui._upgradeRunning = true;
+
+        await ui._adoptPulledSettings(pulledResults);
+
+        expect(restore).not.toHaveBeenCalled();
+    });
+
+    test('does not draw remembered upgrade results once a run has started on this panel', async () => {
+        ui.buildPanel();
+        await settle();
+        const restore = vi.spyOn(ui, '_restoreUpgradeResults');
+        ui._upgradeRunStarted = true;
+
+        await ui._adoptPulledSettings(pulledResults);
+
+        expect(restore).not.toHaveBeenCalled();
+    });
+
+    test('offers a pulled last trigger result where the box shows one', async () => {
+        ui.buildPanel();
+        await settle();
+        const refresh = vi.spyOn(ui, '_refreshCachedTriggerResult').mockResolvedValue(undefined);
+
+        await ui._adoptPulledSettings({ settings: ['combatSimTriggerLastResult_char1'] });
+
+        expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    test('a Bestiary plan key whose write failed is written again by the next save', async () => {
+        ui.buildPanel();
+        await settle();
+        const storage = (await import('../../core/storage.js')).default;
+        const real = storage.set;
+        const set = vi
+            .spyOn(storage, 'set')
+            .mockImplementation(async (key, value, store) =>
+                key === 'combatSimBestiaryPlanHours' && value === 7 ? false : real(key, value, store)
+            );
+        ui._bestiaryPlanHours = 7;
+        await ui._persistBestiaryPlanPrefs();
+        set.mockImplementation(real);
+        await ui._persistBestiaryPlanPrefs();
+
+        const hoursWrites = set.mock.calls.filter(([key]) => key === 'combatSimBestiaryPlanHours');
+        expect(hoursWrites).toHaveLength(2);
+        expect(mocks.store.get('settings:combatSimBestiaryPlanHours')).toBe(7);
+    });
+
+    test('the Bestiary planner is not redrawn under a focused input, but once focus leaves it', () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const box = document.createElement('div');
+        box.id = 'mwi-csim-bestiary-plan';
+        const input = document.createElement('input');
+        box.appendChild(input);
+        host.appendChild(box);
+        const panel = ui.panel;
+        ui.panel = host;
+        const render = vi.spyOn(ui, '_renderBestiaryPlanner').mockImplementation(() => {});
+        try {
+            input.focus();
+            ui._redrawBestiaryPlannerWhenIdle();
+            expect(render).not.toHaveBeenCalled();
+
+            input.blur();
+            expect(render).toHaveBeenCalledTimes(1);
+            expect(render).toHaveBeenCalledWith(host);
+        } finally {
+            ui.panel = panel;
+            host.remove();
+        }
+    });
+
+    test('a trigger choice save keeps a legacy bare value the panel has no control for', async () => {
+        ui.buildPanel();
+        await settle();
+        // An account that still holds the pre-scoping record, read for the first time by this save, on the
+        // character the player chose to inherit it
+        const { setAdoptionTargetId } = await import('../../utils/adoption-consent.js');
+        await setAdoptionTargetId('char1');
+        mocks.store.delete('settings:combatSimTriggerChoices_char1');
+        mocks.store.set('settings:combatSimTriggerChoices', { objective: 'xp', legacyOnly: 'kept' });
+        ui.panel.querySelector('#mwi-csim-trigger-objective')?.remove();
+
+        const scope = ui.panel.querySelector('#mwi-csim-trigger-scope');
+        scope.value = 'party';
+        scope.dispatchEvent(new Event('change', { bubbles: true }));
+        await vi.waitFor(() => expect(mocks.store.get('settings:combatSimTriggerChoices_char1')?.scope).toBe('party'));
+
+        expect(mocks.store.get('settings:combatSimTriggerChoices_char1')).toMatchObject({
+            scope: 'party',
+            objective: 'xp',
+            legacyOnly: 'kept',
+        });
+    });
+});
