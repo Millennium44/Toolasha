@@ -7975,6 +7975,19 @@ function freeSlotForAbility(abilities, special) {
  * @returns {boolean}
  */
 export function checkedAbilityAppliesToDTO(candidate, dto, gameData = null) {
+    if (candidate?.abilityOrder) {
+        if (!dto) return false;
+        // A re-ordering is about loadouts casting exactly this set of ordinary abilities, in another order
+        const current = (dto.abilities || [])
+            .slice(1)
+            .filter(Boolean)
+            .map((ability) => ability.hrid);
+        return (
+            current.length === candidate.order.length &&
+            [...current].sort().join('|') === [...candidate.order].sort().join('|') &&
+            current.join('|') !== candidate.order.join('|')
+        );
+    }
     if (!candidate?.upgradeHrid || !dto) return false;
     const abilities = dto.abilities || [];
     const existing = abilities.find((ability) => ability?.hrid === candidate.upgradeHrid);
@@ -8000,6 +8013,17 @@ export function checkedAbilityAppliesToDTO(candidate, dto, gameData = null) {
 export function applyCheckedAbilityToDTO(dto, candidate) {
     if (!Array.isArray(dto.abilities)) dto.abilities = [];
     const abilities = dto.abilities;
+    if (candidate.abilityOrder) {
+        // The same entries (levels and triggers move with their ability) in the new order
+        const byHrid = new Map(
+            abilities
+                .slice(1)
+                .filter(Boolean)
+                .map((ability) => [ability.hrid, ability])
+        );
+        for (let i = 1; i < abilities.length; i++) abilities[i] = byHrid.get(candidate.order[i - 1]) || null;
+        return dto;
+    }
     if (candidate.levelUp) {
         const index = abilities.findIndex((ability) => ability?.hrid === candidate.upgradeHrid);
         if (index >= 0) abilities[index] = { ...abilities[index], level: candidate.upgradeLevel };

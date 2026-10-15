@@ -101,6 +101,7 @@ vi.mock('../../utils/ability-cost-calculator.js', () => ({
 }));
 
 const advisor = await import('./upgrade-advisor.js');
+const orderApi = await import('./lab-swap-check.js');
 const { explainAbilityLevelUpCost } = await import('../../utils/ability-cost-calculator.js');
 const {
     buildCombatAbilityCandidates,
@@ -399,5 +400,90 @@ describe('the whole run: best replacement per loadout', () => {
         expect(row.fights[0].skipReason).toBe('already equipped at 10');
         expect(row.fights[1].applied).toBe(true);
         expect(row.fights[1].replaced).toBe('Fierce Aura');
+    });
+});
+
+describe('the ability order check', () => {
+    const { buildCombatAbilityCheck, consistentAbilityOrders, ABILITY_ORDER_HRID } = orderApi;
+    const names = (dto) => dto.abilities.map((entry) => entry && ABILITY_DETAIL_MAP[entry.hrid].name);
+
+    test('"order" resolves to the order check, whose chip reads "Ability order"', () => {
+        expect(resolveSwapHrid(gameData, 'order')).toBe(ABILITY_ORDER_HRID);
+        expect(describeCheckedSwap({ hrid: ABILITY_ORDER_HRID, level: 0 }, gameData)).toBe('Ability order');
+        expect(clampLevelFor(ABILITY_ORDER_HRID, 5)).toBe(0);
+        expect(sanitizeSwapQueues({ combat: [{ hrid: ABILITY_ORDER_HRID, level: 0 }] }).combat).toEqual([
+            { hrid: ABILITY_ORDER_HRID, level: 0 },
+        ]);
+    });
+
+    test('three ordinary abilities have 5 other orders; always-ready ones stay last', () => {
+        expect(consistentAbilityOrders([SMACK, POKE, TOUGHNESS], [])).toHaveLength(6);
+        const orders = consistentAbilityOrders([SMACK, FIREBALL, POKE, TOUGHNESS], [FIREBALL]);
+        expect(orders).toHaveLength(6);
+        expect(orders.every((order) => order[3] === FIREBALL)).toBe(true);
+    });
+
+    test('four ordinary abilities give 23 alternatives, with the special slot untouched', () => {
+        const dto = loadout([
+            ability(FIERCE_AURA, 10),
+            ability(SMACK, 12),
+            ability(POKE, 14),
+            ability(TOUGHNESS, 16),
+            ability(QUICK_STRIKE, 18),
+        ]);
+        const built = buildCombatAbilityCheck({ hrid: ABILITY_ORDER_HRID, level: 0 }, [dto], gameData);
+        expect(built.candidates).toHaveLength(23);
+        for (const option of built.candidates) {
+            expect(advisor.candidateAppliesToDTO(option, dto, gameData)).toBe(true);
+            expect(advisor.applyCandidateToDTO(dto, option).abilities[0].hrid).toBe(FIERCE_AURA);
+        }
+        // a loadout with a different set is not reached by them
+        const other = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(POKE, 14), null, null]);
+        expect(advisor.candidateAppliesToDTO(built.candidates[0], other, gameData)).toBe(false);
+    });
+
+    test('finds the better order with a stubbed sim and reports cost 0', async () => {
+        // Poke first is what wins
+        state.sim = async ({ playerDTOs }) => {
+            const first = playerDTOs[0].abilities[1].hrid;
+            const win = first === POKE ? 0.7 : 0.5;
+            return { encounters: win * 1000, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 };
+        };
+        const dto = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(POKE, 14), ability(FIREBALL, 16)]);
+        const built = buildCombatAbilityCheck({ hrid: ABILITY_ORDER_HRID, level: 0 }, [dto], gameData);
+        expect(built.candidates).toHaveLength(1);
+        const raw = await advisor.runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    {
+                        monsterHrid: '/monsters/mimic',
+                        monsterName: 'mimic',
+                        roomLevel: 50,
+                        dto,
+                        loadoutName: 'mimic loadout',
+                    },
+                ],
+                crates: [],
+                hours: 1,
+                precision: null,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: built.candidates,
+            },
+            () => {}
+        );
+        const row = mergeCheckedAbilityRows(raw, gameData).results[0];
+        expect(row.cost).toBe(0);
+        expect(row.candidate.description).toBe('Ability order (Order: Poke → Smack → Fireball)');
+        expect(row.fights[0].note).toBe('Order: Poke → Smack → Fireball');
+        expect(row.attemptsDelta).toBeLessThan(0);
+        expect(row.appliedFights).toBe(1);
+        expect(names(advisor.applyCandidateToDTO(dto, built.candidates[0]))).toEqual([
+            'Fierce Aura',
+            'Poke',
+            'Smack',
+            'Fireball',
+        ]);
     });
 });
