@@ -7,8 +7,11 @@
  * not a one-off purchase, so it is deliberately kept out of the purchase
  * ranking, whose cost, repay-time and budget columns all assume an outlay made
  * once. Instead its cost is the tokens' opportunity cost — what 30 tokens would
- * have bought at the shop's best conversion, the figure the token tooltip's
- * "Labyrinth Shop Value" table shows — set against the Profit/hr the scroll adds.
+ * have bought at the shop's best conversion, valued after sale tax at a patient
+ * tick (`calculateLabyrinthTokenValueDetail`, the figure the "Labyrinth Shop
+ * Value" table is built from) — set against the Profit/hr the scroll adds. The
+ * token tooltip's headline figure is the raw ask, so it reads higher than this
+ * by about the sale tax.
  */
 
 import dataManager from '../../core/data-manager.js';
