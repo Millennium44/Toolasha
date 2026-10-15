@@ -89,6 +89,21 @@ describe('the pull report', () => {
         expect(text).toContain('Reload advice shown: no');
     });
 
+    test('lists a failed fold per key, marked MERGE FAILED', () => {
+        const summary = buildPullSummary({
+            mergeFailed: [{ store: 'settings', key: 'reportLive_30404', label: 'live records' }],
+            writtenWholeKeys: [{ store: 'settings', key: 'reportLive_30404' }],
+            expected: { settings: 1 },
+            latched: 0,
+        });
+        const text = buildPullReport(summary, {});
+        expect(text).toContain('Merge failed: settings/live records');
+        const line = text.split('\n').find((l) => l.includes('settings / reportLive_30404'));
+        expect(line).toContain('MERGE FAILED');
+        expect(line).toContain('base=reportLive');
+        expect(line).toContain('registered="live records" live-safe');
+    });
+
     test('never carries a stored value', () => {
         const text = buildPullReport(fixtureSummary(), { host: 'www.milkywayidle.com' });
         expect(text).not.toContain(SENTINEL);
