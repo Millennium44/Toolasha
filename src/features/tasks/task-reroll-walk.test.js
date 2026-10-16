@@ -540,7 +540,7 @@ describe('planning a walk down the board', () => {
 
         await walk.start();
 
-        expect(chipText()).toBe('✓ Done — 2 kept, 0 rerolled, 0 trashed');
+        expect(chipText()).toBe('↕ Sort · ✓ Done — 2 kept, 0 rerolled, 0 trashed');
         expect(clicks).toEqual([]);
     });
 
@@ -1221,7 +1221,7 @@ describe('a discarded slot is done with, not walked again', () => {
 
         expect(clicks.filter((click) => click.endsWith(':10,000'))).toHaveLength(1);
         expect(walk.tally.goldSpent).toBe(10000);
-        expect(chipText()).toBe('✓ Done — 0 kept, 1 rerolled, 1 trashed · spent 10.0K🪙');
+        expect(chipText()).toBe('↕ Sort · ✓ Done — 0 kept, 1 rerolled, 1 trashed · spent 10.0K🪙');
     });
 
     test('a board that got shorter instead still judges the card that moved up', async () => {
@@ -1437,13 +1437,13 @@ describe('what the walk spent', () => {
 
         expect(walk.tally.rerolled).toBe(1);
         expect(walk.tally.goldSpent).toBe(0);
-        expect(chipText()).toBe('✓ Done — 1 kept, 1 rerolled, 0 trashed');
+        expect(chipText()).toBe('↕ Sort · ✓ Done — 1 kept, 1 rerolled, 0 trashed');
     });
 
     test('the Done summary says what the walk spent as well as what it did', async () => {
         await payOnce(['Back', '10,000']);
 
-        expect(chipText()).toBe('✓ Done — 1 kept, 1 rerolled, 0 trashed · spent 10.0K🪙');
+        expect(chipText()).toBe('↕ Sort · ✓ Done — 1 kept, 1 rerolled, 0 trashed · spent 10.0K🪙');
     });
 
     test('hiding the widget no longer destroys the summary of the walk that just ended', async () => {
@@ -1944,6 +1944,93 @@ describe('the widget sorts on demand', () => {
         expect(sortButton()).toBeTruthy();
         sortButton().click();
         expect(sorter.sortTasks).toHaveBeenCalledWith(true);
+    });
+});
+
+describe('a finished walk offers Sort, then Walk again', () => {
+    const mainButton = () => document.querySelector('.mwi-task-reroll-walk-advance');
+    const finishedBoard = async () => {
+        sorter.sortTasks.mockReset();
+        walk.protectedHrids = new Set([MILKING]);
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+    };
+
+    test('done reads Sort with the summary kept, and one press runs the board sort only', async () => {
+        await finishedBoard();
+
+        expect(chipText()).toBe('↕ Sort · ✓ Done — 1 kept, 0 rerolled, 0 trashed');
+        expect(mainButton().disabled).toBe(false);
+
+        mainButton().click();
+
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(sorter.sortTasks).toHaveBeenCalledWith(true);
+        expect(clicks).toEqual([]);
+        // The walk did not restart: still the finished board, summary intact
+        expect(walk.state).toBe('done');
+        expect(chipText()).toBe('↻ Walk again · ✓ Done — 1 kept, 0 rerolled, 0 trashed');
+    });
+
+    test('done -> Sort -> Walk again -> done again, with Sort offered afresh', async () => {
+        await finishedBoard();
+
+        mainButton().click(); // Sort
+        expect(chipText()).toContain('↻ Walk again');
+        mainButton().click(); // Walk again
+        await flush();
+
+        // The sort was not repeated by walking again, and the new walk ended
+        // the same way, so the main button offers Sort once more
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(walk.state).toBe('done');
+        expect(chipText()).toBe('↕ Sort · ✓ Done — 1 kept, 0 rerolled, 0 trashed');
+
+        mainButton().click();
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(2);
+    });
+
+    test('the small Sort control counts as the sort too', async () => {
+        await finishedBoard();
+
+        document.querySelector('.mwi-task-reroll-walk-sort').click();
+
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(chipText()).toContain('↻ Walk again');
+    });
+
+    test('a sort that fails leaves Sort on offer', async () => {
+        await finishedBoard();
+        const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+        sorter.sortTasks.mockImplementationOnce(() => {
+            throw new Error('board gone');
+        });
+
+        mainButton().click();
+
+        expect(chipText()).toContain('↕ Sort');
+        quiet.mockRestore();
+    });
+
+    test('sorting mid-walk does not turn anything into Walk again', async () => {
+        sorter.sortTasks.mockReset();
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+        expect(walk.state).toBe('ready');
+
+        document.querySelector('.mwi-task-reroll-walk-sort').click();
+
+        expect(walk.sortedAfterDone).toBe(false);
+        expect(chipText()).toContain('Reroll #1');
+    });
+
+    test('a stop or a character switch leaves nothing sorted behind', async () => {
+        await finishedBoard();
+        mainButton().click();
+        expect(walk.sortedAfterDone).toBe(true);
+
+        walk.cleanup();
+        expect(walk.sortedAfterDone).toBe(false);
     });
 });
 
