@@ -640,6 +640,37 @@ describe('the insta-vs-listing decision', () => {
         });
     });
 
+    describe('a bid above the tradable band maximum', () => {
+        const rich = (bid) => ({
+            asks: [{ price: 200, orderQuantity: 10, filledQuantity: 0, createdTimestamp: new Date().toISOString() }],
+            bids: [{ price: bid, orderQuantity: 10, filledQuantity: 0 }],
+        });
+
+        test('is still sold into, with a warning before anything is pressed', () => {
+            band.value = { min: 45, max: 55 };
+            settings['market_bulkSellMaxSpreadPct'] = 99;
+            bulkSell._decideAndOpen(rich(80));
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.price).toBe(80);
+            expect(bulkSell.decision.warning).toMatch(/above the tradable range/);
+        });
+
+        test('an in-band bid carries no warning', () => {
+            band.value = { min: 45, max: 55 };
+            settings['market_bulkSellMaxSpreadPct'] = 99;
+            bulkSell._decideAndOpen(rich(50));
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.warning).toBeUndefined();
+        });
+
+        test('a listing decision carries no warning', () => {
+            band.value = { min: 45, max: 55 };
+            bulkSell._decideAndOpen(rich(80));
+            expect(bulkSell.decision.insta).toBe(false);
+            expect(bulkSell.decision.warning).toBeUndefined();
+        });
+    });
+
     describe('the tradable band prices the patient side', () => {
         test('a stale above-band ask is judged at the band edge, and listed at it', () => {
             // Official value 50 → band max 55: the 100 ask could never fill,
@@ -900,6 +931,9 @@ describe('confirming from the strip', () => {
         // first, as the DOM orders them — which is the shape the finder cannot
         // positively identify
         unreadableQty = false,
+        // A price row as the game draws it: the input is there already, or only the display div that wakes it
+        price = null,
+        pricePrewoken = true,
     } = {}) => {
         const modal = document.createElement('div');
         modal.className = 'Modal_modalContainer__abc';
@@ -948,7 +982,24 @@ describe('confirming from the strip', () => {
             document.body.appendChild(modal);
             return modal;
         }
-        modal.append(head, icon, ...(enhRow ? [enhRow] : []), qtyRow, confirm);
+        const priceRow = document.createElement('div');
+        priceRow.className = 'MarketplacePanel_priceInputs__p';
+        if (price !== null) {
+            const makeInput = () => {
+                const priceInput = document.createElement('input');
+                priceInput.value = String(price);
+                priceRow.textContent = '';
+                priceRow.appendChild(priceInput);
+            };
+            if (pricePrewoken) makeInput();
+            else {
+                const display = document.createElement('div');
+                display.className = 'MarketplacePanel_priceDisplay__d';
+                display.addEventListener('click', makeInput);
+                priceRow.appendChild(display);
+            }
+        }
+        modal.append(head, icon, ...(enhRow ? [enhRow] : []), ...(price !== null ? [priceRow] : []), qtyRow, confirm);
         document.body.appendChild(modal);
         return modal;
     };
@@ -988,6 +1039,8 @@ describe('confirming from the strip', () => {
 
     beforeEach(() => {
         gameClicks = 0;
+        // The bag matches the queue, as it does until something moves the stack
+        game.items = [inventory('/items/cheese', 18), inventory('/items/milk', 4), inventory('/items/sword', 1, 3)];
         document.body.textContent = '';
         settings['market_bulkSellAssistant'] = true;
         bulkSell.chip = null;
@@ -1103,6 +1156,321 @@ describe('confirming from the strip', () => {
         expect(statusText()).toMatch(/quantity cannot be read/);
         // Not a comparison against the price, dressed up as a quantity mismatch
         expect(statusText()).not.toMatch(/45,?000,?000/);
+    });
+
+    describe('the stack is re-read at the press', () => {
+        const setCheese = (count) => {
+            game.items = [inventory('/items/cheese', count), inventory('/items/milk', 4)];
+        };
+
+        test('unchanged: sells the queued count', () => {
+            openModal({ qty: 18 });
+            runAtStep0();
+            confirmBtn().click();
+            expect(gameClicks).toBe(1);
+            expect(bulkSell.current.count).toBe(18);
+        });
+
+        test('grew: rewrites the modal and sells the whole live stack', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            confirmBtn().click();
+            expect(modal.querySelector('input').value).toBe('25');
+            expect(bulkSell.current.count).toBe(25);
+            expect(gameClicks).toBe(1);
+        });
+
+        test("grew with another item's modal open: that modal is untouched and the press refuses", () => {
+            const modal = openModal({ item: 'milk', qty: 4 });
+            runAtStep0();
+            setCheese(25);
+            confirmBtn().click();
+            expect(modal.querySelector('input').value).toBe('4');
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('not Cheese');
+            expect(bulkSell.current.count).toBe(18);
+        });
+
+        test('grew with a same-item Buy modal open: that modal is untouched and the press refuses', () => {
+            const modal = openModal({ qty: 18, header: 'Buy Now' });
+            runAtStep0();
+            setCheese(25);
+            confirmBtn().click();
+            expect(modal.querySelector('input').value).toBe('18');
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('not a sell form');
+            expect(bulkSell.current.count).toBe(18);
+        });
+
+        test('grew with another enhancement level open: that modal is untouched and the press refuses', () => {
+            const modal = openModal({ qty: 18, enhancement: 3 });
+            runAtStep0();
+            setCheese(25);
+            confirmBtn().click();
+            expect(modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input').value).toBe('18');
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('+3');
+        });
+
+        test('shrank: sells what is there', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(7);
+            confirmBtn().click();
+            expect(modal.querySelector('input').value).toBe('7');
+            expect(gameClicks).toBe(1);
+        });
+
+        test('gone: the step is skipped and nothing is pressed', () => {
+            openModal({ qty: 18 });
+            runAtStep0();
+            game.items = [inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.statusNote).toBe('no longer in inventory');
+        });
+
+        describe('gone with a modal open', () => {
+            const addClose = (modal) => {
+                let closes = 0;
+                const close = document.createElement('button');
+                close.className = 'Modal_closeButton__c';
+                close.addEventListener('click', () => closes++);
+                modal.appendChild(close);
+                return () => closes;
+            };
+
+            test("another item's modal is left open and the step is still skipped", () => {
+                const modal = openModal({ item: 'milk', qty: 4 });
+                const closes = addClose(modal);
+                runAtStep0();
+                game.items = [inventory('/items/milk', 4)];
+                confirmBtn().click();
+                expect(closes()).toBe(0);
+                expect(bulkSell.statusNote).toBe('no longer in inventory');
+                expect(gameClicks).toBe(0);
+            });
+
+            test('the matching sell modal is closed and the step is skipped', () => {
+                const modal = openModal({ qty: 18 });
+                const closes = addClose(modal);
+                runAtStep0();
+                game.items = [inventory('/items/milk', 4)];
+                confirmBtn().click();
+                expect(closes()).toBe(1);
+                expect(bulkSell.statusNote).toBe('no longer in inventory');
+                expect(gameClicks).toBe(0);
+            });
+        });
+
+        test('grew but the modal will not take it: refuses and names the leftover', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            // A game that clamps the field back to what it allows
+            const input = modal.querySelector('input');
+            input.addEventListener('input', () => {
+                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '20');
+            });
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(statusText()).toMatch(/only takes 20; 5 would be left over/);
+        });
+    });
+
+    describe('the decision follows the stack at the press', () => {
+        const bid = (price, orderQuantity) => ({ price, orderQuantity, filledQuantity: 0 });
+        // Insta because the stack is worth less than the minimum listing value; asks high enough that a
+        // stack of ten is not
+        const bookOf = () => ({
+            asks: [{ price: 120, orderQuantity: 50, filledQuantity: 0, createdTimestamp: new Date().toISOString() }],
+            bids: [bid(100, 5), bid(50, 10)],
+        });
+        const priceOf = (modal) => modal.querySelector('div[class*="MarketplacePanel_priceInputs"] input').value;
+
+        /** A run parked on a 5-stack of cheese whose decision was made on bookOf() */
+        const runDecided = (modalOptions = {}) => {
+            settings['market_bulkSellSupplyRatio'] = 0;
+            settings['market_bulkSellQueueDays'] = 0;
+            settings['market_bulkSellMaxSpreadPct'] = 0;
+            settings['market_bulkSellMinPatientPremium'] = 0;
+            settings['market_bulkSellMinListingValue'] = 1_000_000;
+            game.items = [inventory('/items/cheese', 5), inventory('/items/milk', 4)];
+            const modal = openModal({ qty: 5, price: 100, ...modalOptions });
+            runAtStep0();
+            bulkSell.current.count = 5;
+            bulkSell._decideAndOpen(bookOf());
+            bulkSell.state = 'awaiting_confirm';
+            return modal;
+        };
+
+        afterEach(() => {
+            for (const key of [
+                'market_bulkSellSupplyRatio',
+                'market_bulkSellQueueDays',
+                'market_bulkSellMaxSpreadPct',
+                'market_bulkSellMinPatientPremium',
+                'market_bulkSellMinListingValue',
+            ]) {
+                delete settings[key];
+            }
+        });
+
+        test('the 5-stack fills at the top bid', () => {
+            runDecided();
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.price).toBe(100);
+        });
+
+        test('growth that needs a lower bid level writes the lower minimum price', () => {
+            const modal = runDecided();
+            game.items = [inventory('/items/cheese', 10), inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(priceOf(modal)).toBe('50');
+            expect(modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input').value).toBe('10');
+            expect(bulkSell.decision.price).toBe(50);
+            // 5 at 100 and 5 at 50
+            expect(bulkSell.decision.avgPrice).toBe(75);
+            expect(bulkSell.decision.reason).toContain('fills best-first to 50');
+            expect(gameClicks).toBe(1);
+        });
+
+        test('a price field still asleep is woken and written', () => {
+            const modal = runDecided({ pricePrewoken: false });
+            game.items = [inventory('/items/cheese', 10), inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(priceOf(modal)).toBe('50');
+            expect(gameClicks).toBe(1);
+        });
+
+        test('a price field that cannot be reached refuses rather than submit the old minimum', () => {
+            const modal = runDecided({ price: null });
+            game.items = [inventory('/items/cheese', 10), inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('minimum price of 50');
+            expect(modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input').value).toBe('5');
+            expect(bulkSell.current.count).toBe(5);
+        });
+
+        test('growth that flips insta to listing is refused with a note', () => {
+            // 5 x 120 = 600 < 700 insta; 10 x 120 = 1200 lists
+            settings['market_bulkSellMinListingValue'] = 700;
+            const modal = runDecided();
+            settings['market_bulkSellMinListingValue'] = 700;
+            bulkSell._decideAndOpen(bookOf());
+            bulkSell.state = 'awaiting_confirm';
+            expect(bulkSell.decision.insta).toBe(true);
+            game.items = [inventory('/items/cheese', 10), inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('be listed instead');
+            expect(priceOf(modal)).toBe('100');
+            expect(bulkSell.current.count).toBe(5);
+            expect(bulkSell.decision.insta).toBe(true);
+        });
+
+        test('an unchanged count leaves the decision and the price alone', () => {
+            const modal = runDecided();
+            const before = bulkSell.decision;
+            confirmBtn().click();
+            expect(bulkSell.decision).toBe(before);
+            expect(priceOf(modal)).toBe('100');
+            expect(gameClicks).toBe(1);
+        });
+    });
+
+    describe('what is left after a sale made in the modal', () => {
+        const setCheese = (count) => {
+            game.items =
+                count > 0
+                    ? [inventory('/items/cheese', count), inventory('/items/milk', 4)]
+                    : [inventory('/items/milk', 4)];
+        };
+
+        test('a grown stack confirmed in the game modal leaves the remainder as the current step', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            vi.advanceTimersByTime(200);
+            // The player presses the game's own Confirm: 18 sold, 7 stay in the bag
+            modal.querySelector('button').click();
+            setCheese(7);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(bulkSell.index).toBe(0);
+            expect(bulkSell.current.itemHrid).toBe('/items/cheese');
+            expect(bulkSell.current.count).toBe(7);
+            expect(statusText()).toContain('7 left after the sale; sell again');
+
+            // Its own press re-opens the same step, not the next item
+            confirmBtn().click();
+            expect(bulkSell.index).toBe(0);
+            expect(bulkSell.state).toBe('preparing');
+            expect(bulkSell.current.itemHrid).toBe('/items/cheese');
+        });
+
+        test('a sale that clears the stack advances as before', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            vi.advanceTimersByTime(200);
+            modal.querySelector('button').click();
+            setCheese(0);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(bulkSell._sellAgain).toBe(0);
+            expect(statusText()).toContain('press Next for the next item');
+            confirmBtn().click();
+            expect(bulkSell.index).toBe(1);
+        });
+
+        test('a cancel with the stack unchanged is unchanged', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            vi.advanceTimersByTime(200);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            expect(bulkSell.state).toBe('awaiting_next');
+            vi.advanceTimersByTime(3000);
+            expect(bulkSell._sellAgain).toBe(0);
+            expect(statusText()).toContain('press Next for the next item');
+            confirmBtn().click();
+            expect(bulkSell.index).toBe(1);
+        });
+
+        test('a sale the inventory reports a moment after the modal closed still leaves the remainder', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            vi.advanceTimersByTime(200);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            expect(bulkSell._sellAgain).toBe(0);
+            setCheese(7);
+            vi.advanceTimersByTime(400);
+            expect(bulkSell._sellAgain).toBe(7);
+            expect(bulkSell.current.count).toBe(7);
+            expect(statusText()).toContain('7 left after the sale');
+        });
+
+        test('Skip leaves the remainder and moves on', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            vi.advanceTimersByTime(200);
+            setCheese(7);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            skipBtn().click();
+            expect(bulkSell.index).toBe(1);
+            expect(bulkSell._sellAgain).toBe(0);
+        });
     });
 
     test('Skip and Stop are untouched by the new button', () => {
