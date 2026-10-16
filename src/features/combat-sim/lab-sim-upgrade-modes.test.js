@@ -455,3 +455,64 @@ describe('a level source, resolved into a level', () => {
         expect(at({ source: 'skip' }).fellBack).toBe(false);
     });
 });
+
+describe('the Ability order Include option in a plan', () => {
+    const all = ['/monsters/a', '/monsters/b'];
+
+    test('is carried beside the plan and never becomes a mode of the analysis', () => {
+        const single = planLabUpgradeRun({
+            dimensions: ['equipment', 'ability_order'],
+            scopeMode: 'current',
+            configureMonsterHrid: '/monsters/a',
+        });
+        expect(single).toMatchObject({ kind: 'single', includeAbilityOrder: true, orderOnly: false });
+        expect(single.upgradeMode).toBe('equipment');
+        expect(single.extraModes).toEqual([]);
+
+        const everything = planLabUpgradeRun({
+            dimensions: ['ability_level', 'ability_order'],
+            scopeMode: 'all',
+            allMonsters: all,
+        });
+        expect(everything).toMatchObject({ kind: 'allFights', includeAbilityOrder: true, orderOnly: false });
+        expect(everything.modes).toEqual(['ability_level']);
+    });
+
+    test('alone it is an order-only run with nothing for the table', () => {
+        const single = planLabUpgradeRun({
+            dimensions: ['ability_order'],
+            scopeMode: 'current',
+            configureMonsterHrid: '/monsters/a',
+        });
+        expect(single).toMatchObject({
+            kind: 'single',
+            includeAbilityOrder: true,
+            orderOnly: true,
+            upgradeMode: 'none',
+        });
+        const many = planLabUpgradeRun({ dimensions: ['ability_order'], scopeMode: 'all', allMonsters: all });
+        expect(many).toMatchObject({ kind: 'allFights', orderOnly: true, modes: [] });
+        expect(many.monsterHrids).toEqual(all);
+    });
+
+    test('unticked, the plan says so', () => {
+        const plan = planLabUpgradeRun({ dimensions: ['equipment'], scopeMode: 'all', allMonsters: all });
+        expect(plan.includeAbilityOrder).toBe(false);
+        expect(plan.orderOnly).toBe(false);
+    });
+
+    test('is offered for every scope and a saved selection keeps it', () => {
+        for (const scope of ['current', 'all', 'selected']) {
+            expect(labDimensionAvailability(scope, 2).ability_order.enabled).toBe(true);
+        }
+        expect(sanitizeLabUpgradeSelection(['equipment', 'ability_order'], null).dimensions).toEqual([
+            'equipment',
+            'ability_order',
+        ]);
+        expect(planLabSingleTargetModes(['ability_order'])).toEqual({ upgradeMode: 'none', extraModes: [] });
+    });
+
+    test('adds to the simulation estimate', () => {
+        expect(estimateLabUpgradeSims(['ability_order'], 4).sims).toBeGreaterThan(estimateLabUpgradeSims([], 4).sims);
+    });
+});

@@ -88,7 +88,6 @@ export function clampAbilityLevel(value) {
  * @returns {number}
  */
 export function clampLevelFor(hrid, value) {
-    if (hrid === ABILITY_ORDER_HRID) return 0;
     return String(hrid || '').startsWith(ABILITY_PREFIX) ? clampAbilityLevel(value) : clampSwapLevel(value);
 }
 
@@ -132,6 +131,8 @@ export function sanitizeSwapQueues(raw) {
         const out = [];
         for (const entry of Array.isArray(list) ? list : []) {
             if (!entry || typeof entry.hrid !== 'string') continue;
+            // The order check used to be queued here; it is the Upgrade tab's Include option now, so an old chip is dropped
+            if (entry.hrid === ABILITY_ORDER_HRID) continue;
             const isItem = entry.hrid.startsWith('/items/');
             if (!isItem && !(allowAbilities && entry.hrid.startsWith(ABILITY_PREFIX))) continue;
             const swap = { hrid: entry.hrid, level: clampLevelFor(entry.hrid, entry.level) };
@@ -163,9 +164,11 @@ export function sanitizeSwapOptions(raw) {
         upgradesOpen: { combat: raw?.upgradesOpen?.combat !== false, skilling: raw?.upgradesOpen?.skilling !== false },
         // The Checked swaps results below it: open unless left closed
         checkedOpen: { combat: raw?.checkedOpen?.combat !== false, skilling: raw?.checkedOpen?.skilling !== false },
-        // The Ability order section of the combat results: left minimized, and showing every order
+        // The Ability order section of the Upgrade results (an Include option): left minimized, and showing every order
         orderCollapsed: raw?.orderCollapsed === true,
         orderShowAll: raw?.orderShowAll === true,
+        // The Trigger tuning results box: left minimized
+        triggerCollapsed: raw?.triggerCollapsed === true,
     };
 }
 
@@ -176,7 +179,6 @@ export function sanitizeSwapOptions(raw) {
  * @returns {string}
  */
 export function swapItemName(hrid, gameData) {
-    if (hrid === ABILITY_ORDER_HRID) return 'Ability order';
     return (
         gameData?.itemDetailMap?.[hrid]?.name ||
         gameData?.abilityDetailMap?.[hrid]?.name ||
@@ -194,7 +196,6 @@ export function swapItemName(hrid, gameData) {
  * @returns {string}
  */
 export function describeCheckedSwap(swap, gameData) {
-    if (swap.hrid === ABILITY_ORDER_HRID) return 'Ability order';
     // An ability has a level, not an enhancement: "Critical Aura 7"
     if (isAbilitySwap(swap)) return `${swapItemName(swap.hrid, gameData)} ${swap.level}`;
     return `${swapItemName(swap.hrid, gameData)} +${swap.level}`;
@@ -325,7 +326,6 @@ export function resolveAbilityHrid(gameData, text) {
  * @returns {string|null} Item hrid or ability hrid
  */
 export function resolveSwapHrid(gameData, text) {
-    if (/^(ability |abilities )?order$/i.test(String(text || '').trim())) return ABILITY_ORDER_HRID;
     return resolveEquipmentHrid(gameData, text) || resolveAbilityHrid(gameData, text);
 }
 
@@ -1117,7 +1117,8 @@ export function buildCombatAbilityOrderCandidates(dtos, gameData, isSelf = true)
 }
 
 /**
- * Build whatever a queued ability-kind swap means: an ability, or the order check.
+ * Build what a queued ability-kind swap means. (The order check is no longer queued: it is the Upgrade tab's
+ * Include option, built with `buildCombatAbilityOrderCandidates`.)
  * @param {{hrid: string, level: number}} swap - The queued entry
  * @param {Array<Object>} dtos - The loadout of every fight in the run
  * @param {Object} gameData - Game data payload
@@ -1126,7 +1127,6 @@ export function buildCombatAbilityOrderCandidates(dtos, gameData, isSelf = true)
  * @returns {{candidates: Array<Object>, reach: number, alreadyEquipped: number, key: string}|null}
  */
 export function buildCombatAbilityCheck(swap, dtos, gameData, isSelf = true, options = {}) {
-    if (swap.hrid === ABILITY_ORDER_HRID) return buildCombatAbilityOrderCandidates(dtos, gameData, isSelf);
     return buildCombatAbilityCandidates(swap, dtos, gameData, isSelf, options);
 }
 

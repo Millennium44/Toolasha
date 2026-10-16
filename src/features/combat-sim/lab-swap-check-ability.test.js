@@ -488,16 +488,20 @@ describe('the whole run: best replacement per loadout', () => {
 });
 
 describe('the ability order check', () => {
-    const { buildCombatAbilityCheck, consistentAbilityOrders, ABILITY_ORDER_HRID } = orderApi;
+    const { buildCombatAbilityOrderCandidates, consistentAbilityOrders, ABILITY_ORDER_HRID } = orderApi;
     const names = (dto) => dto.abilities.map((entry) => entry && ABILITY_DETAIL_MAP[entry.hrid].name);
 
-    test('"order" resolves to the order check, whose chip reads "Ability order"', () => {
-        expect(resolveSwapHrid(gameData, 'order')).toBe(ABILITY_ORDER_HRID);
-        expect(describeCheckedSwap({ hrid: ABILITY_ORDER_HRID, level: 0 }, gameData)).toBe('Ability order');
-        expect(clampLevelFor(ABILITY_ORDER_HRID, 5)).toBe(0);
-        expect(sanitizeSwapQueues({ combat: [{ hrid: ABILITY_ORDER_HRID, level: 0 }] }).combat).toEqual([
-            { hrid: ABILITY_ORDER_HRID, level: 0 },
-        ]);
+    test('the order check is not a Check a swap entry any more: typing "order" resolves to nothing and a saved queue drops it', () => {
+        expect(resolveSwapHrid(gameData, 'order')).not.toBe(ABILITY_ORDER_HRID);
+        expect(
+            sanitizeSwapQueues({
+                combat: [
+                    { hrid: ABILITY_ORDER_HRID, level: 0 },
+                    { hrid: '/items/sinister_cape', level: 3 },
+                ],
+            }).combat
+        ).toEqual([{ hrid: '/items/sinister_cape', level: 3 }]);
+        expect(clampLevelFor(ABILITY_ORDER_HRID, 5)).toBe(5);
     });
 
     test('three ordinary abilities have 5 other orders; always-ready ones stay last', () => {
@@ -515,7 +519,7 @@ describe('the ability order check', () => {
             ability(TOUGHNESS, 16),
             ability(QUICK_STRIKE, 18),
         ]);
-        const built = buildCombatAbilityCheck({ hrid: ABILITY_ORDER_HRID, level: 0 }, [dto], gameData);
+        const built = buildCombatAbilityOrderCandidates([dto], gameData);
         expect(built.candidates).toHaveLength(24);
         expect(built.candidates.filter((option) => option.keepCurrent)).toHaveLength(1);
         for (const option of built.candidates) {
@@ -535,7 +539,7 @@ describe('the ability order check', () => {
             return { encounters: win * 1000, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 };
         };
         const dto = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(POKE, 14), ability(FIREBALL, 16)]);
-        const built = buildCombatAbilityCheck({ hrid: ABILITY_ORDER_HRID, level: 0 }, [dto], gameData);
+        const built = buildCombatAbilityOrderCandidates([dto], gameData);
         expect(built.candidates).toHaveLength(2);
         const raw = await advisor.runLabyrinthAllFightsAnalysis(
             {
@@ -581,11 +585,7 @@ describe('the ability order check keeps the current order when it is best', () =
             experienceGained: {},
             simulatedTime: 1,
         });
-        const built = orderApi.buildCombatAbilityCheck(
-            { hrid: orderApi.ABILITY_ORDER_HRID, level: 0 },
-            [dto],
-            gameData
-        );
+        const built = orderApi.buildCombatAbilityOrderCandidates([dto], gameData);
         const raw = await advisor.runLabyrinthAllFightsAnalysis(
             {
                 fights: [
@@ -686,7 +686,7 @@ describe('row actions for a checked ability', () => {
 });
 
 describe('the ability order section is ranked apart from the paid swaps', () => {
-    const { extractAbilityOrderSection, buildCombatAbilityCheck, ABILITY_ORDER_HRID } = orderApi;
+    const { extractAbilityOrderSection, buildCombatAbilityOrderCandidates } = orderApi;
     const fight = (dto, loadoutId, loadoutName) => ({
         monsterHrid: '/monsters/mimic',
         monsterName: 'mimic',
@@ -702,8 +702,7 @@ describe('the ability order section is ranked apart from the paid swaps', () => 
             experienceGained: {},
             simulatedTime: 1,
         });
-        const candidates = buildCombatAbilityCheck(
-            { hrid: ABILITY_ORDER_HRID, level: 0 },
+        const candidates = buildCombatAbilityOrderCandidates(
             fights.map((f) => f.dto),
             gameData
         ).candidates;

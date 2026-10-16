@@ -59,6 +59,19 @@ export const LAB_UPGRADE_DIMENSIONS = [
             'leaving fights out — the status line says how many simulations it comes to before it starts.',
     },
     {
+        key: 'ability_order',
+        label: 'Ability order',
+        defaultOn: false,
+        title:
+            'Every order of each loadout’s ordinary abilities (the special slot fixed, always-ready abilities ' +
+            'last), simulated against the fights the target scope names and ranked in a section of its own by ' +
+            'expected attempts saved, with the current order as the baseline.\n\n' +
+            'Orders cost nothing, so they never join the priced table: a free gain would float above every paid ' +
+            'upgrade however small it was. Set the order in the game by hand.\n\n' +
+            'Each loadout is read on its own fights; one with fewer than two ordinary abilities has nothing to ' +
+            'reorder.',
+    },
+    {
         key: 'house',
         label: 'House Rooms',
         defaultOn: false,
@@ -462,6 +475,8 @@ export const LAB_DIMENSION_SIMS_PER_FIGHT = {
     // Was 100 back when every style-compatible ability was offered for every
     // slot; the guide is what took an order of magnitude off it.
     ability_swap: 12,
+    // Every other order of a loadout's ordinary abilities (three or four of them) in that loadout's fights
+    ability_order: 8,
     // One per combat skill, and a combat level is every fight
     combat_level: 6,
     guild_shrine: 6,
@@ -536,13 +551,16 @@ export function labAbilityLevelTypeAvailability(scopeMode, targetCount) {
  * @returns {{upgradeMode: string, extraModes: string[]}}
  */
 export function planLabSingleTargetModes(dimensions) {
+    // `ability_order` never becomes a mode either: it is a separate pass over the same fights (see `planLabUpgradeRun`).
     // `labyrinth_buff` never becomes a mode: the single-fight analysis generates
     // the combat token buffs itself, unconditionally, and has done since before
     // there was a box for them. Handing it the key as a mode would ask the
     // generator for a set it has no branch for and get an empty list back.
     const dims = [
         ...new Set(
-            (dimensions || []).filter((key) => LAB_UPGRADE_DIMENSION_KEYS.includes(key) && key !== 'labyrinth_buff')
+            (dimensions || []).filter(
+                (key) => LAB_UPGRADE_DIMENSION_KEYS.includes(key) && key !== 'labyrinth_buff' && key !== 'ability_order'
+            )
         ),
     ];
     // Nothing for the analysis to generate. `none` matches no branch in the
@@ -572,8 +590,8 @@ export function planLabSingleTargetModes(dimensions) {
  * @param {string[]} [params.chosenMonsters] - Ticked monsters, for `selected`
  * @param {string[]} [params.allMonsters] - Every labyrinth fight's monster hrid
  * @param {string} [params.configureMonsterHrid] - The Configure tab's monster
- * @returns {Object} `{ kind, error, monsterHrids, dropped, upgradeMode, extraModes, modes }`
- *   where `kind` is `single`, `allFights` or `none`
+ * @returns {Object} `{ kind, error, monsterHrids, dropped, upgradeMode, extraModes, modes, includeAbilityOrder,
+ *   orderOnly }` where `kind` is `single`, `allFights` or `none`
  */
 export function planLabUpgradeRun({
     dimensions = [],
@@ -599,6 +617,12 @@ export function planLabUpgradeRun({
         };
     }
 
+    // Ability order is a pass of its own over the same fights, not a candidate set the analysis generates, so it
+    // is carried beside the plan. `orderOnly` is a run with nothing else checked: no table, just the section.
+    const includeAbilityOrder = kept.includes('ability_order');
+    const analysisKept = kept.filter((key) => key !== 'ability_order');
+    const orderOnly = includeAbilityOrder && !analysisKept.length;
+
     if (scopeMode === 'current') {
         if (!configureMonsterHrid) {
             return { kind: 'none', dropped, error: 'Select a monster in the Configure tab first.' };
@@ -607,7 +631,9 @@ export function planLabUpgradeRun({
             kind: 'single',
             dropped,
             monsterHrids: [configureMonsterHrid],
-            ...planLabSingleTargetModes(kept),
+            includeAbilityOrder,
+            orderOnly,
+            ...planLabSingleTargetModes(analysisKept),
         };
     }
 
@@ -627,5 +653,5 @@ export function planLabUpgradeRun({
         };
     }
 
-    return { kind: 'allFights', dropped, monsterHrids, modes: kept };
+    return { kind: 'allFights', dropped, monsterHrids, modes: analysisKept, includeAbilityOrder, orderOnly };
 }
