@@ -11741,6 +11741,8 @@ describe('verifying close calls on fresh seeds', () => {
                 orderRow('I → J', { profit: 100, se: 1 }),
             ]);
             mocks.verifyImpl = answer({});
+            // The button sends four rows here, so it does not promise three
+            expect(section().querySelector('#mwi-csim-order-verify').textContent).toBe('Verify top picks');
             await verifyOrders();
 
             expect(mocks.verifyCalls).toHaveLength(1);

@@ -13475,8 +13475,8 @@ class CombatSimUI {
         const verifyBar =
             `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:10px; color:#777;">` +
             `<button id="mwi-csim-order-verify" ${VERIFY_BTN_ATTR}${canVerify && verifyPick.length ? '' : ' disabled'} ` +
-            `title="${canVerify ? `Re-measures the top ${VERIFY_DEFAULTS.top} orders by ${rankLabel} against your current order on fresh seeds` : 'Re-run the analysis to verify'}">` +
-            `Verify top ${VERIFY_DEFAULTS.top}</button>` +
+            `title="${canVerify ? `Re-measures the top ${VERIFY_DEFAULTS.top} orders by ${rankLabel}, plus the best order that clears the noise when it is not among them, against your current order on fresh seeds` : 'Re-run the analysis to verify'}">` +
+            `Verify top picks</button>` +
             `<span>${canVerify ? `by ${rankLabel}` : 're-run the analysis to verify'}</span></div>`;
         // The loadout's own order, when the analysis still carries it (a remembered run does not)
         const ctx = results.context;
