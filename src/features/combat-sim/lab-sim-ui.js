@@ -4837,6 +4837,8 @@ class LabSimUI {
                     fights.length
                 );
                 this._setStatus(`Starting: ${estimate.text}. Stop cancels at any point.`);
+                // The table result a combined run saves again with the order section
+                let allFightsAnalysis = null;
                 if (!plan.orderOnly) {
                     const analysisResult = await runLabyrinthAllFightsAnalysis(
                         {
@@ -4875,6 +4877,8 @@ class LabSimUI {
                     );
 
                     this._renderAllFightsResults(analysisResult, resultsEl);
+                    // Marked, so a reload draws it with the all-fights renderer rather than the single-fight one
+                    if (analysisResult?.results?.length) allFightsAnalysis = { ...analysisResult, allFights: true };
                 }
                 if (plan.includeAbilityOrder && startToken === this._runStartToken && !this._upgradeAborted) {
                     await this._runUpgradeAbilityOrder({
@@ -4890,6 +4894,7 @@ class LabSimUI {
                         startToken,
                         ownerId,
                         orderOnly: plan.orderOnly,
+                        savedAnalysis: allFightsAnalysis,
                     });
                 }
             } catch (error) {
@@ -7301,7 +7306,10 @@ class LabSimUI {
             this._restoredUpgradeAt = payload.savedAt || null;
             this._restoredUpgradeMeta = { characterName: payload.characterName || null };
             // An order-only run saved no table, only its section
-            if (payload.data?.results?.length) this._renderUpgradeResults(payload.data, container);
+            // A combined all-fights run saved its own table, marked, and draws with the renderer the run used
+            if (payload.data?.results?.length && payload.data.allFights) {
+                this._renderAllFightsResults(payload.data, container);
+            } else if (payload.data?.results?.length) this._renderUpgradeResults(payload.data, container);
             else container.innerHTML = '';
             // A payload from before the section was remembered carries none
             this._upgradeOrderSection = payload.orderSection || null;
