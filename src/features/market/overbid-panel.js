@@ -376,6 +376,21 @@ class OverbidPanel {
          * canceled listing's hide, while the first start after switching to another character still does.
          */
         this.prunedOwner = null;
+        /** Whether the login watch below is attached; it outlives `disable()` on purpose */
+        this.loginWatch = false;
+    }
+
+    /**
+     * Forget the prune marker on every login, including those that happen while the panel is turned
+     * off, so the next start for a character that logged in again prunes against its fresh listings.
+     * Attached once and never removed.
+     */
+    watchLogins() {
+        if (this.loginWatch) return;
+        this.loginWatch = true;
+        dataManager.on('character_initialized', () => {
+            this.prunedOwner = null;
+        });
     }
 
     /**
@@ -383,6 +398,7 @@ class OverbidPanel {
      * @returns {Promise<void>}
      */
     async initialize() {
+        this.watchLogins();
         if (this.isInitialized) return;
         if (!config.getSetting(SETTING)) return;
         this.isInitialized = true;
