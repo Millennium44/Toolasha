@@ -3330,17 +3330,24 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
             bought.set(key, line);
         };
         // The +0 base has no listing to buy: crafting it buys the recipe's inputs (and the item it upgrades)
+        // Copies are totalled first: a craft makes `output.count` at once and consumes whole inputs, so the
+        // bill is whole crafts times the inputs, not a fractional craft rounded at the end
+        let craftedCopies = 0;
         const craft = (count) => {
+            craftedCopies += count;
+        };
+        const billCrafts = () => {
+            if (!(craftedCopies > 0)) return;
             const actionDetailMap = gameData?.actionDetailMap || dataManager.getInitClientData?.()?.actionDetailMap;
             const recipe = actionDetailMap
                 ? findProducingAction(baseHrid, { primaryOnly: true, actionDetailMap })
                 : null;
             if (!recipe) return;
-            const perCraft = count / (recipe.output?.count || 1);
+            const crafts = Math.max(1, Math.ceil(craftedCopies / (recipe.output?.count || 1) - 1e-9));
             for (const input of recipe.action.inputItems || []) {
-                if (input?.itemHrid && input.itemHrid !== '/items/coin') buy(input.itemHrid, 0, perCraft * input.count);
+                if (input?.itemHrid && input.itemHrid !== '/items/coin') buy(input.itemHrid, 0, crafts * input.count);
             }
-            if (recipe.action.upgradeItemHrid) buy(recipe.action.upgradeItemHrid, 0, perCraft);
+            if (recipe.action.upgradeItemHrid) buy(recipe.action.upgradeItemHrid, 0, crafts);
         };
         const want = (k, count) => {
             if (!(count > 0) || k < 0) return;
@@ -3362,6 +3369,7 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
         };
         if (plan.buyUpper) want(level - 1, 1);
         if (plan.buyLower) want(level - 2, plan.stepOdds);
+        billCrafts();
     }
     return {
         baseCost: plan.pay,

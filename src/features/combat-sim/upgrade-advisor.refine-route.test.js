@@ -415,8 +415,8 @@ describe('refined target priced from a held base', () => {
             test('a +0 base with no listing is crafted: the bill is the recipe inputs, not a +0 base to buy', () => {
                 listedSix();
                 const bought = boughtOf(7);
-                // Five bases stand under the built +5, two to a batch, three ore a batch: 7.5 rounds up to 8
-                expect(bought).toContainEqual({ itemHrid: RING_ORE, enhancementLevel: 0, count: 8 });
+                // Five bases stand under the built +5, two to a batch, three ore a batch: 3 whole batches use 9
+                expect(bought).toContainEqual({ itemHrid: RING_ORE, enhancementLevel: 0, count: 9 });
                 expect(bought).toContainEqual({ itemHrid: RING_BASE, enhancementLevel: 6, count: 1 });
                 expect(bought.some((line) => line.itemHrid === RING_BASE && line.enhancementLevel === 0)).toBe(false);
                 // Coins are not an item to buy
