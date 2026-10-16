@@ -3102,10 +3102,11 @@ function weakestCostSource(sources) {
 }
 
 /**
- * The lowest level at which a base item can be refined into its ★ version. The
- * game's recipe data does not carry it (the crafting panel shows it as
- * "Upgrades From <item> +5"), so it is a constant here; a held copy below it
- * falls back to the ordinary price instead of a refine route.
+ * The lowest level of base item the advisor will consider refining into its ★
+ * version. This is a judgment, not a game rule: the game lets any level be
+ * refined (the recipe data carries no minimum), but refining a base below +5 is
+ * not worth planning around, so a held copy below it falls back to the ordinary
+ * price instead of a refine route.
  */
 export const MIN_REFINE_BASE_LEVEL = 5;
 
@@ -3240,7 +3241,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
  * @param {number} level - Level of base wanted
  * @param {Object} gameData - Game data payload
  * @param {Object} [options]
- * @param {number} [options.minLevel] - Lowest level worth offering (a refine needs a +5 base)
+ * @param {number} [options.minLevel] - Lowest level worth offering (the refine route only considers a +5 or better base)
  * @returns {{baseCost: number, mirrorPrice: number}|null} Null when no mirror route beats the ordinary one
  */
 function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_LEVEL, held = [] } = {}) {
