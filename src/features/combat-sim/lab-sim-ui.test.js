@@ -2626,6 +2626,26 @@ describe('a character switch mid-restore does not adopt the departing characterâ
         expect(ui.panel.querySelector('#mwi-labsim-buffs-body').innerHTML).toBe(bodyBefore);
     });
 
+    test('a level typed while the read is out is kept, not replaced by the older stored value', async () => {
+        ui.buildPanel();
+        await settle();
+        let resolveRead;
+        storage.pending['labSimTokenBuffLevels_me'] = new Promise((resolve) => {
+            resolveRead = resolve;
+        });
+        const restore = ui._restoreTokenBuffLevels();
+
+        // The edit lands (and is saved) before the pulled value comes back
+        ui._tokenBuffOverrides = { labyrinthCombatDamageLevel: 9 };
+        await ui._saveTokenBuffLevels();
+        resolveRead({ labyrinthCombatDamageLevel: 8 });
+        await restore;
+        delete storage.pending['labSimTokenBuffLevels_me'];
+
+        expect(ui._tokenBuffOverrides).toEqual({ labyrinthCombatDamageLevel: 9 });
+        expect(storage.written['labSimTokenBuffLevels_me']).toEqual({ labyrinthCombatDamageLevel: 9 });
+    });
+
     test('a same-character restore still adopts the stored levels', async () => {
         storage.values['labSimTokenBuffLevels_me'] = { labyrinthCombatDamageLevel: 8 };
 
@@ -4382,6 +4402,22 @@ describe('Check a swap', () => {
         delete storage.pending['labSimCheckedSwaps_alt'];
         expect(ui._checkedSwaps.combat).toEqual([]);
         game.characterId = 'me';
+    });
+
+    test('a swap queued while a pulled queue is being read is kept, not replaced by it', async () => {
+        let resolveRead;
+        storage.pending['labSimCheckedSwaps_me'] = new Promise((resolve) => {
+            resolveRead = resolve;
+        });
+        const restore = ui._restoreCheckedSwaps({ replace: true });
+        type('combat', 'Sinister Cape', '7');
+        ui.panel.querySelector('#mwi-labsim-swap-add-combat').click();
+        resolveRead({ combat: [], skilling: [{ hrid: CAPE, level: 2 }] });
+        await restore;
+        delete storage.pending['labSimCheckedSwaps_me'];
+
+        expect(chips('combat')).toEqual(['Sinister Cape +7']);
+        expect(chips('skilling')).toEqual([]);
     });
 
     test('destroying the panel drops the queue from memory', () => {

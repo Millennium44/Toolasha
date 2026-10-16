@@ -12965,6 +12965,7 @@ class CombatSimUI {
 
     /** @private */
     async _persistUpgradeColumnPrefs() {
+        this._columnPrefEdits = (this._columnPrefEdits || 0) + 1;
         try {
             await storage.set(
                 UPGRADE_COLUMNS_KEY,
@@ -12990,9 +12991,13 @@ class CombatSimUI {
 
     /** @private */
     async _loadUpgradeColumnPrefs() {
+        // Bumped by every persist: a preference changed while this read was out is saved and on screen, and
+        // the read holds the older value
+        const editsBefore = this._columnPrefEdits || 0;
         try {
             const saved = await storage.get(UPGRADE_COLUMNS_KEY, 'settings', null);
             if (!saved) return;
+            if ((this._columnPrefEdits || 0) !== editsBefore) return;
             // Every field is replaced, a missing one by its default (an unset value reads as the
             // default everywhere), so a pulled record from an older build cannot leave this page's values
             // in place for the next save to write back over it
