@@ -2,6 +2,10 @@ import vm from 'node:vm';
 import { describe, expect, test, vi } from 'vitest';
 
 const pool = vi.hoisted(() => ({ script: null }));
+const shop = vi.hoisted(() => ({ costs: {} }));
+
+// The shop's coin price is read off the game data, which this suite has none of
+vi.mock('./game-lookups.js', () => ({ getShopCoinCost: (hrid) => shop.costs[hrid] || 0 }));
 
 // The pool runs the real worker script in a vm sandbox instead of a Web Worker, so the test
 // drives the exact text the browser would ship.
@@ -134,5 +138,73 @@ describe('networth enhancement materials with no market quote', () => {
         const quoted = await value([{ itemHrid: MAT, count: 10 }], {}, priceMap);
 
         expect(quoted).toBe(1000);
+    });
+});
+
+describe('networth enhancement path parity with the main thread', () => {
+    const MAT = '/items/rare_mat';
+    const MIRROR = '/items/philosophers_mirror';
+    const params = { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1 };
+    const base = { [`${ITEM}:0`]: 1000, [`${ITEM}:0_ask`]: 1000, [`${ITEM}:0_bid`]: 1000 };
+
+    const value = async (materials, priceMap, level = 5, shopCosts = {}) => {
+        shop.costs = shopCosts;
+        const [v] = await calculateItemValueBatch(
+            [{ itemHrid: ITEM, enhancementLevel: level, count: 1 }],
+            priceMap,
+            { useHighEnhancementCost: false, minLevel: 99, enhancementParams: params },
+            {
+                itemDetailMap: {
+                    [ITEM]: { itemLevel: 10, enhancementCosts: materials, protectionItemHrids: [] },
+                    [MAT]: { name: 'Rare Mat' },
+                },
+                actionDetailMap: {},
+            }
+        );
+        return v;
+    };
+
+    test('a material quoted on the bid side only is priced at it, as the main thread prices it', async () => {
+        // The order book answers a missing side with null, and null < 0 is false: the old
+        // cross-fill never fired, the material read unpriced and the whole path fell back to base
+        const materials = [{ itemHrid: MAT, count: 10 }];
+        const bidOnly = await value(materials, { ...base, [`${MAT}:0_ask`]: null, [`${MAT}:0_bid`]: 300 });
+        const twoSided = await value(materials, { ...base, [`${MAT}:0_ask`]: 300, [`${MAT}:0_bid`]: 300 });
+        const askOnly = await value(materials, { ...base, [`${MAT}:0_ask`]: 300, [`${MAT}:0_bid`]: null });
+
+        expect(twoSided).toBeGreaterThan(1000);
+        expect(bidOnly).toBeCloseTo(twoSided, 6);
+        expect(askOnly).toBeCloseTo(twoSided, 6);
+    });
+
+    test('the mirror is priced as the tooltip prices it, not at the pricing-mode price', async () => {
+        // A wide spread: the realistic rule takes the bid (nothing crafts a mirror here), while the
+        // pricing-mode key holds the ask. A mirror at the bid is far cheaper, and the +12 path uses it.
+        const coins = [{ itemHrid: '/items/coin', count: 1000 }];
+        const spread = {
+            ...base,
+            [`${MIRROR}:0`]: 5_000_000,
+            [`${MIRROR}:0_ask`]: 5_000_000,
+            [`${MIRROR}:0_bid`]: 10,
+        };
+        const atBid = { ...base, [`${MIRROR}:0`]: 10, [`${MIRROR}:0_ask`]: 10, [`${MIRROR}:0_bid`]: 10 };
+        const atAsk = {
+            ...base,
+            [`${MIRROR}:0`]: 5_000_000,
+            [`${MIRROR}:0_ask`]: 5_000_000,
+            [`${MIRROR}:0_bid`]: 5_000_000,
+        };
+
+        const quoted = await value(coins, spread, 12);
+        expect(quoted).toBeCloseTo(await value(coins, atBid, 12), 6);
+        expect(quoted).toBeLessThan(await value(coins, atAsk, 12));
+    });
+
+    test('a shop-sold piece with no market quote is worth its shop price, not 0', async () => {
+        const coins = [{ itemHrid: '/items/coin', count: 1000 }];
+        const noQuote = {};
+
+        expect(await value(coins, noQuote, 5)).toBe(0);
+        expect(await value(coins, noQuote, 5, { [ITEM]: 7000 })).toBe(7000);
     });
 });
