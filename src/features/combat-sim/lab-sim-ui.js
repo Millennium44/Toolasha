@@ -4907,6 +4907,8 @@ class LabSimUI {
         }
 
         try {
+            // The table result a combined run saves again with the order section
+            let singleAnalysis = null;
             if (!plan.orderOnly) {
                 const analysisResult = await runLabyrinthUpgradeAnalysis(
                     {
@@ -4987,6 +4989,7 @@ class LabSimUI {
                 // restored set was measured against whatever floor was set then
                 if (analysisResult?.roomLevels) analysisResult.roomLevels.targetFloor = this._getTargetFloor();
                 this._renderUpgradeResults(analysisResult, resultsEl);
+                singleAnalysis = analysisResult;
                 // The remembered set is per character and has no undo: writing this
                 // run under the character who arrived mid-analysis would delete the
                 // analysis they were keeping
@@ -5025,6 +5028,7 @@ class LabSimUI {
                     startToken,
                     ownerId,
                     orderOnly: plan.orderOnly,
+                    savedAnalysis: singleAnalysis,
                 });
             }
         } catch (error) {
@@ -6444,6 +6448,7 @@ class LabSimUI {
      * @param {number} params.startToken - `_runStartToken` of the run
      * @param {string} params.ownerId - Character the run began for
      * @param {boolean} params.orderOnly - Nothing else was checked, so the status line is this pass's alone
+     * @param {Object|null} [params.savedAnalysis] - The run's own table result, saved again with the section
      * @returns {Promise<void>}
      * @private
      */
@@ -6460,6 +6465,7 @@ class LabSimUI {
         startToken,
         ownerId,
         orderOnly,
+        savedAnalysis = null,
     }) {
         const isCurrent = () =>
             startToken === this._runStartToken && Boolean(this.panel) && this._stillSameCharacter(ownerId);
@@ -6518,6 +6524,15 @@ class LabSimUI {
               ? `Ranked ${orders} ability order${orders === 1 ? '' : 's'} across ${fights.length} fight${fights.length === 1 ? '' : 's'}.`
               : 'Nothing to reorder: no loadout has two or more ordinary abilities.';
         this._setStatus(orderOnly ? outcome : `Upgrade analysis finished. ${outcome}`);
+        // Remembered with the table so a reload brings the section back. An order-only run has no table, so
+        // it is saved as an empty result set beside the section
+        if (section.groups.length) {
+            const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+            saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, savedAnalysis || { results: [] }, {
+                characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
+                orderSection: section,
+            });
+        }
     }
 
     /**
@@ -7270,17 +7285,24 @@ class LabSimUI {
             const payload = await loadUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
             if (replace && (this._upgradeRunning || this._upgradeRunStarted)) return;
             if (!payload) {
-                if (replace && this.panel && container.querySelector('table')) {
+                if (replace && this.panel && (container.querySelector('table') || this._upgradeOrderSection)) {
                     this._restoredUpgradeAt = null;
                     this._restoredUpgradeMeta = null;
                     container.innerHTML = '';
+                    this._upgradeOrderSection = null;
+                    this._drawUpgradeAbilityOrder();
                 }
                 return;
             }
             if (!this.panel || (container.querySelector('table') && !replace)) return;
             this._restoredUpgradeAt = payload.savedAt || null;
             this._restoredUpgradeMeta = { characterName: payload.characterName || null };
-            this._renderUpgradeResults(payload.data, container);
+            // An order-only run saved no table, only its section
+            if (payload.data?.results?.length) this._renderUpgradeResults(payload.data, container);
+            else container.innerHTML = '';
+            // A payload from before the section was remembered carries none
+            this._upgradeOrderSection = payload.orderSection || null;
+            this._drawUpgradeAbilityOrder();
         } catch (error) {
             console.error('[LabSimUI] Restoring upgrade results failed:', error);
         }

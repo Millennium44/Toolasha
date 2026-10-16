@@ -35,7 +35,8 @@ export function rememberUpgradeResultsEnabled() {
  */
 export async function saveUpgradeResults(key, results, meta = {}) {
     if (!rememberUpgradeResultsEnabled()) return;
-    if (!results?.results?.length) return;
+    // An order-only Lab run has no table, only the Ability order section carried in `meta`
+    if (!results?.results?.length && !meta.orderSection?.groups?.length) return;
     try {
         await writeScoped(
             key,
@@ -59,7 +60,8 @@ export async function loadUpgradeResults(key) {
     if (!rememberUpgradeResultsEnabled()) return null;
     try {
         const payload = await readScoped(key, STORE, null, { migrate: 'discard' });
-        if (!fromCurrentBuild(payload) || !payload?.data?.results?.length) return null;
+        if (!fromCurrentBuild(payload)) return null;
+        if (!payload?.data?.results?.length && !payload?.orderSection?.groups?.length) return null;
         return payload;
     } catch (error) {
         console.error('[UpgradeResultsStore] Loading upgrade results failed:', error);
