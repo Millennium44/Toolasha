@@ -22,7 +22,7 @@ step 'Prettier (CI globs)'
 npx prettier --check "src/**/*.js" "*.config.js" "**/*.md"
 
 step 'Tests'
-node_modules/.bin/vitest run --exclude '**/.claude/**' 2>&1 | tail -4
+node_modules/.bin/vitest run 2>&1 | tail -4
 
 step 'Build: dev standalone'
 BUILD_TARGET=dev-standalone npx rollup -c 2>&1 | tail -1
