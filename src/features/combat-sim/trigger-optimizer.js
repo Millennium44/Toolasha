@@ -500,8 +500,11 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         for (const key of ['xp', 'profit', 'revenue', 'cost', 'deaths', 'dps', 'encounters', 'attempts']) {
             baseScope[key] = mean(baseMetrics.map((m) => m[key]));
         }
-        const baseComplete = profitValuation([baseline], scopeHrids).complete;
-        if (objective === 'profit' && !baseComplete) {
+        const baseValuation = profitValuation([baseline], scopeHrids);
+        const baseComplete = baseValuation.complete;
+        // Profit/h has nothing to optimize once EITHER phase could not value profit: the threshold phase's own
+        // unpriced drop is as disqualifying as one in this search's baseline
+        if (objective === 'profit' && (!baseComplete || out.profitLeftOut)) {
             // Profit/h with a baseline that cannot be valued has nothing to optimize
             conditions = { changes: [], rejected: [], bestMeasured: [], skipped: 'profit' };
         } else {
@@ -509,9 +512,10 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
             // as the threshold search's scoreSets does, so a candidate is never judged on a different objective
             // from its reference
             // A comparison scored without profit is remembered, so the results warn that profit was left out
-            const conditionUnpriced = new Set();
-            let conditionProfitLeftOut = false;
-            let conditionValuationFailed = false;
+            // Seeded from the baseline: an unpriced item there already keeps profit out of every comparison
+            const conditionUnpriced = new Set(baseValuation.unpriced);
+            let conditionProfitLeftOut = !baseComplete;
+            let conditionValuationFailed = baseValuation.failed;
             const scoreSets = (sets) => {
                 const valuation = profitValuation(sets, scopeHrids);
                 const withProfit = baseComplete && valuation.complete;

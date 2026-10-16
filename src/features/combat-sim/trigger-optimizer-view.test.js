@@ -415,3 +415,22 @@ describe('condition changes stopped before the all-together check', () => {
         expect(html).not.toContain('data-csim-condition-unconfirmed');
     });
 });
+
+describe('a condition-only run that left profit out', () => {
+    test('still carries the profit-left-out warning', () => {
+        const html = renderTriggerResultsHtml(
+            {
+                scope: 'me',
+                noTunables: true,
+                include: 'both',
+                objective: 'balanced',
+                profitLeftOut: true,
+                unpriced: ['/items/mystery'],
+                changes: [],
+                conditions: { changes: [], bestMeasured: [] },
+            },
+            gameData
+        );
+        expect(html).toContain('Profit/h left out of the score');
+    });
+});

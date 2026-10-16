@@ -265,9 +265,16 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
                   : `Nothing to tune: none of the ${who} ability or food triggers compare an HP or MP ` +
                     'reading to a number.';
         // With the condition search on, "no thresholds" is not the end: the conditions block still has its answer
+        // A condition scored without profit still says so, as the threshold path's footer does
+        const leftOut =
+            result.profitLeftOut && result.objective !== 'profit'
+                ? `<div style="font-size:11px; color:#ff9800; margin-top:6px;">Profit/h left out of the score where it ` +
+                  `could not be counted: ${esc(profitUnvaluedReason(result, gameData))}.</div>`
+                : '';
         return wrap(
             `<div style="color:#888; font-size:12px;">${esc(message)}</div>` +
-                conditionResultsHtml(result.conditions, gameData)
+                conditionResultsHtml(result.conditions, gameData) +
+                leftOut
         );
     }
 
