@@ -2621,6 +2621,34 @@ describe('results outliving the character they were run for', () => {
         ).toBe('the alt’s own run');
     });
 
+    test('an Ability order run with nothing to reorder replaces the remembered run, and a reload shows that', async () => {
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+        const KEY = 'combatExport:combatSimUpgradeResults_char1';
+        mocks.upgradeResult = { baseline: BASELINE, results: [row('Older gear run')], food: null };
+        ui.buildPanel();
+        selectZone();
+        await ui._onUpgradeAnalyze();
+        expect(mocks.store.get(KEY).data.results).toHaveLength(1);
+
+        // Ability order alone, on a loadout with no ordinary abilities to reorder
+        for (const box of ui.panel.querySelectorAll('[data-upgrade-mode]')) {
+            box.checked = box.getAttribute('data-upgrade-mode') === 'ability_order';
+        }
+        mocks.upgradeResult = { baseline: BASELINE, results: [], food: null };
+        await ui._onUpgradeAnalyze();
+        expect(mocks.store.get(KEY).data.abilityOrder).toMatchObject({ ran: true, expected: 0, stopped: false });
+
+        ui.destroy();
+        ui.buildPanel();
+        await ui._restoreUpgradeResults();
+        const text = ui.panel.querySelector('#mwi-csim-upgrade-results').textContent;
+        expect(text).toContain('Nothing to reorder');
+        expect(text).not.toContain('Older gear run');
+    });
+
     test('an upgrade analysis waiting for player profiles does not start after a character switch', async () => {
         let releaseProfiles;
         mocks.buildPlayerDTOs = () =>

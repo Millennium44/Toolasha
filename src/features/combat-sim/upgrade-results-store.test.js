@@ -74,6 +74,24 @@ describe('upgrade-results-store', () => {
         expect(store.data[KEY]).toBeUndefined();
     });
 
+    test('saves and loads an empty result whose Ability order stamp says the pass finished', async () => {
+        settings.enabled = true;
+        const stamped = { baseline: {}, results: [], abilityOrder: { ran: true, expected: 0, stopped: false } };
+        await saveUpgradeResults(KEY, stamped);
+        expect(store.data[KEY].data.abilityOrder.ran).toBe(true);
+        const payload = await loadUpgradeResults(KEY);
+        expect(payload.data.abilityOrder.expected).toBe(0);
+    });
+
+    test('a stopped Ability order stamp with no rows saves nothing and loads as nothing', async () => {
+        settings.enabled = true;
+        const stopped = { baseline: {}, results: [], abilityOrder: { ran: true, expected: 6, stopped: true } };
+        await saveUpgradeResults(KEY, stopped);
+        expect(store.data[KEY]).toBeUndefined();
+        store.data[KEY] = { data: stopped, savedAt: 1, scriptVersion: '9.9.9' };
+        expect(await loadUpgradeResults(KEY)).toBeNull();
+    });
+
     test('load returns null when the option is off, even with a stored payload', async () => {
         store.data[KEY] = { data: sampleResults(), savedAt: 123, scriptVersion: '9.9.9' };
         expect(await loadUpgradeResults(KEY)).toBeNull();
