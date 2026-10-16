@@ -421,7 +421,14 @@ class TaskRerollWalk {
          * two spend totals are what the player was otherwise left to reconstruct
          * from their coin balance afterwards.
          */
-        this.tally = { kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
+        this.tally = { claimed: 0, kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
+        /**
+         * The claim the walk just pressed and the game has not yet answered:
+         * the card it was made on, the quest slot behind it and the task as it
+         * read, so the press is counted only once the board proves it landed.
+         */
+        this.pendingClaim = null;
+        this.claimWaits = 0;
         /** The last finished walk's summary, kept after its widget goes away */
         this.summary = '';
         /** Bumped by every start and every stop, so an in-flight start can tell it was abandoned */
@@ -733,6 +740,120 @@ class TaskRerollWalk {
         return [...card.querySelectorAll('button')].some((b) => /claim/i.test(b.textContent || ''));
     }
 
+    /**
+     * The card's own Claim Reward button, when the card is finished and the
+     * game is offering it. Found by the game's claim-button class, with the
+     * word as the fallback for a build that renames the class, so a player
+     * running the game in another language still gets the claim step. A card
+     * mid-flow (a chooser or a discard confirm open) never offers one.
+     * @param {HTMLElement} card - A task card
+     * @returns {HTMLElement|null}
+     * @private
+     */
+    _claimButton(card) {
+        if (!card || findRerollOptions(card).length || this._discardButton(card)) return null;
+        const byClass = [...card.querySelectorAll(GAME.TASK_CLAIM_BUTTON)].find((b) => {
+            const text = (b.textContent || '').trim();
+            return !b.disabled && text && !/^(back|reroll)$/i.test(text);
+        });
+        if (byClass) return byClass;
+        return (
+            [...card.querySelectorAll('button')].find((b) => !b.disabled && /claim/i.test(b.textContent || '')) || null
+        );
+    }
+
+    /**
+     * The task name the game shows on a card.
+     * @param {HTMLElement} card - A task card
+     * @returns {string}
+     * @private
+     */
+    _cardName(card) {
+        const key = cardTaskKey(card);
+        const cut = key.lastIndexOf('|');
+        return (cut >= 0 ? key.slice(0, cut) : key).trim();
+    }
+
+    /**
+     * The card an unanswered claim was made on, found again after a remount.
+     * @returns {HTMLElement|null}
+     * @private
+     */
+    _claimedCard() {
+        const claim = this.pendingClaim;
+        if (!claim) return null;
+        if (document.contains(claim.card)) return claim.card;
+        if (claim.questId === null || claim.questId === undefined) return null;
+        return this._cards().find((card) => questForTaskCard(card)?.id === claim.questId) || null;
+    }
+
+    /**
+     * Count the claim just pressed once the board proves the game took it: the
+     * card is gone, shows another task, or no longer offers the button. A press
+     * the game ignored leaves the card exactly as it was, and counts nothing.
+     * @private
+     */
+    _settleClaim() {
+        const claim = this.pendingClaim;
+        if (!claim) return;
+        const card = this._claimedCard();
+        const answered = !card || cardTaskKey(card) !== claim.signature || !this._claimButton(card);
+        if (!answered) return;
+        this.tally.claimed = (this.tally.claimed || 0) + 1;
+        this.pendingClaim = null;
+        this.claimWaits = 0;
+    }
+
+    /**
+     * The claim step: the first finished card on the board, before any card is
+     * rerolled. Only ahead of the walk's own card presses, because a claim
+     * removes a card and the walk's slot numbers must not move after that.
+     *
+     * @returns {Object|null|'wait'} The step, null when nothing is left to claim,
+     *   or 'wait' while a claim already pressed is still unanswered
+     * @private
+     */
+    _planClaim() {
+        const cards = this._cards();
+        for (let i = 0; i < cards.length; i += 1) {
+            const card = cards[i];
+            const button = this._claimButton(card);
+            if (!button) continue;
+            const slot = i + 1;
+            const quest = questForTaskCard(card);
+            const key = `claim:${quest?.id ?? cardTaskKey(card)}`;
+            const claim = this.pendingClaim;
+            const samePlace =
+                claim &&
+                (claim.card === card ||
+                    (claim.questId !== null && claim.questId !== undefined && claim.questId === quest?.id));
+            if (samePlace && cardTaskKey(card) === claim.signature) {
+                // Pressed, and the card still shows the button: the answer may
+                // simply not have arrived. Wait it out, then hand the card to
+                // the player, whose real press always counts.
+                if (this.claimWaits < PAID_WAIT_LIMIT) {
+                    this.claimWaits += 1;
+                    this.pending = true;
+                    return 'wait';
+                }
+                this.manualFor.add(key);
+                this.pendingClaim = null;
+                this.claimWaits = 0;
+            }
+            const manual = this.manualFor.has(key);
+            const name = this._cardName(card) || `#${slot}`;
+            return this._step(
+                'claim',
+                card,
+                slot,
+                manual ? `Press #${slot}'s highlighted Claim Reward button` : `Claim: ${name}`,
+                button,
+                { manual }
+            );
+        }
+        return null;
+    }
+
     // --------------------------------------------------------------- planning
 
     /**
@@ -818,6 +939,27 @@ class TaskRerollWalk {
                     button: null,
                     signature: '',
                 };
+            }
+        }
+
+        // Finished tasks are claimed before anything is rerolled: one claim per
+        // press, each counted once the board proves the game took it. Only
+        // while no card press has been made, so the slot numbers the rest of
+        // the walk relies on cannot shift under it.
+        this._settleClaim();
+        if (!this.walkBegun) {
+            const claim = this._planClaim();
+            if (claim === 'wait') return null;
+            if (claim) {
+                // A claim moves cards between slots; whatever the walk had
+                // judged so far is judged again from the top
+                this.index = 0;
+                this.tally.kept = 0;
+                this.pendingRetries = 0;
+                // The press revalidates the cap it was planned under; a claim
+                // spends nothing, but the check is made on every step
+                this.planCap = this._capSignature();
+                return claim;
             }
         }
 
@@ -1214,7 +1356,9 @@ class TaskRerollWalk {
         this.readPresses = 0;
         this.awaitingReadSort = false;
         this.walkBegun = false;
-        this.tally = { kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
+        this.tally = { claimed: 0, kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
+        this.pendingClaim = null;
+        this.claimWaits = 0;
         // A new walk is what finally replaces the last one's summary
         this.summary = '';
         this.message = '';
@@ -1254,6 +1398,8 @@ class TaskRerollWalk {
         this.paidFor = null;
         this.paidWaits = 0;
         this.pendingBill = null;
+        this.pendingClaim = null;
+        this.claimWaits = 0;
         this.awaitingReadSort = false;
         this.timerRegistry.clearAll();
         this.sortTimerRegistry.clearAll();
@@ -1425,7 +1571,7 @@ class TaskRerollWalk {
         // DOM event, so the shield's capture listener never sees it. A task
         // protected between the plan and the press is caught here or nowhere.
         // Back is exempt — closing a menu destroys nothing.
-        if (planned.kind !== 'back') {
+        if (planned.kind !== 'back' && planned.kind !== 'claim') {
             const quest = questForTaskCard(planned.card);
             const hrid = quest?.actionHrid || quest?.monsterHrid || '';
             if (hrid && this._liveProtectedHrids().has(hrid)) {
@@ -1448,14 +1594,15 @@ class TaskRerollWalk {
         }
 
         clickThroughReact(button, { reactFirst: true });
-        this.walkBegun = true;
+        if (planned.kind === 'claim') this._armClaim(planned);
+        else this.walkBegun = true;
 
         if (planned.kind === 'pay' || planned.kind === 'confirmDiscard') this._armSettle(planned);
 
         // A press the server has to answer for waits for its answer; a press
         // that only opened or closed a menu is React state and is back within a
         // frame. Either way what comes back is a label, not another click.
-        const serverBound = planned.kind === 'pay' || planned.kind === 'confirmDiscard';
+        const serverBound = planned.kind === 'pay' || planned.kind === 'confirmDiscard' || planned.kind === 'claim';
         this.state = 'waiting';
         this._render();
         this._replanSoon(serverBound ? SERVER_SETTLE_MS : UI_SETTLE_MS);
@@ -1470,13 +1617,28 @@ class TaskRerollWalk {
     _manualPressed() {
         const planned = this.step;
         if (!planned?.manual) return;
-        this.walkBegun = true;
+        if (planned.kind === 'claim') this._armClaim(planned);
+        else this.walkBegun = true;
 
         if (planned.kind === 'pay' || planned.kind === 'confirmDiscard') this._armSettle(planned);
 
         this.state = 'waiting';
         this._render();
         this._replanSoon(SERVER_SETTLE_MS);
+    }
+
+    /**
+     * Remember the claim just pressed so it is counted once the game answers.
+     * @param {Object} planned - The claim step
+     * @private
+     */
+    _armClaim(planned) {
+        this.pendingClaim = {
+            card: planned.card,
+            questId: questForTaskCard(planned.card)?.id ?? null,
+            signature: planned.signature,
+        };
+        this.claimWaits = 0;
     }
 
     /**
@@ -1512,6 +1674,7 @@ class TaskRerollWalk {
         if (planned.kind === 'open') return this._rerollButton(card);
         if (planned.kind === 'back') return this._backButton(card);
         if (planned.kind === 'trash') return this._trashButton(card);
+        if (planned.kind === 'claim') return this._claimButton(card);
         if (planned.kind === 'confirmDiscard') return this._discardButton(card);
         if (planned.kind === 'pay') {
             const option = preferredRerollOption(findRerollOptions(card), planned.currency);
@@ -1576,8 +1739,13 @@ class TaskRerollWalk {
      */
     _summaryText() {
         const { kept, rerolled, trashed } = this.tally;
+        const claimed = this.tally.claimed || 0;
         const spent = this.spendLabel();
-        return `${kept} kept, ${rerolled} rerolled, ${trashed} trashed` + (spent ? ` · spent ${spent}` : '');
+        return (
+            (claimed ? `${claimed} claimed, ` : '') +
+            `${kept} kept, ${rerolled} rerolled, ${trashed} trashed` +
+            (spent ? ` · spent ${spent}` : '')
+        );
     }
 
     /**
@@ -1859,6 +2027,8 @@ class TaskRerollWalk {
         this.index = 0;
         this.hidden = false;
         this.summary = '';
+        this.pendingClaim = null;
+        this.claimWaits = 0;
         this.isInitialized = false;
     }
 
