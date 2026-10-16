@@ -2614,6 +2614,8 @@ class GuildTrials {
         this.record = null;
         /** The name the record is currently keyed by; null means the `default` key */
         this.guildName = null;
+        /** Whether the record and work bases were re-checked once the game's data was there; see _rescrubOnGameData */
+        this.gameDataScrubbed = false;
         /** Guards the one-shot adoption below against a second render starting it again */
         this.adopting = false;
         /** When the sampler last ran, so a sampler that has stopped can be noticed */
@@ -2940,6 +2942,7 @@ class GuildTrials {
     /** One sampler tick: read the tab if it is open, and note that the sampler is alive */
     _tick() {
         this.lastTickAt = Date.now();
+        this._rescrubOnGameData();
         const el = findTrialsRoot();
         if (el?.isConnected) this._render(el);
     }
@@ -3087,6 +3090,27 @@ class GuildTrials {
         }
         this.recordUnread = false;
         this.record = this._scrubRecord(mergeTrialRecords(stored, this.record));
+    }
+
+    /**
+     * Re-run the scrubs once the game's data has arrived, if they ran before it did.
+     *
+     * Both scrubs judge a wave by its monster count, which comes from `getInitClientData()`. A record adopted
+     * (and work bases purged) before that data exists passed through them as no-ops, and the in-memory copies
+     * kept the untagged tier observations and untrusted bases until the next save. There is no event for the
+     * data arriving, so the sampler tick and every render check — a cheap read, and a one-shot once it answers.
+     */
+    _rescrubOnGameData() {
+        if (this.gameDataScrubbed) return;
+        try {
+            // Unloaded is null in the game; an empty object is the same answer
+            if (!Object.keys(dataManager.getInitClientData?.() || {}).length) return;
+            this.gameDataScrubbed = true;
+            if (this.record) this.record = this._scrubRecord(this.record);
+            this._purgeWorkBases();
+        } catch (error) {
+            console.error('[GuildTrials] Re-scrubbing after the game data arrived failed:', error);
+        }
     }
 
     /**
@@ -3534,6 +3558,7 @@ class GuildTrials {
      */
     _render(root) {
         try {
+            this._rescrubOnGameData();
             if (!root?.isConnected) return;
             if (!config.getSetting('guildTrialsInfo', true)) return;
 
