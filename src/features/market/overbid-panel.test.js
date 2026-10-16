@@ -14,6 +14,20 @@ const hoisted = vi.hoisted(() => ({
     settingCallbacks: {},
     mooket: new Map(),
     refresh: vi.fn(async () => {}),
+    characterId: 'c1',
+    store: {},
+    storageSet: vi.fn(),
+    storageGet: null,
+}));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        get: async (key, _store, fallback) =>
+            hoisted.storageGet ? hoisted.storageGet(key) : (hoisted.store[key] ?? fallback),
+        set: (...args) => {
+            hoisted.storageSet(...args);
+            hoisted.store[args[0]] = args[1];
+        },
+    },
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -31,6 +45,7 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getMarketListings: () => hoisted.listings,
+        getCurrentCharacterId: () => hoisted.characterId,
         getItemDetails: (hrid) => ({ name: hrid.split('/').pop() }),
         on: (event, fn) => {
             (hoisted.handlers[event] ||= []).push(fn);
@@ -172,6 +187,10 @@ describe('panel', () => {
         hoisted.tabs = null;
         hoisted.mooket.clear();
         hoisted.refresh.mockClear();
+        hoisted.characterId = 'c1';
+        hoisted.store = {};
+        hoisted.storageSet.mockClear();
+        hoisted.storageGet = null;
         document.body.innerHTML = '';
         vi.useFakeTimers();
         vi.setSystemTime(NOW);
@@ -189,6 +208,7 @@ describe('panel', () => {
         fire();
         expect(root()).not.toBeNull();
         expect(root().textContent).toContain('Overbid table');
+        expect(root().textContent).not.toContain('Your items have been overbid');
         expect(root().querySelectorAll('tbody tr')).toHaveLength(1);
         expect(root().textContent).toContain('Sell');
         hoisted.observations[`${CHEESE}:0:sell`] = fresh(100);
@@ -396,6 +416,229 @@ describe('panel', () => {
         fire();
         await vi.advanceTimersByTimeAsync(2500);
         expect(hoisted.refresh).toHaveBeenCalledTimes(3);
+    });
+
+    describe('hiding items', () => {
+        const STORE_KEY = 'overbidPanel_hidden_c1';
+        const SWORD = '/items/sword';
+        const closeX = () => root().querySelector('.toolasha-minimize-btn').nextElementSibling.click();
+        const hideBtn = (n = 0) => root().querySelectorAll('[data-overbid-hide]')[n];
+        const toggleLine = () => root().querySelector('[data-overbid-toggle-hidden]');
+        const tableRows = () => root().querySelectorAll('tbody tr');
+
+        function beat() {
+            hoisted.listings = [
+                listing({ id: 1, itemHrid: SWORD, enhancementLevel: 3, price: 100 }),
+                listing({ id: 2, itemHrid: SWORD, enhancementLevel: 3, price: 120 }),
+                listing({ id: 3, itemHrid: SWORD, enhancementLevel: 5, price: 100 }),
+                listing({ id: 4, itemHrid: SWORD, enhancementLevel: 3, isSell: false, price: 10 }),
+                listing({ id: 5, itemHrid: CHEESE, price: 100 }),
+            ];
+            hoisted.observations[`${SWORD}:3:sell`] = fresh(90);
+            hoisted.observations[`${SWORD}:5:sell`] = fresh(90);
+            hoisted.observations[`${SWORD}:3:buy`] = fresh(20);
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            fire();
+        }
+
+        async function withTab() {
+            const container = document.createElement('div');
+            const native = document.createElement('button');
+            native.setAttribute('role', 'tab');
+            container.appendChild(native);
+            document.body.appendChild(container);
+            hoisted.tabs = container;
+            overbidPanel.disable();
+            await overbidPanel.initialize();
+            return container.querySelector.bind(container, '[data-mwi-overbid-tab="true"]');
+        }
+
+        it('hides every listing of that item, level and side, and nothing else, and persists the key', () => {
+            beat();
+            expect(tableRows()).toHaveLength(5);
+            const control = hideBtn(0);
+            expect(control.title).toBe('Hide this item from the table');
+            control.click();
+            // Both sell +3 sword listings go; sell +5, buy +3 and the cheese stay
+            expect([...tableRows()].map((r) => r.dataset.listingId)).toEqual(['3', '4', '5']);
+            expect(root().textContent).toContain('Overbid table (3, 2 hidden)');
+            expect(hoisted.storageSet).toHaveBeenLastCalledWith(STORE_KEY, [`${SWORD}:3:sell`], 'settings', true);
+            expect(toggleLine().textContent).toBe('Show hidden (2)');
+        });
+
+        it('Show hidden reveals dimmed rows with an unhide control, and unhide restores them', () => {
+            beat();
+            hideBtn(0).click();
+            toggleLine().click();
+            expect(toggleLine().textContent).toBe('Hide hidden');
+            expect(tableRows()).toHaveLength(5);
+            const dimmed = root().querySelectorAll('tr[data-overbid-hidden="true"]');
+            expect(dimmed).toHaveLength(2);
+            expect(dimmed[0].querySelector('[data-overbid-hide]')).toBeNull();
+            dimmed[0].querySelector('[data-overbid-unhide]').click();
+            expect(tableRows()).toHaveLength(5);
+            expect(root().querySelectorAll('tr[data-overbid-hidden="true"]')).toHaveLength(0);
+            expect(toggleLine()).toBeNull();
+            expect(hoisted.storageSet).toHaveBeenLastCalledWith(STORE_KEY, [], 'settings', true);
+            expect(root().querySelectorAll('[data-overbid-hide]')).toHaveLength(5);
+        });
+
+        it('hiding and toggling never close the panel or count as a dismissal', () => {
+            beat();
+            hideBtn(0).click();
+            toggleLine().click();
+            toggleLine().click();
+            expect(root()).not.toBeNull();
+            expect(overbidPanel.dismissed.size).toBe(0);
+        });
+
+        it('a hidden row is not part of a dismissal and does not pop the panel open', () => {
+            beat();
+            hideBtn(0).click();
+            closeX();
+            expect(root()).toBeNull();
+            fire();
+            expect([...overbidPanel.dismissed].sort()).toEqual([3, 4, 5]);
+            // The hidden item is relisted under a new id at a new price: still hidden, still silent
+            hoisted.listings = hoisted.listings.map((l) => (l.id === 1 ? { ...l, id: 9, price: 95 } : l));
+            fire();
+            expect(root()).toBeNull();
+            // A hidden-only beaten set never opens it
+            hoisted.listings = [listing({ id: 20, itemHrid: SWORD, enhancementLevel: 3, price: 100 })];
+            fire();
+            expect(root()).toBeNull();
+        });
+
+        it('a tab close does not dismiss hidden rows either', async () => {
+            const tab = await withTab();
+            beat();
+            hideBtn(0).click();
+            tab().click();
+            expect(root()).toBeNull();
+            expect(overbidPanel.dismissed.has(1)).toBe(false);
+            expect(overbidPanel.dismissed.has(2)).toBe(false);
+            expect(overbidPanel.dismissed.has(5)).toBe(true);
+        });
+
+        it('with every beaten row hidden an open panel stays open and offers them back', () => {
+            hoisted.listings = [listing({ id: 1 }), listing({ id: 2, price: 120 })];
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            fire();
+            hideBtn(0).click();
+            expect(root()).not.toBeNull();
+            expect(root().textContent).toContain('All overbid items are hidden.');
+            expect(root().textContent).not.toContain('Nothing is undercut');
+            expect(root().textContent).toContain('Overbid table (0, 2 hidden)');
+            fire();
+            expect(root()).not.toBeNull();
+            toggleLine().click();
+            expect(tableRows()).toHaveLength(2);
+            expect(root().textContent).not.toContain('All overbid items are hidden.');
+            // Closing it and updating again keeps it closed
+            closeX();
+            expect(root()).toBeNull();
+            fire();
+            expect(root()).toBeNull();
+        });
+
+        it('show-hidden resets once no hidden row is beaten any more', () => {
+            beat();
+            hideBtn(0).click();
+            toggleLine().click();
+            expect(overbidPanel.showHidden).toBe(true);
+            hoisted.observations[`${SWORD}:3:sell`] = fresh(200);
+            fire();
+            expect(toggleLine()).toBeNull();
+            expect(overbidPanel.showHidden).toBe(false);
+        });
+
+        it('a manual open with everything hidden shows the toggle, not the nothing-beaten line', async () => {
+            const tab = await withTab();
+            hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`];
+            await overbidPanel.loadHidden();
+            hoisted.listings = [listing({ id: 1 })];
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            fire();
+            expect(root()).toBeNull();
+            tab().click();
+            expect(root().textContent).toContain('All overbid items are hidden.');
+            expect(toggleLine().textContent).toBe('Show hidden (1)');
+        });
+
+        it('restores the saved keys on initialize, so a hidden item does not open the panel', async () => {
+            overbidPanel.disable();
+            hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`];
+            hoisted.listings = [listing({ id: 1 })];
+            hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+            await overbidPanel.initialize();
+            expect(root()).toBeNull();
+            expect(overbidPanel.hidden.has(`${CHEESE}:0:sell`)).toBe(true);
+        });
+
+        it('prunes a key at login when no active listing of that item, level and side remains', async () => {
+            hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`, `${CHEESE}:0:buy`, `${SWORD}:3:sell`];
+            await overbidPanel.loadHidden();
+            // Cheese sell is live; cheese buy is only a filled listing; the sword is at another level
+            hoisted.listings = [
+                listing({ id: 1 }),
+                listing({ id: 2, isSell: false, status: '/market_listing_status/filled' }),
+                listing({ id: 3, itemHrid: SWORD, enhancementLevel: 4 }),
+            ];
+            hoisted.handlers.character_initialized.forEach((fn) => fn());
+            await vi.advanceTimersByTimeAsync(0);
+            expect([...overbidPanel.hidden]).toEqual([`${CHEESE}:0:sell`]);
+            expect(hoisted.storageSet).toHaveBeenLastCalledWith(STORE_KEY, [`${CHEESE}:0:sell`], 'settings', true);
+        });
+
+        it('does not prune while listings are empty or not loaded, nor on a plain listings update', async () => {
+            hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`];
+            await overbidPanel.loadHidden();
+            hoisted.listings = [];
+            hoisted.handlers.character_initialized.forEach((fn) => fn());
+            await vi.advanceTimersByTimeAsync(0);
+            hoisted.listings = undefined;
+            hoisted.handlers.character_initialized.forEach((fn) => fn());
+            await vi.advanceTimersByTimeAsync(0);
+            expect(overbidPanel.hidden.has(`${CHEESE}:0:sell`)).toBe(true);
+            // A cancel-then-relist gap: another item is listed, the hidden one briefly is not
+            hoisted.listings = [listing({ id: 7, itemHrid: SWORD })];
+            fire();
+            expect(overbidPanel.hidden.has(`${CHEESE}:0:sell`)).toBe(true);
+            expect(hoisted.storageSet).not.toHaveBeenCalled();
+        });
+
+        it('a load that resolves after a character switch does not apply to the new character', async () => {
+            overbidPanel.disable();
+            let release;
+            hoisted.storageGet = () => new Promise((resolve) => (release = resolve));
+            const starting = overbidPanel.initialize();
+            await Promise.resolve();
+            overbidPanel.disable();
+            hoisted.characterId = 'c2';
+            release([`${CHEESE}:0:sell`]);
+            await starting;
+            expect(overbidPanel.hidden.size).toBe(0);
+            expect(overbidPanel.hiddenOwner).toBeNull();
+        });
+
+        it('keeps each character apart and forgets the set on disable', async () => {
+            beat();
+            hideBtn(0).click();
+            overbidPanel.disable();
+            expect(overbidPanel.hidden.size).toBe(0);
+            hoisted.characterId = 'c2';
+            await overbidPanel.initialize();
+            expect(overbidPanel.hidden.size).toBe(0);
+        });
+
+        it('caps the remembered set', () => {
+            for (let i = 0; i < 205; i++) {
+                overbidPanel.setHidden({ itemHrid: `/items/i${i}`, enhancementLevel: 0, isSell: true }, true);
+            }
+            expect(overbidPanel.hidden.size).toBe(200);
+            expect(overbidPanel.hidden.has('/items/i0:0:sell')).toBe(false);
+            expect(overbidPanel.hidden.has('/items/i204:0:sell')).toBe(true);
+        });
     });
 
     describe('the Overbid tab', () => {

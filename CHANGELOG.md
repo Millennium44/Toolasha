@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market: hide items in the Overbid table
+
+- Each Overbid table row has a ✕ that hides that item (level and side) — remembered per character and kept through a relist — with a "Show hidden (n)" toggle to see them again; hidden items never pop the table open, and the "Your items have been overbid" line is gone.
+
 ### Guild Trials: no forecast before anyone signs up
 
 - A trial that hasn't started is forecast only from the loadouts of members signed up for that trial; right after the weekly rollover, with nobody signed up, it no longer shows an "If it started now" tier built from last week's fighters.
