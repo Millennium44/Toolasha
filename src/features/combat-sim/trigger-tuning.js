@@ -1408,8 +1408,14 @@ export async function runTriggerSearch({
     const kept = new Set(changes.map((c) => c.key));
     // The best candidate measured over every row, whatever it scored: `deltaScore` at or below 0 means the
     // current values measured best. Display only; the acceptance rules above never read it.
+    // A row that was accepted step by step and then rejected as a whole shows its whole move (from the original,
+    // cumulative figures), not whichever single step happened to be recorded last
+    const rejectedByKey = new Map(rejected.map((c) => [c.key, c]));
     const bestMeasured =
-        [...bestSeen.values()].filter((b) => !kept.has(b.key)).sort((a, b) => b.deltaScore - a.deltaScore)[0] || null;
+        [...bestSeen.values()]
+            .filter((b) => !kept.has(b.key))
+            .map((b) => rejectedByKey.get(b.key) || b)
+            .sort((a, b) => b.deltaScore - a.deltaScore)[0] || null;
     return {
         stopped: stopped(),
         objective,
