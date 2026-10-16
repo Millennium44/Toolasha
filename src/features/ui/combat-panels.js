@@ -49,7 +49,15 @@ import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { fitValueToBox } from '../../utils/wrap-long-value.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { expectedKills, killComparison } from '../../utils/expected-kills.js';
-import { loadAllZonesSnapshot, bestSoloZone, zoneFromSnapshot } from '../../utils/all-zones-snapshot.js';
+import {
+    ALL_ZONES_SNAPSHOT_KEY,
+    ALL_ZONES_SNAPSHOT_STORE,
+    loadAllZonesSnapshot,
+    bestSoloZone,
+    zoneFromSnapshot,
+} from '../../utils/all-zones-snapshot.js';
+import { characterKey } from '../../utils/character-key.js';
+import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { partyLintWarnings, battleLintInputs } from '../../utils/party-lint.js';
 import { abilityBreakdownRows, abilityDamageText, abilityRateText } from '../../utils/damage-board.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
@@ -210,6 +218,27 @@ let soloSnapshot;
  */
 let soloSnapshotOwner;
 
+/** Bumped when the cache is dropped, so a load that began before the drop is discarded on arrival */
+let soloSnapshotGeneration = 0;
+
+/**
+ * Drop the cached snapshot so the next ask re-reads storage.
+ * @returns {void}
+ */
+export function invalidateSoloSnapshot() {
+    soloSnapshot = undefined;
+    soloSnapshotOwner = undefined;
+    soloSnapshotGeneration++;
+}
+
+// A live-safe sync pull replaces the stored snapshot under a running page; the cache would otherwise keep the
+// older run until the character changed. Module lifetime, like the cache itself (nothing here is torn down).
+onSyncPullApplied((written) => {
+    if ((written?.[ALL_ZONES_SNAPSHOT_STORE] || []).includes(characterKey(ALL_ZONES_SNAPSHOT_KEY))) {
+        invalidateSoloSnapshot();
+    }
+});
+
 /**
  * The cached snapshot, kicking off the one load on the first ask.
  *
@@ -225,9 +254,10 @@ function cachedSnapshot() {
     if (soloSnapshot === undefined || soloSnapshotOwner !== owner) {
         soloSnapshot = null;
         soloSnapshotOwner = owner;
+        const generation = soloSnapshotGeneration;
         loadAllZonesSnapshot()
             .then((snapshot) => {
-                if (soloSnapshotOwner !== owner) return;
+                if (soloSnapshotOwner !== owner || soloSnapshotGeneration !== generation) return;
                 soloSnapshot = snapshot;
             })
             .catch(() => {});
