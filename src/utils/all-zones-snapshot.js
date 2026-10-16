@@ -453,6 +453,37 @@ export const SIM_CONSUMABLE_RATES_KEY = 'simConsumableRates';
 export const SIM_CONSUMABLE_RATES_BY_ZONE_KEY = 'simConsumableRatesByZone';
 
 /**
+ * Store one zone's consumable rates into the by-zone map, as one storage update.
+ *
+ * The zone is merged into whatever is stored when the write happens (a queued write included), so
+ * a sync pull that landed after the caller decided to save cannot lose the other device's zones.
+ * The key is passed in, resolved before any await, so a character switch cannot redirect the write.
+ *
+ * @param {string} storageKey - `characterKey(SIM_CONSUMABLE_RATES_BY_ZONE_KEY)` resolved by the caller
+ * @param {string} zoneKey - `"zone|tier"`
+ * @param {Object} record - This run's rate record
+ * @returns {Promise<boolean>} Whether it was stored
+ */
+export async function saveSimConsumableRateForZone(storageKey, zoneKey, record) {
+    try {
+        if (!storageKey || !zoneKey) return false;
+        const result = await storage.update(
+            storageKey,
+            (current) => {
+                const saved = storage.parseJSON(current ?? null, storageKey, null);
+                const map = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+                return { ...map, [zoneKey]: record };
+            },
+            ALL_ZONES_SNAPSHOT_STORE
+        );
+        return Boolean(result);
+    } catch (error) {
+        console.error('[AllZonesSnapshot] Saving a zone consumable rate failed:', error);
+        return false;
+    }
+}
+
+/**
  * Pick one of two whole run records: the readable one, the one this build wrote, then the later save.
  * @param {*} local - This device's record
  * @param {*} incoming - The other side's record

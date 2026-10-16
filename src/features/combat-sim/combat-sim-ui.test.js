@@ -197,6 +197,7 @@ vi.mock('../../core/storage.js', () => {
                 mocks.store.set(keyOf(key, store), value);
                 return true;
             },
+            parseJSON: (raw, _key, fallback) => (raw === null ? fallback : raw),
             getJSON: async (key, store, fallback) => {
                 const value = mocks.store.get(keyOf(key, store));
                 return value === undefined ? fallback : value;
@@ -2077,6 +2078,34 @@ describe('results outliving the character they were run for', () => {
         await Promise.resolve();
 
         expect(Object.keys(mocks.store.get('combatExport:simConsumableRatesByZone_char2'))).toEqual(['a|0', 'b|0']);
+    });
+
+    test('the by-zone consumable map keeps a zone a sync pull stored while the rate was being saved', async () => {
+        const key = 'combatExport:simConsumableRatesByZone_char1';
+        mocks.store.set(key, { 'a|0': { perHour: { '/items/cheese': 1 } } });
+        const realUpdate = (await import('../../core/storage.js')).default.update;
+        // A pull lands another device's zone after this save decided what to write
+        const storage = (await import('../../core/storage.js')).default;
+        storage.update = async (k, mutate, store) => {
+            mocks.store.set(key, { ...mocks.store.get(key), 'pulled|0': { perHour: { '/items/cheese': 9 } } });
+            return realUpdate(k, mutate, store);
+        };
+        try {
+            ui._persistConsumableRates(
+                {
+                    simulatedTime: 3600 * 1e9,
+                    zoneName: '/actions/combat/fly',
+                    difficultyTier: 0,
+                    consumablesUsed: { player1: { '/items/mystery_stew': 6 } },
+                },
+                'player1',
+                'char1'
+            );
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        } finally {
+            storage.update = realUpdate;
+        }
+        expect(Object.keys(mocks.store.get(key)).sort()).toEqual(['/actions/combat/fly|0', 'a|0', 'pulled|0']);
     });
 
     test('an all-zones sweep finishing after a switch does not overwrite the arriving character’s snapshot', async () => {
