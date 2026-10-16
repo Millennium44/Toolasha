@@ -766,6 +766,79 @@ describe('the Lab Sim Verify controls', () => {
         });
     });
 
+    describe('auto-verify across both sections', () => {
+        const A = '/abilities/a';
+        const B = '/abilities/b';
+        const C = '/abilities/c';
+        test('takes at most three rows in all, the best improvements against noise first', async () => {
+            // Scores (improvement over noise): all rows 1.25, 1.0 and 0.2; the order below 1.25
+            await analyze(
+                analysisOf([
+                    upgradeRow(1, -0.5, 0.4, false),
+                    upgradeRow(2, -0.4, 0.4, false),
+                    upgradeRow(3, -0.1, 0.5, false),
+                ])
+            );
+            const s = {
+                groups: [
+                    {
+                        loadoutName: 'Lab',
+                        currentName: 'A → B → C',
+                        orders: [
+                            {
+                                order: [B, A, C],
+                                name: 'B → A → C',
+                                attemptsDelta: -0.5,
+                                attemptsDeltaNoise: 0.4,
+                                runClearDelta: 0.01,
+                                significant: false,
+                            },
+                        ],
+                    },
+                ],
+            };
+            ui._upgradeOrderSection = s;
+            ui._registerVerifyLive(
+                'order',
+                {
+                    raw: {
+                        baseline: { fights: [{ winRate: 0.5 }] },
+                        results: [
+                            {
+                                candidate: { checkedAbilityKey: 'ability_order', abilityOrder: true, order: [B, A, C] },
+                                fights: [{ applied: true }],
+                            },
+                        ],
+                        pairing: { seed: 9, rules: [] },
+                        context: {
+                            fights: [
+                                { loadoutId: 1, dto: { abilities: [null, { hrid: A }, { hrid: B }, { hrid: C }] } },
+                            ],
+                            hours: 1,
+                        },
+                    },
+                    section: s,
+                },
+                'me'
+            );
+            settings.autoVerify = true;
+            verify.lab = async ({ rows }) => ({
+                rows: rows.map(() => verdictRow('x', 'not-confirmed', -0.1, 0.3)),
+                metric: 'attempts',
+                unit: 'attempts',
+                seeds: 8,
+                stopped: false,
+            });
+            await ui._autoVerifyCloseCalls({ startToken: ui._runStartToken, ownerId: 'me' });
+            const total = verify.labCalls.reduce((sum, call) => sum + call.rows.length, 0);
+            expect(total).toBe(3);
+            const names = verify.labCalls.flatMap((call) => call.rows.map((r) => r.candidate.description ?? 'order'));
+            expect(names).toContain('Gear 1');
+            expect(names).toContain('Gear 2');
+            expect(names).not.toContain('Gear 3');
+        });
+    });
+
     describe('trigger tuning', () => {
         const groupOf = (extra = {}) => ({
             key: 'loadout:3',
