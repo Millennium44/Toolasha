@@ -1536,6 +1536,17 @@ describe('what a run costs, through the real Markov chain', () => {
         // Seven real chains: ~1 s alone, far past vitest's 5 s default under full-suite load
     }, 30_000);
 
+    test('a material with no quote and no recipe makes the run unpriced, not cheaper', () => {
+        const priced = enhancementCost('/items/sinister_cape', 7, 5);
+        expect(priced).toBeGreaterThan(0);
+
+        // The vendor pays 50,000 for it; that is not a price anyone will sell it at
+        game.details['/items/relic'] = { name: 'Relic', sellPrice: 50_000 };
+        game.details['/items/sinister_cape'].enhancementCosts.push({ itemHrid: '/items/relic', count: 1 });
+
+        expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeNull();
+    });
+
     test('the two levels the report was about, the right way round', () => {
         const fromFive = enhancementCost('/items/sinister_cape', 7, 5);
         const fromFour = enhancementCost('/items/sinister_cape', 7, 4);

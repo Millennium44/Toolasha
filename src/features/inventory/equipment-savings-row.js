@@ -1242,10 +1242,11 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
     if (!params || !details || !calculate) return null;
 
     // Priced by the one shared rule: a one-sided book cross-fills, and only then
-    // does it fall back to what the thing costs to make and what the vendor
-    // pays. This card used to take `ask || sellPrice`, which on a bid-only book
+    // does it fall back to what the thing costs to make. The vendor price is not a
+    // fallback. This card used to take `ask || sellPrice`, which on a bid-only book
     // quoted the vendor price — a ninth of the real bill on the fixtures in
-    // enhancement-cost-parity.test.js.
+    // enhancement-cost-parity.test.js. A material nothing can price makes the whole
+    // run unpriced (see the plan check below).
     const materials = perAttemptMaterialCost(details);
     if (!materials.hasCost) return null;
 
@@ -1321,7 +1322,9 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
             calculate,
         });
 
-        const cost = plan?.cost ?? null;
+        // A plan that left a material unpriced is a partial bill: unknown, like a run nothing
+        // could price, so the target reads as unpriced instead of quoting the part that had a price
+        const cost = plan && !plan.hasMissingPrices ? plan.cost : null;
         // Bounded rather than grown forever: a player editing a target's level
         // walks through twenty keys a piece, and nothing here is worth holding
         // an unbounded table for. A failed sweep is not cached — the next draw
