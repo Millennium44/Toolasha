@@ -159,7 +159,7 @@ vi.mock('./verify-runner.js', async (importOriginal) => ({
     },
 }));
 
-const { default: ui } = await import('./lab-sim-ui.js');
+const { default: ui, orderDisplayEntries } = await import('./lab-sim-ui.js');
 
 async function settle() {
     for (let i = 0; i < 30; i++) await Promise.resolve();
@@ -779,6 +779,134 @@ describe('the Lab Sim Verify controls', () => {
             expect(verify.labCalls).toHaveLength(1);
             expect(verify.labCalls[0].rows).toHaveLength(1);
             expect(orderEl().textContent).toContain('Auto-verify: 0 confirmed, 1 not confirmed of 1');
+        });
+    });
+
+    describe('the Ability order table and the rows Verify takes', () => {
+        const key = (n) => `/abilities/k${n}`;
+        const tied = (n, delta = -0.5, noise = 0.4) => ({
+            order: [key(n), '/abilities/z'],
+            name: `order ${n}`,
+            attemptsDelta: delta,
+            attemptsDeltaNoise: noise,
+            runClearDelta: 0.01,
+            significant: false,
+        });
+        const rowFor = (o) => ({
+            candidate: { checkedAbilityKey: 'ability_order', abilityOrder: true, order: o.order },
+            fights: [{ applied: true }, { applied: true }],
+        });
+        // Group 0: eight exact ties, two better rows listed after them, and a 0.0 row tied with the current order.
+        // Group 1: its own exact ties, so two loadouts are drawn at once.
+        const tiedSection = () => ({
+            groups: [
+                {
+                    loadoutName: 'Lab',
+                    currentName: 'cur',
+                    orders: [
+                        ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => tied(n)),
+                        tied(9, -1.0),
+                        tied(10, -1.0),
+                        tied(11, 0),
+                    ],
+                },
+                { loadoutName: 'Spare', currentName: 'cur', orders: [20, 21, 22, 23].map((n) => tied(n)) },
+            ],
+        });
+        const liveOf = (section) => ({
+            baseline: { fights: [{ winRate: 0.5 }, { winRate: 0.5 }] },
+            results: section.groups.flatMap((g) => g.orders.map(rowFor)),
+            pairing: { seed: 9, rules: [] },
+            context: {
+                fights: [
+                    { loadoutId: 1, dto: { abilities: [null, { hrid: 'a' }, { hrid: 'b' }] } },
+                    { loadoutId: 2, dto: { abilities: [null, { hrid: 'a' }, { hrid: 'b' }] } },
+                ],
+                hours: 1,
+            },
+        });
+        const orderEl = () => ui.panel.querySelector('#mwi-labsim-upgrade-order');
+        const drawTied = () => {
+            const s = tiedSection();
+            ui._upgradeOrderSection = s;
+            ui._registerVerifyLive('order', { raw: liveOf(s), section: s }, 'me');
+            ui._drawUpgradeAbilityOrder();
+            return s;
+        };
+        const drawnNames = (blockIndex) => {
+            const table = orderEl().querySelectorAll('table')[blockIndex];
+            return [...table.querySelectorAll('tbody tr')].map((tr) =>
+                tr.hasAttribute('data-order-current')
+                    ? 'CURRENT'
+                    : tr.querySelector('td').textContent.split('within')[0]
+            );
+        };
+
+        test('the display comparator puts the current row first among equal savings and keeps tied orders in order', () => {
+            const orders = [tied(1), tied(2), tied(3, 0), tied(4, -1), tied(5, 0), tied(6)];
+            const names = orderDisplayEntries(orders).map((o) => (o.current ? 'CURRENT' : o.name));
+            expect(names).toEqual(['order 4', 'order 1', 'order 2', 'order 6', 'CURRENT', 'order 3', 'order 5']);
+            // Input order decides ties, not the engine's sort
+            const flipped = orderDisplayEntries([...orders].reverse()).map((o) => (o.current ? 'CURRENT' : o.name));
+            expect(flipped).toEqual(['order 4', 'order 6', 'order 2', 'order 1', 'CURRENT', 'order 5', 'order 3']);
+        });
+
+        test('collapsed with eight tied orders, Verify top 3 sends the first three rows the table draws', async () => {
+            drawTied();
+            const drawn = drawnNames(0);
+            // Collapsed: five orders and the current row
+            expect(drawn).toHaveLength(6);
+            expect(drawn.slice(0, 3)).toEqual(['order 9', 'order 10', 'order 1']);
+            verify.lab = async ({ rows }) => ({
+                rows: rows.map(() => verdictRow('x', 'confirmed', -1.4, 0.2)),
+                metric: 'attempts',
+                unit: 'attempts',
+                seeds: 8,
+                stopped: false,
+            });
+            const button = orderEl().querySelector('[data-order-verify="0"]');
+            expect(button.textContent).toBe('Verify top 3');
+            button.click();
+            await settle();
+            const sent = verify.labCalls[0].rows.map((r) => r.candidate.order[0]);
+            expect(sent).toEqual(drawn.slice(0, 3).map((name) => key(name.replace('order ', ''))));
+            // The chips land on those drawn rows, 1 to 3
+            const chipRows = [...orderEl().querySelectorAll('table')[0].querySelectorAll('tbody tr')].map((tr) =>
+                Boolean(tr.querySelector('[data-verify-chip]'))
+            );
+            expect(chipRows).toEqual([true, true, true, false, false, false]);
+        });
+
+        test('the second loadout group verifies its own first rows, and its label counts what it will pick', async () => {
+            drawTied();
+            const button = orderEl().querySelector('[data-order-verify="1"]');
+            expect(button.textContent).toBe('Verify top 3');
+            verify.lab = async ({ rows }) => ({
+                rows: rows.map(() => verdictRow('x', 'confirmed', -1.4, 0.2)),
+                metric: 'attempts',
+                unit: 'attempts',
+                seeds: 8,
+                stopped: false,
+            });
+            button.click();
+            await settle();
+            expect(verify.labCalls[0].rows.map((r) => r.candidate.order[0])).toEqual([key(20), key(21), key(22)]);
+        });
+
+        test('auto-verify breaks exact score ties in the order the table draws them', async () => {
+            settings.autoVerify = true;
+            drawTied();
+            verify.lab = async ({ rows }) => ({
+                rows: rows.map(() => verdictRow('x', 'not-confirmed', -0.1, 0.3)),
+                metric: 'attempts',
+                unit: 'attempts',
+                seeds: 8,
+                stopped: false,
+            });
+            await ui._autoVerifyCloseCalls({ startToken: ui._runStartToken, ownerId: 'me' });
+            // Every order has the same score; the three taken are the first three of the table
+            const sent = verify.labCalls.flatMap((c) => c.rows.map((r) => r.candidate.order[0]));
+            expect(sent).toEqual([key(9), key(10), key(1)]);
         });
     });
 

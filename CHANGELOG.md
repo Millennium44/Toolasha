@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: Verify takes the rows the table shows
+
+- The Ability order section's Verify button (and Auto-verify, on exact ties) now takes its rows in the order the table draws them, so a collapsed table no longer verifies orders it is hiding; the button's count matches what it will run.
+
 <!-- shipped in 3.72.0 -->
 
 ### Tasks: the reroll walk claims first and sorts when done
