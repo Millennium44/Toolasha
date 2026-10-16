@@ -39,6 +39,7 @@ import {
     houseRoomMovesWinRate,
     MAX_HOUSE_LEVEL,
     MAX_GUILD_SHRINE_LEVEL,
+    candidateAssignmentKey,
 } from './upgrade-advisor.js';
 import {
     configureFightGroup,
@@ -54,7 +55,15 @@ import {
     renderLabTriggerResultsHtml,
     summarizeLabTriggerRun,
     sanitizeLabTriggerChoices,
+    verifyChipHtml,
 } from './lab-trigger-view.js';
+import {
+    VERIFY_DEFAULTS,
+    canVerifyTriggerResult,
+    isCloseCall,
+    verifyLabCandidates,
+    verifyTriggerChanges,
+} from './verify-runner.js';
 import {
     LAB_COMPARISON_BASELINE_KEY,
     LAB_COMPARISON_KEY,
@@ -852,6 +861,10 @@ class LabSimUI {
         this._swapOptions = sanitizeSwapOptions(null);
         // The Upgrade tab's Ability order section (the Include option's last result), kept so Show all can redraw it
         this._upgradeOrderSection = null;
+        // Verify verdicts, the live analyses they can run against, and a token that retires a run in flight
+        this._verifyToken = 0;
+        this._verify = this._freshVerify();
+        this._verifyLive = { all: null, order: null, trigger: null };
         // The Tune triggers section's choices; read back from storage on each build
         this._triggerChoices = sanitizeLabTriggerChoices(null);
         // The fights the section last listed (the Upgrade tab's target scope applied), and a counter that
@@ -3864,6 +3877,7 @@ class LabSimUI {
                 resultsEl.innerHTML = '';
                 resultsEl.style.display = 'none';
             }
+            this._clearVerify(['trigger']);
             this._upgradeAborted = false;
             this._setStatus(`Tuning triggers: ${describeLabTriggerEstimate(estimate)} Stop cancels at any point.`);
 
@@ -3909,8 +3923,8 @@ class LabSimUI {
                 return;
             }
             if (resultsEl) {
-                resultsEl.innerHTML = renderLabTriggerResultsHtml(run, gameData);
-                resultsEl.style.display = 'block';
+                this._verifyLive.trigger = { run, gameData, ownerId };
+                this._drawTriggerResults();
                 this._triggerSummary = summarizeLabTriggerRun(run);
                 this._applyTriggerSummary();
             }
@@ -4776,6 +4790,7 @@ class LabSimUI {
         progressEl.style.display = 'block';
         resultsEl.innerHTML = '';
         this._upgradeOrderSection = null;
+        this._clearVerify(['all', 'order']);
         this._drawUpgradeAbilityOrder();
         runBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
@@ -4920,6 +4935,7 @@ class LabSimUI {
                         { abortSignal: () => this._upgradeAborted }
                     );
 
+                    this._registerVerifyLive('all', analysisResult, ownerId);
                     this._renderAllFightsResults(analysisResult, resultsEl);
                     // Marked, so a reload draws it with the all-fights renderer rather than the single-fight one
                     if (analysisResult?.results?.length) allFightsAnalysis = { ...analysisResult, allFights: true };
@@ -4941,6 +4957,7 @@ class LabSimUI {
                         savedAnalysis: allFightsAnalysis,
                     });
                 }
+                await this._autoVerifyCloseCalls({ startToken, ownerId });
             } catch (error) {
                 if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
                     console.error('[LabSimUI] All-fights analysis failed:', error);
@@ -5080,6 +5097,7 @@ class LabSimUI {
                     savedAnalysis: singleAnalysis,
                 });
             }
+            await this._autoVerifyCloseCalls({ startToken, ownerId });
         } catch (error) {
             if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
                 console.error('[LabSimUI] Upgrade analysis failed:', error);
@@ -6454,6 +6472,543 @@ class LabSimUI {
         }
     }
 
+    // ---- Verify: re-measuring the winners on fresh paired seeds -----------------------------------
+
+    /**
+     * An empty verify record: verdicts by row key for each section, a note line for the two tables, and the run
+     * in flight (`{ scope, keys }`) while there is one.
+     * @returns {{all: Map, order: Map, trigger: Map, notes: {all: string, order: string}, running: Object|null}}
+     * @private
+     */
+    _freshVerify() {
+        return { all: new Map(), order: new Map(), trigger: new Map(), notes: { all: '', order: '' }, running: null };
+    }
+
+    /**
+     * Drop the verdicts (and the live analysis they could run against) of some sections, and retire any verify
+     * run in flight: its token no longer matches, so whatever it returns is discarded.
+     * @param {Array<string>} [scopes] - Sections to clear; all three by default
+     * @private
+     */
+    _clearVerify(scopes = ['all', 'order', 'trigger']) {
+        this._verifyToken++;
+        const fresh = this._freshVerify();
+        for (const scope of scopes) {
+            this._verify[scope] = fresh[scope];
+            if (scope !== 'trigger') this._verify.notes[scope] = '';
+            this._verifyLive[scope] = null;
+        }
+        this._verify.running = null;
+    }
+
+    /** @returns {boolean} Whether the Auto-verify close calls setting is on @private */
+    _autoVerifyEnabled() {
+        return config.getSettingValue('combatSim_autoVerifyCloseCalls', false) === true;
+    }
+
+    /**
+     * Remember a fresh analysis as something a verify can run against. A remembered (restored) result is never
+     * registered: it carries no simulation context, so its Verify controls stay off.
+     * @param {'all'|'order'|'trigger'} scope - Section
+     * @param {Object} source - The analysis (`all`), `{ raw, section }` (`order`) or `{ run, gameData }` (`trigger`)
+     * @param {string|null} ownerId - Character the analysis ran for
+     * @private
+     */
+    _registerVerifyLive(scope, source, ownerId) {
+        this._verifyLive[scope] = null;
+        if (scope === 'all') {
+            if (!source?.context || !source?.pairing || !Array.isArray(source.results)) return;
+            this._verifyLive.all = { analysis: source, context: source.context, pairing: source.pairing, ownerId };
+        } else if (scope === 'order') {
+            const { raw, section } = source;
+            if (!raw?.context || !raw?.pairing || !raw?.baseline) return;
+            const rows = (raw.results || []).filter(
+                (row) => row.candidate?.checkedAbilityKey === 'ability_order' && !row.candidate.keepCurrent
+            );
+            // The section's groups are the baseline's loadout groups with two or more ordinary abilities, in order
+            const byLoadout = new Map();
+            raw.baseline.fights.forEach((_fight, i) => {
+                const rawId = raw.context.fights?.[i]?.loadoutId;
+                const id = Number(rawId) || 0;
+                const key =
+                    rawId === undefined || rawId === null ? `fight:${i}` : id > 0 ? `loadout:${id}` : 'current-gear';
+                if (!byLoadout.has(key)) byLoadout.set(key, []);
+                byLoadout.get(key).push(i);
+            });
+            const groupIdx = [...byLoadout.values()].filter(
+                (indexes) =>
+                    (raw.context.fights?.[indexes[0]]?.dto?.abilities || []).slice(1).filter(Boolean).length >= 2
+            );
+            this._verifyLive.order = {
+                section,
+                context: raw.context,
+                pairing: raw.pairing,
+                rows,
+                groupIdx,
+                ownerId,
+            };
+        } else {
+            this._verifyLive.trigger = { ...source, ownerId };
+        }
+    }
+
+    /**
+     * Whether a section's verify controls can act: its analysis is the live one and the character has not moved.
+     * @param {'all'|'order'} scope - Section
+     * @param {Object} subject - The analysis (`all`) or the order section (`order`) being drawn
+     * @returns {boolean}
+     * @private
+     */
+    _isVerifyLive(scope, subject) {
+        const live = this._verifyLive[scope];
+        if (!live || !this._stillSameCharacter(live.ownerId)) return false;
+        return (scope === 'all' ? live.analysis : live.section) === subject;
+    }
+
+    /** The verdict key of an all-fights row @private */
+    _allRowKey(row) {
+        try {
+            if (row?.candidate) return candidateAssignmentKey(row.candidate);
+        } catch {
+            // fall through to the description
+        }
+        return row?.candidate?.description ?? '';
+    }
+
+    /** The verdict key of one order in the Ability order section @private */
+    _orderRowKey(groupIndex, order) {
+        return `${groupIndex}|${(order.order || []).join('>')}`;
+    }
+
+    /**
+     * The analysis row to hand the engine for an order of one loadout group: the raw row, narrowed to the fights
+     * of that group so a verify measures the loadout the section ranked it in.
+     * @param {number} groupIndex - Index into the section's groups
+     * @param {Object} order - A section order
+     * @returns {Object|null} Null when the raw row is gone
+     * @private
+     */
+    _orderVerifyRow(groupIndex, order) {
+        const live = this._verifyLive.order;
+        const indexes = new Set(live?.groupIdx?.[groupIndex] || []);
+        const wanted = (order.order || []).join('>');
+        const row = (live?.rows || []).find(
+            (candidate) =>
+                (candidate.candidate.order || []).join('>') === wanted &&
+                [...indexes].some((i) => candidate.fights?.[i]?.applied)
+        );
+        if (!row) return null;
+        return {
+            ...row,
+            fights: row.fights.map((fight, i) => (indexes.has(i) ? fight : { ...fight, applied: false })),
+        };
+    }
+
+    /**
+     * Up to three improving rows worth verifying on their own: close calls the analysis did not call
+     * significant, best first, and not yet verified.
+     * @param {'all'|'order'} scope - Section
+     * @returns {Array<{key: string, row: Object, delta: number}>}
+     * @private
+     */
+    _closeCallItems(scope) {
+        const live = this._verifyLive[scope];
+        if (!live) return [];
+        const found = [];
+        if (scope === 'all') {
+            for (const row of live.analysis.results) {
+                if (isLevelRow(row) || row.costType === 'token') continue;
+                if (!(row.attemptsDelta < 0) || !isCloseCall(row)) continue;
+                found.push({ key: this._allRowKey(row), row, delta: row.attemptsDelta });
+            }
+        } else {
+            (live.section.groups || []).forEach((group, gi) => {
+                for (const order of group.orders) {
+                    if (!(order.attemptsDelta < 0) || !isCloseCall(order)) continue;
+                    const row = this._orderVerifyRow(gi, order);
+                    if (row) found.push({ key: this._orderRowKey(gi, order), row, delta: order.attemptsDelta });
+                }
+            });
+        }
+        return found
+            .filter((item) => !this._verify[scope].has(item.key))
+            .sort((a, b) => a.delta - b.delta)
+            .slice(0, VERIFY_DEFAULTS.top);
+    }
+
+    /**
+     * After an analysis finishes: verify its close, improving winners when the Auto-verify setting is on. Never
+     * after a stop, a character switch or a newer run, and never for a remembered result (those have no live
+     * record to verify against).
+     * @param {Object} params
+     * @param {number} params.startToken - `_runStartToken` of the analysis
+     * @param {string|null} params.ownerId - Character the analysis ran for
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _autoVerifyCloseCalls({ startToken, ownerId }) {
+        if (!this._autoVerifyEnabled()) return;
+        const isCurrent = () =>
+            startToken === this._runStartToken && Boolean(this.panel) && this._stillSameCharacter(ownerId);
+        for (const scope of ['all', 'order']) {
+            if (!isCurrent() || this._upgradeAborted) return;
+            const live = this._verifyLive[scope];
+            if (!live || live.ownerId !== ownerId) continue;
+            const items = this._closeCallItems(scope);
+            if (items.length) await this._runLabVerify({ scope, items, auto: true });
+        }
+    }
+
+    /**
+     * Set up the progress box and the guards a verify run needs, and hand back what it must check after each
+     * await. A manual verify claims the Upgrade tab (so no analysis starts beside it); an auto-verify runs inside
+     * the analysis that triggered it, which already holds it.
+     * @param {string|null} ownerId - Character the verify is for
+     * @param {boolean} auto - Whether an analysis is already holding the tab
+     * @returns {{isCurrent: Function, onProgress: Function, finish: Function, token: number}}
+     * @private
+     */
+    _beginVerify(ownerId, auto) {
+        if (!auto) {
+            this._upgradeRunning = true;
+            this._upgradeAborted = false;
+        }
+        const startToken = this._runStartToken;
+        const token = ++this._verifyToken;
+        const isCurrent = () =>
+            token === this._verifyToken &&
+            startToken === this._runStartToken &&
+            Boolean(this.panel) &&
+            this._stillSameCharacter(ownerId);
+        const progressEl = this.panel.querySelector('#mwi-labsim-upgrade-progress');
+        const runBtn = this.panel.querySelector('#mwi-labsim-upgrade-run');
+        const stopBtn = this.panel.querySelector('#mwi-labsim-upgrade-stop');
+        if (progressEl) progressEl.style.display = 'block';
+        if (runBtn) runBtn.style.display = 'none';
+        if (stopBtn) stopBtn.style.display = 'inline-block';
+        const eta = createEtaTracker();
+        const onProgress = ({ current, total, description }) => {
+            if (!isCurrent() || this._upgradeAborted) return;
+            const fill = this.panel?.querySelector('#mwi-labsim-upgrade-progress-fill');
+            const text = this.panel?.querySelector('#mwi-labsim-upgrade-progress-text');
+            const { text: remaining } = eta.update(total > 0 ? current / total : 0);
+            if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
+            if (text)
+                text.textContent = `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
+        };
+        const finish = () => {
+            if (token === this._verifyToken) this._verify.running = null;
+            if (auto) return;
+            // The run that was torn down while this one ran owns the flags now
+            if (startToken === this._runStartToken) this._upgradeRunning = false;
+            const progress = this.panel?.querySelector('#mwi-labsim-upgrade-progress');
+            const run = this.panel?.querySelector('#mwi-labsim-upgrade-run');
+            const stop = this.panel?.querySelector('#mwi-labsim-upgrade-stop');
+            if (progress) progress.style.display = 'none';
+            if (run) run.style.display = '';
+            if (stop) stop.style.display = 'none';
+        };
+        return { isCurrent, onProgress, finish, token };
+    }
+
+    /**
+     * Verify rows of the all-fights table or the Ability order section: each is re-run on fresh paired seeds,
+     * several times longer than the analysis, against the analysis' own fights, loadouts and buffs.
+     * @param {Object} params
+     * @param {'all'|'order'} params.scope - Section
+     * @param {Array<{key: string, row: Object}>} params.items - Rows to verify, with their verdict keys
+     * @param {boolean} [params.auto] - Started by the Auto-verify setting inside an analysis
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _runLabVerify({ scope, items, auto = false }) {
+        const live = this._verifyLive[scope];
+        if (!live || !items.length || !this.panel) return;
+        if (!auto && (this._upgradeRunning || this._skillingRunning || this._runStarting || this.isRunning)) {
+            this._setStatus('Wait for the current run to finish, then verify.');
+            return;
+        }
+        if (!this._stillSameCharacter(live.ownerId)) return;
+        const frame = this._beginVerify(live.ownerId, auto);
+        const state = this._verify;
+        state.running = { scope, keys: new Set(items.map((item) => item.key)) };
+        state.notes[scope] = '';
+        const noun = scope === 'order' ? 'ability order' : 'upgrade';
+        this._setStatus(
+            `${auto ? 'Auto-verifying' : 'Verifying'} ${items.length} ${noun}${items.length === 1 ? '' : 's'} on fresh seeds. Stop cancels at any point.`
+        );
+        this._redrawVerify(scope);
+        let out = null;
+        let error = null;
+        try {
+            out = await verifyLabCandidates({
+                context: live.context,
+                pairing: live.pairing,
+                rows: items.map((item) => item.row),
+                seeds: VERIFY_DEFAULTS.seeds,
+                hoursMultiplier: VERIFY_DEFAULTS.hoursMultiplier,
+                abortSignal: () => !frame.isCurrent() || this._upgradeAborted,
+                onProgress: frame.onProgress,
+            });
+        } catch (caught) {
+            error = caught;
+        }
+        const current = frame.isCurrent();
+        frame.finish();
+        // A newer analysis, a character switch or a teardown owns the panel now: nothing of this run is kept
+        if (!current) return;
+        const label = auto ? 'Auto-verify' : 'Verify';
+        if (error) {
+            const cancelled = error.message === 'Cancelled' || error.message === 'Aborted';
+            if (!cancelled) console.error('[LabSimUI] Verify failed:', error);
+            state.notes[scope] = cancelled
+                ? `${label} stopped before any result.`
+                : `${label} failed: ${error.message}`;
+        } else {
+            state.notes[scope] = this._applyLabVerify(scope, items, out, label);
+        }
+        this._redrawVerify(scope);
+        this._setStatus(state.notes[scope]);
+    }
+
+    /**
+     * Keep a verify run's rows and word its outcome.
+     * @param {'all'|'order'} scope - Section
+     * @param {Array<{key: string}>} items - The rows asked for, parallel to `out.rows`
+     * @param {Object} out - `verifyLabCandidates` result
+     * @param {string} label - "Verify" or "Auto-verify"
+     * @returns {string} The note for the section
+     * @private
+     */
+    _applyLabVerify(scope, items, out, label) {
+        if (out?.refused) {
+            const reason = {
+                seeds: 'too few seeds',
+                rows: 'nothing to verify',
+                context: 'the analysis record is incomplete',
+            }[out.refused];
+            return `${label} did not run: ${reason || out.refused}.`;
+        }
+        const map = this._verify[scope];
+        const tally = { confirmed: 0, 'not-confirmed': 0, worse: 0, error: 0 };
+        let unfinished = 0;
+        (out?.rows || []).forEach((row, i) => {
+            const key = items[i]?.key;
+            if (key === undefined) return;
+            // A cancelled simulation reads as an error row; after a stop it only means "did not finish"
+            if (out.stopped && (row.verdict === 'error' || !(row.seeds > 0))) {
+                unfinished++;
+                return;
+            }
+            map.set(key, { ...row, partial: Boolean(out.stopped) && row.seeds < out.seeds });
+            tally[row.verdict] = (tally[row.verdict] || 0) + 1;
+        });
+        if (out?.error && !map.size) return `${label} failed: ${out.error}`;
+        const parts = [`${tally.confirmed} confirmed`, `${tally['not-confirmed']} not confirmed`];
+        if (tally.worse) parts.push(`${tally.worse} worse`);
+        if (tally.error) parts.push(`${tally.error} failed`);
+        return (
+            `${label}: ${parts.join(', ')} of ${items.length} ` +
+            `(${out.seeds} fresh seeds, ${VERIFY_DEFAULTS.hoursMultiplier}x longer than the analysis).` +
+            (out.stopped
+                ? ` Stopped early${unfinished ? `: ${unfinished} unfinished and left unmarked` : ''}; partial results are marked.`
+                : '')
+        );
+    }
+
+    /**
+     * Draw a section again after its verdicts moved, without touching the status line.
+     * @param {'all'|'order'|'trigger'} scope - Section
+     * @private
+     */
+    _redrawVerify(scope) {
+        if (!this.panel) return;
+        if (scope === 'all') {
+            const live = this._verifyLive.all;
+            const container = this._allFightsContainer;
+            if (live && this._allFightsResult === live.analysis && container?.isConnected) {
+                this._renderAllFightsResults(this._allFightsResult, container, { quiet: true });
+            }
+        } else if (scope === 'order') {
+            this._drawUpgradeAbilityOrder();
+        } else {
+            this._drawTriggerResults();
+        }
+    }
+
+    /**
+     * The chip and the per-row Verify button for one table row.
+     * @param {'all'|'order'} scope - Section
+     * @param {string} key - Verdict key
+     * @param {string} dataAttr - The data attribute name for the button, with the row's index as its value
+     * @param {number} index - Row index the click handler maps back
+     * @param {boolean} live - Whether Verify can act on this table
+     * @returns {string} HTML
+     * @private
+     */
+    _verifyRowHtml(scope, key, dataAttr, index, live) {
+        const running = this._verify.running;
+        if (running?.scope === scope && running.keys.has(key)) {
+            return '<span data-verify-running style="color:#8ab4f8; font-size:10px; margin-left:6px;">verifying…</span>';
+        }
+        const verdict = this._verify[scope].get(key);
+        let html = verdict ? verifyChipHtml(verdict, { partial: verdict.partial }) : '';
+        if (live && !running) {
+            html +=
+                `<button ${dataAttr}="${index}" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; ` +
+                `border-radius:3px; padding:0 5px; font-size:10px; cursor:pointer; font-family:inherit; margin-left:6px;">` +
+                `${verdict ? 'verify again' : 'verify'}</button>`;
+        }
+        return html;
+    }
+
+    /**
+     * The strip above the all-fights table: Verify top 3, the run's progress word, and the last outcome. A
+     * remembered table says why it cannot be verified.
+     * @param {Object} analysis - The result being drawn
+     * @param {Array<Object>} picks - The rows Verify top 3 would take
+     * @returns {string} HTML
+     * @private
+     */
+    _allFightsVerifyBarHtml(analysis, picks) {
+        const style = 'color:#777; font-size:11px; margin:0 0 8px;';
+        if (!this._isVerifyLive('all', analysis)) {
+            return (
+                `<div data-verify-bar="all" style="${style}">Verify: re-run the analysis to verify. A remembered ` +
+                `result carries no simulation to re-measure.</div>`
+            );
+        }
+        const running = this._verify.running;
+        const busy = Boolean(running);
+        const note = this._verify.notes.all;
+        const top = VERIFY_DEFAULTS.top;
+        return (
+            `<div data-verify-bar="all" style="${style}">` +
+            `<button data-af-verify-top ${busy || !picks.length ? 'disabled' : ''} title="${
+                picks.length
+                    ? 'Re-run the best improving rows longer, on fresh paired seeds'
+                    : 'No improving row to verify'
+            }" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; ` +
+            `font-size:11px; cursor:${busy || !picks.length ? 'default' : 'pointer'}; font-family:inherit;">Verify top ${top}</button>` +
+            `${running?.scope === 'all' ? ' <span>Verifying on fresh seeds… Stop cancels.</span>' : ''}` +
+            `${note ? ` <span data-verify-note>${escapeHtmlAttribute(note)}</span>` : ''}</div>`
+        );
+    }
+
+    /**
+     * Verify one loadout group's best orders from the Ability order section.
+     * @param {number} groupIndex - Index into the section's groups
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _verifyOrderGroup(groupIndex) {
+        const section = this._upgradeOrderSection;
+        if (!this._isVerifyLive('order', section)) return;
+        const group = section.groups?.[groupIndex];
+        if (!group) return;
+        const items = [];
+        for (const order of group.orders) {
+            if (items.length >= VERIFY_DEFAULTS.top) break;
+            if (!(order.attemptsDelta < 0)) continue;
+            const row = this._orderVerifyRow(groupIndex, order);
+            if (row) items.push({ key: this._orderRowKey(groupIndex, order), row });
+        }
+        await this._runLabVerify({ scope: 'order', items });
+    }
+
+    /**
+     * Draw the Tune triggers results box from the live run and the verify verdicts.
+     * @private
+     */
+    _drawTriggerResults() {
+        const live = this._verifyLive.trigger;
+        const resultsEl = this.panel?.querySelector('#mwi-labsim-trigger-results');
+        if (!live || !resultsEl) return;
+        resultsEl.innerHTML = renderLabTriggerResultsHtml(live.run, live.gameData, {
+            states: this._verify.trigger,
+            busy: Boolean(this._verify.running),
+        });
+        resultsEl.style.display = 'block';
+        resultsEl.querySelectorAll('[data-lab-trigger-verify]').forEach((button) => {
+            button.addEventListener('click', () => this._verifyTriggerGroup(Number(button.dataset.labTriggerVerify)));
+        });
+    }
+
+    /**
+     * Verify one loadout's trigger recommendation on fresh seeds.
+     * @param {number} index - Index into the live run's groups
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _verifyTriggerGroup(index) {
+        const live = this._verifyLive.trigger;
+        const group = live?.run?.groups?.[index];
+        if (!group || !canVerifyTriggerResult(group.result) || !this.panel) return;
+        if (
+            this._upgradeRunning ||
+            this._skillingRunning ||
+            this._runStarting ||
+            this.isRunning ||
+            this._verify.running
+        ) {
+            this._setStatus('Wait for the current run to finish, then verify.');
+            return;
+        }
+        if (!this._stillSameCharacter(live.ownerId)) return;
+        const frame = this._beginVerify(live.ownerId, false);
+        const state = this._verify;
+        state.running = { scope: 'trigger', keys: new Set([group.key]) };
+        state.trigger.set(group.key, { running: true });
+        this._setStatus(`Verifying ${group.name}'s trigger changes on fresh seeds. Stop cancels at any point.`);
+        this._drawTriggerResults();
+        let out = null;
+        let error = null;
+        try {
+            out = await verifyTriggerChanges({
+                result: group.result,
+                conditions: group.conditions ?? null,
+                seeds: VERIFY_DEFAULTS.seeds,
+                hoursMultiplier: VERIFY_DEFAULTS.hoursMultiplier,
+                abortSignal: () => !frame.isCurrent() || this._upgradeAborted,
+                onProgress: frame.onProgress,
+            });
+        } catch (caught) {
+            error = caught;
+        }
+        const current = frame.isCurrent();
+        frame.finish();
+        if (!current) return;
+        const row = out?.rows?.[0] || null;
+        let status;
+        if (error) {
+            console.error('[LabSimUI] Trigger verify failed:', error);
+            state.trigger.set(group.key, { error: error.message });
+            status = `Verify failed: ${error.message}`;
+        } else if (out.refused) {
+            state.trigger.set(group.key, { refused: out.refused });
+            status = `Nothing to verify (${out.refused}).`;
+        } else if (out.stopped && (!row || row.verdict === 'error' || !(row.seeds > 0))) {
+            // A cancelled simulation reads as an error; with no seed finished there is nothing to show
+            state.trigger.delete(group.key);
+            status = 'Verify stopped before any seed finished.';
+        } else if (row?.verdict === 'error') {
+            state.trigger.set(group.key, { row, error: row.error || out.error || 'unknown error' });
+            status = `Verify failed: ${row.error || out.error || 'unknown error'}`;
+        } else {
+            state.trigger.set(group.key, {
+                row,
+                basis: out.basis,
+                stopped: Boolean(out.stopped) && row.seeds < out.seeds,
+            });
+            status =
+                `Verify: ${row.verdict === 'confirmed' ? 'confirmed' : row.verdict === 'worse' ? 'worse than the current triggers' : 'not confirmed'} ` +
+                `(${row.seeds} fresh seeds)` +
+                (out.stopped ? '. Stopped early; the partial result is marked.' : '.');
+        }
+        this._drawTriggerResults();
+        this._setStatus(status);
+    }
+
     /**
      * The element the Ability order section draws into, below the Upgrade results.
      * @returns {HTMLElement|null}
@@ -6526,6 +7081,7 @@ class LabSimUI {
             isSelf
         );
         let section;
+        let rawOrder = null;
         if (!built.candidates.length) {
             // Fewer than two orderable abilities in every loadout: nothing to simulate
             section = { groups: [] };
@@ -6563,8 +7119,11 @@ class LabSimUI {
             section = raw?.baseline
                 ? extractAbilityOrderSection(raw, gameData).section || { groups: [], noResult: true }
                 : { groups: [], noResult: true };
+            rawOrder = raw;
         }
         this._upgradeOrderSection = section;
+        if (rawOrder?.baseline && section.groups?.length)
+            this._registerVerifyLive('order', { raw: rawOrder, section }, ownerId);
         this._drawUpgradeAbilityOrder();
         // The pass sets its own ending whether or not other sets ran first, so "Checking ability orders"
         // never outlives it. A stop is worded by the Stop button and an error by the caller
@@ -6613,12 +7172,31 @@ class LabSimUI {
             `<div style="color:${color}; font-size:11px; margin:4px 0;">${text}</div>`;
 
         const bestOrderOf = (list) => list.find((o) => o.attemptsDelta < 0 && o.significant) || list[0] || null;
-        const blocks = groups.map((group) => {
+        // Verify: one button per loadout group, because each group is its own ranking of its own permutations
+        // (one overall top 3 would be three orders of whichever loadout happens to lead, and the section already
+        // keeps every loadout's orders apart)
+        const verifyLive = this._isVerifyLive('order', section);
+        const verifyRunning = this._verify.running;
+        const verdictOf = (gi, order) => this._verify.order.get(this._orderRowKey(gi, order)) || null;
+        // The confirmed order with the largest verified saving, the one the section should lead with
+        const confirmedOf = (gi, orders) =>
+            orders
+                .map((o) => ({ order: o, verdict: verdictOf(gi, o) }))
+                .filter((x) => x.verdict?.verdict === 'confirmed')
+                .sort((a, b) => a.verdict.mean - b.verdict.mean)[0] || null;
+        const blocks = groups.map((group, gi) => {
             const orders = group.orders;
             // Best significant improving order; a noisy top must not hide a significant later one
             const best = bestOrderOf(orders);
+            const confirmed = confirmedOf(gi, orders);
             let verdict = '';
-            if (!orders.length) {
+            if (confirmed) {
+                verdict = note(
+                    `Confirmed on fresh seeds: ${escapeHtmlAttribute(confirmed.order.name)} (` +
+                        `${attemptsText(confirmed.verdict.mean)} ± ${confirmed.verdict.se.toFixed(2)} attempts).`,
+                    '#4caf50'
+                );
+            } else if (!orders.length) {
                 verdict = note('No other order of these abilities was reached.', '#888');
             } else if (best.attemptsDelta >= 0) {
                 verdict = note('Your current order is already the best measured.', '#9ab');
@@ -6658,6 +7236,11 @@ class LabSimUI {
                     (e.significant
                         ? ''
                         : `<span style="${noteStyle} background:rgba(150,150,150,0.2); color:#999;" title="The change is inside the simulation’s own error">within noise</span>`) +
+                    (verifyRunning?.scope === 'order' && verifyRunning.keys.has(this._orderRowKey(gi, e))
+                        ? '<span data-verify-running style="color:#8ab4f8; font-size:10px; margin-left:6px;">verifying…</span>'
+                        : verdictOf(gi, e)
+                          ? verifyChipHtml(verdictOf(gi, e), { partial: verdictOf(gi, e).partial })
+                          : '') +
                     `</td><td style="${td} color:${color};">${attemptsText(e.attemptsDelta)}</td>` +
                     `<td style="${td} color:${clearColor};">${clearText(e.runClearDelta)}</td>` +
                     `<td style="${td} color:#888;">±${e.attemptsDeltaNoise.toFixed(1)}</td></tr>`;
@@ -6666,9 +7249,21 @@ class LabSimUI {
                 groups.length > 1
                     ? `<div style="color:#aaa; font-size:11px; margin-top:6px;">${escapeHtmlAttribute(group.loadoutName)}</div>`
                     : '';
+            const improving = orders.filter((o) => o.attemptsDelta < 0);
+            const verifyBusy = Boolean(verifyRunning);
+            const verifyButton =
+                verifyLive && improving.length
+                    ? `<div style="margin:4px 0;"><button data-order-verify="${gi}" ${verifyBusy ? 'disabled' : ''} ` +
+                      `title="Re-run this loadout's best improving orders longer, on fresh paired seeds" ` +
+                      `style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ` +
+                      `padding:2px 8px; font-size:11px; cursor:${verifyBusy ? 'default' : 'pointer'}; font-family:inherit;">` +
+                      `Verify top ${Math.min(VERIFY_DEFAULTS.top, improving.length)}</button>` +
+                      `${verifyRunning?.scope === 'order' ? ' <span style="color:#8ab4f8; font-size:11px;">Verifying on fresh seeds… Stop cancels.</span>' : ''}</div>`
+                    : '';
             return (
                 title +
                 verdict +
+                verifyButton +
                 `<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
                 `<th style="${th} text-align:left;">Order</th>` +
                 `<th style="${th}" title="Change in expected attempts to clear this loadout’s fights; negative is better">ΔExpected attempts</th>` +
@@ -6681,10 +7276,15 @@ class LabSimUI {
         const bests = groups.map((g) => bestOrderOf(g.orders)).filter(Boolean);
         const improving = bests.filter((b) => b.attemptsDelta < 0 && b.significant);
         let summary;
+        // A confirmed order outranks a merely significant one: it survived a longer run on fresh seeds
+        const confirmedBests = groups.map((g, gi) => confirmedOf(gi, g.orders)).filter(Boolean);
         if (section.noResult) summary = 'no order measured';
         else if (!groups.length) summary = 'nothing to reorder';
         else if (!bests.length) summary = 'no order reached';
-        else if (improving.length) {
+        else if (confirmedBests.length) {
+            const winner = confirmedBests.reduce((a, b) => (b.verdict.mean < a.verdict.mean ? b : a));
+            summary = `best confirmed ${attemptsText(winner.verdict.mean)} attempts`;
+        } else if (improving.length) {
             const winner = improving.reduce((a, b) => (b.attemptsDelta < a.attemptsDelta ? b : a));
             summary = `best ${attemptsText(winner.attemptsDelta)} attempts`;
         } else if (bests.some((b) => b.attemptsDelta < 0)) summary = 'all within noise';
@@ -6698,6 +7298,15 @@ class LabSimUI {
                       : 'Nothing to reorder: no loadout has two or more ordinary abilities.',
                   '#888'
               );
+        const improvable = groups.some((g) => g.orders.some((o) => o.attemptsDelta < 0));
+        let verifyNote = '';
+        if (this._verify.notes.order) {
+            verifyNote = `<div data-verify-note style="color:#9ab; font-size:11px; margin:4px 0;">${escapeHtmlAttribute(this._verify.notes.order)}</div>`;
+        } else if (!verifyLive && improvable) {
+            verifyNote =
+                '<div data-verify-note style="color:#777; font-size:11px; margin:4px 0;">Verify: re-run the analysis to ' +
+                'verify. A remembered result carries no simulation to re-measure.</div>';
+        }
         const needsToggle = groups.some((g) => g.orders.length > top);
         const toggle = needsToggle
             ? `<button data-order-showall style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ` +
@@ -6715,6 +7324,7 @@ class LabSimUI {
             }) +
             `<div style="color:#666; font-size:10px; margin-bottom:6px;">Every order of each loadout’s ordinary abilities, ` +
             `simulated and ranked by expected attempts saved. Free to apply: set it in the game.</div>` +
+            verifyNote +
             body +
             toggle +
             `</div>`
@@ -6733,6 +7343,9 @@ class LabSimUI {
         enhanceCollapsibles(container, map, () => {
             this._swapOptions.orderCollapsed = Boolean(map.abilityOrder);
             this._swapOptionChanged(['orderCollapsed']);
+        });
+        container.querySelectorAll('[data-order-verify]').forEach((button) => {
+            button.addEventListener('click', () => this._verifyOrderGroup(Number(button.dataset.orderVerify)));
         });
         container.querySelector('[data-order-showall]')?.addEventListener('click', () => {
             this._swapOptions.orderShowAll = !this._swapOptions.orderShowAll;
@@ -6848,6 +7461,10 @@ class LabSimUI {
                 <span style="color:#555; font-size:10px; margin-left:6px;">Σ 1/win rate per fight, at its skip level with its assigned loadout — retries included</span>
             </div>
             `;
+        // Verify top N: the first rows of this table, in the order it is showing, that the analysis found improving
+        const verifyPicks = checked ? [] : sorted.filter((r) => r.attemptsDelta < 0).slice(0, VERIFY_DEFAULTS.top);
+        const verifyLive = !checked && this._isVerifyLive('all', analysisResult);
+        if (!checked && !levelsOnly) html += this._allFightsVerifyBarHtml(analysisResult, verifyPicks);
         // A run of nothing but combat levels has no gear to table
         if (!levelsOnly)
             html += `<table style="width:100%; border-collapse:collapse; font-size:11px;">
@@ -6924,7 +7541,9 @@ class LabSimUI {
                         ? ` <span style="color:#555;">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
                         : '';
                 html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
-                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${combatSimUI.upgradeRowActionsHtml(r)}</td>
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${combatSimUI.upgradeRowActionsHtml(r)}${
+                    checked ? '' : this._verifyRowHtml('all', this._allRowKey(r), 'data-af-verify', i, verifyLive)
+                }</td>
                 <td style="${tdStyle} color:#aaa;">${cost}</td>
                 <td style="${tdStyle} color:${measured && r.attemptsSavedPerMillion > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perGold}</td>
                 <td style="${tdStyle} ${attemptsStyle}">${fmtAttempts(r.expectedAttempts)}</td>
@@ -6992,6 +7611,20 @@ class LabSimUI {
                 })),
             }));
 
+        container.querySelector('[data-af-verify-top]')?.addEventListener('click', () => {
+            this._runLabVerify({
+                scope: 'all',
+                items: verifyPicks.map((row) => ({ key: this._allRowKey(row), row })),
+            });
+        });
+        container.querySelectorAll('[data-af-verify]').forEach((button) => {
+            button.addEventListener('click', (event) => {
+                // The row itself toggles its per-fight breakdown
+                event.stopPropagation();
+                const row = sorted[Number(button.dataset.afVerify)];
+                if (row) this._runLabVerify({ scope: 'all', items: [{ key: this._allRowKey(row), row }] });
+            });
+        });
         container.querySelectorAll('[data-allfights-row]').forEach((row) => {
             row.addEventListener('click', () => {
                 const detail = container.querySelector(`[data-allfights-detail="${row.dataset.allfightsRow}"]`);
@@ -7054,7 +7687,8 @@ class LabSimUI {
             });
         });
 
-        if (checked) return;
+        // A redraw for a verdict leaves the status line to the verify run that caused it
+        if (checked || options.quiet) return;
         const budget = analysisResult.budget;
         this._setStatus(
             `All-fights analysis complete: ${results.length} upgrades across ${baseline.fights.length} fights` +
@@ -7729,6 +8363,11 @@ class LabSimUI {
             if (this._restoredUpgradeAt) {
                 html += this._restoredUpgradeNote(this._restoredUpgradeAt, this._restoredUpgradeMeta);
             }
+            // The verify engine re-measures every fight an upgrade reaches; the single-fight analysis keeps
+            // no such record, so there is nothing to offer here
+            html +=
+                '<div data-verify-single-note style="color:#666; font-size:10px; margin:0 0 6px;">' +
+                'Verify needs the All or Chosen targets scope: this single-fight table cannot be re-measured.</div>';
             if (roomLevels) html += renderRoomLevelSummary();
             if (tokenResults.length > 0) html += renderTokenTable();
             if (communityResults.length > 0) html += renderCommunityTable();
@@ -9618,6 +10257,7 @@ class LabSimUI {
         this._swapsLoaded = false;
         this._optionEdits = [];
         this._upgradeOrderSection = null;
+        this._clearVerify();
         this._triggerChoices = sanitizeLabTriggerChoices(null);
         this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
         // What the last result found, shown on the Tune triggers header while it is collapsed

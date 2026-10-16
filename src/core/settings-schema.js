@@ -3205,6 +3205,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Runs the baseline and every candidate on the same random draws, so a small difference reflects the upgrade instead of luck. Turn off to give every sim independent randomness (the old behavior).',
             },
+            combatSim_autoVerifyCloseCalls: {
+                id: 'combatSim_autoVerifyCloseCalls',
+                label: 'Combat & Lab Simulator: Auto-verify close calls',
+                type: 'checkbox',
+                default: false,
+                help: "After an analysis finishes, re-runs up to 3 'within noise' winners longer on fresh paired seeds and marks each confirmed, not confirmed or worse. Slower when it triggers, and never runs on a stopped or remembered result. The Verify buttons work the same way on demand.",
+            },
             combatSim_soloMode: {
                 id: 'combatSim_soloMode',
                 label: 'Combat Simulator: Solo (Configure tab checkbox)',
