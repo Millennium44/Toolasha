@@ -12,6 +12,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import queueSnapshot from './queue-snapshot.js';
+import { remainingQueueSeconds } from './queue-projection.js';
 
 const PANEL_ID = 'toolasha-queue-monitor';
 const UPDATE_INTERVAL = 30_000; // 30 seconds
@@ -279,7 +280,7 @@ class QueueMonitorUI {
         for (const snap of snapshots) {
             const elapsed = (Date.now() - snap.timestamp) / 1000;
             const ageMs = Math.max(0, Date.now() - snap.timestamp);
-            const remaining = Math.max(0, snap.totalQueueSeconds - elapsed);
+            const remaining = remainingQueueSeconds(snap, elapsed);
             const isStale = ageMs > STALE_THRESHOLD;
             const isExpanded = this._expandedChars.has(String(snap.characterId));
             const relativeAge = formatRelativeTime(ageMs);

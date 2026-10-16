@@ -111,7 +111,10 @@ describe('snapshot freshness', () => {
                 totalQueueSeconds: 600,
                 hasInfiniteAction: false,
                 hasUnknownAction: true,
-                actions: [{ actionName: 'Fly', estimatedSeconds: null, isInfinite: false, hasMaxCount: true }],
+                actions: [
+                    { actionName: 'Milking', estimatedSeconds: 600, isInfinite: false, hasMaxCount: true },
+                    { actionName: 'Fly', estimatedSeconds: null, isInfinite: false, hasMaxCount: true },
+                ],
             },
         ];
 
@@ -191,6 +194,48 @@ describe('snapshot freshness', () => {
         await queueMonitorUI.initialize();
 
         expect(document.body.textContent).toContain('≥ 1h');
+    });
+
+    const mixedSnapshot = (actions, total) => ({
+        characterId: 'other',
+        characterName: 'Alt Cow',
+        timestamp: Date.now() - 30 * 60 * 1000,
+        totalQueueSeconds: total,
+        hasInfiniteAction: false,
+        hasUnknownAction: true,
+        actions,
+    });
+    const fight = { actionName: 'Fight', estimatedSeconds: null, isInfinite: false, hasMaxCount: true };
+    const gather = (s) => ({ actionName: 'Gather', estimatedSeconds: s, isInfinite: false, hasMaxCount: true });
+
+    test('elapsed time is not taken off timed work queued behind an untimed fight', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [mixedSnapshot([fight, gather(3600)], 3600)];
+
+        await queueMonitorUI.initialize();
+
+        expect(document.body.textContent).toContain('≥ 1h');
+    });
+
+    test('elapsed time burns down timed work ahead of the untimed row, up to its length', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        // 30 min elapsed: the 20 min of timed work before the fight is gone, the 1 h after it is whole
+        game.snapshots = [mixedSnapshot([gather(1200), fight, gather(3600)], 4800)];
+
+        await queueMonitorUI.initialize();
+
+        expect(document.body.textContent).toContain('≥ 1h');
+        expect(document.body.textContent).not.toContain('1h 20m');
+    });
+
+    test('an all-timed queue still burns down by the full elapsed time', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [{ ...mixedSnapshot([gather(3600)], 3600), hasUnknownAction: false }];
+
+        await queueMonitorUI.initialize();
+
+        expect(document.body.textContent).toContain('30m');
+        expect(document.body.textContent).not.toContain('≥');
     });
 });
 
