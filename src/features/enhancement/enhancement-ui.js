@@ -17,7 +17,7 @@ import {
     mergeSessions,
 } from './enhancement-session.js';
 import { attemptTailProbability, describeAttemptOutcome } from './attempt-percentile.js';
-import { costVsExpected, valueVsCost } from './enhancement-profit.js';
+import { costVsExpected, hasUnpricedInput, valueVsCost } from './enhancement-profit.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
@@ -135,7 +135,8 @@ export function enhancementSessionText(
             `${session.totalFailures || 0} fail)`,
         `Protections used: ${getProtectionUsage(session).count}`,
         ...(getMirrorUsage(session).count > 0 ? [`Philosopher's Mirrors used: ${getMirrorUsage(session).count}`] : []),
-        `Total cost: ${formatNum(session.totalCost || 0)}`,
+        // A total that leaves an unpriced input out is a partial bill, and says so
+        `Total cost: ${formatNum(session.totalCost || 0)}${hasUnpricedInput(session) ? ' (partial: an input had no price)' : ''}`,
     ];
 
     const duration = getSessionDuration(session);
@@ -1828,7 +1829,8 @@ class EnhancementUI {
         const hasCoins = session.coinCost > 0;
         const protections = getProtectionUsage(session);
         const mirrors = getMirrorUsage(session);
-        const hasProtection = protections.cost > 0;
+        // A protection spent at no price is still spent: listed, so its zero is seen next to the partial total
+        const hasProtection = protections.cost > 0 || protections.count > 0;
         const hasMirror = mirrors.count > 0;
 
         if (!hasMaterials && !hasCoins && !hasProtection && !hasMirror) {
@@ -1837,6 +1839,7 @@ class EnhancementUI {
 
         const gameData = dataManager.getInitClientData();
         const detailsId = `cost-details-${session.id}`;
+        const unpriced = hasUnpricedInput(session);
 
         let html = '<div style="margin-top: 12px; font-size: 13px;">';
 
@@ -1845,7 +1848,7 @@ class EnhancementUI {
             <div style="display: flex; justify-content: space-between; cursor: pointer; font-weight: bold; padding: 5px 0;"
                  onclick="document.getElementById('${detailsId}').style.display = document.getElementById('${detailsId}').style.display === 'none' ? 'block' : 'none'">
                 <span>💰 Total Cost (click for details)</span>
-                <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.totalCost)}</span>
+                <span style="color: ${STYLE.colors.gold};"${unpriced ? ' class="enh-cost-partial" title="An input had no price, so this total leaves it out"' : ''}>${this.formatNumber(session.totalCost)}${unpriced ? '*' : ''}</span>
             </div>
         `;
 

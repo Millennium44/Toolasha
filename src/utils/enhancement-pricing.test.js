@@ -171,6 +171,19 @@ describe('perAttemptMaterialCost', () => {
         expect(result).toEqual({ cost: 90_000, hasCost: true, hasMissingPrices: true });
     });
 
+    test('a material the recipe consumes none of is neither priced nor flagged unpriced', () => {
+        game.prices['/items/enhance_mat:0'] = { ask: 90_000, bid: 80_000 };
+
+        const result = perAttemptMaterialCost({
+            enhancementCosts: [
+                { itemHrid: '/items/enhance_mat', count: 2 },
+                { itemHrid: '/items/unknown', count: 0 },
+            ],
+        });
+
+        expect(result).toEqual({ cost: 180_000, hasCost: true, hasMissingPrices: false });
+    });
+
     test('an item with no recipe costs nothing per attempt and knows it', () => {
         expect(perAttemptMaterialCost({})).toEqual({ cost: 0, hasCost: false, hasMissingPrices: false });
     });

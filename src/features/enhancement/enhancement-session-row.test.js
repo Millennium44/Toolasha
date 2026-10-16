@@ -112,6 +112,19 @@ describe('the enhancement session tile', () => {
         expect(container.textContent).toContain('310.00M');
     });
 
+    test('a session with an unpriced input marks its spend as a part, not the whole', () => {
+        game.session = session({ hasUnpricedInput: true });
+
+        const container = draw();
+        expect(container.textContent).toContain('310.00M*');
+        expect(container.title).toContain('An input had no price');
+
+        game.session = session();
+        const priced = draw();
+        expect(priced.textContent).not.toContain('*');
+        expect(priced.title).not.toContain('An input had no price');
+    });
+
     test('the tooltip carries the success rate the tile has no room for', () => {
         game.session = session();
 

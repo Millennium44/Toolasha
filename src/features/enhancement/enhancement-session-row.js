@@ -28,6 +28,7 @@ import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import enhancementTracker from './enhancement-tracker.js';
 import { SessionState, getOverallSuccessRate } from './enhancement-session.js';
+import { hasUnpricedInput } from './enhancement-profit.js';
 import enhancementUI from './enhancement-ui.js';
 
 /**
@@ -73,6 +74,8 @@ registerRow({
 
         const attempts = session.totalAttempts || 0;
         const spent = session.totalCost || 0;
+        // An input with no price is left out of the total, which then reads as a part, not the whole
+        const partial = hasUnpricedInput(session);
         const level = Number.isFinite(session.currentLevel) ? session.currentLevel : session.startLevel;
         const done = session.state !== SessionState.TRACKING;
 
@@ -88,7 +91,7 @@ registerRow({
             // Counted rather than abbreviated: attempt counts are small enough
             // to read, and "1.2K" hides the difference between 1,180 and 1,240
             { text: formatWithSeparator(attempts), color: ROW_COLORS.neutral, push: true },
-            { text: formatLargeNumber(Math.round(spent)), color: ROW_COLORS.gold },
+            { text: `${formatLargeNumber(Math.round(spent))}${partial ? '*' : ''}`, color: ROW_COLORS.gold },
         ]);
 
         container.title =
@@ -97,6 +100,7 @@ registerRow({
             `${(session.totalSuccesses || 0).toLocaleString()} of them successful ` +
             `(${getOverallSuccessRate(session).toFixed(1)}%).\n` +
             `${Math.round(spent).toLocaleString()} spent so far.` +
+            (partial ? '\nAn input had no price, so this leaves it out.' : '') +
             (done ? '\nThis session has finished; the figures are its totals.' : '') +
             '\nDouble-click for the enhancement panel.';
     },

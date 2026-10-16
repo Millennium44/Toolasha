@@ -220,3 +220,32 @@ describe("cost details list the Philosopher's Mirror on its own line", () => {
         expect(html).toContain("Philosopher's Mirror (2×)");
     });
 });
+
+describe('cost details mark a total that leaves an unpriced input out', () => {
+    test('a priced session shows its total plain', () => {
+        const html = enhancementUI.generateMaterialCostsHTML(
+            sessionFixture({ id: 'priced', mirrorCount: 2, mirrorCost: 180000, totalCost: 180000 })
+        );
+
+        expect(html).not.toContain('enh-cost-partial');
+    });
+
+    test('a session flagged with an unpriced input marks the total and lists the unpriced protection', () => {
+        const html = enhancementUI.generateMaterialCostsHTML(
+            sessionFixture({
+                id: 'partial',
+                hasUnpricedInput: true,
+                protectionCount: 2,
+                protectionCost: 0,
+                protectionItemHrid: '/items/mirror_of_protection',
+                mirrorCount: 1,
+                mirrorCost: 90000,
+                totalCost: 90000,
+            })
+        );
+
+        expect(html).toContain('enh-cost-partial');
+        expect(html).toContain('enh-protection-row');
+        expect(html).toContain('(2×)');
+    });
+});
