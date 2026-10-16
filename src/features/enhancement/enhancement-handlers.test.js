@@ -366,6 +366,20 @@ describe('a protected failure with no market quote for the protection', () => {
 
         expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 40_000]);
     });
+
+    test('a -1 ask (no live order) is skipped for the bid, and -1 on both sides is unpriced', async () => {
+        state.prices['/items/mirror_of_protection:0'] = { ask: -1, bid: 35_000 };
+        await state.handlers.action_completed(attempt(5, 78));
+        await state.handlers.action_completed(attempt(4, 79));
+        expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 35_000]);
+    });
+
+    test('-1 on both sides is charged 0, never -1', async () => {
+        state.prices['/items/mirror_of_protection:0'] = { ask: -1, bid: -1 };
+        await state.handlers.action_completed(attempt(5, 78));
+        await state.handlers.action_completed(attempt(4, 79));
+        expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 0]);
+    });
 });
 
 describe('a protected failure consuming a spare at an enhancement level', () => {
