@@ -135,10 +135,6 @@ function calculateEnhancementCost(params) {
                 } else if (material.itemHrid === '/items/coin') {
                     materialPrice = 1; // Coins have face value of 1
                 } else {
-                    // Get material details for sellPrice fallback
-                    const materialDetail = itemDetails.enhancementCosts ?
-                        (itemDetails.allItemDetails && itemDetails.allItemDetails[material.itemHrid]) : null;
-
                     // Try to get market price from priceMap
                     const hasMarketData = (material.itemHrid + ':0_ask') in priceMap || (material.itemHrid + ':0') in priceMap;
 
@@ -164,11 +160,12 @@ function calculateEnhancementCost(params) {
                     // A key present but quoted -1 on both sides — the marketplace's "no live
                     // order" — is not a price, it is an absent book, and taking it literally
                     // charged the run a negative amount per attempt. Main's
-                    // getEnhancementMaterialPrice reaches for the sell price in exactly this
-                    // case, so an entry with nothing positive on either side falls through here
-                    // the same way a missing entry does.
+                    // getEnhancementMaterialPrice falls back to the craft cost and then to 0
+                    // (never the vendor price), so an entry with nothing positive on either side
+                    // does the same here. A material still at 0 is left out of the per-attempt
+                    // sum: the networth is understated by it, not credited with it as free.
                     if (!(materialPrice > 0)) {
-                        materialPrice = materialDetail?.sellPrice || 0;
+                        materialPrice = calculateProductionCost(material.itemHrid, priceMap, recipes);
                     }
                 }
 

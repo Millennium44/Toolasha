@@ -66,3 +66,56 @@ describe('networth enhancement cost under Blessed Tea', () => {
         expect(nested).toBeCloseTo(flat, 6);
     });
 });
+
+describe('networth enhancement materials with no market quote', () => {
+    const MAT = '/items/rare_mat';
+    const params = { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1 };
+    const prices = { [`${ITEM}:0`]: 1000, [`${ITEM}:0_ask`]: 1000, [`${ITEM}:0_bid`]: 1000 };
+
+    const value = async (materials, actionDetailMap, priceMap = prices) => {
+        const [v] = await calculateItemValueBatch(
+            [{ itemHrid: ITEM, enhancementLevel: 5, count: 1 }],
+            priceMap,
+            { useHighEnhancementCost: false, minLevel: 99, enhancementParams: params },
+            {
+                itemDetailMap: {
+                    [ITEM]: { itemLevel: 10, enhancementCosts: materials, protectionItemHrids: [] },
+                    [MAT]: { name: 'Rare Mat', sellPrice: 50_000 },
+                    '/items/ore': { name: 'Ore' },
+                },
+                actionDetailMap,
+            }
+        );
+        return v;
+    };
+
+    test('is left out of the sum, not booked at its vendor price', async () => {
+        const unpriced = await value([{ itemHrid: MAT, count: 10 }], {});
+        const without = await value([], {});
+        const vendorPriced = await value([{ itemHrid: '/items/coin', count: 10 * 50_000 }], {});
+
+        expect(unpriced).toBe(without);
+        expect(unpriced).toBeLessThan(vendorPriced);
+    });
+
+    test('a craftable but unlisted material is costed from its recipe', async () => {
+        const recipe = {
+            '/actions/make_mat': {
+                inputItems: [{ itemHrid: '/items/ore', count: 2 }],
+                outputItems: [{ itemHrid: MAT, count: 1 }],
+            },
+        };
+        const crafted = await value([{ itemHrid: MAT, count: 10 }], recipe, { ...prices, '/items/ore:0': 400 });
+        const without = await value([], recipe, { ...prices, '/items/ore:0': 400 });
+
+        expect(crafted).toBeGreaterThan(without);
+    });
+
+    test('a -1 quote on both sides is not a negative cost', async () => {
+        const priceMap = { ...prices, [`${MAT}:0_ask`]: -1, [`${MAT}:0_bid`]: -1 };
+        const quoted = await value([{ itemHrid: MAT, count: 10 }], {}, priceMap);
+        const without = await value([], {}, priceMap);
+
+        expect(quoted).toBe(without);
+    });
+});
