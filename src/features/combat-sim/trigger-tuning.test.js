@@ -1118,6 +1118,22 @@ describe('runTriggerSearch with deterministic fakes', () => {
         expect(result.combined.deltaScore).toBeLessThan(0);
     });
 
+    test('a row tuned over several passes and then rejected reports its whole move as the best found', async () => {
+        const { measure } = world({ afterFinal: (overrides) => (Object.keys(overrides).length ? -400 : 0) });
+        const result = await run(measure);
+        expect(result.changes).toEqual([]);
+        const [rejected] = result.rejected;
+        expect(rejected.key).toBe(FIRE_KEY);
+        // Accepted at more than one step (the first move cannot reach 300 from 1), so a step-wise record would
+        // start from the previous step's value and carry one step's gain
+        expect(result.bestMeasured.key).toBe(FIRE_KEY);
+        expect(result.bestMeasured.from).toBe(rejected.from);
+        expect(result.bestMeasured.from).toBe(1);
+        expect(result.bestMeasured.to).toBe(rejected.to);
+        expect(result.bestMeasured.deltaScore).toBe(rejected.deltaScore);
+        expect(result.bestMeasured.se).toBe(rejected.se);
+    });
+
     test('stopping keeps what was accepted and skips the combined check', async () => {
         const { measure } = world();
         let stop = false;
