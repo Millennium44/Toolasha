@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tasks: the reroll walk claims first and sorts when done
+
+- The task reroll walk now starts by claiming finished tasks, one press each, before it rerolls anything, and when it's done its button offers Sort, then Walk again; the Claim Reward button presses through the game's own handler so a press is never ignored.
+
 ### Combat Sim and Lab Sim: verify the top picks
 
 - A "Verify" button re-runs the top picks (ability orders, upgrade rows and trigger tuning) against your current setup several times longer on fresh paired seeds, and marks each "confirmed", "not confirmed" or "worse" with a much tighter ±; the Ability order summary and the Budget plan's free order prefer a confirmed result.
