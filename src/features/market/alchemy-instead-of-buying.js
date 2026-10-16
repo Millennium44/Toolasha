@@ -45,10 +45,19 @@ import {
 } from '../../utils/profit-helpers.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { COINIFY_BASE_SUCCESS_RATE, COINIFY_COINS_PER_SELL_PRICE } from '../../utils/ironcow-valuation.js';
-import { alchemySourceUnitCost, bestSelfUseCandidate, untaxedContainerValue } from '../../utils/self-use-alchemy.js';
+import {
+    alchemyRunBasis,
+    alchemySourceUnitCost,
+    bestSelfUseCandidate,
+    selfUseDecompose,
+    selfUseTransmuteHeld,
+    untaxedContainerValue,
+} from '../../utils/self-use-alchemy.js';
 
 /** The setting that draws the lines */
 export const INSTEAD_SETTING = 'itemTooltip_alchemyInsteadOfBuying';
+/** The setting that draws the "Instead of selling" lines */
+export const SELLING_SETTING = 'itemTooltip_alchemyInsteadOfSelling';
 /** Your gold per hour; 0 leaves alchemy time free */
 export const GOLD_RATE_SETTING = 'actionPanel_craftingPlanGoldPerHour';
 
@@ -357,6 +366,121 @@ export function findAlchemyAlternatives(targetHrid, deps) {
     };
 }
 
+/** The coin item, a coinify's whole base output */
+const COIN_HRID = '/items/coin';
+
+/**
+ * The alchemy actions one item can be put through, from its details.
+ * @param {Object|null} details
+ * @returns {Array<'decompose'|'transmute'|'coinify'>}
+ */
+function alchemyActionsOf(details) {
+    const alchemy = details?.alchemyDetail;
+    if (!alchemy) return [];
+    const actions = [];
+    if (alchemy.decomposeItems?.length) actions.push('decompose');
+    if (alchemy.transmuteDropTable?.length) actions.push('transmute');
+    if (alchemy.isCoinifiable === true) actions.push('coinify');
+    return actions;
+}
+
+/**
+ * Find the alchemy actions that pay more for one unit you hold than selling it does.
+ *
+ * The held unit is worth its bid after tax; the action's outputs are valued the way the buying
+ * path values them (a kept output at its ask, any other sold after tax, a crate opened, a
+ * transmute's self-return at the same bid after tax), less the coin, catalyst and tea spend and
+ * the time at the gold rate. Per unit of the item, not per action: a bulk action eats several.
+ *
+ * @param {string} itemHrid
+ * @param {Object} deps
+ * @param {(hrid: string) => Object|null} deps.getItemDetails
+ * @param {(hrid: string) => number|null} deps.bidOf - A real bid before tax, null when unpriced or estimated
+ * @param {(hrid: string) => number|null} deps.askOf - A real ask, null when unpriced or estimated
+ * @param {(hrid: string) => number|null} deps.sellOf - A real bid after tax, null when unpriced or estimated
+ * @param {(actionType: string, hrid: string) => Array<Object>} deps.candidatesOf - Calculator results, one
+ *   per buyable catalyst/tea setup
+ * @param {(hrid: string) => boolean} [deps.isWanted] - The keep list; absent, nothing is kept
+ * @param {Function} [deps.containerValue] - A kept crate's opened value at the ask
+ * @param {Function} [deps.sellContainerValue] - An unwanted crate's opened value, contents sold after tax
+ * @param {number} [deps.goldPerHour=0] - The player's gold rate; 0 leaves time free
+ * @returns {{sellValue: number|null, routes: Array<Object>}} `sellValue` is the bid after tax, null without a real
+ *   bid (then no route is looked for). Routes best margin first, only those that beat selling, each
+ *   `{actionType, valuePerUnit, sellValue, margin, secondsPerUnit, timeCostPerUnit, partlyUnpriced, kept}`;
+ *   `valuePerUnit` is what one unit yields after spend and time, so `margin = valuePerUnit - sellValue`.
+ */
+export function findAlchemySellRoutes(itemHrid, deps) {
+    const { getItemDetails, bidOf, askOf, sellOf, candidatesOf, isWanted, containerValue, sellContainerValue } = deps;
+    const goldPerHour = Math.max(0, Number(deps.goldPerHour) || 0);
+    const bid = bidOf(itemHrid);
+    if (bid === null || bid === undefined || !(bid > 0)) return { sellValue: null, routes: [] };
+    const sellValue = calculatePriceAfterTax(bid);
+    if (!(sellValue > 0)) return { sellValue: null, routes: [] };
+    const details = getItemDetails(itemHrid);
+    const pricing = {
+        priceOf: askOf,
+        containerValue,
+        isWanted: typeof isWanted === 'function' ? isWanted : () => false,
+        sellOf,
+        sellContainerValue,
+    };
+    const routes = [];
+    for (const actionType of alchemyActionsOf(details)) {
+        const pick = bestSelfUseCandidate(
+            candidatesOf(actionType, itemHrid),
+            (result) => {
+                const basis = alchemyRunBasis(result);
+                if (!basis) return null;
+                let netPerAction;
+                let partlyUnpriced;
+                let kept;
+                if (actionType === 'decompose') {
+                    const step = selfUseDecompose(result, details, { ...pricing, ownUseCost: sellValue });
+                    if (!step) return null;
+                    ({ netPerAction, partlyUnpriced, kept } = step);
+                } else if (actionType === 'transmute') {
+                    const held = selfUseTransmuteHeld(result, details, { ...pricing, sellPrice: bid });
+                    if (!held) return null;
+                    ({ netPerAction, partlyUnpriced, kept } = held);
+                } else {
+                    // A coinify's output is its coins at face value, the rest its bonus drops
+                    const made = alchemySourceUnitCost(result, details, {
+                        ...pricing,
+                        actionType,
+                        targetHrid: COIN_HRID,
+                        inputPrice: sellValue,
+                    });
+                    if (!made) return null;
+                    netPerAction = made.targetPerAction + made.creditPerAction - made.spendPerAction;
+                    ({ partlyUnpriced, kept } = made);
+                }
+                if (!Number.isFinite(netPerAction)) return null;
+                const secondsPerUnit = 3600 / (basis.actionsPerHour * basis.bulk);
+                const timeCostPerUnit = (secondsPerUnit / 3600) * goldPerHour;
+                const margin = netPerAction / basis.bulk - timeCostPerUnit;
+                return { margin, secondsPerUnit, timeCostPerUnit, partlyUnpriced, kept };
+            },
+            'margin',
+            // A missing output price only lowers the margin, so the best partial figure is a lower bound
+            { rankPartial: true }
+        );
+        const evaluation = pick?.evaluation;
+        if (!evaluation || !(evaluation.margin > 0)) continue;
+        routes.push({
+            actionType,
+            valuePerUnit: sellValue + evaluation.margin,
+            sellValue,
+            margin: evaluation.margin,
+            secondsPerUnit: evaluation.secondsPerUnit,
+            timeCostPerUnit: evaluation.timeCostPerUnit,
+            partlyUnpriced: evaluation.partlyUnpriced,
+            kept: evaluation.kept,
+        });
+    }
+    routes.sort((a, b) => b.margin - a.margin);
+    return { sellValue, routes: routes.slice(0, deps.limit ?? MAX_ALTERNATIVES) };
+}
+
 // ---- Live wiring: the market, the calculator and the keep list ----
 
 /**
@@ -390,6 +514,8 @@ const CATALYST_HRIDS = {
 const candidateCache = new Map();
 /** Per target, gold rate and keep list: the finished alternatives */
 const resultCache = new Map();
+/** Per item, gold rate and keep list: the finished "Instead of selling" routes */
+const sellCache = new Map();
 /** Character and five-minute bucket: a change empties both caches */
 let candidateStamp = null;
 /** Every price input as well: a change empties the result cache only */
@@ -549,6 +675,7 @@ function syncStamps() {
     const full = `${hard}|${priceKey()}`;
     if (full !== resultStamp) {
         resultCache.clear();
+        sellCache.clear();
         setupSignatures.clear();
         bonusRanks.clear();
         resultStamp = full;
@@ -562,6 +689,7 @@ function syncStamps() {
 export function clearInsteadCache() {
     candidateCache.clear();
     resultCache.clear();
+    sellCache.clear();
     setupSignatures.clear();
     resolvedDrinkHrids = [];
     bonusRanks.clear();
@@ -958,6 +1086,50 @@ function resultKey(targetHrid, wanted) {
 }
 
 /**
+ * The price reads every costing here shares, real book prices only: asks, bids after tax, and the
+ * opened value of a crate at the ask (kept) or sold after tax (unwanted). Crate values are
+ * memoized per call, so build one per lookup.
+ * @returns {{askOf: Function, sellOf: Function, containerValue: Function, sellContainerValue: Function}}
+ */
+function makeMarketPricing() {
+    const askOf = (hrid) => realPrice(hrid, 'buy');
+    const sellOf = (hrid) => {
+        const bid = realPrice(hrid, 'sell');
+        return bid === null ? null : calculatePriceAfterTax(bid);
+    };
+    const containerDrops = (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null;
+    const crates = new Map();
+    const containerValue = (hrid) => {
+        if (!crates.has(`k|${hrid}`)) {
+            crates.set(
+                `k|${hrid}`,
+                untaxedContainerValue(hrid, {
+                    containerDrops,
+                    // Real book asks only, like every kept output: no custom or value-map price
+                    priceOf: askOf,
+                })
+            );
+        }
+        return crates.get(`k|${hrid}`);
+    };
+    const sellContainerValue = (hrid) => {
+        if (!crates.has(`s|${hrid}`)) {
+            crates.set(
+                `s|${hrid}`,
+                untaxedContainerValue(hrid, {
+                    containerDrops,
+                    // The player's sell side after tax, like every other unwanted output; custom
+                    // prices and value-map estimates are no listing
+                    priceOf: sellOf,
+                })
+            );
+        }
+        return crates.get(`s|${hrid}`);
+    };
+    return { askOf, sellOf, containerValue, sellContainerValue };
+}
+
+/**
  * Work out one lookup now, every calculator run included, and cache it.
  * @param {string} targetHrid
  * @param {Set<string>} wanted
@@ -975,40 +1147,7 @@ function computeAlternatives(targetHrid, wanted) {
     const { sources, truncated } = lookupSources(targetHrid);
     let found = { targetAsk: null, alternatives: [], noCheaperRoute: false, truncated: false };
     if (sources.length > 0) {
-        const askOf = (hrid) => realPrice(hrid, 'buy');
-        const sellOf = (hrid) => {
-            const bid = realPrice(hrid, 'sell');
-            return bid === null ? null : calculatePriceAfterTax(bid);
-        };
-        const containerDrops = (h) => dataManager.getInitClientData?.()?.openableLootDropMap?.[h] ?? null;
-        const crates = new Map();
-        const containerValue = (hrid) => {
-            if (!crates.has(`k|${hrid}`)) {
-                crates.set(
-                    `k|${hrid}`,
-                    untaxedContainerValue(hrid, {
-                        containerDrops,
-                        // Real book asks only, like every kept output: no custom or value-map price
-                        priceOf: askOf,
-                    })
-                );
-            }
-            return crates.get(`k|${hrid}`);
-        };
-        const sellContainerValue = (hrid) => {
-            if (!crates.has(`s|${hrid}`)) {
-                crates.set(
-                    `s|${hrid}`,
-                    untaxedContainerValue(hrid, {
-                        containerDrops,
-                        // The player's sell side after tax, like every other unwanted output; custom
-                        // prices and value-map estimates are no listing
-                        priceOf: sellOf,
-                    })
-                );
-            }
-            return crates.get(`s|${hrid}`);
-        };
+        const { askOf, sellOf, containerValue, sellContainerValue } = makeMarketPricing();
         found = findAlchemyAlternatives(targetHrid, {
             sources,
             getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
@@ -1143,4 +1282,42 @@ export async function settleAlternatives(targetHrid, wanted) {
         jobs.set(key, job);
     }
     return jobs.get(key);
+}
+
+/**
+ * The alchemy actions that pay more than selling one unit of an item, cached per price snapshot.
+ * Synchronous: an item has at most three actions, so at most three calculator runs (shared with
+ * the buying path's cache), under the sync budget {@link SYNC_SOURCE_RUNS}. An item with no real
+ * bid or no alchemy action runs nothing.
+ * @param {string} itemHrid
+ * Every output is sold after tax whatever the keep list says.
+ * @returns {{sellValue: number|null, routes: Array<Object>}}
+ */
+export function liveSellRoutes(itemHrid) {
+    syncStamps();
+    // Outputs are always sold: no keep list in the key
+    const { key, goldPerHour } = resultKey(itemHrid, new Set());
+    if (sellCache.has(key)) return sellCache.get(key);
+    let found = { sellValue: null, routes: [] };
+    // No bid or no action: nothing to run the calculator for
+    if (alchemyActionsOf(dataManager.getItemDetails(itemHrid)).length > 0 && realPrice(itemHrid, 'sell') !== null) {
+        const { askOf, sellOf, containerValue, sellContainerValue } = makeMarketPricing();
+        try {
+            found = findAlchemySellRoutes(itemHrid, {
+                getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
+                bidOf: (hrid) => realPrice(hrid, 'sell'),
+                askOf,
+                sellOf,
+                candidatesOf: liveCandidates,
+                isWanted: () => false,
+                containerValue,
+                sellContainerValue,
+                goldPerHour,
+            });
+        } catch (error) {
+            console.error('[AlchemyInstead] Selling routes failed for', itemHrid, error);
+        }
+    }
+    sellCache.set(key, found);
+    return found;
 }

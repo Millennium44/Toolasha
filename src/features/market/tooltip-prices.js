@@ -65,8 +65,10 @@ import selfUseWanted, {
 import {
     liveAlternatives,
     settleAlternatives,
+    liveSellRoutes,
     stopInsteadListeners,
     INSTEAD_SETTING,
+    SELLING_SETTING,
 } from './alchemy-instead-of-buying.js';
 
 // Compiled regex patterns (created once, reused for performance)
@@ -91,6 +93,7 @@ const TOOLTIP_FEATURE_SETTINGS = [
     'itemTooltip_multiActionProfit',
     'itemTooltip_selfUseAlchemy',
     'itemTooltip_alchemyInsteadOfBuying',
+    'itemTooltip_alchemyInsteadOfSelling',
     'itemTooltip_selfUseKeepChip',
     'itemTooltip_gathering',
     'itemTooltip_gatheringRareDrops',
@@ -124,6 +127,9 @@ const INSTEAD_HEADLINE_SETTING = 'itemTooltip_alchemyInsteadHeadline';
 /** The "Instead of buying" section's class */
 const INSTEAD_SECTION_CLASS = 'mwi-alchemy-instead';
 
+/** The "Instead of selling" section's class */
+const SELLING_SECTION_CLASS = 'mwi-alchemy-instead-selling';
+
 /**
  * Hover text on every "Instead of buying" line, following what a K mark means.
  * @returns {string}
@@ -147,6 +153,19 @@ function insteadTitle() {
  */
 function escapeAttribute(text) {
     return String(text).replace(/&/g, '&amp;').replaceAll('"', '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Hover text on every "Instead of selling" line. K marks do not apply: every output is sold.
+ * @returns {string}
+ */
+function sellingTitle() {
+    return (
+        'Instead of selling: one unit you hold, decomposed, transmuted or coinified, against selling it at your sell ' +
+        'price after tax. The catalyst and tea are bought at your buy price and every output is sold at your sell ' +
+        'price after tax (K marks do not apply). Estimated prices are left out. With a gold rate set, the alchemy ' +
+        'time is charged at that rate.'
+    );
 }
 
 /**
@@ -685,6 +704,7 @@ class TooltipPrices {
                     '.market-gathering-injected',
                     '.market-multi-action-injected',
                     `.${INSTEAD_SECTION_CLASS}`,
+                    `.${SELLING_SECTION_CLASS}`,
                     '.market-enhancement-injected',
                     '.mwi-enhancement-milestones',
                     '.mwi-ability-status',
@@ -723,7 +743,9 @@ class TooltipPrices {
             !isCollectionTooltip &&
             !(info.enhancementLevel > 0) &&
             config.getSetting(KEEP_CHIP_SETTING) &&
-            (config.getSetting('itemTooltip_selfUseAlchemy') || config.getSetting(INSTEAD_SETTING)) &&
+            (config.getSetting('itemTooltip_selfUseAlchemy') ||
+                config.getSetting(INSTEAD_SETTING) ||
+                config.getSetting(SELLING_SETTING)) &&
             selfUseWanted.isAlchemyOutput(itemHrid);
 
         // Check if this is an openable container first (they have no market price)
@@ -797,6 +819,11 @@ class TooltipPrices {
         // The cheapest alchemy route to this item, when one beats buying it
         if (config.getSetting(INSTEAD_SETTING) && enhancementLevel === 0 && !isCollectionTooltip) {
             await this.injectInsteadOfBuyingDisplay(tooltipElement, itemHrid, itemName);
+        }
+
+        // The alchemy routes that pay more than selling the unit you hold
+        if (config.getSetting(SELLING_SETTING) && enhancementLevel === 0 && !isCollectionTooltip) {
+            await this.injectInsteadOfSellingDisplay(tooltipElement, itemHrid, itemName);
         }
 
         // Check for gathering sources (Foraging, Woodcutting, Milking)
@@ -961,7 +988,7 @@ class TooltipPrices {
     buildNoCheaperRouteHTML(uncertain = false) {
         return (
             '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">' +
-            `<div style="color: ${config.COLOR_TOOLTIP_INFO}; opacity: 0.7;" title="${insteadTitle()}">` +
+            `<div style="color: ${config.COLOR_TOOLTIP_INFO}; opacity: 0.7;" title="${escapeAttribute(insteadTitle())}">` +
             `Instead of buying: no alchemy route beats the ${buySideWord()}${uncertain ? ' (some outputs unpriced)' : ''}</div></div>`
         );
     }
@@ -1042,6 +1069,66 @@ class TooltipPrices {
             html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${hover}">`;
             html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)}${headline}${caveat}`;
             html += '</div>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    /**
+     * The "Instead of selling" lines: the alchemy actions that pay more for one unit you hold than selling
+     * it does. Nothing is drawn without a real bid, an alchemy action, or a route that wins.
+     * @param {Element} tooltipElement
+     * @param {string} itemHrid
+     * @param {string} itemName - The name this tooltip was processed for
+     * @returns {Promise<void>}
+     */
+    async injectInsteadOfSellingDisplay(tooltipElement, itemHrid, _itemName) {
+        try {
+            const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
+            if (!tooltipText || tooltipText.querySelector(`.${SELLING_SECTION_CLASS}`)) return;
+            const { sellValue, routes } = liveSellRoutes(itemHrid);
+            if (!routes.length) return;
+            // Under an "Instead of buying" section the rule above it already divides the tooltip
+            const divided = !tooltipText.querySelector(`.${INSTEAD_SECTION_CLASS}`);
+            const div = dom.createStyledDiv(
+                { color: config.COLOR_TOOLTIP_INFO, marginTop: divided ? '8px' : '2px' },
+                '',
+                SELLING_SECTION_CLASS
+            );
+            div.innerHTML = this.buildInsteadOfSellingHTML(sellValue, routes, divided);
+            tooltipText.appendChild(div);
+        } catch (error) {
+            console.error('[TooltipPrices] Instead-of-selling lines failed:', error);
+        }
+    }
+
+    /**
+     * The "Instead of selling" section's contents: one headline per winning action, the working in its hover text.
+     * @param {number} sellValue - The unit's bid after tax
+     * @param {Array<Object>} routes - From `liveSellRoutes`, best margin first
+     * @param {boolean} [divided=true] - Draw the rule above the first line
+     * @returns {string}
+     */
+    buildInsteadOfSellingHTML(sellValue, routes, divided = true) {
+        let html = divided ? '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">' : '<div>';
+        for (const route of routes) {
+            const atLeast = route.partlyUnpriced ? '≥' : '';
+            const figure = `${atLeast}${formatKMB(route.valuePerUnit)}/unit`;
+            const perUnit =
+                route.secondsPerUnit > 0 && route.secondsPerUnit < 9.95
+                    ? `${route.secondsPerUnit.toFixed(1)}s`
+                    : timeReadable(route.secondsPerUnit);
+            const parts = [`${atLeast}${formatKMB(route.margin)}/unit more than selling`];
+            if (route.timeCostPerUnit > 0) parts.push(`after ${formatKMB(route.timeCostPerUnit)} time`);
+            parts.push(`${perUnit}/unit`);
+            const caveat = route.partlyUnpriced
+                ? '<span style="opacity: 0.7; font-size: 0.9em;"> (an output unpriced)</span>'
+                : '';
+            const hover = escapeAttribute(`${sellingTitle()}\n${parts.join(' · ')}`);
+            html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${hover}">`;
+            html += `Instead of selling: ${route.actionType} — `;
+            html += `<span style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">${figure}</span>`;
+            html += ` vs ${formatKMB(sellValue)} after tax${caveat}</div>`;
         }
         html += '</div>';
         return html;

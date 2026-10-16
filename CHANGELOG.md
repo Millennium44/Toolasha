@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tooltip: "Instead of selling" alchemy line
+
+- An item tooltip now shows up to two alchemy routes (transmute, decompose, coinify) that beat selling the unit you hold, with outputs counted as sold after tax — useful for self-farmed items where market tax makes selling the worse deal.
+
 ### Tooltip: tidier "Instead of buying" lines
 
 - The long muted detail line under each "Instead of buying" suggestion is gone; its working now shows on hover, and an unpriced output is still flagged on the line.

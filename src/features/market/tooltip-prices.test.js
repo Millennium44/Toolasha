@@ -16,6 +16,7 @@ const settings = vi.hoisted(() => ({
     keepChip: true,
     markMeaning: 'keep',
     insteadOfBuying: false,
+    insteadOfSelling: false,
     insteadHeadline: undefined,
     goldRate: 0,
     patientTickBuy: false,
@@ -41,6 +42,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_selfUseAlchemy') return settings.selfUseAlchemy;
             if (id === 'itemTooltip_selfUseKeepChip') return settings.keepChip;
             if (id === 'itemTooltip_alchemyInsteadOfBuying') return settings.insteadOfBuying;
+            if (id === 'itemTooltip_alchemyInsteadOfSelling') return settings.insteadOfSelling;
             if (id === 'actionPanel_craftingPlanGoldPerHour') return settings.goldRate;
             return true;
         },
@@ -307,6 +309,7 @@ beforeEach(async () => {
     settings.keepChip = true;
     settings.markMeaning = 'keep';
     settings.insteadOfBuying = false;
+    settings.insteadOfSelling = false;
     settings.goldRate = 0;
     settings.pricingMode = undefined;
     settings.patientTickBuy = false;
@@ -1440,6 +1443,113 @@ describe('keep for self-use chip', () => {
         observerState.handler(apple);
         await settleLong();
         expect(apple.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
+    });
+});
+
+describe('instead of selling', () => {
+    // A Cheese Sword decomposes into 18 Cheese at 60% success: 10.8 cheese an action
+    const swordDecompose = (overrides = {}) => ({
+        actionType: 'decompose',
+        itemHrid: '/items/cheese_sword',
+        actionsPerHour: 100,
+        successRate: 0.6,
+        requirementCosts: [{ itemHrid: '/items/cheese_sword', count: 1, price: 45 }],
+        catalystCostPerHour: 0,
+        totalTeaCostPerHour: 0,
+        dropRevenues: [],
+        ...overrides,
+    });
+    const hover = async (name = 'Cheese Sword') => {
+        const el = itemTooltip(name);
+        observerState.handler(el);
+        for (let i = 0; i < 40; i++) await Promise.resolve();
+        return el;
+    };
+    const section = (el) => el.querySelector('.mwi-alchemy-instead-selling');
+
+    beforeEach(() => {
+        settings.insteadOfSelling = true;
+        priceState.info = { '/items/cheese': { ask: 10, bid: 9 }, '/items/cheese_sword': { ask: 50, bid: 45 } };
+        alchemyState.candidates = { 'decompose|/items/cheese_sword': [swordDecompose()] };
+    });
+
+    test('a winning action is one headline against the bid after tax, the working in its hover text', async () => {
+        const line = section(await hover());
+        expect(line).not.toBeNull();
+        // 10.8 cheese at a bid of 9 = 97.2 an action against a sword bid of 45
+        expect(line.textContent).toBe('Instead of selling: decompose — 97/unit vs 45 after tax');
+        expect(line.querySelectorAll('div[style*="font-size: 0.9em"]')).toHaveLength(0);
+        const title = line.querySelector('[title^="Instead of selling"]').title;
+        expect(title).toContain('52/unit more than selling');
+        expect(title).toContain('36s/unit');
+        // The headline figure takes the profit color
+        expect(line.innerHTML).toContain('color: #0f0; font-weight: bold;">97/unit');
+    });
+
+    test('the setting off draws nothing, even with a winning action', async () => {
+        settings.insteadOfSelling = false;
+        const el = await hover();
+        expect(el.dataset.pricesProcessedItem).toBe('Cheese Sword');
+        expect(section(el)).toBeNull();
+    });
+
+    test('the sales tax comes off both the bid and the outputs', async () => {
+        taxState.rate = 0.5;
+        // Cheese at 9 after tax 4.5 × 10.8 = 48.6 against a bid of 45 after tax 22.5
+        expect((await hover()).querySelector('.mwi-alchemy-instead-selling').textContent).toBe(
+            'Instead of selling: decompose — 49/unit vs 23 after tax'
+        );
+    });
+
+    test('an enhanced item draws nothing: its sale price is not the base bid', async () => {
+        expect(section(await hover('Cheese Sword +3'))).toBeNull();
+    });
+
+    test('a loss draws nothing', async () => {
+        alchemyState.candidates['decompose|/items/cheese_sword'] = [swordDecompose({ catalystCostPerHour: 1e6 })];
+        expect(section(await hover())).toBeNull();
+    });
+
+    test('no bid draws nothing', async () => {
+        priceState.info['/items/cheese_sword'] = { ask: 50 };
+        expect(section(await hover())).toBeNull();
+    });
+
+    test('a zero bid draws nothing', async () => {
+        priceState.info['/items/cheese_sword'] = { ask: 50, bid: 0 };
+        expect(section(await hover())).toBeNull();
+    });
+
+    test('an item with no alchemy action draws nothing', async () => {
+        priceState.info['/items/apple'] = { ask: 5, bid: 4 };
+        expect(section(await hover('Apple'))).toBeNull();
+    });
+
+    test('every output unpriced draws nothing', async () => {
+        priceState.info['/items/cheese'] = {};
+        expect(section(await hover())).toBeNull();
+    });
+
+    test('an unpriced output that still wins is a lower bound with a short visible caveat', async () => {
+        // The twin sword also yields a cheese sword, which has no bid
+        priceState.info['/items/twin_sword'] = { ask: 80, bid: 40 };
+        priceState.info['/items/cheese_sword'] = {};
+        alchemyState.candidates['decompose|/items/twin_sword'] = [
+            swordDecompose({ itemHrid: '/items/twin_sword', successRate: 1, requirementCosts: [{ count: 1 }] }),
+        ];
+        const line = section(await hover('Twin Sword'));
+        // 5 cheese × 9 = 45 against a bid of 40; the cheese sword has no bid, so it adds nothing
+        expect(line.textContent).toBe('Instead of selling: decompose — ≥45/unit vs 40 after tax (an output unpriced)');
+    });
+
+    test('the hover text says every output is sold, whatever the K meaning, with no kept list', async () => {
+        for (const meaning of ['sell', 'keep']) {
+            settings.markMeaning = meaning;
+            const title = section(await hover()).querySelector('[title^="Instead of selling"]').title;
+            expect(title).toContain('every output is sold at your sell price after tax (K marks do not apply)');
+            expect(title).not.toContain('K to');
+            expect(title).not.toContain('counts');
+        }
     });
 });
 
