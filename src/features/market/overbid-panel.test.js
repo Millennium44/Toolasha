@@ -195,6 +195,8 @@ describe('panel', () => {
         vi.useFakeTimers();
         vi.setSystemTime(NOW);
         overbidPanel.prunedOwner = null;
+        // Handlers are reset above, so the once-only login watch has to be attached again
+        overbidPanel.loginWatch = false;
         await overbidPanel.initialize();
     });
     afterEach(() => {
@@ -622,6 +624,19 @@ describe('panel', () => {
             expect(hoisted.storageSet).not.toHaveBeenCalled();
         });
 
+        it('a login while the panel is turned off makes the next start prune again', async () => {
+            overbidPanel.disable();
+            hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`];
+            hoisted.listings = [listing({ id: 1 }), listing({ id: 2, itemHrid: SWORD })];
+            await overbidPanel.initialize();
+            overbidPanel.disable();
+            // Away and back to the same character while off; the cheese listing is gone by then
+            hoisted.listings = [listing({ id: 2, itemHrid: SWORD })];
+            hoisted.handlers.character_initialized.forEach((fn) => fn());
+            await overbidPanel.initialize();
+            expect(overbidPanel.hidden.has(`${CHEESE}:0:sell`)).toBe(false);
+        });
+
         it('the first start after switching to another character still prunes against its listings', async () => {
             overbidPanel.disable();
             hoisted.characterId = 'c2';
@@ -773,7 +788,10 @@ describe('panel', () => {
         fire();
         overbidPanel.disable();
         expect(root()).toBeNull();
-        for (const list of Object.values(hoisted.handlers)) expect(list).toEqual([]);
+        // Only the once-only login watch outlives a teardown, by design
+        for (const [event, list] of Object.entries(hoisted.handlers)) {
+            expect(list).toHaveLength(event === 'character_initialized' ? 1 : 0);
+        }
         expect(hoisted.marketHandlers).toEqual([]);
     });
 
