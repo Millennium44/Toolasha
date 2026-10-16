@@ -51,7 +51,9 @@ import { scriptVersion } from '../../utils/script-version.js';
 import {
     ALL_ZONES_SNAPSHOT_KEY,
     ALL_ZONES_SNAPSHOT_STORE,
+    SIM_CONSUMABLE_RATES_BY_ZONE_KEY,
     saveAllZonesSnapshot,
+    saveSimConsumableRateForZone,
     resaveAllZonesSnapshot,
     loadAllZonesSnapshot,
 } from '../../utils/all-zones-snapshot.js';
@@ -7348,22 +7350,14 @@ class CombatSimUI {
             // pin "always rate my food from this zone at this tier" and keep
             // that rating across sims of other zones
             //
-            // A read-modify-write: `readScoped` resolves its key now,
-            // `writeScoped` resolves its own only once the read has settled. A
-            // switch in between wrote this character's whole by-zone map back
-            // under the arriving character's key, replacing every zone rating
-            // they had recorded with someone else's. Re-checked after the read.
+            // One storage update against the newest stored map, under the key resolved now (the check above
+            // is synchronous, so it is this character's): a read, an await and a write would put back a copy
+            // older than a sync pull that landed in between, and a switch in between would file this
+            // character's map under the arriving one's key.
             const zoneKey = `${record.zoneHrid || 'unknown'}|${record.difficultyTier}`;
-            readScoped('simConsumableRatesByZone', 'combatExport', {})
-                .then((byZone) => {
-                    if (!this._stillSameCharacter(ownerId)) return undefined;
-                    return writeScoped(
-                        'simConsumableRatesByZone',
-                        { ...(byZone || {}), [zoneKey]: record },
-                        'combatExport'
-                    );
-                })
-                .catch(() => {});
+            saveSimConsumableRateForZone(characterKey(SIM_CONSUMABLE_RATES_BY_ZONE_KEY), zoneKey, record).catch(
+                () => {}
+            );
         } catch (error) {
             console.error('[CombatSimUI] Persisting consumable rates failed:', error);
         }
