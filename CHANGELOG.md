@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tooltip: "Instead of selling" alchemy line
+
+- An item tooltip now shows up to two alchemy routes (transmute, decompose, coinify) that beat selling the unit you hold, with outputs counted as sold after tax — useful for self-farmed items where market tax makes selling the worse deal.
+
+### Tooltip: tidier "Instead of buying" lines
+
+- The long muted detail line under each "Instead of buying" suggestion is gone; its working now shows on hover, and an unpriced output is still flagged on the line.
+
 ### Market: hide items in the Overbid table
 
 - Each Overbid table row has a ✕ that hides that item (level and side) — remembered per character and kept through a relist — with a "Show hidden (n)" toggle to see them again; hidden items never pop the table open, and the "Your items have been overbid" line is gone.

@@ -74,6 +74,7 @@ export const IRON_COW_SETTINGS = new Set([
     'itemTooltip_multiActionProfit',
     'itemTooltip_selfUseAlchemy',
     'itemTooltip_alchemyInsteadOfBuying',
+    'itemTooltip_alchemyInsteadOfSelling',
     'itemTooltip_selfUseKeepChip',
     'taskProfitCalculator',
     'profitCalc_keyPricingMode', // Prices in tooltips / UI

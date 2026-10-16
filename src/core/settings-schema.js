@@ -922,7 +922,14 @@ export const settingsGroups = {
                     { value: 'perHour', label: 'Saving per hour over your time value' },
                     { value: 'grossPerHour', label: 'Alchemy gold/hr' },
                 ],
-                help: 'Which figure the "Instead of buying" line shows first, in green. The other figures stay on the line and the detail line under it. Alchemy gold/hr is the hourly saving before your time value is taken off.',
+                help: 'Which figure the "Instead of buying" line shows first, in green. The other figures stay on the line, and the working is in its hover text. Alchemy gold/hr is the hourly saving before your time value is taken off.',
+            },
+            itemTooltip_alchemyInsteadOfSelling: {
+                id: 'itemTooltip_alchemyInsteadOfSelling',
+                label: 'Show alchemy routes that beat selling an item you hold',
+                type: 'checkbox',
+                default: true,
+                help: 'On an item you might sell, names the alchemy action (decompose, transmute or coinify) that pays more for one unit you already hold than selling it, and what it nets per unit against selling that unit at your sell price after tax (which side of the book that is follows your pricing mode). The input is valued at your sell price after tax, never your buy price, so this is for items you farmed or made yourself. The catalyst and tea are bought at your buy price; every output is sold at your sell price after tax, whatever your K marks say. Estimated prices are left out. Alchemy time is charged at "Your time value (gold/hr)". Nothing is shown when selling pays more.',
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',
