@@ -1231,6 +1231,39 @@ describe('confirming from the strip', () => {
             expect(bulkSell.statusNote).toBe('no longer in inventory');
         });
 
+        describe('gone with a modal open', () => {
+            const addClose = (modal) => {
+                let closes = 0;
+                const close = document.createElement('button');
+                close.className = 'Modal_closeButton__c';
+                close.addEventListener('click', () => closes++);
+                modal.appendChild(close);
+                return () => closes;
+            };
+
+            test("another item's modal is left open and the step is still skipped", () => {
+                const modal = openModal({ item: 'milk', qty: 4 });
+                const closes = addClose(modal);
+                runAtStep0();
+                game.items = [inventory('/items/milk', 4)];
+                confirmBtn().click();
+                expect(closes()).toBe(0);
+                expect(bulkSell.statusNote).toBe('no longer in inventory');
+                expect(gameClicks).toBe(0);
+            });
+
+            test('the matching sell modal is closed and the step is skipped', () => {
+                const modal = openModal({ qty: 18 });
+                const closes = addClose(modal);
+                runAtStep0();
+                game.items = [inventory('/items/milk', 4)];
+                confirmBtn().click();
+                expect(closes()).toBe(1);
+                expect(bulkSell.statusNote).toBe('no longer in inventory');
+                expect(gameClicks).toBe(0);
+            });
+        });
+
         test('grew but the modal will not take it: refuses and names the leftover', () => {
             const modal = openModal({ qty: 18 });
             runAtStep0();

@@ -1378,7 +1378,10 @@ class BulkSellAssistant {
         if (this.decision?.vendor) return true;
         const live = this._liveCount();
         if (live <= 0) {
-            this._skip('no longer in inventory');
+            // The modal is closed only when it is the sell form this step opened; one the player swapped in
+            // is theirs and stays open, the way the changed-count path leaves it
+            const openModal = document.querySelector('[class*="Modal_modalContainer"]');
+            this._skip('no longer in inventory', !openModal || !this._modalIdentityProblem(openModal));
             return false;
         }
         const queued = this.current.count;
@@ -2492,10 +2495,12 @@ class BulkSellAssistant {
         }, 200);
     }
 
-    _skip(note) {
+    _skip(note, closeModal = true) {
         this._clearTransient();
         // Close any modal the run opened so it can't linger over the next item
-        document.querySelector('[class*="Modal_modalContainer"] [class*="Modal_closeButton"]')?.click();
+        if (closeModal) {
+            document.querySelector('[class*="Modal_modalContainer"] [class*="Modal_closeButton"]')?.click();
+        }
         // Dismiss an open item action menu (vendor path) the same way the
         // game does — via Escape
         if (document.querySelector('[class*="Item_actionMenu"]')) {
