@@ -223,6 +223,36 @@ export function profitCellHTML(r) {
     return `<span style="color:${color};"${valueTitle}>${text}</span>${separator}${marker}`;
 }
 
+/** Columns computed from the run's cost, which a missing price understates (profit: overstates) */
+const COST_DERIVED_KEYS = new Set(['goldPerXP', 'costPerHour', 'profitPerHour']);
+
+/**
+ * Order two rows of the table by one column. Empty cells go last whichever way it runs, and on a
+ * column derived from cost a row with missing prices goes after every fully priced one: its figure
+ * leaves an input out, so ascending cost or descending profit would otherwise put the least
+ * trustworthy row first.
+ *
+ * @param {Object} a - Row from {@link calculateItemXPH}
+ * @param {Object} b - Row from {@link calculateItemXPH}
+ * @param {string} key - Row field to order by
+ * @param {boolean} asc - Ascending order
+ * @returns {number} Negative when `a` comes first
+ */
+export function compareXPHRows(a, b, key, asc) {
+    const av = a[key];
+    const bv = b[key];
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    if (COST_DERIVED_KEYS.has(key)) {
+        const aPartial = Boolean(a.costPartial);
+        const bPartial = Boolean(b.costPartial);
+        if (aPartial !== bPartial) return aPartial ? 1 : -1;
+    }
+    if (typeof av === 'string') return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+    return asc ? av - bv : bv - av;
+}
+
 class XPHCalculator {
     constructor() {
         this.isInitialized = false;
@@ -636,16 +666,7 @@ class XPHCalculator {
     }
 
     _render() {
-        const sorted = [...this.lastResults].sort((a, b) => {
-            const key = this.sortColumn;
-            const av = a[key];
-            const bv = b[key];
-            if (av === null && bv === null) return 0;
-            if (av === null) return 1;
-            if (bv === null) return -1;
-            if (typeof av === 'string') return this.sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
-            return this.sortAsc ? av - bv : bv - av;
-        });
+        const sorted = [...this.lastResults].sort((a, b) => compareXPHRows(a, b, this.sortColumn, this.sortAsc));
 
         const tdR = 'padding:5px 10px; text-align:right; border-bottom:1px solid #141414;';
         const tdL = `padding:5px 10px; text-align:left; border-bottom:1px solid #141414;

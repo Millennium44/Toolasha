@@ -218,6 +218,61 @@ describe('enhancementSessionNet', () => {
         expect(enhancementSessionNet(session, price)).toBe(9000 - 1000 - 50000);
     });
 
+    test('a run that consumed an unpriced input is not valued: its cost leaves that input out', () => {
+        const run = { itemHrid: '/items/sword', startLevel: 0, currentLevel: 5, totalCost: 3000 };
+        expect(enhancementSessionNet({ ...run, hasUnpricedInput: true }, price)).toBeNull();
+        // Sessions recorded before the flag show it as units with no cost
+        const legacyMaterial = { materialCosts: { '/items/cheese': { count: 4, totalCost: 0 } } };
+        expect(enhancementSessionNet({ ...run, ...legacyMaterial }, price)).toBeNull();
+        expect(enhancementSessionNet({ ...run, mirrorCount: 2, mirrorCost: 0 }, price)).toBeNull();
+        expect(enhancementSessionNet({ ...run, protectionCount: 3, protectionCost: 0 }, price)).toBeNull();
+        // The per-item breakdown form of an unpriced protection
+        const breakdown = { '/items/mirror_of_protection': { count: 2, totalCost: 0 } };
+        expect(
+            enhancementSessionNet(
+                { ...run, protectionCount: 2, protectionCost: 0, protectionBreakdown: breakdown },
+                price
+            )
+        ).toBeNull();
+        // A legacy mirror kept in the protection fields, with no cost
+        const legacyMirror = { '/items/philosophers_mirror': { count: 1, totalCost: 0 } };
+        expect(
+            enhancementSessionNet(
+                { ...run, protectionCount: 1, protectionCost: 0, protectionBreakdown: legacyMirror },
+                price
+            )
+        ).toBeNull();
+        // A fully priced one still is
+        const priced = { materialCosts: { '/items/cheese': { count: 4, totalCost: 80 } } };
+        expect(enhancementSessionNet({ ...run, ...priced }, price)).toBe(9000 - 1000 - 3000);
+        const pricedProtection = { protectionCount: 3, protectionCost: 600 };
+        expect(enhancementSessionNet({ ...run, ...pricedProtection }, price)).toBe(9000 - 1000 - 3000);
+    });
+
+    test('a protection entry with units and no cost is unpriced even when the total cost is positive', () => {
+        const run = { itemHrid: '/items/sword', startLevel: 0, currentLevel: 5, totalCost: 3000 };
+        const mixed = {
+            '/items/mirror_of_protection': { count: 3, totalCost: 600 },
+            '/items/crushed_pearl': { count: 2, totalCost: 0 },
+        };
+        expect(
+            enhancementSessionNet(
+                { ...run, protectionCount: 5, protectionCost: 600, protectionBreakdown: mixed },
+                price
+            )
+        ).toBeNull();
+        const allPriced = {
+            '/items/mirror_of_protection': { count: 3, totalCost: 600 },
+            '/items/crushed_pearl': { count: 2, totalCost: 100 },
+        };
+        expect(
+            enhancementSessionNet(
+                { ...run, protectionCount: 5, protectionCost: 700, protectionBreakdown: allPriced },
+                price
+            )
+        ).toBe(9000 - 1000 - 3000);
+    });
+
     test('an item with no price at one of its levels is not valued at all', () => {
         const session = { itemHrid: '/items/sword', startLevel: 0, currentLevel: 20, totalCost: 10 };
         expect(enhancementSessionNet(session, price)).toBeNull();
@@ -499,6 +554,31 @@ describe('attributeGoldSources', () => {
         });
         expect(result.totals.sources.offline).toBe(1234);
         expect(result.totals.sources.production).toBe(0);
+    });
+
+    test('a merged run with an unpriced input is unvalued whole, not booked leg by leg against a partial cost', () => {
+        const result = attributeGoldSources({
+            ...base,
+            enhancementSessions: [
+                {
+                    startTime: D20,
+                    pastActiveSpans: [{ start: D20, end: D20 + 3600_000, startLevel: 0, endLevel: 5, cost: 500 }],
+                    segmentStartTime: D20 + 7200_000,
+                    segmentStartLevel: 5,
+                    segmentStartCost: 500,
+                    lastUpdateTime: D20 + 9000_000,
+                    itemHrid: '/items/sword',
+                    startLevel: 0,
+                    currentLevel: 5,
+                    totalCost: 1000,
+                    hasUnpricedInput: true,
+                },
+            ],
+        });
+
+        expect(result.unpricedEnhancementSessions).toBe(1);
+        expect(result.partlyPricedEnhancementSessions).toBe(0);
+        expect(result.totals.sources.enhancement).toBe(0);
     });
 
     test('unpriceable enhancement runs are counted, not silently valued at zero', () => {

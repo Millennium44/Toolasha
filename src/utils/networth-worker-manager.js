@@ -11,6 +11,7 @@ import {
     buildEnhancementMarkov,
 } from './enhancement-calculator.js';
 import { createMatrixMath } from './matrix-inverse.js';
+import { getShopCoinCost } from './game-lookups.js';
 
 // Worker pool instance
 let workerPool = null;
@@ -150,11 +151,14 @@ function calculateEnhancementCost(params) {
                         if (ask === undefined) ask = priceMap[material.itemHrid + ':0'];
                         let bid = priceMap[material.itemHrid + ':0_bid'];
 
-                        // Match MCS behavior: if one price is positive and other is negative, use positive for both
-                        if (ask > 0 && bid < 0) {
+                        // Match MCS behavior: when only one side is quoted, both sides use it. A missing
+                        // side arrives as null (the order book's own answer) as well as -1, and
+                        // null < 0 is false, so "not a positive number" is what missing looks like -
+                        // the same test getEnhancementMaterialPrice runs on the main thread.
+                        if (ask > 0 && !(bid > 0)) {
                             bid = ask;
                         }
-                        if (bid > 0 && ask < 0) {
+                        if (bid > 0 && !(ask > 0)) {
                             ask = bid;
                         }
 
@@ -226,10 +230,10 @@ function calculateEnhancementCost(params) {
 
     // Apply Philosopher's Mirror optimization, through the same serialised sweep the tooltip
     // path runs, so the two cannot drift (it starts at +3: the game will not mirror below +2).
-    let mirrorPrice = priceMap['/items/philosophers_mirror:0'] || 0;
-    if (mirrorPrice === 0) {
-        mirrorPrice = calculateProductionCost('/items/philosophers_mirror', priceMap, recipes);
-    }
+    // The tooltip prices the mirror with getRealisticBaseItemPrice; so does this, rather than the
+    // pricing-mode price, which on a wide ask/bid spread quotes a different mirror than the path
+    // the same item takes on the main thread
+    const mirrorPrice = getRealisticPrice('/items/philosophers_mirror', null, priceMap, recipes);
 
     // A Blessed Tea mirror success can be +2; same chance the chain gives an ordinary success
     const mirrorBlessedChance = (enhancementParams.teas?.blessed ?? enhancementParams.blessedTea)
@@ -373,12 +377,29 @@ function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes) {
 }
 
 /**
+ * What one unenhanced copy is worth when the enhancement path cannot be priced: the pricing-mode
+ * price, then the craft cost, then the shop's coin price - the order getMarketPrice runs on the
+ * main thread (an openable's expected value never reaches an enhanced piece). Without the shop
+ * step a shop-sold piece with no market quote was worth 0 here and its shop price there.
+ */
+function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts) {
+    let basePrice = priceMap[itemHrid + ':0'] || 0;
+    if (basePrice === 0) {
+        basePrice = calculateProductionCost(itemHrid, priceMap, recipes);
+    }
+    if (!(basePrice > 0)) {
+        basePrice = (shopCosts && shopCosts[itemHrid]) || 0;
+    }
+    return basePrice;
+}
+
+/**
  * Calculate value for a single item
  * @param {Object} data - Item data
  * @returns {Object} {itemIndex, value}
  */
 function calculateItemValue(data) {
-    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, recipes } = data;
+    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, recipes, shopCosts } = data;
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
 
     let itemValue = 0;
@@ -400,12 +421,8 @@ function calculateItemValue(data) {
             if (cost !== null && cost > 0) {
                 itemValue = cost;
             } else {
-                // Fallback to base item price or production cost
-                let basePrice = priceMap[itemHrid + ':0'] || 0;
-                if (basePrice === 0) {
-                    basePrice = calculateProductionCost(itemHrid, priceMap, recipes);
-                }
-                itemValue = basePrice;
+                // Fallback to base item price, production cost or shop price
+                itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts);
             }
         } else {
             // Normal logic: try market price first
@@ -427,20 +444,13 @@ function calculateItemValue(data) {
                 if (cost !== null && cost > 0) {
                     itemValue = cost;
                 } else {
-                    let basePrice = priceMap[itemHrid + ':0'] || 0;
-                    if (basePrice === 0) {
-                        basePrice = calculateProductionCost(itemHrid, priceMap, recipes);
-                    }
-                    itemValue = basePrice;
+                    itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts);
                 }
             }
         }
     } else {
         // Unenhanced items: use market price or production cost
-        itemValue = priceMap[itemHrid + ':0'] || 0;
-        if (itemValue === 0) {
-            itemValue = calculateProductionCost(itemHrid, priceMap, recipes);
-        }
+        itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts);
     }
 
     return { itemIndex, value: itemValue * count };
@@ -474,7 +484,8 @@ self.onmessage = function (e) {
                 recipes: params.recipes,
                 useHighEnhancementCost: params.useHighEnhancementCost,
                 minLevel: params.minLevel,
-                enhancementParams: params.enhancementParams
+                enhancementParams: params.enhancementParams,
+                shopCosts: params.shopCosts
             };
             const results = calculateItemValueBatch(params.items, shared);
             self.postMessage({ taskId, result: results });
@@ -630,9 +641,19 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
         if (levelKey in priceMap) prunedPriceMap[levelKey] = priceMap[levelKey];
     }
 
+    // The shop's coin price of each enhanced piece in the batch: the last fallback the main thread's
+    // getMarketPrice reaches for, and the worker has no game data to read it from
+    const shopCosts = {};
+    for (const item of items) {
+        if (!((item.enhancementLevel || 0) >= 1) || item.itemHrid in shopCosts) continue;
+        const shopCost = getShopCoinCost(item.itemHrid);
+        if (shopCost > 0) shopCosts[item.itemHrid] = shopCost;
+    }
+
     const shared = {
         priceMap: prunedPriceMap,
         recipes,
+        shopCosts,
         useHighEnhancementCost: configOptions.useHighEnhancementCost,
         minLevel: configOptions.minLevel,
         enhancementParams: configOptions.enhancementParams,

@@ -119,9 +119,10 @@ vi.mock('../../utils/background-work.js', () => ({
 let calculateItemXPH;
 let capXPHRowProfit;
 let profitCellHTML;
+let compareXPHRows;
 
 beforeAll(async () => {
-    ({ calculateItemXPH, capXPHRowProfit, profitCellHTML } = await import('./xph-calculator.js'));
+    ({ calculateItemXPH, capXPHRowProfit, profitCellHTML, compareXPHRows } = await import('./xph-calculator.js'));
 });
 
 const itemDetails = { name: 'Test Sword', itemLevel: 10, enhancementCosts: [{ itemHrid: MATERIAL, count: 1 }] };
@@ -331,5 +332,41 @@ describe('the wisdom a ranked row is computed with', () => {
         calculateItemXPH(ITEM, itemDetails, 5, 0, { ...params, experienceBonus: 12.5 });
         expect(xpCalls.length).toBeGreaterThan(0);
         for (const args of xpCalls) expect(args[2]).toBeCloseTo(0.125, 9);
+    });
+});
+
+describe('ordering rows by a cost-derived column', () => {
+    const row = (name, over) => ({
+        name,
+        xph: 1,
+        goldPerXP: 1,
+        costPerHour: 1,
+        profitPerHour: 1,
+        costPartial: false,
+        ...over,
+    });
+    const order = (rows, key, asc) => [...rows].sort((a, b) => compareXPHRows(a, b, key, asc)).map((r) => r.name);
+
+    const rows = [
+        row('priced-low', { profitPerHour: 100, costPerHour: 500, goldPerXP: 5 }),
+        row('partial-high', { profitPerHour: 9_000_000, costPerHour: 1, goldPerXP: 0.01, costPartial: true }),
+        row('priced-high', { profitPerHour: 5000, costPerHour: 200, goldPerXP: 2 }),
+        row('no-profit', { profitPerHour: null }),
+    ];
+
+    test('a partial-cost row follows every fully priced row, whichever way profit sorts', () => {
+        expect(order(rows, 'profitPerHour', false)).toEqual(['priced-high', 'priced-low', 'partial-high', 'no-profit']);
+        expect(order(rows, 'profitPerHour', true)).toEqual(['priced-low', 'priced-high', 'partial-high', 'no-profit']);
+    });
+
+    test('the same holds for cost per hour and gold per XP, where a missing price reads cheap', () => {
+        expect(order(rows, 'costPerHour', true).at(-1)).toBe('partial-high');
+        expect(order(rows, 'goldPerXP', true)).toEqual(['no-profit', 'priced-high', 'priced-low', 'partial-high']);
+    });
+
+    test('columns the cost does not feed are not reordered by it', () => {
+        const byXp = [row('a', { xph: 10, costPartial: true }), row('b', { xph: 20 })];
+        expect(order(byXp, 'xph', false)).toEqual(['b', 'a']);
+        expect(order(byXp, 'xph', true)).toEqual(['a', 'b']);
     });
 });

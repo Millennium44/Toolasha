@@ -258,8 +258,9 @@ export function mirrorCostColumn(costs, basePrice, mirrorPrice, toLevel = costs.
 
     let mirrorStartLevel = null;
     for (let level = 3; level <= costs.length; level++) {
-        const mirrorCost = mirrorTotals[level] - basePrice;
-        const isMirrorCheaper = comparable(level) && mirrorCost < costs[level - 1];
+        // A route built only from unpriced levels never finds a finite total: that is no quote, not "∞"
+        const mirrorCost = Number.isFinite(mirrorTotals[level]) ? mirrorTotals[level] - basePrice : null;
+        const isMirrorCheaper = comparable(level) && mirrorCost !== null && mirrorCost < costs[level - 1];
         levels[level - 1] = { mirrorCost, isMirrorCheaper };
         if (isMirrorCheaper && mirrorStartLevel === null && level <= cap) mirrorStartLevel = level;
     }
@@ -380,8 +381,9 @@ function generateCostsByLevelTable(
             const protectionMarketData = ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
             // No market quote leaves the protection unpriced - the vendor price is far below what
             // one costs to buy, and a low number there reads as a cheap run. The book answers
-            // "no quote" with -1, which is not a price
-            if (protectionMarketData?.ask > 0) protectionPrice = protectionMarketData.ask;
+            // "no quote" with -1, which is not a price. A side that is missing borrows the other,
+            // as the tracker prices the same item when the run is made
+            protectionPrice = bookPrice(protectionMarketData);
             protectionUnpriced = !(protectionPrice > 0);
 
             protectionCost = calc.protectionCount * protectionPrice;
@@ -402,7 +404,12 @@ function generateCostsByLevelTable(
         let mirrorFootingCost = protectionUnpriced || materialUnpriced ? null : totalCost;
         if (effectiveProtect && !protectionItemHrid) {
             const bare = calculateEnhancement({ ...chainArgs, protectFrom: 0 });
-            mirrorFootingCost = calc.attempts > 0 ? (materialCost / calc.attempts) * bare.attempts : 0;
+            // An unpriced material leaves materialCost a partial bill, which is no footing at all
+            mirrorFootingCost = materialUnpriced
+                ? null
+                : calc.attempts > 0
+                  ? (materialCost / calc.attempts) * bare.attempts
+                  : 0;
         }
 
         // Override time with buff-map-based per-action time (authoritative source)
@@ -441,10 +448,8 @@ function generateCostsByLevelTable(
     // mirror is in the slot
     const isPhilosopherMirror = protectionItemHrid === '/items/philosophers_mirror';
     // The book answers "no quote" with -1, which is not a price
-    const askOf = (hrid) => {
-        const ask = (ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0))?.ask;
-        return ask > 0 ? ask : 0;
-    };
+    // The same one-sided rule the tracker books a mirror and a base copy at when the run is made
+    const askOf = (hrid) => bookPrice(ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0));
     const mirrorPrice = askOf('/items/philosophers_mirror');
     const basePrice = itemDetails.hrid ? askOf(itemDetails.hrid) : 0;
     // The banner and the sweep's mirror line quote the route to the player's target, not +20
@@ -604,7 +609,7 @@ function generateCostsByLevelTable(
             if (data.mirrorCost === null) {
                 // The base item or the mirror has no price to build the route from
                 lines.push(
-                    `<td style="padding: 6px 4px; text-align: right; color: #666;" title="No market price for the base item or the mirror">no quote</td>`
+                    `<td style="padding: 6px 4px; text-align: right; color: #666;" title="The base item, the mirror, or an input of the plan has no market price">no quote</td>`
                 );
             } else if (data.mirrorCost !== undefined) {
                 const mirrorCostFormatted = Math.round(data.mirrorCost).toLocaleString();
@@ -883,13 +888,37 @@ const SPREAD_APPROX_NOTE =
 const SPREAD_EXACT_NOTE = 'Exact: no protection is used, so every attempt costs the same.';
 
 /**
- * Unit price of one enhancing material: the Iron Cow book, then the market ask, then the shared
- * rule the tracker uses (bid cross-fill, then craft cost). Never the vendor price; 0 is unpriced.
+ * What a market book quotes for buying one: the ask, else the bid when that is the only side
+ * quoted. A missing side is -1 or null, neither of which is a price.
+ * @param {{ask?: number|null, bid?: number|null}|null|undefined} quote - Market book
+ * @returns {number} Coins, 0 when neither side is quoted
+ */
+function bookPrice(quote) {
+    if (quote?.ask > 0) return quote.ask;
+    return quote?.bid > 0 ? quote.bid : 0;
+}
+
+/**
+ * Whether a material is sold at a fixed shop price and never traded (trainee charms).
+ * @param {string} itemHrid - Material hrid
+ * @returns {boolean}
+ */
+function isFixedPriceMaterial(itemHrid) {
+    return typeof itemHrid === 'string' && itemHrid.startsWith('/items/trainee_');
+}
+
+/**
+ * Unit price of one enhancing material: the shop price for a trainee charm, else the Iron Cow
+ * book, then the market ask, then the shared rule the tracker uses (bid cross-fill, then craft
+ * cost). Never the vendor price; 0 is unpriced.
  * @param {string} itemHrid - Material hrid
  * @returns {number} Coins per unit, 0 when nothing prices it
  */
 function materialUnitPrice(itemHrid) {
     if (itemHrid === '/items/coin') return 1;
+    // The shop's fixed price, ahead of any book: a trainee charm is not traded, so an Iron Cow
+    // vendor value or a stale listing would price it differently from the tracker and the tooltip
+    if (isFixedPriceMaterial(itemHrid)) return getEnhancementMaterialPrice(itemHrid, 'ask');
     const quote = ironCowBook(itemHrid) ?? marketAPI.getPrice(itemHrid, 0);
     if (quote?.ask > 0) return quote.ask;
     return getEnhancementMaterialPrice(itemHrid, 'ask');
@@ -1068,7 +1097,9 @@ export function protectSweepHTML({
         for (const cost of enhancementCosts || []) {
             // The profit price first (it honors custom prices), then the rule the table above uses,
             // so a craft-cost-only material is priced the same in both and 0 stays unpriced
-            const price = sweepBuyPrice(cost.itemHrid) || materialUnitPrice(cost.itemHrid);
+            const price = isFixedPriceMaterial(cost.itemHrid)
+                ? materialUnitPrice(cost.itemHrid)
+                : sweepBuyPrice(cost.itemHrid) || materialUnitPrice(cost.itemHrid);
             if (price > 0) materialCostPerAttempt += (cost.count || 0) * price;
             else materialsUnpriced = true;
         }
@@ -1644,10 +1675,9 @@ function formatEnhancementDisplay(
                 const protectionItemName = protectionItemDetail?.name || protectionItemHrid;
 
                 // Get protection item price
-                let protectionPrice = 0;
-                const protectionMarketData =
-                    ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
-                if (protectionMarketData?.ask > 0) protectionPrice = protectionMarketData.ask;
+                const protectionPrice = bookPrice(
+                    ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0)
+                );
                 const priceText = protectionPrice > 0 ? `@${protectionPrice.toLocaleString()}` : 'no price';
 
                 lines.push(

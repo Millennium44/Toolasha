@@ -160,9 +160,11 @@ export function perAttemptMaterialCost(itemDetails, { priceMaterial = getEnhance
     let hasMissingPrices = false;
 
     for (const material of itemDetails.enhancementCosts) {
+        // A material the recipe does not consume costs nothing whatever its quote, and needs none
+        if (!(material.count > 0)) continue;
         const price = priceMaterial(material.itemHrid, 'ask');
         if (price > 0) {
-            cost += (material.count || 0) * price;
+            cost += material.count * price;
             hasCost = true;
         } else {
             hasMissingPrices = true;

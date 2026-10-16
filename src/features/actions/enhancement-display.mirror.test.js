@@ -139,6 +139,20 @@ describe('mirrorCostColumn', () => {
         expect(line).toContain('protection or a material has no market price');
     });
 
+    test('a column with no priced level has no quote, not an infinite mirror cost', () => {
+        // Every level's footing unpriced (a material with no price): the route has no finite total
+        const column = mirrorCostColumn(
+            steep.map(() => null),
+            10,
+            100
+        );
+        for (let level = 3; level <= 20; level++) {
+            expect(column.levels[level - 1]).toEqual({ mirrorCost: null, isMirrorCheaper: false });
+        }
+        expect(column.mirrorStartLevel).toBeNull();
+        expect(column.totalSavings).toBe(0);
+    });
+
     test('an unpriced mirror is not a free one', () => {
         const column = mirrorCostColumn(steep, 1000, 0);
         expect(column.levels[2].mirrorCost).toBeNull();

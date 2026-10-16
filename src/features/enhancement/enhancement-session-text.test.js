@@ -44,6 +44,16 @@ describe('enhancementSessionText', () => {
         expect(text).toContain('Advanced Intelligence Charm +0 → +5 (in progress)');
     });
 
+    test('a total that leaves an unpriced input out says it is partial', () => {
+        expect(enhancementSessionText(session())).not.toContain('partial');
+        expect(enhancementSessionText(session({ hasUnpricedInput: true }))).toContain(
+            'Total cost: 2000 (partial: an input had no price)'
+        );
+        // A material recorded at no cost is enough, whatever the flag says (sessions from before it)
+        const legacy = session({ materialCosts: { '/items/prime_catalyst': { count: 20, totalCost: 0 } } });
+        expect(enhancementSessionText(legacy)).toContain('(partial: an input had no price)');
+    });
+
     test('a completed session says so, not "in progress"', () => {
         const text = enhancementSessionText(session({ state: SessionState.COMPLETED }));
         expect(text).toContain('(completed)');
