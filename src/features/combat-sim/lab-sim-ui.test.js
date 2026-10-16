@@ -6297,6 +6297,51 @@ describe('the Ability order Include option', () => {
             expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').querySelector('table')).toBeNull();
         });
 
+        test('an order-only run that measures nothing replaces the older section, and a reload shows its note', async () => {
+            game.rememberUpgradeResults = true;
+            tick('ability_order');
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY].orderSection.groups.length).toBeGreaterThan(0);
+
+            allSpy.mockImplementation(async () => ({}));
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY].orderSection.noResult).toBe(true);
+
+            await reload();
+            expect(section().style.display).toBe('block');
+            expect(section().textContent).toContain('no order measured');
+            expect(section().textContent).not.toContain('Smack → Poke → Fireball');
+        });
+
+        test('a combined run with an empty order section leaves no stale section behind', async () => {
+            game.rememberUpgradeResults = true;
+            singleSpy.mockResolvedValue({ baseline: null, results: [], marker: 'run' });
+            tick('equipment', 'ability_order');
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY].orderSection.groups.length).toBeGreaterThan(0);
+
+            allSpy.mockImplementation(async () => ({}));
+            singleSpy.mockResolvedValue({ baseline: null, results: [], marker: 'run2' });
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY].data.marker).toBe('run2');
+            expect(storage.written[KEY].orderSection.groups).toEqual([]);
+
+            await reload();
+            expect(section().textContent).not.toContain('Smack → Poke → Fireball');
+        });
+
+        test('a stopped order-only run saves nothing over the older record', async () => {
+            game.rememberUpgradeResults = true;
+            tick('ability_order');
+            await ui._onUpgradeAnalyze();
+            const before = storage.written[KEY];
+            allSpy.mockImplementation(async () => {
+                throw new Error('Cancelled');
+            });
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY]).toBe(before);
+        });
+
         test('with the setting off nothing is saved', async () => {
             tick('ability_order');
             await ui._onUpgradeAnalyze();
