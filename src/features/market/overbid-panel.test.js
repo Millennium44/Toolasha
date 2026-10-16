@@ -618,6 +618,47 @@ describe('panel', () => {
             expect(hoisted.storageSet).not.toHaveBeenCalled();
         });
 
+        it('a listing canceled while the login read is in flight does not forget its hide', async () => {
+            hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`, `${SWORD}:3:sell`];
+            hoisted.listings = [listing({ id: 1 }), listing({ id: 2, itemHrid: SWORD, enhancementLevel: 3 })];
+            let release;
+            const gate = new Promise((resolve) => {
+                release = resolve;
+            });
+            hoisted.storageGet = async (key) => {
+                await gate;
+                return hoisted.store[key] ?? [];
+            };
+            hoisted.handlers.character_initialized.forEach((fn) => fn());
+            // Both listings were live when the read began; the cheese one is canceled before it returns
+            hoisted.listings = [listing({ id: 2, itemHrid: SWORD, enhancementLevel: 3 })];
+            release();
+            await vi.advanceTimersByTimeAsync(0);
+            expect([...overbidPanel.hidden].sort()).toEqual([`${CHEESE}:0:sell`, `${SWORD}:3:sell`].sort());
+            expect(hoisted.storageSet).not.toHaveBeenCalled();
+        });
+
+        it('a hide made while the login read is in flight survives the prune', async () => {
+            hoisted.store[STORE_KEY] = [`${SWORD}:3:sell`];
+            // No cheese listing is live: only the in-flight rule keeps the fresh cheese hide
+            hoisted.listings = [listing({ id: 9, itemHrid: '/items/milk' })];
+            let release;
+            const gate = new Promise((resolve) => {
+                release = resolve;
+            });
+            hoisted.storageGet = async (key) => {
+                await gate;
+                return hoisted.store[key] ?? [];
+            };
+            hoisted.handlers.character_initialized.forEach((fn) => fn());
+            // The player hides the cheese row mid-read; it is not in storage yet
+            overbidPanel.setHidden({ itemHrid: CHEESE, enhancementLevel: 0, isSell: true }, true);
+            release();
+            await vi.advanceTimersByTimeAsync(0);
+            // The sword key (stored, no live listing) is forgotten; the fresh cheese hide is kept
+            expect([...overbidPanel.hidden]).toEqual([`${CHEESE}:0:sell`]);
+        });
+
         it('a loaded character with no listings at all prunes every key', async () => {
             hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`, `${SWORD}:3:sell`];
             await overbidPanel.loadHidden();
