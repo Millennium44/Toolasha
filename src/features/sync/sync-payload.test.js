@@ -33,6 +33,12 @@ vi.mock('../../core/storage.js', () => ({
         endRestore: async () => {
             flushLog.push('endRestore');
         },
+        // Writes still queued after the hold ended; each flush lands `drainPerFlush` of them (0 = a stuck one)
+        pendingWriteCount: () => storeState.pendingCount ?? 0,
+        flushAll: async () => {
+            flushLog.push('flushAll');
+            storeState.pendingCount = Math.max(0, (storeState.pendingCount ?? 0) - (storeState.drainPerFlush ?? 1));
+        },
         delete: async (key, name, options = {}) => {
             if (storeState.deleteFails) return false;
             storeState.deleteCalls = [...(storeState.deleteCalls || []), { key, name, options }];
@@ -581,6 +587,40 @@ describe('applyPayload', () => {
 
         expect(heard).toHaveLength(1);
         expect(heard[0].at(-1)).toBe('endRestore');
+    });
+
+    test('flushes until nothing is queued before the announcement, so a write debounced mid-flush lands first', async () => {
+        storeState.pendingCount = 2;
+        storeState.drainPerFlush = 1;
+        const heard = [];
+        const off = onSyncPullApplied(() => heard.push([...flushLog]));
+        try {
+            await applyPayload(JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores: { settings: { a: 1 } } }));
+        } finally {
+            off();
+            storeState.pendingCount = 0;
+            storeState.drainPerFlush = undefined;
+        }
+
+        expect(heard).toHaveLength(1);
+        expect(heard[0].slice(-3)).toEqual(['endRestore', 'flushAll', 'flushAll']);
+    });
+
+    test('a write that never drains cannot hold the announcement back: five flushes, then it goes out', async () => {
+        storeState.pendingCount = 1;
+        storeState.drainPerFlush = 0;
+        const heard = [];
+        const off = onSyncPullApplied(() => heard.push([...flushLog]));
+        try {
+            await applyPayload(JSON.stringify({ formatVersion: 1, exportedAt: 'x', stores: { settings: { a: 1 } } }));
+        } finally {
+            off();
+            storeState.pendingCount = 0;
+            storeState.drainPerFlush = undefined;
+        }
+
+        expect(heard).toHaveLength(1);
+        expect(heard[0].filter((entry) => entry === 'flushAll')).toHaveLength(5);
     });
 
     test('ignores device-only data an older build still uploaded', async () => {
