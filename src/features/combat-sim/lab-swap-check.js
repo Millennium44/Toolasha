@@ -851,7 +851,7 @@ export function buildCombatAbilityCandidates(swap, dtos, gameData, isSelf = true
  * @param {Array<Object>} [contextFights] - The run's fights, parallel to `baseline.fights`
  * @returns {Map<string, Array<number>>} Group key to fight indexes
  */
-function groupFightsByLoadout(baseline, contextFights) {
+export function groupFightsByLoadout(baseline, contextFights) {
     const groups = new Map();
     baseline.fights.forEach((_baseFight, i) => {
         const raw = contextFights?.[i]?.loadoutId;

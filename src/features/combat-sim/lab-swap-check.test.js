@@ -148,6 +148,7 @@ const {
     sanitizeSwapOptions,
     sanitizeSwapQueues,
     searchEquipmentItems,
+    groupFightsByLoadout,
 } = await import('./lab-swap-check.js');
 const { applySkillingCandidate } = await import('./lab-skilling-goals.js');
 
@@ -157,6 +158,20 @@ const piece = (hrid, enhancementLevel = 0) => ({ hrid, enhancementLevel });
 
 beforeEach(() => {
     state.items = [];
+});
+
+describe('groupFightsByLoadout', () => {
+    test('fights share a saved loadout, worn gear is one group, and a fight that says nothing stands alone', () => {
+        const baseline = { fights: [{}, {}, {}, {}, {}] };
+        const contextFights = [{ loadoutId: 7 }, { loadoutId: 0 }, { loadoutId: 7 }, {}, { loadoutId: null }];
+        const groups = groupFightsByLoadout(baseline, contextFights);
+        expect([...groups.entries()]).toEqual([
+            ['loadout:7', [0, 2]],
+            ['current-gear', [1]],
+            ['fight:3', [3]],
+            ['fight:4', [4]],
+        ]);
+    });
 });
 
 describe('picking an item', () => {

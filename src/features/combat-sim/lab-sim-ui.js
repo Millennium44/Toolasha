@@ -108,6 +108,7 @@ import {
     clampLevelFor,
     describeCheckedSwap,
     evaluateSkillingSwaps,
+    groupFightsByLoadout,
     isAbilitySwap,
     mergeCheckedAbilityRows,
     resolveEquipmentHrid,
@@ -6526,16 +6527,7 @@ class LabSimUI {
                 (row) => row.candidate?.checkedAbilityKey === 'ability_order' && !row.candidate.keepCurrent
             );
             // The section's groups are the baseline's loadout groups with two or more ordinary abilities, in order
-            const byLoadout = new Map();
-            raw.baseline.fights.forEach((_fight, i) => {
-                const rawId = raw.context.fights?.[i]?.loadoutId;
-                const id = Number(rawId) || 0;
-                const groupKey =
-                    rawId === undefined || rawId === null ? `fight:${i}` : id > 0 ? `loadout:${id}` : 'current-gear';
-                if (!byLoadout.has(groupKey)) byLoadout.set(groupKey, []);
-                byLoadout.get(groupKey).push(i);
-            });
-            const groupIdx = [...byLoadout.values()].filter(
+            const groupIdx = [...groupFightsByLoadout(raw.baseline, raw.context.fights).values()].filter(
                 (indexes) =>
                     (raw.context.fights?.[indexes[0]]?.dto?.abilities || []).slice(1).filter(Boolean).length >= 2
             );
