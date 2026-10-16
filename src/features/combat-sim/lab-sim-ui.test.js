@@ -6255,6 +6255,74 @@ describe('the Ability order Include option', () => {
         expect(status).toContain('Ranked');
     });
 
+    describe('remembered across a reload', () => {
+        const KEY = 'labSimUpgradeResults-fullkit_me';
+        const reload = async () => {
+            storage.values = { [KEY]: storage.written[KEY] };
+            ui._upgradeOrderSection = null;
+            ui._drawUpgradeAbilityOrder();
+            ui.panel.querySelector('#mwi-labsim-upgrade-results').innerHTML = '';
+            ui._upgradeRunStarted = false;
+            await ui._restoreUpgradeResults();
+        };
+        afterEach(() => {
+            game.rememberUpgradeResults = false;
+            storage.values = {};
+            delete storage.written[KEY];
+        });
+
+        test('a combined run brings its section back with the table result it saved', async () => {
+            game.rememberUpgradeResults = true;
+            singleSpy.mockResolvedValue({ baseline: null, results: [], marker: 'run' });
+            tick('equipment', 'ability_order');
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY].data.marker).toBe('run');
+            expect(storage.written[KEY].orderSection.groups.length).toBeGreaterThan(0);
+
+            await reload();
+            expect(section().style.display).toBe('block');
+            expect(section().textContent).toContain('Smack → Poke → Fireball');
+        });
+
+        test('an order-only run brings its section back, drawn with the saved collapse state', async () => {
+            game.rememberUpgradeResults = true;
+            tick('ability_order');
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY].orderSection.groups.length).toBeGreaterThan(0);
+            section().querySelector('[data-collapse-key]').click();
+            await settle();
+
+            await reload();
+            expect(section().querySelector('[data-collapse-key]').getAttribute('aria-expanded')).toBe('false');
+            expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').querySelector('table')).toBeNull();
+        });
+
+        test('with the setting off nothing is saved', async () => {
+            tick('ability_order');
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY]).toBeUndefined();
+        });
+
+        test('a payload from before the section was remembered restores without one', async () => {
+            game.rememberUpgradeResults = true;
+            tick('ability_order');
+            await ui._onUpgradeAnalyze();
+            const old = { ...storage.written[KEY], data: { results: [{}] } };
+            delete old.orderSection;
+            storage.written[KEY] = old;
+            const render = vi.spyOn(ui, '_renderUpgradeResults').mockImplementation((data, container) => {
+                container.innerHTML = '<table><tr><td>old table</td></tr></table>';
+            });
+            try {
+                await reload();
+                expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').textContent).toContain('old table');
+                expect(section().style.display).toBe('none');
+            } finally {
+                render.mockRestore();
+            }
+        });
+    });
+
     test('stopped partway: nothing is drawn, as the table draws nothing for a stopped run', async () => {
         allSpy.mockImplementation(async () => {
             throw new Error('Cancelled');
