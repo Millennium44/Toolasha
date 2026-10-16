@@ -6605,35 +6605,44 @@ class LabSimUI {
     }
 
     /**
-     * Up to three improving rows worth verifying on their own: close calls the analysis did not call
-     * significant, best first, and not yet verified.
+     * The improving rows of one section worth verifying on their own: close calls the analysis did not call
+     * significant, not yet verified. `score` is the improvement against its own noise (a row with no noise
+     * figure scores 0), the order the auto-verify picks its three by across both sections.
      * @param {'all'|'order'} scope - Section
-     * @returns {Array<{key: string, row: Object, delta: number}>}
+     * @returns {Array<{key: string, row: Object, delta: number, score: number}>}
      * @private
      */
     _closeCallItems(scope) {
         const live = this._verifyLive[scope];
         if (!live) return [];
         const found = [];
+        const scoreOf = (source) => {
+            const noise = source.attemptsDeltaNoise;
+            return Number.isFinite(noise) && noise > 0 ? -source.attemptsDelta / noise : 0;
+        };
         if (scope === 'all') {
             for (const row of live.analysis.results) {
                 if (isLevelRow(row) || row.costType === 'token') continue;
                 if (!(row.attemptsDelta < 0) || !isCloseCall(row)) continue;
-                found.push({ key: this._allRowKey(row), row, delta: row.attemptsDelta });
+                found.push({ key: this._allRowKey(row), row, delta: row.attemptsDelta, score: scoreOf(row) });
             }
         } else {
             (live.section.groups || []).forEach((group, gi) => {
                 for (const order of group.orders) {
                     if (!(order.attemptsDelta < 0) || !isCloseCall(order)) continue;
                     const row = this._orderVerifyRow(gi, order);
-                    if (row) found.push({ key: this._orderRowKey(gi, order), row, delta: order.attemptsDelta });
+                    if (row) {
+                        found.push({
+                            key: this._orderRowKey(gi, order),
+                            row,
+                            delta: order.attemptsDelta,
+                            score: scoreOf(order),
+                        });
+                    }
                 }
             });
         }
-        return found
-            .filter((item) => !this._verify[scope].has(item.key))
-            .sort((a, b) => a.delta - b.delta)
-            .slice(0, VERIFY_DEFAULTS.top);
+        return found.filter((item) => !this._verify[scope].has(item.key));
     }
 
     /**
@@ -6650,11 +6659,17 @@ class LabSimUI {
         if (!this._autoVerifyEnabled()) return;
         const isCurrent = () =>
             startToken === this._runStartToken && Boolean(this.panel) && this._stillSameCharacter(ownerId);
+        // At most three in all, the ones whose improvement is largest against its noise across both sections
+        const candidates = [];
         for (const scope of ['all', 'order']) {
-            if (!isCurrent() || this._upgradeAborted) return;
             const live = this._verifyLive[scope];
             if (!live || live.ownerId !== ownerId) continue;
-            const items = this._closeCallItems(scope);
+            for (const item of this._closeCallItems(scope)) candidates.push({ ...item, scope });
+        }
+        const chosen = candidates.sort((a, b) => b.score - a.score || a.delta - b.delta).slice(0, VERIFY_DEFAULTS.top);
+        for (const scope of ['all', 'order']) {
+            if (!isCurrent() || this._upgradeAborted) return;
+            const items = chosen.filter((item) => item.scope === scope);
             if (items.length) await this._runLabVerify({ scope, items, auto: true });
         }
     }

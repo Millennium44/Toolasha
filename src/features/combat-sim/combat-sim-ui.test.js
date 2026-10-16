@@ -12116,6 +12116,25 @@ describe('verifying close calls on fresh seeds', () => {
             expect(ui.panel.querySelectorAll('#mwi-csim-order-section [data-verify-chip]')).toHaveLength(3);
         });
 
+        test('verifies at most three rows in all across the order and gold tables', async () => {
+            mocks.autoVerify = true;
+            await run({
+                baseline: BASELINE,
+                results: [
+                    closeOrder('A → B', { profit: 500 }),
+                    closeOrder('C → D', { profit: 400 }),
+                    closeOrder('E → F', { profit: 300 }),
+                    closeGold('R1'),
+                    closeGold('R2'),
+                    closeGold('R3'),
+                ],
+                food: null,
+                context: CONTEXT,
+            });
+            const verified = mocks.verifyCalls.flatMap((call) => call.rows);
+            expect(verified).toHaveLength(3);
+        });
+
         test('says it is auto-verifying while it runs, and a close gold row is verified too', async () => {
             mocks.autoVerify = true;
             const seen = [];

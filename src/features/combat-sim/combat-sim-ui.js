@@ -13153,9 +13153,10 @@ class CombatSimUI {
     }
 
     /**
-     * Which close calls the auto-verify setting re-measures: up to three Ability order rows (by Rank-by) and up
-     * to three gold-table rows (by the table's verify metric) that `isCloseCall` flags and whose point estimate
-     * is an improvement.
+     * Which close calls the auto-verify setting re-measures: at most three in all, taken from the Ability order
+     * rows (by Rank-by) and the gold-table rows (by the table's verify metric) that `isCloseCall` flags and whose
+     * point estimate is an improvement. The three are the ones whose improvement is largest against its own
+     * noise, across both tables (a row with no noise figure ranks last).
      * @param {Object} results - The finished analysis
      * @returns {{rank: string, order: Array<Object>, goldMetric: string, gold: Array<Object>}}
      * @private
@@ -13166,18 +13167,27 @@ class CombatSimUI {
             : DEFAULT_ABILITY_ORDER_RANK;
         const all = results.results || [];
         const orderRows = all.filter((r) => r.candidate?.abilityOrder);
-        const order = this._abilityOrderRanking(orderRows, results.baseline || {}, rank)
+        // Improvement against its own noise: comparable across the two tables whatever their units
+        const closeness = (gain, noise) => (Number.isFinite(noise) && noise > 0 ? gain / noise : 0);
+        const orderEntries = this._abilityOrderRanking(orderRows, results.baseline || {}, rank)
             .filter((e) => e.gain > 0 && isCloseCall(e.r, { metric: rank }))
-            .slice(0, VERIFY_DEFAULTS.top)
-            .map((e) => e.r);
+            .map((e) => ({ r: e.r, gain: e.gain, score: closeness(e.gain, e.noise), table: 'order' }));
         const { metric: goldMetric } = this._goldVerifyMetric();
         const deltaKey = VERIFY_DELTA_KEY[goldMetric];
-        const gold = all
+        const goldEntries = all
             .filter((r) => r.candidate?.type !== 'combat_level' && !r.candidate?.abilityOrder && r.cost != null)
             .filter((r) => r.deltas?.[deltaKey] > 0 && isCloseCall(r, { metric: goldMetric }))
-            .sort((a, b) => b.deltas[deltaKey] - a.deltas[deltaKey])
+            .map((r) => ({
+                r,
+                gain: r.deltas[deltaKey],
+                score: closeness(r.deltas[deltaKey], r.noise?.[deltaKey]),
+                table: 'gold',
+            }));
+        const chosen = [...orderEntries, ...goldEntries]
+            .sort((a, b) => b.score - a.score || b.gain - a.gain)
             .slice(0, VERIFY_DEFAULTS.top);
-        return { rank, order, goldMetric, gold };
+        const rowsOf = (table) => chosen.filter((e) => e.table === table).map((e) => e.r);
+        return { rank, order: rowsOf('order'), goldMetric, gold: rowsOf('gold') };
     }
 
     /**
