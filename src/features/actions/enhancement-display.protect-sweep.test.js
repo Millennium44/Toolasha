@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
     sellPrices: {},
     // Craft cost of materials with no market listing
     craftPrices: {},
+    // Bids for items whose ask is missing (a one-sided book)
+    bids: {},
     // Copies claimed by other plans in the reservation ledger
     reservedElsewhere: {},
     // The market tax a sale pays (0 keeps the other tests' figures round)
@@ -86,7 +88,7 @@ vi.mock('../../utils/enhancement-config.js', () => ({
     }),
 }));
 vi.mock('../../api/marketplace.js', () => ({
-    default: { getPrice: (hrid) => ({ ask: state.prices[hrid] || -1, bid: -1 }), on: () => {} },
+    default: { getPrice: (hrid) => ({ ask: state.prices[hrid] || -1, bid: state.bids[hrid] || -1 }), on: () => {} },
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     calculatePriceAfterTax: (price) => price * (1 - state.taxRate),
@@ -131,6 +133,7 @@ beforeEach(() => {
     state.taxRate = 0;
     state.sellPrices = {};
     state.craftPrices = {};
+    state.bids = {};
     state.prices = { ...BASE_PRICES };
 });
 
@@ -531,6 +534,33 @@ describe("Philosopher's Mirror beside the protect-from sweep", () => {
         expect(await lineFor(3)).toBe(await lineFor(0));
     });
 
+    test('with the slot empty and a material unpriced, the mirror is not weighed against the partial bill', async () => {
+        const sword = state.items['/items/cheese_sword'];
+        const original = sword.enhancementCosts;
+        try {
+            // One expensive priced material and one with no quote at all: the priced part alone is
+            // a footing the mirror would beat, which the unpriced part may well not allow
+            sword.enhancementCosts = [
+                { itemHrid: '/items/wheat', count: 2 },
+                { itemHrid: '/items/cheese', count: 2 },
+            ];
+            state.items['/items/wheat'] = { hrid: '/items/wheat', name: 'Wheat', sellPrice: 10 };
+            state.prices['/items/wheat'] = 100_000;
+            delete state.prices['/items/cheese'];
+            state.prices['/items/philosophers_mirror'] = 1;
+
+            const panel = buildPanel({ target: 12, protection: null, protectFrom: 3 });
+            await displayEnhancementStats(panel, '/items/cheese_sword');
+            const line = panel.querySelector('.mwi-protsweep-mirror').textContent;
+
+            expect(line).toContain('no quote');
+            expect(line).not.toContain('use mirrors starting at');
+        } finally {
+            sword.enhancementCosts = original;
+            delete state.items['/items/wheat'];
+        }
+    });
+
     test('mirror levels that are not one run are listed, not summed up as a start level', () => {
         const coins = (value) => String(value);
         const split = mirrorSummaryLine(
@@ -764,5 +794,50 @@ describe('an enhancing material with no market ask and no recipe', () => {
         const unpriced = buildPanel({ protectFrom: 3 });
         await displayEnhancementStats(unpriced, '/items/cheese_sword');
         expect(unpriced.querySelector('#mwi-enhancement-stats').textContent).toContain('Some materials have no price');
+    });
+});
+
+describe('a trainee charm material', () => {
+    // The shop's fixed price is the one figure for a charm nobody trades: the tracker and the
+    // tooltip read it, so a book or a stale listing must not price it differently on the panel
+    test('is priced at the shop price on the table, ahead of a market quote', async () => {
+        const sword = state.items['/items/cheese_sword'];
+        const original = sword.enhancementCosts;
+        try {
+            sword.enhancementCosts = [{ itemHrid: '/items/trainee_charm', count: 1 }];
+            state.items['/items/trainee_charm'] = {
+                hrid: '/items/trainee_charm',
+                name: 'Trainee Charm',
+                sellPrice: 20,
+            };
+            state.prices['/items/trainee_charm'] = 90_000;
+            state.craftPrices['/items/trainee_charm'] = 250_000;
+
+            const panel = buildPanel({ protectFrom: 0, protection: null });
+            await displayEnhancementStats(panel, '/items/cheese_sword');
+            const text = panel.querySelector('#mwi-enhancement-stats').textContent;
+
+            expect(text).toContain('@250,000');
+            expect(text).not.toContain('@90,000');
+        } finally {
+            sword.enhancementCosts = original;
+            delete state.items['/items/trainee_charm'];
+        }
+    });
+});
+
+describe('a protection item quoted on the bid side only', () => {
+    // The tracker books such an item at its bid when the run is made; the table must not call it
+    // unpriced while the run it previews would be priced
+    test('is priced at its bid on the table, as the tracker books it', async () => {
+        delete state.prices['/items/mirror_of_protection'];
+        state.bids['/items/mirror_of_protection'] = 7_000;
+
+        const panel = buildPanel({ target: 5, protectFrom: 3, protection: 'mirror_of_protection' });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const text = panel.querySelector('#mwi-enhancement-stats').textContent;
+
+        expect(text).toContain('× 7,000 →');
+        expect(text).not.toContain('The protection item has no market price');
     });
 });
