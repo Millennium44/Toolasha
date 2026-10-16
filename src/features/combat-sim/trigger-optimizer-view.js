@@ -306,7 +306,14 @@ export function verifyChipHtml(entry) {
         style = 'background:rgba(150,150,150,0.2); color:#999;';
         text = 'not confirmed';
     }
-    const title = entry?.verdict === 'error' ? `Verify failed${entry.error ? `: ${entry.error}` : ''}` : tip;
+    // Profit counted an unpriced item at zero: the verdict (or the balanced score's profit term) cannot stand on it
+    let title = entry?.verdict === 'error' ? `Verify failed${entry.error ? `: ${entry.error}` : ''}` : tip;
+    if (entry?.profitLeftOut && entry.verdict !== 'error') {
+        const items = entry.unpriced?.length ? ` (${entry.unpriced.join(', ')})` : '';
+        text = entry.verdict === 'not-confirmed' && !figure ? 'profit could not be valued' : `${text}, profit left out`;
+        style += ' border:1px solid #ff9800;';
+        title = `Some items had no price, so profit was left out of this judgement${items}`;
+    }
     return `<span data-verify-chip="${esc(entry?.verdict || 'not-confirmed')}" style="${base}${style}" title="${esc(title)}">${esc((text + stopped).trim())}</span>`;
 }
 

@@ -13135,6 +13135,8 @@ class CombatSimUI {
                 unit: outcome.unit,
                 stopped: Boolean(outcome.stopped),
                 error: row.error ?? null,
+                profitLeftOut: Boolean(row.profitLeftOut),
+                unpriced: row.unpriced ?? [],
             };
         }
         const count = (verdict) => outcome.rows.filter((r) => r.verdict === verdict).length;

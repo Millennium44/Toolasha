@@ -545,6 +545,21 @@ describe('verify chips and figures', () => {
         );
     });
 
+    test('a row whose profit could not be valued says so, and names the unpriced items', () => {
+        const chip = verifyChipHtml({
+            verdict: 'not-confirmed',
+            mean: null,
+            se: null,
+            profitLeftOut: true,
+            unpriced: ['Rare Drop'],
+        });
+        expect(chip).toContain('profit could not be valued');
+        expect(chip).toContain('Rare Drop');
+        expect(verifyChipHtml({ verdict: 'confirmed', mean: 1, se: 1, unit: 'points', profitLeftOut: true })).toContain(
+            'profit left out'
+        );
+    });
+
     test('gold per hour is abbreviated and a missing figure is a dash', () => {
         expect(formatVerifyFigure(1500, 'gold/hr')).toBe('+1.5K');
         expect(formatVerifyFigure(NaN, 'gold/hr')).toBe('—');

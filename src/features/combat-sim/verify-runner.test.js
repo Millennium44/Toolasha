@@ -11,6 +11,10 @@ const sim = vi.hoisted(() => ({
     labAttempts: (seed) => 200 + (seed % 5),
     /** Random seeds handed out by the mocked generator, in order */
     seeds: [],
+    /** Items nothing priced, by candidate marker (a result carries them the way calculateSimRevenue reports them) */
+    unpriced: {},
+    /** The market price the mocked valuation reads; a price cache holds the first value it saw */
+    price: 0,
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
@@ -25,7 +29,7 @@ vi.mock('./combat-sim-runner.js', () => ({
             marker,
         });
         sim.onRun?.(marker, params);
-        return { seed: params.seed, marker, hours: params.hours };
+        return { seed: params.seed, marker, hours: params.hours, unpriced: sim.unpriced[marker] ?? [] };
     }),
     runLabyrinthSimulation: vi.fn(async (params) => {
         const marker = params.playerDTOs[0].applied ?? 'base';
@@ -82,13 +86,17 @@ vi.mock('./upgrade-advisor.js', () => ({
         };
     },
     // Luck shared by every run on a seed (cancels in a paired difference) plus the candidate's own effect
-    computeMetrics: (result, _gameData, _hrid, hours) => {
+    computeMetrics: (result, _gameData, _hrid, hours, options = {}) => {
+        const cache = options.priceCache;
+        if (cache && !cache.has('price')) cache.set('price', sim.price);
+        const price = cache ? cache.get('price') : sim.price;
         const luck = (result.seed % 7) * 10;
         const effect = result.marker === 'good' ? 100 : result.marker === 'bad' ? -100 : 0;
         const wobble = result.marker === 'wobble' ? (result.seed % 2 ? 300 : -300) : 0;
         return {
             xpPerHour: 1000 + luck + effect + wobble,
-            profitPerHour: result.marker === 'nan' ? NaN : 5000 + luck * 5 + effect * 5 + wobble,
+            profitPerHour: result.marker === 'nan' ? NaN : 5000 + luck * 5 + effect * 5 + wobble + price,
+            unpriced: result.unpriced ?? [],
             dps: 100 + luck / 10 + effect / 10,
             encountersPerHour: 50 + luck / 10 + effect / 10,
             deathsPerHour: 0,
@@ -183,6 +191,8 @@ beforeEach(() => {
     sim.onRun = null;
     sim.onLabRun = null;
     sim.seeds = [];
+    sim.unpriced = {};
+    sim.price = 0;
     vi.clearAllMocks();
 });
 
@@ -430,6 +440,87 @@ describe('verifyCombatCandidates', () => {
 
     test('exposes its defaults', () => {
         expect(VERIFY_DEFAULTS).toEqual({ seeds: 8, hoursMultiplier: 4, top: 3 });
+    });
+});
+
+describe('verifyCombatCandidates profit completeness and held prices', () => {
+    test('an unpriced drop on the candidate side makes a profit verify not-confirmed, flagged, with no figure', async () => {
+        sim.unpriced = { good: ['Rare Drop'] };
+        const out = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('good', 'good')],
+            seeds: 4,
+            metric: 'profit',
+        });
+        const [good] = out.rows;
+        expect(good.verdict).toBe('not-confirmed');
+        expect(good.profitLeftOut).toBe(true);
+        expect(good.unpriced).toEqual(['Rare Drop']);
+        expect(good.mean).toBeNull();
+    });
+
+    test('an unpriced item on the baseline side leaves every row not-confirmed on profit, never worse', async () => {
+        sim.unpriced = { base: ['Key'] };
+        const out = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('good', 'good'), row('bad', 'bad')],
+            seeds: 4,
+            metric: 'profit',
+        });
+        expect(out.rows.map((r) => r.verdict)).toEqual(['not-confirmed', 'not-confirmed']);
+        expect(out.rows.every((r) => r.profitLeftOut)).toBe(true);
+    });
+
+    test('balanced leaves the profit term out on both sides and flags it', async () => {
+        // The candidate is better on xp, dps and encounters but its profit reads far lower; with profit
+        // dropped from the composite the verdict follows the other three
+        sim.unpriced = { good: ['Rare Drop'] };
+        const withProfit = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('good', 'good')],
+            seeds: 4,
+            metric: 'balanced',
+        });
+        expect(withProfit.rows[0].profitLeftOut).toBe(true);
+        expect(withProfit.rows[0].verdict).toBe('confirmed');
+
+        sim.unpriced = {};
+        const priced = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('good', 'good')],
+            seeds: 4,
+            metric: 'balanced',
+        });
+        expect(priced.rows[0].profitLeftOut).toBeUndefined();
+        // The profit term is gone from one run and present in the other, so the scores differ
+        expect(withProfit.rows[0].mean).not.toBe(priced.rows[0].mean);
+    });
+
+    test('a fully priced run is unchanged: confirmed, no flag', async () => {
+        const out = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('good', 'good')],
+            seeds: 4,
+            metric: 'profit',
+        });
+        expect(out.rows[0].verdict).toBe('confirmed');
+        expect(out.rows[0].profitLeftOut).toBeUndefined();
+        expect(out.rows[0].unpriced).toBeUndefined();
+    });
+
+    test('a price change partway through the run does not read as a gain: one cache values every run', async () => {
+        // The market jumps as soon as the first candidate starts; the baselines were valued before it
+        sim.onRun = (marker) => {
+            if (marker !== 'base') sim.price = 1_000_000;
+        };
+        const out = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('flat', 'flat')],
+            seeds: 4,
+            metric: 'profit',
+        });
+        expect(out.rows[0].verdict).toBe('not-confirmed');
+        expect(out.rows[0].mean).toBe(0);
     });
 });
 

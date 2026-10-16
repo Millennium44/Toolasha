@@ -190,9 +190,10 @@ function rowKey(row, index) {
  * @param {string} metric - A VERIFY_METRICS key
  * @param {Object} base - `computeMetrics` of the baseline on this seed
  * @param {Object} cand - `computeMetrics` of the candidate on the same seed
+ * @param {boolean} [withProfit] - False when profit could not be valued: balanced then leaves its profit term out
  * @returns {number}
  */
-function combatGain(metric, base, cand) {
+function combatGain(metric, base, cand, withProfit = true) {
     if (metric === 'profit') return (cand.profitPerHour ?? NaN) - (base.profitPerHour ?? NaN);
     const deltas = computeDeltas(base, cand);
     if (metric === 'xp') return deltas.xp;
@@ -205,7 +206,7 @@ function combatGain(metric, base, cand) {
         encounters: m?.encountersPerHour,
         deaths: m?.deathsPerHour,
     });
-    return balancedScore(asScore(cand), asScore(base));
+    return balancedScore(asScore(cand), asScore(base), { withProfit });
 }
 
 const UNIT_OF = { profit: 'gold/hr', xp: '%', dps: '%', eph: '%', balanced: 'points' };
@@ -230,7 +231,9 @@ const UNIT_OF = { profit: 'gold/hr', xp: '%', dps: '%', eph: '%', balanced: 'poi
  *   stopped: boolean, refused?: string, error?: string}>} Rows are `{ key, description, mean, se, seeds,
  *   verdict, error? }` with verdict `confirmed` | `worse` | `not-confirmed` | `error`; `mean` and `se` are in
  *   `unit`. `stopped` means Stop cut the run short and rows carry only the seeds that finished (a row with
- *   fewer than two is `not-confirmed`). `refused` is `seeds`, `rows`, `metric` or `context` when nothing ran
+ *   fewer than two is `not-confirmed`). `refused` is `seeds`, `rows`, `metric` or `context` when nothing ran.
+ *   A row whose baseline or candidate valuation counted an unpriced item at zero carries `profitLeftOut: true`
+ *   and `unpriced`: on profit it is `not-confirmed` with no figure, on balanced it was judged without profit
  */
 export async function verifyCombatCandidates({
     context,
@@ -258,6 +261,9 @@ export async function verifyCombatCandidates({
     const total = seeds * (rows.length + 1);
     const tally = { done: 0 };
     const report = (description) => onProgress?.({ current: Math.min(tally.done, total), total, description });
+    // One set of held prices for the baseline and every candidate: a market or custom-price update partway through
+    // the run cannot read as a gain (the trigger optimizer does the same)
+    const priceCache = new Map();
 
     const simulate = (dtos, buffs, seed) =>
         limit(async () => {
@@ -285,7 +291,7 @@ export async function verifyCombatCandidates({
     const baselines = Array.from({ length: seeds }, (_, k) =>
         simulate(playerDTOs, communityBuffs, seedOf(k)).then((result) => {
             report('Verify: baseline');
-            return result ? computeMetrics(result, gameData, playerHrid, hoursPerSeed) : null;
+            return result ? computeMetrics(result, gameData, playerHrid, hoursPerSeed, { priceCache }) : null;
         })
     );
     // A baseline that throws takes the whole verify down: nothing can be paired to it. Awaiting them all here
@@ -315,6 +321,8 @@ export async function verifyCombatCandidates({
         };
     }
     const baseMetrics = baselineOutcome.map((o) => o.value);
+    // Items the baseline's profit counted at zero: with any, no row's profit gain is a figure
+    const baselineUnpriced = new Set(baseMetrics.flatMap((m) => m?.unpriced || []));
 
     const results = rows.map(async (row, i) => {
         const key = rowKey(row, i);
@@ -342,19 +350,18 @@ export async function verifyCombatCandidates({
         }
         const dtos = playerDTOs.map((player, index) => (index === playerIndex ? dto : player));
         const state = { failed: null };
-        const gains = await Promise.all(
+        // Every seed's candidate metrics are kept: whether profit can be valued is known only once all of them are
+        const measured = await Promise.all(
             Array.from({ length: seeds }, async (_, k) => {
                 if (state.failed || stopped() || !baseMetrics[k]) return null;
                 try {
                     const result = await simulate(dtos, buffs, seedOf(k));
                     if (!result) return null;
                     report(`Verify: ${description ?? key}`);
-                    const gain = combatGain(
-                        metric,
-                        baseMetrics[k],
-                        computeMetrics(result, gameData, playerHrid, hoursPerSeed)
-                    );
-                    return Number.isFinite(gain) ? gain : null;
+                    return {
+                        base: baseMetrics[k],
+                        cand: computeMetrics(result, gameData, playerHrid, hoursPerSeed, { priceCache }),
+                    };
                 } catch (error) {
                     // A simulation Stop terminated is a seed that did not finish, not a broken candidate
                     if (isCancel(error, stopped)) return null;
@@ -365,10 +372,25 @@ export async function verifyCombatCandidates({
             })
         );
         if (state.failed) return failure(state.failed);
+        // An unpriced drop, consumable or key counts as zero, so a profit built on any of them (either side) is a floor
+        const unpriced = new Set(baselineUnpriced);
+        for (const m of measured) for (const item of m?.cand?.unpriced || []) unpriced.add(item);
+        const profitLeftOut = unpriced.size > 0;
+        const gains = measured.map((m) => {
+            if (!m) return null;
+            const gain = combatGain(metric, m.base, m.cand, !profitLeftOut);
+            return Number.isFinite(gain) ? gain : null;
+        });
         const finished = gains.filter((g) => g !== null);
         // Every gain unusable (non-finite) on a run nobody stopped: nothing was measured, which is a failure
         if (finished.length === 0 && !stopped()) return failure(new Error('No seed produced a usable result'));
-        return { ...rowFromDiffs(key, finished, true, seeds), description };
+        const out = { ...rowFromDiffs(key, finished, true, seeds), description };
+        if (!profitLeftOut) return out;
+        out.profitLeftOut = true;
+        out.unpriced = [...unpriced].sort();
+        // A profit gain on a floor proves nothing either way; balanced already judged without its profit term
+        if (metric === 'profit') return { ...out, mean: null, se: null, verdict: 'not-confirmed' };
+        return out;
     });
 
     const settled = await Promise.all(results);
