@@ -33,6 +33,7 @@ const BASE = '/items/sinister_cape';
 const RING = '/items/sinister_ring_refined';
 const RING_BASE = '/items/sinister_ring';
 const SHARD = '/items/sinister_refinement_shard';
+const RING_ORE = '/items/sinister_ore';
 const MIRROR = '/items/philosophers_mirror';
 const SWORD = '/items/cheese_sword';
 const CHAR = 161296;
@@ -79,6 +80,15 @@ const ACTIONS = {
         retainAllEnhancement: true,
         inputItems: [{ itemHrid: SHARD, count: 100 }],
         outputItems: [{ itemHrid: CAPE, count: 1 }],
+    },
+    // The unrefined ring is crafted too, two to a batch: what a base with no +0 listing is priced from
+    '/actions/crafting/sinister_ring': {
+        hrid: '/actions/crafting/sinister_ring',
+        inputItems: [
+            { itemHrid: RING_ORE, count: 3 },
+            { itemHrid: '/items/coin', count: 500 },
+        ],
+        outputItems: [{ itemHrid: RING_BASE, count: 2 }],
     },
     '/actions/crafting/sinister_ring_refined': {
         hrid: '/actions/crafting/sinister_ring_refined',
@@ -391,7 +401,8 @@ describe('refined target priced from a held base', () => {
             const boughtOf = (level) => explainUpgradeCost(ring(level), gameData).ladder.refine.mirror.boughtCopies;
 
             test('a listed +6 is bought at its level, the built +5 down to its base copies', () => {
-                listedSix();
+                // +0 is listed as well as +6, so the +0 bases are bought off the market
+                state.askFor = (hrid, level) => (hrid === RING_BASE && (level === 6 || level === 0) ? 5_000_000 : 0);
                 const bought = boughtOf(7);
                 // +5 is built from a +4 and a +3, each built in turn: five +0 bases stand under it
                 expect(bought).toContainEqual({ itemHrid: RING_BASE, enhancementLevel: 0, count: 5 });
@@ -399,6 +410,24 @@ describe('refined target priced from a held base', () => {
                 // The +5 is built from cheaper copies, so no +5 is bought, only the +0 bases it stands on
                 expect(bought.some((line) => line.enhancementLevel === 5)).toBe(false);
                 expect(bought.find((line) => line.enhancementLevel === 0).count).toBeGreaterThan(0);
+            });
+
+            test('a +0 base with no listing is crafted: the bill is the recipe inputs, not a +0 base to buy', () => {
+                listedSix();
+                const bought = boughtOf(7);
+                // Five bases stand under the built +5, two to a batch, three ore a batch: 7.5 rounds up to 8
+                expect(bought).toContainEqual({ itemHrid: RING_ORE, enhancementLevel: 0, count: 8 });
+                expect(bought).toContainEqual({ itemHrid: RING_BASE, enhancementLevel: 6, count: 1 });
+                expect(bought.some((line) => line.itemHrid === RING_BASE && line.enhancementLevel === 0)).toBe(false);
+                // Coins are not an item to buy
+                expect(bought.some((line) => line.itemHrid === '/items/coin')).toBe(false);
+            });
+
+            test('a +0 base with no listing and no recipe leaves nothing to buy for it', () => {
+                listedSix();
+                const noRecipes = { itemDetailMap: ITEM_DETAIL_MAP, actionDetailMap: {} };
+                const bought = explainUpgradeCost(ring(7), noRecipes).ladder.refine.mirror.boughtCopies;
+                expect(bought).toEqual([{ itemHrid: RING_BASE, enhancementLevel: 6, count: 1 }]);
             });
 
             test('a held +6 is used, not bought', () => {
