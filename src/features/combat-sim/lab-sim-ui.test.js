@@ -6461,6 +6461,15 @@ describe('the Ability order Include option', () => {
             );
         });
 
+        test('the header advertises the best significant gain, not a larger one inside the noise', () => {
+            const el = draw({
+                groups: [group('Low Lab', [order('A', -0.4)]), group('High Lab', [order('B', -2.5, false)])],
+            });
+            const summary = el.querySelector('[data-collapse-summary]').textContent;
+            expect(summary).toContain('0.4');
+            expect(summary).not.toContain('2.5');
+        });
+
         test('several loadouts get one named block each', () => {
             const el = draw({ groups: [group('Low Lab', [order('A', -1)]), group('High Lab', [order('B', -2)])] });
             expect(el.querySelectorAll('table')).toHaveLength(2);

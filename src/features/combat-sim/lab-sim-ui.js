@@ -6626,12 +6626,13 @@ class LabSimUI {
         });
 
         const bests = groups.map((g) => g.orders[0]).filter(Boolean);
+        const improving = bests.filter((b) => b.attemptsDelta < 0 && b.significant);
         let summary;
         if (section.noResult) summary = 'no order measured';
         else if (!groups.length) summary = 'nothing to reorder';
         else if (!bests.length) summary = 'no order reached';
-        else if (bests.some((b) => b.attemptsDelta < 0 && b.significant)) {
-            const winner = bests.reduce((a, b) => (b.attemptsDelta < a.attemptsDelta ? b : a));
+        else if (improving.length) {
+            const winner = improving.reduce((a, b) => (b.attemptsDelta < a.attemptsDelta ? b : a));
             summary = `best ${attemptsText(winner.attemptsDelta)} attempts`;
         } else if (bests.some((b) => b.attemptsDelta < 0)) summary = 'all within noise';
         else summary = 'current order is best';
