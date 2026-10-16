@@ -242,7 +242,14 @@ export function objectiveFooterText(objective) {
  */
 export function triggerHeadline(result) {
     if (!result) return 'Stopped before the baseline finished';
-    if (result.noTunables) return 'Nothing to tune';
+    if (result.noTunables) {
+        // No thresholds to tune, but the condition search may still have an answer, and the expanded view shows it
+        const conditionChanges = result.conditions?.changes?.length || 0;
+        if (conditionChanges > 0) {
+            return `${conditionChanges} condition change${conditionChanges === 1 ? '' : 's'} recommended`;
+        }
+        return 'Nothing to tune';
+    }
     if (result.profitLeftOut && result.objective === 'profit') return 'Nothing recommended: profit cannot be counted';
     if (result.reliable === false) return 'No reliable improvement found';
     const changes = result.changes?.length || 0;

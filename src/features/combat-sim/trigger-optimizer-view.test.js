@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { renderTriggerResultsHtml, triggerChipOptionsHtml, esc } from './trigger-optimizer-view.js';
+import { renderTriggerResultsHtml, triggerChipOptionsHtml, triggerHeadline, esc } from './trigger-optimizer-view.js';
 
 const gameData = {
     combatTriggerDependencyDetailMap: { '/combat_trigger_dependencies/targeted_enemy': { name: 'Targeted enemy' } },
@@ -432,5 +432,21 @@ describe('a condition-only run that left profit out', () => {
             gameData
         );
         expect(html).toContain('Profit/h left out of the score');
+    });
+});
+
+describe('triggerHeadline with no thresholds to tune', () => {
+    const cond = { playerHrid: 'player1', deltaScore: 5 };
+    test('counts the condition changes the expanded view still shows', () => {
+        expect(triggerHeadline({ noTunables: true, changes: [], conditions: { changes: [cond] } })).toBe(
+            '1 condition change recommended'
+        );
+        expect(triggerHeadline({ noTunables: true, changes: [], conditions: { changes: [cond, cond] } })).toBe(
+            '2 condition changes recommended'
+        );
+    });
+    test('still says there is nothing to tune when the condition search found nothing or did not run', () => {
+        expect(triggerHeadline({ noTunables: true, changes: [], conditions: { changes: [] } })).toBe('Nothing to tune');
+        expect(triggerHeadline({ noTunables: true, changes: [] })).toBe('Nothing to tune');
     });
 });

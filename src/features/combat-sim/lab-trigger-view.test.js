@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 
-import { labTriggerLoadoutsHtml, renderLabTriggerResultsHtml } from './lab-trigger-view.js';
+import { labTriggerLoadoutsHtml, renderLabTriggerResultsHtml, summarizeLabTriggerRun } from './lab-trigger-view.js';
 
 const FROM_ROW = {
     dependencyHrid: '/combat_trigger_dependencies/self',
@@ -158,5 +158,18 @@ describe('labTriggerLoadoutsHtml', () => {
     test('an empty list says why when it is told, and otherwise the default', () => {
         expect(labTriggerLoadoutsHtml([], new Set(), 'No target is ticked')).toContain('No target is ticked');
         expect(labTriggerLoadoutsHtml([], new Set())).toContain('No labyrinth fights');
+    });
+});
+
+describe('summarizeLabTriggerRun', () => {
+    test('counts condition changes in a loadout with no threshold changes', () => {
+        const run = { groups: [{ result: { changes: [] }, conditions: { changes: [{}, {}] } }] };
+        expect(summarizeLabTriggerRun(run)).toBe('2 changes found');
+        expect(
+            summarizeLabTriggerRun({ groups: [{ result: { noTunables: true }, conditions: { changes: [{}] } }] })
+        ).toBe('1 change found');
+        expect(
+            summarizeLabTriggerRun({ groups: [{ result: { noTunables: true }, conditions: { changes: [] } }] })
+        ).toBe('No change beat the current thresholds');
     });
 });
