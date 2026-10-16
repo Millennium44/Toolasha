@@ -4942,7 +4942,7 @@ export function primaryLevelsAlongside(candidate, primary, xpSimResult, gameData
 /**
  * Compute key metrics from a sim result.
  */
-export function computeMetrics(simResult, gameData, playerHrid, hours) {
+export function computeMetrics(simResult, gameData, playerHrid, hours, { priceCache } = {}) {
     const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
     const xp = simResult.experienceGained?.[playerHrid] || {};
     const totalXpPerHour = Object.values(xp).reduce((s, v) => s + v, 0) / simHours;
@@ -4950,7 +4950,7 @@ export function computeMetrics(simResult, gameData, playerHrid, hours) {
     const encounters = (simResult.encounters || 0) / simHours;
 
     // Profit/hr
-    const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours);
+    const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours, { priceCache });
 
     return {
         xpPerHour: totalXpPerHour,
@@ -4958,6 +4958,12 @@ export function computeMetrics(simResult, gameData, playerHrid, hours) {
         // Gross sides of the profit: the scale a profit sampling error is sized against (net can be ~0)
         revenuePerHour: revenue.revenuePerHour,
         costPerHour: revenue.costPerHour,
+        // Counted at zero in the profit, so a profit built on any of them is a floor, not a figure
+        unpriced: [
+            ...(revenue.unpricedDrops || []),
+            ...(revenue.unpricedConsumables || []),
+            ...(revenue.unpricedKeys || []),
+        ],
         deathsPerHour: deaths,
         encountersPerHour: encounters,
         dps: (simResult.totalDamageDealt?.[playerHrid] || 0) / (simHours * 3600),
