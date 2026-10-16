@@ -241,14 +241,14 @@ describe('generated worker sources', () => {
         expect(calculateEnhancementCost({ ...params, targetLevel: 3 })).toBeCloseTo(hardTwo + 10100 + 2000, 6);
     });
 
-    test('an unquoted enhancement material falls back to its sell price, never to a negative one', async () => {
+    test('an unquoted enhancement material is costed by recipe or left out, never at its sell price or a negative one', async () => {
         // The marketplace answers "no quote" with -1 on a side, which is why the
         // worker already swaps a negative side for the positive one. When BOTH
         // sides are -1 there is nothing to swap to, and `ask || 0` handed the
         // material a price of -1 — an attempt that pays the enhancer to make it,
         // dragging the whole run's cost below the base item. Main's
         // getEnhancementMaterialPrice treats a book with no positive side as no
-        // book at all and takes the item's sell price.
+        // book at all and takes its craft cost, then 0 (never the sell price).
         vi.resetModules();
         const { calculateItemValueBatch } = await import('./networth-worker-manager.js');
         const source = await captureWorkerScript(() =>
@@ -279,9 +279,17 @@ describe('generated worker sources', () => {
             recipes: {},
         };
 
-        // +1 takes two attempts on the 50% base rate, so the run is the base item
-        // plus two materials at their sell price
-        expect(calculateEnhancementCost(params)).toBeCloseTo(100 + 2 * 300, 6);
+        // +1 takes two attempts on the 50% base rate. No recipe: the material is left out
+        // of the sum, so the run is the base item alone (not 100 + 2 * 300, not below 100)
+        expect(calculateEnhancementCost(params)).toBeCloseTo(100, 6);
+
+        // With a recipe it is costed from it: one ore at 50, less the 10% Artisan reduction
+        const crafted = {
+            ...params,
+            priceMap: { ...params.priceMap, '/items/ore:0': 50 },
+            recipes: { '/items/test_material': { inputItems: [{ itemHrid: '/items/ore', count: 1 }], outputCount: 1 } },
+        };
+        expect(calculateEnhancementCost(crafted)).toBeCloseTo(100 + 2 * 45, 6);
     });
 
     test('the pruned closure prices every hrid the worker can reach', async () => {
