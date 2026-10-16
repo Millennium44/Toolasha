@@ -34,6 +34,7 @@ import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct
 import { MIRROR_FIRST_LEVEL, MIRROR_ITEM_HRID, cheapestWithMirror } from '../../utils/mirror-route.js';
 import { blessedMirrorChance } from '../../utils/enhancement-calculator.js';
 import { computeRefinementCraftCost, findRefinementAction } from '../../utils/refined-item-cost.js';
+import { findProducingAction } from '../../utils/production-index.js';
 import { copiesForPricing, isSelfEnhancedItem, planSelfEnhance } from './self-enhance-ladder.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
@@ -3316,10 +3317,30 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
 
     // The base copies the route buys, for the Market bill. A level the mirror builds is built from its
     // two inputs in turn, so the leaves are what is bought: a listed level at its own level, and a level
-    // priced as base plus an enhance as the +0 base (the enhance is the player's own work). An item no
-    // market lists (a cape) has nothing to buy.
+    // priced as base plus an enhance as the +0 base (the enhance is the player's own work). A +0 with no
+    // listing is priced from its recipe, so what is bought is the recipe's inputs. An item no market lists
+    // (a cape) has nothing to buy.
     const bought = new Map();
     if (!isSelfEnhancedItem(baseHrid, gameData?.itemDetailMap)) {
+        const buy = (itemHrid, enhancementLevel, count) => {
+            const key = `${itemHrid}@${enhancementLevel}`;
+            const line = bought.get(key) || { itemHrid, enhancementLevel, count: 0 };
+            line.count += count;
+            bought.set(key, line);
+        };
+        // The +0 base has no listing to buy: crafting it buys the recipe's inputs (and the item it upgrades)
+        const craft = (count) => {
+            const actionDetailMap = gameData?.actionDetailMap || dataManager.getInitClientData?.()?.actionDetailMap;
+            const recipe = actionDetailMap
+                ? findProducingAction(baseHrid, { primaryOnly: true, actionDetailMap })
+                : null;
+            if (!recipe) return;
+            const perCraft = count / (recipe.output?.count || 1);
+            for (const input of recipe.action.inputItems || []) {
+                if (input?.itemHrid && input.itemHrid !== '/items/coin') buy(input.itemHrid, 0, perCraft * input.count);
+            }
+            if (recipe.action.upgradeItemHrid) buy(recipe.action.upgradeItemHrid, 0, perCraft);
+        };
         const want = (k, count) => {
             if (!(count > 0) || k < 0) return;
             const direct = Number.isFinite(ordinary[k]) ? ordinary[k] : Infinity;
@@ -3328,8 +3349,15 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
                 want(k - 2, count * landing[k - 1]);
                 return;
             }
-            const at = ordinarySource[k] === 'market' ? k : 0;
-            bought.set(at, (bought.get(at) || 0) + count);
+            const source = ordinarySource[k];
+            if (source === 'market') {
+                buy(baseHrid, k, count);
+            } else if (source === 'craft' || (source === 'sim' && !(getItemPrices(baseHrid, 0)?.ask > 0))) {
+                // No +0 listing: its price is the recipe's, so the recipe's inputs are what is bought
+                craft(count);
+            } else {
+                buy(baseHrid, 0, count);
+            }
         };
         if (plan.buyUpper) want(level - 1, 1);
         if (plan.buyLower) want(level - 2, plan.stepOdds);
@@ -3337,12 +3365,8 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
     return {
         baseCost: plan.pay,
         // Whole copies, rounded up (a Blessed Tea chain buys a fraction of a step's inputs on average)
-        boughtCopies: [...bought.entries()]
-            .map(([enhancementLevel, count]) => ({
-                itemHrid: baseHrid,
-                enhancementLevel,
-                count: Math.max(1, Math.ceil(count - 1e-9)),
-            }))
+        boughtCopies: [...bought.values()]
+            .map((line) => ({ ...line, count: Math.max(1, Math.ceil(line.count - 1e-9)) }))
             .sort((a, b) => b.enhancementLevel - a.enhancementLevel),
         forfeited: plan.forfeit,
         // The resale of bag copies another loadout wears. Unlike a worn piece the row takes off, no credit
