@@ -29,10 +29,19 @@
  * already told you about, and closes when nothing is beaten. Closing it with
  * its X keeps it away until a different listing is beaten. Position and the
  * minimized fold are remembered by the shared panel shell.
+ *
+ * ## Hiding an item
+ *
+ * Each row has a small control that hides it. What is hidden is the item at its enhancement level on one
+ * side (sell or buy), not a listing id, so cancelling and relisting while flipping stays hidden. Hidden
+ * rows are not counted, never open the panel and are not part of a dismissal; "Show hidden" draws them
+ * dimmed with a control to bring each back. The set is remembered per character, and a key is forgotten
+ * only when the full listings snapshot at login shows no active listing of that item, level and side.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import localMarketUndercutAlerts from '../notifications/market-undercut-alerts.js';
 import { marketUndercutAlerts as liveMarketUndercutAlerts } from '../../utils/bundle-bridge.js';
@@ -56,6 +65,35 @@ const POOLED_SETTING = 'market_pooledHistory';
 const ACTIVE_STATUS = '/market_listing_status/active';
 const ACCENT = '#ff8f6b';
 const MUTED = 'rgba(232, 236, 245, 0.55)';
+/** Most hidden keys remembered per character; the oldest go first */
+const MAX_HIDDEN = 200;
+const HIDDEN_STORE = 'settings';
+
+/**
+ * What hiding is keyed on: the item at its level on one side, so a relisting stays hidden.
+ * @param {{itemHrid: string, enhancementLevel?: number, isSell?: boolean}} row - A beaten listing
+ * @returns {string}
+ */
+export function hiddenKey(row) {
+    return `${row.itemHrid}:${row.enhancementLevel || 0}:${row.isSell === true ? 'sell' : 'buy'}`;
+}
+
+/**
+ * Where a character's hidden keys are kept.
+ * @param {string} owner - Character id
+ * @returns {string}
+ */
+function hiddenStorageKey(owner) {
+    return `overbidPanel_hidden_${owner}`;
+}
+
+/**
+ * Who the hidden set belongs to.
+ * @returns {string} Character id, or `'default'` before login
+ */
+function currentOwner() {
+    return dataManager.getCurrentCharacterId?.() || 'default';
+}
 
 /**
  * Which of the given listings are beaten right now.
@@ -189,10 +227,33 @@ function rowLabel(row) {
 /**
  * Draw the table into a panel body.
  * @param {HTMLElement} body - Panel body
- * @param {Object[]} rows - Beaten listings
+ * @param {Object[]} rows - Beaten listings to show (the ones not hidden)
  * @param {number} [unknown] - Active listings that could not be checked for lack of fresh data
+ * @param {Object} [options] - Hiding support; omitted, the table is drawn as before with no controls
+ * @param {Object[]} [options.hiddenRows] - Beaten listings the player hid
+ * @param {boolean} [options.showHidden] - Draw the hidden rows (dimmed) too
+ * @param {(row: Object) => void} [options.onHide] - Called with a row whose hide control was pressed
+ * @param {(row: Object) => void} [options.onUnhide] - Called with a hidden row whose unhide control was pressed
+ * @param {() => void} [options.onToggleHidden] - Called when the show/hide-hidden line is pressed
  */
-export function drawOverbidTable(body, rows, unknown = 0) {
+export function drawOverbidTable(body, rows, unknown = 0, options = {}) {
+    const hiddenRows = options.hiddenRows || [];
+    const showHidden = options.showHidden === true && hiddenRows.length > 0;
+
+    if (hiddenRows.length > 0) {
+        const toggle = document.createElement('a');
+        toggle.href = '#';
+        toggle.dataset.overbidToggleHidden = 'true';
+        toggle.textContent = showHidden ? 'Hide hidden' : `Show hidden (${hiddenRows.length})`;
+        Object.assign(toggle.style, { color: ACCENT, textDecoration: 'underline', cursor: 'pointer' });
+        toggle.addEventListener('click', (event) => {
+            event.preventDefault();
+            options.onToggleHidden?.();
+        });
+        const line = document.createElement('div');
+        line.appendChild(toggle);
+        body.appendChild(line);
+    }
     if (unknown > 0) {
         body.appendChild(
             panelNote(
@@ -200,8 +261,11 @@ export function drawOverbidTable(body, rows, unknown = 0) {
             )
         );
     }
-    if (!rows.length) {
-        body.appendChild(panelNote('Nothing is undercut or outbid right now.'));
+    const drawn = showHidden ? [...rows, ...hiddenRows] : rows;
+    if (!drawn.length) {
+        body.appendChild(
+            panelNote(hiddenRows.length ? 'All overbid items are hidden.' : 'Nothing is undercut or outbid right now.')
+        );
         return;
     }
 
@@ -223,11 +287,31 @@ export function drawOverbidTable(body, rows, unknown = 0) {
     }
 
     const tbody = table.createTBody();
-    for (const row of rows) {
+    for (const row of drawn) {
+        const isHidden = showHidden && hiddenRows.includes(row);
         const tr = tbody.insertRow();
         tr.dataset.listingId = String(row.id);
+        if (isHidden) {
+            tr.dataset.overbidHidden = 'true';
+            tr.style.opacity = '0.5';
+        }
 
         const nameCell = tr.insertCell();
+        const onPress = isHidden ? options.onUnhide : options.onHide;
+        if (onPress) {
+            const control = document.createElement('span');
+            control.setAttribute('role', 'button');
+            control.dataset[isHidden ? 'overbidUnhide' : 'overbidHide'] = 'true';
+            control.textContent = isHidden ? '↺' : '✕';
+            control.title = isHidden ? 'Show this item in the table again' : 'Hide this item from the table';
+            Object.assign(control.style, { color: MUTED, cursor: 'pointer', marginRight: '6px' });
+            control.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onPress(row);
+            });
+            nameCell.appendChild(control);
+        }
         const link = document.createElement('a');
         link.textContent = rowLabel(row);
         link.href = '#';
@@ -263,6 +347,14 @@ class OverbidPanel {
         this.panel = null;
         /** The beaten listings from the last update; the panel draws from this */
         this.rows = [];
+        /** Beaten listings the player hid, as of the last update; not counted, not announced, not dismissed */
+        this.hiddenRows = [];
+        /** Hidden keys (see {@link hiddenKey}) of the character in {@link hiddenOwner}, oldest first */
+        this.hidden = new Set();
+        /** Whose hidden set is in memory; null until it has been loaded */
+        this.hiddenOwner = null;
+        /** Draw the hidden rows too. In memory only */
+        this.showHidden = false;
         /** Listing ids the player closed the panel on, so they are not announced again until resolved */
         this.dismissed = new Set();
         /** Whether the panel is open because this module (or the button) opened it and has not seen it close */
@@ -278,6 +370,27 @@ class OverbidPanel {
         this.sightingTimer = null;
         /** `itemHrid:level` keys already asked for, so an unknown item is not asked for again */
         this.requestedSightings = new Set();
+        /**
+         * The character whose hidden keys were last pruned against a login snapshot. Kept through
+         * `disable()`, so turning the setting off and on again mid-session does not prune a temporarily
+         * canceled listing's hide, while the first start after switching to another character still does.
+         */
+        this.prunedOwner = null;
+        /** Whether the login watch below is attached; it outlives `disable()` on purpose */
+        this.loginWatch = false;
+    }
+
+    /**
+     * Forget the prune marker on every login, including those that happen while the panel is turned
+     * off, so the next start for a character that logged in again prunes against its fresh listings.
+     * Attached once and never removed.
+     */
+    watchLogins() {
+        if (this.loginWatch) return;
+        this.loginWatch = true;
+        dataManager.on('character_initialized', () => {
+            this.prunedOwner = null;
+        });
     }
 
     /**
@@ -285,6 +398,7 @@ class OverbidPanel {
      * @returns {Promise<void>}
      */
     async initialize() {
+        this.watchLogins();
         if (this.isInitialized) return;
         if (!config.getSetting(SETTING)) return;
         this.isInitialized = true;
@@ -295,26 +409,37 @@ class OverbidPanel {
             size: { width: 400, height: 220 },
             accent: ACCENT,
             draw: (body) => {
-                if (this.rows.length) {
-                    const note = document.createElement('div');
-                    note.textContent = 'Your items have been overbid';
-                    note.style.color = MUTED;
-                    body.appendChild(note);
-                }
-                drawOverbidTable(body, this.rows, this.unknown);
+                drawOverbidTable(body, this.rows, this.unknown, {
+                    hiddenRows: this.hiddenRows,
+                    showHidden: this.showHidden,
+                    onHide: (row) => this.setHidden(row, true),
+                    onUnhide: (row) => this.setHidden(row, false),
+                    onToggleHidden: () => {
+                        this.showHidden = !this.showHidden;
+                        this.panel?.render();
+                    },
+                });
             },
         });
 
         const handler = () => this.update();
+        const loginHandler = async () => {
+            const generation = this.generation;
+            await this.loadHidden();
+            if (generation !== this.generation) return;
+            this.pruneHidden();
+            this.prunedOwner = this.hiddenOwner;
+            this.update();
+        };
         const listingsHandler = () => {
             this.update();
             this.requestMissingSightings();
         };
-        dataManager.on('character_initialized', handler);
+        dataManager.on('character_initialized', loginHandler);
         dataManager.on('market_listings_updated', listingsHandler);
         marketAPI.on(handler);
         this.cleanup.registerCleanup(() => {
-            dataManager.off('character_initialized', handler);
+            dataManager.off('character_initialized', loginHandler);
             dataManager.off('market_listings_updated', listingsHandler);
             marketAPI.off(handler);
         });
@@ -335,7 +460,91 @@ class OverbidPanel {
         const switching = () => this.disable();
         dataManager.on('character_switching', switching);
         this.cleanup.registerCleanup(() => dataManager.off('character_switching', switching));
+        this.update();
+        await this.loadHidden();
+        if (!this.isInitialized) return;
+        // A start that follows a login (the registry may start this after `character_initialized` fired)
+        // prunes once; a later start for the same character is a settings toggle and leaves the hides alone
+        if (this.prunedOwner !== this.hiddenOwner) {
+            this.pruneHidden();
+            this.prunedOwner = this.hiddenOwner;
+        }
+        this.update();
+    }
 
+    /**
+     * Read this character's hidden keys from storage. The character is captured before the read and checked
+     * after it, so a read that resolves after a switch never lands on the new character.
+     * @returns {Promise<void>}
+     */
+    async loadHidden() {
+        const owner = currentOwner();
+        const generation = this.generation;
+        try {
+            const saved = await storage.get(hiddenStorageKey(owner), HIDDEN_STORE, []);
+            if (generation !== this.generation || owner !== currentOwner()) return;
+            const keys = Array.isArray(saved) ? saved.filter((key) => typeof key === 'string') : [];
+            // Anything hidden while the read was in flight is kept
+            const merged = new Set([...keys, ...(this.hiddenOwner === owner ? this.hidden : [])]);
+            this.hidden = new Set([...merged].slice(-MAX_HIDDEN));
+            this.hiddenOwner = owner;
+        } catch (error) {
+            console.error('[OverbidPanel] Loading hidden items failed:', error);
+            // Without a stored set the table still works; nothing is hidden
+            if (generation === this.generation && owner === currentOwner() && this.hiddenOwner !== owner) {
+                this.hidden = new Set();
+                this.hiddenOwner = owner;
+            }
+        }
+    }
+
+    /**
+     * Write the hidden keys for the character they belong to.
+     */
+    saveHidden() {
+        if (this.hiddenOwner === null) return;
+        storage.set(hiddenStorageKey(this.hiddenOwner), [...this.hidden], HIDDEN_STORE, true);
+    }
+
+    /**
+     * Forget hidden keys with no active listing left, judged by the full snapshot at login. Does nothing
+     * until the character's data has loaded: before that `getMarketListings()` is also an empty list, and
+     * proves nothing. Once loaded, an empty list is a character with no listings, and prunes every key.
+     */
+    pruneHidden() {
+        if (!this.hidden.size || this.hiddenOwner !== currentOwner()) return;
+        if (!dataManager.characterData) return;
+        const listings = dataManager.getMarketListings();
+        if (!Array.isArray(listings)) return;
+        const live = new Set(
+            listings.filter((l) => l?.status === ACTIVE_STATUS && l.itemHrid).map((l) => hiddenKey(l))
+        );
+        let changed = false;
+        for (const key of this.hidden) {
+            if (!live.has(key)) {
+                this.hidden.delete(key);
+                changed = true;
+            }
+        }
+        if (changed) this.saveHidden();
+    }
+
+    /**
+     * Hide or unhide an item and redraw. Not a dismissal.
+     * @param {Object} row - A beaten listing
+     * @param {boolean} hide - True to hide, false to bring back
+     */
+    setHidden(row, hide) {
+        if (this.hiddenOwner === null) this.hiddenOwner = currentOwner();
+        const key = hiddenKey(row);
+        if (hide) {
+            this.hidden.delete(key);
+            this.hidden.add(key);
+            while (this.hidden.size > MAX_HIDDEN) this.hidden.delete(this.hidden.values().next().value);
+        } else {
+            this.hidden.delete(key);
+        }
+        this.saveHidden();
         this.update();
     }
 
@@ -401,12 +610,14 @@ class OverbidPanel {
      * Recompute who is beaten and show, refresh or hide the panel.
      */
     update() {
-        if (!this.isInitialized || !this.panel) return;
+        // Until this character's hidden set is loaded nothing can be told apart from what the player hid
+        if (!this.isInitialized || !this.panel || this.hiddenOwner !== currentOwner()) return;
         const shownRows = this.rows;
         let classification;
         try {
             classification = currentClassification();
-            this.rows = classification.beaten;
+            this.rows = classification.beaten.filter((row) => !this.hidden.has(hiddenKey(row)));
+            this.hiddenRows = classification.beaten.filter((row) => this.hidden.has(hiddenKey(row)));
         } catch (error) {
             console.error('[OverbidPanel] Checking listings failed:', error);
             return;
@@ -428,9 +639,13 @@ class OverbidPanel {
             if (!classification.activeIds.has(id) || classification.settled.has(id)) this.dismissed.delete(id);
         }
 
+        if (!this.hiddenRows.length) this.showHidden = false;
+        const hiddenNote = this.hiddenRows.length ? `, ${this.hiddenRows.length} hidden` : '';
+
         if (!this.rows.length) {
-            this.panel.setTitle('Overbid table');
-            if (this.manual && this.panel.isOpen()) {
+            this.panel.setTitle(this.hiddenRows.length ? `Overbid table (0${hiddenNote})` : 'Overbid table');
+            // Open with only hidden rows left: stay open and offer them back rather than closing under the player
+            if ((this.manual || this.hiddenRows.length) && this.panel.isOpen()) {
                 this.panel.render();
             } else {
                 this.wasOpen = false;
@@ -439,7 +654,7 @@ class OverbidPanel {
             return;
         }
 
-        this.panel.setTitle(`Overbid table (${this.rows.length})`);
+        this.panel.setTitle(`Overbid table (${this.rows.length}${hiddenNote})`);
         const fresh = this.rows.some((row) => !this.dismissed.has(row.id));
 
         if (this.panel.isOpen()) {
@@ -532,6 +747,10 @@ class OverbidPanel {
         this.panel?.destroy();
         this.panel = null;
         this.rows = [];
+        this.hiddenRows = [];
+        this.hidden = new Set();
+        this.hiddenOwner = null;
+        this.showHidden = false;
         this.dismissed.clear();
         this.wasOpen = false;
         this.manual = false;
