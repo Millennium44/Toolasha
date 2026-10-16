@@ -24,7 +24,9 @@ vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } })
 vi.mock('./engine/rng.js', async (importOriginal) => ({ ...(await importOriginal()), randomSeed: () => 12345 }));
 
 const {
+    configureFightGroup,
     groupFightsByLoadout,
+    groupFightsForScope,
     runLabTriggerOptimization,
     estimateLabTriggerRun,
     labSampleFromResults,
@@ -145,6 +147,61 @@ describe('groupFightsByLoadout', () => {
     test('two loadouts that share a name stay apart, keyed by id', () => {
         const groups = groupFightsByLoadout([fight('cyclops', 3, 'Mage'), fight('mimic', 4, 'Mage')]);
         expect(groups.map((g) => g.key)).toEqual(['loadout:3', 'loadout:4']);
+    });
+});
+
+describe('groupFightsForScope', () => {
+    const fights = () => [
+        fight('cyclops', 3, 'Mage'),
+        fight('mimic', 3, 'Mage'),
+        fight('jerry', 7, 'Tank'),
+        fight('gobbo', 0, 'Current gear'),
+    ];
+
+    test('all keeps every fight in its loadout group', () => {
+        expect(groupFightsForScope(fights(), 'all').map((g) => [g.key, g.fights.length])).toEqual([
+            ['loadout:3', 2],
+            ['loadout:7', 1],
+            [CURRENT_GEAR_KEY, 1],
+        ]);
+    });
+
+    test('selected keeps only the chosen rooms, so a shared loadout shrinks and an emptied one is gone', () => {
+        const groups = groupFightsForScope(fights(), 'selected', ['/monsters/mimic', '/monsters/gobbo']);
+        expect(groups.map((g) => [g.key, g.fights.map((f) => f.monsterName)])).toEqual([
+            ['loadout:3', ['mimic']],
+            [CURRENT_GEAR_KEY, ['gobbo']],
+        ]);
+    });
+
+    test('an empty chosen set, or the Configure scope, has no loadout groups', () => {
+        expect(groupFightsForScope(fights(), 'selected', [])).toEqual([]);
+        expect(groupFightsForScope(fights(), 'current')).toEqual([]);
+    });
+});
+
+describe('configureFightGroup', () => {
+    test('is one group keyed by the fight, never by a saved loadout, and estimates like any group', () => {
+        const dto = loadoutDTO();
+        const group = configureFightGroup({
+            monsterHrid: '/monsters/mimic',
+            monsterName: 'Mimic',
+            roomLevel: 130,
+            dto,
+        });
+        expect(group).toMatchObject({ key: 'configure:/monsters/mimic:130', configure: true, loadoutId: 0 });
+        expect(group.key.startsWith('loadout:')).toBe(false);
+        expect(group.fights).toEqual([
+            {
+                monsterHrid: '/monsters/mimic',
+                monsterName: 'Mimic',
+                roomLevel: 130,
+                dto,
+                loadoutName: 'Configure fight',
+            },
+        ]);
+        const estimate = estimateLabTriggerRun({ groups: [group], gameData, precision: 'quick' });
+        expect(estimate.groups.map((g) => [g.key, g.fights])).toEqual([['configure:/monsters/mimic:130', 1]]);
     });
 });
 

@@ -5136,11 +5136,17 @@ describe('Tune triggers', () => {
         ui.buildPanel();
         await settle();
         ui._switchTab('upgrade');
+        // The section tunes the fights the Upgrade tab's scope names; these tests walk the labyrinth's
+        const scopeSelect = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        scopeSelect.value = 'all';
+        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await settle();
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
         game.characterId = 'me';
+        game.editedDTOs = null;
         game.monsters = [];
         game.skipLevels = {};
         game.loadoutByMonster = {};
@@ -5210,8 +5216,9 @@ describe('Tune triggers', () => {
     const results = () => ui.panel.querySelector('#mwi-labsim-trigger-results');
     const status = () => ui.panel.querySelector('#mwi-labsim-status').textContent;
 
-    test('opening the section lists one checkbox per loadout, ticked, with the cost before any run', () => {
+    test('opening the section lists one checkbox per loadout, ticked, with the cost before any run', async () => {
         ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+        await settle();
         const boxes = [...ui.panel.querySelectorAll('[data-lab-trigger-group]')];
         expect(boxes.map((b) => [b.dataset.labTriggerGroup, b.checked])).toEqual([
             ['loadout:3', true],
@@ -5221,13 +5228,15 @@ describe('Tune triggers', () => {
         expect(ui.panel.querySelector('#mwi-labsim-trigger-estimate').textContent).toMatch(/About [\d,]+ fight sims/);
     });
 
-    test('switching back to the upgrade tab relists the loadouts of an open section', () => {
+    test('switching back to the upgrade tab relists the loadouts of an open section', async () => {
         ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+        await settle();
         const list = () => ui.panel.querySelector('#mwi-labsim-trigger-loadouts').textContent;
         expect(list()).toContain('Mage');
         ui._switchTab('configure');
         game.loadoutNames = { 3: 'Healer' };
         ui._switchTab('upgrade');
+        await settle();
         expect(list()).toContain('Healer');
         expect(list()).not.toContain('Mage');
     });
@@ -5296,6 +5305,7 @@ describe('Tune triggers', () => {
 
     test('the choices are remembered per character, and a pull brings them back', async () => {
         ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+        await settle();
         // No food/drink choice any more: the labyrinth allows none, so only abilities are tuned
         expect(ui.panel.querySelector('#mwi-labsim-trigger-include')).toBeNull();
         const box = ui.panel.querySelector('[data-lab-trigger-group="current"]');
@@ -5310,10 +5320,156 @@ describe('Tune triggers', () => {
 
         storage.values['labSimTriggerChoices_me'] = { open: true, include: 'consumables', precision: 'precise' };
         await ui._adoptPulledSettings({ settings: ['labSimTriggerChoices_me'] });
+        await settle();
         // A stored consumables choice (older versions) is ignored: tuning stays abilities only
         expect(ui._triggerChoices.include).toBe('abilities');
         expect(ui.panel.querySelector('#mwi-labsim-trigger-precision').value).toBe('precise');
         expect(ui.panel.querySelector('[data-lab-trigger-group="current"]').checked).toBe(true);
+    });
+
+    describe('follows the Upgrade tab�s Targets scope', () => {
+        const setScope = async (mode) => {
+            const select = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+            select.value = mode;
+            select.dispatchEvent(new window.Event('change', { bubbles: true }));
+            await settle();
+        };
+        const tick = async (hrid, checked) => {
+            const box = ui.panel.querySelector(`[data-lab-target="${hrid}"]`);
+            box.checked = checked;
+            box.dispatchEvent(new window.Event('change', { bubbles: true }));
+            await settle();
+        };
+        const list = () => ui.panel.querySelector('#mwi-labsim-trigger-loadouts').textContent;
+        const estimate = () => ui.panel.querySelector('#mwi-labsim-trigger-estimate').textContent;
+        const groupKeys = () =>
+            [...ui.panel.querySelectorAll('[data-lab-trigger-group]')].map((b) => b.dataset.labTriggerGroup);
+        const simCount = () =>
+            Number(
+                estimate()
+                    .match(/About ([\d,]+) fight sims/)?.[1]
+                    .replace(/,/g, '')
+            );
+
+        beforeEach(async () => {
+            ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            await settle();
+        });
+
+        test('all targets lists every loadout and fight, as before', () => {
+            expect(groupKeys()).toEqual(['loadout:3', 'current']);
+            expect(list()).toContain('Mage (2 fights)');
+        });
+
+        test('chosen targets keep only the ticked rooms, and the estimate shrinks with them', async () => {
+            const all = simCount();
+            await setScope('selected');
+            // Mage fights two of the three rooms: tick one of them
+            await tick('/monsters/cyclops', true);
+            expect(groupKeys()).toEqual(['loadout:3']);
+            expect(list()).toContain('Mage (1 fight)');
+            expect(simCount()).toBeLessThan(all);
+            // The results shown for other fights are gone
+            expect(results().innerHTML).toBe('');
+        });
+
+        test('a loadout whose rooms are all left out disappears from the list', async () => {
+            await setScope('selected');
+            await tick('/monsters/jerry', true);
+            expect(groupKeys()).toEqual(['current']);
+            expect(list()).not.toContain('Mage');
+        });
+
+        test('a run tunes only the ticked rooms of a loadout shared by several', async () => {
+            const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+            await setScope('selected');
+            await tick('/monsters/mimic', true);
+            await ui._onTuneTriggers();
+            expect(spy.mock.calls[0][0].groups.map((g) => [g.key, g.fights.map((f) => f.monsterName)])).toEqual([
+                ['loadout:3', ['Mimic']],
+            ]);
+        });
+
+        test('no ticked room: the list says so and a run starts nothing', async () => {
+            const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+            await setScope('selected');
+            expect(list()).toContain('No target is ticked');
+            expect(groupKeys()).toEqual([]);
+            expect(estimate()).toBe('');
+            await ui._onTuneTriggers();
+            expect(spy).not.toHaveBeenCalled();
+            expect(status()).toContain('No target is ticked');
+            expect(ui._upgradeRunning).toBe(false);
+        });
+
+        describe('Configure fight', () => {
+            beforeEach(async () => {
+                game.editedDTOs = {
+                    p1: {
+                        hrid: 'p1',
+                        equipment: {},
+                        abilities: [null, { hrid: FIREBALL, level: 99, triggers: null }],
+                        communityBuffLevels: {},
+                        tokenUpgrades: {},
+                    },
+                };
+                game.players = [{ hrid: 'p1', equipment: {}, abilities: [], guildShrineLevels: {} }];
+                ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+                const source = ui.panel.querySelector('#mwi-labsim-level-source');
+                source.value = 'skip';
+                source.dispatchEvent(new window.Event('change', { bubbles: true }));
+                await setScope('current');
+            });
+
+            test('lists the one fight, in the edited setup, with no loadout tick', () => {
+                expect(groupKeys()).toEqual([]);
+                const label = ui.panel.querySelector('[data-lab-trigger-configure]');
+                expect(label.dataset.labTriggerConfigure).toBe('configure:/monsters/mimic:130');
+                expect(label.textContent).toContain('Configure fight: Mimic L130');
+                expect(simCount()).toBeGreaterThan(0);
+            });
+
+            test('a run tunes the edited, unsaved player, and a stale tick cannot drop the fight', async () => {
+                const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+                ui._triggerChoices.skipped = ['configure:/monsters/mimic:130', 'current', 'loadout:3'];
+                await ui._onTuneTriggers();
+                const [group] = spy.mock.calls[0][0].groups;
+                expect(spy.mock.calls[0][0].groups).toHaveLength(1);
+                expect(group).toMatchObject({
+                    key: 'configure:/monsters/mimic:130',
+                    name: 'Configure fight',
+                    configure: true,
+                });
+                expect(group.fights).toHaveLength(1);
+                expect(group.fights[0]).toMatchObject({ monsterHrid: '/monsters/mimic', roomLevel: 130 });
+                expect(group.fights[0].dto.abilities[1].level).toBe(99);
+                // Nothing in this section applies a result to a setup: it is show-only
+                expect(results().textContent).toContain('set these values in the game by hand');
+            });
+
+            test('changing the Configure monster re-lists the fight and clears an old result', async () => {
+                const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+                await ui._onTuneTriggers();
+                expect(results().innerHTML).not.toBe('');
+                const monster = ui.panel.querySelector('#mwi-labsim-monster');
+                monster.value = '/monsters/jerry';
+                monster.dispatchEvent(new window.Event('change', { bubbles: true }));
+                await settle();
+                expect(results().innerHTML).toBe('');
+                expect(ui.panel.querySelector('[data-lab-trigger-configure]').dataset.labTriggerConfigure).toBe(
+                    'configure:/monsters/jerry:110'
+                );
+                expect(spy).toHaveBeenCalledTimes(1);
+            });
+
+            test('with no monster chosen the list says so and a run starts nothing', async () => {
+                const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+                ui.panel.querySelector('#mwi-labsim-monster').value = '';
+                await ui._onTuneTriggers();
+                expect(spy).not.toHaveBeenCalled();
+                expect(status()).toContain('Select a monster');
+            });
+        });
     });
 
     describe('Search new conditions', () => {
@@ -5384,6 +5540,7 @@ describe('Tune triggers', () => {
 
         test('is off by default, and ticking it adds its own cost to the estimate and is remembered', async () => {
             ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            await settle();
             expect(checkbox().checked).toBe(false);
             expect(estimateText()).not.toContain('Condition search');
 
