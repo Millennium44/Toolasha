@@ -922,7 +922,7 @@ export const settingsGroups = {
                     { value: 'perHour', label: 'Saving per hour over your time value' },
                     { value: 'grossPerHour', label: 'Alchemy gold/hr' },
                 ],
-                help: 'Which figure the "Instead of buying" line shows first, in green. The other figures stay on the line and the detail line under it. Alchemy gold/hr is the hourly saving before your time value is taken off.',
+                help: 'Which figure the "Instead of buying" line shows first, in green. The other figures stay on the line, and the working is in its hover text. Alchemy gold/hr is the hourly saving before your time value is taken off.',
             },
             itemTooltip_expectedValue: {
                 id: 'itemTooltip_expectedValue',

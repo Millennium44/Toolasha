@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tooltip: tidier "Instead of buying" lines
+
+- The long muted detail line under each "Instead of buying" suggestion is gone; its working now shows on hover, and an unpriced output is still flagged on the line.
+
 ### Guild Trials: no forecast before anyone signs up
 
 - A trial that hasn't started is forecast only from the loadouts of members signed up for that trial; right after the weekly rollover, with nobody signed up, it no longer shows an "If it started now" tier built from last week's fighters.

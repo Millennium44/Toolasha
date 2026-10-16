@@ -1494,16 +1494,42 @@ describe('instead of buying', () => {
         expect(text).not.toContain('if you use');
     });
 
-    test('the detail line shows what making it to sell nets, and omits it without a bid', async () => {
+    test('the working is hover text, not a second line, and shows what making it to sell nets', async () => {
         settings.insteadOfBuying = true;
         // 50 / (18 × 0.6) = 4.63 a cheese; a bid of 2 pays less than that after tax
         priceState.info['/items/cheese'] = { ask: 10, bid: 2 };
-        const detail = (await hoverCheese()).querySelector('.mwi-alchemy-instead').textContent;
-        expect(detail).toMatch(/selling instead: -[\d.]+\/unit/);
+        const section = (await hoverCheese()).querySelector('.mwi-alchemy-instead');
+        // One line per route: no muted detail line under the headline
+        expect(section.querySelectorAll('div[style*="font-size: 0.9em"]')).toHaveLength(0);
+        expect(section.textContent).not.toContain('selling instead');
+        expect(section.textContent).not.toContain('vs 10 ask');
+        const hover = section.querySelector('[title^="Instead of buying"]').title;
+        expect(hover).toMatch(/selling instead: -[\d.]+\/unit/);
+        expect(hover).toContain('vs 10 ask');
         clearInsteadCache();
         priceState.info['/items/cheese'] = { ask: 10 };
-        const none = (await hoverCheese()).querySelector('.mwi-alchemy-instead').textContent;
+        const none = (await hoverCheese()).querySelector('.mwi-alchemy-instead [title^="Instead of buying"]').title;
         expect(none).not.toContain('selling instead');
+    });
+
+    test('an unpriced output stays visible as a short suffix on the headline', () => {
+        const alt = {
+            sourceHrid: '/items/cheese_sword',
+            actionType: 'decompose',
+            costPerUnit: 4,
+            timeCostPerUnit: 0,
+            saving: 6,
+            savingPerHour: null,
+            sellingPerUnit: null,
+            secondsPerUnit: 10,
+            kept: [],
+        };
+        const el = document.createElement('div');
+        el.innerHTML = tooltipPrices.buildInsteadOfBuyingHTML(10, [{ ...alt, partlyUnpriced: true }]);
+        expect(el.textContent).toContain('(an output unpriced)');
+        expect(el.querySelector('[title]').title).not.toContain('an output unpriced');
+        el.innerHTML = tooltipPrices.buildInsteadOfBuyingHTML(10, [{ ...alt, partlyUnpriced: false }]);
+        expect(el.textContent).not.toContain('unpriced');
     });
 
     test('selling instead is a lower bound when an output is unpriced, exact when everything is priced', () => {

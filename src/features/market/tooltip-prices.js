@@ -141,6 +141,15 @@ function insteadTitle() {
 }
 
 /**
+ * Text made safe for a double-quoted HTML attribute (hover text).
+ * @param {string} text
+ * @returns {string}
+ */
+function escapeAttribute(text) {
+    return String(text).replace(/&/g, '&amp;').replaceAll('"', '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
  * What the player's buy price is called on the "Instead of buying" detail line: the book side
  * their Buy setting prices at, and "+1" when it is a patient tick.
  * @returns {string} "ask", "bid" or "bid +1"
@@ -1001,9 +1010,6 @@ class TooltipPrices {
                     if (overRate) extra.push(`alchemy ${atLeast}${formatKMB(grossPerHour)}/hr before time value`);
                 }
             }
-            html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${insteadTitle()}">`;
-            html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)}${headline}`;
-            html += '</div>';
             // By-products worth more than the input make the route pay to run: say gain, not a minus sign.
             // An unpriced output makes the cost an upper bound, so the gain is a lower bound
             const costText =
@@ -1027,8 +1033,15 @@ class TooltipPrices {
                 const hint = getMarkMeaning() === 'sell' ? 'K to sell' : 'K to unmark';
                 parts.push(`counts ${alt.kept.map(nameOf).join(', ')} at ${buySideWord()} (${hint})`);
             }
-            if (alt.partlyUnpriced) parts.push('an output unpriced');
-            html += `<div style="opacity: 0.7; font-size: 0.9em; margin-left: 10px;">${parts.join(' · ')}</div>`;
+            // The working lives in the hover text, not on a second line; the one caveat that changes whether
+            // the figure can be trusted stays visible, short, next to the headline
+            const hover = escapeAttribute(`${insteadTitle()}\n${parts.join(' · ')}`);
+            const caveat = alt.partlyUnpriced
+                ? '<span style="opacity: 0.7; font-size: 0.9em;"> (an output unpriced)</span>'
+                : '';
+            html += `<div style="color: ${config.COLOR_TOOLTIP_INFO};" title="${hover}">`;
+            html += `Instead of buying: ${verb} ${nameOf(alt.sourceHrid)}${headline}${caveat}`;
+            html += '</div>';
         }
         html += '</div>';
         return html;
