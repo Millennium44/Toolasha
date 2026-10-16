@@ -225,12 +225,24 @@ export function dropRenamedDuplicates(captures) {
         if (held === undefined || (Number(capture?.at) || 0) >= (Number(captures[held]?.at) || 0)) newest.set(id, key);
     }
 
+    // A single-member redo asked of a name that has since been dropped is still the player's request for that
+    // member, so the surviving capture inherits the latest redo any of the id's entries carried
+    /** @type {Map<string|number, number>} id → the latest redoRequestedAt across its entries */
+    const latestRedo = new Map();
+    for (const [, capture] of entries) {
+        const id = capture?.characterId;
+        if (id === null || id === undefined) continue;
+        latestRedo.set(id, Math.max(latestRedo.get(id) || 0, Number(capture?.redoRequestedAt) || 0));
+    }
+
     const winners = new Set(newest.values());
     const kept = {};
     for (const [key, capture] of entries) {
         const id = capture?.characterId;
         if (id !== null && id !== undefined && !winners.has(key)) continue;
-        kept[key] = capture;
+        const redoAt = id === null || id === undefined ? 0 : latestRedo.get(id) || 0;
+        kept[key] =
+            redoAt > (Number(capture?.redoRequestedAt) || 0) ? { ...capture, redoRequestedAt: redoAt } : capture;
     }
     return kept;
 }
