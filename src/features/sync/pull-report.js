@@ -4,7 +4,8 @@
  * When a pull asks for "Reload now", some keys latched — the stores took the write and refuse more until
  * a reload. Making each of those live-safe takes knowing which they were and what the sync knows about
  * them; this names them. It carries key names and counts only: never a stored value, token, gist id or
- * character name. Character ids are part of key names and stay.
+ * character name. Character ids are part of key names and stay. A guild's name is part of some key names
+ * and is replaced with a placeholder at print time (see {@link redactSyncKey}).
  */
 
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
@@ -28,6 +29,61 @@ export function stripCharacterSuffix(key) {
     return String(key)
         .replace(/_(?:default|[0-9]+)$/, '')
         .replace(/^[0-9]+_/, '');
+}
+
+/**
+ * Key families whose key embeds a guild's name, found by reading every storage-key builder under `src/`:
+ *
+ * - `guildMemberSkills_<guild>`            (guild-member-skills.js `memberSkillsStorageKey`)
+ * - `guildTrialAbilities_<guild>`          (guild-trial-abilities.js `sessionStorageKey`)
+ * - `guildTrialAbilityPlan_<guild>`        (guild-trial-plan.js `planStorageKey`)
+ * - `guildTrialSession_<guild>`            (guild-trial-recorder.js `trialSessionStorageKey`)
+ * - `guildTrials_<guild>`                  (guild-trials-store.js `guildTrialsStorageKey`)
+ * - `guildTrialsStats_<guild>`             (guild-trials-store.js `trialStatsStorageKey`)
+ * - `guildTrialLedger_<guild>__<weekStart>` (guild-trial-ledger.js `ledgerCycleKey`)
+ * - `guildXP_<guild>`                      (guild-xp-tracker.js, inline)
+ * - `guildLoadouts_<characterId>_<guild>`  (guild-loadouts.js `guildLoadoutsStorageKey`)
+ *
+ * No key builder embeds a character's name (the others are id-scoped). Before the guild is known the same
+ * builders fall back to `default` or `char_<id>`, which name nobody and stay.
+ */
+const GUILD_KEY_PREFIXES = [
+    'guildMemberSkills',
+    'guildTrialAbilities',
+    'guildTrialAbilityPlan',
+    'guildTrialSession',
+    'guildTrials',
+    'guildTrialsStats',
+    'guildTrialLedger',
+    'guildXP',
+];
+
+/** What replaces a guild's name in a printed key */
+export const GUILD_PLACEHOLDER = '<guild>';
+
+/**
+ * A key (or a key with its suffix stripped) with any embedded guild name replaced, for printing only.
+ * @param {string} key - Storage key
+ * @returns {string} The key, safe to paste
+ */
+export function redactSyncKey(key) {
+    const text = String(key);
+    const loadouts = /^(guildLoadouts_(?:default|[0-9]+))_(.+)$/.exec(text);
+    if (loadouts) return `${loadouts[1]}_${GUILD_PLACEHOLDER}`;
+    for (const prefix of GUILD_KEY_PREFIXES) {
+        if (!text.startsWith(`${prefix}_`)) continue;
+        let scope = text.slice(prefix.length + 1);
+        let tail = '';
+        if (prefix === 'guildTrialLedger') {
+            const cycle = /^(.*?)(__[0-9]+)?$/.exec(scope);
+            scope = cycle[1];
+            tail = cycle[2] || '';
+        }
+        // The fallbacks before a guild name is known name nobody
+        if (scope === 'default' || /^char_[0-9]+$/.test(scope)) return text;
+        return `${prefix}_${GUILD_PLACEHOLDER}${tail}`;
+    }
+    return text;
 }
 
 /**
@@ -77,9 +133,9 @@ function keyLine(store, key, status) {
             : 'owned (store or pattern)'
         : 'not owned';
     return [
-        `${store} / ${key}`,
+        `${store} / ${redactSyncKey(key)}`,
         status,
-        `base=${info.base}`,
+        `base=${redactSyncKey(info.base)}`,
         registration,
         `owner=${owner}`,
         'writer=not recorded',
@@ -141,4 +197,4 @@ export function buildPullReport(summary, { version = null, host = null } = {}) {
     return lines.join('\n');
 }
 
-export default { REPORT_PRIVACY_LINE, stripCharacterSuffix, describeSyncKey, buildPullReport };
+export default { REPORT_PRIVACY_LINE, stripCharacterSuffix, describeSyncKey, redactSyncKey, buildPullReport };
