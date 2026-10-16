@@ -6815,6 +6815,17 @@ describe('the Score column in the table', () => {
         expect(html()).not.toContain('could not be drawn');
     });
 
+    test('a preference changed while the stored record is being read is kept', async () => {
+        mocks.store.set('settings:combatSimUpgradeColumns', { hidden: ['roi'], scoreDepth: '15' });
+        const load = ui._loadUpgradeColumnPrefs();
+        ui._upgradeScoreDepth = '5';
+        await ui._persistUpgradeColumnPrefs();
+        await load;
+
+        expect(ui._upgradeScoreDepth).toBe('5');
+        expect(mocks.store.get('settings:combatSimUpgradeColumns').scoreDepth).toBe('5');
+    });
+
     test('a scale this build does not know is ignored rather than trusted', async () => {
         mocks.store.set('settings:combatSimUpgradeColumns', {
             hidden: [],

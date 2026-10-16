@@ -866,6 +866,10 @@ class LabSimUI {
         // Only the ones deliberately set: an empty object is "simulate what this
         // character actually owns", which is where every panel starts.
         this._tokenBuffOverrides = {};
+        // Bumped by every save of the store it names. A restore captures it before its read and adopts nothing if
+        // it moved: an edit made while the read was in flight is already saved, and the read holds the older value
+        this._tokenBuffEdits = 0;
+        this._swapEdits = 0;
     }
 
     buildPanel() {
@@ -2717,6 +2721,7 @@ class LabSimUI {
      * @private
      */
     async _saveTokenBuffLevels() {
+        this._tokenBuffEdits += 1;
         try {
             this._tokenBuffOverrides = sanitizeTokenLevels(this._tokenBuffOverrides);
             await writeScoped(TOKEN_BUFF_LEVELS_KEY, this._tokenBuffOverrides, 'settings');
@@ -2732,6 +2737,7 @@ class LabSimUI {
     async _restoreTokenBuffLevels() {
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
+        const editsBefore = this._tokenBuffEdits;
         let levels;
         try {
             levels = sanitizeTokenLevels(await readScoped(TOKEN_BUFF_LEVELS_KEY, 'settings', null));
@@ -2744,6 +2750,8 @@ class LabSimUI {
         // restore (issued by its own buildPanel()) already raced this one and
         // would otherwise be overwritten by whichever read resolves last.
         if (!this._stillSameCharacter(ownerId)) return;
+        // A level typed while the read was out is saved and on screen; the read is the older value
+        if (this._tokenBuffEdits !== editsBefore) return;
         this._tokenBuffOverrides = levels;
         this._refreshBuffsHeaderNote();
         const body = this.panel?.querySelector('#mwi-labsim-buffs-body');
@@ -3379,7 +3387,7 @@ class LabSimUI {
         const what =
             'Tune the numbers in each loadout’s trigger rows (how much enemy HP an ability waits for, how low ' +
             'your HP or MP gets before a food or drink fires) to need fewer attempts in the labyrinth fights the ' +
-            'loadout is assigned to. Tunes the fights the Upgrade tab�s Targets scope names (the Configure fight, ' +
+            'loadout is assigned to. Tunes the fights the Upgrade tab’s Targets scope names (the Configure fight, ' +
             'all targets, or the chosen ones). Only simulates: set any change in the game by hand.';
         bar.innerHTML = `
             <div id="mwi-labsim-trigger-header" style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;"
@@ -4078,6 +4086,7 @@ class LabSimUI {
      * @private
      */
     async _saveCheckedSwaps() {
+        this._swapEdits += 1;
         try {
             await writeScoped(
                 CHECKED_SWAPS_KEY,
@@ -4098,6 +4107,7 @@ class LabSimUI {
      */
     async _restoreCheckedSwaps({ replace = false } = {}) {
         const ownerId = dataManager.getCurrentCharacterId();
+        const editsBefore = this._swapEdits;
         let saved = null;
         try {
             saved = await readScoped(CHECKED_SWAPS_KEY, 'settings', null);
@@ -4106,6 +4116,8 @@ class LabSimUI {
             return;
         }
         if (!this.panel || !this._stillSameCharacter(ownerId)) return;
+        // A swap queued, removed or re-optioned while the read was out is saved and on screen; keep it
+        if (this._swapEdits !== editsBefore) return;
         const restored = sanitizeSwapQueues(saved);
         this._swapOptions = sanitizeSwapOptions(saved?.options);
         for (const kind of ['combat', 'skilling']) {
