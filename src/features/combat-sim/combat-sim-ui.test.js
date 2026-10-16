@@ -4099,6 +4099,37 @@ describe('upgrade row handoff', () => {
         expect(upgradeCostCell(row).text).toBe('free');
     });
 
+    test('a spare another loadout wears says so and names the resale it gives up', () => {
+        const held = { fromLevel: 7, toLevel: 7, fresh: false, alreadyHeld: true, isSelf: true, baseCost: 0 };
+        // A free duplicate keeps the plain sentence
+        const free = upgradeCostCell({ cost: 0, costDetail: { ladder: held } });
+        expect(free.title).toBe('You already hold a spare at +7, which meets +7.');
+        // A worn one costs its resale
+        const claimed = upgradeCostCell({
+            cost: 2_500_000,
+            costDetail: { ladder: { ...held, claimed: true, claimedForfeit: 2_500_000 } },
+        });
+        expect(claimed.title).toContain('another loadout wears it');
+        expect(claimed.title).toContain('gives up its resale, 2.5M');
+        expect(claimed.title).not.toContain('You already hold');
+        // The enhance-from-a-spare sentence too
+        const enhanced = upgradeCostCell({
+            cost: 9_000_000,
+            costDetail: {
+                ladder: {
+                    fromLevel: 5,
+                    toLevel: 7,
+                    fresh: false,
+                    alreadyHeld: false,
+                    claimed: true,
+                    claimedForfeit: 1_000_000,
+                },
+            },
+        });
+        expect(enhanced.title).toContain('spare copy another loadout wears');
+        expect(enhanced.title).toContain('gives up its resale, 1.0M');
+    });
+
     test('the buttons add the item to savings and to the watchlist', () => {
         const container = document.createElement('div');
         container.innerHTML = upgradeRowActionsHtml(

@@ -914,7 +914,12 @@ function ladderSentence(ladder, total = null) {
             `${(ladder.refine.lines || []).join(' + ')} = ${formatKMB(ladder.refine.materialCost)}${enhance}.`
         );
     }
+    // A spare another loadout wears is not a free one: using it takes it off that loadout, which gives up its resale
+    const forfeitNote = ladder.claimed ? `; using it gives up its resale, ${formatKMB(ladder.claimedForfeit)}` : '';
     if (ladder.alreadyHeld) {
+        if (ladder.claimed) {
+            return `You hold a spare at +${ladder.fromLevel}, which meets +${ladder.toLevel}, but another loadout wears it${forfeitNote}.`;
+        }
         return `You already hold a spare at +${ladder.fromLevel}, which meets +${ladder.toLevel}.`;
     }
     const span =
@@ -924,6 +929,7 @@ function ladderSentence(ladder, total = null) {
         return `${span}: you hold no spare copy, so this includes a fresh base at ${formatKMB(ladder.baseCost)}.`;
     }
     if (ladder.fromEquipped) return `${span}, on the copy you are wearing.`;
+    if (ladder.claimed) return `${span}, on a spare copy another loadout wears${forfeitNote}.`;
     return `${span}, on the spare copy you hold.`;
 }
 
