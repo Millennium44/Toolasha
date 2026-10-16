@@ -6566,9 +6566,11 @@ class LabSimUI {
         const note = (text, color = '#aaa') =>
             `<div style="color:${color}; font-size:11px; margin:4px 0;">${text}</div>`;
 
+        const bestOrderOf = (list) => list.find((o) => o.attemptsDelta < 0 && o.significant) || list[0] || null;
         const blocks = groups.map((group) => {
             const orders = group.orders;
-            const best = orders[0] || null;
+            // Best significant improving order; a noisy top must not hide a significant later one
+            const best = bestOrderOf(orders);
             let verdict = '';
             if (!orders.length) {
                 verdict = note('No other order of these abilities was reached.', '#888');
@@ -6630,7 +6632,7 @@ class LabSimUI {
             );
         });
 
-        const bests = groups.map((g) => g.orders[0]).filter(Boolean);
+        const bests = groups.map((g) => bestOrderOf(g.orders)).filter(Boolean);
         const improving = bests.filter((b) => b.attemptsDelta < 0 && b.significant);
         let summary;
         if (section.noResult) summary = 'no order measured';
