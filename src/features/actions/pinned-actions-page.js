@@ -25,6 +25,9 @@ import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calcXpPerAction } from '../alchemy/alchemy-rankings.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE } from '../../utils/all-zones-snapshot.js';
+import { characterKey } from '../../utils/character-key.js';
+import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 
@@ -314,6 +317,16 @@ class PinnedActionsPage {
 
         this._onPinChange = () => this.loadActions();
         actionPanelSort.onPinChange(this._onPinChange);
+
+        // The simulated combat rows come from the all-zones snapshot, read when
+        // the rows load. A sync pull that rewrites this character's snapshot
+        // does not reload the page, so rebuild the open list when one lands.
+        this._unsubscribePulls?.();
+        this._unsubscribePulls = onSyncPullApplied((written) => {
+            const landed = written?.[ALL_ZONES_SNAPSHOT_STORE] || [];
+            if (!this.isActive || !landed.includes(characterKey(ALL_ZONES_SNAPSHOT_KEY))) return;
+            return this.loadActions();
+        });
 
         this.loadActions();
         this.setupNavigationObserver(mainPanel);
@@ -1231,6 +1244,11 @@ class PinnedActionsPage {
         if (this._onPinChange) {
             actionPanelSort.offPinChange(this._onPinChange);
             this._onPinChange = null;
+        }
+
+        if (this._unsubscribePulls) {
+            this._unsubscribePulls();
+            this._unsubscribePulls = null;
         }
 
         for (const { el, prevDisplay } of this.hiddenElements) {
