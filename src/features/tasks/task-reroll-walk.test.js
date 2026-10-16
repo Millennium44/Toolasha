@@ -1948,6 +1948,150 @@ describe('the widget sorts on demand', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Finished tasks are claimed first
+// ---------------------------------------------------------------------------
+
+describe('finished tasks are claimed before anything is rerolled', () => {
+    const FISHING = '/actions/fishing/shrimp';
+    const CLAIM = ['Claim Reward'];
+
+    /** The game takes a finished card off the board */
+    const removeCard = (list, slot) => list.children[slot - 1].remove();
+
+    test('no finished task means no claim step: the walk opens on the first reroll', async () => {
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+        expect(chipText()).toContain('Reroll #1');
+        expect(chipText()).not.toContain('Claim');
+    });
+
+    test('several finished tasks are claimed one per press, in board order, with the game name', async () => {
+        const list = board([
+            { name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) },
+            { name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) },
+            { name: 'Brewing - Coffee', buttons: CLAIM, quest: quest(KEEPER) },
+        ]);
+        await walk.start();
+
+        expect(chipText()).toBe('▶ Claim: Fishing - Shrimp');
+        walk.advance();
+        // One press, one game click, on the named card's own button
+        expect(clicks).toEqual(['Fishing - Shrimp:Claim Reward']);
+        expect(walk.state).toBe('waiting');
+
+        // Pressing again while the game has not answered does nothing
+        walk.advance();
+        expect(clicks).toHaveLength(1);
+
+        removeCard(list, 2);
+        vi.advanceTimersByTime(3000);
+        expect(chipText()).toBe('▶ Claim: Brewing - Coffee');
+        walk.advance();
+        expect(clicks).toEqual(['Fishing - Shrimp:Claim Reward', 'Brewing - Coffee:Claim Reward']);
+
+        removeCard(list, 2);
+        vi.advanceTimersByTime(3000);
+        // Nothing left to claim: the walk's own reroll steps follow
+        expect(chipText()).toContain('Reroll #1');
+        expect(walk.tally.claimed).toBe(2);
+    });
+
+    test('the claim goes through the game React handler, once, and not as a DOM click', async () => {
+        board([{ name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) }]);
+        const onClick = vi.fn();
+        const root = document.getElementById('root');
+        const buttonFiber = root._reactRootContainer.current.child.child;
+        buttonFiber.memoizedProps = { onClick };
+
+        await walk.start();
+        walk.advance();
+
+        expect(onClick).toHaveBeenCalledTimes(1);
+        expect(clicks).toEqual([]);
+    });
+
+    test('a claim button is found by the game class, not its English text', async () => {
+        const list = board([{ name: 'Fishing - Shrimp', buttons: ['领取奖励'], quest: quest(FISHING) }]);
+        list.querySelector('button').className = 'Button_button__1Fe9z Button_buy__3Xyz';
+
+        await walk.start();
+
+        expect(chipText()).toBe('▶ Claim: Fishing - Shrimp');
+        walk.advance();
+        expect(clicks).toEqual(['Fishing - Shrimp:领取奖励']);
+    });
+
+    test('the done summary counts claims', async () => {
+        walk.protectedHrids = new Set([MILKING]);
+        const list = board([
+            { name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) },
+            { name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) },
+        ]);
+        await walk.start();
+        walk.advance();
+        removeCard(list, 2);
+        vi.advanceTimersByTime(3000);
+
+        expect(chipText()).toContain('✓ Done — 1 claimed, 1 kept, 0 rerolled, 0 trashed');
+    });
+
+    test('a claim the game ignores is handed to the player, and counted only when it lands', async () => {
+        const list = board([{ name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) }]);
+        await walk.start();
+        walk.advance();
+        expect(clicks).toHaveLength(1);
+
+        // The card never changes: the walk waits, then asks for the real press
+        vi.advanceTimersByTime(10000);
+        expect(chipText()).toBe("👉 Press #1's highlighted Claim Reward button");
+        expect(walk.tally.claimed).toBe(0);
+
+        // The chip clicks nothing on the manual fallback
+        walk.advance();
+        expect(clicks).toHaveLength(1);
+
+        userPress(list, 1, 'Claim Reward');
+        removeCard(list, 1);
+        vi.advanceTimersByTime(3000);
+        expect(walk.tally.claimed).toBe(1);
+        expect(chipText()).toContain('1 claimed');
+    });
+
+    test('a new task arriving in the claimed slot is walked from the top, not skipped', async () => {
+        const list = board([{ name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) }]);
+        await walk.start();
+        walk.advance();
+
+        // The game refills the slot with a fresh task
+        list.children[0].querySelector('[class*="RandomTask_name"]').textContent = 'Milking - Cow';
+        setButtons(list, 1, AT_REST);
+        vi.advanceTimersByTime(3000);
+
+        expect(walk.tally.claimed).toBe(1);
+        expect(chipText()).toContain('Reroll #1');
+    });
+
+    test('a character switch (cleanup) forgets an unanswered claim', async () => {
+        board([{ name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) }]);
+        await walk.start();
+        walk.advance();
+        expect(walk.pendingClaim).not.toBeNull();
+
+        walk.cleanup();
+        expect(walk.pendingClaim).toBeNull();
+        expect(walk.claimWaits).toBe(0);
+    });
+
+    test('stopping the walk forgets an unanswered claim', async () => {
+        board([{ name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) }]);
+        await walk.start();
+        walk.advance();
+        walk.stop();
+        expect(walk.pendingClaim).toBeNull();
+    });
+});
+
+// ---------------------------------------------------------------------------
 // What start-up costs
 // ---------------------------------------------------------------------------
 
