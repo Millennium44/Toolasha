@@ -1675,10 +1675,9 @@ function formatEnhancementDisplay(
                 const protectionItemName = protectionItemDetail?.name || protectionItemHrid;
 
                 // Get protection item price
-                let protectionPrice = 0;
-                const protectionMarketData =
-                    ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
-                if (protectionMarketData?.ask > 0) protectionPrice = protectionMarketData.ask;
+                const protectionPrice = bookPrice(
+                    ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0)
+                );
                 const priceText = protectionPrice > 0 ? `@${protectionPrice.toLocaleString()}` : 'no price';
 
                 lines.push(

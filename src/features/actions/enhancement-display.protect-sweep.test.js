@@ -292,6 +292,19 @@ describe('protect-from sweep in the enhancing panel', () => {
             expect(table.textContent).toContain('× 20,000 →');
             expect(stats.textContent).toContain('(if used) (@20,000)');
         });
+
+        test('a bid-only protection prices at its bid in the table and the per-attempt line alike', async () => {
+            state.bids[MIRROR] = 18_000;
+            try {
+                const stats = await withVendorPrice(undefined);
+                const table = stats.querySelector('#mwi-enhancement-table-scroll');
+                expect(table.textContent).toContain('× 18,000 →');
+                expect(stats.textContent).toContain('(if used) (@18,000)');
+                expect(stats.textContent).not.toContain('(if used) (no price)');
+            } finally {
+                delete state.bids[MIRROR];
+            }
+        });
     });
 
     test('protectSweepHTML returns nothing without an item', () => {
