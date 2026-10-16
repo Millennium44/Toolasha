@@ -3608,7 +3608,7 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
  *   ladder: Object|undefined}} Buy price in gold, its basis, whose enhancing stats a sweep ran
  *   on, and for a self-enhanced item the copy it was laddered from
  */
-function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { isSelf = true } = {}) {
+function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { isSelf = true, candidate = null } = {}) {
     // Tester shop first, when it is a price source: the shop copy at its
     // level, or that copy mirrored up — see tester-shop.js
     if (testerShopEnabled()) {
@@ -3624,10 +3624,13 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
         // A swap to a copy already held at the level asked for just equips it:
         // nothing to buy or enhance. The spare-ladder rule is for enhancing above
         // every held copy, so it must not discard that copy as the "protected best"
-        const held = heldSwapCopy(itemHrid, enhancementLevel, isSelf);
+        const held = heldSwapCopy(itemHrid, enhancementLevel, isSelf, candidate);
         if (held) {
             return {
-                price: 0,
+                // A spare another loadout wears is not free: using it takes the piece out of that loadout, so
+                // it costs its resale, like the refine and mirror routes charge it
+                price: held.claimed ? held.forfeit : 0,
+                ...(held.taken ? { consumed: [{ hrid: itemHrid, level: held.level }] } : {}),
                 source: 'enhance',
                 ladder: {
                     fromLevel: held.level,
@@ -3637,10 +3640,11 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
                     fromEquipped: false,
                     isSelf: Boolean(isSelf),
                     baseCost: 0,
+                    ...(held.claimed ? { claimed: true, claimedForfeit: held.forfeit } : {}),
                 },
             };
         }
-        return resolveSelfEnhancePrice(itemHrid, enhancementLevel, gameData, { isSelf });
+        return resolveSelfEnhancePrice(itemHrid, enhancementLevel, gameData, { isSelf, candidate });
     }
 
     if (enhancementLevel > 0) {
@@ -3692,13 +3696,20 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
  * @param {string} itemHrid - Item HRID
  * @param {number} targetLevel - Level the swap asks for
  * @param {boolean} isSelf - False for any player other than the live character
- * @returns {Object|null} The copy, or null
+ * @param {Object|null} [candidate] - The row being priced. A bag copy another loadout wears (`claimed`)
+ *   or that the row itself takes off (`taken`) is not a free spare: it is offered with its resale as
+ *   `forfeit`, and a free spare is preferred to it
+ * @returns {Object|null} The copy (with `forfeit`), or null
  */
-function heldSwapCopy(itemHrid, targetLevel, isSelf) {
+function heldSwapCopy(itemHrid, targetLevel, isSelf, candidate = null) {
     if (!isSelf) return null;
     const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
-    const spares = copiesForPricing(itemHrid, { isSelf }).filter((copy) => !copy.equipped && copy.level >= target);
-    return spares.length ? spares[spares.length - 1] : null;
+    const spares = markTakenCopies(copiesForPricing(itemHrid, { isSelf, candidate }), itemHrid, candidate)
+        .filter((copy) => !copy.equipped && copy.level >= target)
+        .map((copy) => ({ ...copy, forfeit: copy.claimed || copy.taken ? sellValue(itemHrid, copy.level) : 0 }));
+    // Cheapest first; among equals the lowest sufficient level, the best-fitting spare
+    spares.sort((a, b) => a.forfeit - b.forfeit || a.level - b.level);
+    return spares[0] || null;
 }
 
 /**
@@ -3726,7 +3737,12 @@ function heldSwapCopy(itemHrid, targetLevel, isSelf) {
  * @returns {{price: number|null, source: string|null, enhanceSource: Object|undefined, ladder: Object}}
  */
 function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = true, candidate = null } = {}) {
-    const plan = planSelfEnhance(targetLevel, copiesForPricing(itemHrid, { isSelf, candidate }));
+    const marked = markTakenCopies(copiesForPricing(itemHrid, { isSelf, candidate }), itemHrid, candidate);
+    const plan = planSelfEnhance(targetLevel, marked);
+    // Enhancing a copy another loadout wears takes it out of that loadout (its resale is forfeited); a copy
+    // the row takes off is spent instead, so its sale is withheld from the row's credit
+    const forfeit = plan.copy?.claimed ? sellValue(itemHrid, plan.copy.level) : 0;
+    const consumed = plan.copy?.taken ? [{ hrid: itemHrid, level: plan.copy.level }] : [];
     const ladder = {
         fromLevel: plan.fromLevel,
         toLevel: plan.toLevel,
@@ -3736,9 +3752,11 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
         // Whose copies these were, so a row for another player draws no Enhance
         isSelf: Boolean(isSelf),
         baseCost: 0,
+        ...(forfeit > 0 ? { claimed: true, claimedForfeit: forfeit } : {}),
     };
 
-    if (plan.alreadyHeld) return { price: 0, source: 'enhance', ladder };
+    if (plan.alreadyHeld)
+        return { price: forfeit, ...(consumed.length ? { consumed } : {}), source: 'enhance', ladder };
 
     let base = 0;
     if (plan.fresh) {
@@ -3761,7 +3779,8 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
     if (enhanceCost == null) return { price: null, source: null, ladder };
 
     return {
-        price: base + Math.max(0, enhanceCost),
+        price: base + Math.max(0, enhanceCost) + forfeit,
+        ...(consumed.length ? { consumed } : {}),
         source: 'enhance',
         enhanceSource:
             plan.toLevel > plan.fromLevel ? describeEnhancementSource(enhancementSweepParams(itemHrid)) : undefined,

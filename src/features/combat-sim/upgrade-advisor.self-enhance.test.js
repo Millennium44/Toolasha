@@ -79,7 +79,13 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
-const { calculateUpgradeCost, explainUpgradeCost, runLabyrinthUpgradeAnalysis } = await import('./upgrade-advisor.js');
+const {
+    calculateUpgradeCost,
+    explainUpgradeCost,
+    runLabyrinthUpgradeAnalysis,
+    buildOtherLoadoutClaims,
+    withLoadoutClaims,
+} = await import('./upgrade-advisor.js');
 const { buildGameDataPayload } = await import('./combat-sim-adapter.js');
 const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 
@@ -233,6 +239,72 @@ describe('self-enhanced upgrade pricing', () => {
         expect(detail.buys[0]).toMatchObject({ price: 999_000_000, source: 'market' });
         expect(detail.ladder).toBeNull();
         expect(state.sweeps).toEqual([]);
+    });
+});
+
+describe('self-enhanced copies another saved loadout wears', () => {
+    beforeEach(() => {
+        state.items = [];
+        state.sweeps = [];
+        state.shops = {};
+    });
+
+    /** The Lab's claims for a saved loadout that wears `level` of the cape, keyed by full equipment-type hrid */
+    const wornBy = (level, loadoutId = 2) =>
+        buildOtherLoadoutClaims([
+            {
+                loadoutId,
+                loadoutName: `Loadout ${loadoutId}`,
+                dto: { equipment: { '/equipment_types/back': { hrid: CAPE, enhancementLevel: level } } },
+            },
+        ]);
+    const claimedRow = (row, level, id) => withLoadoutClaims(row, wornBy(level, id));
+
+    test('a swap to a bag +10 that another loadout wears costs its resale, not nothing', () => {
+        state.items = [stack(CAPE, 10)];
+        const row = claimedRow(tier(CAPE, 10), 10);
+        expect(calculateUpgradeCost(row, gameData)).toBe(5_000_000);
+        const detail = explainUpgradeCost(row, gameData);
+        expect(detail.net).toBe(5_000_000);
+        expect(detail.ladder).toMatchObject({ alreadyHeld: true, claimed: true, claimedForfeit: 5_000_000 });
+    });
+
+    test('a bag +10 nobody wears is still a free spare', () => {
+        state.items = [stack(CAPE, 10)];
+        expect(calculateUpgradeCost(claimedRow(tier(CAPE, 10), 7), gameData)).toBe(0);
+        expect(calculateUpgradeCost(tier(CAPE, 10), gameData)).toBe(0);
+    });
+
+    test('a stack of two +10 with one claimed leaves the other free', () => {
+        state.items = [stack(CAPE, 10, '/item_locations/inventory', 2)];
+        expect(calculateUpgradeCost(claimedRow(tier(CAPE, 10), 10), gameData)).toBe(0);
+    });
+
+    test('a free spare at a higher level beats a claimed one at the target level', () => {
+        state.items = [stack(CAPE, 10), stack(CAPE, 12)];
+        const detail = explainUpgradeCost(claimedRow(tier(CAPE, 10), 10), gameData);
+        expect(detail.net).toBe(0);
+        expect(detail.ladder).toMatchObject({ fromLevel: 12, alreadyHeld: true });
+    });
+
+    test('a +0 target: the claimed bag +0 is charged too', () => {
+        state.items = [stack(CAPE, 0)];
+        expect(calculateUpgradeCost(claimedRow(tier(CAPE, 0), 0), gameData)).toBe(5_000_000);
+    });
+
+    test('an enhance that ladders a claimed spare adds the spare resale', () => {
+        state.items = [stack(CAPE, 6, '/item_locations/back'), stack(CAPE, 3)];
+        const candidate = {
+            type: 'enhancement',
+            currentHrid: CAPE,
+            currentLevel: 6,
+            upgradeHrid: CAPE,
+            upgradeLevel: 7,
+        };
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(4_000_000);
+        const row = claimedRow(candidate, 3);
+        expect(calculateUpgradeCost(row, gameData)).toBe(4_000_000 + 5_000_000);
+        expect(explainUpgradeCost(row, gameData).ladder).toMatchObject({ fromLevel: 3, claimedForfeit: 5_000_000 });
     });
 });
 
