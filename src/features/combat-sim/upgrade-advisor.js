@@ -4955,6 +4955,9 @@ function computeMetrics(simResult, gameData, playerHrid, hours) {
     return {
         xpPerHour: totalXpPerHour,
         profitPerHour: revenue.netPerHour,
+        // Gross sides of the profit: the scale a profit sampling error is sized against (net can be ~0)
+        revenuePerHour: revenue.revenuePerHour,
+        costPerHour: revenue.costPerHour,
         deathsPerHour: deaths,
         encountersPerHour: encounters,
         dps: (simResult.totalDamageDealt?.[playerHrid] || 0) / (simHours * 3600),

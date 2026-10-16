@@ -1553,6 +1553,44 @@ describe('the panel', () => {
             expect(section().querySelector('[data-collapse-summary]').textContent).toBe('all within noise');
         });
 
+        describe('profit noise at break-even', () => {
+            // Net profit is ~0 with ten million moving each way, so a percent error of the NET is ~0 gold
+            const BREAKEVEN = {
+                ...BASELINE,
+                profitPerHour: 0,
+                revenuePerHour: 10_000_000,
+                costPerHour: 10_000_000,
+            };
+            const be = (name, gain) => {
+                const r = orderRow(name, { se: 1 });
+                r.metrics.profitPerHour = gain;
+                r.deltas.profit = 100;
+                r.significantBy.profit = true;
+                return r;
+            };
+
+            test('the section labels a small gain within noise and a large one not', () => {
+                draw([be('A → B', 5_000), be('C → D', 2_000_000)], { baseline: BREAKEVEN });
+                const rows = [...section().querySelectorAll('[data-order-row]')];
+                expect(rows.find((r) => r.textContent.includes('A → B')).textContent).toContain('within noise');
+                expect(rows.find((r) => r.textContent.includes('C → D')).textContent).not.toContain('within noise');
+            });
+
+            test('the section with only a small gain says every order is within noise', () => {
+                draw([be('A → B', 5_000)], { baseline: BREAKEVEN });
+                expect(section().textContent).toContain('within noise of your current one');
+            });
+
+            test('the budget free-order line skips a small gain and takes a large one', () => {
+                const plan = { metric: UPGRADE_PLAN_METRICS.find((m) => m.key === 'profit'), picks: [] };
+                const small = ui._planAbilityOrder(plan, [be('A → B', 5_000)], BREAKEVEN);
+                expect(small.appended).toBe(false);
+                const big = ui._planAbilityOrder(plan, [be('A → B', 5_000), be('C → D', 2_000_000)], BREAKEVEN);
+                expect(big.appended).toBe(true);
+                expect(big.html).toContain('C → D');
+            });
+        });
+
         test('a noisy top with a significant second: the verdict and summary name the second', () => {
             draw([
                 orderRow('A → B', { profit: 700, se: 500, sig: false }),
