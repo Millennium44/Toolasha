@@ -178,6 +178,7 @@ const ABILITY_ORDER_RANKS = [
     { key: 'profit', label: 'Profit/hr' },
     { key: 'xp', label: 'EXP/hr' },
     { key: 'dps', label: 'DPS' },
+    { key: 'eph', label: 'EPH' },
     { key: 'balanced', label: 'Balanced' },
 ];
 const DEFAULT_ABILITY_ORDER_RANK = 'profit';
@@ -12508,7 +12509,8 @@ class CombatSimUI {
             };
         }
         const sectionKey = this._abilityOrderRank || DEFAULT_ABILITY_ORDER_RANK;
-        const planKey = isScore ? 'balanced' : metric.key;
+        // The Budget "for" axis calls encounters/hr 'encounters'; the section's rank key is 'eph'
+        const planKey = isScore ? 'balanced' : metric.key === 'encounters' ? 'eph' : metric.key;
         const sectionLabel = ABILITY_ORDER_RANKS.find((x) => x.key === sectionKey)?.label;
         const notes = [];
         if (planKey !== sectionKey) {
@@ -12855,6 +12857,7 @@ class CombatSimUI {
             if (rank === 'profit') return (r.metrics?.profitPerHour ?? NaN) - (baseline.profitPerHour ?? NaN);
             if (rank === 'xp') return r.deltas?.xp;
             if (rank === 'dps') return r.deltas?.dps;
+            if (rank === 'eph') return r.deltas?.encounters;
             return balancedScore(metricsOf(r.metrics), baseMetrics);
         };
         // One standard error, in the unit of the ranked gain. Balanced is an average of percentage terms that
@@ -12864,7 +12867,7 @@ class CombatSimUI {
             if (rank === 'profit') {
                 return Number.isFinite(n.profit) ? (n.profit / 100) * Math.abs(baseline.profitPerHour || 0) : null;
             }
-            const value = rank === 'xp' ? n.xp : n.dps;
+            const value = rank === 'xp' ? n.xp : rank === 'eph' ? n.encounters : n.dps;
             return Number.isFinite(value) ? value : null;
         };
         const fmtGain = (value) =>
@@ -12950,6 +12953,7 @@ class CombatSimUI {
                     `<span style="${ROW_NOTE_STYLE} background:rgba(120,150,190,0.25); color:#9ab;">current</span></td>` +
                     `<td style="${td} color:#888;">—</td><td style="${td} color:#888;">—</td>` +
                     `<td style="${td} color:#888;">—</td><td style="${td} color:#888;">—</td>` +
+                    `<td style="${td} color:#888;">—</td>` +
                     `<td style="${td} color:#888;">baseline</td></tr>`;
                 continue;
             }
@@ -12965,6 +12969,7 @@ class CombatSimUI {
                 cell(e, profitAbs, money, 'profit') +
                 cell(e, r.deltas?.xp, pct, 'xp') +
                 cell(e, r.deltas?.dps, pct, 'dps') +
+                cell(e, r.deltas?.encounters, pct, 'encounters') +
                 cell(e, r.deltas?.deaths, pct, 'deaths') +
                 `<td style="${td} color:#888;">${Number.isFinite(e.noise) ? fmtNoise(e.noise) : '—'}</td></tr>`;
         }
@@ -12994,7 +12999,7 @@ class CombatSimUI {
                     : '') +
                 `<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
                 `<th style="${th} text-align:left;">Order</th><th style="${th}">ΔProfit/hr</th><th style="${th}">ΔEXP/hr</th>` +
-                `<th style="${th}">ΔDPS</th><th style="${th}">ΔDeaths/hr</th><th style="${th}">Noise</th></tr></thead>` +
+                `<th style="${th}">ΔDPS</th><th style="${th}">ΔEPH</th><th style="${th}">ΔDeaths/hr</th><th style="${th}">Noise</th></tr></thead>` +
                 `<tbody>${rowsHtml}</tbody></table>` +
                 toggle
         );

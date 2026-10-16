@@ -1335,7 +1335,10 @@ describe('the panel', () => {
 
     describe('the Ability order section', () => {
         /** An ability_order row: free, with its own measured gains and a noise of `se` percent */
-        const orderRow = (name, { profit = 0, xpPct = 0, dpsPct = 0, se = 1, sig = true } = {}) => ({
+        const orderRow = (
+            name,
+            { profit = 0, xpPct = 0, dpsPct = 0, ephPct = 0, se = 1, ephSe = se, sig = true } = {}
+        ) => ({
             candidate: {
                 description: `Order: ${name}`,
                 type: 'ability_order',
@@ -1351,10 +1354,10 @@ describe('the panel', () => {
                 xpPerHour: 1000 * (1 + xpPct / 100),
                 profitPerHour: 1000 + profit,
                 deathsPerHour: 0,
-                encountersPerHour: 10,
+                encountersPerHour: 10 * (1 + ephPct / 100),
             },
-            deltas: { dps: dpsPct, xp: xpPct, profit: profit / 10, deaths: 0, encounters: 0 },
-            noise: { dps: se, xp: se, profit: se, encounters: se, deaths: se },
+            deltas: { dps: dpsPct, xp: xpPct, profit: profit / 10, deaths: 0, encounters: ephPct },
+            noise: { dps: se, xp: se, profit: se, encounters: ephSe, deaths: se },
             significantBy: { dps: sig, xp: sig, profit: sig, encounters: sig, deaths: sig },
             score: 25,
             goldPer: { dps: 0, xp: 0, profit: 0, deaths: 0, encounters: 0 },
@@ -1406,6 +1409,34 @@ describe('the panel', () => {
             expect(section().querySelector('#mwi-csim-order-rank option[selected]').value).toBe('dps');
         });
 
+        test('EPH ranks by the encounters delta and draws a ΔEPH column', () => {
+            draw([orderRow('A → B', { profit: 900, ephPct: 1 }), orderRow('C → D', { profit: 100, ephPct: 8 })]);
+            expect(names()[0]).toContain('A → B');
+            const select = section().querySelector('#mwi-csim-order-rank');
+            expect([...select.options].map((o) => o.value)).toContain('eph');
+            select.value = 'eph';
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            expect(names()[0]).toContain('C → D');
+            const heads = [...section().querySelectorAll('thead th')].map((th) => th.textContent);
+            expect(heads).toContain('ΔEPH');
+            expect(heads.indexOf('ΔEPH')).toBe(heads.indexOf('ΔDPS') + 1);
+            const cd = [...section().querySelectorAll('[data-order-row]')].find((r) => r.textContent.includes('C → D'));
+            expect(cd.children[heads.indexOf('ΔEPH')].textContent).toBe('+8.00%');
+            // the baseline row keeps the same number of cells as the header
+            expect(section().querySelector('[data-order-current]').children).toHaveLength(heads.length);
+        });
+
+        test('EPH within-noise uses the EPH noise, not the DPS noise', () => {
+            ui._abilityOrderRank = 'eph';
+            draw([
+                orderRow('A → B', { ephPct: 2, se: 0.1, ephSe: 50, sig: false }),
+                orderRow('C → D', { ephPct: 2, se: 50, ephSe: 0.1 }),
+            ]);
+            const rows = [...section().querySelectorAll('[data-order-row]')];
+            expect(rows.find((r) => r.textContent.includes('A → B')).textContent).toContain('within noise');
+            expect(rows.find((r) => r.textContent.includes('C → D')).textContent).not.toContain('within noise');
+        });
+
         test('the current order is a marked baseline row and a noisy gain says within noise', () => {
             draw([orderRow('A → B', { profit: 20, se: 50, sig: false }), orderRow('C → D', { profit: 900, se: 1 })]);
             expect(section().querySelector('[data-order-current]').textContent).toContain('current');
@@ -1445,6 +1476,17 @@ describe('the panel', () => {
             expect(ui._abilityOrderRank).toBe('xp');
             expect(ui._abilityOrderShowAll).toBe(true);
             expect(section().querySelector('table').style.display).toBe('none');
+        });
+
+        test('a persisted eph rank is restored and an unknown one falls back to Profit/hr', async () => {
+            draw([orderRow('A → B', { profit: 500 })]);
+            mocks.store.set('settings:combatSimUpgradeColumns', { hidden: [], abilityOrderRank: 'eph' });
+            await ui._loadUpgradeColumnPrefs();
+            expect(ui._abilityOrderRank).toBe('eph');
+            expect(section().querySelector('#mwi-csim-order-rank option[selected]').value).toBe('eph');
+            mocks.store.set('settings:combatSimUpgradeColumns', { hidden: [], abilityOrderRank: 'nonsense' });
+            await ui._loadUpgradeColumnPrefs();
+            expect(section().querySelector('#mwi-csim-order-rank option[selected]').value).toBe('profit');
         });
 
         test('Export CSV still carries the order rows, with no score', () => {
@@ -1574,6 +1616,21 @@ describe('the panel', () => {
                     results: [level(), orderOf({ profit: 700 })],
                     food: null,
                 });
+                expect(budgetText()).toContain('the Ability order section ranks by EXP/hr');
+            });
+
+            test('an EPH budget objective maps to EPH ranking, so there is no mismatch note', () => {
+                ui._upgradePlanMetric = 'encounters';
+                ui._abilityOrderRank = 'eph';
+                ui._renderUpgradeResults({
+                    baseline: BASELINE,
+                    results: [level(), orderOf({ ephPct: 30, se: 0.1, sig: true })],
+                    food: null,
+                });
+                expect(planOrder()).not.toBeNull();
+                expect(budgetText()).not.toContain('the Ability order section ranks by');
+                ui._abilityOrderRank = 'xp';
+                ui._renderUpgradeResults(ui._upgradeResultsData);
                 expect(budgetText()).toContain('the Ability order section ranks by EXP/hr');
             });
 
