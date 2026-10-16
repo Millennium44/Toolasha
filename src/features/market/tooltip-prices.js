@@ -743,9 +743,8 @@ class TooltipPrices {
             !isCollectionTooltip &&
             !(info.enhancementLevel > 0) &&
             config.getSetting(KEEP_CHIP_SETTING) &&
-            (config.getSetting('itemTooltip_selfUseAlchemy') ||
-                config.getSetting(INSTEAD_SETTING) ||
-                config.getSetting(SELLING_SETTING)) &&
+            // Not the selling line: it sells every output, so a K mark changes nothing there
+            (config.getSetting('itemTooltip_selfUseAlchemy') || config.getSetting(INSTEAD_SETTING)) &&
             selfUseWanted.isAlchemyOutput(itemHrid);
 
         // Check if this is an openable container first (they have no market price)

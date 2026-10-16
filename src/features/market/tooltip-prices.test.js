@@ -1377,6 +1377,14 @@ describe('keep for self-use chip', () => {
         expect(chip.textContent).toBe('☑ Sell (not kept) (K)');
     });
 
+    test('the selling line alone does not bring the chip: it sells every output, so K changes nothing', async () => {
+        settings.insteadOfSelling = true;
+        const el = itemTooltip('Frenzy');
+        observerState.handler(el);
+        await settleLong();
+        expect(el.querySelector('.toolasha-selfuse-keep-chip')).toBeNull();
+    });
+
     test('no chip with the keep-chip setting off, even with the self-use lines on', async () => {
         settings.selfUseAlchemy = true;
         settings.keepChip = false;
