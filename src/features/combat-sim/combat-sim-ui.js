@@ -12502,8 +12502,9 @@ class CombatSimUI {
             .map((r) => ({ r, gain: gainOf(r) }))
             .filter((e) => Number.isFinite(e.gain))
             .sort((a, b) => b.gain - a.gain);
-        const best = ranked[0];
-        if (!best || best.gain <= 0 || !clearsNoise(best.r, best.gain)) {
+        // The best order that improves AND clears the noise; a noisy top must not hide a significant second
+        const best = ranked.find((e) => e.gain > 0 && clearsNoise(e.r, e.gain));
+        if (!best) {
             return {
                 html: muted(`Ability order: no order beats your current one outside the noise on ${metric.label}.`),
                 gain: 0,
@@ -12910,7 +12911,8 @@ class CombatSimUI {
             .sort((a, b) => b.gain - a.gain);
 
         const total = measured.length;
-        const best = measured[0] || null;
+        // The best order that improves and is not within noise; a noisy top must not hide a significant second
+        const best = measured.find((e) => e.gain > 0 && !e.within) || measured[0] || null;
         const expected = stamp?.expected ?? total;
         const partial = Boolean(stamp?.stopped) && total < expected;
         let verdict;
