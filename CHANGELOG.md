@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers round (2026-10-15, second pass)
+
+- Enhancing: a material, Philosopher's Mirror or base copy with no market quote is no longer priced at its NPC vendor price; materials still fall back to their craft cost, otherwise they show "no price" and mark a tracked session, the savings card and the Lab's enhance quotes unpriced instead of reading cheap.
+- Lab Sim upgrade costs charge a spare that another loadout wears at its resale (and say so), credit the pieces an enhance-route Check a swap frees, and the mirror-then-refine Market button lists a crafted base's recipe materials.
+- Combat Sim Profit/h trigger tuning withholds its threshold changes when the condition search finds a drop with no price, and "Best found" shows a rejected row's whole move from its original setting.
+- Lab Tune triggers follows the Upgrade tab's Targets choice: by default it now tunes the Configure fight, so pick All targets to tune every fight; trigger progress bars end at 100%.
+- Sync: the pull report no longer shows guild names inside key names, the all-zones snapshot and sim consumable rates merge without "Reload now", and an edit made while a pull is loading is no longer reverted.
+- Overbid table hides survive a listing cancelled during login, a guild member's pending re-read survives a rename, and guild trial cards drop a wave reading filed before game data loaded.
+
 ### Agent rule: a pre-PR question list
 
 - Contributor rules now carry ten questions every diff answers before its PR, drawn from the recurring themes of past automated reviews, so fewer review rounds are spent rediscovering the same kinds of bug.
