@@ -4145,6 +4145,55 @@ describe('the panel, end to end', () => {
             expect(stored.tiles['combat::trial chameleon'].tiers).toEqual([{ tier: 2, total: 618_000 }]);
         });
 
+        test('a record and bases adopted before the game data arrived are scrubbed once it does', () => {
+            const poisoned = {
+                weekStart: trialWeekStart(now),
+                tiles: {
+                    'combat::trial badger': {
+                        name: 'Trial Badger',
+                        kind: 'combat',
+                        samples: [],
+                        tiers: [
+                            { tier: 12, total: 971_520 },
+                            { tier: 1, total: 971_520, source: 'pool' },
+                        ],
+                    },
+                    'combat::trial chameleon': {
+                        name: 'Trial Chameleon',
+                        kind: 'combat',
+                        samples: [],
+                        tiers: [{ tier: 2, total: 618_000 }],
+                    },
+                },
+            };
+            game.clientData = {};
+            guildTrials.gameDataScrubbed = false;
+            guildTrials.record = null;
+            guildTrials.workBases = {
+                'trial badger': { baseWork: BADGER / 1.47 },
+                'trial chameleon': { baseWork: 550_000 },
+            };
+            guildTrials._adoptStored(structuredClone(poisoned));
+            guildTrials._purgeWorkBases();
+
+            // Nothing can be placed yet, so the scrubs were no-ops
+            expect(guildTrials.record.tiles['combat::trial badger'].tiers).toHaveLength(2);
+            expect(Object.keys(guildTrials.workBases)).toHaveLength(2);
+            guildTrials._tick();
+            expect(guildTrials.record.tiles['combat::trial badger'].tiers).toHaveLength(2);
+            expect(guildTrials.gameDataScrubbed).toBe(false);
+
+            game.clientData = TRIAL_GAME_DATA;
+            guildTrials._tick();
+            expect(guildTrials.record.tiles['combat::trial badger'].tiers).toEqual([
+                { tier: 1, total: 971_520, source: 'pool' },
+            ]);
+            // A single-boss wave's untagged observation is untouched
+            expect(guildTrials.record.tiles['combat::trial chameleon'].tiers).toEqual([{ tier: 2, total: 618_000 }]);
+            expect(Object.keys(guildTrials.workBases)).toEqual(['trial chameleon']);
+            expect(guildTrials.gameDataScrubbed).toBe(true);
+        });
+
         test('an untagged base on a multi-monster wave is dropped on load, a single boss’s is kept', async () => {
             trialsFeature.cleanup();
             game.store = {
