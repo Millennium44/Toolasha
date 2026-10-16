@@ -1200,15 +1200,33 @@ describe('the registry entries the entrypoint hands over', () => {
         expect(entry.liveStop).toBe(true);
     });
 
-    test.each(['savingsGoalAlerts', 'priceTargetAlerts'])(
-        'the %s alert is live-stopped, so switching it off drops its armed bits instead of freezing them',
-        (key) => {
-            const entry = registered.find((e) => e.key === key);
+    // Each keeps a seen/armed/baseline value that only a running check updates, so a gate closing must tear it
+    // down (its disable() clears it) or switching the setting off and on resumes from a frozen one
+    test.each([
+        'savingsGoalAlerts',
+        'priceTargetAlerts',
+        'emptyQueueNotification',
+        'labyrinthRunAlerts',
+        'combatConsumableAlerts',
+        'labyrinthEntryAlerts',
+        'combatDeathAlerts',
+        'ttlTargetAlerts',
+        'enhancementTargetAlerts',
+        'philoStoneAlerts',
+        'taskSlotAlerts',
+    ])('the %s alert is live-stopped, so switching it off drops its armed bits instead of freezing them', (key) => {
+        const entry = registered.find((e) => e.key === key);
 
-            expect(entry, `${key} is no longer registered`).toBeTruthy();
-            expect(entry.liveStop).toBe(true);
-        }
-    );
+        expect(entry, `${key} is no longer registered`).toBeTruthy();
+        expect(entry.liveStop).toBe(true);
+    });
+
+    test('the empty queue notification is gated on its own setting, since no feature-map entry carries its key', () => {
+        const entry = registered.find((e) => e.key === 'emptyQueueNotification');
+
+        expect(entry, 'emptyQueueNotification is no longer registered').toBeTruthy();
+        expect(typeof entry.customCheck).toBe('function');
+    });
 
     test('the overbid table is gated on its own setting and live-stopped', () => {
         const entry = registered.find((e) => e.key === 'overbidPanel');
