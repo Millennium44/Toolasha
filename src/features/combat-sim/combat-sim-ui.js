@@ -2938,6 +2938,8 @@ class CombatSimUI {
         this._unsubscribePricingQuickSettings = [];
         // Whether a coalesced reprice is already queued — see _scheduleReprice()
         this._repriceScheduled = false;
+        // Re-saves of the all-zones snapshot, one after another — see _resaveAllZonesSnapshot()
+        this._resaveChain = Promise.resolve();
         // Bumped whenever the expected-value cache rebuilds, so cached history
         // metrics keyed on it are invalidated — see _subscribePricingQuickSettings()
         // and _ensureHistoryMetrics().
@@ -7481,9 +7483,13 @@ class CombatSimUI {
         if (!saved || !this._stillSameCharacter(saved.ownerId)) return;
         const snapshot = buildAllZonesSnapshot(rows, saved.meta);
         // Not over a newer stored snapshot (a sync pull brings the other device's later run): the table on screen
-        // stays as it is, and the stored run is the one the ranked list and the planner read
-        resaveAllZonesSnapshot(snapshot, saved.savedAt ?? null)
-            .then((stored) => {
+        // stays as it is, and the stored run is the one the ranked list and the planner read.
+        // One at a time: `saved.savedAt` advances only when a resave settles, so a second re-price issued before
+        // then would compare against the stamp the first already replaced and be refused as "older"
+        this._resaveChain = this._resaveChain
+            .then(async () => {
+                if (this._allZonesSnapshotMeta !== saved || !this._stillSameCharacter(saved.ownerId)) return;
+                const stored = await resaveAllZonesSnapshot(snapshot, saved.savedAt ?? null);
                 if (stored && this._allZonesSnapshotMeta === saved) saved.savedAt = snapshot.savedAt;
             })
             .catch((error) => {
