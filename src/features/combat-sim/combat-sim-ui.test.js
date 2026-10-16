@@ -3280,6 +3280,32 @@ describe('the all-zones table', () => {
                 ui._allZonesSnapshotMeta = null;
             });
 
+            test('two re-prices back to back leave the stored snapshot at the second one’s prices', async () => {
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+                const key = 'combatExport:allZonesSnapshot_' + mocks.characterId;
+                ui._allZonesSnapshotMeta = {
+                    ownerId: mocks.characterId,
+                    meta: { hours: 1, playerHrid: 'player1' },
+                    savedAt: 1000,
+                };
+                mocks.store.set(key, { version: 1, savedAt: 1000, zones: [] });
+
+                // Issued before the first resave settles, so `saved.savedAt` is still 1000 for the second
+                const now = vi.spyOn(Date, 'now');
+                now.mockReturnValue(2000);
+                ui._resaveAllZonesSnapshot([result('Fly', { profit: 111 })]);
+                now.mockReturnValue(3000);
+                ui._resaveAllZonesSnapshot([result('Fly', { profit: 222 })]);
+                now.mockRestore();
+                await flush();
+                await flush();
+
+                expect(mocks.store.get(key).savedAt).toBe(3000);
+                expect(mocks.store.get(key).zones[0].profitPerHour).toBe(222);
+                expect(ui._allZonesSnapshotMeta.savedAt).toBe(3000);
+                ui._allZonesSnapshotMeta = null;
+            });
+
             test('a naming-only change resyncs the row without re-pricing the sweep', async () => {
                 mocks.revenueCalls = [];
                 await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
