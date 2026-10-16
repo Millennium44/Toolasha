@@ -1458,6 +1458,10 @@ const marketHistoryPanel = new MarketHistoryPanel();
  *   target: {side: 'ask'|'bid', price: number}|null}>}
  */
 export function watchedPriceTargets() {
+    // After a character switch, until loadPrefs() has run for the new character, the list held is
+    // the previous character's: unknown, not theirs
+    const who = dataManager.getCurrentCharacterId?.() || null;
+    if (marketHistoryPanel.watchlistOwner !== who && marketHistoryPanel.watchlistOwner !== null) return [];
     return (marketHistoryPanel.watchlist || []).map((entry) => {
         const [itemHrid, level] = String(entry.key).split(':');
         const enhancementLevel = Number(level) || 0;
