@@ -640,6 +640,37 @@ describe('the insta-vs-listing decision', () => {
         });
     });
 
+    describe('a bid above the tradable band maximum', () => {
+        const rich = (bid) => ({
+            asks: [{ price: 200, orderQuantity: 10, filledQuantity: 0, createdTimestamp: new Date().toISOString() }],
+            bids: [{ price: bid, orderQuantity: 10, filledQuantity: 0 }],
+        });
+
+        test('is still sold into, with a warning before anything is pressed', () => {
+            band.value = { min: 45, max: 55 };
+            settings['market_bulkSellMaxSpreadPct'] = 99;
+            bulkSell._decideAndOpen(rich(80));
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.price).toBe(80);
+            expect(bulkSell.decision.warning).toMatch(/above the tradable range/);
+        });
+
+        test('an in-band bid carries no warning', () => {
+            band.value = { min: 45, max: 55 };
+            settings['market_bulkSellMaxSpreadPct'] = 99;
+            bulkSell._decideAndOpen(rich(50));
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.warning).toBeUndefined();
+        });
+
+        test('a listing decision carries no warning', () => {
+            band.value = { min: 45, max: 55 };
+            bulkSell._decideAndOpen(rich(80));
+            expect(bulkSell.decision.insta).toBe(false);
+            expect(bulkSell.decision.warning).toBeUndefined();
+        });
+    });
+
     describe('the tradable band prices the patient side', () => {
         test('a stale above-band ask is judged at the band edge, and listed at it', () => {
             // Official value 50 → band max 55: the 100 ask could never fill,
@@ -988,6 +1019,8 @@ describe('confirming from the strip', () => {
 
     beforeEach(() => {
         gameClicks = 0;
+        // The bag matches the queue, as it does until something moves the stack
+        game.items = [inventory('/items/cheese', 18), inventory('/items/milk', 4), inventory('/items/sword', 1, 3)];
         document.body.textContent = '';
         settings['market_bulkSellAssistant'] = true;
         bulkSell.chip = null;
@@ -1103,6 +1136,62 @@ describe('confirming from the strip', () => {
         expect(statusText()).toMatch(/quantity cannot be read/);
         // Not a comparison against the price, dressed up as a quantity mismatch
         expect(statusText()).not.toMatch(/45,?000,?000/);
+    });
+
+    describe('the stack is re-read at the press', () => {
+        const setCheese = (count) => {
+            game.items = [inventory('/items/cheese', count), inventory('/items/milk', 4)];
+        };
+
+        test('unchanged: sells the queued count', () => {
+            openModal({ qty: 18 });
+            runAtStep0();
+            confirmBtn().click();
+            expect(gameClicks).toBe(1);
+            expect(bulkSell.current.count).toBe(18);
+        });
+
+        test('grew: rewrites the modal and sells the whole live stack', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            confirmBtn().click();
+            expect(modal.querySelector('input').value).toBe('25');
+            expect(bulkSell.current.count).toBe(25);
+            expect(gameClicks).toBe(1);
+        });
+
+        test('shrank: sells what is there', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(7);
+            confirmBtn().click();
+            expect(modal.querySelector('input').value).toBe('7');
+            expect(gameClicks).toBe(1);
+        });
+
+        test('gone: the step is skipped and nothing is pressed', () => {
+            openModal({ qty: 18 });
+            runAtStep0();
+            game.items = [inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.statusNote).toBe('no longer in inventory');
+        });
+
+        test('grew but the modal will not take it: refuses and names the leftover', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            // A game that clamps the field back to what it allows
+            const input = modal.querySelector('input');
+            input.addEventListener('input', () => {
+                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '20');
+            });
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(statusText()).toMatch(/only takes 20; 5 would be left over/);
+        });
     });
 
     test('Skip and Stop are untouched by the new button', () => {

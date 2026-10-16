@@ -295,6 +295,9 @@ function shownEnhancementLevel(root) {
     return match ? parseInt(match[1], 10) : 0;
 }
 
+/** Shown beside an insta-sell whose price is above the item's tradable range maximum */
+const ABOVE_BAND_WARNING = 'bid above the tradable range: the game may refuse it';
+
 class BulkSellAssistant {
     constructor() {
         this.isInitialized = false;
@@ -998,7 +1001,8 @@ class BulkSellAssistant {
                     ? 'click Sell For in the item menu, or press Confirm here'
                     : 'confirm in the modal, or press Confirm here';
             const shown = d?.insta && d.avgPrice ? d.avgPrice : d?.price || 0;
-            const detail = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})`;
+            const warn = d?.warning ? ` ⚠ ${d.warning}` : '';
+            const detail = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})${warn}`;
             // A refusal leads. It used to be appended after the price and the
             // reason, which is past where the strip truncates — so a Confirm
             // that had refused for a stated reason looked like a dead button.
@@ -1332,6 +1336,40 @@ class BulkSellAssistant {
      * button are the same single path. Once per step — the button disables
      * itself and the step key makes a second press a no-op even if it does not.
      */
+    /**
+     * Before a market confirm, sell the stack as it stands now: the quantity was queued when the step was
+     * prepared, and production or loot can move it before the press. Gone: the step is skipped. Changed: the
+     * step takes the live count and the modal's quantity is rewritten; if the modal will not take it, the
+     * press refuses with the leftover named, so no remainder is left unsaid. The vendor step does the same
+     * check in its own target.
+     * @returns {boolean} True when the press may go on to the modal checks
+     */
+    _syncLiveCountForConfirm() {
+        if (this.decision?.vendor) return true;
+        const live = this._liveCount();
+        if (live <= 0) {
+            this._skip('no longer in inventory');
+            return false;
+        }
+        const queued = this.current.count;
+        if (live === queued) return true;
+        this.current.count = live;
+        const modal = document.querySelector('[class*="Modal_modalContainer"]');
+        const input = modal ? marketplaceShortcuts.findQuantityInput(modal) : null;
+        if (input) {
+            nativeInputValueSetter.call(input, String(live));
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        const shown = modal ? this._modalQuantity(modal) : null;
+        if (shown === live) return true;
+        this.confirmNote =
+            shown !== null && shown < live
+                ? `the stack is now ${live} but the modal only takes ${shown}; ${live - shown} would be left over`
+                : `the stack changed from ${queued} to ${live}; the modal quantity could not be updated`;
+        this._render();
+        return false;
+    }
+
     _onConfirmClick() {
         // A press while the vendor button is mid-arming would find it already
         // armed and sell, then the waiting press would sell again
@@ -1345,6 +1383,7 @@ class BulkSellAssistant {
             this._skipLockedCurrent();
             return;
         }
+        if (!this._syncLiveCountForConfirm()) return;
         const target = this._confirmTarget();
         if (target.why) {
             // Said on the strip rather than swallowed: a button that does
@@ -2082,7 +2121,17 @@ class BulkSellAssistant {
                 ? `; fills best-first to ${formatKMB(instaPrice)} so the depth covers the stack` +
                   `${depthShort ? ' (book still short)' : ''}`
                 : '';
-        this.decision = { insta, price, avgPrice: insta ? instaAvg : null, reason: reason + depthNote };
+        // Selling into a bid above the band maximum is still done; the game may refuse it, which is unverified,
+        // so the strip says so before anything is pressed
+        const aboveBand =
+            insta && clampToBand(instaPrice, this.current.itemHrid, this.current.enhancementLevel) < instaPrice;
+        this.decision = {
+            insta,
+            price,
+            avgPrice: insta ? instaAvg : null,
+            reason: reason + depthNote,
+            ...(aboveBand ? { warning: ABOVE_BAND_WARNING } : {}),
+        };
 
         const open = insta
             ? marketplaceShortcuts.clickInstantActionButton('Sell')
