@@ -2591,6 +2591,9 @@ function registerFeatures() {
             module: Market.savingsGoalAlerts,
             async: true,
             customCheck: () => config.getSetting('notifications_savingsGoalReached'),
+            // Its armed bits only follow the market while the check runs; switching it off must drop them,
+            // or re-enabling inherits a bit set before the goal was spent and re-saved for, and says nothing.
+            liveStop: true,
         },
         {
             key: 'priceTargetAlerts',
@@ -2602,6 +2605,8 @@ function registerFeatures() {
             module: Market.priceTargetAlerts,
             async: true,
             customCheck: () => config.getSetting('notifications_priceTargetReached'),
+            // As the savings-goal alert: the armed bits and the refresh timer must not outlive the setting.
+            liveStop: true,
         },
         {
             key: 'enhancementTargetAlerts',
