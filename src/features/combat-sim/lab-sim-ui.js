@@ -84,11 +84,13 @@ import {
     describeTokenOverrides,
 } from './lab-token-buffs.js';
 import { scopeEquipmentToSkill } from './skilling-gear-candidates.js';
+import { collapseHeaderHtml, enhanceCollapsibles } from './collapsible-sections.js';
 import {
     MAX_SWAP_LEVEL,
     MAX_ABILITY_SWAP_LEVEL,
     MAX_QUEUED_SWAPS,
     ABILITY_ORDER_HRID,
+    extractAbilityOrderSection,
     buildCombatAbilityCheck,
     buildCombatSwapCandidate,
     checkedSwapKey,
@@ -422,6 +424,8 @@ function goldPerPctCell(cost, deltaPct) {
     return value <= 0 ? 'pays for itself' : formatWithSeparator(value);
 }
 
+/** Orders shown per loadout before "Show all" in the Check a swap Ability order section */
+const LAB_ABILITY_ORDER_TOP = 5;
 const ACCENT = '#4a9eff';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -4440,16 +4444,24 @@ class LabSimUI {
             );
 
             if (!isCurrent() || this._upgradeAborted) return;
-            const analysisResult = rawAnalysis?.baseline ? mergeCheckedAbilityRows(rawAnalysis, gameData) : rawAnalysis;
-            if (!analysisResult?.baseline || !analysisResult.results?.length) {
+            // Ability orders are free, so a value-per-million ranking would float any gain above every paid swap:
+            // they leave the table and are ranked in their own section by expected attempts saved
+            const split = rawAnalysis?.baseline
+                ? extractAbilityOrderSection(rawAnalysis, gameData)
+                : { analysis: rawAnalysis, section: null };
+            const analysisResult = split.analysis?.baseline
+                ? mergeCheckedAbilityRows(split.analysis, gameData)
+                : split.analysis;
+            if (!analysisResult?.baseline || (!analysisResult.results?.length && !split.section)) {
                 resultsEl.style.display = 'none';
                 this._setStatus('Checking the swaps produced no results.');
                 return;
             }
             resultsEl.style.display = 'block';
-            this._renderAllFightsResults(analysisResult, resultsEl, { checked: true });
+            this._renderAllFightsResults(analysisResult, resultsEl, { checked: true, abilityOrder: split.section });
+            const checkedCount = analysisResult.results.length + (split.section ? 1 : 0);
             this._setStatus(
-                `Checked ${analysisResult.results.length} swap${analysisResult.results.length === 1 ? '' : 's'} across ${fights.length} fights` +
+                `Checked ${checkedCount} swap${checkedCount === 1 ? '' : 's'} across ${fights.length} fights` +
                     (alreadyEquipped.length
                         ? `. Already equipped at that level or higher: ${describeAll(alreadyEquipped)}`
                         : '') +
@@ -6179,6 +6191,150 @@ class LabSimUI {
     }
 
     /**
+     * The Ability order section of the Check a swap results: every simulated order of a loadout's ordinary
+     * abilities ranked by expected attempts saved, the Lab's own measure, with the current order as a baseline
+     * row. One block per loadout, because each loadout's orders are permutations of its own abilities (one
+     * table would interleave unrelated sets under a single ranking). Orders cost nothing, so there is no Cost
+     * or Per 1M column. The collapsed state and Show-all live in the saved Check a swap options.
+     * @param {{groups: Array<Object>}} section - From `extractAbilityOrderSection`
+     * @returns {string} HTML
+     * @private
+     */
+    _renderLabAbilityOrderSection(section) {
+        const groups = section.groups || [];
+        const orderCount = groups.reduce((sum, g) => sum + g.orders.length, 0);
+        const showAll = Boolean(this._swapOptions.orderShowAll);
+        const top = LAB_ABILITY_ORDER_TOP;
+        const sign = (v) => (v > 0 ? '+' : v < 0 ? '−' : '');
+        const attemptsText = (v) => `${sign(v)}${Math.abs(v).toFixed(1)}`;
+        const clearText = (v) => `${sign(v)}${Math.abs(v * 100).toFixed(2)}%`;
+        const td = 'padding:3px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap; text-align:right;';
+        const th = 'padding:3px 6px; text-align:right; border-bottom:1px solid #333; color:#888; font-weight:600;';
+        const noteStyle = 'font-size:9px; margin-left:4px; padding:0 3px; border-radius:2px; vertical-align:middle;';
+        const note = (text, color = '#aaa') =>
+            `<div style="color:${color}; font-size:11px; margin:4px 0;">${text}</div>`;
+
+        const blocks = groups.map((group) => {
+            const orders = group.orders;
+            const best = orders[0] || null;
+            let verdict = '';
+            if (!orders.length) {
+                verdict = note('No other order of these abilities was reached.', '#888');
+            } else if (best.attemptsDelta >= 0) {
+                verdict = note('Your current order is already the best measured.', '#9ab');
+            } else if (!best.significant) {
+                verdict = note(
+                    'Every order is within noise of your current one: none is clearly better, so keep it.',
+                    '#9ab'
+                );
+            }
+            const entries = [...orders, { current: true, attemptsDelta: 0 }].sort(
+                (a, b) => a.attemptsDelta - b.attemptsDelta || (a.current ? -1 : 1)
+            );
+            let kept = 0;
+            const shown = showAll ? entries : entries.filter((e) => e.current || ++kept <= top);
+            let rows = '';
+            for (const e of shown) {
+                if (e.current) {
+                    rows +=
+                        `<tr data-order-current style="background:rgba(120,150,190,0.08);">` +
+                        `<td style="${td} text-align:left; white-space:normal; color:#e0e0e0;">${escapeHtmlAttribute(group.currentName)}` +
+                        `<span style="${noteStyle} background:rgba(120,150,190,0.25); color:#9ab;">current</span></td>` +
+                        `<td style="${td} color:#888;">baseline</td><td style="${td} color:#888;">—</td>` +
+                        `<td style="${td} color:#888;">—</td></tr>`;
+                    continue;
+                }
+                const color = !e.significant ? '#888' : e.attemptsDelta < 0 ? '#4caf50' : '#f44336';
+                const clearColor = !e.significant
+                    ? '#888'
+                    : e.runClearDelta > 0
+                      ? '#4caf50'
+                      : e.runClearDelta < 0
+                        ? '#f44336'
+                        : '#888';
+                rows +=
+                    `<tr data-order-row>` +
+                    `<td style="${td} text-align:left; white-space:normal; color:#e0e0e0;">${escapeHtmlAttribute(e.name)}` +
+                    (e.significant
+                        ? ''
+                        : `<span style="${noteStyle} background:rgba(150,150,150,0.2); color:#999;" title="The change is inside the simulation’s own error">within noise</span>`) +
+                    `</td><td style="${td} color:${color};">${attemptsText(e.attemptsDelta)}</td>` +
+                    `<td style="${td} color:${clearColor};">${clearText(e.runClearDelta)}</td>` +
+                    `<td style="${td} color:#888;">±${e.attemptsDeltaNoise.toFixed(1)}</td></tr>`;
+            }
+            const title =
+                groups.length > 1
+                    ? `<div style="color:#aaa; font-size:11px; margin-top:6px;">${escapeHtmlAttribute(group.loadoutName)}</div>`
+                    : '';
+            return (
+                title +
+                verdict +
+                `<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
+                `<th style="${th} text-align:left;">Order</th>` +
+                `<th style="${th}" title="Change in expected attempts to clear this loadout’s fights; negative is better">ΔExpected attempts</th>` +
+                `<th style="${th}" title="Change in the chance of clearing this loadout’s fights in one go">ΔClear chance</th>` +
+                `<th style="${th}" title="One standard error of the change in expected attempts">Noise</th></tr></thead>` +
+                `<tbody>${rows}</tbody></table>`
+            );
+        });
+
+        const bests = groups.map((g) => g.orders[0]).filter(Boolean);
+        let summary;
+        if (!groups.length) summary = 'nothing to reorder';
+        else if (!bests.length) summary = 'no order reached';
+        else if (bests.some((b) => b.attemptsDelta < 0 && b.significant)) {
+            const winner = bests.reduce((a, b) => (b.attemptsDelta < a.attemptsDelta ? b : a));
+            summary = `best ${attemptsText(winner.attemptsDelta)} attempts`;
+        } else if (bests.some((b) => b.attemptsDelta < 0)) summary = 'all within noise';
+        else summary = 'current order is best';
+
+        const body = groups.length
+            ? blocks.join('')
+            : note('Nothing to reorder: no loadout has two or more ordinary abilities.', '#888');
+        const needsToggle = groups.some((g) => g.orders.length > top);
+        const toggle = needsToggle
+            ? `<button data-order-showall style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ` +
+              `padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; margin-top:6px;">` +
+              `${showAll ? `Show top ${top}` : `Show all ${orderCount}`}</button>`
+            : '';
+        return (
+            `<div id="mwi-labsim-order-section" style="margin-top:14px; padding:8px 10px; background:#0d0d1a; ` +
+            `border:1px solid #2a2a4a; border-radius:6px;">` +
+            collapseHeaderHtml({
+                key: 'abilityOrder',
+                title: 'Ability order',
+                summary,
+                style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
+            }) +
+            `<div style="color:#666; font-size:10px; margin-bottom:6px;">Every order of each loadout’s ordinary abilities, ` +
+            `simulated and ranked by expected attempts saved. Free to apply: set it in the game.</div>` +
+            body +
+            toggle +
+            `</div>`
+        );
+    }
+
+    /**
+     * Wire the Ability order section's collapse header and Show-all toggle. The collapsed state is part of the
+     * saved Check a swap options; Show-all redraws the results through `redraw`.
+     * @param {HTMLElement} container - The results element
+     * @param {Function} redraw - Draws the results again
+     * @private
+     */
+    _wireLabAbilityOrder(container, redraw) {
+        const map = this._swapOptions.orderCollapsed ? { abilityOrder: true } : {};
+        enhanceCollapsibles(container, map, () => {
+            this._swapOptions.orderCollapsed = Boolean(map.abilityOrder);
+            void this._saveCheckedSwaps();
+        });
+        container.querySelector('[data-order-showall]')?.addEventListener('click', () => {
+            this._swapOptions.orderShowAll = !this._swapOptions.orderShowAll;
+            void this._saveCheckedSwaps();
+            redraw();
+        });
+    }
+
+    /**
      * Render the all-fights combat level analysis: candidates ranked by how
      * many expected combat attempts they save across the whole run (retrying
      * failed rooms), with a per-fight breakdown on click.
@@ -6191,7 +6347,9 @@ class LabSimUI {
         const checked = Boolean(options.checked);
         const baseline = analysisResult?.baseline;
         const results = analysisResult?.results;
-        if (!baseline || !results?.length) {
+        // A check of nothing but ability orders has no swap table, only its own section
+        const orderSection = checked ? options.abilityOrder || null : null;
+        if (!baseline || (!results?.length && !orderSection)) {
             container.innerHTML = checked
                 ? ''
                 : '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No results — check that combat skip levels and loadouts are set.</div>';
@@ -6213,7 +6371,7 @@ class LabSimUI {
         const tokenResults = results.filter((r) => r.costType === 'token');
         const levelResults = checked ? [] : results.filter((r) => r.candidate?.type === 'combat_level');
         const goldResults = results.filter((r) => r.costType !== 'token' && !levelResults.includes(r));
-        const levelsOnly = levelResults.length > 0 && !goldResults.length;
+        const levelsOnly = (levelResults.length > 0 || !results.length) && !goldResults.length;
 
         const pct = (v) => `${(v * 100).toFixed(1)}%`;
         const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
@@ -6383,8 +6541,14 @@ class LabSimUI {
         const levelSorted = checked ? [] : this._sortedLevelRows(levelResults);
         if (!checked) html += this._renderAllFightsLevelSection(levelSorted, sharedStyles);
         if (!checked) html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
+        if (orderSection) html += this._renderLabAbilityOrderSection(orderSection);
         container.innerHTML = html;
         if (checked) this._wireCheckedHeading('combat', container);
+        if (orderSection) {
+            this._wireLabAbilityOrder(container, () =>
+                this._renderAllFightsResults(analysisResult, container, options)
+            );
+        }
 
         if (!checked)
             this._addCsvExport(container, 'labsim-all-fights', () => ({

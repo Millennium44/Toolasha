@@ -684,3 +684,96 @@ describe('row actions for a checked ability', () => {
         expect(html).toContain('Market');
     });
 });
+
+describe('the ability order section is ranked apart from the paid swaps', () => {
+    const { extractAbilityOrderSection, buildCombatAbilityCheck, ABILITY_ORDER_HRID } = orderApi;
+    const fight = (dto, loadoutId, loadoutName) => ({
+        monsterHrid: '/monsters/mimic',
+        monsterName: 'mimic',
+        roomLevel: 50,
+        dto,
+        loadoutId,
+        loadoutName,
+    });
+    const run = async (fights, win) => {
+        state.sim = async ({ playerDTOs }) => ({
+            encounters: win(playerDTOs[0].abilities.slice(1).map((a) => a.hrid)) * 1000,
+            labyAttemptCount: 1000,
+            experienceGained: {},
+            simulatedTime: 1,
+        });
+        const candidates = buildCombatAbilityCheck(
+            { hrid: ABILITY_ORDER_HRID, level: 0 },
+            fights.map((f) => f.dto),
+            gameData
+        ).candidates;
+        return advisor.runLabyrinthAllFightsAnalysis(
+            {
+                fights,
+                crates: [],
+                hours: 1,
+                precision: null,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: candidates,
+            },
+            () => {}
+        );
+    };
+
+    test('the order rows leave the results and come back ranked by expected attempts, current as the baseline', async () => {
+        const dto = fourAbilities();
+        const raw = await run([fight(dto, 1, 'Mimic Lab')], (order) =>
+            order[0] === POKE ? 0.7 : order[0] === SMACK ? 0.5 : 0.4
+        );
+        const { analysis, section } = extractAbilityOrderSection(raw, gameData);
+        expect(analysis.results.some((row) => row.candidate.abilityOrder)).toBe(false);
+        expect(section.groups).toHaveLength(1);
+        const group = section.groups[0];
+        expect(group.loadoutName).toBe('Mimic Lab');
+        expect(group.currentName).toBe('Smack → Poke → Toughness');
+        // 3 abilities: 6 orders, one of them the current one
+        expect(group.orders).toHaveLength(5);
+        const deltas = group.orders.map((o) => o.attemptsDelta);
+        expect(deltas).toEqual([...deltas].sort((a, b) => a - b));
+        expect(group.orders[0].order[0]).toBe(POKE);
+        expect(group.orders[0].attemptsDelta).toBeLessThan(0);
+        expect(group.orders[0].runClearDelta).toBeGreaterThan(0);
+        expect(group.orders[0].attemptsDeltaNoise).toBeGreaterThan(0);
+        expect(group.orders.every((o) => o.name.includes(' → '))).toBe(true);
+    });
+
+    test('equal orders are all within noise', async () => {
+        const raw = await run([fight(fourAbilities(), 1, 'Mimic Lab')], () => 0.5);
+        const { section } = extractAbilityOrderSection(raw, gameData);
+        expect(section.groups[0].orders.every((o) => !o.significant)).toBe(true);
+    });
+
+    test('two loadouts with different ability sets are two groups, each ranked on its own fights', async () => {
+        const a = fourAbilities();
+        const b = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12), ability(POKE, 14), ability(FIREBALL, 16)]);
+        const raw = await run([fight(a, 1, 'A'), fight(b, 2, 'B')], (order) => (order[0] === POKE ? 0.7 : 0.4));
+        const { section } = extractAbilityOrderSection(raw, gameData);
+        expect(section.groups.map((g) => g.loadoutName)).toEqual(['A', 'B']);
+        expect(section.groups[0].orders.length).toBe(5);
+        expect(section.groups[1].orders.length).toBe(1);
+        expect(section.groups[1].orders[0].order[0]).toBe(POKE);
+    });
+
+    test('a loadout with a single ordinary ability has no group; a run with no order rows has no section', async () => {
+        const one = loadout([ability(FIERCE_AURA, 10), ability(SMACK, 12)]);
+        const raw = await run([fight(fourAbilities(), 1, 'A'), fight(one, 2, 'One')], () => 0.5);
+        const { section } = extractAbilityOrderSection(raw, gameData);
+        expect(section.groups.map((g) => g.loadoutName)).toEqual(['A']);
+        const bare = { baseline: raw.baseline, results: [], context: raw.context };
+        expect(extractAbilityOrderSection(bare, gameData).section).toBeNull();
+    });
+
+    test('a paid swap in the same run stays in the results untouched', async () => {
+        const raw = await run([fight(fourAbilities(), 1, 'A')], (order) => (order[0] === POKE ? 0.9 : 0.4));
+        const paid = { candidate: { description: 'Paid', type: 'enhancement' }, fights: [], attemptsDelta: -1 };
+        const { analysis } = extractAbilityOrderSection({ ...raw, results: [...raw.results, paid] }, gameData);
+        expect(analysis.results).toEqual([paid]);
+    });
+});

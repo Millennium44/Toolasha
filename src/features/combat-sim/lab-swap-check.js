@@ -163,6 +163,9 @@ export function sanitizeSwapOptions(raw) {
         upgradesOpen: { combat: raw?.upgradesOpen?.combat !== false, skilling: raw?.upgradesOpen?.skilling !== false },
         // The Checked swaps results below it: open unless left closed
         checkedOpen: { combat: raw?.checkedOpen?.combat !== false, skilling: raw?.checkedOpen?.skilling !== false },
+        // The Ability order section of the combat results: left minimized, and showing every order
+        orderCollapsed: raw?.orderCollapsed === true,
+        orderShowAll: raw?.orderShowAll === true,
     };
 }
 
@@ -834,6 +837,25 @@ export function buildCombatAbilityCandidates(swap, dtos, gameData, isSelf = true
 }
 
 /**
+ * Which fights share a saved loadout. Fights sharing a `loadoutId` are one group; id 0 is the worn gear, which
+ * every fight without a saved loadout shares; a fight that says nothing about its loadout stands alone.
+ * @param {Object} baseline - The analysis baseline
+ * @param {Array<Object>} [contextFights] - The run's fights, parallel to `baseline.fights`
+ * @returns {Map<string, Array<number>>} Group key to fight indexes
+ */
+function groupFightsByLoadout(baseline, contextFights) {
+    const groups = new Map();
+    baseline.fights.forEach((_baseFight, i) => {
+        const raw = contextFights?.[i]?.loadoutId;
+        const id = Number(raw) || 0;
+        const key = raw === undefined || raw === null ? `fight:${i}` : id > 0 ? `loadout:${id}` : 'current-gear';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(i);
+    });
+    return groups;
+}
+
+/**
  * For each fight, the option row its saved loadout should use. Fights sharing a saved loadout
  * (`loadoutId`) share one choice: the option minimizing the summed expected attempts over that
  * loadout's fights, where a fight the option does not apply to counts at its baseline win rate.
@@ -845,16 +867,7 @@ export function buildCombatAbilityCandidates(swap, dtos, gameData, isSelf = true
  * @returns {Array<Object|null>} The chosen row per fight index, null where nothing applies
  */
 function chooseRowPerLoadout(rows, baseline, contextFights) {
-    const groups = new Map();
-    baseline.fights.forEach((_baseFight, i) => {
-        // 0 is the worn gear, which every fight without a saved loadout shares; a fight that says
-        // nothing about its loadout (undefined or null) stands alone
-        const raw = contextFights?.[i]?.loadoutId;
-        const id = Number(raw) || 0;
-        const key = raw === undefined || raw === null ? `fight:${i}` : id > 0 ? `loadout:${id}` : 'current-gear';
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(i);
-    });
+    const groups = groupFightsByLoadout(baseline, contextFights);
     const chosen = new Array(baseline.fights.length).fill(null);
     for (const indexes of groups.values()) {
         let bestRow = null;
@@ -1115,4 +1128,73 @@ export function buildCombatAbilityOrderCandidates(dtos, gameData, isSelf = true)
 export function buildCombatAbilityCheck(swap, dtos, gameData, isSelf = true, options = {}) {
     if (swap.hrid === ABILITY_ORDER_HRID) return buildCombatAbilityOrderCandidates(dtos, gameData, isSelf);
     return buildCombatAbilityCandidates(swap, dtos, gameData, isSelf, options);
+}
+
+/**
+ * Take the ability-order rows out of a Check a swap analysis and rank them on their own.
+ *
+ * Orders are free, so a priced ranking gives any order with a gain an infinite value per million and floats it
+ * over every paid swap, however small the gain. They are ranked by the Lab's own measure instead: expected
+ * attempts saved (`attemptsDelta`, negative is better) with its standard error, per loadout, because each
+ * loadout's orders are permutations of its own abilities. A loadout's gain is what its fights alone gain; the
+ * current order is the baseline (0) and the "keep current" candidates only exist to be measured against it.
+ *
+ * @param {{baseline: Object, results: Array<Object>, context?: Object}} analysis - From `runLabyrinthAllFightsAnalysis`
+ * @param {Object} gameData - Game data payload
+ * @returns {{analysis: Object, section: ({groups: Array<Object>}|null)}} The analysis without its order rows, and
+ *   the section (null when no order candidate was in the run)
+ */
+export function extractAbilityOrderSection(analysis, gameData) {
+    const { baseline } = analysis || {};
+    if (!baseline || !Array.isArray(analysis.results)) return { analysis, section: null };
+    const orderRows = analysis.results.filter((row) => row.candidate?.checkedAbilityKey === 'ability_order');
+    if (!orderRows.length) return { analysis, section: null };
+    const rest = { ...analysis, results: analysis.results.filter((row) => !orderRows.includes(row)) };
+    const contextFights = analysis.context?.fights;
+    const candidates = orderRows.filter((row) => !row.candidate.keepCurrent);
+    const groups = [];
+    for (const indexes of groupFightsByLoadout(baseline, contextFights).values()) {
+        const dto = contextFights?.[indexes[0]]?.dto;
+        const current = (dto?.abilities || [])
+            .slice(1)
+            .filter(Boolean)
+            .map((ability) => ability.hrid);
+        // A loadout with fewer than two ordinary abilities has nothing to order
+        if (current.length < 2) continue;
+        const baseAttempts = indexes.reduce((sum, i) => sum + expectedFightAttempts(baseline.fights[i].winRate), 0);
+        const baseClear = indexes.reduce((product, i) => product * baseline.fights[i].winRate, 1);
+        const orders = [];
+        for (const row of candidates) {
+            const applied = indexes.filter((i) => row.fights[i]?.applied);
+            if (!applied.length) continue;
+            const attempts = indexes.reduce((sum, i) => {
+                const fight = row.fights[i];
+                return sum + expectedFightAttempts(fight?.applied ? fight.winRate : baseline.fights[i].winRate);
+            }, 0);
+            const clear = indexes.reduce((product, i) => {
+                const fight = row.fights[i];
+                return product * (fight?.applied ? fight.winRate : baseline.fights[i].winRate);
+            }, 1);
+            const noise = attemptsNoise(
+                applied.map((i) => row.fights[i]),
+                baseline.fights
+            );
+            const attemptsDelta = attempts - baseAttempts;
+            orders.push({
+                order: row.candidate.order,
+                name: row.candidate.order.map((hrid) => swapItemName(hrid, gameData)).join(' → '),
+                attemptsDelta,
+                attemptsDeltaNoise: noise,
+                runClearDelta: clear - baseClear,
+                significant: Math.abs(attemptsDelta) > SIGNIFICANCE_Z * noise,
+            });
+        }
+        orders.sort((a, b) => a.attemptsDelta - b.attemptsDelta);
+        groups.push({
+            loadoutName: baseline.fights[indexes[0]].loadoutName || 'Loadout',
+            currentName: current.map((hrid) => swapItemName(hrid, gameData)).join(' → '),
+            orders,
+        });
+    }
+    return { analysis: rest, section: { groups } };
 }

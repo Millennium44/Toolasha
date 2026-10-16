@@ -4961,6 +4961,95 @@ describe('Check a swap', () => {
         expect(checked.querySelector('#mwi-labsim-budget')).toBeNull();
     });
 
+    describe('the Ability order section of the checked combat results', () => {
+        const order = (name, attemptsDelta, significant = true) => ({
+            order: [name],
+            name,
+            attemptsDelta,
+            attemptsDeltaNoise: 0.2,
+            runClearDelta: -attemptsDelta / 100,
+            significant,
+        });
+        const group = (loadoutName, orders) => ({ loadoutName, currentName: 'Smack → Poke', orders });
+        const draw = (section, analysis = combatAnalysis()) => {
+            const results = ui.panel.querySelector('#mwi-labsim-swap-results');
+            ui._renderAllFightsResults(analysis, results, { checked: true, abilityOrder: section });
+            return results;
+        };
+        const sevenOrders = () => [
+            order('O1', -3),
+            order('O2', -2.5),
+            order('O3', -2),
+            order('O4', -1.5),
+            order('O5', -1),
+            order('O6', -0.5, false),
+            order('O7', 0.4, false),
+        ];
+
+        test('ranks by expected attempts, shows the top five plus the current order, and Show all N', () => {
+            const results = draw({ groups: [group('Lab', sevenOrders())] });
+            const section = results.querySelector('#mwi-labsim-order-section');
+            const headers = [...section.querySelectorAll('th')].map((th) => th.textContent);
+            expect(headers).toEqual(['Order', 'ΔExpected attempts', 'ΔClear chance', 'Noise']);
+            expect(section.textContent).not.toContain('Per 1M');
+            const names = [...section.querySelectorAll('tbody tr')].map((tr) => tr.firstChild.textContent);
+            expect(names).toHaveLength(6);
+            expect(names[0]).toBe('O1');
+            expect(section.querySelector('[data-order-current]').textContent).toContain('current');
+            expect(section.querySelector('[data-order-current]').textContent).toContain('Smack → Poke');
+
+            section.querySelector('[data-order-showall]').click();
+            const after = ui.panel.querySelector('#mwi-labsim-order-section');
+            const rows = [...after.querySelectorAll('tbody tr')];
+            expect(rows).toHaveLength(8);
+            expect(rows.map((tr) => tr.firstChild.textContent).join('|')).toContain('within noise');
+            // The current order sits at zero, between the gains and the losses
+            expect(rows.findIndex((tr) => tr.hasAttribute('data-order-current'))).toBe(6);
+            expect(after.querySelector('[data-order-showall]').textContent).toBe('Show top 5');
+        });
+
+        test('the orders leave the main table: a row of only orders draws no swap table', () => {
+            const results = draw({ groups: [group('Lab', sevenOrders())] }, { ...combatAnalysis(), results: [] });
+            expect(results.querySelector('tr[data-allfights-row]')).toBeNull();
+            expect(results.querySelector('#mwi-labsim-order-section')).toBeTruthy();
+            expect(results.textContent).toContain('Baseline:');
+        });
+
+        test('every ending says what it is', () => {
+            const text = (section) => draw(section).querySelector('#mwi-labsim-order-section').textContent;
+            expect(text({ groups: [] })).toContain('Nothing to reorder');
+            expect(text({ groups: [group('Lab', [])] })).toContain('No other order of these abilities was reached');
+            expect(text({ groups: [group('Lab', [order('A', -0.3, false), order('B', -0.1, false)])] })).toContain(
+                'within noise of your current one'
+            );
+            expect(text({ groups: [group('Lab', [order('A', 0.3), order('B', 0.5)])] })).toContain(
+                'already the best measured'
+            );
+        });
+
+        test('several loadouts get one block each, named', () => {
+            const results = draw({ groups: [group('Low Lab', [order('A', -1)]), group('High Lab', [order('B', -2)])] });
+            const section = results.querySelector('#mwi-labsim-order-section');
+            expect(section.querySelectorAll('table')).toHaveLength(2);
+            expect(section.textContent).toContain('Low Lab');
+            expect(section.textContent).toContain('High Lab');
+        });
+
+        test('minimizing it is remembered with the Check a swap options and survives a redraw', async () => {
+            const results = draw({ groups: [group('Lab', sevenOrders())] });
+            results.querySelector('#mwi-labsim-order-section [data-collapse-key]').click();
+            await settle();
+            expect(storage.written['labSimCheckedSwaps_me'].options.orderCollapsed).toBe(true);
+            const again = draw({ groups: [group('Lab', sevenOrders())] });
+            expect(
+                again.querySelector('#mwi-labsim-order-section [data-collapse-key]').getAttribute('aria-expanded')
+            ).toBe('false');
+            expect(again.querySelector('#mwi-labsim-order-section [data-collapse-summary]').textContent).toContain(
+                'best'
+            );
+        });
+    });
+
     test('the checked combat results collapse from the heading, stay collapsed on a re-render and are remembered', async () => {
         const results = ui.panel.querySelector('#mwi-labsim-swap-results');
         const heading = () => results.querySelector('[data-checked-heading]');
