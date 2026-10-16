@@ -357,6 +357,8 @@ class BulkSellAssistant {
         this._navigatedSinceClick = false;
         /** Why the last Confirm press was refused, shown on the strip */
         this.confirmNote = '';
+        /** The order book the current step's decision was made on, kept to re-walk it if the stack changes */
+        this._book = null;
     }
 
     /**
@@ -1375,6 +1377,12 @@ class BulkSellAssistant {
             this._render();
             return false;
         }
+        const refreshed = this._refreshDecisionForCount(live, modal);
+        if (refreshed.why) {
+            this.confirmNote = refreshed.why;
+            this._render();
+            return false;
+        }
         this.current.count = live;
         const input = modal ? marketplaceShortcuts.findQuantityInput(modal) : null;
         if (input) {
@@ -1389,6 +1397,71 @@ class BulkSellAssistant {
                 : `the stack changed from ${queued} to ${live}; the modal quantity could not be updated`;
         this._render();
         return false;
+    }
+
+    /**
+     * Walk the order book the step was decided on again for a changed stack. The insta price is the
+     * bid level that covers the whole count, so a bigger stack can need a lower level than the one the
+     * modal was given; selling at the old price would fill only part of it. A flip between insta and
+     * listing, or a price the modal will not take, refuses rather than submit a stale decision.
+     * @param {number} live - The stack as it stands now
+     * @param {HTMLElement|null} modal - The open sell modal
+     * @returns {{why?: string}} A reason when the press must refuse; the decision is replaced otherwise
+     */
+    _refreshDecisionForCount(live, modal) {
+        // Without the saved book (a vendor step, or a decision made some other way) there is nothing to walk
+        if (!this._book || !this.decision || this.decision.vendor) return {};
+        const queued = this.current.count;
+        this.current.count = live;
+        let next;
+        try {
+            next = this._evaluateBook(this._book);
+        } finally {
+            this.current.count = queued;
+        }
+        if (!next) return { why: `the stack changed from ${queued} to ${live} and the order book has no orders left` };
+        if (next.insta !== this.decision.insta) {
+            return {
+                why:
+                    `the stack changed from ${queued} to ${live}, which would now ` +
+                    `${next.insta ? 'sell instantly' : 'be listed'} instead; skip this one and run it again`,
+            };
+        }
+        if (next.insta && next.decision.price !== this.decision.price) {
+            if (!modal || !this._setModalPrice(modal, next.decision.price)) {
+                return {
+                    why:
+                        `the stack changed from ${queued} to ${live} and needs a minimum price of ` +
+                        `${formatKMB(next.decision.price)}, which the modal would not take; press again`,
+                };
+            }
+        }
+        this.decision = next.decision;
+        return {};
+    }
+
+    /**
+     * Write a price into the open sell modal's price field, waking the field first if it is still the
+     * display the game draws until it is clicked. Same setter and event as the prefill.
+     * @param {HTMLElement} modal - The open sell modal
+     * @param {number} price - The minimum price to sell at
+     * @returns {boolean} Whether the field now shows the price
+     */
+    _setModalPrice(modal, price) {
+        const row = modal.querySelector('div[class*="MarketplacePanel_priceInputs"]');
+        if (!row) return false;
+        let input = row.querySelector('input');
+        if (!input) {
+            row.querySelector('div[class*="MarketplacePanel_priceDisplay"]')?.click();
+            input = row.querySelector('input');
+        }
+        if (!input) return false;
+        nativeInputValueSetter.call(input, String(price));
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        // A field that shows the price abbreviated cannot be read back; one that shows digits must match
+        const shown = String(input.value);
+        if (/[a-z]/i.test(shown)) return true;
+        return parseInt(shown.replace(/[^0-9]/g, ''), 10) === price;
     }
 
     _onConfirmClick() {
@@ -2029,6 +2102,55 @@ class BulkSellAssistant {
      * of an edge is not worth the slot and the wait).
      */
     _decideAndOpen(book) {
+        const result = this._evaluateBook(book);
+        if (!result) {
+            this._skip('no orders');
+            return;
+        }
+        // Kept so a stack that grows before the press can be walked down the same book again
+        this._book = book;
+        this.decision = result.decision;
+        const { insta, askPrice, bidPrice } = result;
+
+        const open = insta
+            ? marketplaceShortcuts.clickInstantActionButton('Sell')
+            : marketplaceShortcuts.clickListingButton('+ New Sell Listing', 'Button_sell');
+        open.then(() => {
+            if (this.state !== 'preparing') return;
+            this.state = 'awaiting_confirm';
+            this._render();
+            this._watchClose();
+        }).catch(() => {
+            if (!insta) {
+                this._skip('sell button not found');
+                return;
+            }
+            // The insta Sell button wasn't there (the bid moved, or went out of range): list instead
+            this.decision = {
+                insta: false,
+                price: askPrice || bidPrice || 0,
+                avgPrice: null,
+                reason: 'no sellable bid',
+            };
+            marketplaceShortcuts
+                .clickListingButton('+ New Sell Listing', 'Button_sell')
+                .then(() => {
+                    if (this.state !== 'preparing') return;
+                    this.state = 'awaiting_confirm';
+                    this._render();
+                    this._watchClose();
+                })
+                .catch(() => this._skip('sell button not found'));
+        });
+    }
+
+    /**
+     * The insta-vs-listing decision for the current step's count against an order book. Pure: it
+     * reads `this.current` and settings and changes nothing, so the press can run it again for a new count.
+     * @param {Object|null} book - The item's order book
+     * @returns {{insta: boolean, askPrice: number, bidPrice: number, decision: Object}|null} Null with no orders
+     */
+    _evaluateBook(book) {
         const asks = book?.asks || [];
         // A bid below the tradable range can't be insta-sold into — the game puts it under "Outside
         // current tradable range" and its Sell button holds an hourglass icon rather than text — so only
@@ -2037,10 +2159,7 @@ class BulkSellAssistant {
             const clamped = clampToBand(row.price, this.current.itemHrid, this.current.enhancementLevel);
             return !(clamped > row.price);
         });
-        if (!asks.length && !bids.length) {
-            this._skip('no orders');
-            return;
-        }
+        if (!asks.length && !bids.length) return null;
 
         const remaining = (rows) =>
             rows.reduce(
@@ -2146,44 +2265,18 @@ class BulkSellAssistant {
         // so the strip says so before anything is pressed
         const aboveBand =
             insta && clampToBand(instaPrice, this.current.itemHrid, this.current.enhancementLevel) < instaPrice;
-        this.decision = {
+        return {
             insta,
-            price,
-            avgPrice: insta ? instaAvg : null,
-            reason: reason + depthNote,
-            ...(aboveBand ? { warning: ABOVE_BAND_WARNING } : {}),
+            askPrice,
+            bidPrice,
+            decision: {
+                insta,
+                price,
+                avgPrice: insta ? instaAvg : null,
+                reason: reason + depthNote,
+                ...(aboveBand ? { warning: ABOVE_BAND_WARNING } : {}),
+            },
         };
-
-        const open = insta
-            ? marketplaceShortcuts.clickInstantActionButton('Sell')
-            : marketplaceShortcuts.clickListingButton('+ New Sell Listing', 'Button_sell');
-        open.then(() => {
-            if (this.state !== 'preparing') return;
-            this.state = 'awaiting_confirm';
-            this._render();
-            this._watchClose();
-        }).catch(() => {
-            if (!insta) {
-                this._skip('sell button not found');
-                return;
-            }
-            // The insta Sell button wasn't there (the bid moved, or went out of range): list instead
-            this.decision = {
-                insta: false,
-                price: askPrice || bidPrice || 0,
-                avgPrice: null,
-                reason: 'no sellable bid',
-            };
-            marketplaceShortcuts
-                .clickListingButton('+ New Sell Listing', 'Button_sell')
-                .then(() => {
-                    if (this.state !== 'preparing') return;
-                    this.state = 'awaiting_confirm';
-                    this._render();
-                    this._watchClose();
-                })
-                .catch(() => this._skip('sell button not found'));
-        });
     }
 
     /**
@@ -2410,6 +2503,8 @@ class BulkSellAssistant {
         this.statusNote = '';
         this.confirmNote = '';
         this._confirmedStep = null;
+        // The order book belongs to the step it was fetched for
+        this._book = null;
     }
 
     cleanup() {
