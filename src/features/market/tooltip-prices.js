@@ -36,6 +36,7 @@ import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import dom from '../../utils/dom.js';
+import { shortDuration } from '../../utils/overlay-format.js';
 import { parseItemCount, parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
@@ -701,6 +702,7 @@ class TooltipPrices {
                     '.market-price-injected',
                     '.market-profit-injected',
                     '.market-ev-injected',
+                    '.market-scroll-duration-injected',
                     '.market-gathering-injected',
                     '.market-multi-action-injected',
                     `.${INSTEAD_SECTION_CLASS}`,
@@ -746,6 +748,13 @@ class TooltipPrices {
             // Not the selling line: it sells every output, so a K mark changes nothing there
             (config.getSetting('itemTooltip_selfUseAlchemy') || config.getSetting(INSTEAD_SETTING)) &&
             selfUseWanted.isAlchemyOutput(itemHrid);
+
+        // A stack of scrolls: how long the whole stack lasts if every one is opened. Sits with the
+        // expected-value setting, the tooltip setting that already covers opened items. Drawn before
+        // the container branch below, which returns early.
+        if (isItemTooltip && !isCollectionTooltip && config.getSetting('itemTooltip_expectedValue')) {
+            this.injectScrollDuration(tooltipElement, itemHrid);
+        }
 
         // Check if this is an openable container first (they have no market price)
         if (itemDetails.isOpenable && config.getSetting('itemTooltip_expectedValue')) {
@@ -1620,6 +1629,43 @@ class TooltipPrices {
         }
 
         return html;
+    }
+
+    /**
+     * Seconds one opened scroll's buff lasts, from the game's personal buff table.
+     * @param {string} itemHrid - Scroll item hrid
+     * @returns {number|null} Seconds, or null when the table has no duration for it
+     */
+    getScrollBuffSeconds(itemHrid) {
+        const buffTypeHrid = dataManager.getItemDetails(itemHrid)?.scrollDetail?.personalBuffTypeHrid;
+        if (!buffTypeHrid) return null;
+        const map = dataManager.getInitClientData()?.personalBuffTypeDetailMap;
+        const detail = map?.[buffTypeHrid] ?? Object.values(map || {}).find((d) => d?.buff?.typeHrid === buffTypeHrid);
+        const ns = Number(detail?.buff?.duration);
+        return Number.isFinite(ns) && ns > 0 ? ns / 1e9 : null;
+    }
+
+    /**
+     * Add "All N: <duration>" to a scroll stack's tooltip. Opening a scroll whose buff is
+     * active adds its full duration, so the stack lasts count x duration.
+     * @param {Element} tooltipElement - Tooltip element
+     * @param {string} itemHrid - Item hrid
+     */
+    injectScrollDuration(tooltipElement, itemHrid) {
+        // By category, not name: a translated client shows a different name
+        if (dataManager.getItemDetails(itemHrid)?.categoryHrid !== '/item_categories/scroll') return;
+        const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
+        if (!tooltipText || tooltipText.querySelector('.market-scroll-duration-injected')) return;
+        const count = this.extractItemAmount(tooltipElement);
+        if (!(count > 1)) return;
+        const seconds = this.getScrollBuffSeconds(itemHrid);
+        if (seconds === null) return;
+        const div = dom.createStyledDiv(
+            { color: config.COLOR_TOOLTIP_INFO, marginTop: '8px' },
+            `All ${count}: ${shortDuration(count * seconds)}`,
+            'market-scroll-duration-injected'
+        );
+        tooltipText.appendChild(div);
     }
 
     /**

@@ -104,6 +104,16 @@ vi.mock('../../core/data-manager.js', () => {
             },
         },
         '/items/frenzy': { name: 'Frenzy' },
+        '/items/seal_of_wisdom': {
+            name: 'Scroll of Wisdom',
+            categoryHrid: '/item_categories/scroll',
+            scrollDetail: { personalBuffTypeHrid: '/personal_buff_types/wisdom' },
+        },
+        '/items/seal_of_mystery': {
+            name: 'Scroll of Mystery',
+            categoryHrid: '/item_categories/scroll',
+            scrollDetail: { personalBuffTypeHrid: '/personal_buff_types/mystery' },
+        },
         '/items/puncture': { name: 'Puncture' },
         // Curd has more alchemy sources than one hover works out itself
         '/items/curd': { name: 'Curd' },
@@ -134,6 +144,12 @@ vi.mock('../../core/data-manager.js', () => {
                 itemDetailMap,
                 actionDetailMap: gatheringState.actionDetailMap,
                 openableLootDropMap: openableState.drops,
+                personalBuffTypeDetailMap: {
+                    '/personal_buff_types/wisdom': {
+                        hrid: '/personal_buff_types/wisdom',
+                        buff: { typeHrid: '/buff_types/wisdom', duration: 1800000000000 },
+                    },
+                },
                 abilityDetailMap: { '/abilities/berserk': { name: 'Berserk' } },
             }),
             getItemDetails: (hrid) => itemDetailMap[hrid] || null,
@@ -1918,5 +1934,41 @@ describe('instead of buying', () => {
         for (let i = 0; i < 40; i++) await Promise.resolve();
         expect(apple.dataset.pricesProcessedItem).toBe('Apple');
         expect(apple.querySelector('.mwi-alchemy-instead')).toBeNull();
+    });
+});
+
+describe('scroll stack duration', () => {
+    const settleLong = async () => {
+        for (let i = 0; i < 40; i++) await Promise.resolve();
+    };
+    const scrollTooltip = (name, count) =>
+        popper(`<div class="ItemTooltipText_itemTooltipText__x">
+            <div class="ItemTooltipText_name__2JAHA"><span>${name}</span></div>
+            <div>Amount: ${count}</div></div>`);
+    const lineFor = async (name, count) => {
+        const el = scrollTooltip(name, count);
+        observerState.handler(el);
+        await settleLong();
+        return el.querySelector('.market-scroll-duration-injected');
+    };
+
+    test('492 held shows how long all of them last', async () => {
+        expect((await lineFor('Scroll of Wisdom', 492))?.textContent).toBe('All 492: 10d 6h');
+    });
+
+    test('5 held shows 2h 30m', async () => {
+        expect((await lineFor('Scroll of Wisdom', 5))?.textContent).toBe('All 5: 2h 30m');
+    });
+
+    test('one held shows nothing', async () => {
+        expect(await lineFor('Scroll of Wisdom', 1)).toBeNull();
+    });
+
+    test('a scroll with no duration in the buff table shows nothing', async () => {
+        expect(await lineFor('Scroll of Mystery', 20)).toBeNull();
+    });
+
+    test('a non-scroll shows nothing', async () => {
+        expect(await lineFor('Frenzy', 20)).toBeNull();
     });
 });
