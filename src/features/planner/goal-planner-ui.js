@@ -64,6 +64,7 @@ import {
     reservationLines,
     RESERVATION_OWNER_PREFIX,
 } from './goal-planner.js';
+import { shortDuration } from '../../utils/overlay-format.js';
 import { buildPlannerContext, withHouseCosts, coinsHeld } from './goal-planner-context.js';
 import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, saveCombatGear } from './goal-planner-store.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
@@ -527,7 +528,9 @@ class GoalPlannerPanel {
                 const context = await buildPlannerContext();
                 if (gone()) return;
                 this.context = context;
-                this.pricedAt = Date.now();
+                // The market snapshot's own time: a cached snapshot is not "priced just now".
+                // Falls back to now only when no market data loaded (no timestamp exists).
+                this.pricedAt = Number.isFinite(context?.pricedAt) ? context.pricedAt : Date.now();
             } else {
                 // The memoised providers and the ranked rates ride along
                 // unchanged; only what a purchase can be measured against moves
@@ -780,7 +783,7 @@ class GoalPlannerPanel {
                 (this.busy
                     ? 'Pricing…'
                     : this.pricedAt
-                      ? `priced ${new Date(this.pricedAt).toLocaleTimeString()}`
+                      ? `priced ${new Date(this.pricedAt).toLocaleTimeString()}${pricedAgo(this.pricedAt)}`
                       : 'not priced yet')
         );
 
@@ -1424,6 +1427,16 @@ class GoalPlannerPanel {
         this.bodyEl = null;
         this.statusEl = null;
     }
+}
+
+/**
+ * "(3h ago)" once prices are old enough that a bare clock time would read as fresh.
+ * @param {number} pricedAt - When the market quotes were true
+ * @returns {string} A leading-space suffix, or ''
+ */
+function pricedAgo(pricedAt) {
+    const age = (Date.now() - pricedAt) / 1000;
+    return age >= 600 ? ` (${shortDuration(age)} ago)` : '';
 }
 
 export const goalPlannerPanel = new GoalPlannerPanel();

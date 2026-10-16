@@ -916,6 +916,33 @@ describe('adding and removing a goal', () => {
         expect(text()).not.toContain('Not priced yet');
     });
 
+    test('prices loaded from a 3 h old market snapshot are stamped with the snapshot time and shown as old', async () => {
+        const threeHoursAgo = Date.now() - 3 * 3600 * 1000;
+        plannerContext.value = { ...fixtureContext(), pricedAt: threeHoursAgo };
+        store.data = {};
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+
+        expect(goalPlannerPanel.pricedAt).toBe(threeHoursAgo);
+        expect(store.data.goalPlannerSnapshot_char1.pricedAt).toBe(threeHoursAgo);
+        expect(text()).toContain('3h ago');
+    });
+
+    test('a fresh fetch stamps pricedAt with the fetch time and shows no age', async () => {
+        const fetchedAt = Date.now() - 1000;
+        plannerContext.value = { ...fixtureContext(), pricedAt: fetchedAt };
+        store.data = {};
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+
+        expect(goalPlannerPanel.pricedAt).toBe(fetchedAt);
+        expect(text()).not.toContain('ago');
+    });
+
     test('removing a goal gives its windfall back to the goal below it', async () => {
         // Two gold goals against one crossbow: the first has it, the second is
         // milking cows and saying so. Remove the first and the second should
