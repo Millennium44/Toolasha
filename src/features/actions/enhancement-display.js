@@ -475,7 +475,7 @@ function generateCostsByLevelTable(
         ),
         mirrorStartLevel,
         totalSavings,
-        // Levels up to the target whose protection has no quote: the mirror is not weighed at those
+        // Levels up to the target where protection or a material has no quote: the mirror is not weighed at those
         unpricedLevels: costData.flatMap((data, index) =>
             (data.protectionUnpriced || data.materialUnpriced) && index + 1 <= column.toLevel ? [index + 1] : []
         ),
@@ -960,7 +960,7 @@ export function mirrorSummaryLine(summary, coins) {
     } else if (summary.mirrorStartLevel === null) {
         // Nothing found cheaper is only a finding when every level was weighed
         if (!(summary.unpricedLevels || []).length) return '';
-        text = `Philosopher's Mirror: no quote — protection has no market price at ${levelRanges(summary.unpricedLevels)}, so it cannot be weighed there.`;
+        text = `Philosopher's Mirror: no quote — protection or a material has no market price at ${levelRanges(summary.unpricedLevels)}, so it cannot be weighed there.`;
     } else {
         const levels = summary.cheaperLevels || [];
         const contiguous = levels.length > 0 && levels.every((level, i) => level === levels[0] + i);
