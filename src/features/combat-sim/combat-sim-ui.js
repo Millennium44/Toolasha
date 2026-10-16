@@ -128,6 +128,7 @@ import {
     shrineName,
     SIGNIFICANCE_Z,
     generateAbilityOrderCandidates,
+    conflictKeys,
 } from './upgrade-advisor.js';
 import { applyMaxTierFood } from './food-optimizer.js';
 import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
@@ -180,6 +181,15 @@ const ABILITY_ORDER_RANKS = [
     { key: 'balanced', label: 'Balanced' },
 ];
 const DEFAULT_ABILITY_ORDER_RANK = 'profit';
+
+/** A metrics object (`xpPerHour`, ...) in the shape the trigger tuner's `balancedScore` reads */
+const abilityOrderMetrics = (m) => ({
+    xp: m?.xpPerHour,
+    profit: m?.profitPerHour,
+    dps: m?.dps,
+    encounters: m?.encountersPerHour,
+    deaths: m?.deathsPerHour,
+});
 /** Orders shown before "Show all" */
 const ABILITY_ORDER_TOP = 5;
 /** Storage key for the Triggers chip's party mode, precision and min gain choices */
@@ -12350,7 +12360,7 @@ class CombatSimUI {
      * @returns {string} HTML
      * @private
      */
-    _renderUpgradeBudget(rows, baseline) {
+    _renderUpgradeBudget(rows, baseline, orderRows = []) {
         const budget = this._upgradeBudget ?? 0;
         const metricKey = this._upgradePlanMetric || UPGRADE_PLAN_METRICS[0].key;
         const money = (value) => formatKMB(Math.round(value));
@@ -12369,8 +12379,9 @@ class CombatSimUI {
             const plan = planUpgradeBudget(rows, budget, { baseline, metricKey });
             if (!plan.picks.length) {
                 body = `<div style="color:#888; font-size:11px;">Nothing in the list both fits ${money(budget)}
-                    and improves ${plan.metric.label}.</div>`;
+                    and improves ${plan.metric.label}.</div>${this._planAbilityOrder(plan, orderRows, baseline).html}`;
             } else {
+                const orderPlan = this._planAbilityOrder(plan, orderRows, baseline);
                 // What `_wireBudgetConfirm` reads to run the confirming
                 // simulation on click — the exact picks this render is showing
                 this._lastBudgetPlan = plan;
@@ -12403,10 +12414,11 @@ class CombatSimUI {
                     : '';
                 body =
                     picks +
+                    orderPlan.html +
                     `<div style="margin-top:4px; padding-top:4px; border-top:1px solid #222; color:#aaa; font-size:11px;">
-                        ${plan.picks.length} upgrade${plan.picks.length === 1 ? '' : 's'} ·
+                        ${plan.picks.length} upgrade${plan.picks.length === 1 ? '' : 's'}${orderPlan.appended ? ' + order' : ''} ·
                         ${money(plan.totalCost)} of ${money(budget)} ·
-                        <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
+                        <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
                     </div>${provisional}${this._renderBudgetConfirm(plan, baseline)}`;
             }
@@ -12438,6 +12450,82 @@ class CombatSimUI {
             </div>
             ${body ? `<div style="margin-top:6px;">${body}</div>` : ''}
         </div>`;
+    }
+
+    /**
+     * The free extra line a budget plan gets from the Ability order section: the best order under the plan's
+     * own objective, when it beats the current order outside the noise (the Ability order section's rule,
+     * `SIGNIFICANCE_Z` standard errors). It is display-only: `plan.picks` is untouched, so "Confirm together"
+     * simulates the purchases alone.
+     *
+     * Combining reuses `conflictKeys`: a level upgrade keeps the set of abilities and combines with an
+     * order, while a swap of an ordered ability or a fill of an ordinary slot conflicts with it and the
+     * order is left out with the reason. On the Score axis an order has no rank to add (orders are not
+     * scored), so it is named but its gain is not added to the total.
+     * @param {Object} plan - From `planUpgradeBudget`
+     * @param {Array<Object>} orderRows - Result rows of type 'ability_order'
+     * @param {Object} baseline - Baseline metrics
+     * @returns {{html: string, gain: number, appended: boolean}}
+     * @private
+     */
+    _planAbilityOrder(plan, orderRows, baseline) {
+        const none = { html: '', gain: 0, appended: false };
+        if (!orderRows?.length) return none;
+        const metric = plan.metric;
+        const isScore = metric.key === 'score';
+        const muted = (text) => `<div style="color:#777; font-size:10px; margin-top:3px;">${text}</div>`;
+        const gainOf = (r) =>
+            isScore
+                ? balancedScore(abilityOrderMetrics(r.metrics), abilityOrderMetrics(baseline))
+                : metric.gain(r, baseline);
+        const clearsNoise = (r, gain) =>
+            isScore
+                ? Number.isFinite(r.noise?.dps) && gain > SIGNIFICANCE_Z * r.noise.dps
+                : (r.significantBy?.[metric.key] ?? true);
+        const ranked = orderRows
+            .map((r) => ({ r, gain: gainOf(r) }))
+            .filter((e) => Number.isFinite(e.gain))
+            .sort((a, b) => b.gain - a.gain);
+        const best = ranked[0];
+        if (!best || best.gain <= 0 || !clearsNoise(best.r, best.gain)) {
+            return {
+                html: muted(`Ability order: no order beats your current one outside the noise on ${metric.label}.`),
+                gain: 0,
+                appended: false,
+            };
+        }
+        const name = String(best.r.candidate.description || '').replace(/^Order:\s*/, '');
+        const orderKeys = conflictKeys(best.r.candidate);
+        const clash = plan.picks.find((pick) => conflictKeys(pick.candidate).some((key) => orderKeys.includes(key)));
+        if (clash) {
+            return {
+                html: muted(
+                    `Ability order "${escapeAttribute(name)}" left out: it cannot be combined with ` +
+                        `"${escapeAttribute(clash.candidate.description)}", which changes which abilities are on the bar.`
+                ),
+                gain: 0,
+                appended: false,
+            };
+        }
+        const sectionKey = this._abilityOrderRank || DEFAULT_ABILITY_ORDER_RANK;
+        const planKey = isScore ? 'balanced' : metric.key;
+        const sectionLabel = ABILITY_ORDER_RANKS.find((x) => x.key === sectionKey)?.label;
+        const notes = [];
+        if (planKey !== sectionKey) {
+            notes.push(`best order for ${metric.label}; the Ability order section ranks by ${sectionLabel}`);
+        }
+        if (isScore) notes.push('orders are not scored, so no gain is added to the total');
+        return {
+            html:
+                `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;" data-plan-order>` +
+                `<span style="color:#e0e0e0;">Order: ${escapeAttribute(name)}` +
+                `<span style="${ROW_NOTE_STYLE} background:rgba(120,150,190,0.25); color:#9ab;">free</span></span>` +
+                `<span style="white-space:nowrap; color:#aaa;">0 ` +
+                `<span style="color:#4caf50;">${isScore ? '' : metric.format(best.gain)}</span></span></div>` +
+                (notes.length ? muted(`Ability order: ${notes.join('; ')}.`) : ''),
+            gain: isScore ? 0 : best.gain,
+            appended: true,
+        };
     }
 
     /**
@@ -12756,13 +12844,7 @@ class CombatSimUI {
             return card(head(stamp.stopped ? 'stopped' : 'nothing to compare') + note(text, '#888'));
         }
 
-        const metricsOf = (m) => ({
-            xp: m?.xpPerHour,
-            profit: m?.profitPerHour,
-            dps: m?.dps,
-            encounters: m?.encountersPerHour,
-            deaths: m?.deathsPerHour,
-        });
+        const metricsOf = abilityOrderMetrics;
         const baseMetrics = metricsOf(baseline);
         const money = (value) => {
             const sign = value > 0 ? '+' : value < 0 ? '−' : '';
@@ -12989,7 +13071,7 @@ class CombatSimUI {
         if (this._restoredUpgradeAt) {
             html = this._restoredUpgradeNote(this._restoredUpgradeAt, this._restoredUpgradeMeta) + html;
         }
-        if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline);
+        if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline, orderRows);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         // The gold table carries the ⚙ Columns popover; with no gold table the
         // level Score would be stuck on its saved metrics and depth, so the

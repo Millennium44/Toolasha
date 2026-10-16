@@ -1389,7 +1389,8 @@ describe('the panel', () => {
             draw([orderRow('B → A', { profit: 500 })]);
             const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
             expect(container.querySelectorAll('tr[data-upgrade-row]')).toHaveLength(1);
-            expect(container.querySelector('#mwi-csim-upgrade-budget').textContent).not.toContain('Order:');
+            // Not in the planner's pool; the plan's own free order line is a separate, display-only thing
+            expect(ui._lastBudgetPlan.picks.some((p) => p.candidate.abilityOrder)).toBe(false);
             expect(section().textContent).toContain('B → A');
             expect(section().textContent).not.toMatch(/Repay|ROI|Gold\//);
         });
@@ -1482,6 +1483,105 @@ describe('the panel', () => {
         test('ending: a run stopped partway says how many were measured', () => {
             draw([orderRow('A → B', { profit: 500 })], { abilityOrder: { ran: true, expected: 6, stopped: true } });
             expect(section().textContent).toContain('Stopped partway: 1 of 6');
+        });
+
+        describe('as a free line in the budget plan', () => {
+            const budgetText = () => ui.panel.querySelector('#mwi-csim-upgrade-budget').textContent;
+            const planOrder = () => ui.panel.querySelector('#mwi-csim-upgrade-budget [data-plan-order]');
+            const level = (extra = {}) => {
+                const r = row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 });
+                r.significantBy = { profit: true, dps: true, xp: true };
+                return { ...r, ...extra };
+            };
+            const abilityRow2 = (type, over) => ({
+                ...level(),
+                candidate: {
+                    description: `${type} thing`,
+                    type: 'ability_swap',
+                    slot: 'ability_2',
+                    upgradeHrid: '/abilities/new',
+                    upgradeLevel: 1,
+                    cost: 100,
+                    ...over,
+                },
+                significantBy: { profit: true },
+            });
+            beforeEach(() => {
+                ui._upgradeBudget = 1_000_000;
+                ui._upgradePlanMetric = 'profit';
+            });
+            afterEach(() => {
+                ui._upgradeBudget = 0;
+                ui._upgradePlanMetric = undefined;
+            });
+            const orderOf = (over) => {
+                const r = orderRow('/abilities/a → /abilities/b', over);
+                r.candidate.order = ['/abilities/a', '/abilities/b'];
+                return r;
+            };
+
+            test('a winner outside noise is appended, free, and its gain is added to the total', () => {
+                ui._renderUpgradeResults({
+                    baseline: BASELINE,
+                    results: [level(), orderOf({ profit: 700 })],
+                    food: null,
+                });
+                expect(planOrder().textContent).toContain('free');
+                expect(planOrder().textContent).toContain('/abilities/a');
+                // ring 50 + order 700 = 750 per hour
+                expect(budgetText()).toContain('+ order');
+                expect(budgetText()).toContain('750/hr profit');
+                expect(ui._lastBudgetPlan.picks.every((p) => !p.candidate.abilityOrder)).toBe(true);
+            });
+
+            test('no winner outside noise says so in one muted line', () => {
+                ui._renderUpgradeResults({
+                    baseline: BASELINE,
+                    results: [level(), orderOf({ profit: 20, se: 50, sig: false })],
+                    food: null,
+                });
+                expect(planOrder()).toBeNull();
+                expect(budgetText()).toContain('no order beats your current one outside the noise');
+            });
+
+            test('a swap of an ordered ability conflicts: the order is left out with the reason', () => {
+                ui._renderUpgradeResults({
+                    baseline: BASELINE,
+                    results: [abilityRow2('Swap', { replacesHrid: '/abilities/a' }), orderOf({ profit: 700 })],
+                    food: null,
+                });
+                expect(planOrder()).toBeNull();
+                expect(budgetText()).toContain('left out');
+                expect(budgetText()).toContain('Swap thing');
+            });
+
+            test('a level upgrade of an ordered ability combines with the order', () => {
+                ui._renderUpgradeResults({
+                    baseline: BASELINE,
+                    results: [
+                        abilityRow2('Level', { type: 'ability_level', upgradeHrid: '/abilities/a' }),
+                        orderOf({ profit: 700 }),
+                    ],
+                    food: null,
+                });
+                expect(planOrder()).not.toBeNull();
+            });
+
+            test('a plan objective that differs from the Rank-by is noted', () => {
+                ui._abilityOrderRank = 'xp';
+                ui._renderUpgradeResults({
+                    baseline: BASELINE,
+                    results: [level(), orderOf({ profit: 700 })],
+                    food: null,
+                });
+                expect(budgetText()).toContain('the Ability order section ranks by EXP/hr');
+            });
+
+            test('with no order rows the plan is unchanged', () => {
+                ui._renderUpgradeResults({ baseline: BASELINE, results: [level()], food: null });
+                expect(planOrder()).toBeNull();
+                expect(budgetText()).not.toContain('Ability order');
+            });
         });
 
         test('no section at all when the option did not run and there are no orders', () => {
