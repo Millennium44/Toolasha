@@ -121,6 +121,77 @@ describe('snapshot freshness', () => {
         expect(body).toContain('?');
         expect(body).not.toContain('Done');
     });
+
+    test('a queue whose only action has no game data is not shown as Idle', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [
+            {
+                characterId: 'other',
+                characterName: 'Alt Cow',
+                timestamp: Date.now() - 60 * 1000,
+                totalQueueSeconds: 0,
+                hasInfiniteAction: false,
+                hasUnknownAction: true,
+                actions: [
+                    {
+                        actionName: '/actions/mystery/x',
+                        estimatedSeconds: null,
+                        isInfinite: false,
+                        hasMaxCount: true,
+                        currentCount: 0,
+                        maxCount: 10,
+                    },
+                ],
+            },
+        ];
+
+        await queueMonitorUI.initialize();
+
+        const body = document.body.textContent;
+        expect(body).not.toContain('Idle');
+        expect(body).toContain('?');
+    });
+
+    test('an empty action list that still flags unknown work is not Idle', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [
+            {
+                characterId: 'other',
+                characterName: 'Alt Cow',
+                timestamp: Date.now() - 60 * 1000,
+                totalQueueSeconds: 0,
+                hasInfiniteAction: false,
+                hasUnknownAction: true,
+                actions: [],
+            },
+        ];
+
+        await queueMonitorUI.initialize();
+
+        expect(document.body.textContent).not.toContain('Idle');
+    });
+
+    test('a mixed queue with an untimed placeholder still shows a lower bound', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [
+            {
+                characterId: 'other',
+                characterName: 'Alt Cow',
+                timestamp: Date.now(),
+                totalQueueSeconds: 3600,
+                hasInfiniteAction: false,
+                hasUnknownAction: true,
+                actions: [
+                    { actionName: 'Milking', estimatedSeconds: 3600, isInfinite: false, hasMaxCount: true },
+                    { actionName: '/actions/mystery/x', estimatedSeconds: null, isInfinite: false, hasMaxCount: true },
+                ],
+            },
+        ];
+
+        await queueMonitorUI.initialize();
+
+        expect(document.body.textContent).toContain('≥ 1h');
+    });
 });
 
 afterEach(() => {

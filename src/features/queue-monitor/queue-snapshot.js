@@ -90,7 +90,22 @@ class QueueSnapshot {
 
                 const actionDetails = dataManager.getActionDetails(action.actionHrid);
                 if (!actionDetails) {
-                    if (action.hasMaxCount && !hasInfiniteAction) hasUnknownAction = true;
+                    // No game data to time it with: keep a placeholder row so the queue is not read as
+                    // empty (the monitor shows "Idle" for an empty list), with no duration
+                    if (!action.hasMaxCount) {
+                        hasInfiniteAction = true;
+                    } else if (!hasInfiniteAction) {
+                        hasUnknownAction = true;
+                    }
+                    snapshotActions.push({
+                        actionHrid: action.actionHrid,
+                        actionName: action.actionHrid || 'Unknown action',
+                        maxCount: action.maxCount || null,
+                        currentCount: action.currentCount || 0,
+                        hasMaxCount: action.hasMaxCount,
+                        estimatedSeconds: null,
+                        isInfinite: !action.hasMaxCount,
+                    });
                     continue;
                 }
 
