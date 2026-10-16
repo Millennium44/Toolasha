@@ -1066,7 +1066,9 @@ export function protectSweepHTML({
         let materialCostPerAttempt = 0;
         let materialsUnpriced = false;
         for (const cost of enhancementCosts || []) {
-            const price = sweepBuyPrice(cost.itemHrid);
+            // The profit price first (it honors custom prices), then the rule the table above uses,
+            // so a craft-cost-only material is priced the same in both and 0 stays unpriced
+            const price = sweepBuyPrice(cost.itemHrid) || materialUnitPrice(cost.itemHrid);
             if (price > 0) materialCostPerAttempt += (cost.count || 0) * price;
             else materialsUnpriced = true;
         }
