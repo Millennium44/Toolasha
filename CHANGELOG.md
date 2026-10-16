@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Net worth values one-sided materials, the Philosopher's Mirror and shop-sold enhanced pieces the same way the rest of Toolasha does.
 - A tracked session whose cost left out an unpriced input marks its total as partial, gold attribution no longer counts it as an inflated gain, and the XP/h table sorts partly priced rows after fully priced ones.
 
+### Audit round: alerts
+
+- Turning an alert off and back on no longer leaves it stuck on its old state: price-target, savings-goal, empty-queue, labyrinth run and entry, combat consumable and death, TTL target, enhancement target, Philosopher's Stone and task-slot alerts all start fresh, so none stays silent or announces what happened while it was off.
+- The empty-queue alert's setting now takes effect without a reload, and price-target alerts no longer briefly check the previous character's pins right after a character switch.
+
 ### Combat Sim and Lab Sim: collapsible Upgrade sections and an Ability order section
 
 - The Combat Sim Upgrade tab scrolls as a whole: the trigger tuning box is no longer squeezed into a short inner-scrolling box, and it and each results section (Upgrades, Budget, Food, Combat levels, Scrolls, unpriced) can be minimized to a one-line summary, remembered per character.

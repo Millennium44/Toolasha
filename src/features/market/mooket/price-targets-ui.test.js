@@ -287,6 +287,21 @@ describe('seeding from a costed row', () => {
 });
 
 describe('what the alert reads', () => {
+    test("a list still held for the previous character is unknown, not this character's pins", () => {
+        // A switch tears the panel down but leaves the list in memory until loadPrefs() has read the new
+        // character's; the alert must not look up, fire or record against the outgoing character's pins
+        panel.watchlist = [{ key: '/items/cheese:0', target: { side: 'ask', price: 4_200_000 } }];
+        panel.watchlistOwner = 'someone-else';
+        try {
+            expect(watchedPriceTargets()).toEqual([]);
+
+            panel.watchlistOwner = 'market123';
+            expect(watchedPriceTargets()).toHaveLength(1);
+        } finally {
+            panel.watchlistOwner = null;
+        }
+    });
+
     test('names the item the way the player sees it, level included', () => {
         panel.watchlist = [
             { key: '/items/cheese:0', target: { side: 'ask', price: 4_200_000 } },
