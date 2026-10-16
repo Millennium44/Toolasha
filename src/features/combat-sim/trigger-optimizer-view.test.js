@@ -551,3 +551,70 @@ describe('verify chips and figures', () => {
         expect(formatVerifyFigure(2, 'attempts', { signed: false })).toBe('2.00 attempts');
     });
 });
+
+describe('the Verify block on a condition-only result', () => {
+    const condRow = {
+        dependencyHrid: '/combat_trigger_dependencies/targeted_enemy',
+        conditionHrid: '/combat_trigger_conditions/current_hp',
+        comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+        value: 50,
+    };
+    const conditionChange = {
+        key: 'abilities|1',
+        slotType: 'abilities',
+        itemName: 'Fireball',
+        fromRows: [],
+        toRows: [condRow],
+        deltaScore: 5,
+        se: 0.4,
+    };
+    const condOnly = (extra = {}) => ({
+        noTunables: true,
+        scope: 'me',
+        changes: [],
+        conditions: { changes: [conditionChange], bestMeasured: [], reliable: true, slotCount: 1 },
+        verifyContext: { kind: 'combat', tunables: [], playerDTOs: [{}] },
+        ...extra,
+    });
+
+    test('a recommended condition shows Verify', () => {
+        const html = renderTriggerResultsHtml(condOnly(), gameData, { verify: { canVerify: true } });
+        expect(html).toContain('New conditions');
+        expect(html).toContain('mwi-csim-trigger-verify-btn');
+    });
+
+    test('a best-found-only condition result shows Verify too, and nothing to verify shows none', () => {
+        const best = condOnly({ conditions: { changes: [], bestMeasured: [conditionChange], slotCount: 1 } });
+        expect(renderTriggerResultsHtml(best, gameData, { verify: { canVerify: true } })).toContain(
+            'mwi-csim-trigger-verify-btn'
+        );
+        const none = condOnly({ conditions: { changes: [], bestMeasured: [], slotCount: 1 } });
+        expect(renderTriggerResultsHtml(none, gameData, { verify: { canVerify: true } })).not.toContain(
+            'mwi-csim-trigger-verify-btn'
+        );
+    });
+
+    test('a verdict renders under the condition-only result', () => {
+        const row = { key: 'triggers', verdict: 'confirmed', mean: 4.2, se: 0.9, seeds: 8, meetsMinGain: true };
+        const html = renderTriggerResultsHtml(
+            condOnly({ verifyOutcome: { unit: 'points', basis: 'recommended', rows: [row] } }),
+            gameData,
+            { verify: { canVerify: true } }
+        );
+        expect(html).toContain('data-verify-chip="confirmed"');
+        expect(html).toContain('recommended changes');
+    });
+
+    test('a remembered condition-only result says to re-run to verify', () => {
+        const html = renderTriggerResultsHtml(condOnly({ verifyContext: undefined }), gameData, {
+            cached: true,
+            verify: { canVerify: false },
+        });
+        expect(html).toContain('re-run to verify');
+        expect(html).not.toContain('mwi-csim-trigger-verify-btn');
+    });
+
+    test('without the verify option nothing is added', () => {
+        expect(renderTriggerResultsHtml(condOnly(), gameData)).not.toContain('mwi-csim-trigger-verify');
+    });
+});

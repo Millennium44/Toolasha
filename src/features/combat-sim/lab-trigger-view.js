@@ -321,7 +321,9 @@ export function verifyChipHtml(row, { savedIsPositive = false, partial = false }
  */
 function triggerVerifyHtml(group, index, verify) {
     const result = group.result;
-    if (!result || result.noTunables) return '';
+    if (!result) return '';
+    // No thresholds to tune: only the condition search can have something to re-measure
+    if (result.noTunables && !(group.conditions?.changes?.length || group.conditions?.bestMeasured?.length)) return '';
     const hasProposal = (result.changes?.length || 0) + (group.conditions?.changes?.length || 0) > 0;
     const state = verify.states?.get(group.key) || null;
     const note = (text) =>
@@ -370,7 +372,8 @@ function groupHtml(group, gameData, index = 0, verify = null) {
             head +
             '<div style="color:#888; font-size:12px;">No thresholds to tune: no trigger in this loadout compares an HP ' +
             'or MP reading to a number.</div>' +
-            conditionResultsHtml(group.conditions, gameData)
+            conditionResultsHtml(group.conditions, gameData) +
+            (verify ? triggerVerifyHtml(group, index, verify) : '')
         );
     }
 

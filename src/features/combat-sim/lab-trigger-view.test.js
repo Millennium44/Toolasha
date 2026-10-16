@@ -173,3 +173,36 @@ describe('summarizeLabTriggerRun', () => {
         ).toBe('No change beat the current thresholds');
     });
 });
+
+describe('the Verify controls on a condition-only loadout', () => {
+    const condGroup = (resultExtra = {}, conditions = { changes: [{ key: 'c' }], bestMeasured: [] }) =>
+        groupWith({
+            result: { noTunables: true, verifyContext: { kind: 'lab', tunables: [], fights: [{}] }, ...resultExtra },
+            conditions,
+        });
+    const renderVerify = (group, states = new Map()) =>
+        renderLabTriggerResultsHtml({ groups: [group], minGain: 0.02, simCount: 10 }, {}, { states, busy: false });
+
+    test('a recommended condition shows Verify', () => {
+        expect(renderVerify(condGroup())).toContain('data-lab-trigger-verify="0"');
+    });
+
+    test('nothing recommended or measured shows none', () => {
+        const html = renderVerify(condGroup({}, { changes: [], bestMeasured: [] }));
+        expect(html).not.toContain('data-lab-trigger-verify');
+        expect(html).not.toContain('Re-run the tuning');
+    });
+
+    test('a verdict renders after Verify', () => {
+        const row = { key: 'triggers', verdict: 'confirmed', mean: -0.5, se: 0.1, seeds: 8 };
+        const html = renderVerify(condGroup(), new Map([['current', { row, basis: 'recommended' }]]));
+        expect(html).toContain('Verify again');
+        expect(html).toContain('basis: recommended changes');
+    });
+
+    test('a remembered condition-only result says to re-tune', () => {
+        const html = renderVerify(condGroup({ verifyContext: undefined }));
+        expect(html).not.toContain('data-lab-trigger-verify=');
+        expect(html).toContain('Re-run the tuning to verify');
+    });
+});

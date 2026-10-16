@@ -987,6 +987,30 @@ describe('the Lab Sim Verify controls', () => {
             expect(statusText()).toContain('stopped before any seed finished');
         });
 
+        test('a condition-only loadout (no thresholds) is wired: the click verifies with its conditions', async () => {
+            const conditions = { changes: [{ key: 'c', toRows: [] }], bestMeasured: [] };
+            show({
+                key: 'loadout:3',
+                name: 'Mage',
+                fights: [],
+                result: { noTunables: true, changes: [], verifyContext: { kind: 'lab', tunables: [], fights: [{}] } },
+                conditions,
+            });
+            verify.trigger = async () => ({
+                rows: [verdictRow('triggers', 'confirmed', 0.4, 0.1)],
+                metric: 'attempts',
+                unit: 'attempts',
+                seeds: 8,
+                stopped: false,
+                basis: 'recommended',
+            });
+            triggerEl().querySelector('[data-lab-trigger-verify]').click();
+            await settle();
+            expect(verify.triggerCalls[0].conditions).toBe(conditions);
+            expect(triggerEl().textContent).toContain('✓ confirmed');
+            expect(triggerEl().querySelector('[data-lab-trigger-verify]')).not.toBeNull();
+        });
+
         test('a refusal is worded, and a failure reported', async () => {
             show(groupOf());
             verify.trigger = async () => ({
