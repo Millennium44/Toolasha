@@ -429,7 +429,7 @@ describe('the Lab Sim Verify controls', () => {
             release({
                 rows: [
                     verdictRow('a', 'confirmed', -1.2, 0.3, 5),
-                    verdictRow('b', 'error', null, null, 0),
+                    verdictRow('b', 'not-confirmed', null, null, 0),
                     verdictRow('c', 'not-confirmed', null, null, 0),
                 ],
                 metric: 'attempts',
@@ -601,7 +601,7 @@ describe('the Lab Sim Verify controls', () => {
                 return Promise.resolve({
                     rows: [
                         verdictRow(keyOf(closeRows()[0]), 'not-confirmed', -0.2, 0.3, 4),
-                        verdictRow(keyOf(closeRows()[3]), 'error', null, null, 0),
+                        verdictRow(keyOf(closeRows()[3]), 'not-confirmed', null, null, 0),
                     ],
                     metric: 'attempts',
                     unit: 'attempts',
@@ -870,7 +870,7 @@ describe('the Lab Sim Verify controls', () => {
         test('a stop before any seed finished leaves no verdict', async () => {
             show(groupOf());
             verify.trigger = async () => ({
-                rows: [{ key: 'triggers', mean: null, se: null, seeds: 0, verdict: 'error', error: 'Cancelled' }],
+                rows: [],
                 metric: 'attempts',
                 unit: 'attempts',
                 seeds: 8,

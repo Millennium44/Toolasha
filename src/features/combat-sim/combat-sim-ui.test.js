@@ -11819,8 +11819,8 @@ describe('verifying close calls on fresh seeds', () => {
                 });
                 signalDuring = params.abortSignal();
                 const done = answer({})(params);
-                // The row cut off by the terminated sim comes back as a failure
-                done.rows[1] = { ...done.rows[1], verdict: 'error', error: 'Cancelled', mean: null, se: null };
+                // The row cut off by the terminated sim finished no seed
+                done.rows[1] = { ...done.rows[1], verdict: 'not-confirmed', seeds: 0, mean: null, se: null };
                 return { ...done, stopped: true };
             };
             section().querySelector('#mwi-csim-order-verify').click();
@@ -12250,7 +12250,7 @@ describe('verifying close calls on fresh seeds', () => {
             mocks.triggerVerifyImpl = async () => {
                 await settle();
                 return {
-                    rows: [{ key: 'triggers', verdict: 'error', error: 'Cancelled', mean: null, se: null, seeds: 0 }],
+                    rows: [],
                     stopped: true,
                     unit: 'points',
                 };
