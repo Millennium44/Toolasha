@@ -146,6 +146,7 @@ import {
     OBJECTIVES,
     DEFAULT_OBJECTIVE,
     balancedScore,
+    profitScale,
 } from './trigger-tuning.js';
 import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
 import { collapseHeaderHtml, enhanceCollapsibles } from './collapsible-sections.js';
@@ -191,6 +192,24 @@ const abilityOrderMetrics = (m) => ({
     encounters: m?.encountersPerHour,
     deaths: m?.deathsPerHour,
 });
+/**
+ * One standard error of a row's profit/hr change, in gold. The row's profit noise is a percent of the
+ * gross money moving through the fight (`profitScale`: the larger of revenue and cost per hour), never of
+ * the net profit, which near break-even is ~0 and would make any small gain read as significant.
+ * @param {Object} row - A result row carrying `noise.profit` (percent)
+ * @param {Object} baseline - Baseline metrics (`profitPerHour`, `revenuePerHour`, `costPerHour`)
+ * @returns {number|null}
+ */
+export function profitNoiseGold(row, baseline) {
+    const pctNoise = row?.noise?.profit;
+    if (!Number.isFinite(pctNoise)) return null;
+    const scale = profitScale({
+        profit: baseline?.profitPerHour,
+        revenue: baseline?.revenuePerHour,
+        cost: baseline?.costPerHour,
+    });
+    return (pctNoise / 100) * scale;
+}
 /** Orders shown before "Show all" */
 const ABILITY_ORDER_TOP = 5;
 /** Storage key for the Triggers chip's party mode, precision and min gain choices */
@@ -12494,10 +12513,15 @@ class CombatSimUI {
             isScore
                 ? balancedScore(abilityOrderMetrics(r.metrics), abilityOrderMetrics(baseline))
                 : metric.gain(r, baseline);
-        const clearsNoise = (r, gain) =>
-            isScore
-                ? Number.isFinite(r.noise?.dps) && gain > SIGNIFICANCE_Z * r.noise.dps
-                : (r.significantBy?.[metric.key] ?? true);
+        const clearsNoise = (r, gain) => {
+            if (isScore) return Number.isFinite(r.noise?.dps) && gain > SIGNIFICANCE_Z * r.noise.dps;
+            if (metric.key === 'profit') {
+                // Absolute gold against a gross-scaled error; the row's percent verdict is of net profit
+                const noise = profitNoiseGold(r, baseline);
+                return noise === null ? true : Math.abs(gain) > SIGNIFICANCE_Z * noise;
+            }
+            return r.significantBy?.[metric.key] ?? true;
+        };
         const ranked = orderRows
             .map((r) => ({ r, gain: gainOf(r) }))
             .filter((e) => Number.isFinite(e.gain))
@@ -12881,7 +12905,7 @@ class CombatSimUI {
         const noiseOf = (r) => {
             const n = r.noise || {};
             if (rank === 'profit') {
-                return Number.isFinite(n.profit) ? (n.profit / 100) * Math.abs(baseline.profitPerHour || 0) : null;
+                return profitNoiseGold(r, baseline);
             }
             const value = rank === 'xp' ? n.xp : rank === 'eph' ? n.encounters : n.dps;
             return Number.isFinite(value) ? value : null;
