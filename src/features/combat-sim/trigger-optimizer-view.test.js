@@ -494,6 +494,28 @@ describe('the Verify block', () => {
         expect(html).toContain('over 8 fresh seeds');
     });
 
+    test('says when a confirmed verdict is below the minimum gain or profit could not be valued', () => {
+        const draw = (row) =>
+            triggerVerifyHtml(
+                { ...result, verifyOutcome: { unit: 'points', basis: 'recommended', rows: [row] } },
+                { canVerify: true }
+            );
+        const plain = draw({
+            verdict: 'confirmed',
+            mean: 3,
+            se: 1,
+            seeds: 8,
+            meetsMinGain: true,
+            profitLeftOut: false,
+        });
+        expect(plain).not.toContain('below your minimum gain');
+        expect(plain).not.toContain('profit could not be valued');
+        const below = draw({ verdict: 'confirmed', mean: 0.1, se: 0.01, seeds: 8, meetsMinGain: false });
+        expect(below).toContain('below your minimum gain');
+        const unvalued = draw({ verdict: 'confirmed', mean: 3, se: 1, seeds: 8, profitLeftOut: true });
+        expect(unvalued).toContain('profit could not be valued');
+    });
+
     test('refused, failed and still-running states each read plainly', () => {
         const refused = triggerVerifyHtml(
             { ...result, verifyOutcome: { refused: 'nothing', rows: [] } },

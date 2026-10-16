@@ -357,6 +357,8 @@ export function triggerVerifyHtml(result, { canVerify = false, cached = false, r
                     `${formatVerifyFigure(row.mean, out.unit)} ± ${formatVerifyFigure(row.se, out.unit, { signed: false })} ` +
                         `over ${row.seeds} fresh seeds${basis ? ` · ${basis}` : ''}`
                 )}`;
+                if (row.meetsMinGain === false) inner += ` ${muted('below your minimum gain')}`;
+                if (row.profitLeftOut) inner += ` ${muted('profit could not be valued')}`;
             }
         } else if (out.stopped) {
             inner += ` ${muted('Verify stopped before any seed finished.')}`;

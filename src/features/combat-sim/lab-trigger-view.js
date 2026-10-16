@@ -347,7 +347,8 @@ function triggerVerifyHtml(group, index, verify) {
         `<div>${button}${verifyChipHtml(row, { savedIsPositive: true, partial: state.stopped })}</div>` +
         note(
             `Fresh seeds (${esc(row?.seeds ?? 0)}), basis: ${esc(basis)}.${figures}` +
-                (state.stopped ? ' Stopped before every seed finished.' : '')
+                (state.stopped ? ' Stopped before every seed finished.' : '') +
+                (row?.meetsMinGain === false ? ' Below your minimum gain.' : '')
         )
     );
 }

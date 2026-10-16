@@ -842,6 +842,21 @@ describe('the Lab Sim Verify controls', () => {
             expect(text).toContain('Baseline 3.20 → tuned 2.58');
         });
 
+        test('a verdict below the minimum gain says so', async () => {
+            show(groupOf());
+            verify.trigger = async () => ({
+                rows: [{ ...verdictRow('triggers', 'confirmed', 0.01, 0.002), meetsMinGain: false }],
+                metric: 'attempts',
+                unit: 'attempts',
+                seeds: 8,
+                stopped: false,
+                basis: 'recommended',
+            });
+            triggerEl().querySelector('[data-lab-trigger-verify]').click();
+            await settle();
+            expect(triggerEl().textContent).toContain('Below your minimum gain');
+        });
+
         test('Stop mid-verify marks the partial verdict', async () => {
             show(groupOf());
             let release;
