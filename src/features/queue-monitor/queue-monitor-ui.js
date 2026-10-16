@@ -290,7 +290,7 @@ class QueueMonitorUI {
             let dotColor;
             if (snap.actions.length === 0 && !snap.hasUnknownAction) {
                 dotColor = '#666'; // No actions = grey
-            } else if (remaining <= 0 && snap.hasUnknownAction && !snap.hasInfiniteAction) {
+            } else if (remaining <= 0 && snap.hasUnknownAction) {
                 dotColor = '#666'; // Grey — counted work with no estimate may still be running
             } else if (remaining <= 0 && !snap.hasInfiniteAction) {
                 dotColor = '#e74c3c'; // Red — likely idle
@@ -304,10 +304,10 @@ class QueueMonitorUI {
             let timeDisplay;
             if (snap.actions.length === 0 && !snap.hasUnknownAction) {
                 timeDisplay = 'Idle';
-            } else if (snap.hasInfiniteAction && remaining <= 0) {
-                timeDisplay = '∞';
             } else if (remaining <= 0 && snap.hasUnknownAction) {
                 timeDisplay = '?';
+            } else if (snap.hasInfiniteAction && remaining <= 0) {
+                timeDisplay = '∞';
             } else if (remaining <= 0) {
                 timeDisplay = 'Done';
             } else {

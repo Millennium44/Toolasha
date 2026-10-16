@@ -252,9 +252,10 @@ export function queueState(snapshot, now = Date.now()) {
             atLeast: Boolean(snapshot.hasUnknownAction),
         };
     }
-    if (snapshot.hasInfiniteAction) return { state: 'endless', remainingSeconds: null, stale, ageMs };
+    // Untimed work ahead of an endless action may still be running, so the endless action has not started
     // The timed part has elapsed but counted work with no time estimate (a counted fight) may not
     if (snapshot.hasUnknownAction) return { state: 'untimed', remainingSeconds: null, stale, ageMs };
+    if (snapshot.hasInfiniteAction) return { state: 'endless', remainingSeconds: null, stale, ageMs };
     return { state: 'idle', remainingSeconds: 0, stale, ageMs };
 }
 

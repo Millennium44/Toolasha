@@ -173,6 +173,26 @@ describe('what a queue snapshot still implies', () => {
         expect(queueState(snapshot, now).state).toBe('endless');
     });
 
+    test('untimed work ahead of an endless action reads untimed, not endless', () => {
+        const snapshot = {
+            timestamp: now - 3 * HOUR,
+            totalQueueSeconds: 600,
+            hasUnknownAction: true,
+            hasInfiniteAction: true,
+        };
+        expect(queueState(snapshot, now)).toMatchObject({ state: 'untimed', remainingSeconds: null });
+    });
+
+    test('known time remaining ahead of untimed and endless work is a busy lower bound', () => {
+        const snapshot = {
+            timestamp: now - HOUR,
+            totalQueueSeconds: 4200,
+            hasUnknownAction: true,
+            hasInfiniteAction: true,
+        };
+        expect(queueState(snapshot, now)).toMatchObject({ state: 'busy', atLeast: true });
+    });
+
     test('untimed counted work is not idle once the timed part has ended', () => {
         const snapshot = { timestamp: now - 3 * HOUR, totalQueueSeconds: 3600, hasUnknownAction: true };
         expect(queueState(snapshot, now)).toMatchObject({ state: 'untimed', remainingSeconds: null });

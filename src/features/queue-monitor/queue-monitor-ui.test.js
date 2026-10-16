@@ -101,6 +101,50 @@ describe('snapshot freshness', () => {
         expect(document.querySelector('.toolasha-qm-age')?.textContent).toBe('Updated 1d 2h ago · stale');
     });
 
+    test('untimed work ahead of an endless action shows ? not the endless mark', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [
+            {
+                characterId: 'other',
+                characterName: 'Alt Fighter',
+                timestamp: Date.now() - 3 * 60 * 60 * 1000,
+                totalQueueSeconds: 600,
+                hasInfiniteAction: true,
+                hasUnknownAction: true,
+                actions: [
+                    { actionName: 'Milking', estimatedSeconds: 600, isInfinite: false, hasMaxCount: true },
+                    { actionName: 'Fly', estimatedSeconds: null, isInfinite: false, hasMaxCount: true },
+                    { actionName: 'Foraging', estimatedSeconds: null, isInfinite: true, hasMaxCount: false },
+                ],
+            },
+        ];
+
+        await queueMonitorUI.initialize();
+
+        const body = document.body.textContent;
+        expect(body).toContain('?');
+        expect(body).not.toContain('∞');
+    });
+
+    test('an endless-only queue still shows the endless mark', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [
+            {
+                characterId: 'other',
+                characterName: 'Alt Cow',
+                timestamp: Date.now() - 3 * 60 * 60 * 1000,
+                totalQueueSeconds: 0,
+                hasInfiniteAction: true,
+                hasUnknownAction: false,
+                actions: [{ actionName: 'Milking', estimatedSeconds: null, isInfinite: true }],
+            },
+        ];
+
+        await queueMonitorUI.initialize();
+
+        expect(document.body.textContent).toContain('∞');
+    });
+
     test('a queue with untimed counted work is never shown as done', async () => {
         vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
         game.snapshots = [
