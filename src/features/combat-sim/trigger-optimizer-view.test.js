@@ -4,7 +4,15 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { renderTriggerResultsHtml, triggerChipOptionsHtml, triggerHeadline, esc } from './trigger-optimizer-view.js';
+import {
+    renderTriggerResultsHtml,
+    triggerChipOptionsHtml,
+    triggerHeadline,
+    esc,
+    triggerVerifyHtml,
+    verifyChipHtml,
+    formatVerifyFigure,
+} from './trigger-optimizer-view.js';
 
 const gameData = {
     combatTriggerDependencyDetailMap: { '/combat_trigger_dependencies/targeted_enemy': { name: 'Targeted enemy' } },
@@ -448,5 +456,76 @@ describe('triggerHeadline with no thresholds to tune', () => {
     test('still says there is nothing to tune when the condition search found nothing or did not run', () => {
         expect(triggerHeadline({ noTunables: true, changes: [], conditions: { changes: [] } })).toBe('Nothing to tune');
         expect(triggerHeadline({ noTunables: true, changes: [] })).toBe('Nothing to tune');
+    });
+});
+
+describe('the Verify block', () => {
+    const result = { scope: 'me', changes: [change()], unchanged: [], simCount: 1 };
+
+    test('offers a button when the result can be verified, and nothing without the verify option', () => {
+        const withVerify = renderTriggerResultsHtml(result, gameData, { verify: { canVerify: true } });
+        expect(withVerify).toContain('mwi-csim-trigger-verify-btn');
+        expect(renderTriggerResultsHtml(result, gameData)).not.toContain('mwi-csim-trigger-verify');
+    });
+
+    test('a remembered result that cannot be verified says to re-run, with no button', () => {
+        const html = renderTriggerResultsHtml(result, gameData, { cached: true, verify: { canVerify: false } });
+        expect(html).toContain('re-run to verify');
+        expect(html).not.toContain('mwi-csim-trigger-verify-btn');
+        // a fresh result without a context says nothing at all
+        const fresh = renderTriggerResultsHtml(result, gameData, { verify: { canVerify: false } });
+        expect(fresh).not.toContain('re-run to verify');
+    });
+
+    test('draws the verdict with mean and se in points, and the basis', () => {
+        const html = triggerVerifyHtml(
+            {
+                ...result,
+                verifyOutcome: {
+                    unit: 'points',
+                    basis: 'best-found',
+                    rows: [{ verdict: 'confirmed', mean: 3, se: 1, seeds: 8 }],
+                },
+            },
+            { canVerify: true }
+        );
+        expect(html).toContain('✓ confirmed +3.00 pts ±1.00 pts');
+        expect(html).toContain('best found');
+        expect(html).toContain('over 8 fresh seeds');
+    });
+
+    test('refused, failed and still-running states each read plainly', () => {
+        const refused = triggerVerifyHtml(
+            { ...result, verifyOutcome: { refused: 'nothing', rows: [] } },
+            { canVerify: true }
+        );
+        expect(refused).toContain('Not verified: nothing to verify');
+        const failed = triggerVerifyHtml(
+            { ...result, verifyOutcome: { error: 'boom', rows: [] } },
+            { canVerify: true }
+        );
+        expect(failed).toContain('Verify failed: boom');
+        const running = triggerVerifyHtml(result, { canVerify: true, running: true });
+        expect(running).toContain('Verifying…');
+        expect(running).toContain('disabled');
+    });
+});
+
+describe('verify chips and figures', () => {
+    test('each verdict has its own wording, in the result unit', () => {
+        const chip = (verdict, mean) => verifyChipHtml({ verdict, mean, se: 2, unit: '%', seeds: 8 });
+        expect(chip('confirmed', 1.5)).toContain('✓ confirmed +1.50% ±2.00%');
+        expect(chip('worse', -1.5)).toContain('✗ worse −1.50% ±2.00%');
+        expect(chip('not-confirmed', 0.1)).toContain('not confirmed');
+        expect(verifyChipHtml({ verdict: 'error', error: '<b>' })).toContain('&lt;b&gt;');
+        expect(verifyChipHtml({ verdict: 'confirmed', mean: 1, se: 1, unit: '%', stopped: true })).toContain(
+            '(stopped)'
+        );
+    });
+
+    test('gold per hour is abbreviated and a missing figure is a dash', () => {
+        expect(formatVerifyFigure(1500, 'gold/hr')).toBe('+1.5K');
+        expect(formatVerifyFigure(NaN, 'gold/hr')).toBe('—');
+        expect(formatVerifyFigure(2, 'attempts', { signed: false })).toBe('2.00 attempts');
     });
 });
