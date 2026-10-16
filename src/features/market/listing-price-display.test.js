@@ -122,6 +122,58 @@ describe('_getTopOrderPrice — fresh undercut over a stale book', () => {
         expect(price).toBeNull();
     });
 
+    test('a snapshot price that is another of your own resting listings is not an undercut', () => {
+        // Two sells of one item: 920k (listing 1) and 900k (listing 3). The snapshot's top ask is your 900k.
+        listingPriceDisplay.allListings = {
+            1: {
+                id: 1,
+                isSell: true,
+                itemHrid: ITEM,
+                enhancementLevel: 0,
+                price: 920_000,
+                orderQuantity: 5,
+                filledQuantity: 0,
+            },
+            3: {
+                id: 3,
+                isSell: true,
+                itemHrid: ITEM,
+                enhancementLevel: 0,
+                price: 900_000,
+                orderQuantity: 5,
+                filledQuantity: 0,
+            },
+        };
+        try {
+            ageMock.orderBooksCache[ITEM] = {
+                lastUpdated: 1000,
+                data: {
+                    orderBooks: {
+                        0: {
+                            asks: [
+                                { listingId: 3, price: 900_000 },
+                                { listingId: 1, price: 920_000 },
+                            ],
+                        },
+                    },
+                },
+            };
+            marketMock.getPrice.mockReturnValue({ ask: 900_000, bid: null });
+            marketMock.getPriceTimestamp.mockReturnValue(2000);
+            const own = new Set([1, 3]);
+
+            expect(listingPriceDisplay._getTopOrderPrice(ITEM, 0, true, new Map(), own, 920_000)).toBeNull();
+            // The age cell agrees with the price cell: the book has no competitor, so None
+            expect(listingPriceDisplay._getTopOrderAgeMs(ITEM, 0, true, own, 920_000)).toBe(-1);
+
+            // A rival's 900k is indistinguishable once yours is at 900k too, but a rival at 890k still beats you
+            marketMock.getPrice.mockReturnValue({ ask: 890_000, bid: null });
+            expect(listingPriceDisplay._getTopOrderPrice(ITEM, 0, true, new Map(), own, 920_000)).toBe(890_000);
+        } finally {
+            listingPriceDisplay.allListings = {};
+        }
+    });
+
     test('with no opened book, a snapshot undercut is surfaced directly', () => {
         marketMock.getPrice.mockReturnValue({ ask: null, bid: 17_000_000 });
         marketMock.getPriceTimestamp.mockReturnValue(2000);
