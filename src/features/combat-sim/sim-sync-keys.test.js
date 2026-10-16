@@ -40,7 +40,9 @@ const { incomingWins, laterSavedAtWins, mergeFieldRecord, StoredValueMemo, pulle
 const { mergeLabComparison, LabComparisonStore } = await import('./lab-sim-comparison.js');
 await import('./trigger-result-cache.js');
 await import('./lab-skilling-loadouts.js');
-const { mergeZoneSimRates } = await import('../../utils/all-zones-snapshot.js');
+const { mergeZoneSimRates, mergeAllZonesSnapshot, mergeSimConsumableRates, mergeSimConsumableRatesByZone } =
+    await import('../../utils/all-zones-snapshot.js');
+const { scriptVersion } = await import('../../utils/script-version.js');
 const { isLiveSafeKey } = await import('../../utils/sync-merge-registry.js');
 const { exportEverything, importEverything } = await import('../../utils/full-backup.js');
 const storageMock = (await import('../../core/storage.js')).default;
@@ -83,6 +85,9 @@ const KEYS = [
     ['settings', 'combatSimBestiaryPlanTolerance'],
     ['combatExport', 'combatSimUpgradeResults'],
     ['combatExport', 'zoneSimRates'],
+    ['combatExport', 'allZonesSnapshot'],
+    ['combatExport', 'simConsumableRates'],
+    ['combatExport', 'simConsumableRatesByZone'],
 ];
 
 /**
@@ -322,6 +327,48 @@ describe('the folds', () => {
         expect(merged.rates['z1|0|0'].encountersPerHour).toBe(10);
         expect(Object.keys(merged.rates).sort()).toEqual(['z1|0|0', 'z2|0|0', 'z3|0|0']);
         expect(mergeZoneSimRates(local, 'not json')).toBe(local);
+    });
+
+    test('the all-zones snapshot and the last-run consumable rates are taken whole, the later run winning', () => {
+        const stamp = scriptVersion();
+        const older = { savedAt: 1, scriptVersion: stamp, zones: [{ zoneHrid: 'a' }] };
+        const newer = { savedAt: 2, scriptVersion: stamp, zones: [{ zoneHrid: 'b' }] };
+        for (const fold of [mergeAllZonesSnapshot, mergeSimConsumableRates]) {
+            expect(fold(older, newer)).toBe(newer);
+            expect(fold(newer, older)).toBe(newer);
+            // A tie goes to the incoming side
+            const tie = { ...newer, zones: [{ zoneHrid: 'c' }] };
+            expect(fold(newer, tie)).toBe(tie);
+            // An unreadable side never beats a readable one
+            expect(fold(older, 'not json')).toBe(older);
+            expect(fold(null, older)).toBe(older);
+        }
+    });
+
+    test('a record another build wrote never displaces one this build can read, however late it was saved', () => {
+        const mine = { savedAt: 1, scriptVersion: scriptVersion() };
+        const foreign = { savedAt: 99, scriptVersion: `${scriptVersion()}-other` };
+        expect(mergeAllZonesSnapshot(mine, foreign)).toBe(mine);
+        expect(mergeSimConsumableRates(foreign, mine)).toBe(mine);
+        // Neither readable: the later one, as a whole-key write would leave it
+        expect(mergeAllZonesSnapshot(foreign, { savedAt: 100 })).toEqual({ savedAt: 100 });
+    });
+
+    test('consumable rates by zone are joined by zone, the later run winning one both have', () => {
+        const stamp = scriptVersion();
+        const local = {
+            'z1|0': { savedAt: 5, scriptVersion: stamp, perHour: { food: 10 } },
+            'z2|0': { savedAt: 1, scriptVersion: stamp, perHour: { food: 1 } },
+        };
+        const incoming = {
+            'z1|0': { savedAt: 3, scriptVersion: stamp, perHour: { food: 7 } },
+            'z3|0': { savedAt: 4, scriptVersion: stamp, perHour: { food: 3 } },
+        };
+        const merged = mergeSimConsumableRatesByZone(local, incoming);
+        expect(merged['z1|0'].perHour.food).toBe(10);
+        expect(Object.keys(merged).sort()).toEqual(['z1|0', 'z2|0', 'z3|0']);
+        expect(mergeSimConsumableRatesByZone(local, 'not json')).toBe(local);
+        expect(mergeSimConsumableRatesByZone(null, incoming)).toBe(incoming);
     });
 
     test('single-zone rates keep the newest hundred', () => {

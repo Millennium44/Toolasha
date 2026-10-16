@@ -404,6 +404,104 @@ registerSyncMerge({
     liveSafe: true,
 });
 
+// ---------------------------------------------------------------------------
+// Sync folds for the snapshot and the consumable rates
+//
+// All three records are simulator OUTPUTS stamped with `savedAt` (when the run finished) and
+// `scriptVersion` (the build that produced them; a reader refuses another build's). A fold
+// cannot mix the rows of two runs: the snapshot's gear evidence, hours and party size describe
+// the whole run (see the note above `ZONE_SIM_RATES_KEY`). So the unit that is chosen between
+// is a whole record, the newer `savedAt` winning and a tie going to the incoming side; the
+// by-zone consumable map is the exception, since each entry in it is its own run and says
+// when it was saved. A record the running build would refuse never beats one it would accept.
+// ---------------------------------------------------------------------------
+
+/** Where the last run's per-hour consumable use is kept, per character, in the same store */
+export const SIM_CONSUMABLE_RATES_KEY = 'simConsumableRates';
+
+/** Where each zone's per-hour consumable use is kept, per character, in the same store */
+export const SIM_CONSUMABLE_RATES_BY_ZONE_KEY = 'simConsumableRatesByZone';
+
+/**
+ * Pick one of two whole run records: the readable one, the one this build wrote, then the later save.
+ * @param {*} local - This device's record
+ * @param {*} incoming - The other side's record
+ * @returns {*} One of the two, unchanged
+ */
+function newerRunRecord(local, incoming) {
+    const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!isRecord(incoming)) return isRecord(local) ? local : incoming;
+    if (!isRecord(local)) return incoming;
+    const mine = fromCurrentBuild(local);
+    const theirs = fromCurrentBuild(incoming);
+    if (mine !== theirs) return mine ? local : incoming;
+    return Number(local.savedAt) > Number(incoming.savedAt) ? local : incoming;
+}
+
+/**
+ * Fold two devices' all-zones snapshots for a sync: the later run, whole.
+ * @param {*} local - This device's stored snapshot
+ * @param {*} incoming - The other side's snapshot
+ * @returns {*} One of the two
+ */
+export function mergeAllZonesSnapshot(local, incoming) {
+    return newerRunRecord(local, incoming);
+}
+
+/**
+ * Fold two devices' last-run consumable rates for a sync: the later run, whole.
+ * @param {*} local - This device's stored record
+ * @param {*} incoming - The other side's record
+ * @returns {*} One of the two
+ */
+export function mergeSimConsumableRates(local, incoming) {
+    return newerRunRecord(local, incoming);
+}
+
+/**
+ * Fold two devices' by-zone consumable rates for a sync: the union of the zones, the later run
+ * winning a zone both have. A zone's entry is only ever replaced by another run of that zone,
+ * so the join cannot bring back one that was taken out on purpose.
+ * @param {*} local - This device's stored map `{ "zone|tier": record }`
+ * @param {*} incoming - The other side's map
+ * @returns {*} The joined map, or whichever side is a map
+ */
+export function mergeSimConsumableRatesByZone(local, incoming) {
+    const isMap = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!isMap(incoming)) return isMap(local) ? local : incoming;
+    if (!isMap(local)) return incoming;
+    const joined = { ...local };
+    for (const [key, entry] of Object.entries(incoming)) {
+        joined[key] = key in joined ? newerRunRecord(joined[key], entry) : entry;
+    }
+    return joined;
+}
+
+// Live-safe: every reader (`loadAllZonesSnapshot`, the Consumables panel, the combat stats panel, the queue
+// display) reads storage when asked rather than holding a copy, and the sweep's own writers
+// (`saveAllZonesSnapshot`, `_persistConsumableRates`) write a fresh run, which is the newest by construction
+registerSyncMerge({
+    store: ALL_ZONES_SNAPSHOT_STORE,
+    base: ALL_ZONES_SNAPSHOT_KEY,
+    merge: mergeAllZonesSnapshot,
+    label: 'All-zones sim snapshot',
+    liveSafe: true,
+});
+registerSyncMerge({
+    store: ALL_ZONES_SNAPSHOT_STORE,
+    base: SIM_CONSUMABLE_RATES_KEY,
+    merge: mergeSimConsumableRates,
+    label: 'Sim consumable rates',
+    liveSafe: true,
+});
+registerSyncMerge({
+    store: ALL_ZONES_SNAPSHOT_STORE,
+    base: SIM_CONSUMABLE_RATES_BY_ZONE_KEY,
+    merge: mergeSimConsumableRatesByZone,
+    label: 'Sim consumable rates by zone',
+    liveSafe: true,
+});
+
 /**
  * How many players a stored single-zone rate was simulated with, if it recorded it.
  *
