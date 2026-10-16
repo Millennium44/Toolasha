@@ -6247,6 +6247,29 @@ describe('the Ability order Include option', () => {
         expect(section().textContent).toContain('already the best measured');
     });
 
+    test('a noisy top with a significant second order: the verdict and summary name the second', () => {
+        const order = (name, attemptsDelta, significant) => ({
+            name,
+            attemptsDelta,
+            runClearDelta: 0.01,
+            attemptsDeltaNoise: significant ? 0.1 : 5,
+            significant,
+        });
+        const html = ui._renderLabAbilityOrderSection({
+            groups: [
+                {
+                    loadoutName: 'L',
+                    currentName: 'A → B → C',
+                    orders: [order('NOISY', -3, false), order('REAL', -2, true)],
+                },
+            ],
+        });
+        expect(html).not.toContain('Every order is within noise');
+        expect(html).toContain('best −2.0 attempts');
+        // both measured rows stay displayed, noisy one first
+        expect(html.indexOf('NOISY')).toBeLessThan(html.indexOf('REAL'));
+    });
+
     test('a combined run does not leave the status on "Checking ability orders"', async () => {
         tick('equipment', 'ability_order');
         await ui._onUpgradeAnalyze();
