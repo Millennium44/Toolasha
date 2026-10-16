@@ -772,6 +772,33 @@ describe('merging two devices captured profiles', () => {
         }
     });
 
+    test('a redo asked of a dropped old name moves to the surviving capture, whichever id entry carried it', () => {
+        const old = {
+            alice: capture('Alice', 1000, { characterId: 7, redoRequestedAt: 9000 }),
+            alicia: capture('Alicia', 2000, { characterId: 7, redoRequestedAt: 3000 }),
+            bob: capture('Bob', 1500, { characterId: 8 }),
+            carol: capture('Carol', 1500, { characterId: undefined, redoRequestedAt: 7000 }),
+        };
+        const newest = { aly: capture('Aly', 5000, { characterId: 7 }) };
+
+        for (const merged of [mergeMemberSkillCaptures(old, newest), mergeMemberSkillCaptures(newest, old)]) {
+            expect(Object.keys(merged).sort()).toEqual(['aly', 'bob', 'carol']);
+            expect(merged.aly.redoRequestedAt).toBe(9000);
+            // Other members, and an id-less entry, keep exactly what they had
+            expect(merged.bob.redoRequestedAt).toBeUndefined();
+            expect(merged.carol.redoRequestedAt).toBe(7000);
+            // The redo is still pending for the member: the capture is due again
+            expect(nextMemberToLog([{ name: 'Aly' }], merged, 6000).next?.name ?? null).toBe('Aly');
+        }
+        // A redo older than the surviving capture adds nothing
+        const quiet = dropRenamedDuplicates({
+            alice: capture('Alice', 1000, { characterId: 7, redoRequestedAt: 2000 }),
+            aly: capture('Aly', 5000, { characterId: 7 }),
+        });
+        expect(quiet.aly.redoRequestedAt).toBe(2000);
+        expect(nextMemberToLog([{ name: 'Aly' }], quiet, 6000).next?.name ?? null).toBe(null);
+    });
+
     test('an id-less legacy entry is never taken for anybody duplicate', () => {
         // Captures written before `characterId` was stored carry a name only
         const legacy = { alice: capture('Alice', 1000, { characterId: undefined }) };
