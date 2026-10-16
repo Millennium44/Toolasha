@@ -429,6 +429,11 @@ class TaskRerollWalk {
          */
         this.pendingClaim = null;
         this.claimWaits = 0;
+        /**
+         * Whether the board has been sorted since this walk finished. A finished
+         * walk offers Sort first and Walk again after it.
+         */
+        this.sortedAfterDone = false;
         /** The last finished walk's summary, kept after its widget goes away */
         this.summary = '';
         /** Bumped by every start and every stop, so an in-flight start can tell it was abandoned */
@@ -1359,6 +1364,7 @@ class TaskRerollWalk {
         this.tally = { claimed: 0, kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
         this.pendingClaim = null;
         this.claimWaits = 0;
+        this.sortedAfterDone = false;
         // A new walk is what finally replaces the last one's summary
         this.summary = '';
         this.message = '';
@@ -1400,6 +1406,7 @@ class TaskRerollWalk {
         this.pendingBill = null;
         this.pendingClaim = null;
         this.claimWaits = 0;
+        this.sortedAfterDone = false;
         this.awaitingReadSort = false;
         this.timerRegistry.clearAll();
         this.sortTimerRegistry.clearAll();
@@ -1435,6 +1442,7 @@ class TaskRerollWalk {
             this._replanSoon(UI_SETTLE_MS);
         } else {
             this.state = this.message ? 'stopped' : 'done';
+            this.sortedAfterDone = false;
             this.summary = this._summaryText();
         }
         this._render();
@@ -1767,7 +1775,10 @@ class TaskRerollWalk {
         // that ends a walk is also the press that destroys its only account of
         // what it spent
         if (this.state === 'idle') return this.summary ? `▶ Reroll walk — last: ${this.summary}` : '▶ Reroll walk';
-        return `✓ Done — ${this._summaryText()}`;
+        // A finished walk offers the board's Sort first, with the summary kept
+        // beside it, and Walk again once that has been pressed
+        const action = this.sortedAfterDone ? '↻ Walk again' : '↕ Sort';
+        return `${action} · ✓ Done — ${this._summaryText()}`;
     }
 
     /**
@@ -1886,19 +1897,33 @@ class TaskRerollWalk {
             'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit; white-space:nowrap;';
         button.addEventListener('mousedown', (event) => event.stopPropagation());
         button.addEventListener('pointerdown', (event) => event.stopPropagation());
-        button.addEventListener('click', () => {
-            try {
-                taskSorter.sortTasks(true);
-            } catch (error) {
-                console.error('[TaskRerollWalk] Sorting from the widget failed:', error);
-            }
-            // A sort moves cards between slots, and the armed step names a
-            // slot. Re-reading the board here re-binds the label to the card
-            // that is actually there, rather than leaving the next press to
-            // abort with "Slot N is not the card it was".
-            if (this.state === 'ready') this._replan();
-        });
+        button.addEventListener('click', () => this._sortBoard());
         return button;
+    }
+
+    /**
+     * Sort the board once: the ↕ Sort control's press, and the finished walk's
+     * main button. Nothing is scheduled and no game button is pressed.
+     * @private
+     */
+    _sortBoard() {
+        let sorted = false;
+        try {
+            taskSorter.sortTasks(true);
+            sorted = true;
+        } catch (error) {
+            console.error('[TaskRerollWalk] Sorting from the widget failed:', error);
+        }
+        // A sort moves cards between slots, and the armed step names a
+        // slot. Re-reading the board here re-binds the label to the card
+        // that is actually there, rather than leaving the next press to
+        // abort with "Slot N is not the card it was".
+        if (this.state === 'ready') this._replan();
+        // A sorted finished board is what turns the main button into Walk again
+        if (sorted && this.state === 'done' && !this.sortedAfterDone) {
+            this.sortedAfterDone = true;
+            this._render();
+        }
     }
 
     /** @private */
@@ -1908,6 +1933,11 @@ class TaskRerollWalk {
             return;
         }
         if (this.state === 'waiting') return;
+        // A finished walk offers the sort first; the press after it walks again
+        if (this.state === 'done' && !this.sortedAfterDone) {
+            this._sortBoard();
+            return;
+        }
         // A click handler cannot await; the walk's own state is what the press
         // after this one reads, and a failed read leaves the thresholds as they
         // were rather than stopping the walk
@@ -1995,7 +2025,9 @@ class TaskRerollWalk {
                     : 'One press, one game action. Nothing else happens until you press again.'
                 : this.state === 'idle'
                   ? 'Start at the top of the board. Every press does one thing, then says what the next would do.'
-                  : 'Press to walk the board again from the top.';
+                  : this.state === 'done' && !this.sortedAfterDone
+                    ? 'Sort the board, the same way the Sort Tasks button does. The press after it walks the board again from the top.'
+                    : 'Press to walk the board again from the top.';
         if (widget.main.title !== title) widget.main.title = title;
     }
 
@@ -2029,6 +2061,7 @@ class TaskRerollWalk {
         this.summary = '';
         this.pendingClaim = null;
         this.claimWaits = 0;
+        this.sortedAfterDone = false;
         this.isInitialized = false;
     }
 
