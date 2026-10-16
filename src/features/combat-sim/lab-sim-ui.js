@@ -838,6 +838,10 @@ class LabSimUI {
         this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
         // Bumped by every scope change, so a tuning run can tell the scope moved while it ran
         this._triggerScopeGen = 0;
+        // What the Configure editor's DTOs looked like when a tuning run started or last changed, and the
+        // timer that checks them after an editor event
+        this._editorEditSig = null;
+        this._editorEditTimer = null;
         this._triggerRefreshSeq = 0;
         this._checkedSwapSort = null;
         this._skillingSwapSortHandler = null;
@@ -1017,7 +1021,16 @@ class LabSimUI {
         editorArea.innerHTML =
             '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>';
 
-        this._editor = new SimEditor({ editorEl: editorArea, labMode: true });
+        this._editor = new SimEditor({
+            editorEl: editorArea,
+            labMode: true,
+            onRender: () => this._scheduleEditorEditCheck(),
+        });
+        // Most of the editor's inputs write straight into its DTOs without redrawing, so the edits that
+        // matter to the Configure-fight trigger tuning are caught as events bubbling out of the editor
+        for (const type of ['change', 'input', 'click']) {
+            editorArea.addEventListener(type, () => this._scheduleEditorEditCheck());
+        }
 
         configureContent.appendChild(configureControls);
         configureContent.appendChild(crateRow);
@@ -3563,6 +3576,52 @@ class LabSimUI {
     }
 
     /**
+     * What the Configure editor holds right now, as a comparable string.
+     * @returns {string|null}
+     * @private
+     */
+    _editorEditSignature() {
+        try {
+            return JSON.stringify(this._editor?.getEditedDTOs() ?? null);
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Check the editor shortly after an event from it: a burst of keystrokes costs one comparison.
+     * @private
+     */
+    _scheduleEditorEditCheck() {
+        if (this._editorEditTimer) clearTimeout(this._editorEditTimer);
+        this._editorEditTimer = setTimeout(() => {
+            this._editorEditTimer = null;
+            this._checkEditorEdited();
+        }, 150);
+    }
+
+    /**
+     * The Configure editor changed (gear, ability levels, trigger values, food): under the Configure
+     * fight scope a run's snapshot or a drawn result describes the old build, so it goes stale like any
+     * other scope change. Under All or Selected targets the saved loadouts are the input and the
+     * editor does not matter, so only the remembered signature moves.
+     * @returns {boolean} True when the editor differs from the last look
+     * @private
+     */
+    _checkEditorEdited() {
+        const signature = this._editorEditSignature();
+        // First look: nothing has run on an earlier state of the editor
+        if (this._editorEditSig === null) {
+            this._editorEditSig = signature;
+            return false;
+        }
+        if (signature === this._editorEditSig) return false;
+        this._editorEditSig = signature;
+        if (this._getUpgradeScopeMode() === 'current') this._onTriggerScopeChanged();
+        return true;
+    }
+
+    /**
      * List the loadout checkboxes and the cost line.
      * @private
      */
@@ -3701,6 +3760,7 @@ class LabSimUI {
                 if (runBtn) runBtn.style.display = 'none';
             }
             const scopeGen = this._triggerScopeGen;
+            this._editorEditSig = this._editorEditSignature();
             // Resolved again here: the DTOs and levels drawn in the list may be older than this press
             const targets = await this._resolveTriggerTargets({ forRun: true, gameData });
             if (!isCurrent()) return;
@@ -3768,6 +3828,8 @@ class LabSimUI {
                 this._setStatus('Trigger tuning stopped.');
                 return;
             }
+            // An edit in the Configure editor whose event has not been checked yet counts as a scope move
+            this._checkEditorEdited();
             // The scope (target mode, ticked rooms, skip rule, Configure fight) moved while this ran: the list
             // beside the results now names other fights, so the result would read as theirs
             if (scopeGen !== this._triggerScopeGen) {
@@ -8983,6 +9045,9 @@ class LabSimUI {
         this._triggerChoices = sanitizeLabTriggerChoices(null);
         this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
         this._triggerRefreshSeq++;
+        clearTimeout(this._editorEditTimer);
+        this._editorEditTimer = null;
+        this._editorEditSig = null;
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;

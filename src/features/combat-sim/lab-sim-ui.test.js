@@ -5525,6 +5525,61 @@ describe('Tune triggers', () => {
                 expect(ui._upgradeRunning).toBe(false);
             });
 
+            describe('an edit in the Configure editor', () => {
+                /** An edit the editor makes without redrawing: an ability level typed into its input */
+                const editLevel = () => {
+                    game.editedDTOs.p1.abilities[1].level = 55;
+                    ui.panel
+                        .querySelector('#mwi-labsim-editor')
+                        .dispatchEvent(new window.Event('change', { bubbles: true }));
+                };
+
+                test('during a run keeps the old snapshot result off the screen', async () => {
+                    let finish;
+                    vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockImplementation(
+                        () => new Promise((resolve) => (finish = resolve))
+                    );
+                    const running = ui._onTuneTriggers();
+                    await settle();
+                    editLevel();
+                    // The debounce has not fired; the run's end looks at the editor itself
+                    finish(finishedRun());
+                    await running;
+                    expect(results().innerHTML).toBe('');
+                    expect(status()).toContain('targets changed');
+                });
+
+                test('after a drawn result clears it, once the editor event is checked', async () => {
+                    vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+                    await ui._onTuneTriggers();
+                    expect(results().innerHTML).not.toBe('');
+                    editLevel();
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                    expect(results().innerHTML).toBe('');
+                    expect(results().style.display).toBe('none');
+                });
+
+                test('a click that changes nothing leaves the result alone', async () => {
+                    vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+                    await ui._onTuneTriggers();
+                    ui.panel
+                        .querySelector('#mwi-labsim-editor')
+                        .dispatchEvent(new window.Event('click', { bubbles: true }));
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                    expect(results().innerHTML).not.toBe('');
+                });
+
+                test('under All targets the saved loadouts are the input, so the result stays', async () => {
+                    vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+                    await setScope('all');
+                    await ui._onTuneTriggers();
+                    expect(results().innerHTML).not.toBe('');
+                    game.editedDTOs.p1.abilities[1].level = 55;
+                    expect(ui._checkEditorEdited()).toBe(true);
+                    expect(results().innerHTML).not.toBe('');
+                });
+            });
+
             test('with no monster chosen the list says so and a run starts nothing', async () => {
                 const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
                 ui.panel.querySelector('#mwi-labsim-monster').value = '';
