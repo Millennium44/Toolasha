@@ -6,6 +6,7 @@
 import { PRECISIONS, DEFAULT_PRECISION, describeRow } from './trigger-tuning.js';
 import { esc } from './trigger-optimizer-view.js';
 import { LAB_TRIGGER_SCOPE, describeTriggerRows } from './lab-condition-search.js';
+import { canVerifyTriggerResult } from './verify-runner.js';
 
 const ACCENT = '#4a9eff';
 
@@ -271,13 +272,95 @@ function triggerBestHtml(result, gameData) {
     );
 }
 
+/** The verdict colors, shared by every Lab verify chip */
+const VERDICT_COLORS = { confirmed: '#4caf50', worse: '#f44336', 'not-confirmed': '#9aa4b2', error: '#f44336' };
+
+/**
+ * One verify verdict as a chip. For the Lab, a `verifyLabCandidates` row's `mean` is attempts candidate minus
+ * baseline, so a negative figure is an improvement; a trigger verify row's `mean` is attempts saved, so pass
+ * `savedIsPositive` for it.
+ * @param {Object} row - A verify row
+ * @param {Object} [options]
+ * @param {boolean} [options.savedIsPositive] - Row `mean` is attempts saved (positive is better)
+ * @param {boolean} [options.partial] - The run was stopped before this row finished
+ * @returns {string} HTML
+ */
+export function verifyChipHtml(row, { savedIsPositive = false, partial = false } = {}) {
+    if (!row) return '';
+    const color = VERDICT_COLORS[row.verdict] || VERDICT_COLORS['not-confirmed'];
+    let figure = '';
+    if (Number.isFinite(row.mean) && Number.isFinite(row.se)) {
+        const improvement = savedIsPositive ? row.mean : -row.mean;
+        const sign = improvement > 0 ? '−' : improvement < 0 ? '+' : '';
+        // "−0.80" always reads as the improvement, whichever way the engine's figure points
+        figure = ` ${sign}${Math.abs(row.mean).toFixed(2)} ±${row.se.toFixed(2)} attempts`;
+    }
+    let label;
+    if (row.verdict === 'confirmed') label = `✓ confirmed${figure}`;
+    else if (row.verdict === 'worse') label = `✗ worse${figure}`;
+    else if (row.verdict === 'error') label = 'verify error';
+    else label = `not confirmed${figure ? ` (${figure.trim()})` : ''}`;
+    const early = partial ? ` · stopped early, ${row.seeds || 0} seed${row.seeds === 1 ? '' : 's'}` : '';
+    const title =
+        row.verdict === 'error'
+            ? row.error || 'The verify run failed'
+            : `Re-measured on ${row.seeds || 0} fresh paired seeds, longer than the analysis ran`;
+    return (
+        `<span data-verify-chip="${esc(row.verdict)}" title="${esc(title)}" style="font-size:10px; margin-left:6px; ` +
+        `padding:0 4px; border-radius:2px; white-space:nowrap; color:${color}; border:1px solid ${color};">` +
+        `${esc(label)}${esc(early)}</span>`
+    );
+}
+
+/**
+ * The verify control and verdict under one loadout's trigger result.
+ * @param {Object} group - A run group
+ * @param {number} index - Its position in `run.groups`
+ * @param {Object} verify - `{ states: Map<groupKey, state>, busy: boolean }`
+ * @returns {string} HTML
+ */
+function triggerVerifyHtml(group, index, verify) {
+    const result = group.result;
+    if (!result || result.noTunables) return '';
+    const hasProposal = (result.changes?.length || 0) + (group.conditions?.changes?.length || 0) > 0;
+    const state = verify.states?.get(group.key) || null;
+    const note = (text) =>
+        `<div style="font-size:11px; color:#888; margin-top:4px;" data-lab-trigger-verify-note>${text}</div>`;
+    if (!canVerifyTriggerResult(result)) {
+        return hasProposal ? note('Re-run the tuning to verify this result.') : '';
+    }
+    if (state?.running) return note('Verifying on fresh seeds… Stop cancels.');
+    const button =
+        `<button data-lab-trigger-verify="${index}" ${verify.busy ? 'disabled' : ''} style="background:#1a1a2e; ` +
+        `color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; ` +
+        `font-family:inherit; margin-top:4px;">${state ? 'Verify again' : 'Verify'}</button>`;
+    if (!state) return `<div>${button}</div>`;
+    if (state.refused) return `<div>${button}</div>` + note(`Nothing to verify (${esc(state.refused)}).`);
+    if (state.error && !state.row) return `<div>${button}</div>` + note(`Verify failed: ${esc(state.error)}`);
+    const row = state.row;
+    const figures =
+        Number.isFinite(row?.baselineAttempts) && Number.isFinite(row?.tunedAttempts)
+            ? ` Baseline ${esc(attempts(row.baselineAttempts))} → tuned ${esc(attempts(row.tunedAttempts))} expected attempts.`
+            : '';
+    const basis = state.basis === 'best-found' ? 'best value found (nothing was recommended)' : 'recommended changes';
+    return (
+        `<div>${button}${verifyChipHtml(row, { savedIsPositive: true, partial: state.stopped })}</div>` +
+        note(
+            `Fresh seeds (${esc(row?.seeds ?? 0)}), basis: ${esc(basis)}.${figures}` +
+                (state.stopped ? ' Stopped before every seed finished.' : '')
+        )
+    );
+}
+
 /**
  * One loadout's block.
  * @param {Object} group - From `runLabTriggerOptimization`
  * @param {Object} gameData - Game data payload (display names)
+ * @param {number} [index] - Its position in the run
+ * @param {Object|null} [verify] - Verify controls, or null for none
  * @returns {string} HTML
  */
-function groupHtml(group, gameData) {
+function groupHtml(group, gameData, index = 0, verify = null) {
     const head = `<div style="color:#e0e0e0; font-weight:700; font-size:12px; margin-top:8px;">${esc(group.name)}</div>`;
     const result = group.result;
     if (!result) return head + '<div style="color:#888; font-size:12px;">Stopped before the baseline finished.</div>';
@@ -336,7 +419,12 @@ function groupHtml(group, gameData) {
             `<div style="font-size:11px; color:#666; margin-top:4px;">Never came into play in these fights: ` +
             `${esc(unused.join(', '))}.</div>`;
     }
-    return head + body + conditionResultsHtml(group.conditions, gameData);
+    return (
+        head +
+        body +
+        (verify ? triggerVerifyHtml(group, index, verify) : '') +
+        conditionResultsHtml(group.conditions, gameData)
+    );
 }
 
 /**
@@ -367,12 +455,14 @@ export function summarizeLabTriggerRun(run) {
  * The results box: one block per loadout, then the footer.
  * @param {Object} run - From `runLabTriggerOptimization`
  * @param {Object} gameData - Game data payload (display names)
+ * @param {Object|null} [verify] - `{ states: Map<groupKey, {running, row, basis, stopped, refused, error}>,
+ *   busy: boolean }`; omit for a result with no verify controls
  * @returns {string} HTML
  */
-export function renderLabTriggerResultsHtml(run, gameData) {
+export function renderLabTriggerResultsHtml(run, gameData, verify = null) {
     const groups = run?.groups || [];
     const body = groups.length
-        ? groups.map((g) => groupHtml(g, gameData)).join('')
+        ? groups.map((g, i) => groupHtml(g, gameData, i, verify)).join('')
         : '<div style="color:#888; font-size:12px;">No loadout was tuned.</div>';
     const footer =
         `<div style="font-size:11px; color:#666; margin-top:8px;">` +
