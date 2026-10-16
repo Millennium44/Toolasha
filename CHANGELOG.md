@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Net worth values one-sided materials, the Philosopher's Mirror and shop-sold enhanced pieces the same way the rest of Toolasha does.
 - A tracked session whose cost left out an unpriced input marks its total as partial, gold attribution no longer counts it as an inflated gain, and the XP/h table sorts partly priced rows after fully priced ones.
 
+### Audit round: market listings and Bulk Sell
+
+- With two sell listings of one item, the higher one no longer shows your own cheaper listing as a rival's undercut.
+- Bulk Sell re-reads the live stack when you press confirm, so a stack that grew or shrank mid-run is sold as it stands (or refused with a note if the game's quantity box won't take it), and a bid above the tradable range is flagged before you press.
+
 ### Audit round: alerts
 
 - Turning an alert off and back on no longer leaves it stuck on its old state: price-target, savings-goal, empty-queue, labyrinth run and entry, combat consumable and death, TTL target, enhancement target, Philosopher's Stone and task-slot alerts all start fresh, so none stays silent or announces what happened while it was off.

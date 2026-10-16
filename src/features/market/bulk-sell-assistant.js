@@ -295,6 +295,11 @@ function shownEnhancementLevel(root) {
     return match ? parseInt(match[1], 10) : 0;
 }
 
+/** Shown beside an insta-sell whose price is above the item's tradable range maximum */
+/** How long after the sell modal closes the stack is still watched for the sale's inventory update */
+const AFTER_CLOSE_WATCH_MS = 1500;
+const ABOVE_BAND_WARNING = 'bid above the tradable range: the game may refuse it';
+
 class BulkSellAssistant {
     constructor() {
         this.isInitialized = false;
@@ -354,6 +359,15 @@ class BulkSellAssistant {
         this._navigatedSinceClick = false;
         /** Why the last Confirm press was refused, shown on the strip */
         this.confirmNote = '';
+        /**
+         * Units of the current step left over after a sale made in the game's own modal. While set, the
+         * strip offers to sell the step again instead of moving on.
+         */
+        this._sellAgain = 0;
+        /** The short watch for a sale the inventory reports after the modal already closed */
+        this._afterCloseWatch = null;
+        /** The order book the current step's decision was made on, kept to re-walk it if the stack changes */
+        this._book = null;
     }
 
     /**
@@ -998,7 +1012,8 @@ class BulkSellAssistant {
                     ? 'click Sell For in the item menu, or press Confirm here'
                     : 'confirm in the modal, or press Confirm here';
             const shown = d?.insta && d.avgPrice ? d.avgPrice : d?.price || 0;
-            const detail = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})`;
+            const warn = d?.warning ? ` ⚠ ${d.warning}` : '';
+            const detail = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})${warn}`;
             // A refusal leads. It used to be appended after the price and the
             // reason, which is past where the strip truncates — so a Confirm
             // that had refused for a stated reason looked like a dead button.
@@ -1024,6 +1039,12 @@ class BulkSellAssistant {
             }
             show(skipBtn, true);
             skipBtn.title = 'Close the modal and skip this item';
+        } else if (this.state === 'awaiting_next' && this._sellAgain > 0) {
+            say(`${progress} · ${this.current?.name || ''}: ${this._sellAgain} left after the sale; sell again`);
+            setMain('▶ Sell again');
+            setMainEnabled(true, 'Open this item again for what is left. Its own click, one game action.');
+            show(skipBtn, true);
+            skipBtn.title = 'Leave the remainder and move on to the next item';
         } else if (this.state === 'awaiting_next') {
             const outcome = this.statusNote ? `skipped (${this.statusNote})` : 'dealt with';
             say(`${progress} · ${this.current?.name || ''} ${outcome} — press Next for the next item`);
@@ -1172,30 +1193,8 @@ class BulkSellAssistant {
 
         const modal = document.querySelector('[class*="Modal_modalContainer"]');
         if (!modal) return { why: 'the sell modal is not open' };
-        const header = modal.querySelector('div[class*="MarketplacePanel_header"]')?.textContent || '';
-        if (!header.includes('Sell Now') && !header.includes('Sell Listing')) {
-            return { why: 'the open modal is not a sell form' };
-        }
-
-        const hrid = this._modalItemHrid(modal);
-        if (!hrid) return { why: 'the modal does not say what it is selling' };
-        if (hrid !== this.current.itemHrid) {
-            const clientData = dataManager.getInitClientData();
-            const name = clientData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop();
-            return { why: `the modal is selling ${name}, not ${this.current.name}` };
-        }
-        const level = this._modalEnhancementLevel(modal);
-        const wanted = this.current.enhancementLevel || 0;
-        // No field at all is how an unenhanceable item's modal looks, so it
-        // means +0 — but only for a step that queued +0. A step that queued an
-        // enhanced stack against a modal that will not say its level is a sale
-        // whose level nothing has checked, and that is the one this guard is
-        // for, so it refuses rather than assuming
-        if (level === null) {
-            if (wanted !== 0) return { why: 'the modal does not say what enhancement level it is selling' };
-        } else if (level !== wanted) {
-            return { why: `the modal is selling +${level}, not +${wanted}` };
-        }
+        const wrong = this._modalIdentityProblem(modal);
+        if (wrong) return { why: wrong };
         const quantity = this._modalQuantity(modal);
         if (quantity === null) return { why: 'the modal quantity cannot be read' };
         if (quantity !== this.current.count) {
@@ -1206,6 +1205,41 @@ class BulkSellAssistant {
         if (!button) return { why: "the modal's own confirm button was not found" };
         if (isButtonDisabled(button)) return { why: "the modal's confirm button is disabled" };
         return { button };
+    }
+
+    /**
+     * Whether the open modal is a sell form for the queued item at the queued enhancement level.
+     * Shared by the press target and the live-count rewrite, so a modal the player opened for
+     * something else is judged the same way by both.
+     * @param {Element} modal - The open sell modal
+     * @returns {string|null} Why it is not the queued sale, or null when it is
+     */
+    _modalIdentityProblem(modal) {
+        // A Buy Now / Buy Listing modal of the same item and level is not ours to touch or to press
+        const header = modal.querySelector('div[class*="MarketplacePanel_header"]')?.textContent || '';
+        if (!header.includes('Sell Now') && !header.includes('Sell Listing')) {
+            return 'the open modal is not a sell form';
+        }
+        const hrid = this._modalItemHrid(modal);
+        if (!hrid) return 'the modal does not say what it is selling';
+        if (hrid !== this.current.itemHrid) {
+            const clientData = dataManager.getInitClientData();
+            const name = clientData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop();
+            return `the modal is selling ${name}, not ${this.current.name}`;
+        }
+        const level = this._modalEnhancementLevel(modal);
+        const wanted = this.current.enhancementLevel || 0;
+        // No field at all is how an unenhanceable item's modal looks, so it
+        // means +0, but only for a step that queued +0. A step that queued an
+        // enhanced stack against a modal that will not say its level is a sale
+        // whose level nothing has checked, and that is the one this guard is
+        // for, so it refuses rather than assuming
+        if (level === null) {
+            if (wanted !== 0) return 'the modal does not say what enhancement level it is selling';
+        } else if (level !== wanted) {
+            return `the modal is selling +${level}, not +${wanted}`;
+        }
+        return null;
     }
 
     /**
@@ -1332,6 +1366,122 @@ class BulkSellAssistant {
      * button are the same single path. Once per step — the button disables
      * itself and the step key makes a second press a no-op even if it does not.
      */
+    /**
+     * Before a market confirm, sell the stack as it stands now: the quantity was queued when the step was
+     * prepared, and production or loot can move it before the press. Gone: the step is skipped. Changed: the
+     * step takes the live count and the modal's quantity is rewritten; if the modal will not take it, the
+     * press refuses with the leftover named, so no remainder is left unsaid. The vendor step does the same
+     * check in its own target.
+     * @returns {boolean} True when the press may go on to the modal checks
+     */
+    _syncLiveCountForConfirm() {
+        if (this.decision?.vendor) return true;
+        const live = this._liveCount();
+        if (live <= 0) {
+            // The modal is closed only when it is the sell form this step opened; one the player swapped in
+            // is theirs and stays open, the way the changed-count path leaves it
+            const openModal = document.querySelector('[class*="Modal_modalContainer"]');
+            this._skip('no longer in inventory', !openModal || !this._modalIdentityProblem(openModal));
+            return false;
+        }
+        const queued = this.current.count;
+        if (live === queued) return true;
+        const modal = document.querySelector('[class*="Modal_modalContainer"]');
+        // A modal the player opened for another item or level is theirs: its quantity is not ours to
+        // rewrite, so the press refuses the way the target check does and leaves it exactly as it was
+        const wrong = modal ? this._modalIdentityProblem(modal) : null;
+        if (wrong) {
+            this.confirmNote = wrong;
+            this._render();
+            return false;
+        }
+        const refreshed = this._refreshDecisionForCount(live, modal);
+        if (refreshed.why) {
+            this.confirmNote = refreshed.why;
+            this._render();
+            return false;
+        }
+        this.current.count = live;
+        const input = modal ? marketplaceShortcuts.findQuantityInput(modal) : null;
+        if (input) {
+            nativeInputValueSetter.call(input, String(live));
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        const shown = modal ? this._modalQuantity(modal) : null;
+        if (shown === live) return true;
+        this.confirmNote =
+            shown !== null && shown < live
+                ? `the stack is now ${live} but the modal only takes ${shown}; ${live - shown} would be left over`
+                : `the stack changed from ${queued} to ${live}; the modal quantity could not be updated`;
+        this._render();
+        return false;
+    }
+
+    /**
+     * Walk the order book the step was decided on again for a changed stack. The insta price is the
+     * bid level that covers the whole count, so a bigger stack can need a lower level than the one the
+     * modal was given; selling at the old price would fill only part of it. A switch between insta and
+     * listing, or a price the modal will not take, refuses rather than submit a stale decision.
+     * @param {number} live - The stack as it stands now
+     * @param {HTMLElement|null} modal - The open sell modal
+     * @returns {{why?: string}} A reason when the press must refuse; the decision is replaced otherwise
+     */
+    _refreshDecisionForCount(live, modal) {
+        // Without the saved book (a vendor step, or a decision made some other way) there is nothing to walk
+        if (!this._book || !this.decision || this.decision.vendor) return {};
+        const queued = this.current.count;
+        this.current.count = live;
+        let next;
+        try {
+            next = this._evaluateBook(this._book);
+        } finally {
+            this.current.count = queued;
+        }
+        if (!next) return { why: `the stack changed from ${queued} to ${live} and the order book has no orders left` };
+        if (next.insta !== this.decision.insta) {
+            return {
+                why:
+                    `the stack changed from ${queued} to ${live}, which would now ` +
+                    `${next.insta ? 'sell instantly' : 'be listed'} instead; skip this one and run it again`,
+            };
+        }
+        if (next.insta && next.decision.price !== this.decision.price) {
+            if (!modal || !this._setModalPrice(modal, next.decision.price)) {
+                return {
+                    why:
+                        `the stack changed from ${queued} to ${live} and needs a minimum price of ` +
+                        `${formatKMB(next.decision.price)}, which the modal would not take; press again`,
+                };
+            }
+        }
+        this.decision = next.decision;
+        return {};
+    }
+
+    /**
+     * Write a price into the open sell modal's price field, waking the field first if it is still the
+     * display the game draws until it is clicked. Same setter and event as the prefill.
+     * @param {HTMLElement} modal - The open sell modal
+     * @param {number} price - The minimum price to sell at
+     * @returns {boolean} Whether the field now shows the price
+     */
+    _setModalPrice(modal, price) {
+        const row = modal.querySelector('div[class*="MarketplacePanel_priceInputs"]');
+        if (!row) return false;
+        let input = row.querySelector('input');
+        if (!input) {
+            row.querySelector('div[class*="MarketplacePanel_priceDisplay"]')?.click();
+            input = row.querySelector('input');
+        }
+        if (!input) return false;
+        nativeInputValueSetter.call(input, String(price));
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        // A field that shows the price abbreviated cannot be read back; one that shows digits must match
+        const shown = String(input.value);
+        if (/[a-z]/i.test(shown)) return true;
+        return parseInt(shown.replace(/[^0-9]/g, ''), 10) === price;
+    }
+
     _onConfirmClick() {
         // A press while the vendor button is mid-arming would find it already
         // armed and sell, then the waiting press would sell again
@@ -1345,6 +1495,7 @@ class BulkSellAssistant {
             this._skipLockedCurrent();
             return;
         }
+        if (!this._syncLiveCountForConfirm()) return;
         const target = this._confirmTarget();
         if (target.why) {
             // Said on the strip rather than swallowed: a button that does
@@ -1641,7 +1792,8 @@ class BulkSellAssistant {
             this._start();
         } else if (this.state === 'awaiting_next') {
             this._navigatedSinceClick = false;
-            this.index++;
+            // A remainder left by a sale is this same step again, with its live count; anything else moves on
+            if (!(this._sellAgain > 0)) this.index++;
             this.state = 'preparing';
             this._render();
             this._prepareCurrent();
@@ -1969,6 +2121,55 @@ class BulkSellAssistant {
      * of an edge is not worth the slot and the wait).
      */
     _decideAndOpen(book) {
+        const result = this._evaluateBook(book);
+        if (!result) {
+            this._skip('no orders');
+            return;
+        }
+        // Kept so a stack that grows before the press can be walked down the same book again
+        this._book = book;
+        this.decision = result.decision;
+        const { insta, askPrice, bidPrice } = result;
+
+        const open = insta
+            ? marketplaceShortcuts.clickInstantActionButton('Sell')
+            : marketplaceShortcuts.clickListingButton('+ New Sell Listing', 'Button_sell');
+        open.then(() => {
+            if (this.state !== 'preparing') return;
+            this.state = 'awaiting_confirm';
+            this._render();
+            this._watchClose();
+        }).catch(() => {
+            if (!insta) {
+                this._skip('sell button not found');
+                return;
+            }
+            // The insta Sell button wasn't there (the bid moved, or went out of range): list instead
+            this.decision = {
+                insta: false,
+                price: askPrice || bidPrice || 0,
+                avgPrice: null,
+                reason: 'no sellable bid',
+            };
+            marketplaceShortcuts
+                .clickListingButton('+ New Sell Listing', 'Button_sell')
+                .then(() => {
+                    if (this.state !== 'preparing') return;
+                    this.state = 'awaiting_confirm';
+                    this._render();
+                    this._watchClose();
+                })
+                .catch(() => this._skip('sell button not found'));
+        });
+    }
+
+    /**
+     * The insta-vs-listing decision for the current step's count against an order book. Pure: it
+     * reads `this.current` and settings and changes nothing, so the press can run it again for a new count.
+     * @param {Object|null} book - The item's order book
+     * @returns {{insta: boolean, askPrice: number, bidPrice: number, decision: Object}|null} Null with no orders
+     */
+    _evaluateBook(book) {
         const asks = book?.asks || [];
         // A bid below the tradable range can't be insta-sold into — the game puts it under "Outside
         // current tradable range" and its Sell button holds an hourglass icon rather than text — so only
@@ -1977,10 +2178,7 @@ class BulkSellAssistant {
             const clamped = clampToBand(row.price, this.current.itemHrid, this.current.enhancementLevel);
             return !(clamped > row.price);
         });
-        if (!asks.length && !bids.length) {
-            this._skip('no orders');
-            return;
-        }
+        if (!asks.length && !bids.length) return null;
 
         const remaining = (rows) =>
             rows.reduce(
@@ -2082,38 +2280,22 @@ class BulkSellAssistant {
                 ? `; fills best-first to ${formatKMB(instaPrice)} so the depth covers the stack` +
                   `${depthShort ? ' (book still short)' : ''}`
                 : '';
-        this.decision = { insta, price, avgPrice: insta ? instaAvg : null, reason: reason + depthNote };
-
-        const open = insta
-            ? marketplaceShortcuts.clickInstantActionButton('Sell')
-            : marketplaceShortcuts.clickListingButton('+ New Sell Listing', 'Button_sell');
-        open.then(() => {
-            if (this.state !== 'preparing') return;
-            this.state = 'awaiting_confirm';
-            this._render();
-            this._watchClose();
-        }).catch(() => {
-            if (!insta) {
-                this._skip('sell button not found');
-                return;
-            }
-            // The insta Sell button wasn't there (the bid moved, or went out of range): list instead
-            this.decision = {
-                insta: false,
-                price: askPrice || bidPrice || 0,
-                avgPrice: null,
-                reason: 'no sellable bid',
-            };
-            marketplaceShortcuts
-                .clickListingButton('+ New Sell Listing', 'Button_sell')
-                .then(() => {
-                    if (this.state !== 'preparing') return;
-                    this.state = 'awaiting_confirm';
-                    this._render();
-                    this._watchClose();
-                })
-                .catch(() => this._skip('sell button not found'));
-        });
+        // Selling into a bid above the band maximum is still done; the game may refuse it, which is unverified,
+        // so the strip says so before anything is pressed
+        const aboveBand =
+            insta && clampToBand(instaPrice, this.current.itemHrid, this.current.enhancementLevel) < instaPrice;
+        return {
+            insta,
+            askPrice,
+            bidPrice,
+            decision: {
+                insta,
+                price,
+                avgPrice: insta ? instaAvg : null,
+                reason: reason + depthNote,
+                ...(aboveBand ? { warning: ABOVE_BAND_WARNING } : {}),
+            },
+        };
     }
 
     /**
@@ -2252,6 +2434,10 @@ class BulkSellAssistant {
             this.modalPoll = null;
         }
         let seen = false;
+        // Only a market sell modal can leave a remainder; the vendor menu has its own quantity check
+        const market = selector === '[class*="Modal_modalContainer"]';
+        // The most the stack stood at while the modal was open: a sale is the stack ending below it
+        let peak = 0;
         this.modalPoll = setInterval(() => {
             if (this.state !== 'awaiting_confirm') {
                 clearInterval(this.modalPoll);
@@ -2261,6 +2447,7 @@ class BulkSellAssistant {
             const open = !!document.querySelector(selector);
             if (open) {
                 seen = true;
+                if (market) peak = Math.max(peak, this._liveCount());
             } else if (seen) {
                 clearInterval(this.modalPoll);
                 this.modalPoll = null;
@@ -2270,15 +2457,50 @@ class BulkSellAssistant {
                 // its own Next press, so every server action has a click of
                 // its own.
                 this.state = 'awaiting_next';
+                if (market) this._noteRemainder(peak);
                 this._render();
             }
         }, 200);
     }
 
-    _skip(note) {
+    /**
+     * After the sell modal closed: if the stack ended below where it stood while the modal was open, a sale
+     * happened, and whatever is still in the bag is not dealt with. The step stays current with the live
+     * count and the player presses to sell it again. A closed modal with the stack unchanged is a cancel
+     * (or a sale the inventory has not reported yet, so the stack is watched for a moment longer).
+     * The game's own Confirm is never touched; this only reads the bag afterwards.
+     * @param {number} peak - The stack's highest count seen while the modal was open
+     */
+    _noteRemainder(peak) {
+        const key = this._stepKey();
+        const check = () => {
+            if (this.state !== 'awaiting_next' || this._stepKey() !== key) return true;
+            const live = this._liveCount();
+            if (live >= peak) return false;
+            if (live > 0) {
+                this.current.count = live;
+                this._sellAgain = live;
+                this.statusNote = '';
+                this._render();
+            }
+            return true;
+        };
+        if (check()) return;
+        const until = Date.now() + AFTER_CLOSE_WATCH_MS;
+        this._afterCloseWatch = setInterval(() => {
+            if (check() || Date.now() >= until) {
+                clearInterval(this._afterCloseWatch);
+                this._afterCloseWatch = null;
+            }
+        }, 200);
+    }
+
+    _skip(note, closeModal = true) {
         this._clearTransient();
         // Close any modal the run opened so it can't linger over the next item
-        document.querySelector('[class*="Modal_modalContainer"] [class*="Modal_closeButton"]')?.click();
+        if (closeModal) {
+            document.querySelector('[class*="Modal_modalContainer"] [class*="Modal_closeButton"]')?.click();
+        }
         // Dismiss an open item action menu (vendor path) the same way the
         // game does — via Escape
         if (document.querySelector('[class*="Item_actionMenu"]')) {
@@ -2340,6 +2562,13 @@ class BulkSellAssistant {
         this.statusNote = '';
         this.confirmNote = '';
         this._confirmedStep = null;
+        // The order book belongs to the step it was fetched for
+        this._book = null;
+        this._sellAgain = 0;
+        if (this._afterCloseWatch) {
+            clearInterval(this._afterCloseWatch);
+            this._afterCloseWatch = null;
+        }
     }
 
     cleanup() {
