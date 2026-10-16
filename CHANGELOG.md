@@ -13,6 +13,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Lab Sim ability order is an Upgrade "Include" option instead of a Check a swap entry, drawn in its own section per loadout and ranked by expected attempts saved, so a free order within noise no longer jumps above paid swaps.
 - Every Lab Sim tab scrolls as a whole instead of squeezing results into short inner-scrolling boxes, every section can be minimized to a one-line summary, and Tune triggers holds its own results so one header hides both.
 - The Combat Sim Upgrade tab has its own Hours box, kept in step with the Configure tab's, so you can see and set how long (and how low-noise) an upgrade run is; ability orders can also rank by EPH.
+- A scroll's tooltip shows how long the whole stack lasts if every one is opened (e.g. "All 492: 10d 6h"), since each opened scroll adds its full duration.
 
 ### Leftovers round (2026-10-15, second pass)
 
