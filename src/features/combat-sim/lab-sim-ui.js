@@ -6443,7 +6443,7 @@ class LabSimUI {
      * @param {Array} params.labyrinthCombatBuffs - Token buffs
      * @param {number} params.startToken - `_runStartToken` of the run
      * @param {string} params.ownerId - Character the run began for
-     * @param {boolean} params.orderOnly - Nothing else was checked, so the status line is this pass's to set
+     * @param {boolean} params.orderOnly - Nothing else was checked, so the status line is this pass's alone
      * @returns {Promise<void>}
      * @private
      */
@@ -6509,16 +6509,15 @@ class LabSimUI {
         }
         this._upgradeOrderSection = section;
         this._drawUpgradeAbilityOrder();
-        if (orderOnly) {
-            const orders = section.groups.reduce((sum, group) => sum + group.orders.length, 0);
-            this._setStatus(
-                section.noResult
-                    ? 'Checking ability orders produced no results.'
-                    : section.groups.length
-                      ? `Ranked ${orders} ability order${orders === 1 ? '' : 's'} across ${fights.length} fight${fights.length === 1 ? '' : 's'}.`
-                      : 'Nothing to reorder: no loadout has two or more ordinary abilities.'
-            );
-        }
+        // The pass sets its own ending whether or not other sets ran first, so "Checking ability orders"
+        // never outlives it. A stop is worded by the Stop button and an error by the caller
+        const orders = section.groups.reduce((sum, group) => sum + group.orders.length, 0);
+        const outcome = section.noResult
+            ? 'Checking ability orders produced no results.'
+            : section.groups.length
+              ? `Ranked ${orders} ability order${orders === 1 ? '' : 's'} across ${fights.length} fight${fights.length === 1 ? '' : 's'}.`
+              : 'Nothing to reorder: no loadout has two or more ordinary abilities.';
+        this._setStatus(orderOnly ? outcome : `Upgrade analysis finished. ${outcome}`);
     }
 
     /**
