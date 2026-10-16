@@ -244,6 +244,10 @@ const VERIFY_REFUSED_TEXT = {
 const abilityOrderMetrics = (m) => ({
     xp: m?.xpPerHour,
     profit: m?.profitPerHour,
+    // Gross money through the fight: balancedScore's profitScale measures a profit change against these,
+    // so a near-break-even run's small profit swing is not scored as a huge percentage
+    revenue: m?.revenuePerHour,
+    cost: m?.costPerHour,
     dps: m?.dps,
     encounters: m?.encountersPerHour,
     deaths: m?.deathsPerHour,
