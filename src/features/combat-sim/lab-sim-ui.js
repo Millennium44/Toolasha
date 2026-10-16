@@ -6744,10 +6744,11 @@ class LabSimUI {
         this._setStatus(
             `${auto ? 'Auto-verifying' : 'Verifying'} ${items.length} ${noun}${items.length === 1 ? '' : 's'} on fresh seeds. Stop cancels at any point.`
         );
-        this._redrawVerify(scope);
         let out = null;
         let error = null;
         try {
+            // Inside the try: a draw that throws must still reach `frame.finish()` below, or the tab stays busy
+            this._redrawVerify(scope);
             out = await verifyLabCandidates({
                 context: live.context,
                 pairing: live.pairing,
@@ -6967,10 +6968,10 @@ class LabSimUI {
         state.running = { scope: 'trigger', keys: new Set([group.key]) };
         state.trigger.set(group.key, { running: true });
         this._setStatus(`Verifying ${group.name}'s trigger changes on fresh seeds. Stop cancels at any point.`);
-        this._drawTriggerResults();
         let out = null;
         let error = null;
         try {
+            this._drawTriggerResults();
             out = await verifyTriggerChanges({
                 result: group.result,
                 conditions: group.conditions ?? null,
