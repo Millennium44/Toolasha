@@ -105,7 +105,8 @@ import combatStatsDataCollector from '../combat-stats/combat-stats-data-collecto
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import { dungeonTracker, queueLengthEstimator } from '../../utils/bundle-bridge.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { readScoped, writeScoped, characterKey } from '../../utils/character-key.js';
+import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { currentBuildEntries, fromCurrentBuild } from '../../utils/script-version.js';
 import { entriesOf } from '../../utils/cleared-record.js';
 import { isClearRun } from '../../utils/dungeon-run-result.js';
@@ -383,6 +384,31 @@ class ConsumablesPanel {
         // panel raised since the page loaded — so the panel you just asked for
         // appears behind the ones you did not
         bringPanelToFront(this.panel);
+        this._subscribePulls();
+    }
+
+    /**
+     * Watch for a live-safe sync pull replacing the sim's stored consumable rates under an open panel.
+     * The panel re-reads them only when shown, so a pull landing while it is up would otherwise leave
+     * the idle plan rating food against the replaced rates until the next open.
+     * @returns {void}
+     */
+    _subscribePulls() {
+        if (this._unsubscribePulls) return;
+        this._unsubscribePulls = onSyncPullApplied((written) => {
+            const landed = written?.combatExport || [];
+            if (
+                !this.panel ||
+                !(
+                    landed.includes(characterKey('simConsumableRates')) ||
+                    landed.includes(characterKey('simConsumableRatesByZone'))
+                )
+            ) {
+                return;
+            }
+            // Redraws on its own when the reread readings differ and the panel is open
+            return this._refreshStoredReadings();
+        });
     }
 
     /**
@@ -3462,6 +3488,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
     }
 
     _remove() {
+        this._unsubscribePulls?.();
+        this._unsubscribePulls = null;
         clearInterval(this.refreshId);
         this.refreshId = null;
         this.detachDrag?.();
