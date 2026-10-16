@@ -229,6 +229,23 @@ describe('EnhancementTracker material costs', () => {
         const tracked = enhancementTracker.getCurrentSession().materialCosts['/items/sword'];
         expect(tracked).toEqual({ count: 3, totalCost: 5000 });
     });
+
+    test('a material the price rules cannot price flags the session instead of counting as free', async () => {
+        const session = createSession('/items/sword', 'Sword', 8, 10, 0);
+        await loadWith(session);
+
+        // The mocked rule answers 0: no quote, no recipe (the vendor price is not a fallback)
+        await enhancementTracker.trackMaterialCost('/items/holy_cheese', 2);
+        expect(enhancementTracker.getCurrentSession().hasUnpricedInput).toBe(true);
+    });
+
+    test('a zero-count material with no price does not flag the session', async () => {
+        const session = createSession('/items/sword', 'Sword', 8, 10, 0);
+        await loadWith(session);
+
+        await enhancementTracker.trackMaterialCost('/items/holy_cheese', 0);
+        expect(enhancementTracker.getCurrentSession().hasUnpricedInput).toBeFalsy();
+    });
 });
 
 describe('merging sessions into one', () => {

@@ -97,12 +97,24 @@ describe('getEnhancementMaterialPrice', () => {
         expect(getEnhancementMaterialPrice('/items/enhance_mat', 'bid')).toBe(80_000);
     });
 
-    test('a book with neither side falls back to the vendor price', () => {
+    test('a book with neither side and no recipe is unpriced, not the vendor price', () => {
         game.prices['/items/enhance_mat:0'] = { ask: null, bid: null };
 
-        // No recipe produces it here, so the production cost is 0 and the
-        // vendor's 100 is all that is left
-        expect(getEnhancementMaterialPrice('/items/enhance_mat', 'ask')).toBe(100);
+        // No recipe produces it here and the vendor's 100 is deliberately not a fallback
+        expect(game.items['/items/enhance_mat'].sellPrice).toBe(100);
+        expect(getEnhancementMaterialPrice('/items/enhance_mat', 'ask')).toBe(0);
+    });
+
+    test('a recipe that is itself unpriceable leaves the material unpriced', () => {
+        game.items['/items/ghost_mat'] = { name: 'Ghost Mat', sellPrice: 100 };
+        game.items['/items/ghost_ore'] = { name: 'Ghost Ore', sellPrice: 50 };
+        game.actions['/actions/make_ghost'] = {
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/ghost_ore', count: 2 }],
+            outputItems: [{ itemHrid: '/items/ghost_mat', count: 1 }],
+        };
+
+        expect(getEnhancementMaterialPrice('/items/ghost_mat', 'ask')).toBe(0);
     });
 
     test('production cost beats the vendor price when there is a recipe', () => {

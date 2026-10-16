@@ -28,6 +28,7 @@ import {
 } from '../../utils/enhancement-protect-sweep.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { getEnhancementMaterialPrice } from '../../utils/enhancement-pricing.js';
 import { effectiveInventory } from '../../utils/inventory-reservations.js';
 import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimited-action-estimate.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
@@ -342,23 +343,17 @@ function generateCostsByLevelTable(
 
         // Calculate material cost breakdown
         let materialCost = 0;
+        let materialUnpriced = false;
         const materialBreakdown = {};
 
         if (enhancementCosts && enhancementCosts.length > 0) {
             enhancementCosts.forEach((cost) => {
                 const itemDetail = gameData.itemDetailMap[cost.itemHrid];
-                let itemPrice = 0;
-
-                if (cost.itemHrid === '/items/coin') {
-                    itemPrice = 1;
-                } else {
-                    const marketData = ironCowBook(cost.itemHrid) ?? marketAPI.getPrice(cost.itemHrid, 0);
-                    if (marketData && marketData.ask) {
-                        itemPrice = marketData.ask;
-                    } else {
-                        itemPrice = itemDetail?.sellPrice || 0;
-                    }
-                }
+                const itemPrice = materialUnitPrice(cost.itemHrid);
+                // No ask and no recipe leaves the material unpriced: its cost is left out of the
+                // total rather than booked as free or at the vendor price
+                const itemUnpriced = !(itemPrice > 0) && cost.count > 0;
+                if (itemUnpriced) materialUnpriced = true;
 
                 const quantity = cost.count * calc.attempts; // Use exact decimal attempts
                 const itemCost = quantity * itemPrice;
@@ -370,6 +365,7 @@ function generateCostsByLevelTable(
                     cost: itemCost,
                     quantity: quantity,
                     unitPrice: itemPrice,
+                    unpriced: itemUnpriced,
                 };
             });
         }
@@ -403,7 +399,7 @@ function generateCostsByLevelTable(
         // What the mirror route is weighed against. With the slot empty a protect-from setting
         // protects nothing, so the protected chain's attempts at no protection cost are a route
         // that does not exist; the unprotected chain is the real alternative
-        let mirrorFootingCost = protectionUnpriced ? null : totalCost;
+        let mirrorFootingCost = protectionUnpriced || materialUnpriced ? null : totalCost;
         if (effectiveProtect && !protectionItemHrid) {
             const bare = calculateEnhancement({ ...chainArgs, protectFrom: 0 });
             mirrorFootingCost = calc.attempts > 0 ? (materialCost / calc.attempts) * bare.attempts : 0;
@@ -434,6 +430,7 @@ function generateCostsByLevelTable(
             xpPerHour,
             cost: totalCost,
             protectionUnpriced,
+            materialUnpriced,
             mirrorFootingCost,
             breakdown: materialBreakdown,
         });
@@ -480,7 +477,7 @@ function generateCostsByLevelTable(
         totalSavings,
         // Levels up to the target whose protection has no quote: the mirror is not weighed at those
         unpricedLevels: costData.flatMap((data, index) =>
-            data.protectionUnpriced && index + 1 <= column.toLevel ? [index + 1] : []
+            (data.protectionUnpriced || data.materialUnpriced) && index + 1 <= column.toLevel ? [index + 1] : []
         ),
         targetLevel: column.toLevel,
         savingsLevel: column.savingsLevel,
@@ -591,9 +588,10 @@ function generateCostsByLevelTable(
         lines.push(
             `<td style="padding: 6px 4px; text-align: right; color: ${config.COLOR_XP_RATE};">${data.xpPerHour > 0 ? formatLargeNumber(data.xpPerHour) : '-'}</td>`
         );
-        if (data.protectionUnpriced) {
+        if (data.protectionUnpriced || data.materialUnpriced) {
+            const what = data.protectionUnpriced ? 'The protection item has' : 'A material has';
             lines.push(
-                `<td style="padding: 6px 4px; text-align: right; color: #ff8866;" title="The protection item has no market price, so this row has no total. Everything else comes to ${formatLargeNumber(Math.round(data.cost))}">no price</td>`
+                `<td style="padding: 6px 4px; text-align: right; color: #ff8866;" title="${what} no market price, so this row has no total. Everything else comes to ${formatLargeNumber(Math.round(data.cost))}">no price</td>`
             );
         } else {
             lines.push(
@@ -883,6 +881,19 @@ const SPREAD_APPROX_NOTE =
 
 /** The no-protection row: one cost per attempt, so the percentiles are exact. */
 const SPREAD_EXACT_NOTE = 'Exact: no protection is used, so every attempt costs the same.';
+
+/**
+ * Unit price of one enhancing material: the Iron Cow book, then the market ask, then the shared
+ * rule the tracker uses (bid cross-fill, then craft cost). Never the vendor price; 0 is unpriced.
+ * @param {string} itemHrid - Material hrid
+ * @returns {number} Coins per unit, 0 when nothing prices it
+ */
+function materialUnitPrice(itemHrid) {
+    if (itemHrid === '/items/coin') return 1;
+    const quote = ironCowBook(itemHrid) ?? marketAPI.getPrice(itemHrid, 0);
+    if (quote?.ask > 0) return quote.ask;
+    return getEnhancementMaterialPrice(itemHrid, 'ask');
+}
 
 function sweepBuyPrice(itemHrid) {
     if (itemHrid === '/items/coin') return 1;
@@ -1611,25 +1622,16 @@ function formatEnhancementDisplay(
             const itemDetail = gameData.itemDetailMap[cost.itemHrid];
             const itemName = itemDetail ? itemDetail.name : cost.itemHrid;
 
-            // Get price
-            let itemPrice = 0;
-            if (cost.itemHrid === '/items/coin') {
-                itemPrice = 1;
-            } else {
-                const marketData = ironCowBook(cost.itemHrid) ?? marketAPI.getPrice(cost.itemHrid, 0);
-                if (marketData && marketData.ask) {
-                    itemPrice = marketData.ask;
-                } else {
-                    itemPrice = itemDetail?.sellPrice || 0;
-                }
-            }
+            const itemPrice = materialUnitPrice(cost.itemHrid);
 
             const totalCost = cost.count * itemPrice;
             const formattedCount = Number.isInteger(cost.count)
                 ? cost.count.toLocaleString()
                 : cost.count.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const priceText =
+                itemPrice > 0 ? `@${itemPrice.toLocaleString()} → ${totalCost.toLocaleString()}` : 'no price';
             lines.push(
-                `<div style="font-size: 0.85em; color: #ccc;">${formattedCount}× ${itemName} <span style="color: #888;">(@${itemPrice.toLocaleString()} → ${totalCost.toLocaleString()})</span></div>`
+                `<div style="font-size: 0.85em; color: #ccc;">${formattedCount}× ${itemName} <span style="color: #888;">(${priceText})</span></div>`
             );
         });
 

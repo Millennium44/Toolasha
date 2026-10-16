@@ -746,14 +746,16 @@ describe('a Philosopher’s Mirror attempt', () => {
             enhancingMaxLevel: 10,
             enhancingProtectionMinLevel: 0,
         });
+        state.prices['/items/philosophers_mirror:0'] = { ask: 120_000, bid: 110_000 };
+        state.prices['/items/enchanted_cloak_refined:7'] = { ask: 8_000, bid: 7_500 };
         state.actions = [mirrorRow(8, 0)];
         await state.handlers.actions_updated({ endCharacterActions: [mirrorRow(8, 0)] });
         await state.handlers.action_completed({ endCharacterAction: mirrorRow(9, 1) });
 
         expect(state.calls).toContainEqual(['success', 8, 9, false]);
-        expect(state.calls).toContainEqual(['mirror', 90000]);
-        // The +7 copy, priced at the item's vendor price with the market empty in this file
-        expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
+        expect(state.calls).toContainEqual(['mirror', 120000]);
+        // The +7 copy at its own market price
+        expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 8000]]);
     });
 });
 
@@ -863,12 +865,14 @@ describe('a mirror named only by the configured protection field', () => {
             enhancingMaxLevel: 10,
             enhancingProtectionMinLevel: 0,
         });
+        state.prices['/items/philosophers_mirror:0'] = { ask: 120_000, bid: 110_000 };
+        state.prices['/items/enchanted_cloak_refined:7'] = { ask: 8_000, bid: 7_500 };
         state.actions = [mirrorRow(8, 0)];
         await state.handlers.actions_updated({ endCharacterActions: [mirrorRow(8, 0)] });
         await state.handlers.action_completed({ endCharacterAction: mirrorRow(9, 1) });
 
-        expect(state.calls).toContainEqual(['mirror', 90000]);
-        expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
+        expect(state.calls).toContainEqual(['mirror', 120000]);
+        expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 8000]]);
     });
 });
 
@@ -887,10 +891,14 @@ describe('a mirror attempt with no known start', () => {
     });
 
     test('at +4 or above the mirror certainly applied and is charged', async () => {
+        state.prices['/items/philosophers_mirror:0'] = { ask: 120_000, bid: 110_000 };
+        for (const level of [7, 8]) {
+            state.prices[`/items/enchanted_cloak_refined:${level}`] = { ask: 8_000, bid: 7_500 };
+        }
         await state.handlers.action_completed({ endCharacterAction: row(9, 40) });
 
-        expect(state.calls).toContainEqual(['mirror', 90000]);
-        expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
+        expect(state.calls).toContainEqual(['mirror', 120000]);
+        expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 8000]]);
     });
 
     test('at +3 a Blessed ordinary attempt from +1 fits too, so it is charged as ordinary', async () => {
@@ -948,6 +956,7 @@ describe('a mirror attempt on a refined item', () => {
             enhancingMaxLevel: 10,
             enhancingProtectionMinLevel: 0,
         });
+        state.prices['/items/kraken_chaps:7'] = { ask: 7_000, bid: 6_500 };
         state.actions = [row(8, 0)];
         await state.handlers.actions_updated({ endCharacterActions: [row(8, 0)] });
         await state.handlers.action_completed({ endCharacterAction: row(9, 1) });
@@ -955,6 +964,52 @@ describe('a mirror attempt on a refined item', () => {
         expect(state.calls).toContainEqual(['success', 8, 9, false]);
         // A +7 Kraken Chaps, not a refined copy and not the refined item's materials
         expect(state.costs).toEqual([['mat', '/items/kraken_chaps', 1, 7000]]);
+    });
+
+    // The vendor price (kraken_chaps sells for 7,000 to a shop) is not a quote for the copy or the
+    // mirror: with no quote the tracker passes 0, which addMaterialCost / addMirrorCost flag as
+    // an unpriced input instead of booking a cheap run
+    test.each([
+        ['a +7 copy', 8],
+        ['the lowest copy a mirror can consume, +1', 2],
+    ])('with no quote for the copy or the mirror, both are charged 0 (%s)', async (_label, fromLevel) => {
+        const row = (level, currentCount) => ({
+            id: 'r2',
+            actionHrid: '/actions/enhancing/enhance',
+            isDone: false,
+            ordinal: 1,
+            currentCount,
+            primaryItemHash: '30404::/item_locations/inventory::/items/kraken_chaps_refined::' + level,
+            secondaryItemHash: '30404::/item_locations/inventory::/items/philosophers_mirror::0',
+            enhancingMaxLevel: 10,
+            enhancingProtectionMinLevel: 0,
+        });
+        state.actions = [row(fromLevel, 0)];
+        await state.handlers.actions_updated({ endCharacterActions: [row(fromLevel, 0)] });
+        await state.handlers.action_completed({ endCharacterAction: row(fromLevel + 1, 1) });
+
+        expect(state.costs).toEqual([['mat', '/items/kraken_chaps', 1, 0]]);
+        expect(state.calls).toContainEqual(['mirror', 0]);
+    });
+
+    test('a one-sided book prices the copy from the side that exists (the book says -1 for no quote)', async () => {
+        const row = (level, currentCount) => ({
+            id: 'r3',
+            actionHrid: '/actions/enhancing/enhance',
+            isDone: false,
+            ordinal: 1,
+            currentCount,
+            primaryItemHash: '30404::/item_locations/inventory::/items/kraken_chaps_refined::' + level,
+            secondaryItemHash: '30404::/item_locations/inventory::/items/philosophers_mirror::0',
+            enhancingMaxLevel: 10,
+            enhancingProtectionMinLevel: 0,
+        });
+        state.prices['/items/kraken_chaps:1'] = { ask: -1, bid: 6_000 };
+        state.actions = [row(2, 0)];
+        await state.handlers.actions_updated({ endCharacterActions: [row(2, 0)] });
+        await state.handlers.action_completed({ endCharacterAction: row(3, 1) });
+
+        expect(state.costs).toEqual([['mat', '/items/kraken_chaps', 1, 6000]]);
     });
 });
 
