@@ -452,13 +452,14 @@ function protectionUnitPrice(action, protectionItemHrid) {
     if (loaded.itemHrid === protectionItemHrid && loaded.level > 0) {
         const quote =
             ironCowBook(protectionItemHrid, loaded.level) ?? marketAPI.getPrice(protectionItemHrid, loaded.level);
-        const price = quote?.ask || quote?.bid || 0;
+        // The book answers "no quote" with -1 on a side, which is truthy but not a price
+        const price = quote?.ask > 0 ? quote.ask : quote?.bid > 0 ? quote.bid : 0;
         if (price > 0) return price;
     }
     // No market quote is no price: the tracker flags the session as having an unpriced input
     // rather than booking the vendor price, which is far below what a protection costs to buy
     const marketPrice = ironCowBook(protectionItemHrid, 0) ?? marketAPI.getPrice(protectionItemHrid, 0);
-    return marketPrice?.ask || marketPrice?.bid || 0;
+    return marketPrice?.ask > 0 ? marketPrice.ask : marketPrice?.bid > 0 ? marketPrice.bid : 0;
 }
 
 /**
