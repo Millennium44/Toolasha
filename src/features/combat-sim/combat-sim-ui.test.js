@@ -1255,6 +1255,84 @@ describe('the panel', () => {
         expect(container.querySelectorAll('[data-csv-export]')).toHaveLength(1);
     });
 
+    describe('minimizable Upgrade sections', () => {
+        const rowsFor = () => [
+            row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+            row('Pricey neck', { slot: '/equipment_types/neck', cost: 1000, profitGain: 60 }),
+        ];
+        const draw = () => ui._renderUpgradeResults({ baseline: BASELINE, results: rowsFor(), food: null });
+        const header = (key) => ui.panel.querySelector(`[data-collapse-key="${key}"]`);
+        const tableHidden = () => ui.panel.querySelector('#mwi-csim-upgrade-results table').style.display === 'none';
+
+        beforeEach(() => {
+            // The panel is a singleton and remembers what was minimized
+            ui._collapsedSections = {};
+            mocks.store.delete('settings:combatSimUpgradeColumns');
+        });
+
+        afterEach(() => {
+            ui._collapsedSections = {};
+            mocks.store.delete('settings:combatSimUpgradeColumns');
+        });
+
+        test('the trigger box is not capped and the tab scrolls as a whole', () => {
+            const box = ui.panel.querySelector('#mwi-csim-trigger-box');
+            expect(box.style.maxHeight).toBe('');
+            expect(box.style.overflowY).toBe('');
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-content').style.overflowY).toBe('auto');
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-results').style.overflowY).toBe('');
+        });
+
+        test('a header is a keyboard-operable button that collapses and expands its section', () => {
+            draw();
+            const h = header('gold');
+            expect(h.getAttribute('role')).toBe('button');
+            expect(h.getAttribute('tabindex')).toBe('0');
+            expect(tableHidden()).toBe(false);
+            h.click();
+            expect(tableHidden()).toBe(true);
+            expect(h.getAttribute('aria-expanded')).toBe('false');
+            expect(h.textContent).toContain('2 candidates');
+            h.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            expect(tableHidden()).toBe(false);
+            h.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+            expect(tableHidden()).toBe(true);
+        });
+
+        test('a collapsed section stays collapsed through a sort redraw', () => {
+            draw();
+            header('gold').click();
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(tableHidden()).toBe(true);
+            expect(header('gold').getAttribute('aria-expanded')).toBe('false');
+            header('gold').click();
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(tableHidden()).toBe(false);
+        });
+
+        test('the collapsed state is saved and comes back on the next opening', async () => {
+            draw();
+            header('gold').click();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(mocks.store.get('settings:combatSimUpgradeColumns').collapsed).toEqual({ gold: true });
+
+            ui._collapsedSections = {};
+            await ui._loadUpgradeColumnPrefs();
+            expect(ui._collapsedSections).toEqual({ gold: true });
+            expect(tableHidden()).toBe(true);
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(tableHidden()).toBe(true);
+        });
+
+        test('a stored record without the field means everything expanded', async () => {
+            ui._collapsedSections = { gold: true };
+            mocks.store.set('settings:combatSimUpgradeColumns', { hidden: [] });
+            await ui._loadUpgradeColumnPrefs();
+            expect(ui._collapsedSections).toEqual({});
+        });
+    });
+
     describe('combat levels: Hours/0.01% columns', () => {
         /** A combat_level row: days of grind and percent gains on dps / xp / profit */
         const levelRow = (description, days, { dps = 0, xp = 0, profit = 0 } = {}) => ({
@@ -1582,8 +1660,10 @@ describe('the panel', () => {
         // happy-dom keeps scrollTop across an innerHTML swap; a browser does not,
         // and without the browser's behaviour the assertion below would pass
         // whether or not anything restored it. So zero it the way a browser does.
+        // The Upgrade tab scrolls as a whole, so the position lives on its content element
+        const scroller = ui.panel.querySelector('#mwi-csim-upgrade-content');
         let scroll = 0;
-        Object.defineProperty(container, 'scrollTop', {
+        Object.defineProperty(scroller, 'scrollTop', {
             configurable: true,
             get: () => scroll,
             set: (value) => {
@@ -1604,10 +1684,10 @@ describe('the panel', () => {
             },
         });
 
-        container.scrollTop = 240;
+        scroller.scrollTop = 240;
         container.querySelector('[data-sort-key="upgrade"]').click();
 
-        expect(container.scrollTop).toBe(240);
+        expect(scroller.scrollTop).toBe(240);
     });
 
     test('the remembered-run banner Clear button forgets the saved run and removes itself', async () => {
@@ -10160,6 +10240,31 @@ describe('the Triggers option', () => {
         expect(mocks.triggerRuns[0].include).toBe('abilities');
         expect(mocks.triggerRuns[0].objective).toBe('profit');
         expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
+    });
+
+    test('the result box minimizes to its headline and stays minimized on the next run', async () => {
+        ui.buildPanel();
+        ui._collapsedSections = {};
+        selectZone();
+        onlyTriggers();
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        await ui._onUpgradeAnalyze();
+
+        const head = () => ui.panel.querySelector('#mwi-csim-trigger-box [data-collapse-key="trigger"]');
+        const body = () => ui.panel.querySelector('#mwi-csim-trigger-results');
+        expect(body().children.length).toBeGreaterThan(1);
+        head().click();
+        const hidden = () => [...body().children].slice(1).every((el) => el.style.display === 'none');
+        expect(hidden()).toBe(true);
+        expect(head().textContent).toContain('1 change recommended');
+
+        mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 10 };
+        await ui._onUpgradeAnalyze();
+        expect(hidden()).toBe(true);
+        expect(head().textContent).toContain('No change beat the current thresholds');
+        head().click();
+        expect([...body().children].slice(1).some((el) => el.style.display === 'none')).toBe(false);
+        ui._collapsedSections = {};
     });
 
     test('the condition search is off by default and is passed to the run only when ticked', async () => {
