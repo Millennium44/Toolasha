@@ -15,6 +15,7 @@ const hoisted = vi.hoisted(() => ({
     mooket: new Map(),
     refresh: vi.fn(async () => {}),
     characterId: 'c1',
+    characterLoaded: true,
     store: {},
     storageSet: vi.fn(),
     storageGet: null,
@@ -45,6 +46,9 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getMarketListings: () => hoisted.listings,
+        get characterData() {
+            return hoisted.characterLoaded ? {} : null;
+        },
         getCurrentCharacterId: () => hoisted.characterId,
         getItemDetails: (hrid) => ({ name: hrid.split('/').pop() }),
         on: (event, fn) => {
@@ -188,6 +192,7 @@ describe('panel', () => {
         hoisted.mooket.clear();
         hoisted.refresh.mockClear();
         hoisted.characterId = 'c1';
+        hoisted.characterLoaded = true;
         hoisted.store = {};
         hoisted.storageSet.mockClear();
         hoisted.storageGet = null;
@@ -593,12 +598,15 @@ describe('panel', () => {
             expect(hoisted.storageSet).toHaveBeenLastCalledWith(STORE_KEY, [`${CHEESE}:0:sell`], 'settings', true);
         });
 
-        it('does not prune while listings are empty or not loaded, nor on a plain listings update', async () => {
+        it('does not prune while listings are not loaded, nor on a plain listings update', async () => {
             hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`];
             await overbidPanel.loadHidden();
+            // Before the character's data arrives the list reads as empty too
+            hoisted.characterLoaded = false;
             hoisted.listings = [];
             hoisted.handlers.character_initialized.forEach((fn) => fn());
             await vi.advanceTimersByTimeAsync(0);
+            hoisted.characterLoaded = true;
             hoisted.listings = undefined;
             hoisted.handlers.character_initialized.forEach((fn) => fn());
             await vi.advanceTimersByTimeAsync(0);
@@ -608,6 +616,16 @@ describe('panel', () => {
             fire();
             expect(overbidPanel.hidden.has(`${CHEESE}:0:sell`)).toBe(true);
             expect(hoisted.storageSet).not.toHaveBeenCalled();
+        });
+
+        it('a loaded character with no listings at all prunes every key', async () => {
+            hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`, `${SWORD}:3:sell`];
+            await overbidPanel.loadHidden();
+            hoisted.listings = [];
+            hoisted.handlers.character_initialized.forEach((fn) => fn());
+            await vi.advanceTimersByTimeAsync(0);
+            expect(overbidPanel.hidden.size).toBe(0);
+            expect(hoisted.storageSet).toHaveBeenLastCalledWith(STORE_KEY, [], 'settings', true);
         });
 
         it('turning the setting off and on mid-session keeps a hide whose listing is briefly canceled', async () => {

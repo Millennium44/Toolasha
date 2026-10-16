@@ -508,12 +508,14 @@ class OverbidPanel {
 
     /**
      * Forget hidden keys with no active listing left, judged by the full snapshot at login. Does nothing
-     * until listings are loaded: an empty or missing list proves nothing.
+     * until the character's data has loaded: before that `getMarketListings()` is also an empty list, and
+     * proves nothing. Once loaded, an empty list is a character with no listings, and prunes every key.
      */
     pruneHidden() {
         if (!this.hidden.size || this.hiddenOwner !== currentOwner()) return;
+        if (!dataManager.characterData) return;
         const listings = dataManager.getMarketListings();
-        if (!Array.isArray(listings) || !listings.length) return;
+        if (!Array.isArray(listings)) return;
         const live = new Set(
             listings.filter((l) => l?.status === ACTIVE_STATUS && l.itemHrid).map((l) => hiddenKey(l))
         );
