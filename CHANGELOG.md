@@ -10,7 +10,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Combat Sim Upgrade tab scrolls as a whole: the trigger tuning box is no longer squeezed into a short inner-scrolling box, and it and each results section (Upgrades, Budget, Food, Combat levels, Scrolls, unpriced) can be minimized to a one-line summary, remembered per character.
 - Ability orders leave the main upgrade table (where every free order tied at the top score) for their own section, ranked by a "Rank by" choice (Profit/hr, EXP/hr, DPS, Balanced) with ± noise, the current order as baseline and "within noise" labels; a Budget plan adds the best order as a free line when it clearly beats yours.
-- Lab Sim Check a swap shows ability orders in their own section per loadout, ranked by expected attempts saved, so a free order within noise no longer jumps above paid swaps.
+- Lab Sim ability order is an Upgrade "Include" option instead of a Check a swap entry, drawn in its own section per loadout and ranked by expected attempts saved, so a free order within noise no longer jumps above paid swaps.
+- Every Lab Sim tab scrolls as a whole instead of squeezing results into short inner-scrolling boxes, every section can be minimized to a one-line summary, and Tune triggers holds its own results so one header hides both.
 - The Combat Sim Upgrade tab has its own Hours box, kept in step with the Configure tab's, so you can see and set how long (and how low-noise) an upgrade run is; ability orders can also rank by EPH.
 
 ### Leftovers round (2026-10-15, second pass)
