@@ -12050,6 +12050,25 @@ describe('verifying close calls on fresh seeds', () => {
             expect(mocks.verifyCalls[0].metric).toBe('dps');
         });
 
+        test('hiding the sorted column verifies by the column the table is really ordered by', async () => {
+            ui._upgradeSort = { key: 'dps', asc: false };
+            ui._upgradeHiddenColumns = new Set(['dps']);
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [closeGold('R1'), closeGold('R2')],
+                food: null,
+                context: CONTEXT,
+            });
+            const bar = ui.panel.querySelector('#mwi-csim-gold-verify').parentElement.textContent;
+            // The hidden DPS key no longer names the metric: the table falls back to its first visible column
+            expect(bar).not.toContain('by DPS');
+            expect(ui._effectiveGoldSortKey()).not.toBe('dps');
+            mocks.verifyImpl = answer({});
+            ui.panel.querySelector('#mwi-csim-gold-verify').click();
+            await settle();
+            expect(mocks.verifyCalls[0].metric).toBe('profit');
+        });
+
         test('a row has its own verify action, which does not open its detail row', async () => {
             ui._renderUpgradeResults({
                 baseline: BASELINE,
