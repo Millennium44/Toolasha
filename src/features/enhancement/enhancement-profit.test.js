@@ -106,6 +106,29 @@ describe('costVsExpected', () => {
 describe('valueVsCost', () => {
     const prices = (n) => (hrid, level) => (level === 0 ? { bid: 0, ask: 0 } : { bid: n, ask: n });
 
+    test('a protection entry with units and no cost nulls both readings despite a positive total', () => {
+        const run = session({
+            protectionCount: 5,
+            protectionCost: 600,
+            protectionBreakdown: {
+                '/items/mirror_of_protection': { count: 3, totalCost: 600 },
+                '/items/crushed_pearl': { count: 2, totalCost: 0 },
+            },
+            predictions: { expectedAttempts: 14, expectedProtections: 2 },
+        });
+        expect(valueVsCost(run, prices(10000))).toBeNull();
+        expect(costVsExpected(run)).toBeNull();
+        const priced = {
+            ...run,
+            protectionBreakdown: {
+                '/items/mirror_of_protection': { count: 3, totalCost: 600 },
+                '/items/crushed_pearl': { count: 2, totalCost: 100 },
+            },
+            protectionCost: 700,
+        };
+        expect(valueVsCost(priced, prices(10000))).not.toBeNull();
+    });
+
     test('returns null before the item is enhanced', () => {
         expect(valueVsCost(session({ currentLevel: 0 }), prices(100))).toBeNull();
         expect(valueVsCost({ currentLevel: 3 }, prices(100))).toBeNull();
