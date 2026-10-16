@@ -367,4 +367,41 @@ describe('lab upgrade analysis prices the selected player, not the logged-in cha
         expect(row.candidate.cost).toBe(1_000_000);
         expect(row.costDetail.ladder).toMatchObject({ fromLevel: 4, toLevel: 5 });
     });
+
+    test('a row that only moves an owned copy has no purchase breakdown', async () => {
+        buildGameDataPayload.mockReturnValue({ actionDetailMap: {}, itemDetailMap: ITEM_DETAIL_MAP });
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        const owned = {
+            type: 'tier',
+            slot: CAPE_SLOT,
+            currentHrid: '',
+            currentLevel: 0,
+            upgradeHrid: SWORD,
+            upgradeLevel: 3,
+            removedItems: [],
+            description: 'Cheese Sword +3',
+            checkedSwap: true,
+            cost: 0,
+            noPurchase: true,
+        };
+        const { results } = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [{ hrid: 'me', equipment: {}, abilities: [], staminaLevel: 50 }],
+                playerIndex: 0,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'ability_swap',
+                extraCandidates: [owned],
+            },
+            null,
+            {}
+        );
+        const row = results.find((r) => r.candidate.noPurchase);
+        expect(row).toBeTruthy();
+        expect(row.costDetail).toBeNull();
+    });
 });
