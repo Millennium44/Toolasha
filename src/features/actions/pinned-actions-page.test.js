@@ -49,6 +49,7 @@ const mockDataManager = vi.hoisted(() => ({
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
+        getCurrentCharacterId: () => 'char1',
         getActionDetails: (actionHrid) => mockDataManager.actionDetails[actionHrid] ?? null,
         getItemDetails: (itemHrid) => mockDataManager.itemDetails[itemHrid] ?? null,
     },
@@ -484,6 +485,46 @@ describe('loadActions', () => {
         await expect(page.loadActions()).resolves.toBeUndefined();
 
         expect(page.allActions[0]).toMatchObject({ pending: false, profitPerHour: null, expPerHour: null });
+    });
+});
+
+describe('a sync pull that rewrites the all-zones snapshot', () => {
+    let announce;
+    let characterKey;
+    let loadSpy;
+
+    beforeEach(async () => {
+        ({ announceSyncPullApplied: announce } = await import('../../utils/sync-merge-registry.js'));
+        ({ characterKey } = await import('../../utils/character-key.js'));
+        document.body.innerHTML = '<div class="MainPanel_mainPanel__x"><div>game</div></div>';
+        loadSpy = vi.spyOn(page, 'loadActions').mockResolvedValue(undefined);
+        page.showPage();
+        loadSpy.mockClear();
+    });
+
+    afterEach(() => {
+        page.hidePage();
+        vi.restoreAllMocks();
+        document.body.innerHTML = '';
+    });
+
+    test("rebuilds the open list when it wrote this character's snapshot", async () => {
+        announce({ combatExport: [characterKey('allZonesSnapshot')] });
+        await Promise.resolve();
+        expect(loadSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('ignores a pull that wrote something else', async () => {
+        announce({ combatExport: [characterKey('zoneSimRates')] });
+        await Promise.resolve();
+        expect(loadSpy).not.toHaveBeenCalled();
+    });
+
+    test('stops listening once the page is hidden', async () => {
+        page.hidePage();
+        announce({ combatExport: [characterKey('allZonesSnapshot')] });
+        await Promise.resolve();
+        expect(loadSpy).not.toHaveBeenCalled();
     });
 });
 
