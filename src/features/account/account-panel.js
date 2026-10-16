@@ -69,6 +69,7 @@ function queueText(queue) {
     if (queue.state === 'busy')
         return { text: `Busy ~${shortDuration(queue.remainingSeconds)}`, color: ROW_COLORS.good };
     if (queue.state === 'endless') return { text: 'Endless action', color: ROW_COLORS.good };
+    if (queue.state === 'untimed') return { text: 'Queue length unknown', color: ROW_COLORS.dim };
     return { text: 'Idle', color: ROW_COLORS.bad };
 }
 

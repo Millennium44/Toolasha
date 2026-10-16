@@ -77,6 +77,10 @@ class QueueSnapshot {
             const snapshotActions = [];
             let totalQueueSeconds = 0;
             let hasInfiniteAction = false;
+            // Counted work that could not be timed (a counted fight, an action with no rate): the
+            // total leaves it out, so it is a lower bound and the queue's end is unknown. Only
+            // work ahead of the first endless action matters — nothing behind that one runs.
+            let hasUnknownAction = false;
 
             // Execution order is the game's queue order (party actions first,
             // then ordinal); the array is insertion order
@@ -85,7 +89,10 @@ class QueueSnapshot {
                 if (action.isDone) continue;
 
                 const actionDetails = dataManager.getActionDetails(action.actionHrid);
-                if (!actionDetails) continue;
+                if (!actionDetails) {
+                    if (action.hasMaxCount && !hasInfiniteAction) hasUnknownAction = true;
+                    continue;
+                }
 
                 const actionName = actionDetails.name || action.actionHrid;
                 const isInfinite = !action.hasMaxCount;
@@ -93,14 +100,20 @@ class QueueSnapshot {
                 let estimatedSeconds = null;
 
                 if (!isInfinite) {
-                    // Finite action — compute remaining time
-                    const stats = calculateActionStats(actionDetails, {
-                        skills,
-                        equipment,
-                        itemDetailMap,
-                        actionHrid: action.actionHrid,
-                        includeCommunityBuff: true,
-                    });
+                    // Finite action — compute remaining time. A counted fight's count is battles,
+                    // which have no fixed duration, so it is left untimed rather than charged at
+                    // the action-time floor per battle.
+                    const isFight =
+                        actionDetails.type === '/action_types/combat' || action.actionHrid.includes('/combat/');
+                    const stats = isFight
+                        ? null
+                        : calculateActionStats(actionDetails, {
+                              skills,
+                              equipment,
+                              itemDetailMap,
+                              actionHrid: action.actionHrid,
+                              includeCommunityBuff: true,
+                          });
 
                     if (stats) {
                         const remainingCount = Math.max(0, action.maxCount - action.currentCount);
@@ -112,6 +125,8 @@ class QueueSnapshot {
                         // action starts. Later rows stay in the details, but cannot
                         // delay a boundary that comes before them in execution order.
                         if (!hasInfiniteAction) totalQueueSeconds += estimatedSeconds;
+                    } else if (!hasInfiniteAction) {
+                        hasUnknownAction = true;
                     }
                 } else {
                     hasInfiniteAction = true;
@@ -135,6 +150,7 @@ class QueueSnapshot {
                 actions: snapshotActions,
                 totalQueueSeconds,
                 hasInfiniteAction,
+                hasUnknownAction,
             };
 
             this.snapshots.set(oldId, snapshot);

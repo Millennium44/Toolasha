@@ -173,6 +173,11 @@ describe('what a queue snapshot still implies', () => {
         expect(queueState(snapshot, now).state).toBe('endless');
     });
 
+    test('untimed counted work is not idle once the timed part has ended', () => {
+        const snapshot = { timestamp: now - 3 * HOUR, totalQueueSeconds: 3600, hasUnknownAction: true };
+        expect(queueState(snapshot, now)).toMatchObject({ state: 'untimed', remainingSeconds: null });
+    });
+
     test('an ancient snapshot is marked as such rather than trusted', () => {
         const snapshot = { timestamp: now - STALE_SNAPSHOT_MS - DAY, totalQueueSeconds: 60 };
         expect(queueState(snapshot, now).stale).toBe(true);

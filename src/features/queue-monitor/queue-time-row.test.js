@@ -21,6 +21,7 @@ const game = vi.hoisted(() => ({
     clientData: { itemDetailMap: {} },
     stats: { actionTime: 10, totalEfficiency: 0 },
     elapsedSecondsInCurrentUnit: () => 0,
+    unknownHrids: [],
 }));
 
 vi.mock('../../utils/overlay-rows.js', () => ({
@@ -35,7 +36,10 @@ vi.mock('../../core/data-manager.js', () => ({
         getSkills: () => game.skills,
         getInitClientData: () => game.clientData,
         getEquipment: () => new Map(),
-        getActionDetails: (hrid) => (hrid ? { name: hrid, type: '/action_types/milking' } : null),
+        getActionDetails: (hrid) =>
+            hrid && !game.unknownHrids.includes(hrid)
+                ? { name: hrid, type: hrid.includes('/combat/') ? '/action_types/combat' : '/action_types/milking' }
+                : null,
         getElapsedSecondsInCurrentUnit: (...args) => game.elapsedSecondsInCurrentUnit(...args),
     },
 }));
@@ -90,6 +94,7 @@ describe('the queue time tile', () => {
         game.clientData = { itemDetailMap: {} };
         game.stats = { actionTime: 10, totalEfficiency: 0 };
         game.elapsedSecondsInCurrentUnit = () => 0;
+        game.unknownHrids = [];
     });
 
     test('registers, off by default', () => {
@@ -174,7 +179,7 @@ describe('the queue time tile', () => {
     test('counted work behind a running unbounded action does not become a duration', () => {
         game.actions = [unbounded(0), counted(60, 0, 1)];
 
-        expect(queueTimeLeft()).toEqual({ seconds: 0, finite: 0, queued: 2, infinite: true });
+        expect(queueTimeLeft()).toEqual({ seconds: 0, finite: 0, queued: 2, infinite: true, unknown: false });
         expect(draw().textContent).toContain('∞');
     });
 
@@ -185,7 +190,7 @@ describe('the queue time tile', () => {
         game.actions = [trailing, first, boundary];
         game.elapsedSecondsInCurrentUnit = () => 4;
 
-        expect(queueTimeLeft()).toEqual({ seconds: 56, finite: 1, queued: 3, infinite: true });
+        expect(queueTimeLeft()).toEqual({ seconds: 56, finite: 1, queued: 3, infinite: true, unknown: false });
         expect(game.actions).toEqual([trailing, first, boundary]);
         expect(draw().title).toContain('until the action with no count starts');
     });
@@ -223,5 +228,63 @@ describe('the queue time tile', () => {
         game.elapsedSecondsInCurrentUnit = () => 999; // implausible, but must still clamp at 0
 
         expect(queueTimeLeft().seconds).toBe(0);
+    });
+
+    /** A counted fight: its count is battles, which the tile has no duration for */
+    function countedFight(maxCount, ordinal = 0) {
+        return {
+            id: `fight-${ordinal}`,
+            actionHrid: '/actions/combat/fly',
+            hasMaxCount: true,
+            maxCount,
+            currentCount: 0,
+            isDone: false,
+            ordinal,
+        };
+    }
+
+    test('a counted fight is unknown, not a few seconds per battle', () => {
+        game.actions = [countedFight(20)];
+
+        expect(queueTimeLeft()).toEqual({ seconds: 0, finite: 0, queued: 1, infinite: false, unknown: true });
+        const container = draw();
+        expect(container.textContent).toContain('?');
+        expect(container.textContent).not.toContain('0s');
+        expect(container.title).toContain('no time estimate');
+    });
+
+    test('timed work beside an untimed fight reads as a lower bound', () => {
+        game.actions = [counted(60, 0, 0), countedFight(20, 1)];
+
+        const left = queueTimeLeft();
+        expect(left.seconds).toBe(600);
+        expect(left.unknown).toBe(true);
+        const container = draw();
+        expect(container.textContent).toContain('≥ 10m');
+        expect(container.title).toContain('lower bound');
+    });
+
+    test('a counted action the game has no details for is unknown rather than free', () => {
+        game.unknownHrids = ['/actions/milking/cow'];
+        game.actions = [counted(100)];
+
+        expect(queueTimeLeft().unknown).toBe(true);
+        expect(draw().textContent).toContain('?');
+    });
+
+    test('a counted action with no rate is unknown rather than free', () => {
+        game.stats = null;
+        game.actions = [counted(100)];
+
+        expect(queueTimeLeft().unknown).toBe(true);
+        expect(draw().textContent).toContain('?');
+    });
+
+    test('an untimed fight ahead of an endless action is not read as an endless queue', () => {
+        game.actions = [countedFight(20, 0), unbounded(1)];
+
+        const left = queueTimeLeft();
+        expect(left).toEqual({ seconds: 0, finite: 0, queued: 2, infinite: true, unknown: true });
+        expect(draw().textContent).toContain('?');
     });
 });

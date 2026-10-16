@@ -100,6 +100,27 @@ describe('snapshot freshness', () => {
 
         expect(document.querySelector('.toolasha-qm-age')?.textContent).toBe('Updated 1d 2h ago · stale');
     });
+
+    test('a queue with untimed counted work is never shown as done', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [
+            {
+                characterId: 'other',
+                characterName: 'Alt Fighter',
+                timestamp: Date.now() - 3 * 60 * 60 * 1000,
+                totalQueueSeconds: 600,
+                hasInfiniteAction: false,
+                hasUnknownAction: true,
+                actions: [{ actionName: 'Fly', estimatedSeconds: null, isInfinite: false, hasMaxCount: true }],
+            },
+        ];
+
+        await queueMonitorUI.initialize();
+
+        const body = document.body.textContent;
+        expect(body).toContain('?');
+        expect(body).not.toContain('Done');
+    });
 });
 
 afterEach(() => {

@@ -85,6 +85,17 @@ describe('buildBriefingLines', () => {
         test('an unbounded action never runs out', () => {
             expect(line({ queue: { queued: 1, seconds: 0, infinite: true } }, 'queue').value).toBe('Running, no end');
         });
+
+        test('untimed work is not a zero, an end time or a warning', () => {
+            const alone = line({ queue: { queued: 1, seconds: 0, infinite: false, unknown: true } }, 'queue');
+            expect(alone.value).toBe('Running, length unknown');
+            expect(alone.tone).toBe('good');
+            expect(alone.horizon).toBeUndefined();
+
+            const beside = line({ queue: { queued: 2, seconds: 600, infinite: false, unknown: true } }, 'queue');
+            expect(beside.value).toBe('At least 10m');
+            expect(beside.horizon).toBeUndefined();
+        });
     });
 
     describe('the task board', () => {

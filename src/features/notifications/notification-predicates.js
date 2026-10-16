@@ -82,7 +82,9 @@ export function thresholdCrossing({ armed, secondsLeft, thresholdSeconds }) {
  * @returns {boolean} True when the queue is projected to be exhausted
  */
 export function isQueueExhausted(snapshot, now) {
-    if (!snapshot || snapshot.hasInfiniteAction) return false;
+    // Untimed counted work (a counted fight) leaves the total a lower bound, so the queue may well
+    // still be running when it has elapsed
+    if (!snapshot || snapshot.hasInfiniteAction || snapshot.hasUnknownAction) return false;
     if (!snapshot.timestamp) return false;
 
     const actions = Array.isArray(snapshot.actions) ? snapshot.actions : [];

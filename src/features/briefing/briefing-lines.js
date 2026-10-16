@@ -114,6 +114,13 @@ function queueLine(facts, now) {
         return { key: 'queue', label: 'Action queue', value: `Empty${since}`, tone: 'bad', target: TARGETS.queue };
     }
 
+    // Counted work with no time estimate (a counted fight) makes any figure a lower bound, and a
+    // queue of nothing else has none: a "0s" with a "Queue ended" marker would be a made-up end
+    if (queue.unknown) {
+        const value = queue.seconds > 0 ? `At least ${shortDuration(queue.seconds)}` : 'Running, length unknown';
+        return { key: 'queue', label: 'Action queue', value, tone: 'good', target: TARGETS.queue };
+    }
+
     // An unbounded action never runs out, so the figure beside it is the time
     // until it *starts* rather than the time until the queue ends
     if (queue.infinite && !(queue.seconds > 0)) {

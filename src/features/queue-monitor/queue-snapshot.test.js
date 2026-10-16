@@ -107,6 +107,65 @@ describe('queue snapshot', () => {
         expect(queueSnapshot.getSnapshot('char1').actions[0].estimatedSeconds).toBe(500);
     });
 
+    test('a counted fight is left untimed and the snapshot says its end is unknown', async () => {
+        // Its count is battles; charging the stats' action time per battle read a 20-battle
+        // queue as a minute of work and let the idle alert fire on a character still fighting
+        game.actionDetails['/actions/combat/fly'] = { name: 'Fly', type: '/action_types/combat' };
+        game.actionDetails['/actions/milking/basic'] = { name: 'Basic Milking' };
+        game.actions = [
+            { actionHrid: '/actions/combat/fly', isDone: false, hasMaxCount: true, maxCount: 20, currentCount: 0 },
+            {
+                actionHrid: '/actions/milking/basic',
+                isDone: false,
+                hasMaxCount: true,
+                maxCount: 10,
+                currentCount: 0,
+                ordinal: 1,
+            },
+        ];
+        queueSnapshot.initialize();
+        await Promise.resolve();
+
+        game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'Someone' });
+
+        const snapshot = queueSnapshot.getSnapshot('char1');
+        expect(snapshot.actions[0].estimatedSeconds).toBeNull();
+        expect(snapshot.totalQueueSeconds).toBe(100);
+        expect(snapshot.hasUnknownAction).toBe(true);
+    });
+
+    test('a counted action with no rate, or no details, is flagged unknown', async () => {
+        game.actionDetails['/actions/milking/basic'] = { name: 'Basic Milking' };
+        game.actions = [
+            { actionHrid: '/actions/milking/basic', isDone: false, hasMaxCount: true, maxCount: 10, currentCount: 0 },
+        ];
+        game.stats = null;
+        queueSnapshot.initialize();
+        await Promise.resolve();
+        game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'Someone' });
+        expect(queueSnapshot.getSnapshot('char1').hasUnknownAction).toBe(true);
+
+        game.stats = { totalEfficiency: 0, actionTime: 10 };
+        game.actionDetails = {};
+        game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'Someone' });
+        expect(queueSnapshot.getSnapshot('char1').hasUnknownAction).toBe(true);
+    });
+
+    test('untimed work behind an endless action is not flagged — nothing behind it runs', async () => {
+        game.actionDetails['/actions/combat/fly'] = { name: 'Fly', type: '/action_types/combat' };
+        game.actionDetails['/actions/milking/basic'] = { name: 'Basic Milking' };
+        game.actions = [
+            { actionHrid: '/actions/milking/basic', isDone: false, hasMaxCount: false, ordinal: 0 },
+            { actionHrid: '/actions/combat/fly', isDone: false, hasMaxCount: true, maxCount: 20, ordinal: 1 },
+        ];
+        queueSnapshot.initialize();
+        await Promise.resolve();
+
+        game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'Someone' });
+
+        expect(queueSnapshot.getSnapshot('char1').hasUnknownAction).toBe(false);
+    });
+
     test('lists the queue in execution order, not the array’s insertion order', async () => {
         // A repeating action requeued to the front of the array with the
         // highest ordinal, ahead of the one actually running: the snapshot used

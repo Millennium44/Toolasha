@@ -35,6 +35,16 @@ import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
 
 /**
+ * Whether a queued action is a fight, whose count is battles rather than timed actions.
+ * @param {Object} action - The queued action
+ * @param {Object} details - Its action details
+ * @returns {boolean}
+ */
+function isFight(action, details) {
+    return details?.type === '/action_types/combat' || String(action?.actionHrid || '').includes('/combat/');
+}
+
+/**
  * What is left of the current character's action queue.
  *
  * An infinite action is reported rather than counted: it never empties, so a
@@ -43,7 +53,12 @@ import { compareActionQueueOrder, runningAction } from '../../utils/combat-actio
  * included in the queue size, but contributes no duration: the figure is the
  * time to reach the first infinite action.
  *
- * @returns {{seconds: number, finite: number, queued: number, infinite: boolean}|null}
+ * A counted action this cannot time is not charged as zero: a counted fight is a number of
+ * battles, not of timed actions (the action bar prices one from the last simulation or calls it
+ * unknown), and an action with no details or stats has no rate at all. Either sets `unknown`, so
+ * the figure is a lower bound and a queue made only of them has no figure.
+ *
+ * @returns {{seconds: number, finite: number, queued: number, infinite: boolean, unknown: boolean}|null}
  *   Null when the game has not loaded enough to say anything
  */
 export function queueTimeLeft() {
@@ -57,6 +72,7 @@ export function queueTimeLeft() {
     let finite = 0;
     let queued = 0;
     let infinite = false;
+    let unknown = false;
 
     // The queue array is insertion order, not execution order — a repeating action
     // requeued to the front after completing a cycle keeps a *higher* ordinal, so the
@@ -79,7 +95,10 @@ export function queueTimeLeft() {
         }
 
         const details = dataManager.getActionDetails?.(action.actionHrid);
-        if (!details) continue;
+        if (!details || isFight(action, details)) {
+            unknown = true;
+            continue;
+        }
 
         const stats = calculateActionStats(details, {
             skills,
@@ -88,7 +107,10 @@ export function queueTimeLeft() {
             actionHrid: action.actionHrid,
             includeCommunityBuff: true,
         });
-        if (!stats) continue;
+        if (!stats) {
+            unknown = true;
+            continue;
+        }
 
         const remaining = Math.max(0, (action.maxCount || 0) - (action.currentCount || 0));
         // Whole actions only — a character cannot run 6.4 actions to finish the
@@ -116,7 +138,7 @@ export function queueTimeLeft() {
         finite += 1;
     }
 
-    return { seconds, finite, queued, infinite };
+    return { seconds, finite, queued, infinite, unknown };
 }
 
 registerRow({
@@ -132,8 +154,10 @@ registerRow({
         if (!left || !left.queued) return blank(container);
 
         // An infinite action with nothing costed in front of it has no duration
-        // to give, and a zero would read as "about to stop"
-        const unbounded = left.infinite && left.finite === 0;
+        // to give, and a zero would read as "about to stop"; the same goes for
+        // counted work that could not be timed at all
+        const untimed = left.unknown && left.finite === 0;
+        const unbounded = left.infinite && left.finite === 0 && !left.unknown;
 
         row(container, [
             // Named rather than given a glyph: the overlay has no symbol that
@@ -141,18 +165,21 @@ registerRow({
             // owns it
             { text: 'Queue', color: ROW_COLORS.dim, ellipsis: true },
             {
-                text: unbounded ? '∞' : shortDuration(left.seconds),
-                color: unbounded ? ROW_COLORS.dim : ROW_COLORS.accent,
+                text: untimed ? '?' : unbounded ? '∞' : `${left.unknown ? '≥ ' : ''}${shortDuration(left.seconds)}`,
+                color: untimed || unbounded ? ROW_COLORS.dim : ROW_COLORS.accent,
                 bold: true,
                 push: true,
             },
         ]);
 
         container.title =
-            (unbounded
-                ? 'The action running now has no count, so the queue never empties.'
-                : `About ${shortDuration(left.seconds)} until ${left.infinite ? 'the action with no count starts' : 'the queue empties'}, ` +
-                  `across ${left.finite} counted action${left.finite === 1 ? '' : 's'}.`) +
+            (untimed
+                ? 'The queued work has no time estimate (a counted fight, or an action that could not be costed).'
+                : unbounded
+                  ? 'The action running now has no count, so the queue never empties.'
+                  : `About ${shortDuration(left.seconds)} until ${left.infinite ? 'the action with no count starts' : 'the queue empties'}, ` +
+                    `across ${left.finite} counted action${left.finite === 1 ? '' : 's'}.`) +
+            (left.unknown && !untimed ? '\nSome queued work has no time estimate, so this is a lower bound.' : '') +
             (left.infinite && left.finite > 0
                 ? '\nAn action with no count is queued, so this is time until that.'
                 : '') +

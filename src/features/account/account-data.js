@@ -230,7 +230,7 @@ export function windowChange(points, windowMs, now = Date.now()) {
  * @param {Object|null} snapshot - A `queueSnapshot_<id>` value
  * @param {number} [now] - Clock, injectable for tests
  * @returns {{state: string, remainingSeconds: number|null, stale: boolean, ageMs: number|null}}
- *   State is `unknown`, `idle`, `busy` or `endless`
+ *   State is `unknown`, `idle`, `busy`, `endless` or `untimed` (counted work with no time estimate)
  */
 export function queueState(snapshot, now = Date.now()) {
     if (!snapshot || !Number.isFinite(snapshot.timestamp)) {
@@ -243,6 +243,8 @@ export function queueState(snapshot, now = Date.now()) {
 
     if (remaining > 0) return { state: 'busy', remainingSeconds: remaining, stale, ageMs };
     if (snapshot.hasInfiniteAction) return { state: 'endless', remainingSeconds: null, stale, ageMs };
+    // The timed part has elapsed but counted work with no time estimate (a counted fight) may not
+    if (snapshot.hasUnknownAction) return { state: 'untimed', remainingSeconds: null, stale, ageMs };
     return { state: 'idle', remainingSeconds: 0, stale, ageMs };
 }
 

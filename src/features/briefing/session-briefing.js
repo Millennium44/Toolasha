@@ -359,7 +359,7 @@ function queueEmptySince(characterId, now) {
     if (!characterId) return null;
     const snapshot = queueSnapshot.getSnapshot?.(characterId);
     if (!queueSnapshotUsable) return null;
-    if (!snapshot || snapshot.hasInfiniteAction || !snapshot.timestamp) return null;
+    if (!snapshot || snapshot.hasInfiniteAction || snapshot.hasUnknownAction || !snapshot.timestamp) return null;
 
     const emptiedAt = snapshot.timestamp + (Number(snapshot.totalQueueSeconds) || 0) * 1000;
     return emptiedAt <= now ? emptiedAt : null;

@@ -290,6 +290,17 @@ describe('collectFacts', () => {
         expect(collectFacts(100_000).queue.emptySince).toBe(61_000);
     });
 
+    test('a snapshot with untimed counted work cannot say when the queue emptied', () => {
+        game.ownSnapshot = {
+            timestamp: 1_000,
+            totalQueueSeconds: 60,
+            hasInfiniteAction: false,
+            hasUnknownAction: true,
+        };
+        game.queue = { queued: 0, seconds: 0 };
+        expect(collectFacts(100_000).queue.emptySince).toBeNull();
+    });
+
     test('a queue that has not run out yet has no emptied-at', () => {
         game.ownSnapshot = { timestamp: 1_000, totalQueueSeconds: 600, hasInfiniteAction: false };
         game.queue = { queued: 1, seconds: 100 };
