@@ -12263,6 +12263,52 @@ describe('verifying close calls on fresh seeds', () => {
             expect(block().querySelector('#mwi-csim-trigger-verify-btn')).not.toBeNull();
         });
 
+        test('a condition-only result (no thresholds) is wired too: the click verifies and the verdict shows', async () => {
+            const row = {
+                dependencyHrid: '/combat_trigger_dependencies/targeted_enemy',
+                conditionHrid: '/combat_trigger_conditions/current_hp',
+                comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                value: 50,
+            };
+            mocks.triggerVerifyCalls = [];
+            await runTriggers({
+                noTunables: true,
+                changes: [],
+                conditions: {
+                    changes: [
+                        {
+                            key: 'abilities|1',
+                            slotType: 'abilities',
+                            itemName: 'Fireball',
+                            fromRows: [],
+                            toRows: [row],
+                            deltaScore: 5,
+                            se: 0.4,
+                        },
+                    ],
+                    bestMeasured: [],
+                    reliable: true,
+                    slotCount: 1,
+                },
+            });
+            const btn = block().querySelector('#mwi-csim-trigger-verify-btn');
+            expect(btn).not.toBeNull();
+            mocks.triggerVerifyImpl = () => ({
+                rows: [{ key: 'triggers', mean: 3, se: 1, seeds: 8, verdict: 'confirmed' }],
+                metric: 'balanced',
+                unit: 'points',
+                seeds: 8,
+                stopped: false,
+                basis: 'recommended',
+            });
+            btn.click();
+            await settle();
+            expect(mocks.triggerVerifyCalls).toHaveLength(1);
+            expect(block().textContent).toContain('✓ confirmed +3.00 pts');
+            // re-wired on redraw: the button works again
+            expect(block().querySelector('#mwi-csim-trigger-verify-btn')).not.toBeNull();
+        });
+
         test('not confirmed, worse and an error each read as such', async () => {
             await runTriggers();
             const verdictText = async (row) => {

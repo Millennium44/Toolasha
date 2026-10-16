@@ -470,7 +470,28 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
         let result = null;
         let groupOut;
         if (tunables.length === 0) {
-            result = { noTunables: true, changes: [] };
+            // No thresholds, but the condition search below may still recommend something, and Verify needs the
+            // same context a tuned result carries (an empty tunables list: only condition edits get applied)
+            result = {
+                noTunables: true,
+                changes: [],
+                minGain,
+                precision: precision.key,
+                include: LAB_TRIGGER_SCOPE,
+                tunableCount: 0,
+                baseSeed,
+                verifyContext: {
+                    kind: 'lab',
+                    gameData,
+                    fights,
+                    hrid,
+                    zoneHrid,
+                    crates,
+                    communityBuffs,
+                    labyrinthCombatBuffs,
+                    tunables,
+                },
+            };
             groupOut = { key: group.key, name: group.name, fights: meta, result };
         } else {
             const signature = (overrides) =>

@@ -331,7 +331,12 @@ const REFUSED_TEXT = {
  * @returns {string} HTML
  */
 export function triggerVerifyHtml(result, { canVerify = false, cached = false, running = false } = {}) {
-    if (!result || result.noTunables) return '<div id="mwi-csim-trigger-verify"></div>';
+    const empty = '<div id="mwi-csim-trigger-verify"></div>';
+    if (!result) return empty;
+    // No thresholds to tune: only the condition search can have something to re-measure
+    if (result.noTunables && !(result.conditions?.changes?.length || result.conditions?.bestMeasured?.length)) {
+        return empty;
+    }
     const muted = (text) => `<span style="color:#888; font-size:11px;">${esc(text)}</span>`;
     let inner = '';
     if (canVerify) {
@@ -342,7 +347,7 @@ export function triggerVerifyHtml(result, { canVerify = false, cached = false, r
     } else if (cached) {
         inner += muted('Remembered result: re-run to verify.');
     } else {
-        return '<div id="mwi-csim-trigger-verify"></div>';
+        return empty;
     }
     const out = result.verifyOutcome;
     if (out && !running) {
@@ -415,7 +420,8 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
         return wrap(
             `<div style="color:#888; font-size:12px;">${esc(message)}</div>` +
                 conditionResultsHtml(result.conditions, gameData) +
-                leftOut
+                leftOut +
+                (verify ? triggerVerifyHtml(result, { canVerify: Boolean(verify.canVerify), cached }) : '')
         );
     }
 

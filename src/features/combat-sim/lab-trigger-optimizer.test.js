@@ -499,6 +499,10 @@ describe('runLabTriggerOptimization with the condition search', () => {
         const [group] = run.groups;
         // Nothing for the threshold tuner: the ability has no rows to tune
         expect(group.result.noTunables).toBe(true);
+        // ...but a condition-only result still carries what Verify re-measures it with
+        expect(group.result.verifyContext).toMatchObject({ kind: 'lab', tunables: [] });
+        expect(group.result.verifyContext.fights.length).toBeGreaterThan(0);
+        expect(group.result.precision).toBe('quick');
         const { conditions } = group;
         expect(conditions.reliable).toBe(true);
         expect(conditions.changes).toHaveLength(1);
