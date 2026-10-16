@@ -23,6 +23,7 @@
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import { SNAPSHOT_PREFIX as BRIEFING_PREFIX, readSnapshotsFromKeys } from '../briefing/briefing-snapshot-store.js';
+import { remainingQueueSeconds } from '../queue-monitor/queue-projection.js';
 import { showToast } from '../../utils/toast.js';
 import { idsFromRecordKeys, recordKeysFor } from '../../utils/chunked-history.js';
 
@@ -229,7 +230,7 @@ export function windowChange(points, windowMs, now = Date.now()) {
  *
  * @param {Object|null} snapshot - A `queueSnapshot_<id>` value
  * @param {number} [now] - Clock, injectable for tests
- * @returns {{state: string, remainingSeconds: number|null, stale: boolean, ageMs: number|null}}
+ * @returns {{state: string, remainingSeconds: number|null, stale: boolean, ageMs: number|null, atLeast?: boolean}}
  *   State is `unknown`, `idle`, `busy`, `endless` or `untimed` (counted work with no time estimate)
  */
 export function queueState(snapshot, now = Date.now()) {
@@ -239,9 +240,18 @@ export function queueState(snapshot, now = Date.now()) {
 
     const ageMs = now - snapshot.timestamp;
     const stale = ageMs > STALE_SNAPSHOT_MS;
-    const remaining = Math.max(0, (snapshot.totalQueueSeconds || 0) - ageMs / 1000);
+    const remaining = remainingQueueSeconds(snapshot, ageMs / 1000);
 
-    if (remaining > 0) return { state: 'busy', remainingSeconds: remaining, stale, ageMs };
+    // Untimed counted work (a counted fight) makes the timed total a lower bound: `atLeast`
+    if (remaining > 0) {
+        return {
+            state: 'busy',
+            remainingSeconds: remaining,
+            stale,
+            ageMs,
+            atLeast: Boolean(snapshot.hasUnknownAction),
+        };
+    }
     if (snapshot.hasInfiniteAction) return { state: 'endless', remainingSeconds: null, stale, ageMs };
     // The timed part has elapsed but counted work with no time estimate (a counted fight) may not
     if (snapshot.hasUnknownAction) return { state: 'untimed', remainingSeconds: null, stale, ageMs };

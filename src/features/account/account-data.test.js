@@ -178,6 +178,37 @@ describe('what a queue snapshot still implies', () => {
         expect(queueState(snapshot, now)).toMatchObject({ state: 'untimed', remainingSeconds: null });
     });
 
+    test('timed work ahead of an untimed fight is a lower bound, not an exact time', () => {
+        const snapshot = {
+            timestamp: now - HOUR,
+            totalQueueSeconds: 4200,
+            hasUnknownAction: true,
+            actions: [
+                { estimatedSeconds: 4200, isInfinite: false },
+                { estimatedSeconds: null, isInfinite: false },
+            ],
+        };
+        expect(queueState(snapshot, now)).toMatchObject({ state: 'busy', atLeast: true });
+        expect(queueState(snapshot, now).remainingSeconds).toBeCloseTo(600);
+    });
+
+    test('timed work behind an untimed fight keeps its whole length', () => {
+        const snapshot = {
+            timestamp: now - HOUR,
+            totalQueueSeconds: 3600,
+            hasUnknownAction: true,
+            actions: [
+                { estimatedSeconds: null, isInfinite: false },
+                { estimatedSeconds: 3600, isInfinite: false },
+            ],
+        };
+        expect(queueState(snapshot, now).remainingSeconds).toBeCloseTo(3600);
+    });
+
+    test('a fully timed busy queue is not marked at-least', () => {
+        expect(queueState({ timestamp: now - HOUR, totalQueueSeconds: 7200 }, now).atLeast).toBe(false);
+    });
+
     test('an ancient snapshot is marked as such rather than trusted', () => {
         const snapshot = { timestamp: now - STALE_SNAPSHOT_MS - DAY, totalQueueSeconds: 60 };
         expect(queueState(snapshot, now).stale).toBe(true);
