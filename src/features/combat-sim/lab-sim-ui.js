@@ -6530,10 +6530,10 @@ class LabSimUI {
             raw.baseline.fights.forEach((_fight, i) => {
                 const rawId = raw.context.fights?.[i]?.loadoutId;
                 const id = Number(rawId) || 0;
-                const key =
+                const groupKey =
                     rawId === undefined || rawId === null ? `fight:${i}` : id > 0 ? `loadout:${id}` : 'current-gear';
-                if (!byLoadout.has(key)) byLoadout.set(key, []);
-                byLoadout.get(key).push(i);
+                if (!byLoadout.has(groupKey)) byLoadout.set(groupKey, []);
+                byLoadout.get(groupKey).push(i);
             });
             const groupIdx = [...byLoadout.values()].filter(
                 (indexes) =>
