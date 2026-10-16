@@ -51,6 +51,36 @@ export async function saveAllZonesSnapshot(snapshot) {
 }
 
 /**
+ * Re-save a snapshot of a sweep already on screen, unless a newer one is stored.
+ *
+ * For a re-price: the sweep's own record is updated, but a snapshot that landed after the sweep (a sync pull
+ * folds in the other device's later run) must not be replaced by this older one wearing a fresh `savedAt`.
+ * The check and the write are one storage update, so a pull cannot land between them.
+ *
+ * @param {Object} snapshot - From `buildAllZonesSnapshot`
+ * @param {number|null} sweepSavedAt - `savedAt` of the snapshot this sweep last wrote; null when unknown
+ * @returns {Promise<boolean>} Whether it was stored (false: a newer snapshot is stored, or the write failed)
+ */
+export async function resaveAllZonesSnapshot(snapshot, sweepSavedAt) {
+    try {
+        const result = await storage.update(
+            characterKey(ALL_ZONES_SNAPSHOT_KEY),
+            (current) => {
+                // Snapshots are stored as objects (`setJSON`); anything else has no readable stamp
+                const stored = current && typeof current === 'object' ? current : null;
+                if (Number(stored?.savedAt) > Number(sweepSavedAt)) return undefined;
+                return { ...snapshot, scriptVersion: scriptVersion() };
+            },
+            ALL_ZONES_SNAPSHOT_STORE
+        );
+        return Boolean(result?.written);
+    } catch (error) {
+        console.error('[AllZonesSnapshot] Re-saving the all-zones snapshot failed:', error);
+        return false;
+    }
+}
+
+/**
  * The last all-zones run, if there is one.
  * @returns {Promise<Object|null>} Snapshot, or null when nothing usable is stored
  */

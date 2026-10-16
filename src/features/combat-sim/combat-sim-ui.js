@@ -52,6 +52,7 @@ import {
     ALL_ZONES_SNAPSHOT_KEY,
     ALL_ZONES_SNAPSHOT_STORE,
     saveAllZonesSnapshot,
+    resaveAllZonesSnapshot,
     loadAllZonesSnapshot,
 } from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatRatePerHour, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
@@ -7220,8 +7221,10 @@ class CombatSimUI {
                           }
                         : { source: 'worn', name: null },
                 };
-                this._allZonesSnapshotMeta = { ownerId, meta: snapshotMeta };
-                await saveAllZonesSnapshot(buildAllZonesSnapshot(snapshotRows, snapshotMeta));
+                const snapshot = buildAllZonesSnapshot(snapshotRows, snapshotMeta);
+                // `savedAt` is what a later re-price compares the stored snapshot against
+                this._allZonesSnapshotMeta = { ownerId, meta: snapshotMeta, savedAt: snapshot.savedAt };
+                await saveAllZonesSnapshot(snapshot);
             }
 
             if (!this._isCurrentRun(ownerId, startToken)) return;
@@ -7476,9 +7479,16 @@ class CombatSimUI {
     _resaveAllZonesSnapshot(rows) {
         const saved = this._allZonesSnapshotMeta;
         if (!saved || !this._stillSameCharacter(saved.ownerId)) return;
-        saveAllZonesSnapshot(buildAllZonesSnapshot(rows, saved.meta)).catch((error) => {
-            console.error('[CombatSimUI] Could not re-save the all-zones snapshot:', error);
-        });
+        const snapshot = buildAllZonesSnapshot(rows, saved.meta);
+        // Not over a newer stored snapshot (a sync pull brings the other device's later run): the table on screen
+        // stays as it is, and the stored run is the one the ranked list and the planner read
+        resaveAllZonesSnapshot(snapshot, saved.savedAt ?? null)
+            .then((stored) => {
+                if (stored && this._allZonesSnapshotMeta === saved) saved.savedAt = snapshot.savedAt;
+            })
+            .catch((error) => {
+                console.error('[CombatSimUI] Could not re-save the all-zones snapshot:', error);
+            });
     }
 
     /**

@@ -3240,6 +3240,46 @@ describe('the all-zones table', () => {
                 ui._allZonesSnapshotMeta = null;
             });
 
+            test('a re-price does not replace a newer snapshot that a sync pull stored', async () => {
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+                const key = 'combatExport:allZonesSnapshot_' + mocks.characterId;
+                // The sweep on screen saved at 1000; the other device's later run was pulled in at 5000
+                ui._allZonesSnapshotMeta = {
+                    ownerId: mocks.characterId,
+                    meta: { hours: 1, playerHrid: 'player1' },
+                    savedAt: 1000,
+                };
+                const pulled = { version: 1, savedAt: 5000, zones: [{ zoneHrid: 'pulled' }] };
+                mocks.store.set(key, pulled);
+
+                mocks.settingChangeCallbacks.get('profitCalc_keyPricingMode')?.('profitCalc_keyPricingMode', 'craft');
+                await flush();
+                await flush();
+
+                expect(mocks.store.get(key)).toBe(pulled);
+                ui._allZonesSnapshotMeta = null;
+            });
+
+            test('a re-price with nothing newer stored updates the sweep’s own record, and its stamp moves on', async () => {
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+                const key = 'combatExport:allZonesSnapshot_' + mocks.characterId;
+                ui._allZonesSnapshotMeta = {
+                    ownerId: mocks.characterId,
+                    meta: { hours: 1, playerHrid: 'player1' },
+                    savedAt: 1000,
+                };
+                mocks.store.set(key, { version: 1, savedAt: 1000, zones: [] });
+
+                mocks.settingChangeCallbacks.get('profitCalc_keyPricingMode')?.('profitCalc_keyPricingMode', 'craft');
+                await flush();
+                await flush();
+
+                expect(mocks.store.get(key).savedAt).toBeGreaterThan(1000);
+                expect(mocks.store.get(key).zones.length).toBeGreaterThan(0);
+                expect(ui._allZonesSnapshotMeta.savedAt).toBe(mocks.store.get(key).savedAt);
+                ui._allZonesSnapshotMeta = null;
+            });
+
             test('a naming-only change resyncs the row without re-pricing the sweep', async () => {
                 mocks.revenueCalls = [];
                 await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
