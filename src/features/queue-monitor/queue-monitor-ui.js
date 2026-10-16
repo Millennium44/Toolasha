@@ -12,6 +12,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import queueSnapshot from './queue-snapshot.js';
+import { remainingQueueSeconds } from './queue-projection.js';
 
 const PANEL_ID = 'toolasha-queue-monitor';
 const UPDATE_INTERVAL = 30_000; // 30 seconds
@@ -279,7 +280,7 @@ class QueueMonitorUI {
         for (const snap of snapshots) {
             const elapsed = (Date.now() - snap.timestamp) / 1000;
             const ageMs = Math.max(0, Date.now() - snap.timestamp);
-            const remaining = Math.max(0, snap.totalQueueSeconds - elapsed);
+            const remaining = remainingQueueSeconds(snap, elapsed);
             const isStale = ageMs > STALE_THRESHOLD;
             const isExpanded = this._expandedChars.has(String(snap.characterId));
             const relativeAge = formatRelativeTime(ageMs);
@@ -287,11 +288,13 @@ class QueueMonitorUI {
 
             // Color coding
             let dotColor;
-            if (snap.actions.length === 0) {
+            if (snap.actions.length === 0 && !snap.hasUnknownAction) {
                 dotColor = '#666'; // No actions = grey
+            } else if (remaining <= 0 && snap.hasUnknownAction) {
+                dotColor = '#666'; // Grey — counted work with no estimate may still be running
             } else if (remaining <= 0 && !snap.hasInfiniteAction) {
                 dotColor = '#e74c3c'; // Red — likely idle
-            } else if (remaining < 1800 && !snap.hasInfiniteAction) {
+            } else if (remaining < 1800 && !snap.hasInfiniteAction && !snap.hasUnknownAction) {
                 dotColor = '#f39c12'; // Yellow — less than 30 min
             } else {
                 dotColor = '#2ecc71'; // Green — more than 30 min or infinite
@@ -299,14 +302,16 @@ class QueueMonitorUI {
 
             // Time display
             let timeDisplay;
-            if (snap.actions.length === 0) {
+            if (snap.actions.length === 0 && !snap.hasUnknownAction) {
                 timeDisplay = 'Idle';
+            } else if (remaining <= 0 && snap.hasUnknownAction) {
+                timeDisplay = '?';
             } else if (snap.hasInfiniteAction && remaining <= 0) {
                 timeDisplay = '∞';
             } else if (remaining <= 0) {
                 timeDisplay = 'Done';
             } else {
-                timeDisplay = timeReadable(remaining);
+                timeDisplay = `${snap.hasUnknownAction ? '≥ ' : ''}${timeReadable(remaining)}`;
                 if (snap.hasInfiniteAction) {
                     timeDisplay += ' + ∞';
                 }

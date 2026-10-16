@@ -270,7 +270,7 @@ export async function removeGoal(goalId) {
  * Written whole and on purpose: the snapshot is one derived blob, replaced
  * the moment a refresh finishes and never read back as fact, so a plain
  * overwrite is the right write for it.
- * @returns {Promise<{plans: Array<Object>, computedAt: number}|null>} The snapshot
+ * @returns {Promise<{plans: Array<Object>, computedAt: number, pricedAt?: number|null}|null>} The snapshot
  */
 export async function loadSnapshot() {
     try {
@@ -293,12 +293,18 @@ export async function loadSnapshot() {
  *
  * @param {Array<Object>} plans - Plans from `planGoals`
  * @param {string|null} [expectedOwner] - Who these plans are for; omitted skips the check
+ * @param {number|null} [pricedAt] - When the market was last read for these plans. Stored apart
+ *   from `computedAt`: adding or removing a goal replans against the prices already loaded, so the
+ *   save time says nothing about how old the prices are. Omitted leaves it unrecorded (older
+ *   snapshots), and a reader falls back to `computedAt`.
  * @returns {Promise<void>}
  */
-export async function saveSnapshot(plans, expectedOwner) {
+export async function saveSnapshot(plans, expectedOwner, pricedAt) {
     if (expectedOwner !== undefined && currentOwner() !== expectedOwner) return;
     try {
-        await writeScoped(SNAPSHOT_KEY, { plans: Array.isArray(plans) ? plans : [], computedAt: Date.now() });
+        const snapshot = { plans: Array.isArray(plans) ? plans : [], computedAt: Date.now() };
+        if (pricedAt !== undefined) snapshot.pricedAt = Number.isFinite(pricedAt) ? pricedAt : null;
+        await writeScoped(SNAPSHOT_KEY, snapshot);
     } catch (error) {
         console.error('[GoalPlanner] Saving the last plans failed:', error);
     }

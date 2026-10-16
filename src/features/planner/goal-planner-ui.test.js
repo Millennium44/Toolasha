@@ -916,6 +916,33 @@ describe('adding and removing a goal', () => {
         expect(text()).not.toContain('Not priced yet');
     });
 
+    test('prices loaded from a 3 h old market snapshot are stamped with the snapshot time and shown as old', async () => {
+        const threeHoursAgo = Date.now() - 3 * 3600 * 1000;
+        plannerContext.value = { ...fixtureContext(), pricedAt: threeHoursAgo };
+        store.data = {};
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+
+        expect(goalPlannerPanel.pricedAt).toBe(threeHoursAgo);
+        expect(store.data.goalPlannerSnapshot_char1.pricedAt).toBe(threeHoursAgo);
+        expect(text()).toContain('3h ago');
+    });
+
+    test('a fresh fetch stamps pricedAt with the fetch time and shows no age', async () => {
+        const fetchedAt = Date.now() - 1000;
+        plannerContext.value = { ...fixtureContext(), pricedAt: fetchedAt };
+        store.data = {};
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+
+        expect(goalPlannerPanel.pricedAt).toBe(fetchedAt);
+        expect(text()).not.toContain('ago');
+    });
+
     test('removing a goal gives its windfall back to the goal below it', async () => {
         // Two gold goals against one crossbow: the first has it, the second is
         // milking cows and saying so. Remove the first and the second should
@@ -1023,5 +1050,41 @@ describe('whether the panel was open', () => {
         goalPlannerPanel.hide();
         await settled();
         await expect(wasOpen('goalPlannerPanel')).resolves.toBe(false);
+    });
+});
+
+describe('when the saved plans were priced', () => {
+    test('adding a goal re-saves the plans without restamping old prices as fresh', async () => {
+        // The save time moves on every replan, but a replan after adding a goal reuses the
+        // prices already loaded; the panel reopened later must still say when they were read
+        const clock = vi.spyOn(Date, 'now');
+        clock.mockReturnValue(1_000);
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        clock.mockReturnValue(9_000);
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 123 });
+        const saved = store.data.goalPlannerSnapshot_char1;
+        clock.mockRestore();
+
+        expect(plannerContext.builds).toBe(1);
+        expect(saved.computedAt).toBe(9_000);
+        expect(saved.pricedAt).toBe(1_000);
+
+        goalPlannerPanel.disable();
+        await goalPlannerPanel.load();
+        expect(goalPlannerPanel.pricedAt).toBe(1_000);
+    });
+
+    test('removing a goal before anything is priced this session keeps the original price time', async () => {
+        store.data.goalPlannerSnapshot_char1 = { plans: [], computedAt: 5_000, pricedAt: 2_000 };
+        await goalPlannerPanel.load();
+        expect(goalPlannerPanel.pricedAt).toBe(2_000);
+
+        await goalPlannerPanel.removeGoal('g-gold');
+
+        expect(store.data.goalPlannerSnapshot_char1.pricedAt).toBe(2_000);
+        expect(goalPlannerPanel.pricedAt).toBe(2_000);
     });
 });

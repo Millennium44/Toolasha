@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: queue times and the planner
+
+- A queued fight counted in battles is no longer timed as a minute or less: the queue tile, briefing, account panel and queue monitor show "?" or "≥ X" when part of a queue can't be timed, and no longer call a still-fighting character idle or its queue ended.
+- Queue, action-bar, recycle and enhancing finish clocks are no longer an hour off when the time crosses a daylight-saving change, and the goal planner's "priced at" time stays the time prices were read rather than the last time a goal was added.
+
 ### Audit round: enhancing prices
 
 - The enhancing panel prices trainee charms at their shop price and takes a bid when an item has no ask, matching the tracker. The mirror line no longer compares against a cost that left an unpriced material out, or shows "∞".

@@ -214,6 +214,12 @@ describe('gatheringSells', () => {
 });
 
 describe('goldRates — four providers, one ranking', () => {
+    test('carries the market snapshot time, not the time the context was built', async () => {
+        const context = await buildPlannerContext();
+
+        expect(context.pricedAt).toBe(12345);
+    });
+
     test('ranks alchemy against gathering and production on the one number', async () => {
         rates.alchemy = [
             { actionHrid: '/actions/alchemy/transmute', label: 'Transmute Ore', goldPerHour: 400_000, kind: 'alchemy' },

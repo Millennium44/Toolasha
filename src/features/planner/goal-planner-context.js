@@ -763,6 +763,9 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
 
     return {
         now: Date.now(),
+        // When the quotes were true (the snapshot's own time, whether fetched just now or
+        // loaded from an older cache). Null when no market data loaded at all.
+        pricedAt: marketAPI.lastFetchTimestamp || null,
         gold: coinsHeld(),
         levelExperienceTable: gameData?.levelExperienceTable || null,
         pricingNote: `Priced against market data from ${getPriceAgeString() || 'an unknown time'}. Costs move with the book — re-price before committing.`,

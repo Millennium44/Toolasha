@@ -169,6 +169,10 @@ describe('isQueueExhausted', () => {
         expect(isQueueExhausted(snapshot({ hasInfiniteAction: true, totalQueueSeconds: 0 }), now)).toBe(false);
     });
 
+    test('untimed counted work (a counted fight) means the elapsed total proves nothing', () => {
+        expect(isQueueExhausted(snapshot({ hasUnknownAction: true }), now)).toBe(false);
+    });
+
     test('a snapshot with nothing queued was already idle', () => {
         expect(isQueueExhausted(snapshot({ actions: [], totalQueueSeconds: 0 }), now)).toBe(true);
     });

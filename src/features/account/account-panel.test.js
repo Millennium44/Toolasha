@@ -128,6 +128,18 @@ describe('drawing the account', () => {
         expect(text()).toContain('1.25M');
     });
 
+    test('a busy queue with an untimed fight reads as a lower bound', () => {
+        state.account.characters[0].queue = {
+            state: 'busy',
+            remainingSeconds: 600,
+            stale: false,
+            ageMs: HOUR,
+            atLeast: true,
+        };
+        accountPanel.show({ remember: false });
+        expect(text()).toContain('Busy ≥ 10m');
+    });
+
     test('an alt whose queue has run out reads as idle', () => {
         accountPanel.show({ remember: false });
         expect(text()).toContain('Idle');

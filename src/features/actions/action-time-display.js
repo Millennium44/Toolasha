@@ -84,6 +84,19 @@ function formatCompletionTime(completionTime, includeDate) {
 }
 
 /**
+ * The moment a duration from now ends.
+ *
+ * Added to the epoch, not to the local clock fields: `setSeconds(getSeconds() + n)` is
+ * wall-clock arithmetic, so a duration that crosses a daylight-saving change printed a finish
+ * time an hour out (fall-back) or relied on the nonexistent-hour rollover (spring-forward).
+ * @param {number} seconds - Seconds from now
+ * @returns {Date}
+ */
+function dateAfterSeconds(seconds) {
+    return new Date(Date.now() + seconds * 1000);
+}
+
+/**
  * Format a reachable queue row's cumulative completion suffix.
  * @param {number} accumulatedTime - Seconds from now until this row finishes
  * @param {boolean} [estimated=false] - Whether any preceding duration is estimated
@@ -99,8 +112,7 @@ export function buildQueueCompletionText(
     const parts = [];
     if (style === 'relative' || style === 'both') parts.push(`in ${timeReadable(accumulatedTime)}`);
     if (style === 'absolute' || style === 'both') {
-        const completionDate = new Date();
-        completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
+        const completionDate = dateAfterSeconds(accumulatedTime);
         const isToday = completionDate.toDateString() === new Date().toDateString();
         parts.push(formatCompletionTime(completionDate, !isToday));
     }
@@ -3102,8 +3114,7 @@ class ActionTimeDisplay {
         }
 
         // Calculate completion time
-        const completionTime = new Date();
-        completionTime.setSeconds(completionTime.getSeconds() + totalTimeSeconds);
+        const completionTime = dateAfterSeconds(totalTimeSeconds);
 
         // Format time strings (timeReadable handles days/hours/minutes properly)
         const timeStr = timeReadable(totalTimeSeconds);
@@ -3167,8 +3178,7 @@ class ActionTimeDisplay {
             const matsLabel = itemIconHtml ? `${itemIconHtml}:` : '';
             let recycleHtml = '';
             if (recycleTimeSeconds !== null) {
-                const recycleCompletion = new Date();
-                recycleCompletion.setSeconds(recycleCompletion.getSeconds() + recycleTimeSeconds);
+                const recycleCompletion = dateAfterSeconds(recycleTimeSeconds);
                 const recycleTimeStr = timeReadable(recycleTimeSeconds);
                 const recycleIsToday = recycleCompletion.toDateString() === new Date().toDateString();
                 const recycleClockTime = formatCompletionTime(recycleCompletion, !recycleIsToday);
@@ -3362,8 +3372,7 @@ class ActionTimeDisplay {
         if (timeRemainingMode !== 'none' && materialTime !== null && materialTime > 0 && isFinite(materialTime)) {
             const timeStr = timeReadable(materialTime);
 
-            const completionTime = new Date();
-            completionTime.setSeconds(completionTime.getSeconds() + materialTime);
+            const completionTime = dateAfterSeconds(materialTime);
 
             const now = new Date();
             const isToday = completionTime.toDateString() === now.toDateString();

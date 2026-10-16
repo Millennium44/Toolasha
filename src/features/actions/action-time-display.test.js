@@ -169,6 +169,28 @@ describe('independent action and queue time display modes', () => {
         vi.useRealTimers();
     });
 
+    test('the completion clock adds real elapsed time, not wall-clock seconds', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-22T12:00:00'));
+        // Wall-clock arithmetic is what skews across a daylight-saving change (an hour out
+        // after fall-back); stand in for it with a setter that lands somewhere else entirely
+        const skew = vi.spyOn(Date.prototype, 'setSeconds').mockImplementation(function () {
+            return this.setTime(this.getTime() + 3_600_000 * 7);
+        });
+
+        const text = buildQueueCompletionText(3900, false, 'absolute');
+        skew.mockRestore();
+
+        expect(text).toContain(
+            formatDateTime(new Date('2026-09-22T13:05:00'), {
+                includeDate: false,
+                includeTime: true,
+                includeSeconds: true,
+            })
+        );
+        vi.useRealTimers();
+    });
+
     test('an invalid imported queue style falls back to the shipped clock display', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-09-22T12:00:00'));

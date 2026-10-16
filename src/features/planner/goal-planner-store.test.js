@@ -123,6 +123,18 @@ describe('where goals are written', () => {
         mockDataManager.currentCharacterId = 'ironcow456';
         expect(await loadSnapshot()).toBeNull();
     });
+
+    test('the snapshot records when the market was read apart from when it was saved', async () => {
+        await saveSnapshot([], undefined, 1234);
+        expect((await loadSnapshot()).pricedAt).toBe(1234);
+
+        await saveSnapshot([], undefined, null);
+        expect((await loadSnapshot()).pricedAt).toBeNull();
+
+        // A caller that does not know leaves it unrecorded, so a reader falls back to computedAt
+        await saveSnapshot([]);
+        expect('pricedAt' in (await loadSnapshot())).toBe(false);
+    });
 });
 
 describe('the goal list', () => {
