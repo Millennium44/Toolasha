@@ -836,6 +836,7 @@ describe('combat: who a checked swap reaches', () => {
             checkedOpen: { combat: true, skilling: true },
             orderCollapsed: false,
             orderShowAll: false,
+            triggerCollapsed: false,
         });
         expect(
             sanitizeSwapOptions({ all: { combat: true, skilling: 'x' }, open: { combat: false, skilling: 3 } })
@@ -846,6 +847,7 @@ describe('combat: who a checked swap reaches', () => {
             checkedOpen: { combat: true, skilling: true },
             orderCollapsed: false,
             orderShowAll: false,
+            triggerCollapsed: false,
         });
         expect(sanitizeSwapOptions({ checkedOpen: { combat: false, skilling: 'x' } }).checkedOpen).toEqual({
             combat: false,

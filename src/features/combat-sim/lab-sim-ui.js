@@ -89,9 +89,9 @@ import {
     MAX_SWAP_LEVEL,
     MAX_ABILITY_SWAP_LEVEL,
     MAX_QUEUED_SWAPS,
-    ABILITY_ORDER_HRID,
     extractAbilityOrderSection,
     buildCombatAbilityCheck,
+    buildCombatAbilityOrderCandidates,
     buildCombatSwapCandidate,
     checkedSwapKey,
     clampLevelFor,
@@ -424,7 +424,7 @@ function goldPerPctCell(cost, deltaPct) {
     return value <= 0 ? 'pays for itself' : formatWithSeparator(value);
 }
 
-/** Orders shown per loadout before "Show all" in the Check a swap Ability order section */
+/** Orders shown per loadout before "Show all" in the Upgrade tab's Ability order section */
 const LAB_ABILITY_ORDER_TOP = 5;
 const ACCENT = '#4a9eff';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
@@ -835,6 +835,8 @@ class LabSimUI {
         // table is in (kept apart from the generated table's)
         this._checkedSwaps = { combat: [], skilling: [] };
         this._swapOptions = sanitizeSwapOptions(null);
+        // The Upgrade tab's Ability order section (the Include option's last result), kept so Show all can redraw it
+        this._upgradeOrderSection = null;
         // The Tune triggers section's choices; read back from storage on each build
         this._triggerChoices = sanitizeLabTriggerChoices(null);
         // The fights the section last listed (the Upgrade tab's target scope applied), and a counter that
@@ -1141,7 +1143,9 @@ class LabSimUI {
         // ── Upgrade tab ──
         const upgradeContent = document.createElement('div');
         upgradeContent.id = 'mwi-labsim-upgrade-content';
-        upgradeContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow:hidden;';
+        // The tab scrolls as a whole: no results box is capped with a scroll of its own
+        upgradeContent.style.cssText =
+            'display:none; flex-direction:column; flex:1; overflow-y:auto; overflow-x:hidden;';
 
         const upgradeControls = document.createElement('div');
         upgradeControls.style.cssText = `
@@ -1335,8 +1339,7 @@ class LabSimUI {
         const swapBarCombat = this._buildSwapBar('combat');
         const swapResultsCombat = document.createElement('div');
         swapResultsCombat.id = 'mwi-labsim-swap-results';
-        swapResultsCombat.style.cssText =
-            'display:none; flex:0 1 auto; min-height:0; overflow-y:auto; padding:10px 14px;';
+        swapResultsCombat.style.cssText = 'display:none; flex:0 0 auto; padding:10px 14px;';
 
         // Tune triggers: its own results box, kept apart from both tables so neither run clears the other
         const triggerBar = this._buildTriggerBar();
@@ -1346,7 +1349,12 @@ class LabSimUI {
 
         const upgradeResults = document.createElement('div');
         upgradeResults.id = 'mwi-labsim-upgrade-results';
-        upgradeResults.style.cssText = 'flex:1 1 auto; min-height:0; overflow-y:auto; padding:10px 14px;';
+        upgradeResults.style.cssText = 'flex:1 0 auto; padding:10px 14px;';
+
+        // The Ability order Include option's section: its own box, so a table redraw leaves it be
+        const upgradeOrderResults = document.createElement('div');
+        upgradeOrderResults.id = 'mwi-labsim-upgrade-order';
+        upgradeOrderResults.style.cssText = 'display:none; flex:0 0 auto; padding:0 14px 10px;';
 
         upgradeContent.appendChild(upgradeControls);
         upgradeContent.appendChild(upgradeScopeRow);
@@ -1362,6 +1370,7 @@ class LabSimUI {
         upgradeContent.appendChild(triggerResults);
         upgradeContent.appendChild(this._buildUpgradesHeader('combat'));
         upgradeContent.appendChild(upgradeResults);
+        upgradeContent.appendChild(upgradeOrderResults);
 
         // ── Skilling tab ──
         const skillingContent = document.createElement('div');
@@ -3373,7 +3382,6 @@ class LabSimUI {
                 <input id="mwi-labsim-swap-level-${kind}" type="number" min="0" max="${kind === 'combat' ? MAX_ABILITY_SWAP_LEVEL : MAX_SWAP_LEVEL}" step="1"
                     placeholder="Lv" title="${kind === 'combat' ? 'Enhancement level to check (the ability level, for an ability)' : 'Enhancement level to check'}" style="${inputStyle} width:46px; text-align:center;">
                 <button id="mwi-labsim-swap-add-${kind}" style="${buttonStyle}" title="Queue this swap">Add</button>
-                ${kind === 'combat' ? `<button id="mwi-labsim-swap-order-combat" style="${buttonStyle}" title="Queue a check of every order of each loadout’s ordinary abilities (special slot fixed, always-ready abilities last). Costs nothing.">Ability order</button>` : ''}
                 <button id="mwi-labsim-swap-check-${kind}" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Check</button>
                 <button id="mwi-labsim-swap-clear-${kind}" style="${buttonStyle}" title="Hide and empty the checked swaps table. The queue stays.">Clear</button>
                 <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
@@ -3889,9 +3897,6 @@ class LabSimUI {
             this.panel
                 .querySelector(`#mwi-labsim-swap-add-${kind}`)
                 ?.addEventListener('click', () => this._onAddSwap(kind));
-            this.panel
-                .querySelector(`#mwi-labsim-swap-order-${kind}`)
-                ?.addEventListener('click', () => this._queueSwap(kind, { hrid: ABILITY_ORDER_HRID, level: 0 }));
             this.panel
                 .querySelector(`#mwi-labsim-swap-check-${kind}`)
                 ?.addEventListener('click', () =>
@@ -4444,22 +4449,15 @@ class LabSimUI {
             );
 
             if (!isCurrent() || this._upgradeAborted) return;
-            // Ability orders are free, so a value-per-million ranking would float any gain above every paid swap:
-            // they leave the table and are ranked in their own section by expected attempts saved
-            const split = rawAnalysis?.baseline
-                ? extractAbilityOrderSection(rawAnalysis, gameData)
-                : { analysis: rawAnalysis, section: null };
-            const analysisResult = split.analysis?.baseline
-                ? mergeCheckedAbilityRows(split.analysis, gameData)
-                : split.analysis;
-            if (!analysisResult?.baseline || (!analysisResult.results?.length && !split.section)) {
+            const analysisResult = rawAnalysis?.baseline ? mergeCheckedAbilityRows(rawAnalysis, gameData) : rawAnalysis;
+            if (!analysisResult?.baseline || !analysisResult.results?.length) {
                 resultsEl.style.display = 'none';
                 this._setStatus('Checking the swaps produced no results.');
                 return;
             }
             resultsEl.style.display = 'block';
-            this._renderAllFightsResults(analysisResult, resultsEl, { checked: true, abilityOrder: split.section });
-            const checkedCount = analysisResult.results.length + (split.section ? 1 : 0);
+            this._renderAllFightsResults(analysisResult, resultsEl, { checked: true });
+            const checkedCount = analysisResult.results.length;
             this._setStatus(
                 `Checked ${checkedCount} swap${checkedCount === 1 ? '' : 's'} across ${fights.length} fights` +
                     (alreadyEquipped.length
@@ -4676,6 +4674,8 @@ class LabSimUI {
         const stopBtn = this.panel.querySelector('#mwi-labsim-upgrade-stop');
         progressEl.style.display = 'block';
         resultsEl.innerHTML = '';
+        this._upgradeOrderSection = null;
+        this._drawUpgradeAbilityOrder();
         runBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
@@ -4775,45 +4775,66 @@ class LabSimUI {
                 // analysis's own count the moment it has pooled its candidates.
                 // Both land before the first simulation, while Stop still means
                 // "I did not mean to ask for that".
-                const estimate = estimateLabUpgradeSims(plan.modes, fights.length);
+                const estimate = estimateLabUpgradeSims(
+                    [...plan.modes, ...(plan.includeAbilityOrder ? ['ability_order'] : [])],
+                    fights.length
+                );
                 this._setStatus(`Starting: ${estimate.text}. Stop cancels at any point.`);
-                const analysisResult = await runLabyrinthAllFightsAnalysis(
-                    {
+                if (!plan.orderOnly) {
+                    const analysisResult = await runLabyrinthAllFightsAnalysis(
+                        {
+                            fights,
+                            crates,
+                            hours,
+                            precision,
+                            communityBuffs,
+                            labyrinthCombatBuffs,
+                            abilityTargetLevel,
+                            combatLevelTargets,
+                            abilityTargets,
+                            modes: plan.modes,
+                            auraSwapsOnly: this._getAuraSwapsOnly(),
+                            houseTargetLevel,
+                            houseTargets,
+                            guildShrineTargetLevel,
+                            guildShrineTargets,
+                            guildShrineCapToGuild,
+                            tokenLevels,
+                            claimLoadouts: this._collectOwnedLoadouts(allFights),
+                        },
+                        ({ current, total, description, plan: runPlan }) => {
+                            if (this._upgradeAborted) return;
+                            if (runPlan) this._setStatus(describeAllFightsPlan(runPlan));
+                            const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
+                            const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
+                            const { text: remaining } = eta.update(total > 0 ? current / total : 0);
+                            if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
+                            if (text) {
+                                text.textContent =
+                                    `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
+                            }
+                        },
+                        { abortSignal: () => this._upgradeAborted }
+                    );
+
+                    this._renderAllFightsResults(analysisResult, resultsEl);
+                }
+                if (plan.includeAbilityOrder && startToken === this._runStartToken && !this._upgradeAborted) {
+                    await this._runUpgradeAbilityOrder({
                         fights,
+                        isSelf: true,
+                        claimLoadouts: this._collectOwnedLoadouts(allFights),
+                        gameData,
                         crates,
                         hours,
                         precision,
                         communityBuffs,
                         labyrinthCombatBuffs,
-                        abilityTargetLevel,
-                        combatLevelTargets,
-                        abilityTargets,
-                        modes: plan.modes,
-                        auraSwapsOnly: this._getAuraSwapsOnly(),
-                        houseTargetLevel,
-                        houseTargets,
-                        guildShrineTargetLevel,
-                        guildShrineTargets,
-                        guildShrineCapToGuild,
-                        tokenLevels,
-                        claimLoadouts: this._collectOwnedLoadouts(allFights),
-                    },
-                    ({ current, total, description, plan: runPlan }) => {
-                        if (this._upgradeAborted) return;
-                        if (runPlan) this._setStatus(describeAllFightsPlan(runPlan));
-                        const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
-                        const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
-                        const { text: remaining } = eta.update(total > 0 ? current / total : 0);
-                        if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
-                        if (text) {
-                            text.textContent =
-                                `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
-                        }
-                    },
-                    { abortSignal: () => this._upgradeAborted }
-                );
-
-                this._renderAllFightsResults(analysisResult, resultsEl);
+                        startToken,
+                        ownerId,
+                        orderOnly: plan.orderOnly,
+                    });
+                }
             } catch (error) {
                 if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
                     console.error('[LabSimUI] All-fights analysis failed:', error);
@@ -4829,90 +4850,124 @@ class LabSimUI {
         }
 
         try {
-            const analysisResult = await runLabyrinthUpgradeAnalysis(
-                {
-                    playerDTOs,
-                    playerIndex,
-                    selfHrid,
-                    monsterHrid,
-                    roomLevel,
+            if (!plan.orderOnly) {
+                const analysisResult = await runLabyrinthUpgradeAnalysis(
+                    {
+                        playerDTOs,
+                        playerIndex,
+                        selfHrid,
+                        monsterHrid,
+                        roomLevel,
+                        crates,
+                        hours,
+                        precision,
+                        communityBuffs,
+                        labyrinthCombatBuffs,
+                        upgradeMode: plan.upgradeMode,
+                        abilityLevelType,
+                        abilityTargetLevel,
+                        combatLevelTargets,
+                        abilityTargets,
+                        auraSwapsOnly: this._getAuraSwapsOnly(),
+                        // The single-fight analysis takes one mode, and ranks
+                        // anything else it is handed beside whatever that mode
+                        // generated — which is how a multi-set selection lands in
+                        // one table, against one baseline, at one shared seed
+                        houseTargetLevel,
+                        houseTargets,
+                        guildShrineTargetLevel,
+                        guildShrineTargets,
+                        guildShrineCapToGuild,
+                        tokenLevels,
+                        // The second ranking pass, and the two numbers it needs:
+                        // the window the level search runs over (the character's
+                        // own level) and this tab's fight cap, so a search probe is
+                        // bounded by the same Max fights every other sim here is.
+                        rankByRoomLevels: this._getRankByRoomLevels(),
+                        referenceLevel: (
+                            labyrinthClearRate() || bundledLabyrinthClearRate
+                        ).getPlayerEffectiveCombatLevel(),
+                        maxTrials: upgradeUncapped ? undefined : upgradeMaxFights,
+                        extraCandidates: this._extraDimensionCandidates(
+                            plan.extraModes,
+                            playerDTOs[playerIndex],
+                            gameData,
+                            {
+                                abilityTargetLevel,
+                                abilityLevelType,
+                                combatLevelTargets,
+                                abilityTargets,
+                                auraSwapsOnly: this._getAuraSwapsOnly(),
+                                houseTargetLevel,
+                                houseTargets,
+                                guildShrineTargetLevel,
+                                guildShrineTargets,
+                                guildShrineCapToGuild,
+                                communityBuffs,
+                                communityBuffTargetLevel: this._getCommunityTargetLevel(),
+                            }
+                        ),
+                    },
+                    ({ current, total, description }) => {
+                        if (this._upgradeAborted) return;
+                        const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
+                        const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
+                        const { text: remaining } = eta.update(total > 0 ? current / total : 0);
+                        if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
+                        if (text) {
+                            text.textContent =
+                                `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
+                        }
+                    },
+                    { abortSignal: () => this._upgradeAborted }
+                );
+
+                // A fresh run supersedes any restored set — drop the "from a previous
+                // run" note before drawing, and remember the new results (opt-in).
+                this._restoredUpgradeAt = null;
+                this._restoredUpgradeMeta = null;
+                // Travels with the results rather than being read at draw time: a
+                // restored set was measured against whatever floor was set then
+                if (analysisResult?.roomLevels) analysisResult.roomLevels.targetFloor = this._getTargetFloor();
+                this._renderUpgradeResults(analysisResult, resultsEl);
+                // The remembered set is per character and has no undo: writing this
+                // run under the character who arrived mid-analysis would delete the
+                // analysis they were keeping
+                if (analysisResult?.results?.length && this._stillSameCharacter(ownerId)) {
+                    const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+                    saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, analysisResult, {
+                        characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
+                    });
+                }
+            }
+            if (plan.includeAbilityOrder && startToken === this._runStartToken && !this._upgradeAborted) {
+                // The Configure fight: the edited player at the resolved room level, as the single-fight
+                // analysis takes it
+                const dto = playerDTOs[playerIndex];
+                const isSelf = selfHrid != null && dto.hrid === selfHrid;
+                const monster = getLabyrinthMonsters().find((entry) => entry.hrid === monsterHrid);
+                const orderFights = [
+                    {
+                        monsterHrid,
+                        monsterName: monster?.name || monsterHrid.split('/').pop().replace(/_/g, ' '),
+                        roomLevel,
+                        dto,
+                        loadoutName: 'Configure fight',
+                    },
+                ];
+                await this._runUpgradeAbilityOrder({
+                    fights: orderFights,
+                    isSelf,
+                    claimLoadouts: isSelf ? this._collectOwnedLoadouts(orderFights) : undefined,
+                    gameData,
                     crates,
                     hours,
                     precision,
                     communityBuffs,
                     labyrinthCombatBuffs,
-                    upgradeMode: plan.upgradeMode,
-                    abilityLevelType,
-                    abilityTargetLevel,
-                    combatLevelTargets,
-                    abilityTargets,
-                    auraSwapsOnly: this._getAuraSwapsOnly(),
-                    // The single-fight analysis takes one mode, and ranks
-                    // anything else it is handed beside whatever that mode
-                    // generated — which is how a multi-set selection lands in
-                    // one table, against one baseline, at one shared seed
-                    houseTargetLevel,
-                    houseTargets,
-                    guildShrineTargetLevel,
-                    guildShrineTargets,
-                    guildShrineCapToGuild,
-                    tokenLevels,
-                    // The second ranking pass, and the two numbers it needs:
-                    // the window the level search runs over (the character's
-                    // own level) and this tab's fight cap, so a search probe is
-                    // bounded by the same Max fights every other sim here is.
-                    rankByRoomLevels: this._getRankByRoomLevels(),
-                    referenceLevel: (labyrinthClearRate() || bundledLabyrinthClearRate).getPlayerEffectiveCombatLevel(),
-                    maxTrials: upgradeUncapped ? undefined : upgradeMaxFights,
-                    extraCandidates: this._extraDimensionCandidates(
-                        plan.extraModes,
-                        playerDTOs[playerIndex],
-                        gameData,
-                        {
-                            abilityTargetLevel,
-                            abilityLevelType,
-                            combatLevelTargets,
-                            abilityTargets,
-                            auraSwapsOnly: this._getAuraSwapsOnly(),
-                            houseTargetLevel,
-                            houseTargets,
-                            guildShrineTargetLevel,
-                            guildShrineTargets,
-                            guildShrineCapToGuild,
-                            communityBuffs,
-                            communityBuffTargetLevel: this._getCommunityTargetLevel(),
-                        }
-                    ),
-                },
-                ({ current, total, description }) => {
-                    if (this._upgradeAborted) return;
-                    const fill = this.panel.querySelector('#mwi-labsim-upgrade-progress-fill');
-                    const text = this.panel.querySelector('#mwi-labsim-upgrade-progress-text');
-                    const { text: remaining } = eta.update(total > 0 ? current / total : 0);
-                    if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
-                    if (text) {
-                        text.textContent =
-                            `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
-                    }
-                },
-                { abortSignal: () => this._upgradeAborted }
-            );
-
-            // A fresh run supersedes any restored set — drop the "from a previous
-            // run" note before drawing, and remember the new results (opt-in).
-            this._restoredUpgradeAt = null;
-            this._restoredUpgradeMeta = null;
-            // Travels with the results rather than being read at draw time: a
-            // restored set was measured against whatever floor was set then
-            if (analysisResult?.roomLevels) analysisResult.roomLevels.targetFloor = this._getTargetFloor();
-            this._renderUpgradeResults(analysisResult, resultsEl);
-            // The remembered set is per character and has no undo: writing this
-            // run under the character who arrived mid-analysis would delete the
-            // analysis they were keeping
-            if (analysisResult?.results?.length && this._stillSameCharacter(ownerId)) {
-                const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
-                saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, analysisResult, {
-                    characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
+                    startToken,
+                    ownerId,
+                    orderOnly: plan.orderOnly,
                 });
             }
         } catch (error) {
@@ -6191,12 +6246,134 @@ class LabSimUI {
     }
 
     /**
-     * The Ability order section of the Check a swap results: every simulated order of a loadout's ordinary
+     * The element the Ability order section draws into, below the Upgrade results.
+     * @returns {HTMLElement|null}
+     * @private
+     */
+    _abilityOrderContainer() {
+        return this.panel?.querySelector('#mwi-labsim-upgrade-order') || null;
+    }
+
+    /**
+     * Draw (or clear) the Ability order section from `_upgradeOrderSection`. Kept apart from the Upgrade
+     * results so a sort or a redraw of the table neither loses it nor is lost by it.
+     * @private
+     */
+    _drawUpgradeAbilityOrder() {
+        const el = this._abilityOrderContainer();
+        if (!el) return;
+        const section = this._upgradeOrderSection;
+        if (!section) {
+            el.innerHTML = '';
+            el.style.display = 'none';
+            return;
+        }
+        el.style.display = 'block';
+        el.innerHTML = this._renderLabAbilityOrderSection(section);
+        this._wireLabAbilityOrder(el, () => this._drawUpgradeAbilityOrder());
+    }
+
+    /**
+     * The Include option's Ability order pass: every order of each loadout's ordinary abilities, simulated
+     * against the fights the Targets scope named (the same fights, precision, hours, crates and buffs as the
+     * rest of the run) and drawn as its own section. Stopping draws nothing, as it does for the table.
+     * @param {Object} params
+     * @param {Array<Object>} params.fights - The run's fights, `{ monsterHrid, monsterName, roomLevel, dto, loadoutName }`
+     * @param {boolean} params.isSelf - Whether the loadouts are the live character's
+     * @param {Array<Object>} [params.claimLoadouts] - Passed through to the analysis
+     * @param {Object} params.gameData - Game data payload
+     * @param {Array} params.crates - Selected crates
+     * @param {number} params.hours - Simulated-hours ceiling
+     * @param {Object} params.precision - Stopping rule
+     * @param {Object} params.communityBuffs - Community buffs
+     * @param {Array} params.labyrinthCombatBuffs - Token buffs
+     * @param {number} params.startToken - `_runStartToken` of the run
+     * @param {string} params.ownerId - Character the run began for
+     * @param {boolean} params.orderOnly - Nothing else was checked, so the status line is this pass's to set
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _runUpgradeAbilityOrder({
+        fights,
+        isSelf,
+        claimLoadouts,
+        gameData,
+        crates,
+        hours,
+        precision,
+        communityBuffs,
+        labyrinthCombatBuffs,
+        startToken,
+        ownerId,
+        orderOnly,
+    }) {
+        const isCurrent = () =>
+            startToken === this._runStartToken && Boolean(this.panel) && this._stillSameCharacter(ownerId);
+        const built = buildCombatAbilityOrderCandidates(
+            fights.map((fight) => fight.dto),
+            gameData,
+            isSelf
+        );
+        let section;
+        if (!built.candidates.length) {
+            // Fewer than two orderable abilities in every loadout: nothing to simulate
+            section = { groups: [] };
+        } else {
+            const eta = createEtaTracker();
+            this._setStatus(
+                `Checking ability orders across ${fights.length} fight${fights.length === 1 ? '' : 's'}. Stop cancels at any point.`
+            );
+            const raw = await runLabyrinthAllFightsAnalysis(
+                {
+                    fights,
+                    crates,
+                    hours,
+                    precision,
+                    communityBuffs,
+                    labyrinthCombatBuffs,
+                    modes: [],
+                    extraCandidates: built.candidates,
+                    claimLoadouts,
+                },
+                ({ current, total, description }) => {
+                    if (!isCurrent() || this._upgradeAborted) return;
+                    const fill = this.panel?.querySelector('#mwi-labsim-upgrade-progress-fill');
+                    const text = this.panel?.querySelector('#mwi-labsim-upgrade-progress-text');
+                    const { text: remaining } = eta.update(total > 0 ? current / total : 0);
+                    if (fill) fill.style.width = `${Math.round((current / total) * 100)}%`;
+                    if (text) {
+                        text.textContent =
+                            `${current} / ${total}` + (remaining ? ` · ${remaining}` : '') + `: ${description}`;
+                    }
+                },
+                { abortSignal: () => !isCurrent() || this._upgradeAborted }
+            );
+            if (!isCurrent() || this._upgradeAborted) return;
+            section = raw?.baseline
+                ? extractAbilityOrderSection(raw, gameData).section || { groups: [], noResult: true }
+                : { groups: [], noResult: true };
+        }
+        this._upgradeOrderSection = section;
+        this._drawUpgradeAbilityOrder();
+        if (orderOnly) {
+            const orders = section.groups.reduce((sum, group) => sum + group.orders.length, 0);
+            this._setStatus(
+                section.noResult
+                    ? 'Checking ability orders produced no results.'
+                    : section.groups.length
+                      ? `Ranked ${orders} ability order${orders === 1 ? '' : 's'} across ${fights.length} fight${fights.length === 1 ? '' : 's'}.`
+                      : 'Nothing to reorder: no loadout has two or more ordinary abilities.'
+            );
+        }
+    }
+
+    /**
+     * The Ability order section of the Upgrade results (the Include option): every simulated order of a loadout's ordinary
      * abilities ranked by expected attempts saved, the Lab's own measure, with the current order as a baseline
      * row. One block per loadout, because each loadout's orders are permutations of its own abilities (one
      * table would interleave unrelated sets under a single ranking). Orders cost nothing, so there is no Cost
-     * or Per 1M column. The collapsed state and Show-all live in the saved Check a swap options.
-     * @param {{groups: Array<Object>}} section - From `extractAbilityOrderSection`
+     * or Per 1M column. The collapsed state and Show-all live in the saved swap options.
+     * @param {{groups: Array<Object>, noResult?: boolean}} section - From `extractAbilityOrderSection`
      * @returns {string} HTML
      * @private
      */
@@ -6280,7 +6457,8 @@ class LabSimUI {
 
         const bests = groups.map((g) => g.orders[0]).filter(Boolean);
         let summary;
-        if (!groups.length) summary = 'nothing to reorder';
+        if (section.noResult) summary = 'no order measured';
+        else if (!groups.length) summary = 'nothing to reorder';
         else if (!bests.length) summary = 'no order reached';
         else if (bests.some((b) => b.attemptsDelta < 0 && b.significant)) {
             const winner = bests.reduce((a, b) => (b.attemptsDelta < a.attemptsDelta ? b : a));
@@ -6290,7 +6468,12 @@ class LabSimUI {
 
         const body = groups.length
             ? blocks.join('')
-            : note('Nothing to reorder: no loadout has two or more ordinary abilities.', '#888');
+            : note(
+                  section.noResult
+                      ? 'No ability order could be measured: the simulation returned no baseline.'
+                      : 'Nothing to reorder: no loadout has two or more ordinary abilities.',
+                  '#888'
+              );
         const needsToggle = groups.some((g) => g.orders.length > top);
         const toggle = needsToggle
             ? `<button data-order-showall style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ` +
@@ -6347,9 +6530,7 @@ class LabSimUI {
         const checked = Boolean(options.checked);
         const baseline = analysisResult?.baseline;
         const results = analysisResult?.results;
-        // A check of nothing but ability orders has no swap table, only its own section
-        const orderSection = checked ? options.abilityOrder || null : null;
-        if (!baseline || (!results?.length && !orderSection)) {
+        if (!baseline || !results?.length) {
             container.innerHTML = checked
                 ? ''
                 : '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No results — check that combat skip levels and loadouts are set.</div>';
@@ -6371,7 +6552,7 @@ class LabSimUI {
         const tokenResults = results.filter((r) => r.costType === 'token');
         const levelResults = checked ? [] : results.filter((r) => r.candidate?.type === 'combat_level');
         const goldResults = results.filter((r) => r.costType !== 'token' && !levelResults.includes(r));
-        const levelsOnly = (levelResults.length > 0 || !results.length) && !goldResults.length;
+        const levelsOnly = levelResults.length > 0 && !goldResults.length;
 
         const pct = (v) => `${(v * 100).toFixed(1)}%`;
         const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
@@ -6541,14 +6722,8 @@ class LabSimUI {
         const levelSorted = checked ? [] : this._sortedLevelRows(levelResults);
         if (!checked) html += this._renderAllFightsLevelSection(levelSorted, sharedStyles);
         if (!checked) html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
-        if (orderSection) html += this._renderLabAbilityOrderSection(orderSection);
         container.innerHTML = html;
         if (checked) this._wireCheckedHeading('combat', container);
-        if (orderSection) {
-            this._wireLabAbilityOrder(container, () =>
-                this._renderAllFightsResults(analysisResult, container, options)
-            );
-        }
 
         if (!checked)
             this._addCsvExport(container, 'labsim-all-fights', () => ({
@@ -9206,6 +9381,7 @@ class LabSimUI {
         // reads its own back from storage
         this._checkedSwaps = { combat: [], skilling: [] };
         this._swapOptions = sanitizeSwapOptions(null);
+        this._upgradeOrderSection = null;
         this._triggerChoices = sanitizeLabTriggerChoices(null);
         this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
         this._triggerRefreshSeq++;

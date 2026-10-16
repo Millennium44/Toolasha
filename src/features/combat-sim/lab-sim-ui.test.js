@@ -551,6 +551,7 @@ describe('the Upgrade tab asks two questions instead of one', () => {
             'equipment',
             'ability_level',
             'ability_swap',
+            'ability_order',
             'house',
             'labyrinth_buff',
             'community_buff',
@@ -4605,7 +4606,7 @@ describe('Check a swap', () => {
         expect(swapResults.style.display).toBe('none');
         expect(chips('combat')).toEqual(['Sinister Cape +7']);
         expect(ui._checkedSwaps.combat).toHaveLength(1);
-        expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').style.flex).toBe('1 1 auto');
+        expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').style.flex).toBe('1 0 auto');
 
         const skillingResults = ui.panel.querySelector('#mwi-labsim-skilling-swap-results');
         skillingResults.style.display = 'block';
@@ -4961,93 +4962,21 @@ describe('Check a swap', () => {
         expect(checked.querySelector('#mwi-labsim-budget')).toBeNull();
     });
 
-    describe('the Ability order section of the checked combat results', () => {
-        const order = (name, attemptsDelta, significant = true) => ({
-            order: [name],
-            name,
-            attemptsDelta,
-            attemptsDeltaNoise: 0.2,
-            runClearDelta: -attemptsDelta / 100,
-            significant,
-        });
-        const group = (loadoutName, orders) => ({ loadoutName, currentName: 'Smack → Poke', orders });
-        const draw = (section, analysis = combatAnalysis()) => {
-            const results = ui.panel.querySelector('#mwi-labsim-swap-results');
-            ui._renderAllFightsResults(analysis, results, { checked: true, abilityOrder: section });
-            return results;
+    test('Check a swap no longer has an Ability order button, and a saved queue drops an old order chip', async () => {
+        expect(ui.panel.querySelector('#mwi-labsim-swap-order-combat')).toBeNull();
+        storage.values = {
+            labSimCheckedSwaps_me: {
+                combat: [
+                    { hrid: '/abilities/__order__', level: 0 },
+                    { hrid: CAPE, level: 2 },
+                ],
+                skilling: [],
+            },
         };
-        const sevenOrders = () => [
-            order('O1', -3),
-            order('O2', -2.5),
-            order('O3', -2),
-            order('O4', -1.5),
-            order('O5', -1),
-            order('O6', -0.5, false),
-            order('O7', 0.4, false),
-        ];
-
-        test('ranks by expected attempts, shows the top five plus the current order, and Show all N', () => {
-            const results = draw({ groups: [group('Lab', sevenOrders())] });
-            const section = results.querySelector('#mwi-labsim-order-section');
-            const headers = [...section.querySelectorAll('th')].map((th) => th.textContent);
-            expect(headers).toEqual(['Order', 'ΔExpected attempts', 'ΔClear chance', 'Noise']);
-            expect(section.textContent).not.toContain('Per 1M');
-            const names = [...section.querySelectorAll('tbody tr')].map((tr) => tr.firstChild.textContent);
-            expect(names).toHaveLength(6);
-            expect(names[0]).toBe('O1');
-            expect(section.querySelector('[data-order-current]').textContent).toContain('current');
-            expect(section.querySelector('[data-order-current]').textContent).toContain('Smack → Poke');
-
-            section.querySelector('[data-order-showall]').click();
-            const after = ui.panel.querySelector('#mwi-labsim-order-section');
-            const rows = [...after.querySelectorAll('tbody tr')];
-            expect(rows).toHaveLength(8);
-            expect(rows.map((tr) => tr.firstChild.textContent).join('|')).toContain('within noise');
-            // The current order sits at zero, between the gains and the losses
-            expect(rows.findIndex((tr) => tr.hasAttribute('data-order-current'))).toBe(6);
-            expect(after.querySelector('[data-order-showall]').textContent).toBe('Show top 5');
-        });
-
-        test('the orders leave the main table: a row of only orders draws no swap table', () => {
-            const results = draw({ groups: [group('Lab', sevenOrders())] }, { ...combatAnalysis(), results: [] });
-            expect(results.querySelector('tr[data-allfights-row]')).toBeNull();
-            expect(results.querySelector('#mwi-labsim-order-section')).toBeTruthy();
-            expect(results.textContent).toContain('Baseline:');
-        });
-
-        test('every ending says what it is', () => {
-            const text = (section) => draw(section).querySelector('#mwi-labsim-order-section').textContent;
-            expect(text({ groups: [] })).toContain('Nothing to reorder');
-            expect(text({ groups: [group('Lab', [])] })).toContain('No other order of these abilities was reached');
-            expect(text({ groups: [group('Lab', [order('A', -0.3, false), order('B', -0.1, false)])] })).toContain(
-                'within noise of your current one'
-            );
-            expect(text({ groups: [group('Lab', [order('A', 0.3), order('B', 0.5)])] })).toContain(
-                'already the best measured'
-            );
-        });
-
-        test('several loadouts get one block each, named', () => {
-            const results = draw({ groups: [group('Low Lab', [order('A', -1)]), group('High Lab', [order('B', -2)])] });
-            const section = results.querySelector('#mwi-labsim-order-section');
-            expect(section.querySelectorAll('table')).toHaveLength(2);
-            expect(section.textContent).toContain('Low Lab');
-            expect(section.textContent).toContain('High Lab');
-        });
-
-        test('minimizing it is remembered with the Check a swap options and survives a redraw', async () => {
-            const results = draw({ groups: [group('Lab', sevenOrders())] });
-            results.querySelector('#mwi-labsim-order-section [data-collapse-key]').click();
-            await settle();
-            expect(storage.written['labSimCheckedSwaps_me'].options.orderCollapsed).toBe(true);
-            const again = draw({ groups: [group('Lab', sevenOrders())] });
-            expect(
-                again.querySelector('#mwi-labsim-order-section [data-collapse-key]').getAttribute('aria-expanded')
-            ).toBe('false');
-            expect(again.querySelector('#mwi-labsim-order-section [data-collapse-summary]').textContent).toContain(
-                'best'
-            );
-        });
+        await ui._restoreCheckedSwaps({ replace: true });
+        expect(chips('combat')).toEqual(['Sinister Cape +2']);
+        expect(ui._checkedSwaps.combat).toEqual([{ hrid: CAPE, level: 2 }]);
+        storage.values = {};
     });
 
     test('the checked combat results collapse from the heading, stay collapsed on a re-render and are remembered', async () => {
@@ -6014,5 +5943,338 @@ describe('the all-fights Combat levels table', () => {
         expect(gearLine).toContain('gear');
         expect(levelLine).toContain('combat level');
         expect(levelLine).toContain('5');
+    });
+});
+
+describe('the Ability order Include option', () => {
+    const A = '/abilities/poke';
+    const B = '/abilities/smack';
+    const C = '/abilities/fireball';
+    const SPECIAL = '/abilities/special';
+    const box = (key) => ui.panel.querySelector(`[data-lab-upgrade-dimension="${key}"]`);
+    const tick = (...keys) => {
+        for (const el of ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')) {
+            el.checked = keys.includes(el.getAttribute('data-lab-upgrade-dimension'));
+            el.dispatchEvent(new window.Event('change', { bubbles: true }));
+        }
+    };
+    const setScope = (value) => {
+        const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        scope.value = value;
+        scope.dispatchEvent(new window.Event('change', { bubbles: true }));
+    };
+    const section = () => ui.panel.querySelector('#mwi-labsim-upgrade-order');
+    const abilities = (...hrids) => [SPECIAL, ...hrids].map((hrid) => ({ hrid, level: 10 }));
+    const orderCandidates = (params) => params.extraCandidates.filter((c) => c.abilityOrder);
+
+    // The raw analysis a stub returns: the current order is the keep candidate, one other order wins
+    const rawOrders = (params, { winRate = 0.7, noise = 1000 } = {}) => ({
+        baseline: {
+            fights: params.fights.map((fight) => ({
+                monsterHrid: fight.monsterHrid,
+                roomLevel: fight.roomLevel,
+                monsterName: fight.monsterName,
+                loadoutName: fight.loadoutName,
+                winRate: 0.5,
+                trials: noise,
+            })),
+        },
+        context: { fights: params.fights },
+        results: [
+            {
+                candidate: { checkedAbilityKey: 'ability_order', order: [B, A, C] },
+                fights: params.fights.map((fight) => ({
+                    monsterHrid: fight.monsterHrid,
+                    roomLevel: fight.roomLevel,
+                    winRate,
+                    trials: noise,
+                    applied: true,
+                })),
+            },
+            {
+                candidate: { checkedAbilityKey: 'ability_order', keepCurrent: true, order: [A, B, C] },
+                fights: params.fights.map((fight) => ({
+                    monsterHrid: fight.monsterHrid,
+                    roomLevel: fight.roomLevel,
+                    winRate: 0.5,
+                    trials: noise,
+                    applied: true,
+                })),
+            },
+        ],
+    });
+
+    let singleSpy;
+    let allSpy;
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [
+            { hrid: '/monsters/mimic', name: 'Mimic' },
+            { hrid: '/monsters/eye_watcher', name: 'Eye Watcher' },
+        ];
+        game.skipLevels = { '/monsters/mimic': 130, '/monsters/eye_watcher': 150 };
+        game.abilityDetailMap = { [A]: { name: 'Poke' }, [B]: { name: 'Smack' }, [C]: { name: 'Fireball' } };
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [] }];
+        game.editedDTOs = { p1: { hrid: 'p1', equipment: {}, abilities: abilities(A, B, C) } };
+
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        ui.panel.querySelector('#mwi-labsim-level').value = '170';
+        ui.panel.querySelector('#mwi-labsim-level-source').value = 'configure';
+        singleSpy = vi
+            .spyOn(upgradeAdvisor, 'runLabyrinthUpgradeAnalysis')
+            .mockResolvedValue({ baseline: null, results: [] });
+        allSpy = vi
+            .spyOn(upgradeAdvisor, 'runLabyrinthAllFightsAnalysis')
+            .mockImplementation(async (params) =>
+                params.modes?.length ? { baseline: null, results: [] } : rawOrders(params)
+            );
+    });
+
+    afterEach(() => {
+        singleSpy.mockRestore();
+        allSpy.mockRestore();
+        game.players = [];
+        game.editedDTOs = null;
+        game.abilityDetailMap = {};
+        game.monsters = [];
+        game.skipLevels = {};
+        ui.destroy();
+    });
+
+    test('is a checkbox in the Include row, right after Ability Swaps, unticked by default', () => {
+        const keys = [...ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')].map((b) =>
+            b.getAttribute('data-lab-upgrade-dimension')
+        );
+        expect(keys[keys.indexOf('ability_swap') + 1]).toBe('ability_order');
+        expect(box('ability_order').checked).toBe(false);
+        expect(ui.panel.querySelector('[data-lab-mode-label="ability_order"]').textContent).toContain('Ability order');
+    });
+
+    test('is remembered with the other Include boxes and comes back ticked', async () => {
+        tick('equipment', 'ability_order');
+        storage.written = {};
+        ui._storedValues.clear();
+        await ui._saveUpgradeSelection();
+        expect(storage.written['labSimUpgradeDimensions_me']).toEqual(['equipment', 'ability_order']);
+
+        tick('equipment');
+        storage.values = { labSimUpgradeDimensions_me: ['equipment', 'ability_order'] };
+        await ui._restoreUpgradeSelection();
+        expect(box('ability_order').checked).toBe(true);
+        storage.values = {};
+    });
+
+    test('ticked alone on the Configure fight: one order pass, no table, the section drawn', async () => {
+        tick('ability_order');
+        await ui._onUpgradeAnalyze();
+
+        expect(singleSpy).not.toHaveBeenCalled();
+        expect(allSpy).toHaveBeenCalledTimes(1);
+        const params = allSpy.mock.calls[0][0];
+        expect(params.modes).toEqual([]);
+        expect(params.fights).toHaveLength(1);
+        expect(params.fights[0].loadoutName).toBe('Configure fight');
+        // 3 abilities: 5 other orders plus the keep candidate
+        expect(params.extraCandidates).toHaveLength(6);
+        expect(params.extraCandidates.every((c) => c.abilityOrder)).toBe(true);
+
+        expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').innerHTML).toBe('');
+        expect(section().style.display).toBe('block');
+        const text = section().textContent;
+        expect(text).toContain('Ability order');
+        expect(text).toContain('Smack → Poke → Fireball');
+        expect(section().querySelector('[data-order-current]')).toBeTruthy();
+        expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toContain('Ranked');
+    });
+
+    test('ticked beside other sets: the table run happens first and the orders stay out of its candidates', async () => {
+        tick('equipment', 'ability_order');
+        await ui._onUpgradeAnalyze();
+
+        expect(singleSpy).toHaveBeenCalledTimes(1);
+        const extra = singleSpy.mock.calls[0][0].extraCandidates || [];
+        expect(extra.some((c) => c?.abilityOrder)).toBe(false);
+        expect(allSpy).toHaveBeenCalledTimes(1);
+        expect(orderCandidates(allSpy.mock.calls[0][0]).length).toBeGreaterThan(0);
+        expect(section().style.display).toBe('block');
+    });
+
+    test('under All targets the pass runs over the same fights as the table', async () => {
+        game.loadoutByMonster = { '/monsters/mimic': 'low', '/monsters/eye_watcher': 'high' };
+        game.loadoutNames = { low: 'Low Lab', high: 'High Lab' };
+        game.loadoutAbilities = { low: abilities(A, B, C), high: abilities(A, B, C) };
+        setScope('all');
+        tick('ability_level', 'ability_order');
+        await ui._onUpgradeAnalyze();
+
+        expect(allSpy).toHaveBeenCalledTimes(2);
+        const [table, orders] = allSpy.mock.calls.map((call) => call[0]);
+        expect(table.modes).toEqual(['ability_level']);
+        expect(orders.modes).toEqual([]);
+        expect(orders.fights.map((fight) => fight.monsterHrid)).toEqual(table.fights.map((fight) => fight.monsterHrid));
+        expect(section().textContent).toContain('Ability order');
+        game.loadoutByMonster = {};
+        game.loadoutNames = {};
+        game.loadoutAbilities = {};
+    });
+
+    test('under Chosen targets only the ticked rooms are simulated', async () => {
+        game.loadoutByMonster = { '/monsters/mimic': 'low', '/monsters/eye_watcher': 'high' };
+        game.loadoutNames = { low: 'Low Lab', high: 'High Lab' };
+        game.loadoutAbilities = { low: abilities(A, B, C), high: abilities(A, B, C) };
+        setScope('selected');
+        for (const el of ui.panel.querySelectorAll('[data-lab-target]')) {
+            el.checked = el.getAttribute('data-lab-target') === '/monsters/eye_watcher';
+            el.dispatchEvent(new window.Event('change', { bubbles: true }));
+        }
+        tick('ability_order');
+        await ui._onUpgradeAnalyze();
+
+        expect(allSpy).toHaveBeenCalledTimes(1);
+        expect(allSpy.mock.calls[0][0].fights.map((fight) => fight.monsterHrid)).toEqual(['/monsters/eye_watcher']);
+        game.loadoutByMonster = {};
+        game.loadoutNames = {};
+        game.loadoutAbilities = {};
+    });
+
+    test('unticked: no pass and no section', async () => {
+        tick('equipment');
+        await ui._onUpgradeAnalyze();
+        expect(allSpy).not.toHaveBeenCalled();
+        expect(section().style.display).toBe('none');
+        expect(section().innerHTML).toBe('');
+    });
+
+    test('fewer than two ordinary abilities: nothing is simulated and the section says so', async () => {
+        game.editedDTOs = { p1: { hrid: 'p1', equipment: {}, abilities: abilities(A) } };
+        tick('ability_order');
+        await ui._onUpgradeAnalyze();
+        expect(allSpy).not.toHaveBeenCalled();
+        expect(section().textContent).toContain('Nothing to reorder');
+        expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toContain('Nothing to reorder');
+    });
+
+    test('every order within noise, and the current order best, each say so', async () => {
+        allSpy.mockImplementation(async (params) => rawOrders(params, { winRate: 0.5001, noise: 20 }));
+        tick('ability_order');
+        await ui._onUpgradeAnalyze();
+        expect(section().textContent).toContain('within noise');
+        expect(section().querySelector('[data-collapse-summary]').textContent).toContain('within noise');
+
+        allSpy.mockImplementation(async (params) => rawOrders(params, { winRate: 0.3, noise: 1000 }));
+        await ui._onUpgradeAnalyze();
+        expect(section().textContent).toContain('already the best measured');
+    });
+
+    test('stopped partway: nothing is drawn, as the table draws nothing for a stopped run', async () => {
+        allSpy.mockImplementation(async () => {
+            throw new Error('Cancelled');
+        });
+        tick('ability_order');
+        await ui._onUpgradeAnalyze();
+        expect(section().style.display).toBe('none');
+        expect(section().innerHTML).toBe('');
+        expect(ui._upgradeRunning).toBe(false);
+    });
+
+    test('a new run clears the previous section before simulating', async () => {
+        tick('ability_order');
+        await ui._onUpgradeAnalyze();
+        expect(section().innerHTML).not.toBe('');
+        let seen = null;
+        allSpy.mockImplementation(async (params) => {
+            seen = section().innerHTML;
+            return rawOrders(params);
+        });
+        await ui._onUpgradeAnalyze();
+        expect(seen).toBe('');
+    });
+
+    test('minimizing the section is remembered with the swap options and survives Show all', async () => {
+        tick('ability_order');
+        await ui._onUpgradeAnalyze();
+        section().querySelector('[data-collapse-key]').click();
+        await settle();
+        expect(storage.written['labSimCheckedSwaps_me'].options.orderCollapsed).toBe(true);
+        ui._drawUpgradeAbilityOrder();
+        expect(section().querySelector('[data-collapse-key]').getAttribute('aria-expanded')).toBe('false');
+    });
+
+    describe('the section as drawn', () => {
+        const order = (name, attemptsDelta, significant = true) => ({
+            order: [name],
+            name,
+            attemptsDelta,
+            attemptsDeltaNoise: 0.2,
+            runClearDelta: -attemptsDelta / 100,
+            significant,
+        });
+        const group = (loadoutName, orders) => ({ loadoutName, currentName: 'Smack → Poke', orders });
+        const draw = (data) => {
+            ui._upgradeOrderSection = data;
+            ui._drawUpgradeAbilityOrder();
+            return section();
+        };
+        const sevenOrders = () => [
+            order('O1', -3),
+            order('O2', -2.5),
+            order('O3', -2),
+            order('O4', -1.5),
+            order('O5', -1),
+            order('O6', -0.5, false),
+            order('O7', 0.4, false),
+        ];
+
+        test('ranks by expected attempts, top five plus the current order, and Show all N', () => {
+            const el = draw({ groups: [group('Lab', sevenOrders())] });
+            expect([...el.querySelectorAll('th')].map((th) => th.textContent)).toEqual([
+                'Order',
+                'ΔExpected attempts',
+                'ΔClear chance',
+                'Noise',
+            ]);
+            expect(el.textContent).not.toContain('Per 1M');
+            const names = [...el.querySelectorAll('tbody tr')].map((tr) => tr.firstChild.textContent);
+            expect(names).toHaveLength(6);
+            expect(names[0]).toBe('O1');
+            expect(el.querySelector('[data-order-current]').textContent).toContain('Smack → Poke');
+
+            el.querySelector('[data-order-showall]').click();
+            const rows = [...section().querySelectorAll('tbody tr')];
+            expect(rows).toHaveLength(8);
+            expect(rows.findIndex((tr) => tr.hasAttribute('data-order-current'))).toBe(6);
+            expect(section().querySelector('[data-order-showall]').textContent).toBe('Show top 5');
+        });
+
+        test('every ending says what it is', () => {
+            const text = (data) => draw(data).textContent;
+            expect(text({ groups: [] })).toContain('Nothing to reorder');
+            expect(text({ groups: [], noResult: true })).toContain('could be measured');
+            expect(text({ groups: [group('Lab', [])] })).toContain('No other order of these abilities was reached');
+            expect(text({ groups: [group('Lab', [order('A', -0.3, false)])] })).toContain(
+                'within noise of your current'
+            );
+            expect(text({ groups: [group('Lab', [order('A', 0.3), order('B', 0.5)])] })).toContain(
+                'already the best measured'
+            );
+        });
+
+        test('several loadouts get one named block each', () => {
+            const el = draw({ groups: [group('Low Lab', [order('A', -1)]), group('High Lab', [order('B', -2)])] });
+            expect(el.querySelectorAll('table')).toHaveLength(2);
+            expect(el.textContent).toContain('Low Lab');
+            expect(el.textContent).toContain('High Lab');
+        });
+    });
+
+    test('the estimate counts the order sims', () => {
+        const without = estimateLabUpgradeSims(['equipment'], 3).sims;
+        const withOrder = estimateLabUpgradeSims(['equipment', 'ability_order'], 3).sims;
+        expect(withOrder).toBeGreaterThan(without);
     });
 });
