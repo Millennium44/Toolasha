@@ -126,6 +126,8 @@ import {
     DEFAULT_SCORE_KEYS,
     MAX_GUILD_SHRINE_LEVEL,
     shrineName,
+    SIGNIFICANCE_Z,
+    generateAbilityOrderCandidates,
 } from './upgrade-advisor.js';
 import { applyMaxTierFood } from './food-optimizer.js';
 import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
@@ -142,6 +144,7 @@ import {
     DEFAULT_TUNABLE_SCOPE,
     OBJECTIVES,
     DEFAULT_OBJECTIVE,
+    balancedScore,
 } from './trigger-tuning.js';
 import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
 import { collapseHeaderHtml, enhanceCollapsibles } from './collapsible-sections.js';
@@ -168,6 +171,17 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
+
+/** What the Ability order section ranks by (Balanced is the trigger tuner's `balancedScore`) */
+const ABILITY_ORDER_RANKS = [
+    { key: 'profit', label: 'Profit/hr' },
+    { key: 'xp', label: 'EXP/hr' },
+    { key: 'dps', label: 'DPS' },
+    { key: 'balanced', label: 'Balanced' },
+];
+const DEFAULT_ABILITY_ORDER_RANK = 'profit';
+/** Orders shown before "Show all" */
+const ABILITY_ORDER_TOP = 5;
 /** Storage key for the Triggers chip's party mode, precision and min gain choices */
 const TRIGGER_CHOICES_KEY = 'combatSimTriggerChoices';
 /**
@@ -10507,6 +10521,16 @@ class CombatSimUI {
             // The token rate the scroll rows are priced at is part of the analysis: stamped here so a
             // remembered run restores with the rate its profit deltas were measured against, not today's.
             if (results) results.scrollTokenRate = scrollTokenRate();
+            // What the Ability order section needs to tell "nothing to compare" from "stopped first": whether
+            // the option ran, how many orders there were to measure, and whether Stop cut the run short
+            if (results && upgradeModes.includes('ability_order')) {
+                const gd = results.context?.gameData || buildGameDataPayload();
+                results.abilityOrder = {
+                    ran: true,
+                    expected: generateAbilityOrderCandidates(playerDTOs[playerIndex], gd).length,
+                    stopped: Boolean(this._upgradeAborted),
+                };
+            }
             // A fresh run supersedes any restored set — drop the "from a previous
             // run" note before drawing, and remember the new results (opt-in).
             this._restoredUpgradeAt = null;
@@ -12692,6 +12716,227 @@ class CombatSimUI {
         );
     }
 
+    /**
+     * The Ability order section: every simulated order of the equipped abilities ranked by one gain, the
+     * current order as a baseline row. Orders cost nothing, so there is no Cost, Repay, ROI or Gold/… here.
+     * Noise is the sim's own standard error for the delta (`row.noise`, a % of the metric; see
+     * `rateDeltaNoisePct`), and a gain inside `SIGNIFICANCE_Z` of it is labeled "within noise".
+     * Empty string when the option did not run and there are no order rows.
+     * @param {Array<Object>} orderRows - Result rows of type 'ability_order'
+     * @param {Object} results - The analysis (baseline, context, abilityOrder stamp)
+     * @returns {string} HTML
+     * @private
+     */
+    _renderAbilityOrderSection(orderRows, results) {
+        const stamp = results.abilityOrder || null;
+        if (!orderRows.length && !stamp?.ran) return '';
+        const baseline = results.baseline || {};
+        const rank = ABILITY_ORDER_RANKS.some((r) => r.key === this._abilityOrderRank)
+            ? this._abilityOrderRank
+            : DEFAULT_ABILITY_ORDER_RANK;
+        const head = (summary) =>
+            collapseHeaderHtml({
+                key: 'abilityOrder',
+                title: 'Ability order',
+                summary,
+                style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
+            });
+        const card = (inner) =>
+            `<div id="mwi-csim-order-section" style="margin-top:14px; padding:8px 10px; background:#0d0d1a; ` +
+            `border:1px solid #2a2a4a; border-radius:6px;">${inner}</div>`;
+        const note = (text, color = '#aaa') =>
+            `<div style="color:${color}; font-size:11px; margin:4px 0;">${text}</div>`;
+
+        if (!orderRows.length) {
+            const text = stamp.stopped
+                ? 'Stopped before any order finished.'
+                : stamp.expected === 0
+                  ? 'Nothing to reorder: fewer than two ordinary abilities are equipped, or only one order is possible.'
+                  : 'No order was measured.';
+            return card(head(stamp.stopped ? 'stopped' : 'nothing to compare') + note(text, '#888'));
+        }
+
+        const metricsOf = (m) => ({
+            xp: m?.xpPerHour,
+            profit: m?.profitPerHour,
+            dps: m?.dps,
+            encounters: m?.encountersPerHour,
+            deaths: m?.deathsPerHour,
+        });
+        const baseMetrics = metricsOf(baseline);
+        const money = (value) => {
+            const sign = value > 0 ? '+' : value < 0 ? '−' : '';
+            return `${sign}${formatKMB(Math.abs(Math.round(value)))}`;
+        };
+        const pct = (value) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(2)}%`;
+        const gainOf = (r) => {
+            if (rank === 'profit') return (r.metrics?.profitPerHour ?? NaN) - (baseline.profitPerHour ?? NaN);
+            if (rank === 'xp') return r.deltas?.xp;
+            if (rank === 'dps') return r.deltas?.dps;
+            return balancedScore(metricsOf(r.metrics), baseMetrics);
+        };
+        // One standard error, in the unit of the ranked gain. Balanced is an average of percentage terms that
+        // share one per-encounter error, so that same figure is read as score points.
+        const noiseOf = (r) => {
+            const n = r.noise || {};
+            if (rank === 'profit') {
+                return Number.isFinite(n.profit) ? (n.profit / 100) * Math.abs(baseline.profitPerHour || 0) : null;
+            }
+            const value = rank === 'xp' ? n.xp : n.dps;
+            return Number.isFinite(value) ? value : null;
+        };
+        const fmtGain = (value) =>
+            rank === 'profit'
+                ? money(value)
+                : rank === 'balanced'
+                  ? `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(2)} pts`
+                  : pct(value);
+        const fmtNoise = (value) =>
+            rank === 'profit'
+                ? `±${formatKMB(Math.round(value))}`
+                : rank === 'balanced'
+                  ? `±${value.toFixed(2)} pts`
+                  : `±${value.toFixed(2)}%`;
+
+        const measured = orderRows
+            .map((r) => {
+                const gain = gainOf(r);
+                const noise = noiseOf(r);
+                const within =
+                    Number.isFinite(gain) && Number.isFinite(noise) ? Math.abs(gain) <= SIGNIFICANCE_Z * noise : false;
+                return { r, gain, noise, within };
+            })
+            .filter((e) => Number.isFinite(e.gain))
+            .sort((a, b) => b.gain - a.gain);
+
+        const total = measured.length;
+        const best = measured[0] || null;
+        const expected = stamp?.expected ?? total;
+        const partial = Boolean(stamp?.stopped) && total < expected;
+        let verdict;
+        let summary;
+        if (!best || best.gain <= 0) {
+            verdict = 'Your current order is already the best measured.';
+            summary = 'current order is best';
+        } else if (best.within) {
+            verdict = 'Every order is within noise of your current one: none is clearly better, so keep it.';
+            summary = 'all within noise';
+        } else {
+            verdict = '';
+            summary = `best ${fmtGain(best.gain)} ${ABILITY_ORDER_RANKS.find((x) => x.key === rank).label}`;
+        }
+        if (partial) summary += ' (stopped)';
+
+        const nameOf = (r) => String(r.candidate?.description || '').replace(/^Order:\s*/, '');
+        // The loadout's own order, when the analysis still carries it (a remembered run does not)
+        const ctx = results.context;
+        const detail = ctx?.gameData?.abilityDetailMap || {};
+        const currentHrids = (ctx?.playerDTOs?.[ctx.playerIndex]?.abilities || [])
+            .slice(1)
+            .filter(Boolean)
+            .map((a) => a.hrid);
+        const currentName = currentHrids.length
+            ? currentHrids.map((h) => detail[h]?.name || h.split('/').pop().replace(/_/g, ' ')).join(' → ')
+            : 'Current order';
+
+        const entries = [...measured, { current: true, gain: 0 }].sort(
+            (a, b) => b.gain - a.gain || (a.current ? -1 : 1)
+        );
+        const shown = this._abilityOrderShowAll
+            ? entries
+            : (() => {
+                  let kept = 0;
+                  return entries.filter((e) => e.current || ++kept <= ABILITY_ORDER_TOP);
+              })();
+
+        const td = 'padding:3px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap; text-align:right;';
+        const th = 'padding:3px 6px; text-align:right; border-bottom:1px solid #333; color:#888; font-weight:600;';
+        const cell = (e, value, fmt, key) => {
+            if (!Number.isFinite(value)) return `<td style="${td} color:#666;">—</td>`;
+            const significant = e.r.significantBy?.[key] ?? true;
+            // Fewer deaths is the good direction
+            const good = key === 'deaths' ? -value : value;
+            const color = !significant ? '#888' : good > 0 ? '#8bc34a' : good < 0 ? '#f44336' : '#888';
+            return `<td style="${td} color:${color};">${fmt(value)}</td>`;
+        };
+        let rowsHtml = '';
+        for (const e of shown) {
+            if (e.current) {
+                rowsHtml +=
+                    `<tr data-order-current style="background:rgba(120,150,190,0.08);">` +
+                    `<td style="${td} text-align:left; white-space:normal; color:#e0e0e0;">${escapeAttribute(currentName)}` +
+                    `<span style="${ROW_NOTE_STYLE} background:rgba(120,150,190,0.25); color:#9ab;">current</span></td>` +
+                    `<td style="${td} color:#888;">—</td><td style="${td} color:#888;">—</td>` +
+                    `<td style="${td} color:#888;">—</td><td style="${td} color:#888;">—</td>` +
+                    `<td style="${td} color:#888;">baseline</td></tr>`;
+                continue;
+            }
+            const r = e.r;
+            const profitAbs = (r.metrics?.profitPerHour ?? NaN) - (baseline.profitPerHour ?? NaN);
+            rowsHtml +=
+                `<tr data-order-row>` +
+                `<td style="${td} text-align:left; white-space:normal; color:#e0e0e0;">${escapeAttribute(nameOf(r))}` +
+                (e.within
+                    ? `<span style="${ROW_NOTE_STYLE} background:rgba(150,150,150,0.2); color:#999;" title="The gain on the ranked metric is inside the sampling error">within noise</span>`
+                    : '') +
+                `</td>` +
+                cell(e, profitAbs, money, 'profit') +
+                cell(e, r.deltas?.xp, pct, 'xp') +
+                cell(e, r.deltas?.dps, pct, 'dps') +
+                cell(e, r.deltas?.deaths, pct, 'deaths') +
+                `<td style="${td} color:#888;">${Number.isFinite(e.noise) ? fmtNoise(e.noise) : '—'}</td></tr>`;
+        }
+
+        const options = ABILITY_ORDER_RANKS.map(
+            (x) => `<option value="${x.key}"${x.key === rank ? ' selected' : ''}>${x.label}</option>`
+        ).join('');
+        const toggle =
+            total > ABILITY_ORDER_TOP
+                ? `<button id="mwi-csim-order-showall" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; ` +
+                  `border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; margin-top:6px;">` +
+                  `${this._abilityOrderShowAll ? `Show top ${ABILITY_ORDER_TOP}` : `Show all ${total}`}</button>`
+                : '';
+        return card(
+            head(summary) +
+                `<div style="color:#666; font-size:10px; margin-bottom:6px;">Every order of your ordinary abilities, simulated. ` +
+                `Free to apply: set it in the game. Rank by ` +
+                `<select class="toolasha-select" id="mwi-csim-order-rank" style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; ` +
+                `border-radius:3px; padding:1px 4px; font-size:11px; font-family:inherit;">${options}</select>` +
+                `<span style="margin-left:6px;">± is one standard error of the ranked gain.</span></div>` +
+                (verdict ? note(verdict, '#9ab') : '') +
+                (partial
+                    ? note(
+                          `Stopped partway: ${total} of ${expected} orders measured; a better one may be among the rest.`,
+                          '#ff9800'
+                      )
+                    : '') +
+                `<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
+                `<th style="${th} text-align:left;">Order</th><th style="${th}">ΔProfit/hr</th><th style="${th}">ΔEXP/hr</th>` +
+                `<th style="${th}">ΔDPS</th><th style="${th}">ΔDeaths/hr</th><th style="${th}">Noise</th></tr></thead>` +
+                `<tbody>${rowsHtml}</tbody></table>` +
+                toggle
+        );
+    }
+
+    /**
+     * Wire the Ability order section's Rank-by dropdown and Show-all toggle. Both redraw the results, which
+     * is why their state lives on the panel and in the saved prefs rather than in the DOM.
+     * @param {HTMLElement} container - Upgrade results container
+     * @private
+     */
+    _wireAbilityOrder(container) {
+        container.querySelector('#mwi-csim-order-rank')?.addEventListener('change', (event) => {
+            this._abilityOrderRank = event.target.value;
+            this._persistUpgradeColumnPrefs();
+            this._renderUpgradeResults(this._upgradeResultsData);
+        });
+        container.querySelector('#mwi-csim-order-showall')?.addEventListener('click', () => {
+            this._abilityOrderShowAll = !this._abilityOrderShowAll;
+            this._persistUpgradeColumnPrefs();
+            this._renderUpgradeResults(this._upgradeResultsData);
+        });
+    }
+
     _renderUpgradeResults(results) {
         const container = this.panel.querySelector('#mwi-csim-upgrade-results');
         if (!container) return;
@@ -12707,6 +12952,8 @@ class CombatSimUI {
             container.innerHTML =
                 foodHtml ||
                 `<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.${this._houseScanNote(results.houseScan)}</div>`;
+            container.innerHTML += this._renderAbilityOrderSection([], results);
+            this._wireAbilityOrder(container);
             this._enhanceCollapsibles(container);
             return;
         }
@@ -12716,7 +12963,12 @@ class CombatSimUI {
         // selection applies to results that were computed before it was loaded
         this._rescoreUpgrades();
         const levelRows = results.results.filter((r) => r.candidate?.type === 'combat_level');
-        const purchasable = results.results.filter((r) => r.candidate?.type !== 'combat_level');
+        // Orders are free, so every cost-based figure is meaningless for them: they get their own section and
+        // stay out of the table and the budget planner's pool
+        const orderRows = results.results.filter((r) => r.candidate?.abilityOrder);
+        const purchasable = results.results.filter(
+            (r) => r.candidate?.type !== 'combat_level' && !r.candidate?.abilityOrder
+        );
         // A row with no price is not a bad row, and it used to be shown as one:
         // sorted into the same table with cost Infinity, it sank to the bottom
         // beside the genuine regressions with nothing to say it was there for a
@@ -12743,6 +12995,7 @@ class CombatSimUI {
         // level Score would be stuck on its saved metrics and depth, so the
         // levels table brings its own. Never both: the wiring finds it by id.
         if ((levelRows.length || scrollRows.length) && !goldRows.length) html += this._renderUpgradeColumnMenu();
+        html += this._renderAbilityOrderSection(orderRows, results);
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
         if (scrollRows.length) html += this._renderScrollTable(scrollRows, results.baseline, tokenRate);
         if (unpricedRows.length) html += this._renderUnpricedUpgradeTable(unpricedRows, results.baseline);
@@ -12821,6 +13074,7 @@ class CombatSimUI {
         this._wireUpgradeBudget(container);
         this._wireBudgetConfirm(container);
         wireUpgradeRowActions(container);
+        this._wireAbilityOrder(container);
         this._enhanceCollapsibles(container);
 
         // Every measured figure, whatever the ⚙ menu is currently showing — the
@@ -12870,7 +13124,7 @@ class CombatSimUI {
                     cost: finite(r.cost),
                     costSource: r.costSource || '',
                     // As the table shows it: points are whole, a percent of best is rounded
-                    score: Number.isFinite(r.score) ? Math.round(r.score) : null,
+                    score: Number.isFinite(r.score) && !r.candidate?.abilityOrder ? Math.round(r.score) : null,
                     dps: finite(r.metrics?.dps),
                     xpPerHour: finite(r.metrics?.xpPerHour),
                     profitPerHour: finite(r.metrics?.profitPerHour),
@@ -13016,7 +13270,7 @@ class CombatSimUI {
     _rescoreUpgrades() {
         const rows = this._upgradeResultsData?.results;
         if (!rows) return;
-        const scorable = rows.filter((r) => r.candidate?.type !== 'combat_level');
+        const scorable = rows.filter((r) => r.candidate?.type !== 'combat_level' && !r.candidate?.abilityOrder);
         applyScoreScale(scorable, this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH, {
             keys: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
         });
@@ -13060,6 +13314,8 @@ class CombatSimUI {
                     scrollScoreScale: this._scrollScoreScale || DEFAULT_SCROLL_SCORE_SCALE,
                     // Minimized Upgrade-tab sections, by section id; absent means expanded
                     collapsed: { ...(this._collapsedSections || {}) },
+                    abilityOrderRank: this._abilityOrderRank || DEFAULT_ABILITY_ORDER_RANK,
+                    abilityOrderShowAll: Boolean(this._abilityOrderShowAll),
                 },
                 'settings'
             );
@@ -13105,8 +13361,14 @@ class CombatSimUI {
                 for (const [key, value] of Object.entries(saved.collapsed)) if (value === true) collapsed[key] = true;
             }
             this._collapsedSections = collapsed;
+            this._abilityOrderRank = ABILITY_ORDER_RANKS.some((r) => r.key === saved.abilityOrderRank)
+                ? saved.abilityOrderRank
+                : DEFAULT_ABILITY_ORDER_RANK;
+            this._abilityOrderShowAll = saved.abilityOrderShowAll === true;
             // A table or trigger result drawn before this read finished was drawn all expanded
             this._enhanceCollapsibles(this.panel?.querySelector('#mwi-csim-upgrade-content'));
+            // Rank-by and show-all change what the section draws, so it is drawn again with them
+            if (this._upgradeResultsData && !this._isBusy?.()) this._renderUpgradeResults(this._upgradeResultsData);
         } catch (error) {
             console.error('[CombatSimUI] Failed to load upgrade column preferences:', error);
         }
