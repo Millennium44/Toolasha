@@ -201,6 +201,31 @@ describe('Combat Sim condition search', () => {
         expect(result.unpriced).toContain('/items/mystery');
     });
 
+    test('an unpriced drop in the condition baseline alone still marks profit as left out', async () => {
+        sims.respond = (params) => ({
+            ...respond(params),
+            profitRate: 1000,
+            // Only the condition search's own baseline batch (7.5 h per seed) sees the unpriced drop
+            unpricedDrops: params.hours === 7.5 ? ['/items/mystery'] : [],
+        });
+        const result = await runTriggerOptimization({ ...base, objective: 'balanced', searchConditions: true });
+        expect(result.profitLeftOut).toBe(true);
+        expect(result.unpriced).toContain('/items/mystery');
+    });
+
+    test('Profit/h skips the condition search once the threshold phase could not value profit', async () => {
+        sims.respond = (params) => ({
+            ...respond(params),
+            profitRate: 1000,
+            // Unpriced everywhere except the condition baseline batch
+            unpricedDrops: params.hours === 7.5 ? [] : ['/items/mystery'],
+        });
+        const result = await runTriggerOptimization({ ...base, objective: 'profit', searchConditions: true });
+        expect(result.profitLeftOut).toBe(true);
+        expect(result.conditions.skipped).toBe('profit');
+        expect(result.conditions.changes).toEqual([]);
+    });
+
     test('enemy-HP candidates use the zone HP at each spawn tier plus the selected tier', async () => {
         const SLIME = '/monsters/slime';
         const ZONE = '/actions/combat/slimes';
