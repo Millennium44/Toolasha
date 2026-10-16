@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
     actions: [],
     // What a copy would sell for (the profit sell side); the buy side reads `prices`
     sellPrices: {},
+    // Craft cost of materials with no market listing
+    craftPrices: {},
     // Copies claimed by other plans in the reservation ledger
     reservedElsewhere: {},
     // The market tax a sale pays (0 keeps the other tests' figures round)
@@ -93,6 +95,11 @@ vi.mock('../../utils/profit-helpers.js', () => ({
         return { price: table[hrid] || 0, custom: false, missing: !table[hrid] };
     },
 }));
+vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    // Craft cost for a material with no listing, standing in for the recipe walk
+    return { ...actual, getEnhancementMaterialPrice: (hrid) => state.craftPrices[hrid] || 0 };
+});
 vi.mock('../../utils/tester-shop.js', () => ({
     testerShopEnabled: () => false,
     testerGearPrice: () => null,
@@ -123,6 +130,7 @@ beforeEach(() => {
     state.reservedElsewhere = {};
     state.taxRate = 0;
     state.sellPrices = {};
+    state.craftPrices = {};
     state.prices = { ...BASE_PRICES };
 });
 
@@ -740,5 +748,21 @@ describe('an enhancing material with no market ask and no recipe', () => {
 
         expect(text).toContain('2× Cheese (@500 → 1,000)');
         expect(text).not.toContain('no price');
+    });
+
+    test('the sweep prices a craft-cost-only material like the table, and notes an unpriced one', async () => {
+        delete state.prices['/items/cheese'];
+        state.craftPrices['/items/cheese'] = 300;
+        const priced = buildPanel({ protectFrom: 3 });
+        await displayEnhancementStats(priced, '/items/cheese_sword');
+        const pricedText = priced.querySelector('#mwi-enhancement-stats').textContent;
+        expect(pricedText).toContain('2× Cheese (@300 → 600)');
+        expect(pricedText).not.toContain('Some materials have no price');
+
+        clearProtectSweepMemo();
+        state.craftPrices = {};
+        const unpriced = buildPanel({ protectFrom: 3 });
+        await displayEnhancementStats(unpriced, '/items/cheese_sword');
+        expect(unpriced.querySelector('#mwi-enhancement-stats').textContent).toContain('Some materials have no price');
     });
 });
