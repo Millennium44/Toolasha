@@ -202,6 +202,9 @@ function combatGain(metric, base, cand, withProfit = true) {
     const asScore = (m) => ({
         xp: m?.xpPerHour,
         profit: m?.profitPerHour,
+        // Gross revenue and cost let profitScale size the profit term against cash flow, not net profit
+        revenue: m?.revenuePerHour,
+        cost: m?.costPerHour,
         dps: m?.dps,
         encounters: m?.encountersPerHour,
         deaths: m?.deathsPerHour,

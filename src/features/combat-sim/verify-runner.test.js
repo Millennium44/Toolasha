@@ -97,6 +97,8 @@ vi.mock('./upgrade-advisor.js', () => ({
             xpPerHour: 1000 + luck + effect + wobble,
             profitPerHour: result.marker === 'nan' ? NaN : 5000 + luck * 5 + effect * 5 + wobble + price,
             unpriced: result.unpriced ?? [],
+            revenuePerHour: sim.gross,
+            costPerHour: sim.gross,
             dps: 100 + luck / 10 + effect / 10,
             encountersPerHour: 50 + luck / 10 + effect / 10,
             deathsPerHour: 0,
@@ -363,6 +365,28 @@ describe('verifyCombatCandidates', () => {
             });
             expect(Number.isFinite(out.rows[0].mean)).toBe(true);
         }
+    });
+
+    test('Balanced sizes the profit term against gross revenue and cost, not net profit', async () => {
+        const run = () =>
+            verifyCombatCandidates({
+                context: makeContext(),
+                rows: [row('good', 'good')],
+                seeds: 3,
+                metric: 'balanced',
+            });
+        let netOnly;
+        let withGross;
+        try {
+            netOnly = await run();
+            sim.gross = 1_000_000;
+            withGross = await run();
+        } finally {
+            delete sim.gross;
+        }
+        // +500 profit on ~5k net is a ~10% term; on 1M of cash flow it is ~0.05%, so the score drops by
+        // about a quarter of that 10% (the profit term is one of four averaged)
+        expect(netOnly.rows[0].mean - withGross.rows[0].mean).toBeGreaterThan(2);
     });
 
     test('Stop mid-run returns what finished, flagged stopped', async () => {
