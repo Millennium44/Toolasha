@@ -1333,6 +1333,163 @@ describe('the panel', () => {
         });
     });
 
+    describe('the Ability order section', () => {
+        /** An ability_order row: free, with its own measured gains and a noise of `se` percent */
+        const orderRow = (name, { profit = 0, xpPct = 0, dpsPct = 0, se = 1, sig = true } = {}) => ({
+            candidate: {
+                description: `Order: ${name}`,
+                type: 'ability_order',
+                slot: 'ability_1',
+                abilityOrder: true,
+                order: name.split(' → '),
+                cost: 0,
+                noPurchase: true,
+            },
+            cost: 0,
+            metrics: {
+                dps: 100 * (1 + dpsPct / 100),
+                xpPerHour: 1000 * (1 + xpPct / 100),
+                profitPerHour: 1000 + profit,
+                deathsPerHour: 0,
+                encountersPerHour: 10,
+            },
+            deltas: { dps: dpsPct, xp: xpPct, profit: profit / 10, deaths: 0, encounters: 0 },
+            noise: { dps: se, xp: se, profit: se, encounters: se, deaths: se },
+            significantBy: { dps: sig, xp: sig, profit: sig, encounters: sig, deaths: sig },
+            score: 25,
+            goldPer: { dps: 0, xp: 0, profit: 0, deaths: 0, encounters: 0 },
+            economics: {},
+        });
+        const draw = (orders, extra = {}) =>
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [row('Cheap ring', { slot: '/equipment_types/ring' }), ...orders],
+                food: null,
+                ...extra,
+            });
+        const section = () => ui.panel.querySelector('#mwi-csim-order-section');
+        const names = () => [...section().querySelectorAll('tbody tr')].map((tr) => tr.children[0].textContent);
+
+        beforeEach(() => {
+            ui._collapsedSections = {};
+            ui._abilityOrderRank = undefined;
+            ui._abilityOrderShowAll = false;
+            ui._upgradeBudget = 0;
+            mocks.store.delete('settings:combatSimUpgradeColumns');
+        });
+        afterEach(() => {
+            ui._collapsedSections = {};
+            ui._abilityOrderRank = undefined;
+            ui._abilityOrderShowAll = false;
+            mocks.store.delete('settings:combatSimUpgradeColumns');
+        });
+
+        test('orders leave the main table and the budget pool and get their own section', () => {
+            ui._upgradeBudget = 1_000_000;
+            draw([orderRow('B → A', { profit: 500 })]);
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            expect(container.querySelectorAll('tr[data-upgrade-row]')).toHaveLength(1);
+            expect(container.querySelector('#mwi-csim-upgrade-budget').textContent).not.toContain('Order:');
+            expect(section().textContent).toContain('B → A');
+            expect(section().textContent).not.toMatch(/Repay|ROI|Gold\//);
+        });
+
+        test('rows are ranked by profit/hr by default and re-ranked by the dropdown, which sticks across redraws', () => {
+            draw([orderRow('A → B', { profit: 100, dpsPct: 9 }), orderRow('C → D', { profit: 900, dpsPct: 1 })]);
+            expect(names()[0]).toContain('C → D');
+            const select = section().querySelector('#mwi-csim-order-rank');
+            select.value = 'dps';
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            expect(names()[0]).toContain('A → B');
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(section().querySelector('#mwi-csim-order-rank option[selected]').value).toBe('dps');
+        });
+
+        test('the current order is a marked baseline row and a noisy gain says within noise', () => {
+            draw([orderRow('A → B', { profit: 20, se: 50, sig: false }), orderRow('C → D', { profit: 900, se: 1 })]);
+            expect(section().querySelector('[data-order-current]').textContent).toContain('current');
+            const rows = [...section().querySelectorAll('[data-order-row]')];
+            expect(rows.find((r) => r.textContent.includes('A → B')).textContent).toContain('within noise');
+            expect(rows.find((r) => r.textContent.includes('C → D')).textContent).not.toContain('within noise');
+        });
+
+        test('top five plus the current row, with Show all N, and the choice survives a redraw', () => {
+            const orders = [1, 2, 3, 4, 5, 6, 7].map((i) => orderRow(`X${i} → Y${i}`, { profit: i * 100 }));
+            draw(orders);
+            expect(section().querySelectorAll('[data-order-row]')).toHaveLength(5);
+            expect(section().querySelectorAll('[data-order-current]')).toHaveLength(1);
+            const button = section().querySelector('#mwi-csim-order-showall');
+            expect(button.textContent).toBe('Show all 7');
+            button.click();
+            expect(section().querySelectorAll('[data-order-row]')).toHaveLength(7);
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(section().querySelectorAll('[data-order-row]')).toHaveLength(7);
+        });
+
+        test('the section minimizes and everything persists and restores', async () => {
+            draw([orderRow('A → B', { profit: 500 })]);
+            section().querySelector('[data-collapse-key="abilityOrder"]').click();
+            ui._abilityOrderRank = 'xp';
+            ui._abilityOrderShowAll = true;
+            await ui._persistUpgradeColumnPrefs();
+            const saved = mocks.store.get('settings:combatSimUpgradeColumns');
+            expect(saved.collapsed).toEqual({ abilityOrder: true });
+            expect(saved.abilityOrderRank).toBe('xp');
+            expect(saved.abilityOrderShowAll).toBe(true);
+
+            ui._collapsedSections = {};
+            ui._abilityOrderRank = undefined;
+            ui._abilityOrderShowAll = false;
+            await ui._loadUpgradeColumnPrefs();
+            expect(ui._abilityOrderRank).toBe('xp');
+            expect(ui._abilityOrderShowAll).toBe(true);
+            expect(section().querySelector('table').style.display).toBe('none');
+        });
+
+        test('Export CSV still carries the order rows, with no score', () => {
+            draw([orderRow('A → B', { profit: 500 })]);
+            const exported = ui.panel.querySelector('#mwi-csim-upgrade-results [data-csv-export]');
+            expect(exported).toBeTruthy();
+            const data = ui._upgradeResultsData.results.filter((r) => r.candidate.abilityOrder);
+            expect(data).toHaveLength(1);
+        });
+
+        test('ending: nothing to reorder', () => {
+            draw([], { abilityOrder: { ran: true, expected: 0, stopped: false } });
+            expect(section().textContent).toContain('Nothing to reorder');
+            expect(section().querySelector('table')).toBeNull();
+        });
+
+        test('ending: stopped before any order finished', () => {
+            draw([], { abilityOrder: { ran: true, expected: 6, stopped: true } });
+            expect(section().textContent).toContain('Stopped before any order finished');
+        });
+
+        test('ending: every order within noise', () => {
+            draw([orderRow('A → B', { profit: 20, se: 50, sig: false })]);
+            expect(section().textContent).toContain('within noise of your current one');
+            ui._collapsedSections = { abilityOrder: true };
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(section().querySelector('[data-collapse-summary]').textContent).toBe('all within noise');
+        });
+
+        test('ending: the current order is the best', () => {
+            draw([orderRow('A → B', { profit: -300 })]);
+            expect(section().textContent).toContain('current order is already the best');
+            expect(names()[0]).toContain('current');
+        });
+
+        test('ending: a run stopped partway says how many were measured', () => {
+            draw([orderRow('A → B', { profit: 500 })], { abilityOrder: { ran: true, expected: 6, stopped: true } });
+            expect(section().textContent).toContain('Stopped partway: 1 of 6');
+        });
+
+        test('no section at all when the option did not run and there are no orders', () => {
+            draw([]);
+            expect(section()).toBeNull();
+        });
+    });
+
     describe('combat levels: Hours/0.01% columns', () => {
         /** A combat_level row: days of grind and percent gains on dps / xp / profit */
         const levelRow = (description, days, { dps = 0, xp = 0, profit = 0 } = {}) => ({
