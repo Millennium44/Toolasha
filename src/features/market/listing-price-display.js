@@ -1128,12 +1128,39 @@ class ListingPriceDisplay {
 
         const beatsYou = isSell ? marketPrice < ownPrice : marketPrice > ownPrice;
         if (!beatsYou) return null;
+        // A price better than THIS listing's is a rival's only if it is not another of your own: the snapshot
+        // and the order-book patch both include your resting orders, so with two listings of one item and side
+        // the dearer one would read the cheaper one as an undercut
+        if (this._isOwnRestingPrice(itemHrid, enhancementLevel, isSell, marketPrice)) return null;
 
         const timestamp = marketAPI.getPriceTimestamp(itemHrid, enhancementLevel);
         const fresher = bookUpdated === null || (typeof timestamp === 'number' && timestamp > bookUpdated);
         if (!fresher) return null;
 
         return { price: marketPrice, timestamp };
+    }
+
+    /**
+     * Whether one of your own still-resting listings of this item, level and side sits at exactly this price.
+     * @param {string} itemHrid - Item
+     * @param {number} enhancementLevel - Enhancement level
+     * @param {boolean} isSell - Which side
+     * @param {number} price - The price to look for
+     * @returns {boolean}
+     */
+    _isOwnRestingPrice(itemHrid, enhancementLevel, isSell, price) {
+        return Object.values(this.allListings || {}).some(
+            (listing) =>
+                listing &&
+                Boolean(listing.isSell) === Boolean(isSell) &&
+                listing.itemHrid === itemHrid &&
+                (listing.enhancementLevel || 0) === (enhancementLevel || 0) &&
+                // getPrice clamps the snapshot into the tradable band, while a listing keeps its raw price:
+                // with asks at 90 and 100 and the band's top at 80 the snapshot reads 80, which neither
+                // raw price equals. Clamp each candidate the same way before comparing
+                clampToBand(listing.price, itemHrid, enhancementLevel || 0) === price &&
+                (listing.orderQuantity || 0) > (listing.filledQuantity || 0)
+        );
     }
 
     _getTopOrderPrice(itemHrid, enhancementLevel, isSell, priceCache, ownListingIds, ownPrice = null) {
