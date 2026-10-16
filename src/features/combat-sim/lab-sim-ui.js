@@ -836,6 +836,8 @@ class LabSimUI {
         // The fights the section last listed (the Upgrade tab's target scope applied), and a counter that
         // lets only the newest asynchronous refresh draw
         this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
+        // Bumped by every scope change, so a tuning run can tell the scope moved while it ran
+        this._triggerScopeGen = 0;
         this._triggerRefreshSeq = 0;
         this._checkedSwapSort = null;
         this._skillingSwapSortHandler = null;
@@ -3534,7 +3536,10 @@ class LabSimUI {
         const monsterName = monster?.name || monsterHrid.split('/').pop().replace(/_/g, ' ');
         return {
             scopeMode: 'current',
-            groups: [configureFightGroup({ monsterHrid, monsterName, roomLevel, dto })],
+            // A copy: the group outlives this call (the list and the run hold it), and the DTO is the live
+            // editor's, which keeps changing under the player's hands. Solo by design, as the Upgrade tab's
+            // single-fight analysis is: the labyrinth sim runs `[playerDTOs[playerIndex]]`, never a party.
+            groups: [configureFightGroup({ monsterHrid, monsterName, roomLevel, dto: structuredClone(dto) })],
             note: '',
         };
     }
@@ -3547,6 +3552,8 @@ class LabSimUI {
      */
     _onTriggerScopeChanged() {
         if (!this.panel) return;
+        // A run in flight described the scope it started with; it checks this when it finishes
+        this._triggerScopeGen++;
         const resultsEl = this.panel.querySelector('#mwi-labsim-trigger-results');
         if (resultsEl && !this._upgradeRunning) {
             resultsEl.innerHTML = '';
@@ -3693,6 +3700,7 @@ class LabSimUI {
                 if (stopBtn) stopBtn.style.display = 'inline-block';
                 if (runBtn) runBtn.style.display = 'none';
             }
+            const scopeGen = this._triggerScopeGen;
             // Resolved again here: the DTOs and levels drawn in the list may be older than this press
             const targets = await this._resolveTriggerTargets({ forRun: true, gameData });
             if (!isCurrent()) return;
@@ -3758,6 +3766,12 @@ class LabSimUI {
             if (!isCurrent()) return;
             if (this._upgradeAborted || run.stopped) {
                 this._setStatus('Trigger tuning stopped.');
+                return;
+            }
+            // The scope (target mode, ticked rooms, skip rule, Configure fight) moved while this ran: the list
+            // beside the results now names other fights, so the result would read as theirs
+            if (scopeGen !== this._triggerScopeGen) {
+                this._setStatus('The targets changed while tuning, so the result was not shown. Tune again.');
                 return;
             }
             if (resultsEl) {
