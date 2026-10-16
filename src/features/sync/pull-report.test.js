@@ -5,7 +5,20 @@
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
 import { registerSyncMerge, clearSyncMerges } from '../../utils/sync-merge-registry.js';
 import { buildPullSummary } from './pull-summary.js';
-import { buildPullReport, stripCharacterSuffix, describeSyncKey, REPORT_PRIVACY_LINE } from './pull-report.js';
+import {
+    buildPullReport,
+    stripCharacterSuffix,
+    describeSyncKey,
+    redactSyncKey,
+    REPORT_PRIVACY_LINE,
+} from './pull-report.js';
+import { memberSkillsStorageKey } from '../guild/guild-member-skills.js';
+import { sessionStorageKey } from '../guild/guild-trial-abilities.js';
+import { planStorageKey } from '../guild/guild-trial-plan.js';
+import { trialSessionStorageKey } from '../guild/guild-trial-recorder.js';
+import { guildTrialsStorageKey, trialStatsStorageKey } from '../guild/guild-trials-store.js';
+import { ledgerCycleKey, ledgerScope } from '../guild/guild-trial-ledger.js';
+import { guildLoadoutsStorageKey } from '../guild/guild-loadouts.js';
 
 const SENTINEL = 'SECRET-VALUE-9f3a';
 
@@ -107,6 +120,42 @@ describe('the pull report', () => {
     test('never carries a stored value', () => {
         const text = buildPullReport(fixtureSummary(), { host: 'www.milkywayidle.com' });
         expect(text).not.toContain(SENTINEL);
+    });
+
+    test('never prints a guild name, whichever key family embeds it', () => {
+        const guild = 'Quiet Cows 7';
+        const keys = [
+            memberSkillsStorageKey(guild),
+            sessionStorageKey(guild, 5),
+            planStorageKey(guild),
+            trialSessionStorageKey(guild, 5),
+            guildTrialsStorageKey(guild, 5),
+            trialStatsStorageKey(guild, 5),
+            ledgerCycleKey(ledgerScope(guild, 5), 1760000000000),
+            guildLoadoutsStorageKey(30404, guild),
+            `guildXP_${guild}`,
+        ];
+        const summary = buildPullSummary({
+            writtenWholeKeys: keys.map((key) => ({ store: 'guildHistory', key })),
+            mergeFailed: keys.map((key) => ({ store: 'guildHistory', key, label: 'guild records' })),
+            latchedKeys: keys.map((key) => ({ store: 'guildHistory', key })),
+            latched: keys.length,
+            expected: { guildHistory: keys.length },
+        });
+        const text = buildPullReport(summary, {});
+        expect(text).not.toContain('Quiet');
+        expect(text).not.toContain('Cows');
+        expect(text).toContain('guildMemberSkills_<guild>');
+        expect(text).toContain('guildTrialLedger_<guild>__1760000000000');
+        expect(text).toContain('guildLoadouts_30404_<guild>');
+        // The id stays, and so does a key with no guild in it
+        expect(redactSyncKey('guildLoadouts_30404')).toBe('guildLoadouts_30404');
+        expect(redactSyncKey('guildTrials_char_5')).toBe('guildTrials_char_5');
+        expect(redactSyncKey('guildMemberSkills_default')).toBe('guildMemberSkills_default');
+        expect(redactSyncKey('guildTrialLedger_default__1760000000000')).toBe(
+            'guildTrialLedger_default__1760000000000'
+        );
+        expect(redactSyncKey('watchlist_30404')).toBe('watchlist_30404');
     });
 
     test('says so without a summary', () => {
