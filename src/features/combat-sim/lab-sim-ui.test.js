@@ -6247,6 +6247,14 @@ describe('the Ability order Include option', () => {
         expect(section().textContent).toContain('already the best measured');
     });
 
+    test('a combined run does not leave the status on "Checking ability orders"', async () => {
+        tick('equipment', 'ability_order');
+        await ui._onUpgradeAnalyze();
+        const status = ui.panel.querySelector('#mwi-labsim-status').textContent;
+        expect(status).not.toContain('Checking ability orders');
+        expect(status).toContain('Ranked');
+    });
+
     test('stopped partway: nothing is drawn, as the table draws nothing for a stopped run', async () => {
         allSpy.mockImplementation(async () => {
             throw new Error('Cancelled');
