@@ -16,6 +16,7 @@ import {
     describeRow,
 } from './trigger-tuning.js';
 import { describeTriggerRows } from './lab-condition-search.js';
+import { collapseHeaderHtml } from './collapsible-sections.js';
 
 const ACCENT = '#4a9eff';
 const BTN_STYLE =
@@ -235,6 +236,25 @@ export function objectiveFooterText(objective) {
 }
 
 /**
+ * One-line outcome of a trigger run, shown beside the title while the result is minimized.
+ * @param {Object|null} result - Optimizer result (null when stopped before the baseline)
+ * @returns {string} Plain text
+ */
+export function triggerHeadline(result) {
+    if (!result) return 'Stopped before the baseline finished';
+    if (result.noTunables) return 'Nothing to tune';
+    if (result.profitLeftOut && result.objective === 'profit') return 'Nothing recommended: profit cannot be counted';
+    if (result.reliable === false) return 'No reliable improvement found';
+    const changes = result.changes?.length || 0;
+    const found = changes + (result.conditions?.changes?.length || 0);
+    if (found > 0) return `${found} change${found === 1 ? '' : 's'} recommended`;
+    if (!changes && (result.unused || []).length > 0 && !(result.unchanged || []).length) {
+        return 'No trigger came into play in this fight';
+    }
+    return 'No change beat the current thresholds';
+}
+
+/**
  * The results box: changes grouped by player, sorted by impact, with the
  * all-together line at the bottom and the Apply / Copy buttons.
  * @param {Object|null} result - From `runTriggerOptimization`
@@ -248,7 +268,12 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
           ` <button id="mwi-csim-trigger-rerun" style="${BTN_STYLE} margin-left:6px;" ` +
           `title="Runs the trigger search again on fresh seeds">Run again</button>`
         : '';
-    const head = `<div style="color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:4px;">Trigger tuning${cachedLabel}</div>`;
+    const head = collapseHeaderHtml({
+        key: 'trigger',
+        title: `Trigger tuning${cachedLabel}`,
+        summary: triggerHeadline(result),
+        style: `color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:4px;`,
+    });
     const wrap = (inner) =>
         `<div id="mwi-csim-trigger-results" style="border:1px solid #2a2a4a; border-radius:6px; padding:8px 10px; margin:8px 0;">${head}${inner}</div>`;
 

@@ -144,6 +144,7 @@ import {
     DEFAULT_OBJECTIVE,
 } from './trigger-tuning.js';
 import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
+import { collapseHeaderHtml, enhanceCollapsibles } from './collapsible-sections.js';
 import {
     TRIGGER_LAST_RESULT_KEY,
     loadTriggerResult,
@@ -3409,7 +3410,10 @@ class CombatSimUI {
         // Upgrade tab content (hidden by default)
         const upgradeContent = document.createElement('div');
         upgradeContent.id = 'mwi-csim-upgrade-content';
-        upgradeContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow:hidden;';
+        // The tab scrolls as a whole: the trigger box is never capped, and a results table below it just
+        // extends the scroll instead of fighting it for height
+        upgradeContent.style.cssText =
+            'display:none; flex-direction:column; flex:1; overflow-y:auto; overflow-x:hidden;';
 
         const upgradeControls = document.createElement('div');
         upgradeControls.style.cssText = `
@@ -3506,7 +3510,7 @@ class CombatSimUI {
 
         const upgradeResults = document.createElement('div');
         upgradeResults.id = 'mwi-csim-upgrade-results';
-        upgradeResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
+        upgradeResults.style.cssText = 'flex:1 0 auto; padding:10px 14px;';
 
         // Per-room target levels for House mode (hidden until toggled; inputs
         // built from the combat-relevant rooms in game data when opened)
@@ -3538,7 +3542,7 @@ class CombatSimUI {
         // budget replan redraws that container wholesale
         const triggerBox = document.createElement('div');
         triggerBox.id = 'mwi-csim-trigger-box';
-        triggerBox.style.cssText = 'flex-shrink:0; max-height:45%; overflow-y:auto; padding:0 14px;';
+        triggerBox.style.cssText = 'flex-shrink:0; padding:0 14px;';
 
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(triggerBox);
@@ -10676,6 +10680,7 @@ class CombatSimUI {
                 canApply: Boolean(this._editor?.getEditedDTOs()),
                 cached: true,
             });
+            this._enhanceCollapsibles(box);
             box.dataset.cached = '1';
             this._wireTriggerResultButtons(cached, gameData, party.liveDTOs, runContext);
             box.querySelector('#mwi-csim-trigger-rerun')?.addEventListener('click', () => this._onTriggerAnalyze());
@@ -10811,6 +10816,7 @@ class CombatSimUI {
             triggerBox.innerHTML = renderTriggerResultsHtml(result, gameData, {
                 canApply: Boolean(this._editor?.getEditedDTOs()),
             });
+            this._enhanceCollapsibles(triggerBox);
             this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext);
             if (result && !result.stopped && !this._upgradeAborted) await saveTriggerResult(runSignature, result);
             // Condition wins count too: a loadout with no numeric thresholds can still gain a new condition
@@ -11009,8 +11015,14 @@ class CombatSimUI {
         const hasUnknownCost = !Number.isFinite(current.costPerHour) || !Number.isFinite(rec.costPerHour);
         const heading = hasUnknownCost ? 'Viable food — costs incomplete' : 'Cheapest viable food';
 
+        const foodHead = collapseHeaderHtml({
+            key: 'food',
+            title: heading,
+            summary: food.keepCurrent ? 'Keep your current food' : 'Cheaper food found',
+            style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;`,
+        });
         return `<div style="margin:0 0 10px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
-            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;">${heading}</div>
+            ${foodHead}
             <div style="color:#e0e0e0; font-size:12px; line-height:1.5;">${picksText}</div>
             ${statsLine}
             <div style="color:#666; font-size:10px; margin-top:4px;">${currentLine}</div>
@@ -11414,7 +11426,7 @@ class CombatSimUI {
         // with the top of the scroll area rather than floating below it.
         const thBase =
             'padding:3px 4px; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; ' +
-            'user-select:none; position:sticky; top:-10px; z-index:2; background:#12121f; line-height:1.15;';
+            'user-select:none; position:sticky; top:0; z-index:2; background:#12121f; line-height:1.15;';
         const tdBase = 'padding:3px 4px; border-bottom:1px solid #1a1a2e;';
         // Numbers right-align and never wrap; only the Upgrade name may reflow,
         // which is what keeps sixteen columns inside a panel this wide
@@ -11434,7 +11446,13 @@ class CombatSimUI {
             best.set(c.key, winner);
         }
 
-        let html = `${this._renderUpgradeColumnMenu()}
+        const goldHead = collapseHeaderHtml({
+            key: 'gold',
+            title: 'Upgrades',
+            summary: `${rows.length} candidate${rows.length === 1 ? '' : 's'}`,
+            style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;`,
+        });
+        let html = `<div>${goldHead}${this._renderUpgradeColumnMenu()}
         <table style="width:100%; border-collapse:collapse; font-size:10px;">
             <thead><tr>`;
         for (const c of columns) {
@@ -11470,7 +11488,7 @@ class CombatSimUI {
             </tr>`;
         });
 
-        return html + '</tbody></table>';
+        return html + '</tbody></table></div>';
     }
 
     /**
@@ -11926,7 +11944,12 @@ class CombatSimUI {
             : '';
 
         let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
-            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Combat levels</div>
+            ${collapseHeaderHtml({
+                key: 'levels',
+                title: 'Combat levels',
+                summary: `${rows.length} skill${rows.length === 1 ? '' : 's'}`,
+                style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
+            })}
             <div style="color:#666; font-size:10px; margin-bottom:6px;">
                 Levels can't be bought, so these are ranked by improvement per hour of grind (Hours/0.01%, lower is
                 better), not against the gold costs above. Level time assumes you train that skill at your current
@@ -12067,7 +12090,12 @@ class CombatSimUI {
         };
 
         let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
-            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Measured, but not priced</div>
+            ${collapseHeaderHtml({
+                key: 'unpriced',
+                title: 'Measured, but not priced',
+                summary: `${rows.length} row${rows.length === 1 ? '' : 's'}`,
+                style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
+            })}
             <div style="color:#666; font-size:10px; margin-bottom:6px;">
                 Simulated the same way as everything above; only the gold is missing, so these cannot be ranked by
                 value, scored, or bought by the budget planner. The deltas are real.
@@ -12225,7 +12253,12 @@ class CombatSimUI {
             'DPS or EXP push, not for gold.';
 
         let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
-            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Scrolls, priced by their tokens</div>
+            ${collapseHeaderHtml({
+                key: 'scrolls',
+                title: 'Scrolls, priced by their tokens',
+                summary: `${rows.length} scroll${rows.length === 1 ? '' : 's'}`,
+                style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
+            })}
             <div style="color:#666; font-size:10px; margin-bottom:6px;">
                 A scroll costs 30 Labyrinth Tokens for a 30-minute buff, kept up all run (2 per hour). Its price is what
                 those tokens would otherwise buy: the shop's best conversion, ${formatKMB(Math.floor(rate.value))}
@@ -12359,10 +12392,16 @@ class CombatSimUI {
             (m) => `<option value="${m.key}"${m.key === metricKey ? ' selected' : ''}>${m.label}</option>`
         ).join('');
 
+        const budgetHead = collapseHeaderHtml({
+            key: 'budget',
+            title: 'Budget',
+            summary: this._upgradeBudgetText ? `${this._upgradeBudgetText} budget` : 'no budget set',
+            style: `color:${ACCENT}; font-weight:700; font-size:11px; margin-bottom:4px;`,
+        });
         return `<div id="mwi-csim-upgrade-budget" style="margin-bottom:8px; padding:6px 8px; background:#0d0d1a;
             border:1px solid #222; border-radius:4px;">
+            ${budgetHead}
             <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#888; flex-wrap:wrap;">
-                <span style="color:${ACCENT}; font-weight:700;">Budget</span>
                 <input id="mwi-csim-budget-input" type="text" inputmode="numeric" placeholder="e.g. 500m"
                     value="${this._upgradeBudgetText || ''}" style="${inputStyle}">
                 <span style="color:#666;">for</span>
@@ -12658,7 +12697,9 @@ class CombatSimUI {
         if (!container) return;
 
         const openDetails = this._openUpgradeDetails(container);
-        const priorScroll = container.scrollTop;
+        // The Upgrade tab scrolls as a whole, so that is the position to put back
+        const scroller = this.panel.querySelector('#mwi-csim-upgrade-content') || container;
+        const priorScroll = scroller.scrollTop;
 
         const foodHtml = results.food ? this._renderFoodRecommendation(results.food) : '';
 
@@ -12666,6 +12707,7 @@ class CombatSimUI {
             container.innerHTML =
                 foodHtml ||
                 `<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.${this._houseScanNote(results.houseScan)}</div>`;
+            this._enhanceCollapsibles(container);
             return;
         }
 
@@ -12779,6 +12821,7 @@ class CombatSimUI {
         this._wireUpgradeBudget(container);
         this._wireBudgetConfirm(container);
         wireUpgradeRowActions(container);
+        this._enhanceCollapsibles(container);
 
         // Every measured figure, whatever the ⚙ menu is currently showing — the
         // point of a spreadsheet is the columns you did not think to look at
@@ -12862,7 +12905,7 @@ class CombatSimUI {
         // Last, after the export bar has been inserted and the reopened details
         // have taken their height back — restoring earlier would clamp against a
         // shorter table and land you somewhere above where you were
-        container.scrollTop = priorScroll;
+        scroller.scrollTop = priorScroll;
     }
 
     /**
@@ -12979,6 +13022,24 @@ class CombatSimUI {
         });
     }
 
+    /**
+     * Apply the minimized-section state to the headers under `root` and wire them. Called after every
+     * draw of the results container and the trigger box, which are replaced wholesale.
+     * @param {Element|null|undefined} root - Container to enhance
+     * @private
+     */
+    _enhanceCollapsibles(root) {
+        if (!root) return;
+        if (!this._collapsedSections) this._collapsedSections = {};
+        enhanceCollapsibles(
+            root,
+            this._collapsedSections,
+            () => this._persistUpgradeColumnPrefs(),
+            // An open ⚙ Columns popover would otherwise be remembered open and come back with the section
+            () => this._setUpgradeColumnMenuOpen(false)
+        );
+    }
+
     /** @private */
     async _persistUpgradeColumnPrefs() {
         this._columnPrefEdits = (this._columnPrefEdits || 0) + 1;
@@ -12997,6 +13058,8 @@ class CombatSimUI {
                     unpricedSort: this._unpricedSort || null,
                     scrollSort: this._scrollSort || null,
                     scrollScoreScale: this._scrollScoreScale || DEFAULT_SCROLL_SCORE_SCALE,
+                    // Minimized Upgrade-tab sections, by section id; absent means expanded
+                    collapsed: { ...(this._collapsedSections || {}) },
                 },
                 'settings'
             );
@@ -13036,6 +13099,14 @@ class CombatSimUI {
             this._unpricedSort = isSortShape(saved.unpricedSort) ? saved.unpricedSort : undefined;
             this._scrollSort = isSortShape(saved.scrollSort) ? saved.scrollSort : undefined;
             this._scrollScoreScale = isScoreScale(saved.scrollScoreScale) ? saved.scrollScoreScale : undefined;
+            // Replaced wholesale like every other field, so a record from an older build means all expanded
+            const collapsed = {};
+            if (saved.collapsed && typeof saved.collapsed === 'object') {
+                for (const [key, value] of Object.entries(saved.collapsed)) if (value === true) collapsed[key] = true;
+            }
+            this._collapsedSections = collapsed;
+            // A table or trigger result drawn before this read finished was drawn all expanded
+            this._enhanceCollapsibles(this.panel?.querySelector('#mwi-csim-upgrade-content'));
         } catch (error) {
             console.error('[CombatSimUI] Failed to load upgrade column preferences:', error);
         }
