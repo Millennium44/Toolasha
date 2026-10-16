@@ -426,6 +426,19 @@ function goldPerPctCell(cost, deltaPct) {
     return value <= 0 ? 'pays for itself' : formatWithSeparator(value);
 }
 
+/**
+ * Some text as one short line, for a collapsed section header.
+ * @param {string} text - Any text
+ * @param {number} [max=90] - Longest result
+ * @returns {string}
+ */
+function oneLine(text, max = 90) {
+    const flat = String(text || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
 /** Orders shown per loadout before "Show all" in the Upgrade tab's Ability order section */
 const LAB_ABILITY_ORDER_TOP = 5;
 const ACCENT = '#4a9eff';
@@ -975,7 +988,9 @@ class LabSimUI {
         // ── Configure tab ──
         const configureContent = document.createElement('div');
         configureContent.id = 'mwi-labsim-configure-content';
-        configureContent.style.cssText = 'display:flex; flex-direction:column; flex:1; overflow:hidden;';
+        // Each tab scrolls as a whole: no section is capped with a scroll of its own
+        configureContent.style.cssText =
+            'display:flex; flex-direction:column; flex:1; overflow-y:auto; overflow-x:hidden;';
 
         const configureControls = document.createElement('div');
         configureControls.style.cssText = `
@@ -1027,7 +1042,7 @@ class LabSimUI {
 
         const editorArea = document.createElement('div');
         editorArea.id = 'mwi-labsim-editor';
-        editorArea.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
+        editorArea.style.cssText = 'flex:0 0 auto; padding:10px 14px;';
         editorArea.innerHTML =
             '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>';
 
@@ -1042,8 +1057,17 @@ class LabSimUI {
             editorArea.addEventListener(type, () => this._scheduleEditorEditCheck());
         }
 
-        configureContent.appendChild(configureControls);
-        configureContent.appendChild(crateRow);
+        configureContent.appendChild(
+            this._makeSection('configure-setup', 'Setup', [configureControls, crateRow], {
+                empty: 'monster, level and crates',
+                summary: () => {
+                    const select = this.panel?.querySelector('#mwi-labsim-monster');
+                    const name = select?.selectedOptions?.[0]?.textContent || '';
+                    const level = this.panel?.querySelector('#mwi-labsim-level')?.value;
+                    return name ? `${name} · L${level}` : '';
+                },
+            })
+        );
 
         // Collapsible Labyrinth Buffs section
         const buffsSection = document.createElement('div');
@@ -1076,12 +1100,18 @@ class LabSimUI {
         buffsSection.appendChild(buffsBody);
         configureContent.appendChild(buffsSection);
 
-        configureContent.appendChild(editorArea);
+        configureContent.appendChild(
+            this._makeSection('configure-editor', 'Loadout editor', [editorArea], {
+                empty: 'loadout, abilities and house',
+                summary: () => 'loadout, abilities and house',
+            })
+        );
 
         // ── Max Level tab ──
         const maxLevelContent = document.createElement('div');
         maxLevelContent.id = 'mwi-labsim-maxlevel-content';
-        maxLevelContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow:hidden;';
+        maxLevelContent.style.cssText =
+            'display:none; flex-direction:column; flex:1; overflow-y:auto; overflow-x:hidden;';
 
         const maxLevelControls = document.createElement('div');
         maxLevelControls.style.cssText = `
@@ -1138,11 +1168,13 @@ class LabSimUI {
 
         const maxLevelResults = document.createElement('div');
         maxLevelResults.id = 'mwi-labsim-results';
-        maxLevelResults.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
+        maxLevelResults.style.cssText = 'flex:0 0 auto; padding:10px 14px;';
 
         maxLevelContent.appendChild(maxLevelControls);
         maxLevelContent.appendChild(maxLevelProgress);
-        maxLevelContent.appendChild(maxLevelResults);
+        maxLevelContent.appendChild(
+            this._makeSection('single-results', 'Results', [maxLevelResults], { empty: 'no results yet' })
+        );
 
         // ── Upgrade tab ──
         const upgradeContent = document.createElement('div');
@@ -1570,7 +1602,11 @@ class LabSimUI {
         skillingContent.appendChild(swapResultsSkilling);
         skillingContent.appendChild(this._buildUpgradesHeader('skilling'));
         skillingContent.appendChild(skillingResults);
-        skillingContent.appendChild(skillingGoalResults);
+        skillingContent.appendChild(
+            this._makeSection('skilling-goals', 'Room level goals', [skillingGoalResults], {
+                empty: 'nothing planned yet',
+            })
+        );
 
         // Status bar
         const status = document.createElement('div');
@@ -1788,6 +1824,7 @@ class LabSimUI {
         void this._restoreTokenBuffLevels();
         void this._restoreUpgradeResults();
         this._wireSwapBars();
+        this._wireLabSections();
         void this._restoreCheckedSwaps();
         this._wireTriggerBar();
         void this._restoreTriggerChoices();
@@ -4227,6 +4264,8 @@ class LabSimUI {
             if (replace || !this._checkedSwaps[kind].length) this._checkedSwaps[kind] = restored[kind];
             this._renderSwapChips(kind);
         }
+        // The sections' collapsed state came back with the options
+        this._applyLabSectionStates();
     }
 
     /**
@@ -6261,6 +6300,103 @@ class LabSimUI {
                     : '— they do not overlap, the sum holds'
             }</span>
             <span style="color:#555;">±${check.noise.toFixed(1)}</span>`;
+    }
+
+    /**
+     * A minimizable tab section: a header (see `collapseHeaderHtml`) over a body holding the given elements.
+     * The header is static and the body is what hides, so the elements inside can be redrawn and can set
+     * their own `display` without touching the collapsed state, which lives in the saved swap options.
+     * @param {string} key - Section id; the saved state is keyed `lab:<key>`
+     * @param {string} title - Plain-text title
+     * @param {Array<HTMLElement>} children - What the section holds
+     * @param {Object} [options]
+     * @param {string} [options.empty] - Summary shown when the body has nothing to say
+     * @param {Function} [options.summary] - `(body) => string`, the collapsed one-liner; the body's own text by default
+     * @returns {HTMLElement}
+     * @private
+     */
+    _makeSection(key, title, children, { empty = '', summary = null } = {}) {
+        const wrap = document.createElement('div');
+        wrap.setAttribute('data-lab-section', key);
+        wrap.style.cssText = 'flex:0 0 auto;';
+        wrap.innerHTML = collapseHeaderHtml({
+            key: `lab:${key}`,
+            title: escapeHtmlAttribute(title),
+            summary: empty,
+            style: `padding:6px 14px; border-bottom:1px solid #222; color:${ACCENT}; font-size:12px; font-weight:700;`,
+        });
+        const body = document.createElement('div');
+        body.setAttribute('data-lab-section-body', key);
+        for (const child of children) body.appendChild(child);
+        wrap.appendChild(body);
+        const refresh = () => {
+            const header = wrap.firstElementChild;
+            const el = header?.querySelector('[data-collapse-summary]');
+            if (!el) return;
+            let text = '';
+            try {
+                text = oneLine(summary ? summary(body) : body.textContent);
+            } catch {
+                text = '';
+            }
+            el.textContent = text || empty;
+            if (header.getAttribute('aria-expanded') === 'false') el.style.display = el.textContent ? 'inline' : 'none';
+        };
+        wrap._refreshSummary = refresh;
+        if (typeof MutationObserver !== 'undefined') {
+            new MutationObserver(refresh).observe(body, { childList: true, subtree: true, characterData: true });
+        }
+        return wrap;
+    }
+
+    /**
+     * Make every section header made by `_makeSection` clickable. Their collapsed state is read from, and
+     * written to, the saved swap options as they are at the moment, so a restore that replaces the options
+     * needs only `_applyLabSectionStates`.
+     * @private
+     */
+    _wireLabSections() {
+        const owner = this;
+        const state = () => owner._swapOptions.sectionsCollapsed;
+        this._sectionMap = new Proxy(
+            {},
+            {
+                get: (_target, key) => state()[key],
+                set: (_target, key, value) => {
+                    if (value) state()[key] = true;
+                    else delete state()[key];
+                    return true;
+                },
+                deleteProperty: (_target, key) => {
+                    delete state()[key];
+                    return true;
+                },
+            }
+        );
+        this._applyLabSectionStates(true);
+    }
+
+    /**
+     * Draw each tab section open or closed from the saved options. Safe to call after any restore.
+     * @param {boolean} [first=false] - Wire the headers too
+     * @private
+     */
+    _applyLabSectionStates(first = false) {
+        if (!this.panel || !this._sectionMap) return;
+        for (const wrap of this.panel.querySelectorAll('[data-lab-section]')) {
+            wrap._refreshSummary?.();
+            enhanceCollapsibles(
+                wrap,
+                this._sectionMap,
+                first
+                    ? () => {
+                          wrap._refreshSummary?.();
+                          void this._saveCheckedSwaps();
+                      }
+                    : undefined,
+                first ? () => wrap._refreshSummary?.() : undefined
+            );
+        }
     }
 
     /**
