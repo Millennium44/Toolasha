@@ -638,6 +638,26 @@ describe('panel', () => {
             expect(hoisted.storageSet).not.toHaveBeenCalled();
         });
 
+        it('a listing relisted while the login read is in flight keeps its restored hide', async () => {
+            hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`, `${SWORD}:3:sell`];
+            // The cheese listing is absent when the read begins
+            hoisted.listings = [listing({ id: 2, itemHrid: SWORD, enhancementLevel: 3 })];
+            let release;
+            const gate = new Promise((resolve) => {
+                release = resolve;
+            });
+            hoisted.storageGet = async (key) => {
+                await gate;
+                return hoisted.store[key] ?? [];
+            };
+            hoisted.handlers.character_initialized.forEach((fn) => fn());
+            hoisted.listings = [listing({ id: 5 }), listing({ id: 2, itemHrid: SWORD, enhancementLevel: 3 })];
+            release();
+            await vi.advanceTimersByTimeAsync(0);
+            expect([...overbidPanel.hidden].sort()).toEqual([`${CHEESE}:0:sell`, `${SWORD}:3:sell`].sort());
+            expect(hoisted.storageSet).not.toHaveBeenCalled();
+        });
+
         it('a hide made while the login read is in flight survives the prune', async () => {
             hoisted.store[STORE_KEY] = [`${SWORD}:3:sell`];
             // No cheese listing is live: only the in-flight rule keeps the fresh cheese hide
