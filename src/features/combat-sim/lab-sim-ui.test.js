@@ -22,6 +22,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as upgradeAdvisor from './upgrade-advisor.js';
 // Real too; the trigger tuning tests spy on its runner
 import * as labTriggerOptimizer from './lab-trigger-optimizer.js';
+import { summarizeLabTriggerRun } from './lab-trigger-view.js';
 // The game's own trigger detail maps, for the condition search's wording
 import { TRIAL_GAME_DATA } from './engine/guild-trial-game-data.fixture.js';
 
@@ -5318,6 +5319,81 @@ describe('Tune triggers', () => {
         expect(text).toContain('+30.0 pp');
         expect(text).toContain('set these values in the game by hand');
         expect(status()).toContain('1 change found');
+    });
+
+    describe('the result sits inside the section', () => {
+        const body = () => ui.panel.querySelector('#mwi-labsim-trigger-body');
+        const summary = () => ui.panel.querySelector('#mwi-labsim-trigger-summary');
+        const run = async () => {
+            vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+            ui._triggerChoices.skipped = ['current'];
+            await ui._onTuneTriggers();
+        };
+
+        test('the result is drawn inside the section body, below the controls, with no cap of its own', async () => {
+            await run();
+            expect(body().contains(results())).toBe(true);
+            expect(results().textContent).toContain('Trigger tuning');
+            const children = [...body().children].map((el) => el.id);
+            expect(children.indexOf('mwi-labsim-trigger-results')).toBeGreaterThan(-1);
+            expect(children.at(-1)).toBe('mwi-labsim-trigger-results');
+            expect(results().style.overflowY).toBe('');
+            expect(results().style.maxHeight).toBe('');
+            // No second container outside the section
+            expect(ui.panel.querySelectorAll('#mwi-labsim-trigger-results')).toHaveLength(1);
+        });
+
+        test('collapsing the section hides the controls and the result together, and shows the summary', async () => {
+            ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            await settle();
+            await run();
+            expect(body().style.display).toBe('block');
+            expect(summary().style.display).toBe('none');
+
+            ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            expect(body().style.display).toBe('none');
+            expect(summary().style.display).toBe('inline');
+            expect(summary().textContent).toContain('1 change found');
+            // The result is still there, hidden with the controls
+            expect(results().textContent).toContain('Fireball');
+
+            ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            expect(body().style.display).toBe('block');
+            expect(summary().style.display).toBe('none');
+        });
+
+        test('no result yet: a collapsed header says nothing extra', async () => {
+            expect(ui._triggerChoices.open).toBe(false);
+            expect(summary().style.display).toBe('none');
+            expect(summary().textContent).toBe('');
+        });
+
+        test('a scope change clears the result inside the section and its summary', async () => {
+            ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            await settle();
+            await run();
+            ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            expect(summary().textContent).not.toBe('');
+
+            ui._onTriggerScopeChanged();
+            expect(results().innerHTML).toBe('');
+            expect(results().style.display).toBe('none');
+            expect(body().contains(results())).toBe(true);
+            expect(summary().textContent).toBe('');
+            expect(summary().style.display).toBe('none');
+        });
+
+        test('the summaries: changes, none, and stopped', () => {
+            const group = (changes, conditionChanges = []) => ({
+                result: { changes },
+                conditions: { changes: conditionChanges },
+            });
+            expect(summarizeLabTriggerRun({ groups: [group([{}, {}])] })).toBe('2 changes found');
+            expect(summarizeLabTriggerRun({ groups: [group([{}], [{}])] })).toBe('2 changes found');
+            expect(summarizeLabTriggerRun({ groups: [group([{}])] })).toBe('1 change found');
+            expect(summarizeLabTriggerRun({ groups: [group([])] })).toBe('No change beat the current thresholds');
+            expect(summarizeLabTriggerRun({ groups: [], stopped: true })).toBe('Stopped');
+        });
     });
 
     test('a Stop mid-run draws nothing', async () => {
