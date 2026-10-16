@@ -226,6 +226,40 @@ describe('Combat Sim condition search', () => {
         expect(result.conditions.changes).toEqual([]);
     });
 
+    test('Profit/h withholds threshold changes when only the condition baseline cannot value profit', async () => {
+        // Profit peaks with Fireball's row at 300. Only the condition search's own baseline (the first 7.5 h
+        // batch after the threshold phase) sees an unpriced drop, so the threshold phase valued everything
+        let unpricedFrom = Infinity;
+        sims.respond = (params) => {
+            const v = Number(params.playerDTOs[0].abilities[1].triggers?.[0]?.value ?? 1);
+            return {
+                ...respond(params),
+                profitRate: 1000 + 400 - Math.min(400, Math.abs(v - 300)),
+                unpricedDrops: params.hours === 7.5 && sims.calls.length > unpricedFrom ? ['/items/mystery'] : [],
+            };
+        };
+        const withoutConditions = await runTriggerOptimization({ ...base, objective: 'profit', minGain: 0.5 });
+        expect(withoutConditions.changes.length).toBeGreaterThan(0);
+        expect(withoutConditions.profitLeftOut).toBeFalsy();
+        unpricedFrom = sims.calls.length;
+        sims.calls = [];
+        unpricedFrom = withoutConditions.simCount;
+
+        const result = await runTriggerOptimization({
+            ...base,
+            objective: 'profit',
+            minGain: 0.5,
+            searchConditions: true,
+        });
+        expect(result.conditions.skipped).toBe('profit');
+        expect(result.profitLeftOut).toBe(true);
+        expect(result.unpriced).toContain('/items/mystery');
+        expect(result.changes).toEqual([]);
+        expect(result.rejected.length).toBeGreaterThan(0);
+        expect(result.reliable).toBe(false);
+        expect(result.conditions.afterThresholds).toBe(false);
+    });
+
     test('enemy-HP candidates use the zone HP at each spawn tier plus the selected tier', async () => {
         const SLIME = '/monsters/slime';
         const ZONE = '/actions/combat/slimes';

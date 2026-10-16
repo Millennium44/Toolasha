@@ -507,6 +507,19 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         if (objective === 'profit' && (!baseComplete || out.profitLeftOut)) {
             // Profit/h with a baseline that cannot be valued has nothing to optimize
             conditions = { changes: [], rejected: [], bestMeasured: [], skipped: 'profit' };
+            // The threshold phase valued its own comparisons, but this baseline cannot be valued: a figure
+            // that counted an unpriced drop at zero must not stay as a recommendation (as the tuner's own
+            // profit rule withholds changes)
+            if (!baseComplete) {
+                out.profitLeftOut = true;
+                out.unpriced = [...new Set([...(out.unpriced || []), ...baseValuation.unpriced])].sort();
+                if (baseValuation.failed) out.valuationFailed = true;
+            }
+            if (out.profitLeftOut && (out.changes || []).length > 0) {
+                out.rejected = (out.rejected || []).concat(out.changes);
+                out.changes = [];
+                out.reliable = false;
+            }
         } else {
             // One rule per comparison: profit counts only when the baseline and BOTH sides valued completely,
             // as the threshold search's scoreSets does, so a candidate is never judged on a different objective
@@ -570,6 +583,10 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         stopped: out.stopped || stopped(),
         simCount,
         conditionSimCount,
-        conditions: { ...conditions, slotCount: slots.length, afterThresholds: Object.keys(tuned).length > 0 },
+        conditions: {
+            ...conditions,
+            slotCount: slots.length,
+            afterThresholds: Object.keys(tuned).length > 0 && (out.changes || []).length > 0,
+        },
     };
 }
