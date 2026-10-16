@@ -214,6 +214,7 @@ export const OWNED_KEY_PREFIXES = [
     'mooketWatchlist',
     'mooketPanelPrefs',
     'market_volumeStats_columns',
+    'overbidPanel_hidden_',
     'bulkSellStatusExpanded',
     'watchlist',
     'tradeHistory',
