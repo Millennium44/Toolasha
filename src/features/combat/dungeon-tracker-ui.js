@@ -28,6 +28,9 @@ import {
 } from './dungeon-pace.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
+import { ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE } from '../../utils/all-zones-snapshot.js';
+import { characterKey } from '../../utils/character-key.js';
+import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { isClearRun, summarizeAttempts } from '../../utils/dungeon-run-result.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
@@ -114,6 +117,17 @@ class DungeonTrackerUI {
         for (const key of ROI_PRICING_SETTING_KEYS) {
             this.pricingChangeUnregisters.push(config.onSettingChange(key, () => this.updateRoiBoard()));
         }
+
+        // The board's sim clear time, food, XP and gold come from the all-zones
+        // snapshot, read only when it draws. A sync pull that rewrites this
+        // character's snapshot no longer forces a reload, so redraw an open board.
+        this.pricingChangeUnregisters.push(
+            onSyncPullApplied((written) => {
+                const landed = written?.[ALL_ZONES_SNAPSHOT_STORE] || [];
+                if (!landed.includes(characterKey(ALL_ZONES_SNAPSHOT_KEY))) return;
+                return this.updateRoiBoard();
+            })
+        );
 
         // Set up history delete/import callbacks — both change the stored
         // history out from under whatever is on screen, so both redraw it.
