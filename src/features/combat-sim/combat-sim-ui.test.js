@@ -11840,6 +11840,30 @@ describe('verifying close calls on fresh seeds', () => {
             expect(ui.panel.querySelector('#mwi-csim-upgrade-stop').style.display).toBe('none');
         });
 
+        test('tearing the panel down stops an in-flight verify and drops what the verify lists held', async () => {
+            draw([orderRow('A → B', { profit: 900 })]);
+            expect(ui._orderVerifyRows.length).toBeGreaterThan(0);
+            ui._shownTriggerResult = { verifyContext: { tunables: [] } };
+            ui._goldVerifyRows = [{}];
+            let signal;
+            mocks.verifyImpl = (params) => {
+                signal = params.abortSignal;
+                return new Promise(() => {});
+            };
+            section().querySelector('#mwi-csim-order-verify').click();
+            await settle();
+            expect(signal()).toBe(false);
+            const cancels = mocks.cancelActiveCalls;
+
+            ui.destroy();
+
+            expect(signal()).toBe(true);
+            expect(mocks.cancelActiveCalls).toBe(cancels + 1);
+            expect(ui._shownTriggerResult).toBeNull();
+            expect(ui._goldVerifyRows).toBeNull();
+            expect(ui._orderVerifyRows).toBeNull();
+        });
+
         test('a refused verify says so in the status line and stores nothing', async () => {
             draw([orderRow('A → B')]);
             mocks.verifyImpl = () => ({ rows: [], refused: 'context', metric: 'profit', unit: 'gold/hr' });

@@ -9573,11 +9573,19 @@ class CombatSimUI {
         this._unsubscribePricingQuickSettings = [];
         this._pricingQuickSettings = null;
         cleanupUpgradeMarketAutofill();
+        // An in-flight verify (or analysis) reads the abort flag and is terminated the way Stop terminates it
+        this._upgradeAborted = true;
+        cancelActiveSimulations();
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
             this.panel = null;
         }
+        // The last trigger result carries the verify context (players, game data); the verify row lists point
+        // into the analysis that has just been dropped
+        this._shownTriggerResult = null;
+        this._goldVerifyRows = null;
+        this._orderVerifyRows = null;
         this.isRunning = false;
         this._runStartToken++;
         this._runStarting = false;
