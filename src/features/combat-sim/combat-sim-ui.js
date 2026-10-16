@@ -13095,13 +13095,12 @@ class CombatSimUI {
         }
         if (!current()) return null;
 
-        // Stop also terminates the sim in flight, which the engine reports as a failed row. That row was cut
-        // short, not broken: it has no verdict, and the rows that finished keep theirs
-        if (outcome.stopped || this._upgradeAborted) {
+        if (this._upgradeAborted) {
             outcome = {
                 ...outcome,
                 stopped: true,
-                rows: (outcome.rows || []).filter((r) => !(r.verdict === 'error' && /cancel/i.test(r.error || ''))),
+                // A row Stop reached before any seed finished has no verdict to keep
+                rows: (outcome.rows || []).filter((r) => r.verdict === 'error' || r.seeds > 0),
             };
         }
 
@@ -13281,10 +13280,7 @@ class CombatSimUI {
             }
         }
         if (!current()) return;
-        // A Stop cuts the sim in flight, which the engine reports as a failed row: that is a stop, not an error
-        if (this._upgradeAborted && /cancel/i.test(outcome.rows?.[0]?.error || '')) {
-            outcome = { ...outcome, rows: [], stopped: true };
-        }
+        if (this._upgradeAborted) outcome = { ...outcome, stopped: true };
         result.verifyOutcome = outcome;
         redraw(false);
         const verdict = outcome.rows?.[0]?.verdict;

@@ -6795,8 +6795,8 @@ class LabSimUI {
         (out?.rows || []).forEach((row, i) => {
             const key = items[i]?.key;
             if (key === undefined) return;
-            // A cancelled simulation reads as an error row; after a stop it only means "did not finish"
-            if (out.stopped && (row.verdict === 'error' || !(row.seeds > 0))) {
+            // After a stop a row with no seed only means "did not finish" (a cancelled simulation is no error row)
+            if (out.stopped && row.verdict !== 'error' && !(row.seeds > 0)) {
                 unfinished++;
                 return;
             }
@@ -6987,8 +6987,8 @@ class LabSimUI {
         } else if (out.refused) {
             state.trigger.set(group.key, { refused: out.refused });
             status = `Nothing to verify (${out.refused}).`;
-        } else if (out.stopped && (!row || row.verdict === 'error' || !(row.seeds > 0))) {
-            // A cancelled simulation reads as an error; with no seed finished there is nothing to show
+        } else if (out.stopped && (!row || (row.verdict !== 'error' && !(row.seeds > 0)))) {
+            // With no seed finished there is nothing to show (a cancelled simulation is no error row)
             state.trigger.delete(group.key);
             status = 'Verify stopped before any seed finished.';
         } else if (row?.verdict === 'error') {
