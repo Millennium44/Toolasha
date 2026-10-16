@@ -21,6 +21,16 @@ import { fromCurrentBuild, scriptVersion } from '../../utils/script-version.js';
 const STORE = 'combatExport';
 const SETTING = 'combatSim_rememberUpgradeResults';
 
+/**
+ * Whether a result is a Combat Sim run whose Ability order pass finished, even with no rows ("Nothing to
+ * reorder"). A stopped pass does not count: it measured nothing worth replacing an older record for.
+ * @param {Object|null|undefined} results - The runUpgradeAnalysis return
+ * @returns {boolean}
+ */
+function finishedOrderPass(results) {
+    return Boolean(results?.abilityOrder?.ran) && !results.abilityOrder.stopped;
+}
+
 /** Whether the user opted into remembering upgrade results. */
 export function rememberUpgradeResultsEnabled() {
     return Boolean(config.getSetting(SETTING));
@@ -37,7 +47,8 @@ export async function saveUpgradeResults(key, results, meta = {}) {
     if (!rememberUpgradeResultsEnabled()) return;
     // An order-only Lab run has no table, only the Ability order section carried in `meta`
     // A completed section with no groups ("Nothing to reorder") counts: it must replace an older record
-    if (!results?.results?.length && !Array.isArray(meta.orderSection?.groups)) return;
+    // A Combat Sim order-only run that found nothing carries its stamp instead, and replaces an older record the same way
+    if (!results?.results?.length && !Array.isArray(meta.orderSection?.groups) && !finishedOrderPass(results)) return;
     try {
         await writeScoped(
             key,
@@ -62,7 +73,12 @@ export async function loadUpgradeResults(key) {
     try {
         const payload = await readScoped(key, STORE, null, { migrate: 'discard' });
         if (!fromCurrentBuild(payload)) return null;
-        if (!payload?.data?.results?.length && !Array.isArray(payload?.orderSection?.groups)) return null;
+        if (
+            !payload?.data?.results?.length &&
+            !Array.isArray(payload?.orderSection?.groups) &&
+            !finishedOrderPass(payload?.data)
+        )
+            return null;
         return payload;
     } catch (error) {
         console.error('[UpgradeResultsStore] Loading upgrade results failed:', error);

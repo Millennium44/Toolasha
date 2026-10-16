@@ -10575,7 +10575,10 @@ class CombatSimUI {
             // The remembered set is per character and has no undo: writing this
             // run under the character who arrived mid-analysis would delete the
             // analysis they were keeping
-            if (completed && this._stillSameCharacter(ownerId)) {
+            // A finished Ability order pass with no rows ("Nothing to reorder") is a result too: the record is
+            // replaced whole, so skipping it would bring the previous analysis back on reload
+            const emptyOrderRun = !completed && results?.abilityOrder?.ran && !results.abilityOrder.stopped;
+            if ((completed || emptyOrderRun) && this._stillSameCharacter(ownerId)) {
                 // Who and where, so a restored set can say whose run it was -
                 // the selector may hold a different player, or another zone,
                 // by the time these come back
