@@ -3459,6 +3459,8 @@ class CombatSimUI {
             <select class="toolasha-select" id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
             <label style="color:#888; font-size:12px;">Include</label>
             ${UPGRADE_MODES.map(modeChipHtml).join('')}
+            <label style="color:#888; font-size:12px;" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab.">Hours</label>
+            <input id="mwi-csim-upgrade-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_defaultHours', 100)}" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab." style="width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
             <button id="mwi-csim-upgrade-run" style="
                 background: ${ACCENT_BTN_BG};
                 color: ${ACCENT};
@@ -3642,6 +3644,16 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-tab-results').addEventListener('click', () => this._switchTab('results'));
         this.panel.querySelector('#mwi-csim-tab-seek').addEventListener('click', () => this._switchTab('seek'));
         this.panel.querySelector('#mwi-csim-tab-upgrade').addEventListener('click', () => this._switchTab('upgrade'));
+        // The Configure and Upgrade Hours boxes are one setting: editing either updates the other
+        for (const [id, twinId] of [
+            ['#mwi-csim-hours', '#mwi-csim-upgrade-hours'],
+            ['#mwi-csim-upgrade-hours', '#mwi-csim-hours'],
+        ]) {
+            this.panel.querySelector(id)?.addEventListener('change', (e) => {
+                const twin = this.panel.querySelector(twinId);
+                if (twin) twin.value = e.target.value;
+            });
+        }
         this.panel.querySelector('#mwi-csim-upgrade-run').addEventListener('click', () => this._onUpgradeAnalyze());
         this.panel.querySelector('#mwi-csim-upgrade-stop').addEventListener('click', () => {
             this._upgradeAborted = true;
@@ -10340,7 +10352,7 @@ class CombatSimUI {
             10000,
             Math.max(
                 1,
-                parseInt(this.panel.querySelector('#mwi-csim-hours')?.value) ||
+                parseInt(this.panel.querySelector('#mwi-csim-upgrade-hours')?.value) ||
                     config.getSettingValue('combatSim_defaultHours', 100)
             )
         );

@@ -1046,6 +1046,43 @@ describe('the panel', () => {
         expect(progress.querySelector('#mwi-csim-stop')).toBeTruthy();
     });
 
+    test('the Upgrade tab has its own Hours box, seeded like the Configure one', () => {
+        const box = ui.panel.querySelector('#mwi-csim-upgrade-hours');
+        expect(box).not.toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-upgrade-content').contains(box)).toBe(true);
+        expect(box.min).toBe('1');
+        expect(box.max).toBe('10000');
+        expect(box.value).toBe(ui.panel.querySelector('#mwi-csim-hours').value);
+    });
+
+    test('editing either Hours box updates the other', () => {
+        const configure = ui.panel.querySelector('#mwi-csim-hours');
+        const upgrade = ui.panel.querySelector('#mwi-csim-upgrade-hours');
+
+        upgrade.value = '37';
+        upgrade.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(configure.value).toBe('37');
+
+        configure.value = '12';
+        configure.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(upgrade.value).toBe('12');
+    });
+
+    test('an upgrade run uses the hours typed on the Upgrade tab', async () => {
+        selectZone();
+        let hours = null;
+        mocks.onRun = (params) => {
+            hours = params.hours;
+        };
+        const upgrade = ui.panel.querySelector('#mwi-csim-upgrade-hours');
+        upgrade.value = '42';
+        upgrade.dispatchEvent(new Event('change', { bubbles: true }));
+
+        await ui._onUpgradeAnalyze();
+
+        expect(hours).toBe(42);
+    });
+
     test('a tab switch mid-run does not overwrite the running status', () => {
         ui.isRunning = true;
         ui._setStatus('Simulating (Solo)... 3.0s');
