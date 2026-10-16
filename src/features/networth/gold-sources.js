@@ -572,6 +572,7 @@ export function alchemySessionNet(session, price, basisPrice = price) {
  */
 export function enhancementSessionNet(session, price, basisPrice = price) {
     if (!session?.itemHrid) return null;
+    if (sessionHasUnpricedInput(session)) return null;
 
     const startLevel = num(session.startLevel);
     const endLevel = num(session.currentLevel ?? session.startLevel);
@@ -582,6 +583,21 @@ export function enhancementSessionNet(session, price, basisPrice = price) {
     if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
 
     return to - from - num(session.totalCost);
+}
+
+/**
+ * Whether a stored enhancement session consumed an input nothing could price, so its `totalCost`
+ * leaves that input out and a gain measured against it would be overstated. The session's own
+ * flag, or a recorded material, protection or mirror with units and no cost (sessions from before
+ * the flag existed).
+ * @param {Object} session - A stored enhancement session
+ * @returns {boolean}
+ */
+function sessionHasUnpricedInput(session) {
+    if (session?.hasUnpricedInput === true) return true;
+    const materials = Object.values(session?.materialCosts || {});
+    if (materials.some((m) => num(m?.count) > 0 && !(num(m?.totalCost) > 0))) return true;
+    return num(session?.mirrorCount) > 0 && !(num(session?.mirrorCost) > 0);
 }
 
 /**
@@ -622,6 +638,10 @@ function spanHasLeg(span) {
  *   were not valued, and the days the unvalued ones ran on (null: no legs)
  */
 export function enhancementLegNets(session, start, price, basisPrice = price) {
+    // The flag is the session's, not a leg's: which leg consumed the unpriced input is not recorded, so
+    // no leg's spend can be trusted and the whole session is left to the single-span reading, which
+    // reports it unvalued
+    if (sessionHasUnpricedInput(session)) return null;
     const past = Array.isArray(session?.pastActiveSpans) ? session.pastActiveSpans : [];
     if (past.length === 0 || !past.every(spanHasLeg) || !session?.itemHrid) return null;
 
