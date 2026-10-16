@@ -5498,6 +5498,33 @@ describe('Tune triggers', () => {
                 expect(spy).toHaveBeenCalledTimes(1);
             });
 
+            test('the run holds a copy of the edited player, not the live editor object', async () => {
+                const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
+                await ui._onTuneTriggers();
+                const { dto } = spy.mock.calls[0][0].groups[0].fights[0];
+                expect(dto).not.toBe(game.editedDTOs.p1);
+                game.editedDTOs.p1.abilities[1].level = 1;
+                expect(dto.abilities[1].level).toBe(99);
+            });
+
+            test('a scope change while a run is in flight keeps the old result off the new list', async () => {
+                let finish;
+                vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockImplementation(
+                    () => new Promise((resolve) => (finish = resolve))
+                );
+                const running = ui._onTuneTriggers();
+                await settle();
+                const monster = ui.panel.querySelector('#mwi-labsim-monster');
+                monster.value = '/monsters/jerry';
+                monster.dispatchEvent(new window.Event('change', { bubbles: true }));
+                await settle();
+                finish(finishedRun());
+                await running;
+                expect(results().innerHTML).toBe('');
+                expect(status()).toContain('targets changed');
+                expect(ui._upgradeRunning).toBe(false);
+            });
+
             test('with no monster chosen the list says so and a run starts nothing', async () => {
                 const spy = vi.spyOn(labTriggerOptimizer, 'runLabTriggerOptimization').mockResolvedValue(finishedRun());
                 ui.panel.querySelector('#mwi-labsim-monster').value = '';
