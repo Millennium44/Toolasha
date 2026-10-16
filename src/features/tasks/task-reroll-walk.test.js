@@ -2144,6 +2144,29 @@ describe('finished tasks are claimed before anything is rerolled', () => {
         expect(chipText()).toContain('1 claimed');
     });
 
+    test('an unanswered claim is waited on even after a sort moves another finished card ahead of it', async () => {
+        const list = board([
+            { name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) },
+            { name: 'Brewing - Coffee', buttons: CLAIM, quest: quest(KEEPER) },
+        ]);
+        await walk.start();
+        walk.advance();
+        expect(clicks).toEqual(['Fishing - Shrimp:Claim Reward']);
+
+        // A sort puts the other finished card first while the game has not answered
+        list.insertBefore(list.children[1], list.children[0]);
+        vi.advanceTimersByTime(1000);
+
+        // The walk keeps waiting on Fishing rather than offering Brewing as a second claim
+        expect(chipText()).not.toBe('▶ Claim: Brewing - Coffee');
+        walk.advance();
+        expect(clicks).toEqual(['Fishing - Shrimp:Claim Reward']);
+
+        // Unanswered past the wait, the player is asked to press Fishing, now in slot 2
+        vi.advanceTimersByTime(10000);
+        expect(chipText()).toBe("👉 Press #2's highlighted Claim Reward button");
+    });
+
     test('a new task arriving in the claimed slot is walked from the top, not skipped', async () => {
         const list = board([{ name: 'Fishing - Shrimp', buttons: CLAIM, quest: quest(FISHING) }]);
         await walk.start();

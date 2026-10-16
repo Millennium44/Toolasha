@@ -820,19 +820,15 @@ class TaskRerollWalk {
      */
     _planClaim() {
         const cards = this._cards();
-        for (let i = 0; i < cards.length; i += 1) {
-            const card = cards[i];
-            const button = this._claimButton(card);
-            if (!button) continue;
-            const slot = i + 1;
-            const quest = questForTaskCard(card);
-            const key = `claim:${quest?.id ?? cardTaskKey(card)}`;
-            const claim = this.pendingClaim;
-            const samePlace =
-                claim &&
-                (claim.card === card ||
-                    (claim.questId !== null && claim.questId !== undefined && claim.questId === quest?.id));
-            if (samePlace && cardTaskKey(card) === claim.signature) {
+        const claimKey = (card) => `claim:${questForTaskCard(card)?.id ?? cardTaskKey(card)}`;
+        // An unanswered claim is settled first, wherever its card now sits: a
+        // sort can move another finished card ahead of it, and offering that
+        // one would leave two claims outstanding and the first uncounted
+        const claim = this.pendingClaim;
+        if (claim) {
+            const card = this._claimedCard();
+            const button = card && this._claimButton(card);
+            if (button && cardTaskKey(card) === claim.signature) {
                 // Pressed, and the card still shows the button: the answer may
                 // simply not have arrived. Wait it out, then hand the card to
                 // the player, whose real press always counts.
@@ -841,10 +837,22 @@ class TaskRerollWalk {
                     this.pending = true;
                     return 'wait';
                 }
+                const key = claimKey(card);
                 this.manualFor.add(key);
                 this.pendingClaim = null;
                 this.claimWaits = 0;
+                const slot = cards.indexOf(card) + 1;
+                return this._step('claim', card, slot, `Press #${slot}'s highlighted Claim Reward button`, button, {
+                    manual: true,
+                });
             }
+        }
+        for (let i = 0; i < cards.length; i += 1) {
+            const card = cards[i];
+            const button = this._claimButton(card);
+            if (!button) continue;
+            const slot = i + 1;
+            const key = claimKey(card);
             const manual = this.manualFor.has(key);
             const name = this._cardName(card) || `#${slot}`;
             return this._step(
