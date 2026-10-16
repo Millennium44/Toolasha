@@ -10,7 +10,6 @@ import enhancementUI from './enhancement-ui.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateSuccessXP, calculateFailureXP, calculateAdjustedAttemptCount } from './enhancement-xp.js';
-import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
 import { parseItemHash } from '../../utils/item-hash.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
@@ -426,21 +425,17 @@ async function trackMaterialCosts(itemHrid) {
 
 /**
  * Price of one unit of an item at an enhancement level: the Iron Cow book, then the market's
- * ask, then its bid, then the vendor price.
+ * ask, then its bid. No quote is 0 (unpriced), never the vendor price: the tracker flags the
+ * session rather than booking a figure far below what the item costs to buy.
  * @param {string} itemHrid - Item HRID
  * @param {number} level - Enhancement level
  * @returns {number} Unit price (0 when nothing prices it)
  */
 function unitPrice(itemHrid, level = 0) {
     const marketPrice = ironCowBook(itemHrid, level) ?? marketAPI.getPrice(itemHrid, level);
-    const price = marketPrice?.ask || marketPrice?.bid || 0;
-    if (price > 0) return price;
-
-    const item = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
-    if (!item) {
-        console.warn(`[EnhancementHandlers] Item not found in game data: ${itemHrid}`);
-    }
-    return item?.sellPrice || 0;
+    // The book answers "no quote" with -1 on a side, which is truthy but not a price
+    if (marketPrice?.ask > 0) return marketPrice.ask;
+    return marketPrice?.bid > 0 ? marketPrice.bid : 0;
 }
 
 /**
@@ -500,7 +495,7 @@ function configuredProtectionItem(action) {
 async function trackMirrorCosts(itemHrid, fromLevel) {
     const baseHrid = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid]?.baseItemHrids?.[0] || itemHrid;
     const copyLevel = Math.max(0, fromLevel - 1);
-    const copyPrice = copyLevel === 0 ? getEnhancementMaterialPrice(baseHrid, 'ask') : unitPrice(baseHrid, copyLevel);
+    const copyPrice = unitPrice(baseHrid, copyLevel);
     await enhancementTracker.trackMaterialCost(baseHrid, 1, copyPrice);
     await enhancementTracker.trackMirrorCost(unitPrice(PHILOSOPHERS_MIRROR_HRID));
 }

@@ -122,10 +122,10 @@ export function getEnhancementMaterialPrice(itemHrid, side = 'ask') {
         if (price > 0) return price;
     }
 
-    // Fallback: production cost, then NPC sell price
-    const gameData = dataManager.getInitClientData();
-    const materialDetail = gameData?.itemDetailMap?.[itemHrid];
-    return getProductionCost(itemHrid, side) || materialDetail?.sellPrice || 0;
+    // Fallback: what it costs to craft. Never the NPC sell price - it is a fraction of what the
+    // item costs to buy, and a figure that low reads as a cheap run. No quote and no recipe is 0,
+    // which every caller treats as unpriced rather than free.
+    return getProductionCost(itemHrid, side) || 0;
 }
 
 /**

@@ -713,3 +713,32 @@ describe('protection picker in the sweep', () => {
         expect(second.textContent).not.toContain('your pick');
     });
 });
+
+describe('an enhancing material with no market ask and no recipe', () => {
+    // The vendor price (Cheese sells for 100 to a shop) is not a quote: the panel shows the
+    // material as unpriced and leaves it out of the totals, the way the tracker flags it
+    test('shows no price in the breakdown and per-attempt list, leaves it out of the row total', async () => {
+        delete state.prices['/items/cheese'];
+        const panel = buildPanel({ protectFrom: 0, protection: null });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const stats = panel.querySelector('#mwi-enhancement-stats');
+
+        expect(stats.textContent).not.toContain('could not be drawn');
+        expect(stats.textContent).toContain('× no price');
+        expect(stats.textContent).toContain('2× Cheese (no price)');
+        expect(stats.textContent).not.toContain('@100');
+        expect(stats.textContent).not.toContain('@vendor');
+        // The row total is withheld, not shown as a free run
+        const totals = Array.from(stats.querySelectorAll('td')).filter((td) => td.textContent === 'no price');
+        expect(totals.length).toBeGreaterThan(0);
+    });
+
+    test('a priced material still shows its unit price and total, with no no-price marker', async () => {
+        const panel = buildPanel({ protectFrom: 0, protection: null });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const text = panel.querySelector('#mwi-enhancement-stats').textContent;
+
+        expect(text).toContain('2× Cheese (@500 → 1,000)');
+        expect(text).not.toContain('no price');
+    });
+});

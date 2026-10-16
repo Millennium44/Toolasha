@@ -544,9 +544,15 @@ function measureEnhancingRates() {
             if (!(totalXP > 0)) continue;
 
             let materialPerAttempt = 0;
+            let materialUnpriced = false;
             for (const cost of details.enhancementCosts || []) {
-                materialPerAttempt += (getEnhancementMaterialPrice(cost.itemHrid, 'ask') || 0) * cost.count;
+                const price = getEnhancementMaterialPrice(cost.itemHrid, 'ask');
+                if (!(price > 0) && cost.count > 0) materialUnpriced = true;
+                materialPerAttempt += (price || 0) * cost.count;
             }
+            // An unpriced material would make this run look cheaper than it is: leave the
+            // candidate out rather than quote a partial bill as a full one
+            if (materialUnpriced) continue;
 
             const xpPerHour = (totalXP / run.totalTime) * 3600;
             rates.push({
