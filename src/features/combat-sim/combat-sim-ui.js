@@ -11614,7 +11614,7 @@ class CombatSimUI {
         });
         // Verify measures one metric: the sort column's when it is one of the four, else profit. Chips show only
         // for verdicts measured under that metric
-        const verifyInfo = this._goldVerifyMetric();
+        const verifyInfo = this._goldVerifyMetric(column.key);
         const verdicts = this._verifyEntries(this._upgradeResultsData, verifyInfo.metric);
         this._goldVerifyRows = sorted;
         const canVerify = this._canVerifyResults(this._upgradeResultsData);
@@ -13001,13 +13001,27 @@ class CombatSimUI {
     }
 
     /**
-     * The metric the gold table's Verify measures: the sorted column's when it is profit, EXP, DPS or EPH,
-     * else profit.
+     * The column the gold table is actually ordered by: the chosen sort column, or the first visible one when the
+     * chosen column is hidden (the same fallback `_renderUpgradeGoldTable` applies).
+     * @returns {string|undefined}
+     * @private
+     */
+    _effectiveGoldSortKey() {
+        const sortKey = this._upgradeSort?.key ?? 'score';
+        const columns = this._upgradeColumns().filter((c) => c.visible);
+        return (columns.find((c) => c.key === sortKey) || columns[0])?.key;
+    }
+
+    /**
+     * The metric the gold table's Verify measures: the order column's when it is profit, EXP, DPS or EPH, else
+     * profit. The order column is the one the table is really sorted by, which is not the chosen sort key when
+     * that column is hidden.
+     * @param {string} [effectiveKey] - The column the table is ordered by
      * @returns {{metric: string, label: string, fallback: boolean}}
      * @private
      */
-    _goldVerifyMetric() {
-        const named = GOLD_SORT_VERIFY_METRIC[this._upgradeSort?.key];
+    _goldVerifyMetric(effectiveKey = this._effectiveGoldSortKey()) {
+        const named = GOLD_SORT_VERIFY_METRIC[effectiveKey];
         const metric = named || 'profit';
         return { metric, label: ABILITY_ORDER_RANKS.find((x) => x.key === metric).label, fallback: !named };
     }
