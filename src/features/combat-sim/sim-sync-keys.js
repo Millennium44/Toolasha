@@ -12,7 +12,8 @@
  *
  * Keys owned by a store module register there instead: `labSimComparisonRuns` and
  * `labSimComparisonBaseline` (`lab-sim-comparison.js`), `combatSimTriggerLastResult`
- * (`trigger-result-cache.js`), `zoneSimRates` (`utils/all-zones-snapshot.js`) and
+ * (`trigger-result-cache.js`), `zoneSimRates`, `allZonesSnapshot`, `simConsumableRates` and
+ * `simConsumableRatesByZone` (`utils/all-zones-snapshot.js`) and
  * `labSimSkillingLoadouts` (`lab-skilling-loadouts.js`).
  */
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
