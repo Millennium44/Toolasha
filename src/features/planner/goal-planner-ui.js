@@ -458,7 +458,10 @@ class GoalPlannerPanel {
         if (!current()) return;
         this.goals = goals;
         this.plans = snapshot?.plans || [];
-        this.pricedAt = snapshot?.computedAt ?? null;
+        // When the market was read, not when the plans were last saved: adding a goal replans
+        // against the old prices and saves again. Snapshots from before `pricedAt` was stored
+        // only have the save time.
+        this.pricedAt = snapshot ? (snapshot.pricedAt !== undefined ? snapshot.pricedAt : snapshot.computedAt) : null;
         this._render();
     }
 
@@ -536,7 +539,7 @@ class GoalPlannerPanel {
             this.plans = planGoals(this.goals, this.context);
             this.rateNotes = this.context.rateNotes || [];
             this.combatStatus = this.context.combatStatus || null;
-            await saveSnapshot(this.plans, owner);
+            await saveSnapshot(this.plans, owner, this.pricedAt);
             await this._recordReservations(gone);
         } catch (error) {
             if (gone()) return;
@@ -646,7 +649,7 @@ class GoalPlannerPanel {
         if (!this.context) {
             // Nothing has been priced this session, so there is nothing to
             // reallocate against; saying so beats a silent full market fetch
-            await saveSnapshot(this.plans, owner);
+            await saveSnapshot(this.plans, owner, this.pricedAt);
             if (!current()) return;
             this._render();
             this._status('Removed — press Refresh to price the rest.');

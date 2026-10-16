@@ -1025,3 +1025,39 @@ describe('whether the panel was open', () => {
         await expect(wasOpen('goalPlannerPanel')).resolves.toBe(false);
     });
 });
+
+describe('when the saved plans were priced', () => {
+    test('adding a goal re-saves the plans without restamping old prices as fresh', async () => {
+        // The save time moves on every replan, but a replan after adding a goal reuses the
+        // prices already loaded; the panel reopened later must still say when they were read
+        const clock = vi.spyOn(Date, 'now');
+        clock.mockReturnValue(1_000);
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        clock.mockReturnValue(9_000);
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 123 });
+        const saved = store.data.goalPlannerSnapshot_char1;
+        clock.mockRestore();
+
+        expect(plannerContext.builds).toBe(1);
+        expect(saved.computedAt).toBe(9_000);
+        expect(saved.pricedAt).toBe(1_000);
+
+        goalPlannerPanel.disable();
+        await goalPlannerPanel.load();
+        expect(goalPlannerPanel.pricedAt).toBe(1_000);
+    });
+
+    test('removing a goal before anything is priced this session keeps the original price time', async () => {
+        store.data.goalPlannerSnapshot_char1 = { plans: [], computedAt: 5_000, pricedAt: 2_000 };
+        await goalPlannerPanel.load();
+        expect(goalPlannerPanel.pricedAt).toBe(2_000);
+
+        await goalPlannerPanel.removeGoal('g-gold');
+
+        expect(store.data.goalPlannerSnapshot_char1.pricedAt).toBe(2_000);
+        expect(goalPlannerPanel.pricedAt).toBe(2_000);
+    });
+});
