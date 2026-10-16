@@ -58,18 +58,27 @@ export function labTriggerOptionsHtml(choices, selectStyle) {
 }
 
 /**
- * One checkbox per loadout group.
- * @param {Array<Object>} groups - From `groupFightsByLoadout`
+ * One checkbox per loadout group; the Configure fight, which is not a loadout, is a plain label.
+ * @param {Array<Object>} groups - From `groupFightsForScope` or `configureFightGroup`
  * @param {Set<string>} skipped - Group keys left unticked
+ * @param {string} [note] - Why there is nothing to list, when the target scope says so
  * @returns {string} HTML
  */
-export function labTriggerLoadoutsHtml(groups, skipped) {
+export function labTriggerLoadoutsHtml(groups, skipped, note = '') {
     if (!groups.length) {
-        return '<span style="color:#666; font-size:11px;">No labyrinth fights with room levels yet.</span>';
+        return `<span style="color:#666; font-size:11px;">${esc(note || 'No labyrinth fights with room levels yet.')}</span>`;
     }
     return groups
         .map((group) => {
             const monsters = group.fights.map((f) => f.monsterName).join(', ');
+            if (group.configure) {
+                const fight = group.fights[0];
+                return (
+                    `<span style="color:#aaa; font-size:12px;" data-lab-trigger-configure="${esc(group.key)}" ` +
+                    `title="The Configure tab's fight in the setup edited there, saved or not. Change the scope on the Upgrade tab to tune loadouts instead.">` +
+                    `${esc(group.name)}: ${esc(fight.monsterName)} <span style="color:#666;">L${esc(fight.roomLevel)}</span></span>`
+                );
+            }
             return (
                 `<label style="display:inline-flex; align-items:center; gap:4px; color:#aaa; font-size:12px; cursor:pointer;" ` +
                 `title="${esc(monsters)}">` +

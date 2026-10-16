@@ -111,6 +111,45 @@ export function groupFightsByLoadout(fights) {
     return [...groups.values()];
 }
 
+/** Key prefix of the group that holds the Configure tab's own fight (never a saved loadout's `loadout:<id>`) */
+export const CONFIGURE_GROUP_PREFIX = 'configure:';
+
+/** What the Configure fight's group is called */
+export const CONFIGURE_GROUP_NAME = 'Configure fight';
+
+/**
+ * Group the labyrinth fights for the Upgrade tab's target scope: every fight for `all`, only the
+ * chosen monsters' fights for `selected` (a loadout whose fights are all left out has no group).
+ * The Configure-fight scope is not a loadout grouping and is built by `configureFightGroup`.
+ * @param {Array<Object>} fights - From `_collectLabyrinthFights`
+ * @param {string} scopeMode - `all` | `selected`
+ * @param {Array<string>} [chosenMonsters] - Ticked monster hrids, for `selected`
+ * @returns {Array<Object>} From `groupFightsByLoadout`
+ */
+export function groupFightsForScope(fights, scopeMode, chosenMonsters = []) {
+    if (scopeMode === 'all') return groupFightsByLoadout(fights);
+    if (scopeMode !== 'selected') return [];
+    const chosen = new Set(chosenMonsters || []);
+    return groupFightsByLoadout((fights || []).filter((fight) => chosen.has(fight.monsterHrid)));
+}
+
+/**
+ * The one group of the Configure-fight scope: the Configure tab's monster at its resolved room
+ * level, in the edited (possibly unsaved) player. Keyed by the fight, so a different monster or
+ * level is a different group.
+ * @param {Object} fight - `{ monsterHrid, monsterName, roomLevel, dto }`
+ * @returns {Object} A group, with `configure: true`
+ */
+export function configureFightGroup({ monsterHrid, monsterName, roomLevel, dto }) {
+    return {
+        key: `${CONFIGURE_GROUP_PREFIX}${monsterHrid}:${roomLevel}`,
+        name: CONFIGURE_GROUP_NAME,
+        loadoutId: 0,
+        configure: true,
+        fights: [{ monsterHrid, monsterName, roomLevel, dto, loadoutName: CONFIGURE_GROUP_NAME }],
+    };
+}
+
 /**
  * The player DTO a group's sims run, with an hrid the sim results are keyed by.
  * @param {Object} dto - A fight's loadout DTO

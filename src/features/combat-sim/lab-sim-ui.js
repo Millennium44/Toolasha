@@ -40,7 +40,12 @@ import {
     MAX_HOUSE_LEVEL,
     MAX_GUILD_SHRINE_LEVEL,
 } from './upgrade-advisor.js';
-import { estimateLabTriggerRun, groupFightsByLoadout, runLabTriggerOptimization } from './lab-trigger-optimizer.js';
+import {
+    configureFightGroup,
+    estimateLabTriggerRun,
+    groupFightsForScope,
+    runLabTriggerOptimization,
+} from './lab-trigger-optimizer.js';
 import {
     describeLabTriggerEstimate,
     labTriggerLoadoutsHtml,
@@ -828,6 +833,10 @@ class LabSimUI {
         this._swapOptions = sanitizeSwapOptions(null);
         // The Tune triggers section's choices; read back from storage on each build
         this._triggerChoices = sanitizeLabTriggerChoices(null);
+        // The fights the section last listed (the Upgrade tab's target scope applied), and a counter that
+        // lets only the newest asynchronous refresh draw
+        this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
+        this._triggerRefreshSeq = 0;
         this._checkedSwapSort = null;
         this._skillingSwapSortHandler = null;
         this._skillLoadouts = {};
@@ -1625,9 +1634,12 @@ class LabSimUI {
             // Every level source is per monster, so the readout is stale the
             // moment the fight changes
             this._refreshLevelSourceReadout();
+            // The Configure fight is the trigger tuning's fight under that scope
+            this._onTriggerScopeChanged();
         });
         this.panel.querySelector('#mwi-labsim-level').addEventListener('change', () => {
             this._refreshLevelSourceReadout();
+            this._onTriggerScopeChanged();
         });
 
         // Max Level listeners
@@ -1678,6 +1690,7 @@ class LabSimUI {
         this.panel.querySelector('#mwi-labsim-upgrade-player').addEventListener('change', (e) => {
             const opt = e.target.selectedOptions?.[0];
             this._upgradePlayerName = opt?.dataset?.name || opt?.textContent || null;
+            this._onTriggerScopeChanged();
         });
         this.panel.querySelector('#mwi-labsim-upgrade-precision').addEventListener('change', (e) => {
             const n = Math.min(10, Math.max(0.1, Number(e.target.value) || 1));
@@ -1709,16 +1722,19 @@ class LabSimUI {
             this._populateUpgradeTargets();
             this._onUpgradeSelectionChanged();
             void this._saveUpgradeSelection();
+            // The Tune triggers section tunes the fights this scope names
+            this._onTriggerScopeChanged();
         });
         this.panel.querySelector('#mwi-labsim-allfights-useskip').addEventListener('change', () => {
             this._populateUpgradeTargets(this._getChosenTargets());
             this._onUpgradeSelectionChanged();
             // The trigger tuning's fights take their room levels from the same box
-            if (this._triggerChoices.open) this._refreshTriggerLoadouts();
+            this._onTriggerScopeChanged();
         });
         this.panel.querySelector('#mwi-labsim-level-source').addEventListener('change', () => {
             this._refreshLevelSourceReadout();
             void this._saveUpgradeSelection();
+            this._onTriggerScopeChanged();
         });
         this.panel.querySelector('#mwi-labsim-swap-aura-only')?.addEventListener('change', () => {
             void this._saveUpgradeSelection();
@@ -2092,6 +2108,7 @@ class LabSimUI {
             box.addEventListener('change', () => {
                 this._onUpgradeSelectionChanged();
                 void this._saveUpgradeSelection();
+                this._onTriggerScopeChanged();
             });
         });
         const setAll = (checked) => {
@@ -2100,6 +2117,7 @@ class LabSimUI {
             });
             this._onUpgradeSelectionChanged();
             void this._saveUpgradeSelection();
+            this._onTriggerScopeChanged();
         };
         grid.querySelector('[data-lab-target-all]')?.addEventListener('click', () => setAll(true));
         grid.querySelector('[data-lab-target-none]')?.addEventListener('click', () => setAll(false));
@@ -2791,7 +2809,7 @@ class LabSimUI {
             this._populateUpgradeTargets();
             // A section remembered as open would otherwise show the loadouts it
             // was last drawn with
-            if (this._triggerChoices.open) this._refreshTriggerLoadouts();
+            if (this._triggerChoices.open) void this._refreshTriggerLoadouts();
             this._onUpgradeSelectionChanged();
         } else if (tab === 'skilling') {
             skillingContent.style.display = 'flex';
@@ -3361,7 +3379,8 @@ class LabSimUI {
         const what =
             'Tune the numbers in each loadout’s trigger rows (how much enemy HP an ability waits for, how low ' +
             'your HP or MP gets before a food or drink fires) to need fewer attempts in the labyrinth fights the ' +
-            'loadout is assigned to. Only simulates: set any change in the game by hand.';
+            'loadout is assigned to. Tunes the fights the Upgrade tab�s Targets scope names (the Configure fight, ' +
+            'all targets, or the chosen ones). Only simulates: set any change in the game by hand.';
         bar.innerHTML = `
             <div id="mwi-labsim-trigger-header" style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;"
                 title="${escapeHtmlAttribute(what)}">
@@ -3422,29 +3441,133 @@ class LabSimUI {
         if (precision) precision.value = this._triggerChoices.precision;
         const conditions = this.panel?.querySelector('#mwi-labsim-trigger-conditions');
         if (conditions) conditions.checked = this._triggerChoices.conditions;
-        if (open) this._refreshTriggerLoadouts();
+        if (open) void this._refreshTriggerLoadouts();
     }
 
     /**
-     * The labyrinth fights grouped by the loadout each wears, at the room levels the Upgrade tab's
-     * whole-run analysis uses.
-     * @returns {Array<Object>} From `groupFightsByLoadout`
+     * The fights the Tune triggers section works on, as the Upgrade tab's Targets scope names them:
+     * `all` is every labyrinth fight, grouped by the loadout each wears, at the room levels the
+     * whole-run analysis uses; `selected` is the ticked rooms' fights only; `current` is the
+     * Configure tab's single fight. `note` says why the list is empty, when it is.
+     * @param {Object} [options] - `{ forRun, gameData }`; `forRun` resolves the Configure level as Analyze does
+     * @returns {Promise<{scopeMode: string, groups: Array<Object>, note: string}>}
      * @private
      */
-    _triggerGroups() {
+    async _resolveTriggerTargets({ forRun = false, gameData = null } = {}) {
+        const scopeMode = this._getUpgradeScopeMode();
+        if (scopeMode === 'current') return this._configureTriggerTargets({ forRun, gameData });
         const useSkipLevels = this.panel?.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true;
-        return groupFightsByLoadout(this._collectLabyrinthFights(useSkipLevels));
+        const fights = this._collectLabyrinthFights(useSkipLevels);
+        if (!fights.length) {
+            return {
+                scopeMode,
+                groups: [],
+                note: 'No labyrinth fights resolve to a room level yet. Set combat skip levels in the game, or enter the labyrinth.',
+            };
+        }
+        const chosen = this._getChosenTargets();
+        const groups = groupFightsForScope(fights, scopeMode, chosen);
+        if (scopeMode === 'selected' && !groups.length) {
+            return {
+                scopeMode,
+                groups,
+                note: 'No target is ticked in the Upgrade tab’s Chosen targets. Tick at least one room to tune.',
+            };
+        }
+        return { scopeMode, groups, note: '' };
+    }
+
+    /**
+     * The Configure-fight scope's one group, built the way the Upgrade tab's single-fight analysis
+     * builds its fight: the Configure tab's monster at its resolved room level, in the selected player
+     * as edited there (saved or not). `forRun` resolves the level the way Analyze does, which may run
+     * the Find Max search; a refresh only reads what is already known.
+     * @param {Object} [options] - `{ forRun, gameData }`
+     * @returns {Promise<{scopeMode: string, groups: Array<Object>, note: string}>}
+     * @private
+     */
+    async _configureTriggerTargets({ forRun = false, gameData = null } = {}) {
+        const none = (note) => ({ scopeMode: 'current', groups: [], note });
+        const monsterHrid = this.panel?.querySelector('#mwi-labsim-monster')?.value || '';
+        if (!monsterHrid) return none('Select a monster in the Configure tab first.');
+        const edited = this._editor?.getEditedDTOs();
+        let playerDTOs;
+        if (edited) playerDTOs = Object.values(edited);
+        else playerDTOs = (await buildAllPlayerDTOs()).players;
+        const playerIndex = parseInt(this.panel?.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+        const dto = playerDTOs?.[playerIndex];
+        if (!dto) return none('No player data available.');
+        let roomLevel;
+        if (forRun && gameData) {
+            const uncapped = this.panel?.querySelector('#mwi-labsim-upgrade-uncapped')?.checked;
+            const maxHours = Math.max(
+                1,
+                parseInt(this.panel?.querySelector('#mwi-labsim-upgrade-maxhours')?.value) || DEFAULT_LAB_SIM_MAX_HOURS
+            );
+            roomLevel = await this._resolveUpgradeRoomLevel({
+                monsterHrid,
+                gameData,
+                playerDTOs,
+                playerIndex,
+                crates: this.getSelectedCrates(),
+                hours: uncapped ? 1e6 : maxHours,
+                communityBuffs: getCommunityBuffs(),
+                labyrinthCombatBuffs: this._labyrinthCombatBuffs(),
+            });
+        } else {
+            roomLevel = this._resolveTargetLevel(monsterHrid).level;
+        }
+        if (!roomLevel) {
+            return none(
+                'No room level resolves for the Configure fight. Pick a level source with a value behind it, or put a level in the Configure tab.'
+            );
+        }
+        const monster = getLabyrinthMonsters().find((entry) => entry.hrid === monsterHrid);
+        const monsterName = monster?.name || monsterHrid.split('/').pop().replace(/_/g, ' ');
+        return {
+            scopeMode: 'current',
+            groups: [configureFightGroup({ monsterHrid, monsterName, roomLevel, dto })],
+            note: '',
+        };
+    }
+
+    /**
+     * Something the Tune triggers section's fights depend on changed (the Upgrade tab's target scope,
+     * the ticked targets, the skip-level rule, the Configure fight): an earlier result described other
+     * fights, so it is cleared, and the list and cost are redrawn.
+     * @private
+     */
+    _onTriggerScopeChanged() {
+        if (!this.panel) return;
+        const resultsEl = this.panel.querySelector('#mwi-labsim-trigger-results');
+        if (resultsEl && !this._upgradeRunning) {
+            resultsEl.innerHTML = '';
+            resultsEl.style.display = 'none';
+        }
+        if (this._triggerChoices.open) void this._refreshTriggerLoadouts();
     }
 
     /**
      * List the loadout checkboxes and the cost line.
      * @private
      */
-    _refreshTriggerLoadouts() {
+    async _refreshTriggerLoadouts() {
         const box = this.panel?.querySelector('#mwi-labsim-trigger-loadouts');
         if (!box) return;
+        const seq = ++this._triggerRefreshSeq;
+        const ownerId = dataManager.getCurrentCharacterId();
+        let targets;
         try {
-            box.innerHTML = labTriggerLoadoutsHtml(this._triggerGroups(), new Set(this._triggerChoices.skipped));
+            targets = await this._resolveTriggerTargets();
+        } catch (error) {
+            console.error('[LabSimUI] Listing trigger loadouts failed:', error);
+            targets = { scopeMode: this._getUpgradeScopeMode(), groups: [], note: '' };
+        }
+        // A newer refresh, a closed panel or another character owns the section now
+        if (seq !== this._triggerRefreshSeq || !this.panel || !this._stillSameCharacter(ownerId)) return;
+        this._triggerTargets = targets;
+        try {
+            box.innerHTML = labTriggerLoadoutsHtml(targets.groups, new Set(this._triggerChoices.skipped), targets.note);
         } catch (error) {
             console.error('[LabSimUI] Listing trigger loadouts failed:', error);
         }
@@ -3452,13 +3575,15 @@ class LabSimUI {
     }
 
     /**
-     * The ticked loadout groups, as the remembered choices say.
+     * The groups a run would tune: the scope's groups with the unticked loadouts taken out (the
+     * Configure fight has no tick).
+     * @param {Array<Object>} groups - From `_resolveTriggerTargets`
      * @returns {Array<Object>}
      * @private
      */
-    _chosenTriggerGroups() {
+    _chosenTriggerGroups(groups = this._triggerTargets.groups) {
         const skipped = new Set(this._triggerChoices.skipped);
-        return this._triggerGroups().filter((group) => !skipped.has(group.key));
+        return groups.filter((group) => group.configure || !skipped.has(group.key));
     }
 
     /**
@@ -3470,6 +3595,11 @@ class LabSimUI {
         if (!el) return;
         try {
             const gameData = buildGameDataPayload();
+            // The list above already says why there is nothing to tune
+            if (!this._triggerTargets.groups.length && this._triggerTargets.note) {
+                el.textContent = '';
+                return;
+            }
             el.textContent = gameData
                 ? describeLabTriggerEstimate(
                       estimateLabTriggerRun({
@@ -3548,10 +3678,26 @@ class LabSimUI {
                 this._setStatus('No game data available.');
                 return;
             }
-            const groups = this._chosenTriggerGroups();
+            // The Configure level may need the Find Max search, which reports in the progress box
+            this._upgradeAborted = false;
+            if (this._getUpgradeScopeMode() === 'current') {
+                if (progressEl) progressEl.style.display = 'block';
+                if (stopBtn) stopBtn.style.display = 'inline-block';
+                if (runBtn) runBtn.style.display = 'none';
+            }
+            // Resolved again here: the DTOs and levels drawn in the list may be older than this press
+            const targets = await this._resolveTriggerTargets({ forRun: true, gameData });
+            if (!isCurrent()) return;
+            if (this._upgradeAborted) {
+                this._setStatus('Trigger tuning stopped.');
+                return;
+            }
+            this._triggerTargets = targets;
+            const groups = this._chosenTriggerGroups(targets.groups);
             if (!groups.length) {
                 this._setStatus(
-                    'No loadout to tune. Tick one, or set combat skip levels in the game so fights have room levels.'
+                    targets.note ||
+                        'No loadout to tune. Tick one, or set combat skip levels in the game so fights have room levels.'
                 );
                 return;
             }
@@ -8809,6 +8955,8 @@ class LabSimUI {
         this._checkedSwaps = { combat: [], skilling: [] };
         this._swapOptions = sanitizeSwapOptions(null);
         this._triggerChoices = sanitizeLabTriggerChoices(null);
+        this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
+        this._triggerRefreshSeq++;
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;

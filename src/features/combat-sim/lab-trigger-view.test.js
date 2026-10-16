@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 
-import { renderLabTriggerResultsHtml } from './lab-trigger-view.js';
+import { labTriggerLoadoutsHtml, renderLabTriggerResultsHtml } from './lab-trigger-view.js';
 
 const FROM_ROW = {
     dependencyHrid: '/combat_trigger_dependencies/self',
@@ -131,5 +131,32 @@ describe('the best measured candidate when nothing is recommended', () => {
         expect(html).toContain('data-lab-trigger-change="k"');
         expect(html).not.toContain('Best found');
         expect(html).not.toContain('data-lab-trigger-best');
+    });
+});
+
+describe('labTriggerLoadoutsHtml', () => {
+    const mage = { key: 'loadout:3', name: 'Mage', fights: [{ monsterName: 'Cyclops', roomLevel: 120 }] };
+    const configure = {
+        key: 'configure:/monsters/mimic:130',
+        name: 'Configure fight',
+        configure: true,
+        fights: [{ monsterName: 'Mimic', roomLevel: 130 }],
+    };
+
+    test('a loadout gets a tick, unless it was unticked', () => {
+        expect(labTriggerLoadoutsHtml([mage], new Set())).toMatch(/data-lab-trigger-group="loadout:3"[^>]* checked/);
+        expect(labTriggerLoadoutsHtml([mage], new Set(['loadout:3']))).not.toMatch(/ checked/);
+    });
+
+    test('the Configure fight is a plain label with no tick', () => {
+        const html = labTriggerLoadoutsHtml([configure], new Set(['configure:/monsters/mimic:130']));
+        expect(html).not.toContain('<input');
+        expect(html).toContain('data-lab-trigger-configure="configure:/monsters/mimic:130"');
+        expect(html).toContain('Configure fight: Mimic');
+    });
+
+    test('an empty list says why when it is told, and otherwise the default', () => {
+        expect(labTriggerLoadoutsHtml([], new Set(), 'No target is ticked')).toContain('No target is ticked');
+        expect(labTriggerLoadoutsHtml([], new Set())).toContain('No labyrinth fights');
     });
 });
