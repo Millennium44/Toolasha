@@ -446,7 +446,15 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         simCount,
         tunableCount: tunables.length,
     };
-    if (!searchConditions || result.stopped || stopped()) return out;
+    // The total is a worst case (rows that never confirm or searches that end early run fewer sims), so a
+    // finished run snaps the bar to full rather than leaving it short
+    const finish = () => {
+        if (!result.stopped && !stopped()) onProgress?.({ current: total, total });
+    };
+    if (!searchConditions || result.stopped || stopped()) {
+        finish();
+        return out;
+    }
 
     // Start from the thresholds the tuner kept, so the two searches' changes are one setup
     const tuned = Object.fromEntries((result.changes || []).map((c) => [c.key, c.to]));
@@ -578,6 +586,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
             }
         }
     }
+    finish();
     return {
         ...out,
         stopped: out.stopped || stopped(),

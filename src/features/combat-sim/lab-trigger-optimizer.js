@@ -357,6 +357,7 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
     const report = (description) => onProgress?.({ current: Math.min(tally.sims, total), total, description });
 
     const out = [];
+    let ranToEnd = true;
     for (const group of groups || []) {
         if (stopped()) break;
         const fights = group.fights.map((fight) => ({ ...fight, dto: withHrid(fight.dto) }));
@@ -568,7 +569,15 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
         }
 
         out.push(groupOut);
-        if (result.stopped || groupOut.conditions?.stopped) break;
+        if (result.stopped || groupOut.conditions?.stopped) {
+            ranToEnd = false;
+            break;
+        }
+    }
+
+    // The total is a worst case; a finished run snaps the bar to full instead of leaving it short
+    if (ranToEnd && !stopped()) {
+        onProgress?.({ current: total, total });
     }
 
     return {

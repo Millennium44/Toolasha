@@ -242,6 +242,16 @@ describe('runTriggerOptimization', () => {
         expect(sims.calls).toHaveLength(0);
     });
 
+    test('a finished run ends its progress at the full total', async () => {
+        const events = [];
+        await runTriggerOptimization({ ...base, playerDTOs: [dto('player1')], playerIndex: 0, scope: 'me' }, (p) =>
+            events.push(p)
+        );
+        const last = events[events.length - 1];
+        expect(last.current).toBe(last.total);
+        expect(events.every((p) => p.current <= p.total)).toBe(true);
+    });
+
     test('tunes the selected player, simulating the whole party on shared seeds', async () => {
         const result = await runTriggerOptimization({
             ...base,

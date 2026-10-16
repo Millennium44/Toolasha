@@ -317,6 +317,32 @@ describe('runLabTriggerOptimization', () => {
         expect(sims.calls).toHaveLength(0);
     });
 
+    test('a finished run ends its progress at the full total, and a stopped one does not', async () => {
+        sims.respond = labyrinth(() => 0.7);
+        const events = [];
+        await runLabTriggerOptimization({ gameData, groups: twoFights(), precision: 'quick' }, (p) => events.push(p));
+        const last = events[events.length - 1];
+        expect(last.current).toBe(last.total);
+        // The estimate is a worst case, so the run alone had not reached it
+        expect(events.slice(0, -1).every((p) => p.current <= p.total)).toBe(true);
+
+        let stop = false;
+        const stoppedEvents = [];
+        sims.respond = (params) => {
+            stop = true;
+            return labyrinth(() => 0.7)(params);
+        };
+        await runLabTriggerOptimization(
+            { gameData, groups: twoFights(), precision: 'quick' },
+            (p) => stoppedEvents.push(p),
+            {
+                abortSignal: () => stop,
+            }
+        );
+        const stoppedLast = stoppedEvents[stoppedEvents.length - 1];
+        expect(!stoppedLast || stoppedLast.current < stoppedLast.total).toBe(true);
+    });
+
     test('a stop before the baseline finishes returns a stopped run with no result', async () => {
         sims.respond = labyrinth(() => 0.7);
         let stop = false;
