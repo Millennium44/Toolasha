@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     itemDetails: {},
     itemPrices: {}, // itemHrid -> {ask, bid}
     enhancementPaths: {}, // `${hrid}:${level}` -> totalCost
+    partialPaths: new Set(), // keys whose path reports an unpriced material or base
     taskTokenValue: null,
     dungeonTokenValues: {},
     labyrinthTokenDetail: null, // {value, itemHrid} the labyrinth shop's best line
@@ -76,7 +77,12 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     calculateEnhancementPath: (hrid, level) => {
         const key = `${hrid}:${level}`;
-        return key in mocks.enhancementPaths ? { optimalStrategy: { totalCost: mocks.enhancementPaths[key] } } : null;
+        return key in mocks.enhancementPaths
+            ? {
+                  optimalStrategy: { totalCost: mocks.enhancementPaths[key] },
+                  pricesPartial: mocks.partialPaths.has(key),
+              }
+            : null;
     },
 }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
@@ -178,6 +184,7 @@ beforeEach(() => {
     mocks.itemDetails = {};
     mocks.itemPrices = {};
     mocks.enhancementPaths = {};
+    mocks.partialPaths = new Set();
     mocks.taskTokenValue = null;
     mocks.dungeonTokenValues = {};
     mocks.labyrinthTokenDetail = null;
@@ -222,6 +229,15 @@ describe('calculateItemValue', () => {
 
         const value = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 3, count: 2 });
         expect(value).toBe(8400);
+    });
+
+    test('a partial enhancement path (unpriced material) is not the value: falls back to the base price', async () => {
+        // No +3 quote, so the path is consulted; the base item is the fallback the mock leaves at 0
+        mocks.enhancementPaths['/items/sword:3'] = 4200;
+        mocks.partialPaths.add('/items/sword:3');
+
+        const value = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 3, count: 2 });
+        expect(value).toBe(0);
     });
 
     test('an enhancement level missing from the batch cache is filled from the official value, not costed', async () => {

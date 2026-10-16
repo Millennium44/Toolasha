@@ -118,6 +118,13 @@ function calculateEnhancementCost(params) {
     // Get base item cost using realistic pricing (matches main thread logic)
     const basePrice = getRealisticPrice(itemHrid, null, priceMap, recipes);
 
+    // The base item is paid once whatever happens, so an unpriced one understates every level.
+    // Together with an unpriced material (below) it makes the bill a partial one, not a price:
+    // return null and the caller falls back to the base item's price, as the main thread does
+    // when the path reports pricesPartial.
+    if (!(basePrice > 0)) return null;
+    let hasUnpricedMaterial = false;
+
     // Build cost array for each level by testing all protection strategies
     const targetCosts = new Array(targetLevel + 1);
     targetCosts[0] = basePrice;
@@ -162,16 +169,20 @@ function calculateEnhancementCost(params) {
                     // charged the run a negative amount per attempt. Main's
                     // getEnhancementMaterialPrice falls back to the craft cost and then to 0
                     // (never the vendor price), so an entry with nothing positive on either side
-                    // does the same here. A material still at 0 is left out of the per-attempt
-                    // sum: the networth is understated by it, not credited with it as free.
+                    // does the same here. A material still at 0 makes the whole
+                    // enhancement-path valuation unavailable (null below) rather than a partial
+                    // bill shown as the item's value.
                     if (!(materialPrice > 0)) {
                         materialPrice = calculateProductionCost(material.itemHrid, priceMap, recipes);
                     }
+                    if (!(materialPrice > 0) && material.count > 0) hasUnpricedMaterial = true;
                 }
 
                 perAttemptMaterialCost += materialPrice * material.count;
             }
         }
+
+        if (hasUnpricedMaterial) return null;
 
         // Test no protection (protectFrom = 0)
         let minCost = Infinity;

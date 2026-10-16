@@ -89,13 +89,31 @@ describe('networth enhancement materials with no market quote', () => {
         return v;
     };
 
-    test('is left out of the sum, not booked at its vendor price', async () => {
+    test('makes the path unavailable (base price), not booked at its vendor price', async () => {
         const unpriced = await value([{ itemHrid: MAT, count: 10 }], {});
-        const without = await value([], {});
         const vendorPriced = await value([{ itemHrid: '/items/coin', count: 10 * 50_000 }], {});
 
-        expect(unpriced).toBe(without);
+        expect(unpriced).toBe(1000);
         expect(unpriced).toBeLessThan(vendorPriced);
+    });
+
+    test('a partial bill is not the value: coins priced, one material unpriced falls back to base', async () => {
+        const partial = await value(
+            [
+                { itemHrid: '/items/coin', count: 5000 },
+                { itemHrid: MAT, count: 10 },
+            ],
+            {}
+        );
+        const coinsOnly = await value([{ itemHrid: '/items/coin', count: 5000 }], {});
+
+        expect(partial).toBe(1000);
+        expect(coinsOnly).toBeGreaterThan(1000);
+    });
+
+    test('a trainee charm stays priced', async () => {
+        const v = await value([{ itemHrid: '/items/trainee_charm', count: 1 }], {});
+        expect(v).toBeGreaterThan(1000);
     });
 
     test('a craftable but unlisted material is costed from its recipe', async () => {
@@ -114,8 +132,7 @@ describe('networth enhancement materials with no market quote', () => {
     test('a -1 quote on both sides is not a negative cost', async () => {
         const priceMap = { ...prices, [`${MAT}:0_ask`]: -1, [`${MAT}:0_bid`]: -1 };
         const quoted = await value([{ itemHrid: MAT, count: 10 }], {}, priceMap);
-        const without = await value([], {}, priceMap);
 
-        expect(quoted).toBe(without);
+        expect(quoted).toBe(1000);
     });
 });
