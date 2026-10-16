@@ -9,6 +9,7 @@
 import { GAME } from '../../utils/selectors.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
+import { clickThroughReact } from '../../utils/react-click.js';
 
 const PROXY_BTN_ID = 'mwi-claim-proxy-btn';
 
@@ -97,7 +98,10 @@ class TaskClaimCollector {
     }
 
     /**
-     * Click the first available claim button in the task list.
+     * Press the first available claim button in the task list: one user press,
+     * one claim, made through the game's React handler (the game ignores some
+     * untrusted `.click()`s on its claim button) with a plain click as the
+     * fallback `clickThroughReact` already provides.
      */
     _claimNext() {
         const taskList = document.querySelector(GAME.TASK_LIST);
@@ -105,7 +109,7 @@ class TaskClaimCollector {
 
         const claimable = this._getClaimableButtons(taskList);
         if (claimable.length > 0) {
-            claimable[0].click();
+            clickThroughReact(claimable[0], { reactFirst: true });
         }
     }
 
