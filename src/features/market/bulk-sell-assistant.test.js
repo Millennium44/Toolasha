@@ -1337,6 +1337,98 @@ describe('confirming from the strip', () => {
         });
     });
 
+    describe('what is left after a sale made in the modal', () => {
+        const setCheese = (count) => {
+            game.items =
+                count > 0
+                    ? [inventory('/items/cheese', count), inventory('/items/milk', 4)]
+                    : [inventory('/items/milk', 4)];
+        };
+
+        test('a grown stack confirmed in the game modal leaves the remainder as the current step', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            vi.advanceTimersByTime(200);
+            // The player presses the game's own Confirm: 18 sold, 7 stay in the bag
+            modal.querySelector('button').click();
+            setCheese(7);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(bulkSell.index).toBe(0);
+            expect(bulkSell.current.itemHrid).toBe('/items/cheese');
+            expect(bulkSell.current.count).toBe(7);
+            expect(statusText()).toContain('7 left after the sale; sell again');
+
+            // Its own press re-opens the same step, not the next item
+            confirmBtn().click();
+            expect(bulkSell.index).toBe(0);
+            expect(bulkSell.state).toBe('preparing');
+            expect(bulkSell.current.itemHrid).toBe('/items/cheese');
+        });
+
+        test('a sale that clears the stack advances as before', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            vi.advanceTimersByTime(200);
+            modal.querySelector('button').click();
+            setCheese(0);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(bulkSell._sellAgain).toBe(0);
+            expect(statusText()).toContain('press Next for the next item');
+            confirmBtn().click();
+            expect(bulkSell.index).toBe(1);
+        });
+
+        test('a cancel with the stack unchanged is unchanged', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            vi.advanceTimersByTime(200);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            expect(bulkSell.state).toBe('awaiting_next');
+            vi.advanceTimersByTime(3000);
+            expect(bulkSell._sellAgain).toBe(0);
+            expect(statusText()).toContain('press Next for the next item');
+            confirmBtn().click();
+            expect(bulkSell.index).toBe(1);
+        });
+
+        test('a sale the inventory reports a moment after the modal closed still leaves the remainder', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            vi.advanceTimersByTime(200);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            expect(bulkSell._sellAgain).toBe(0);
+            setCheese(7);
+            vi.advanceTimersByTime(400);
+            expect(bulkSell._sellAgain).toBe(7);
+            expect(bulkSell.current.count).toBe(7);
+            expect(statusText()).toContain('7 left after the sale');
+        });
+
+        test('Skip leaves the remainder and moves on', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            vi.advanceTimersByTime(200);
+            setCheese(7);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            skipBtn().click();
+            expect(bulkSell.index).toBe(1);
+            expect(bulkSell._sellAgain).toBe(0);
+        });
+    });
+
     test('Skip and Stop are untouched by the new button', () => {
         const modal = openModal();
         runAtStep0();

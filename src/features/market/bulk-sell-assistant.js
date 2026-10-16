@@ -296,6 +296,8 @@ function shownEnhancementLevel(root) {
 }
 
 /** Shown beside an insta-sell whose price is above the item's tradable range maximum */
+/** How long after the sell modal closes the stack is still watched for the sale's inventory update */
+const AFTER_CLOSE_WATCH_MS = 1500;
 const ABOVE_BAND_WARNING = 'bid above the tradable range: the game may refuse it';
 
 class BulkSellAssistant {
@@ -357,6 +359,13 @@ class BulkSellAssistant {
         this._navigatedSinceClick = false;
         /** Why the last Confirm press was refused, shown on the strip */
         this.confirmNote = '';
+        /**
+         * Units of the current step left over after a sale made in the game's own modal. While set, the
+         * strip offers to sell the step again instead of moving on.
+         */
+        this._sellAgain = 0;
+        /** The short watch for a sale the inventory reports after the modal already closed */
+        this._afterCloseWatch = null;
         /** The order book the current step's decision was made on, kept to re-walk it if the stack changes */
         this._book = null;
     }
@@ -1030,6 +1039,12 @@ class BulkSellAssistant {
             }
             show(skipBtn, true);
             skipBtn.title = 'Close the modal and skip this item';
+        } else if (this.state === 'awaiting_next' && this._sellAgain > 0) {
+            say(`${progress} · ${this.current?.name || ''}: ${this._sellAgain} left after the sale; sell again`);
+            setMain('▶ Sell again');
+            setMainEnabled(true, 'Open this item again for what is left. Its own click, one game action.');
+            show(skipBtn, true);
+            skipBtn.title = 'Leave the remainder and move on to the next item';
         } else if (this.state === 'awaiting_next') {
             const outcome = this.statusNote ? `skipped (${this.statusNote})` : 'dealt with';
             say(`${progress} · ${this.current?.name || ''} ${outcome} — press Next for the next item`);
@@ -1402,7 +1417,7 @@ class BulkSellAssistant {
     /**
      * Walk the order book the step was decided on again for a changed stack. The insta price is the
      * bid level that covers the whole count, so a bigger stack can need a lower level than the one the
-     * modal was given; selling at the old price would fill only part of it. A flip between insta and
+     * modal was given; selling at the old price would fill only part of it. A switch between insta and
      * listing, or a price the modal will not take, refuses rather than submit a stale decision.
      * @param {number} live - The stack as it stands now
      * @param {HTMLElement|null} modal - The open sell modal
@@ -1774,7 +1789,8 @@ class BulkSellAssistant {
             this._start();
         } else if (this.state === 'awaiting_next') {
             this._navigatedSinceClick = false;
-            this.index++;
+            // A remainder left by a sale is this same step again, with its live count; anything else moves on
+            if (!(this._sellAgain > 0)) this.index++;
             this.state = 'preparing';
             this._render();
             this._prepareCurrent();
@@ -2415,6 +2431,10 @@ class BulkSellAssistant {
             this.modalPoll = null;
         }
         let seen = false;
+        // Only a market sell modal can leave a remainder; the vendor menu has its own quantity check
+        const market = selector === '[class*="Modal_modalContainer"]';
+        // The most the stack stood at while the modal was open: a sale is the stack ending below it
+        let peak = 0;
         this.modalPoll = setInterval(() => {
             if (this.state !== 'awaiting_confirm') {
                 clearInterval(this.modalPoll);
@@ -2424,6 +2444,7 @@ class BulkSellAssistant {
             const open = !!document.querySelector(selector);
             if (open) {
                 seen = true;
+                if (market) peak = Math.max(peak, this._liveCount());
             } else if (seen) {
                 clearInterval(this.modalPoll);
                 this.modalPoll = null;
@@ -2433,7 +2454,40 @@ class BulkSellAssistant {
                 // its own Next press, so every server action has a click of
                 // its own.
                 this.state = 'awaiting_next';
+                if (market) this._noteRemainder(peak);
                 this._render();
+            }
+        }, 200);
+    }
+
+    /**
+     * After the sell modal closed: if the stack ended below where it stood while the modal was open, a sale
+     * happened, and whatever is still in the bag is not dealt with. The step stays current with the live
+     * count and the player presses to sell it again. A closed modal with the stack unchanged is a cancel
+     * (or a sale the inventory has not reported yet, so the stack is watched for a moment longer).
+     * The game's own Confirm is never touched; this only reads the bag afterwards.
+     * @param {number} peak - The stack's highest count seen while the modal was open
+     */
+    _noteRemainder(peak) {
+        const key = this._stepKey();
+        const check = () => {
+            if (this.state !== 'awaiting_next' || this._stepKey() !== key) return true;
+            const live = this._liveCount();
+            if (live >= peak) return false;
+            if (live > 0) {
+                this.current.count = live;
+                this._sellAgain = live;
+                this.statusNote = '';
+                this._render();
+            }
+            return true;
+        };
+        if (check()) return;
+        const until = Date.now() + AFTER_CLOSE_WATCH_MS;
+        this._afterCloseWatch = setInterval(() => {
+            if (check() || Date.now() >= until) {
+                clearInterval(this._afterCloseWatch);
+                this._afterCloseWatch = null;
             }
         }, 200);
     }
@@ -2505,6 +2559,11 @@ class BulkSellAssistant {
         this._confirmedStep = null;
         // The order book belongs to the step it was fetched for
         this._book = null;
+        this._sellAgain = 0;
+        if (this._afterCloseWatch) {
+            clearInterval(this._afterCloseWatch);
+            this._afterCloseWatch = null;
+        }
     }
 
     cleanup() {
