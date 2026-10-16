@@ -225,9 +225,28 @@ describe('enhancementSessionNet', () => {
         const legacyMaterial = { materialCosts: { '/items/cheese': { count: 4, totalCost: 0 } } };
         expect(enhancementSessionNet({ ...run, ...legacyMaterial }, price)).toBeNull();
         expect(enhancementSessionNet({ ...run, mirrorCount: 2, mirrorCost: 0 }, price)).toBeNull();
+        expect(enhancementSessionNet({ ...run, protectionCount: 3, protectionCost: 0 }, price)).toBeNull();
+        // The per-item breakdown form of an unpriced protection
+        const breakdown = { '/items/mirror_of_protection': { count: 2, totalCost: 0 } };
+        expect(
+            enhancementSessionNet(
+                { ...run, protectionCount: 2, protectionCost: 0, protectionBreakdown: breakdown },
+                price
+            )
+        ).toBeNull();
+        // A legacy mirror kept in the protection fields, with no cost
+        const legacyMirror = { '/items/philosophers_mirror': { count: 1, totalCost: 0 } };
+        expect(
+            enhancementSessionNet(
+                { ...run, protectionCount: 1, protectionCost: 0, protectionBreakdown: legacyMirror },
+                price
+            )
+        ).toBeNull();
         // A fully priced one still is
         const priced = { materialCosts: { '/items/cheese': { count: 4, totalCost: 80 } } };
         expect(enhancementSessionNet({ ...run, ...priced }, price)).toBe(9000 - 1000 - 3000);
+        const pricedProtection = { protectionCount: 3, protectionCost: 600 };
+        expect(enhancementSessionNet({ ...run, ...pricedProtection }, price)).toBe(9000 - 1000 - 3000);
     });
 
     test('an item with no price at one of its levels is not valued at all', () => {

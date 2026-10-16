@@ -97,6 +97,7 @@
  */
 
 /** Milliseconds in a day */
+import { getMirrorUsage, getProtectionUsage } from '../enhancement/enhancement-session.js';
 import { localDayKey, localDayStart } from './networth-calendar.js';
 import { ownPlayer } from '../../utils/combat-players.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
@@ -597,7 +598,12 @@ function sessionHasUnpricedInput(session) {
     if (session?.hasUnpricedInput === true) return true;
     const materials = Object.values(session?.materialCosts || {});
     if (materials.some((m) => num(m?.count) > 0 && !(num(m?.totalCost) > 0))) return true;
-    return num(session?.mirrorCount) > 0 && !(num(session?.mirrorCost) > 0);
+    // Same readings as enhancement-profit's hasUnpricedInput: an older session keeps its mirrors in
+    // the protection fields, so protections and mirrors are read with the session helpers
+    const protections = getProtectionUsage(session);
+    if (protections.count > 0 && !(protections.cost > 0)) return true;
+    const mirrors = getMirrorUsage(session);
+    return mirrors.count > 0 && !(mirrors.cost > 0);
 }
 
 /**
