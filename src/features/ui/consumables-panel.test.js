@@ -1443,6 +1443,54 @@ describe('the idle plan pins across a character switch', () => {
     });
 });
 
+describe('a sync pull replacing the sim rates under an open panel', () => {
+    const announce = async (written) => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        announceSyncPullApplied(written);
+        await settled();
+        await settled();
+    };
+
+    test('re-reads the rates for this character while the panel is open', async () => {
+        store.data.simConsumableRates_char1 = { rate: 'before' };
+        consumablesPanel.show({ remember: false });
+        await settled();
+        await settled();
+        expect(consumablesPanel._simRates).toEqual({ rate: 'before' });
+
+        store.data.simConsumableRates_char1 = { rate: 'pulled' };
+        store.data.simConsumableRatesByZone_char1 = {};
+        await announce({ combatExport: ['simConsumableRates_char1'] });
+
+        expect(consumablesPanel._simRates).toEqual({ rate: 'pulled' });
+    });
+
+    test('ignores a pull that wrote another character’s rates', async () => {
+        store.data.simConsumableRates_char1 = { rate: 'before' };
+        consumablesPanel.show({ remember: false });
+        await settled();
+        await settled();
+
+        store.data.simConsumableRates_char1 = { rate: 'pulled' };
+        await announce({ combatExport: ['simConsumableRates_char2'] });
+
+        expect(consumablesPanel._simRates).toEqual({ rate: 'before' });
+    });
+
+    test('stops listening once the panel is closed', async () => {
+        store.data.simConsumableRates_char1 = { rate: 'before' };
+        consumablesPanel.show({ remember: false });
+        await settled();
+        await settled();
+        consumablesPanel.hide({ remember: false });
+
+        store.data.simConsumableRates_char1 = { rate: 'pulled' };
+        await announce({ combatExport: ['simConsumableRates_char1'] });
+
+        expect(consumablesPanel._simRates).toEqual({ rate: 'before' });
+    });
+});
+
 describe('the labyrinth burn trend', () => {
     const SUPPLIES = ['/items/basic_torch', '/items/basic_shroud', '/items/basic_beacon'];
 
