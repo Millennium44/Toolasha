@@ -50,7 +50,9 @@ import {
     describeLabTriggerEstimate,
     labTriggerLoadoutsHtml,
     labTriggerOptionsHtml,
+    countLabTriggerChanges,
     renderLabTriggerResultsHtml,
+    summarizeLabTriggerRun,
     sanitizeLabTriggerChoices,
 } from './lab-trigger-view.js';
 import {
@@ -842,6 +844,8 @@ class LabSimUI {
         // The fights the section last listed (the Upgrade tab's target scope applied), and a counter that
         // lets only the newest asynchronous refresh draw
         this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
+        // What the last result found, shown on the Tune triggers header while it is collapsed
+        this._triggerSummary = '';
         // Bumped by every scope change, so a tuning run can tell the scope moved while it ran
         this._triggerScopeGen = 0;
         // What the Configure editor's DTOs looked like when a tuning run started or last changed, and the
@@ -1341,11 +1345,9 @@ class LabSimUI {
         swapResultsCombat.id = 'mwi-labsim-swap-results';
         swapResultsCombat.style.cssText = 'display:none; flex:0 0 auto; padding:10px 14px;';
 
-        // Tune triggers: its own results box, kept apart from both tables so neither run clears the other
+        // Tune triggers: its results sit inside the section, below its controls, kept apart from both tables
+        // so neither run clears the other
         const triggerBar = this._buildTriggerBar();
-        const triggerResults = document.createElement('div');
-        triggerResults.id = 'mwi-labsim-trigger-results';
-        triggerResults.style.cssText = 'display:none; flex:0 1 auto; min-height:0; overflow-y:auto; padding:10px 14px;';
 
         const upgradeResults = document.createElement('div');
         upgradeResults.id = 'mwi-labsim-upgrade-results';
@@ -1367,7 +1369,6 @@ class LabSimUI {
         upgradeContent.appendChild(triggerBar);
         upgradeContent.appendChild(upgradeProgress);
         upgradeContent.appendChild(swapResultsCombat);
-        upgradeContent.appendChild(triggerResults);
         upgradeContent.appendChild(this._buildUpgradesHeader('combat'));
         upgradeContent.appendChild(upgradeResults);
         upgradeContent.appendChild(upgradeOrderResults);
@@ -3421,6 +3422,7 @@ class LabSimUI {
                 title="${escapeHtmlAttribute(what)}">
                 <span id="mwi-labsim-trigger-toggle" style="font-size:10px; color:#888;">▶</span>
                 <span style="color:${ACCENT}; font-weight:700; font-size:12px;">Tune triggers</span>
+                <span id="mwi-labsim-trigger-summary" style="display:none; color:#aaa; font-size:11px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
             </div>
             <div id="mwi-labsim-trigger-body" style="display:none; margin-top:4px;">
                 <div id="mwi-labsim-trigger-loadouts" style="display:flex; flex-wrap:wrap; gap:4px 12px;"></div>
@@ -3429,6 +3431,7 @@ class LabSimUI {
                     <button id="mwi-labsim-trigger-run" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Tune</button>
                     <span id="mwi-labsim-trigger-estimate" style="color:#666; font-size:11px;"></span>
                 </div>
+                <div id="mwi-labsim-trigger-results" style="display:none; margin-top:8px;"></div>
             </div>
         `;
         return bar;
@@ -3476,7 +3479,21 @@ class LabSimUI {
         if (precision) precision.value = this._triggerChoices.precision;
         const conditions = this.panel?.querySelector('#mwi-labsim-trigger-conditions');
         if (conditions) conditions.checked = this._triggerChoices.conditions;
+        this._applyTriggerSummary();
         if (open) void this._refreshTriggerLoadouts();
+    }
+
+    /**
+     * Say what the last result found on the section's header while the section is collapsed (the result is
+     * inside it, hidden with it). Nothing extra when there is no result yet, or while the section is open.
+     * @private
+     */
+    _applyTriggerSummary() {
+        const summary = this.panel?.querySelector('#mwi-labsim-trigger-summary');
+        if (!summary) return;
+        const text = this._triggerSummary || '';
+        summary.textContent = text ? `— ${text}` : '';
+        summary.style.display = !this._triggerChoices.open && text ? 'inline' : 'none';
     }
 
     /**
@@ -3583,6 +3600,8 @@ class LabSimUI {
         if (resultsEl && !this._upgradeRunning) {
             resultsEl.innerHTML = '';
             resultsEl.style.display = 'none';
+            this._triggerSummary = '';
+            this._applyTriggerSummary();
         }
         if (this._triggerChoices.open) void this._refreshTriggerLoadouts();
     }
@@ -3851,11 +3870,10 @@ class LabSimUI {
             if (resultsEl) {
                 resultsEl.innerHTML = renderLabTriggerResultsHtml(run, gameData);
                 resultsEl.style.display = 'block';
+                this._triggerSummary = summarizeLabTriggerRun(run);
+                this._applyTriggerSummary();
             }
-            const changes = run.groups.reduce(
-                (sum, group) => sum + (group.result?.changes?.length || 0) + (group.conditions?.changes?.length || 0),
-                0
-            );
+            const changes = countLabTriggerChanges(run);
             this._setStatus(
                 changes > 0
                     ? `Trigger tuning complete: ${changes} change${changes === 1 ? '' : 's'} found. Set them in the game by hand.`
@@ -9384,6 +9402,8 @@ class LabSimUI {
         this._upgradeOrderSection = null;
         this._triggerChoices = sanitizeLabTriggerChoices(null);
         this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
+        // What the last result found, shown on the Tune triggers header while it is collapsed
+        this._triggerSummary = '';
         this._triggerRefreshSeq++;
         clearTimeout(this._editorEditTimer);
         this._editorEditTimer = null;

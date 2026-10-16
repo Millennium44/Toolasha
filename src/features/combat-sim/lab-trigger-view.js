@@ -340,6 +340,30 @@ function groupHtml(group, gameData) {
 }
 
 /**
+ * How many changes a run found, threshold changes and new conditions together.
+ * @param {Object} run - From `runLabTriggerOptimization`
+ * @returns {number}
+ */
+export function countLabTriggerChanges(run) {
+    return (run?.groups || []).reduce(
+        (sum, group) => sum + (group.result?.changes?.length || 0) + (group.conditions?.changes?.length || 0),
+        0
+    );
+}
+
+/**
+ * The one-line headline of a run, for the Tune triggers header while it is collapsed.
+ * @param {Object} run - From `runLabTriggerOptimization`
+ * @returns {string} "2 changes found", "No change beat the current thresholds" or "Stopped"
+ */
+export function summarizeLabTriggerRun(run) {
+    if (run?.stopped) return 'Stopped';
+    const changes = countLabTriggerChanges(run);
+    if (changes > 0) return `${changes} change${changes === 1 ? '' : 's'} found`;
+    return 'No change beat the current thresholds';
+}
+
+/**
  * The results box: one block per loadout, then the footer.
  * @param {Object} run - From `runLabTriggerOptimization`
  * @param {Object} gameData - Game data payload (display names)
