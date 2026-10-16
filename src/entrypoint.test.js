@@ -1200,6 +1200,16 @@ describe('the registry entries the entrypoint hands over', () => {
         expect(entry.liveStop).toBe(true);
     });
 
+    test.each(['savingsGoalAlerts', 'priceTargetAlerts'])(
+        'the %s alert is live-stopped, so switching it off drops its armed bits instead of freezing them',
+        (key) => {
+            const entry = registered.find((e) => e.key === key);
+
+            expect(entry, `${key} is no longer registered`).toBeTruthy();
+            expect(entry.liveStop).toBe(true);
+        }
+    );
+
     test('the overbid table is gated on its own setting and live-stopped', () => {
         const entry = registered.find((e) => e.key === 'overbidPanel');
 
