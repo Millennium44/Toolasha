@@ -445,6 +445,24 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         minGain,
         simCount,
         tunableCount: tunables.length,
+        // The seed block this run drew its samples from, so a verify run can be told apart from it
+        baseSeed,
+        // What `verifyTriggerChanges` needs to re-measure the answer on fresh seeds: the ORIGINAL players
+        // (the editor may have changed since), the tunables the answer's keys refer to, and the conditions
+        // of the run. In memory only: `compactTriggerResult` whitelists its fields, so a remembered result
+        // has none of this and `canVerifyTriggerResult` says so.
+        verifyContext: {
+            kind: 'combat',
+            gameData,
+            playerDTOs,
+            playerIndex,
+            zoneHrid,
+            difficultyTier,
+            communityBuffs,
+            scopeHrids,
+            allHrids,
+            tunables,
+        },
     };
     // The total is a worst case (rows that never confirm or searches that end early run fewer sims), so a
     // finished run snaps the bar to full rather than leaving it short

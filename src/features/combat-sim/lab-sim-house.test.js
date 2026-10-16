@@ -86,6 +86,13 @@ vi.mock('./upgrade-advisor.js', () => ({
     explainLabCandidateCost: () => null,
     priceMergedAcquisition: () => ({ cost: null, costDetail: null }),
     checkedSwapAppliesToDTO: () => false,
+    // Read by the verify engine, which this suite never reaches
+    computeMetrics: () => ({}),
+    computeDeltas: () => ({}),
+    applyCommunityBuffCandidate: (buffs) => buffs,
+    buildModifiedCombatBuffs: (buffs) => buffs,
+    pairedTrialRule: () => ({ minTrials: 1, maxTrials: 1 }),
+    PAIRED_TIME_HEADROOM: 3,
 }));
 
 const { default: ui } = await import('./lab-sim-ui.js');
