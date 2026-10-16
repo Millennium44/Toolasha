@@ -6284,6 +6284,65 @@ describe('the Ability order Include option', () => {
             expect(section().textContent).toContain('Smack → Poke → Fireball');
         });
 
+        test('a combined all-targets run brings back both the all-fights table and the section', async () => {
+            game.rememberUpgradeResults = true;
+            game.loadoutByMonster = { '/monsters/mimic': 'low', '/monsters/eye_watcher': 'high' };
+            game.loadoutNames = { low: 'Low Lab', high: 'High Lab' };
+            game.loadoutAbilities = { low: abilities(A, B, C), high: abilities(A, B, C) };
+            const fightRow = (i) => ({
+                monsterHrid: `/monsters/m${i}`,
+                monsterName: `Monster ${i}`,
+                loadoutName: 'Loadout',
+                roomLevel: 100,
+                winRate: 0.6,
+                winRateDelta: 0.1,
+                applied: true,
+                trials: 1000,
+            });
+            const table = {
+                baseline: { fights: [fightRow(0), fightRow(1)], runClearChance: 0.25, expectedAttempts: 4 },
+                results: [
+                    {
+                        candidate: {
+                            type: 'equipment',
+                            slot: '/equipment_types/head',
+                            description: 'Plain → Fancy Helm',
+                        },
+                        costType: 'gold',
+                        cost: 1_000_000,
+                        fights: [fightRow(0), fightRow(1)],
+                        appliedFights: 2,
+                        expectedAttempts: 3.4,
+                        attemptsDelta: -0.6,
+                        attemptsDeltaNoise: 0.1,
+                        significant: true,
+                        avgWinDelta: 0.1,
+                        attemptsSavedPerMillion: 0.6,
+                        costDetail: null,
+                    },
+                ],
+            };
+            allSpy.mockImplementation(async (params) => (params.modes?.length ? table : rawOrders(params)));
+            try {
+                setScope('all');
+                tick('equipment', 'ability_order');
+                await ui._onUpgradeAnalyze();
+                expect(storage.written[KEY].data.allFights).toBe(true);
+                expect(storage.written[KEY].data.results).toHaveLength(1);
+                expect(storage.written[KEY].orderSection.groups.length).toBeGreaterThan(0);
+
+                await reload();
+                const results = ui.panel.querySelector('#mwi-labsim-upgrade-results');
+                expect(results.querySelector('tr[data-allfights-row]').textContent).toContain('Plain → Fancy Helm');
+                expect(section().style.display).toBe('block');
+                expect(section().textContent).toContain('Smack → Poke → Fireball');
+            } finally {
+                game.loadoutByMonster = {};
+                game.loadoutNames = {};
+                game.loadoutAbilities = {};
+            }
+        });
+
         test('an order-only run brings its section back, drawn with the saved collapse state', async () => {
             game.rememberUpgradeResults = true;
             tick('ability_order');
