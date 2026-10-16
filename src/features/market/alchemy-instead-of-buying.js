@@ -516,6 +516,8 @@ const candidateCache = new Map();
 const resultCache = new Map();
 /** Per item, gold rate and keep list: the finished "Instead of selling" routes */
 const sellCache = new Map();
+/** Setups run for a held item the market has no ask for, its input priced at its bid; never shared with the buying path */
+const heldCandidateCache = new Map();
 /** Character and five-minute bucket: a change empties both caches */
 let candidateStamp = null;
 /** Every price input as well: a change empties the result cache only */
@@ -676,6 +678,7 @@ function syncStamps() {
     if (full !== resultStamp) {
         resultCache.clear();
         sellCache.clear();
+        heldCandidateCache.clear();
         setupSignatures.clear();
         bonusRanks.clear();
         resultStamp = full;
@@ -690,6 +693,7 @@ export function clearInsteadCache() {
     candidateCache.clear();
     resultCache.clear();
     sellCache.clear();
+    heldCandidateCache.clear();
     setupSignatures.clear();
     resolvedDrinkHrids = [];
     bonusRanks.clear();
@@ -846,6 +850,43 @@ function liveCandidates(actionType, hrid) {
         }
     }
     return entry.list;
+}
+
+/**
+ * The setups of one action on an item you hold that the market has no ask for. The calculator
+ * prices its input at the buy side and gives up without one, though a held unit only needs its
+ * bid; so the run prices this one item at its bid (the selling comparison replaces the input
+ * cost with the bid after tax anyway). Kept apart from {@link candidateCache}, whose runs are
+ * the buying path's and must never see an input priced off the bid.
+ * @param {string} actionType
+ * @param {string} hrid
+ * @param {number} bid - The held item's real bid
+ * @returns {Array<Object>}
+ */
+function heldCandidates(actionType, hrid, bid) {
+    const key = `${actionType}|${hrid}|${bid}`;
+    if (heldCandidateCache.has(key)) return heldCandidateCache.get(key);
+    let list = [];
+    const previous = alchemyProfitCalculator.inputBuyOverride;
+    alchemyProfitCalculator.inputBuyOverride = (itemHrid) => (itemHrid === hrid ? bid : null);
+    try {
+        let raw = alchemyProfitCalculator.calculateCandidateResults?.(actionType, hrid) ?? [];
+        if (raw.length === 0) {
+            let single = null;
+            if (actionType === 'decompose') single = alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0);
+            else if (actionType === 'transmute') single = alchemyProfitCalculator.calculateTransmuteProfit(hrid);
+            else if (actionType === 'coinify') single = alchemyProfitCalculator.calculateCoinifyProfit?.(hrid, 0);
+            raw = [single].filter(Boolean);
+        }
+        list = raw.filter(buyableSetup);
+    } catch (error) {
+        console.error('[AlchemyInstead] Held-item setups failed for', hrid, error);
+        list = [];
+    } finally {
+        alchemyProfitCalculator.inputBuyOverride = previous;
+    }
+    heldCandidateCache.set(key, list);
+    return list;
 }
 
 /**
@@ -1300,15 +1341,19 @@ export function liveSellRoutes(itemHrid) {
     if (sellCache.has(key)) return sellCache.get(key);
     let found = { sellValue: null, routes: [] };
     // No bid or no action: nothing to run the calculator for
-    if (alchemyActionsOf(dataManager.getItemDetails(itemHrid)).length > 0 && realPrice(itemHrid, 'sell') !== null) {
+    const bid = realPrice(itemHrid, 'sell');
+    if (alchemyActionsOf(dataManager.getItemDetails(itemHrid)).length > 0 && bid !== null) {
         const { askOf, sellOf, containerValue, sellContainerValue } = makeMarketPricing();
+        // With no ask the calculator cannot price the input, so the run is priced at the bid instead
+        const hasAsk = getItemPriceInfo(itemHrid, { context: 'profit', side: 'buy' })?.price != null;
         try {
             found = findAlchemySellRoutes(itemHrid, {
                 getItemDetails: (hrid) => dataManager.getItemDetails(hrid),
                 bidOf: (hrid) => realPrice(hrid, 'sell'),
                 askOf,
                 sellOf,
-                candidatesOf: liveCandidates,
+                candidatesOf: (actionType, hrid) =>
+                    hasAsk ? liveCandidates(actionType, hrid) : heldCandidates(actionType, hrid, bid),
                 isWanted: () => false,
                 containerValue,
                 sellContainerValue,

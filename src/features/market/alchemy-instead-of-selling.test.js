@@ -85,8 +85,12 @@ vi.mock('../../core/data-manager.js', () => {
 vi.mock('../../api/marketplace.js', () => ({ default: { lastFetchTimestamp: 1, on: () => {}, off: () => {} } }));
 vi.mock('./alchemy-profit-calculator.js', () => ({
     default: {
-        calculateCandidateResults: (type, hrid) => {
+        inputBuyOverride: null,
+        // Like the real calculator, a source with no ask yields nothing unless the override prices it
+        calculateCandidateResults(type, hrid) {
             world.runs += 1;
+            world.overrideSeen = this.inputBuyOverride?.(hrid) ?? null;
+            if (world.prices[hrid]?.ask == null && world.overrideSeen === null) return [];
             return world.candidates[`${type}|${hrid}`] ?? [];
         },
     },
@@ -109,6 +113,7 @@ vi.mock('../../utils/profit-helpers.js', () => ({
 }));
 
 import { clearInsteadCache, findAlchemySellRoutes, liveSellRoutes } from './alchemy-instead-of-buying.js';
+import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 
 /** One setup; `bulk` items are eaten per action, `overhead` is the catalyst spend per hour */
 const setup = (type, itemHrid, { bulk = 1, overhead = 0, successRate = 0.5, dropRevenues = [] } = {}) => ({
@@ -162,6 +167,17 @@ describe('decompose', () => {
         const route = only(liveSellRoutes(BOOMSTICK, new Set()), 'decompose');
         expect(route.partlyUnpriced).toBe(true);
         expect(route.margin).toBeCloseTo(450);
+    });
+
+    test('a held item with a bid but no ask still gets its routes, the run priced at the bid', () => {
+        world.prices[UNPRICED] = { ask: 1, bid: 1 };
+        world.prices[BOOMSTICK] = { bid: 1000 };
+        world.candidates[`decompose|${BOOMSTICK}`] = [setup('decompose', BOOMSTICK, { bulk: 3 })];
+        const route = only(liveSellRoutes(BOOMSTICK, new Set()), 'decompose');
+        expect(world.overrideSeen).toBe(1000);
+        expect(route.margin).toBeCloseTo(450.45);
+        // The override is the run's alone: the buying path's calculator is left as it was
+        expect(alchemyProfitCalculator.inputBuyOverride).toBeNull();
     });
 
     test('a loss shows nothing', () => {
