@@ -249,6 +249,30 @@ describe('enhancementSessionNet', () => {
         expect(enhancementSessionNet({ ...run, ...pricedProtection }, price)).toBe(9000 - 1000 - 3000);
     });
 
+    test('a protection entry with units and no cost is unpriced even when the total cost is positive', () => {
+        const run = { itemHrid: '/items/sword', startLevel: 0, currentLevel: 5, totalCost: 3000 };
+        const mixed = {
+            '/items/mirror_of_protection': { count: 3, totalCost: 600 },
+            '/items/crushed_pearl': { count: 2, totalCost: 0 },
+        };
+        expect(
+            enhancementSessionNet(
+                { ...run, protectionCount: 5, protectionCost: 600, protectionBreakdown: mixed },
+                price
+            )
+        ).toBeNull();
+        const allPriced = {
+            '/items/mirror_of_protection': { count: 3, totalCost: 600 },
+            '/items/crushed_pearl': { count: 2, totalCost: 100 },
+        };
+        expect(
+            enhancementSessionNet(
+                { ...run, protectionCount: 5, protectionCost: 700, protectionBreakdown: allPriced },
+                price
+            )
+        ).toBe(9000 - 1000 - 3000);
+    });
+
     test('an item with no price at one of its levels is not valued at all', () => {
         const session = { itemHrid: '/items/sword', startLevel: 0, currentLevel: 20, totalCost: 10 };
         expect(enhancementSessionNet(session, price)).toBeNull();

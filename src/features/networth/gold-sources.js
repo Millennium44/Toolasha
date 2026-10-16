@@ -602,6 +602,11 @@ function sessionHasUnpricedInput(session) {
     // the protection fields, so protections and mirrors are read with the session helpers
     const protections = getProtectionUsage(session);
     if (protections.count > 0 && !(protections.cost > 0)) return true;
+    // A resumed or merged session can total a positive cost while one stored entry is still unpriced
+    if (session?.protectionBreakdown) {
+        const entries = Object.values(protections.breakdown || {});
+        if (entries.some((e) => num(e?.count) > 0 && !(num(e?.totalCost) > 0))) return true;
+    }
     const mirrors = getMirrorUsage(session);
     return mirrors.count > 0 && !(mirrors.cost > 0);
 }
