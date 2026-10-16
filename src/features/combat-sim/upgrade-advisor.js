@@ -2248,7 +2248,7 @@ export function generateCommunityBuffCandidates(communityBuffs, targetLevel = 0)
  * @param {Object} candidate - The candidate being evaluated
  * @returns {Object} Community buffs for this run
  */
-function applyCommunityBuffCandidate(communityBuffs, candidate) {
+export function applyCommunityBuffCandidate(communityBuffs, candidate) {
     if (candidate?.type !== 'community_buff') return communityBuffs;
     return { ...communityBuffs, [candidate.buffKey]: candidate.upgradeLevel };
 }
@@ -4942,7 +4942,7 @@ export function primaryLevelsAlongside(candidate, primary, xpSimResult, gameData
 /**
  * Compute key metrics from a sim result.
  */
-function computeMetrics(simResult, gameData, playerHrid, hours) {
+export function computeMetrics(simResult, gameData, playerHrid, hours) {
     const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
     const xp = simResult.experienceGained?.[playerHrid] || {};
     const totalXpPerHour = Object.values(xp).reduce((s, v) => s + v, 0) / simHours;
@@ -4967,7 +4967,7 @@ function computeMetrics(simResult, gameData, playerHrid, hours) {
 /**
  * Compute percentage deltas between baseline and upgraded metrics.
  */
-function computeDeltas(baseline, upgraded) {
+export function computeDeltas(baseline, upgraded) {
     const pctDelta = (base, upg) => {
         if (base === 0) return upg > 0 ? 100 : 0;
         return ((upg - base) / Math.abs(base)) * 100;
@@ -5098,7 +5098,7 @@ const HOURS_PER_YEAR = 24 * 365;
  * count. Upgrades usually kill faster and need less, but a defensive swap can
  * need more, and a run cut short by the clock is no longer paired.
  */
-const PAIRED_TIME_HEADROOM = 3;
+export const PAIRED_TIME_HEADROOM = 3;
 
 /**
  * Make every run in a comparison play exactly as many fights as the baseline
@@ -5119,7 +5119,7 @@ const PAIRED_TIME_HEADROOM = 3;
  * @param {Object} baselineResult - The baseline run's SimResult
  * @returns {Object} A stopping rule pinned to that fight count
  */
-function pairedTrialRule(baselineResult) {
+export function pairedTrialRule(baselineResult) {
     const trials = Math.max(1, Math.floor(Number(baselineResult?.labyAttemptCount) || 0));
     return { minTrials: trials, maxTrials: trials };
 }
@@ -5522,7 +5522,7 @@ export function generateLabyrinthBuffCandidates(levels = null) {
  * @param {Object} candidate - Buff candidate with uniqueKey/typeHrid/valueKey/step
  * @returns {Array} Modified buffs array
  */
-function buildModifiedCombatBuffs(baseBuffs, candidate) {
+export function buildModifiedCombatBuffs(baseBuffs, candidate) {
     const uniqueHrid = `/buff_uniques/labyrinth_upgrade_${candidate.uniqueKey}`;
     const modified = JSON.parse(JSON.stringify(baseBuffs));
 

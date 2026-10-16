@@ -139,6 +139,7 @@ vi.mock('./trigger-optimizer.js', () => ({
     concurrency: () => 1,
     createLimiter: () => (task) => task(),
     triggerUseFromResult: () => ({}),
+    sampleFromResult: () => ({}),
     monsterMaxHpReader: () => () => 0,
     estimateConditionRun: () => ({ slots: 0, counts: [], sims: 0 }),
     runTriggerOptimization: async (params) => {

@@ -538,6 +538,20 @@ export async function runLabTriggerOptimization(params, onProgress, options = {}
                     precision: precision.key,
                     include: LAB_TRIGGER_SCOPE,
                     tunableCount: tunables.length,
+                    baseSeed,
+                    // For `verifyTriggerChanges` (in memory only, see the Combat Sim tuner's note): the
+                    // group's fights with their ORIGINAL loadouts, and the tunables the answer's keys name
+                    verifyContext: {
+                        kind: 'lab',
+                        gameData,
+                        fights,
+                        hrid,
+                        zoneHrid,
+                        crates,
+                        communityBuffs,
+                        labyrinthCombatBuffs,
+                        tunables,
+                    },
                 },
                 baselineAttempts: meanAttempts(finalOrig || baseline),
                 tunedAttempts: finalTuned ? meanAttempts(finalTuned) : null,
