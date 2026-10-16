@@ -7164,6 +7164,44 @@ describe('a combat trial only mates joined', () => {
         expect(html).toContain(`~T${timing.expectedTier}`);
     });
 
+    test('a scheduled trial is forecast only from the loadouts of members signed up for it', async () => {
+        game.clientData = clientData;
+        const capture = (await import('./guild-loadout-capture.js')).default;
+        const seen = vi
+            .spyOn(capture, 'seen')
+            .mockReturnValue([{ name: 'Mate', stats: { attackInterval: 3_000_000_000, autoAttackDamage: 900 } }]);
+        const tile = { name: 'Trial Badger', kind: 'combat' };
+        const scheduledAnalysis = analyseTrial(badger(), { phase: 'scheduled', participants: 0, now });
+        const savedMembers = game.members;
+        const savedWeek = game.currentWeek;
+        try {
+            // Just rolled over: nobody has signed up, so last week's captured loadouts forecast nothing
+            game.currentWeek = '2026-10-15T00:00:00Z';
+            game.members = [];
+            const none = guildTrials._forecast(tile, scheduledAnalysis, 0, 'scheduled', null);
+            expect(none?.tier ?? null).toBeNull();
+            expect(
+                renderTrialBlock(scheduledAnalysis, 0, undefined, { phase: 'scheduled', forecast: none })
+            ).not.toContain('If it started now');
+
+            // Mate signs up for the Badger: now the Badger has a party to estimate from
+            game.members = [
+                {
+                    characterID: 1,
+                    name: 'Mate',
+                    signupWeekStartAt: '2026-10-15T00:00:00Z',
+                    signedUpCombatTrialHrid: '/guild_combat/badger',
+                },
+            ];
+            const signed = guildTrials._forecast(tile, scheduledAnalysis, 1, 'scheduled', null);
+            expect(signed?.tier).toBeGreaterThan(0);
+        } finally {
+            game.members = savedMembers;
+            game.currentWeek = savedWeek;
+            seen.mockRestore();
+        }
+    });
+
     test('a scheduled trial is not forecast from the last cycle’s clears', () => {
         game.clientData = clientData;
         const record = badger();

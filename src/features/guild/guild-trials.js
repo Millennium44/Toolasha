@@ -4100,12 +4100,20 @@ class GuildTrials {
                     ? analysis.rate * 1000
                     : (breakdown?.measured && breakdown.partyDps) || null;
 
+            // Before the start nothing is measured, so the estimate is the party's captured loadouts — and the
+            // party is whoever has signed up for THIS trial this week. Every captured loadout (last week's
+            // fighters included) forecast a trial nobody had joined yet, and the same party for each trial.
+            let loadouts = guildLoadoutCapture.seen?.() || [];
+            if (phase === 'scheduled') {
+                const signed = new Set(signedUpMembers(tile.name).map((name) => name.toLowerCase()));
+                loadouts = loadouts.filter((entry) => signed.has(String(entry?.name || '').toLowerCase()));
+            }
             const forecast = forecastTrial({
                 analysis,
                 clientData: dataManager.getInitClientData?.() || null,
                 name: tile.name,
                 participants,
-                loadouts: guildLoadoutCapture.seen?.() || [],
+                loadouts,
                 measuredDps,
                 // A scheduled trial forecasts from tier 1 with the whole hour
                 scheduled: phase === 'scheduled',

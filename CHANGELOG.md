@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild Trials: no forecast before anyone signs up
+
+- A trial that hasn't started is forecast only from the loadouts of members signed up for that trial; right after the weekly rollover, with nobody signed up, it no longer shows an "If it started now" tier built from last week's fighters.
+
 ### Combat Sim: ability order in the upgrade analyzer
 
 - The Combat Sim's upgrade analyzer has an "Ability order" option that tries every order of your ordinary abilities (first slot fixed, always-ready spells last) and ranks them on its usual columns, free.
