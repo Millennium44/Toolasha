@@ -95,6 +95,7 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         characterData: { character: { name: 'Marketcow' } },
+        getCurrentCharacterId: () => 'market123',
         on: vi.fn(),
         off: vi.fn(),
     },
@@ -157,6 +158,8 @@ beforeEach(async () => {
     world.settings.dungeonTracker_recordFailedRuns = false;
     ui.isInitialized = false;
     ui.container = null;
+    // Unsubscribe the previous init's listeners (the pull listener is process-wide)
+    ui.pricingChangeUnregisters.forEach((unregister) => unregister());
     ui.pricingChangeUnregisters = [];
     for (const key of Object.keys(configListeners)) delete configListeners[key];
     if (ui.updateInterval) clearInterval(ui.updateInterval);
@@ -502,6 +505,48 @@ describe('the ROI board redraws on a pricing change made elsewhere', () => {
         expect(configListeners.profitCalc_patientTickBuy).toHaveLength(0);
         expect(configListeners.profitCalc_patientTickSell).toHaveLength(0);
         expect(configListeners.profitCalc_ironCowValuation).toHaveLength(0);
+    });
+});
+
+describe('the ROI board redraws when a sync pull rewrites the all-zones snapshot', () => {
+    let state;
+    let announce;
+    let characterKey;
+
+    beforeEach(async () => {
+        state = (await import('./dungeon-tracker-ui-state.js')).default;
+        ({ announceSyncPullApplied: announce } = await import('../../utils/sync-merge-registry.js'));
+        ({ characterKey } = await import('../../utils/character-key.js'));
+        ui.roiBoard.render.mockClear();
+    });
+
+    afterEach(() => {
+        state.isRoiExpanded = false;
+    });
+
+    test("a pull that wrote this character's snapshot redraws an open board", async () => {
+        state.isRoiExpanded = true;
+        announce({ combatExport: [characterKey('allZonesSnapshot')] });
+        await Promise.resolve();
+        expect(ui.roiBoard.render).toHaveBeenCalledTimes(1);
+    });
+
+    test('a pull that wrote something else, or while collapsed, draws nothing', async () => {
+        state.isRoiExpanded = true;
+        announce({ combatExport: [characterKey('somethingElse')] });
+        state.isRoiExpanded = false;
+        announce({ combatExport: [characterKey('allZonesSnapshot')] });
+        await Promise.resolve();
+        expect(ui.roiBoard.render).not.toHaveBeenCalled();
+    });
+
+    test('cleanup drops the pull listener', async () => {
+        const roi = ui.roiBoard;
+        state.isRoiExpanded = true;
+        ui.cleanup();
+        announce({ combatExport: [characterKey('allZonesSnapshot')] });
+        await Promise.resolve();
+        expect(roi.render).not.toHaveBeenCalled();
     });
 });
 
