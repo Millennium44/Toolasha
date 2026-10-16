@@ -88,7 +88,7 @@ vi.mock('./upgrade-advisor.js', () => ({
         const wobble = result.marker === 'wobble' ? (result.seed % 2 ? 300 : -300) : 0;
         return {
             xpPerHour: 1000 + luck + effect + wobble,
-            profitPerHour: 5000 + luck * 5 + effect * 5 + wobble,
+            profitPerHour: result.marker === 'nan' ? NaN : 5000 + luck * 5 + effect * 5 + wobble,
             dps: 100 + luck / 10 + effect / 10,
             encountersPerHour: 50 + luck / 10 + effect / 10,
             deathsPerHour: 0,
@@ -709,5 +709,181 @@ describe('verifyTriggerChanges', () => {
         );
         expect(out.rows[0].seeds).toBe(2);
         expect(JSON.parse(JSON.stringify(out))).toEqual(out);
+    });
+});
+
+describe('Stop never reads as a confirmation or a failure', () => {
+    const fights = [{ monsterHrid: '/monsters/a', monsterName: 'A', roomLevel: 10, dto: { hrid: 'p1' } }];
+    const labContext = () => ({
+        fights,
+        crates: [],
+        hours: 10,
+        communityBuffs: {},
+        labyrinthCombatBuffs: [],
+    });
+    const labRow = (description, effect) => ({
+        candidate: { description, effect, appliesTo: [true] },
+        fights: [{ applied: true }],
+    });
+    const triggerResult = () => ({
+        objective: 'xp',
+        precision: 'standard',
+        minGain: 0.5,
+        baseSeed: 11,
+        changes: [{ key: 't1', to: 50 }],
+        verifyContext: {
+            kind: 'combat',
+            gameData: {},
+            playerDTOs: [{ hrid: 'p1', abilities: [{ hrid: 'a', triggers: [{ value: 30 }] }] }],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            communityBuffs: {},
+            scopeHrids: ['p1'],
+            allHrids: ['p1'],
+            tunables: [
+                {
+                    key: 't1',
+                    original: 30,
+                    playerIndex: 0,
+                    slotType: 'abilities',
+                    slotIndex: 0,
+                    rowIndex: 0,
+                    baseRows: [{ value: 30 }],
+                },
+            ],
+        },
+    });
+
+    test('a stopped Combat run with a few consistent seeds is not confirmed', async () => {
+        const state = { stop: false };
+        sim.onRun = () => {
+            // Eight baselines, then a few candidate seeds, then Stop
+            if (sim.calls.length >= 12) state.stop = true;
+        };
+        const out = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('good', 'good')],
+            seeds: 8,
+            abortSignal: () => state.stop,
+        });
+        expect(out.stopped).toBe(true);
+        expect(out.rows[0].seeds).toBeGreaterThanOrEqual(2);
+        expect(out.rows[0].seeds).toBeLessThan(8);
+        expect(out.rows[0].verdict).toBe('not-confirmed');
+    });
+
+    test('a stopped Lab run with a few consistent seeds is not confirmed', async () => {
+        const state = { stop: false };
+        sim.onLabRun = () => {
+            if (sim.labCalls.length >= 12) state.stop = true;
+        };
+        const out = await verifyLabCandidates({
+            context: labContext(),
+            rows: [labRow('good', 'good')],
+            seeds: 8,
+            abortSignal: () => state.stop,
+        });
+        expect(out.stopped).toBe(true);
+        expect(out.rows[0].seeds).toBeGreaterThanOrEqual(2);
+        expect(out.rows[0].seeds).toBeLessThan(8);
+        expect(out.rows[0].verdict).toBe('not-confirmed');
+    });
+
+    test('a stopped trigger verify with a few seeds is not confirmed', async () => {
+        const state = { stop: false };
+        sim.onRun = () => {
+            if (sim.calls.length >= 8) state.stop = true;
+        };
+        const out = await verifyTriggerChanges({
+            result: triggerResult(),
+            seeds: 8,
+            abortSignal: () => state.stop,
+        });
+        expect(out.stopped).toBe(true);
+        expect(out.rows[0].seeds).toBeLessThan(8);
+        expect(out.rows[0].verdict).not.toBe('confirmed');
+    });
+
+    test('Stop during the Combat baseline is a stop, not an error', async () => {
+        const state = { stop: false };
+        sim.onRun = () => {
+            state.stop = true;
+            throw new Error('Cancelled');
+        };
+        const out = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('good', 'good')],
+            seeds: 2,
+            abortSignal: () => state.stop,
+        });
+        expect(out.stopped).toBe(true);
+        expect(out.error).toBeUndefined();
+        expect(out.rows.some((r) => r.verdict === 'error')).toBe(false);
+    });
+
+    test('a candidate cancelled by Stop is not an error row', async () => {
+        const state = { stop: false };
+        sim.onRun = (marker) => {
+            if (marker === 'good') {
+                state.stop = true;
+                throw new Error('Cancelled');
+            }
+        };
+        const out = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('good', 'good')],
+            seeds: 2,
+            abortSignal: () => state.stop,
+        });
+        expect(out.stopped).toBe(true);
+        expect(out.rows.some((r) => r.verdict === 'error')).toBe(false);
+    });
+
+    test('Stop during the Lab baseline is a stop, not an error', async () => {
+        const state = { stop: false };
+        sim.onLabRun = () => {
+            // Stop lands while the candidates are already waiting on their baselines
+            queueMicrotask(() => {
+                state.stop = true;
+            });
+            throw new Error('Cancelled');
+        };
+        const out = await verifyLabCandidates({
+            context: labContext(),
+            rows: [labRow('good', 'good')],
+            seeds: 2,
+            abortSignal: () => state.stop,
+        });
+        expect(out.stopped).toBe(true);
+        expect(out.error).toBeUndefined();
+        expect(out.rows.some((r) => r.verdict === 'error')).toBe(false);
+    });
+
+    test('Stop during a trigger verify is a stop, not an error', async () => {
+        const state = { stop: false };
+        sim.onRun = () => {
+            state.stop = true;
+            throw new Error('Cancelled');
+        };
+        const out = await verifyTriggerChanges({
+            result: triggerResult(),
+            seeds: 2,
+            abortSignal: () => state.stop,
+        });
+        expect(out.stopped).toBe(true);
+        expect(out.error).toBeUndefined();
+        expect(out.rows.some((r) => r.verdict === 'error')).toBe(false);
+    });
+
+    test('a Combat row with no usable seed (every gain non-finite) is an error, not a verdict', async () => {
+        const out = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('nan', 'nan')],
+            seeds: 2,
+            metric: 'profit',
+        });
+        expect(out.stopped).toBe(false);
+        expect(out.rows[0].verdict).toBe('error');
     });
 });
