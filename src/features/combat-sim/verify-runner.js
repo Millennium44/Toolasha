@@ -138,19 +138,33 @@ const plain = (value) => (Number.isFinite(value) ? value : null);
 /** The error text of anything thrown */
 const messageOf = (error) => (error instanceof Error ? error.message : String(error));
 
+/** What a simulation rejects with when Stop (or a teardown) terminates it in flight */
+const CANCEL_MESSAGE = /^(Cancelled|Aborted)$/i;
+
+/**
+ * Whether a thrown error is only a cancelled simulation: after Stop it means "did not finish", not "broke".
+ * @param {*} error - What was thrown
+ * @param {Function} stopped - `() => boolean`, true once the run was asked to stop
+ * @returns {boolean}
+ */
+const isCancel = (error, stopped) => stopped() || CANCEL_MESSAGE.test(messageOf(error));
+
 /**
  * Turn per-seed paired differences into one row result.
  * @param {string} key - Row key
  * @param {Array<number>} diffs - One difference per completed seed
  * @param {boolean} betterIsHigher
+ * @param {number} requestedSeeds - Seeds the run was asked for; a row that finished fewer (a stopped run) can never
+ *   be `confirmed` or `worse`, because the standard error it was judged on was never the one that was asked for
  * @returns {{key: string, mean: number|null, se: number|null, seeds: number, verdict: string}}
  */
-function rowFromDiffs(key, diffs, betterIsHigher) {
+function rowFromDiffs(key, diffs, betterIsHigher, requestedSeeds) {
     const paired = pairedDiff(
         diffs,
         diffs.map(() => 0)
     );
-    const verdict = classifyVerdict({ mean: paired.mean, se: paired.se, seeds: paired.n, betterIsHigher });
+    const judged = classifyVerdict({ mean: paired.mean, se: paired.se, seeds: paired.n, betterIsHigher });
+    const verdict = paired.n < requestedSeeds ? 'not-confirmed' : judged;
     return {
         key,
         mean: paired.n > 0 ? plain(paired.mean) : null,
@@ -279,6 +293,10 @@ export async function verifyCombatCandidates({
     const baselineOutcome = await Promise.allSettled(baselines);
     const failedBaseline = baselineOutcome.find((o) => o.status === 'rejected');
     if (failedBaseline) {
+        // Stop terminates the baseline in flight: that is a stop with nothing measured, not a failure
+        if (baselineOutcome.every((o) => o.status !== 'rejected' || isCancel(o.reason, stopped))) {
+            return { ...empty({}), hoursPerSeed, stopped: true };
+        }
         const error = messageOf(failedBaseline.reason);
         console.error('[VerifyRunner] Baseline failed:', failedBaseline.reason);
         return {
@@ -338,6 +356,8 @@ export async function verifyCombatCandidates({
                     );
                     return Number.isFinite(gain) ? gain : null;
                 } catch (error) {
+                    // A simulation Stop terminated is a seed that did not finish, not a broken candidate
+                    if (isCancel(error, stopped)) return null;
                     console.error('[VerifyRunner] Candidate simulation failed:', error);
                     state.failed = state.failed || error;
                     return null;
@@ -346,7 +366,9 @@ export async function verifyCombatCandidates({
         );
         if (state.failed) return failure(state.failed);
         const finished = gains.filter((g) => g !== null);
-        return { ...rowFromDiffs(key, finished, true), description };
+        // Every gain unusable (non-finite) on a run nobody stopped: nothing was measured, which is a failure
+        if (finished.length === 0 && !stopped()) return failure(new Error('No seed produced a usable result'));
+        return { ...rowFromDiffs(key, finished, true, seeds), description };
     });
 
     const settled = await Promise.all(results);
@@ -451,7 +473,11 @@ export async function verifyLabCandidates({
     );
     const baselineFailure = { error: null };
     for (const row of baselines)
-        for (const promise of row) promise.catch((e) => (baselineFailure.error = baselineFailure.error || e));
+        for (const promise of row) {
+            promise.catch((e) => {
+                if (!isCancel(e, stopped)) baselineFailure.error = baselineFailure.error || e;
+            });
+        }
 
     const results = rows.map(async (row, r) => {
         const key = rowKey(row, r);
@@ -512,6 +538,7 @@ export async function verifyLabCandidates({
                             report(`Verify: ${description ?? key}`);
                             return expectedFightAttempts(winRateOf(result)) - expectedFightAttempts(winRateOf(base));
                         } catch (error) {
+                            if (isCancel(error, stopped)) return null;
                             console.error('[VerifyRunner] Lab simulation failed:', error);
                             state.failed = state.failed || error;
                             return null;
@@ -527,7 +554,8 @@ export async function verifyLabCandidates({
             ...rowFromDiffs(
                 key,
                 diffs.filter((d) => d !== null),
-                false
+                false,
+                seeds
             ),
             description,
         };
@@ -535,7 +563,13 @@ export async function verifyLabCandidates({
 
     const settled = await Promise.all(results);
     if (baselineFailure.error && settled.every((row) => row.verdict === 'error')) {
-        return { ...empty({}), hoursPerSeed, error: messageOf(baselineFailure.error), rows: settled };
+        return {
+            ...empty({}),
+            hoursPerSeed,
+            stopped: stopped(),
+            error: messageOf(baselineFailure.error),
+            rows: settled,
+        };
     }
     return { rows: settled, metric, unit, seeds, hoursPerSeed, stopped: stopped() };
 }
@@ -645,6 +679,8 @@ export async function verifyTriggerChanges({
                   report,
               });
     } catch (error) {
+        // Stop terminates the sims in flight: a stop with nothing measured, not a failure
+        if (isCancel(error, stopped)) return empty({ hoursPerSeed, basis: setting.basis, stopped: true });
         console.error('[VerifyRunner] Trigger verify failed:', error);
         return empty({
             hoursPerSeed,
@@ -663,7 +699,7 @@ export async function verifyTriggerChanges({
         });
     }
 
-    const scored = rowFromDiffs('triggers', outcome.scoreDiffs, true);
+    const scored = rowFromDiffs('triggers', outcome.scoreDiffs, true, seeds);
     const row = {
         ...scored,
         meetsMinGain: Number.isFinite(result.minGain) && scored.mean !== null ? scored.mean >= result.minGain : null,
