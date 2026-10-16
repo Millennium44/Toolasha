@@ -6526,7 +6526,9 @@ class LabSimUI {
         this._setStatus(orderOnly ? outcome : `Upgrade analysis finished. ${outcome}`);
         // Remembered with the table so a reload brings the section back. An order-only run has no table, so
         // it is saved as an empty result set beside the section
-        if (section.groups.length) {
+        // A completed run saves whatever it found, an empty section included ("Nothing to reorder"): the
+        // record is replaced whole, so skipping it would bring an older run's section back on reload
+        if (this._stillSameCharacter(ownerId)) {
             const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
             saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, savedAnalysis || { results: [] }, {
                 characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
