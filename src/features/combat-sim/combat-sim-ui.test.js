@@ -132,6 +132,14 @@ const mocks = vi.hoisted(() => ({
     triggerFail: null,
     /** When set, the SimEditor stub answers `applyTriggerValueChanges` with this */
     applyOutcome: null,
+    /** The `combatSim_autoVerifyCloseCalls` setting */
+    autoVerify: false,
+    /** Every `verifyCombatCandidates` call's params, and an optional (params) => outcome standing in for it */
+    verifyCalls: [],
+    verifyImpl: null,
+    /** Every `verifyTriggerChanges` call's params, and an optional (params) => outcome */
+    triggerVerifyCalls: [],
+    triggerVerifyImpl: null,
 }));
 
 vi.mock('./trigger-optimizer.js', () => ({
@@ -158,6 +166,7 @@ vi.mock('../../core/config.js', () => ({
             if (key === 'profitCalc_pricingMode') return mocks.pricingMode;
             if (key === 'profitCalc_patientTickBuy' || key === 'profitCalc_patientTickSell') return mocks.patientTick;
             if (key === 'profitCalc_keyPricingMode') return mocks.keyPricingMode;
+            if (key === 'combatSim_autoVerifyCloseCalls') return mocks.autoVerify;
             return fallback;
         },
         getSetting: (key, fallback = false) =>
@@ -599,6 +608,21 @@ vi.mock('./sim-editor.js', () => ({
 vi.mock('./scroll-pricing.js', async (importOriginal) => {
     const actual = await importOriginal();
     return { ...actual, scrollTokenRate: () => mocks.scrollRate };
+});
+// The engine's classifiers stay real; the simulations behind them are the part that is stood in for
+vi.mock('./verify-runner.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        verifyCombatCandidates: async (params) => {
+            mocks.verifyCalls.push(params);
+            return mocks.verifyImpl ? mocks.verifyImpl(params) : { rows: [], refused: 'rows' };
+        },
+        verifyTriggerChanges: async (params) => {
+            mocks.triggerVerifyCalls.push(params);
+            return mocks.triggerVerifyImpl ? mocks.triggerVerifyImpl(params) : { rows: [], refused: 'nothing' };
+        },
+    };
 });
 vi.mock('./upgrade-advisor.js', async (importOriginal) => {
     const actual = await importOriginal();
@@ -10947,6 +10971,17 @@ describe('the Triggers option', () => {
             expect(box().textContent).not.toContain('Last result');
         });
 
+        test('a remembered result cannot be verified: no button, a muted line says to re-run', async () => {
+            mocks.triggerVerifyCalls = [];
+            await finishOneRun();
+            openTriggers();
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+            expect(box().querySelector('#mwi-csim-trigger-verify-btn')).toBeNull();
+            expect(box().querySelector('#mwi-csim-trigger-verify').textContent).toContain('re-run to verify');
+            expect(mocks.triggerVerifyCalls).toHaveLength(0);
+        });
+
         test('is not shown after the market prices moved', async () => {
             await finishOneRun();
             const { default: marketAPI } = await import('../../api/marketplace.js');
@@ -11565,6 +11600,684 @@ describe('a sync pull of the panel’s remembered keys', () => {
             scope: 'party',
             objective: 'xp',
             legacyOnly: 'kept',
+        });
+    });
+});
+
+const actualAdvisor = await vi.importActual('./upgrade-advisor.js');
+
+describe('verifying close calls on fresh seeds', () => {
+    const { candidateAssignmentKey } = actualAdvisor;
+    const CONTEXT = { gameData: { abilityDetailMap: {} }, playerDTOs: [{ abilities: [] }], playerIndex: 0 };
+    const settle = async () => {
+        for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    /** An Ability order row: free, with a profit gain and the noise the section reads */
+    const orderRow = (name, { profit = 900, se = 1, sig = true } = {}) => ({
+        candidate: {
+            description: `Order: ${name}`,
+            type: 'ability_order',
+            slot: 'ability_1',
+            abilityOrder: true,
+            order: name.split(' → '),
+            cost: 0,
+            noPurchase: true,
+        },
+        cost: 0,
+        metrics: {
+            dps: 100,
+            xpPerHour: 1000,
+            profitPerHour: 1000 + profit,
+            deathsPerHour: 0,
+            encountersPerHour: 10,
+        },
+        deltas: { dps: 0, xp: 0, profit: profit / 10, deaths: 0, encounters: 0 },
+        noise: { dps: se, xp: se, profit: se, encounters: se, deaths: se },
+        significantBy: { dps: sig, xp: sig, profit: sig, encounters: sig, deaths: sig },
+        score: 25,
+        goldPer: { dps: 0, xp: 0, profit: 0, deaths: 0, encounters: 0 },
+        economics: {},
+    });
+    /** A purchasable row whose profit gain is a close call (positive, not significant) */
+    const closeGold = (name) => {
+        const r = row(name, { slot: '/equipment_types/ring', cost: 100, profitGain: 50 });
+        r.noise = { dps: 1, xp: 1, profit: 1, encounters: 1, deaths: 1 };
+        r.significantBy = { dps: false, xp: false, profit: false, encounters: false, deaths: false };
+        return r;
+    };
+
+    /** What the engine answers: one entry per row handed in, verdicts looked up by description */
+    const answer =
+        (verdicts, extra = {}) =>
+        (params) => ({
+            rows: params.rows.map((r) => {
+                const verdict = verdicts[r.candidate.description] || 'confirmed';
+                return {
+                    key: candidateAssignmentKey(r.candidate),
+                    description: r.candidate.description,
+                    mean: verdict === 'error' ? null : verdict === 'worse' ? -300 : verdict === 'confirmed' ? 640 : 40,
+                    se: verdict === 'error' ? null : 120,
+                    seeds: 8,
+                    verdict,
+                    error: verdict === 'error' ? 'boom' : undefined,
+                };
+            }),
+            metric: params.metric,
+            unit: 'gold/hr',
+            seeds: 8,
+            hoursPerSeed: 1,
+            stopped: false,
+            ...extra,
+        });
+
+    const draw = (orders, extra = {}) =>
+        ui._renderUpgradeResults({
+            baseline: BASELINE,
+            results: [row('Cheap ring', { slot: '/equipment_types/ring' }), ...orders],
+            food: null,
+            context: CONTEXT,
+            ...extra,
+        });
+    const section = () => ui.panel.querySelector('#mwi-csim-order-section');
+    const chips = () => [...section().querySelectorAll('[data-verify-chip]')].map((c) => c.textContent);
+    const verifyOrders = async () => {
+        section().querySelector('#mwi-csim-order-verify').click();
+        await settle();
+    };
+    const statusText = () => ui.panel.querySelector('#mwi-csim-status').textContent;
+
+    beforeEach(() => {
+        mocks.verifyCalls = [];
+        mocks.verifyImpl = null;
+        mocks.triggerVerifyCalls = [];
+        mocks.triggerVerifyImpl = null;
+        mocks.autoVerify = false;
+        mocks.characterId = 'char1';
+        mocks.upgradeRuns = 0;
+        mocks.onRun = null;
+        ui.buildPanel();
+        ui._collapsedSections = {};
+        ui._abilityOrderRank = undefined;
+        ui._abilityOrderShowAll = false;
+        ui._restoredUpgradeAt = null;
+        ui._upgradeBudget = 0;
+    });
+    afterEach(() => {
+        ui._abilityOrderRank = undefined;
+        ui._restoredUpgradeAt = null;
+        ui._upgradeBudget = 0;
+        ui._upgradePlanMetric = undefined;
+        mocks.characterId = 'char1';
+        mocks.autoVerify = false;
+        mocks.onRun = null;
+        ui.destroy();
+        vi.restoreAllMocks();
+    });
+
+    describe('the Ability order section', () => {
+        test('Verify top 3 is offered with a live context, and not for a remembered run or one without a context', () => {
+            draw([orderRow('B → A')]);
+            expect(section().querySelector('#mwi-csim-order-verify').disabled).toBe(false);
+
+            ui._restoredUpgradeAt = Date.now();
+            draw([orderRow('B → A')]);
+            const restored = section().querySelector('#mwi-csim-order-verify');
+            expect(restored.disabled).toBe(true);
+            expect(restored.title).toBe('Re-run the analysis to verify');
+
+            ui._restoredUpgradeAt = null;
+            draw([orderRow('B → A')], { context: undefined });
+            expect(section().querySelector('#mwi-csim-order-verify').disabled).toBe(true);
+        });
+
+        test('verifies the top three by the Rank-by metric, plus the best significant order outside them', async () => {
+            // Three noisy leaders and a smaller gain that is clearly outside the noise
+            draw([
+                orderRow('A → B', { profit: 900, se: 500, sig: false }),
+                orderRow('C → D', { profit: 800, se: 500, sig: false }),
+                orderRow('E → F', { profit: 700, se: 500, sig: false }),
+                orderRow('G → H', { profit: 300, se: 1 }),
+                orderRow('I → J', { profit: 100, se: 1 }),
+            ]);
+            mocks.verifyImpl = answer({});
+            await verifyOrders();
+
+            expect(mocks.verifyCalls).toHaveLength(1);
+            const call = mocks.verifyCalls[0];
+            expect(call.metric).toBe('profit');
+            expect(call.rows.map((r) => r.candidate.description)).toEqual([
+                'Order: A → B',
+                'Order: C → D',
+                'Order: E → F',
+                'Order: G → H',
+            ]);
+            expect(call.context).toBe(CONTEXT);
+            expect(typeof call.abortSignal).toBe('function');
+        });
+
+        test('passes the current Rank-by key as the metric', async () => {
+            ui._abilityOrderRank = 'dps';
+            draw([{ ...orderRow('A → B'), deltas: { dps: 5, xp: 0, profit: 0, deaths: 0, encounters: 0 } }]);
+            mocks.verifyImpl = answer({});
+            await verifyOrders();
+            expect(mocks.verifyCalls[0].metric).toBe('dps');
+        });
+
+        test('each verdict draws its own chip, with the figure in the result unit', async () => {
+            draw([
+                orderRow('A → B', { profit: 900 }),
+                orderRow('C → D', { profit: 800 }),
+                orderRow('E → F', { profit: 700 }),
+            ]);
+            mocks.verifyImpl = answer({ 'Order: C → D': 'not-confirmed', 'Order: E → F': 'worse' });
+            await verifyOrders();
+
+            const chipOf = (name) =>
+                [...section().querySelectorAll('[data-order-row]')]
+                    .find((tr) => tr.children[0].textContent.startsWith(name))
+                    ?.querySelector('[data-verify-chip]')?.textContent;
+            expect(chipOf('A → B')).toBe('✓ confirmed +640 ±120');
+            expect(chipOf('C → D')).toBe('not confirmed');
+            expect(chipOf('E → F')).toBe('✗ worse −300 ±120');
+        });
+
+        test('an error is a chip of its own, and a failed row is not read as a verdict', async () => {
+            draw([orderRow('A → B')]);
+            mocks.verifyImpl = answer({ 'Order: A → B': 'error' });
+            await verifyOrders();
+            expect(chips()).toEqual(['error']);
+            expect(section().textContent).not.toContain('none confirmed');
+            expect(section().textContent).not.toContain('best confirmed');
+        });
+
+        test('the collapsed summary and the verdict line prefer a confirmed order', async () => {
+            draw([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 800 })]);
+            expect(section().querySelector('[data-collapse-key]').textContent).toContain('best +');
+            mocks.verifyImpl = answer({ 'Order: A → B': 'worse' });
+            await verifyOrders();
+            const head = section().querySelector('[data-collapse-key]').textContent;
+            expect(head).toContain('best confirmed: C → D');
+            expect(section().textContent).toContain('Confirmed on fresh seeds');
+        });
+
+        test('with nothing confirmed the summary says so', async () => {
+            draw([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 800 })]);
+            mocks.verifyImpl = answer({ 'Order: A → B': 'not-confirmed', 'Order: C → D': 'worse' });
+            await verifyOrders();
+            expect(section().querySelector('[data-collapse-key]').textContent).toContain('none confirmed');
+            expect(section().textContent).toContain('keep your current one');
+        });
+
+        test('a Stop mid-verify keeps the partial verdicts, marked stopped', async () => {
+            draw([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 800 })]);
+            let release;
+            let signalDuring;
+            mocks.verifyImpl = async (params) => {
+                await new Promise((resolve) => {
+                    release = resolve;
+                });
+                signalDuring = params.abortSignal();
+                const done = answer({})(params);
+                // The row cut off by the terminated sim comes back as a failure
+                done.rows[1] = { ...done.rows[1], verdict: 'error', error: 'Cancelled', mean: null, se: null };
+                return { ...done, stopped: true };
+            };
+            section().querySelector('#mwi-csim-order-verify').click();
+            await settle();
+            // Stop is up while it runs, and the Run button is out of the way
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-stop').style.display).toBe('inline-block');
+            expect(ui._isBusy()).toBe(true);
+            ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+            release();
+            await settle();
+
+            expect(signalDuring).toBe(true);
+            expect(chips()).toEqual(['✓ confirmed +640 ±120 (stopped)']);
+            expect(section().textContent).toContain('Verify stopped partway');
+            expect(statusText()).toContain('stopped');
+            expect(ui._isBusy()).toBe(false);
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-stop').style.display).toBe('none');
+        });
+
+        test('a refused verify says so in the status line and stores nothing', async () => {
+            draw([orderRow('A → B')]);
+            mocks.verifyImpl = () => ({ rows: [], refused: 'context', metric: 'profit', unit: 'gold/hr' });
+            await verifyOrders();
+            expect(statusText()).toContain('re-run the analysis to verify');
+            expect(chips()).toEqual([]);
+            expect(ui._upgradeResultsData.verifyVerdicts).toBeUndefined();
+            expect(ui._isBusy()).toBe(false);
+        });
+
+        test('a character switch during the verify discards the outcome silently', async () => {
+            draw([orderRow('A → B')]);
+            const results = ui._upgradeResultsData;
+            mocks.verifyImpl = (params) => {
+                mocks.characterId = 'char2';
+                return answer({})(params);
+            };
+            await verifyOrders();
+            expect(results.verifyVerdicts).toBeUndefined();
+            expect(statusText()).not.toContain('Verify complete');
+        });
+
+        test('an analysis replacing the results during the verify discards the outcome', async () => {
+            draw([orderRow('A → B')]);
+            const results = ui._upgradeResultsData;
+            mocks.verifyImpl = (params) => {
+                ui._upgradeResultsData = { ...results, results: [] };
+                return answer({})(params);
+            };
+            await verifyOrders();
+            expect(results.verifyVerdicts).toBeUndefined();
+        });
+
+        test('verdicts survive a re-render, a sort, a collapse and a replan', async () => {
+            ui._upgradeBudget = 1_000_000;
+            draw([orderRow('A → B')]);
+            mocks.verifyImpl = answer({});
+            await verifyOrders();
+            expect(chips()).toHaveLength(1);
+
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(chips()).toHaveLength(1);
+            ui._upgradeSort = { key: 'cost', asc: false };
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(chips()).toHaveLength(1);
+            section().querySelector('[data-collapse-key]').click();
+            section().querySelector('[data-collapse-key]').click();
+            expect(chips()).toHaveLength(1);
+            ui._upgradePlanMetric = 'xp';
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(chips()).toHaveLength(1);
+        });
+
+        test('a Rank-by change shows only the verdicts measured under that metric', async () => {
+            draw([{ ...orderRow('A → B'), deltas: { dps: 5, xp: 0, profit: 90, deaths: 0, encounters: 0 } }]);
+            mocks.verifyImpl = answer({});
+            await verifyOrders();
+            expect(chips()).toHaveLength(1);
+
+            const select = section().querySelector('#mwi-csim-order-rank');
+            select.value = 'dps';
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            expect(chips()).toEqual([]);
+            expect(section().querySelector('[data-collapse-key]').textContent).not.toContain('confirmed');
+
+            select.value = 'profit';
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            expect(chips()).toHaveLength(1);
+        });
+
+        test('a new analysis clears the verdicts, even when it hands back the same result', async () => {
+            const results = {
+                baseline: BASELINE,
+                results: [orderRow('A → B')],
+                food: null,
+                context: CONTEXT,
+            };
+            mocks.upgradeResult = results;
+            selectZone();
+            await ui._onUpgradeAnalyze();
+            mocks.verifyImpl = answer({});
+            await verifyOrders();
+            expect(chips()).toHaveLength(1);
+
+            await ui._onUpgradeAnalyze();
+            expect(results.verifyVerdicts).toBeUndefined();
+            expect(chips()).toEqual([]);
+        });
+    });
+
+    describe('the Budget free-order line', () => {
+        const planOrder = () => ui.panel.querySelector('#mwi-csim-upgrade-budget [data-plan-order]');
+        const level = () => {
+            const r = row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 });
+            r.significantBy = { profit: true, dps: true, xp: true };
+            return r;
+        };
+        const drawPlan = (orders) => {
+            ui._upgradeBudget = 1_000_000;
+            ui._upgradePlanMetric = 'profit';
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [level(), ...orders],
+                food: null,
+                context: CONTEXT,
+            });
+        };
+
+        test('an order verified not confirmed is not appended; the next one is', async () => {
+            drawPlan([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 300 })]);
+            expect(planOrder().textContent).toContain('A → B');
+            mocks.verifyImpl = answer({ 'Order: A → B': 'not-confirmed' });
+            await verifyOrders();
+            expect(planOrder().textContent).toContain('C → D');
+            expect(planOrder().textContent).not.toContain('A → B');
+        });
+
+        test('with every order rejected the plan says none held up', async () => {
+            drawPlan([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 300 })]);
+            mocks.verifyImpl = answer({ 'Order: A → B': 'worse', 'Order: C → D': 'not-confirmed' });
+            await verifyOrders();
+            expect(planOrder()).toBeNull();
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-budget').textContent).toContain('held up when verified');
+        });
+
+        test('a confirmed order is named, and a verify cut short rejects nothing', async () => {
+            drawPlan([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 300 })]);
+            mocks.verifyImpl = answer({ 'Order: A → B': 'worse' });
+            await verifyOrders();
+            expect(planOrder().textContent).toContain('C → D');
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-budget').textContent).toContain(
+                'confirmed on fresh seeds'
+            );
+
+            mocks.verifyImpl = answer(
+                { 'Order: A → B': 'not-confirmed', 'Order: C → D': 'not-confirmed' },
+                { stopped: true }
+            );
+            ui._upgradeResultsData.verifyVerdicts = undefined;
+            await verifyOrders();
+            // A stopped run's "not confirmed" is a run that did not get far enough: A → B stays
+            expect(planOrder().textContent).toContain('A → B');
+        });
+    });
+
+    describe('the Upgrades (gold) table', () => {
+        const goldTable = () => ui.panel.querySelector('#mwi-csim-upgrade-results table');
+        const goldChips = () => [...goldTable().querySelectorAll('[data-verify-chip]')].map((c) => c.textContent);
+
+        test('Verify top 3 verifies the table order by profit when the sorted column is not a metric, and says so', async () => {
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [closeGold('R1'), closeGold('R2'), closeGold('R3'), closeGold('R4')],
+                food: null,
+                context: CONTEXT,
+            });
+            const bar = ui.panel.querySelector('#mwi-csim-gold-verify').parentElement.textContent;
+            expect(bar).toContain('by Profit/hr');
+            expect(bar).toContain('not one of');
+            mocks.verifyImpl = answer({});
+            ui.panel.querySelector('#mwi-csim-gold-verify').click();
+            await settle();
+
+            expect(mocks.verifyCalls).toHaveLength(1);
+            expect(mocks.verifyCalls[0].metric).toBe('profit');
+            expect(mocks.verifyCalls[0].rows).toHaveLength(3);
+            expect(goldChips()).toHaveLength(3);
+        });
+
+        test("uses the sort column's metric when it is one of the four", async () => {
+            ui._upgradeSort = { key: 'dps', asc: false };
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [closeGold('R1')],
+                food: null,
+                context: CONTEXT,
+            });
+            expect(ui.panel.querySelector('#mwi-csim-gold-verify').parentElement.textContent).toContain('by DPS');
+            mocks.verifyImpl = answer({});
+            ui.panel.querySelector('#mwi-csim-gold-verify').click();
+            await settle();
+            expect(mocks.verifyCalls[0].metric).toBe('dps');
+        });
+
+        test('a row has its own verify action, which does not open its detail row', async () => {
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [closeGold('R1'), closeGold('R2')],
+                food: null,
+                context: CONTEXT,
+            });
+            mocks.verifyImpl = answer({ R2: 'worse' });
+            const buttons = goldTable().querySelectorAll('[data-verify-row]');
+            expect(buttons).toHaveLength(2);
+            buttons[1].click();
+            await settle();
+
+            expect(mocks.verifyCalls[0].rows).toHaveLength(1);
+            expect(goldChips()).toHaveLength(1);
+            expect(goldChips()[0]).toContain('worse');
+            expect(goldTable().querySelector('tr[data-upgrade-detail]').style.display).toBe('none');
+        });
+
+        test('a remembered run cannot be verified from the table either', () => {
+            ui._restoredUpgradeAt = Date.now();
+            ui._renderUpgradeResults({ baseline: BASELINE, results: [closeGold('R1')], food: null, context: CONTEXT });
+            expect(ui.panel.querySelector('#mwi-csim-gold-verify').disabled).toBe(true);
+            expect(goldTable().querySelector('[data-verify-row]').disabled).toBe(true);
+        });
+    });
+
+    describe('auto-verify', () => {
+        const run = async (results) => {
+            mocks.upgradeResult = results;
+            selectZone();
+            mocks.verifyImpl = answer({});
+            await ui._onUpgradeAnalyze();
+        };
+        const closeOrder = (name, over) => orderRow(name, { profit: 200, se: 500, sig: false, ...over });
+
+        test('does nothing with the setting off', async () => {
+            await run({ baseline: BASELINE, results: [closeOrder('A → B')], food: null, context: CONTEXT });
+            expect(mocks.verifyCalls).toHaveLength(0);
+        });
+
+        test('verifies up to three close improving order rows, by the Rank-by metric', async () => {
+            mocks.autoVerify = true;
+            await run({
+                baseline: BASELINE,
+                results: [
+                    closeOrder('A → B', { profit: 500 }),
+                    closeOrder('C → D', { profit: 400 }),
+                    closeOrder('E → F', { profit: 300 }),
+                    closeOrder('G → H', { profit: 200 }),
+                    // clearly significant: not a close call
+                    orderRow('S → T', { profit: 9000, se: 1 }),
+                    // close, but not an improvement
+                    closeOrder('W → X', { profit: -100 }),
+                ],
+                food: null,
+                context: CONTEXT,
+            });
+            expect(mocks.verifyCalls).toHaveLength(1);
+            expect(mocks.verifyCalls[0].metric).toBe('profit');
+            expect(mocks.verifyCalls[0].rows.map((r) => r.candidate.description)).toEqual([
+                'Order: A → B',
+                'Order: C → D',
+                'Order: E → F',
+            ]);
+            expect(ui.panel.querySelectorAll('#mwi-csim-order-section [data-verify-chip]')).toHaveLength(3);
+        });
+
+        test('says it is auto-verifying while it runs, and a close gold row is verified too', async () => {
+            mocks.autoVerify = true;
+            const seen = [];
+            const real = answer({});
+            mocks.upgradeResult = {
+                baseline: BASELINE,
+                results: [closeGold('R1'), closeOrder('A → B')],
+                food: null,
+                context: CONTEXT,
+            };
+            selectZone();
+            mocks.verifyImpl = (params) => {
+                seen.push(statusText());
+                return real(params);
+            };
+            await ui._onUpgradeAnalyze();
+            expect(mocks.verifyCalls).toHaveLength(2);
+            expect(seen[0]).toContain('Auto-verifying 2 close calls…');
+            expect(mocks.verifyCalls[1].rows[0].candidate.description).toBe('R1');
+        });
+
+        test('never on a stopped run', async () => {
+            mocks.autoVerify = true;
+            mocks.onRun = () => {
+                ui._upgradeAborted = true;
+            };
+            await run({ baseline: BASELINE, results: [closeOrder('A → B')], food: null, context: CONTEXT });
+            expect(mocks.verifyCalls).toHaveLength(0);
+        });
+
+        test('never on a remembered run', async () => {
+            mocks.autoVerify = true;
+            draw([closeOrder('A → B')]);
+            ui._restoredUpgradeAt = Date.now();
+            await ui._autoVerifyCloseCalls(mocks.characterId, ui._upgradeResultsData);
+            expect(mocks.verifyCalls).toHaveLength(0);
+        });
+
+        test('Stop during the first half skips the second', async () => {
+            mocks.autoVerify = true;
+            mocks.upgradeResult = {
+                baseline: BASELINE,
+                results: [closeGold('R1'), closeOrder('A → B')],
+                food: null,
+                context: CONTEXT,
+            };
+            selectZone();
+            mocks.verifyImpl = (params) => {
+                ui._upgradeAborted = true;
+                return { ...answer({})(params), stopped: true };
+            };
+            await ui._onUpgradeAnalyze();
+            expect(mocks.verifyCalls).toHaveLength(1);
+        });
+    });
+
+    describe('trigger tuning', () => {
+        const FIREBALL = {
+            playerHrid: 'player1',
+            playerName: 'player1',
+            slotType: 'abilities',
+            slotIndex: 1,
+            itemHrid: '/abilities/fireball',
+            itemName: 'Fireball',
+            rowIndex: 0,
+            dependencyHrid: '/combat_trigger_dependencies/targeted_enemy',
+            conditionHrid: '/combat_trigger_conditions/current_hp',
+            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+            from: 1,
+            to: 600,
+            deltaScore: 7.2,
+            se: 1.1,
+            deltaXp: 900,
+            deltaProfit: 12000,
+            deltaDeaths: 0,
+        };
+        const runTriggers = async (extra = {}) => {
+            selectZone();
+            ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+                box.checked = box.getAttribute('data-upgrade-mode') === 'triggers';
+            });
+            mocks.editedDTOs = { player1: { hrid: 'player1', abilities: [], food: [], drinks: [] } };
+            mocks.triggerResult = {
+                scope: 'me',
+                objective: 'balanced',
+                changes: [FIREBALL],
+                unchanged: [],
+                combined: null,
+                simCount: 10,
+                verifyContext: { tunables: [], playerDTOs: [] },
+                ...extra,
+            };
+            await ui._onUpgradeAnalyze();
+        };
+        const block = () => ui.panel.querySelector('#mwi-csim-trigger-verify');
+        afterEach(() => {
+            mocks.editedDTOs = null;
+            for (const key of [...mocks.store.keys()])
+                if (key.includes('combatSimTriggerLastResult')) mocks.store.delete(key);
+        });
+
+        test('a fresh result offers Verify, and the verdict shows mean ± se in score points with its basis', async () => {
+            await runTriggers();
+            const btn = block().querySelector('#mwi-csim-trigger-verify-btn');
+            expect(btn).not.toBeNull();
+            mocks.triggerVerifyImpl = () => ({
+                rows: [{ key: 'triggers', mean: 4.25, se: 1.5, seeds: 8, verdict: 'confirmed' }],
+                metric: 'balanced',
+                unit: 'points',
+                seeds: 8,
+                hoursPerSeed: 1,
+                stopped: false,
+                basis: 'recommended',
+            });
+            btn.click();
+            await settle();
+
+            expect(mocks.triggerVerifyCalls).toHaveLength(1);
+            expect(typeof mocks.triggerVerifyCalls[0].abortSignal).toBe('function');
+            expect(block().textContent).toContain('✓ confirmed +4.25 pts ±1.50 pts');
+            expect(block().textContent).toContain('over 8 fresh seeds');
+            expect(block().textContent).toContain('recommended changes');
+            // the button is back for another go
+            expect(block().querySelector('#mwi-csim-trigger-verify-btn')).not.toBeNull();
+        });
+
+        test('not confirmed, worse and an error each read as such', async () => {
+            await runTriggers();
+            const verdictText = async (row) => {
+                mocks.triggerVerifyImpl = () => ({
+                    rows: [{ key: 'triggers', seeds: 8, mean: 0.4, se: 2, ...row }],
+                    metric: 'balanced',
+                    unit: 'points',
+                    seeds: 8,
+                    stopped: false,
+                    basis: 'best-found',
+                });
+                block().querySelector('#mwi-csim-trigger-verify-btn').click();
+                await settle();
+                return block().textContent;
+            };
+            expect(await verdictText({ verdict: 'not-confirmed' })).toContain('not confirmed');
+            expect(await verdictText({ verdict: 'worse', mean: -3 })).toContain('✗ worse −3.00 pts');
+            const error = await verdictText({ verdict: 'error', mean: null, se: null, error: 'boom' });
+            expect(error).toContain('error');
+            expect(error).not.toContain('NaN');
+        });
+
+        test('a refusal and a Stop each say what happened', async () => {
+            await runTriggers();
+            mocks.triggerVerifyImpl = () => ({ rows: [], refused: 'nothing', stopped: false, unit: 'points' });
+            block().querySelector('#mwi-csim-trigger-verify-btn').click();
+            await settle();
+            expect(block().textContent).toContain('Not verified: nothing to verify');
+
+            mocks.triggerVerifyImpl = async () => {
+                await settle();
+                return {
+                    rows: [{ key: 'triggers', verdict: 'error', error: 'Cancelled', mean: null, se: null, seeds: 0 }],
+                    stopped: true,
+                    unit: 'points',
+                };
+            };
+            block().querySelector('#mwi-csim-trigger-verify-btn').click();
+            ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+            await settle();
+            await settle();
+            expect(block().textContent).toContain('Verify stopped');
+            expect(block().textContent).not.toContain('error');
+        });
+
+        test('a result without a live context has no Verify button', async () => {
+            await runTriggers({ verifyContext: undefined });
+            expect(block().querySelector('#mwi-csim-trigger-verify-btn')).toBeNull();
+        });
+
+        test('a new analysis during the verify discards its outcome', async () => {
+            await runTriggers();
+            const shown = ui._shownTriggerResult;
+            mocks.triggerVerifyImpl = () => {
+                ui._analysisGen += 1;
+                return { rows: [{ key: 'triggers', verdict: 'confirmed', mean: 1, se: 1, seeds: 8 }], unit: 'points' };
+            };
+            block().querySelector('#mwi-csim-trigger-verify-btn').click();
+            await settle();
+            expect(shown.verifyOutcome).toBeUndefined();
         });
     });
 });

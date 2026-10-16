@@ -262,14 +262,121 @@ export function triggerHeadline(result) {
 }
 
 /**
+ * A verify figure in the unit the engine measured it in, signed.
+ * @param {number} value - A mean or standard error
+ * @param {string} unit - `gold/hr`, `%`, `points` or `attempts`
+ * @param {Object} [options]
+ * @param {boolean} [options.signed] - Prefix a plus or minus (default); false for a standard error
+ * @returns {string}
+ */
+export function formatVerifyFigure(value, unit, { signed = true } = {}) {
+    if (!Number.isFinite(value)) return '—';
+    const sign = !signed ? '' : value > 0 ? '+' : value < 0 ? '−' : '';
+    const abs = Math.abs(value);
+    if (unit === 'gold/hr') return `${sign}${formatKMB(Math.round(abs))}`;
+    if (unit === '%') return `${sign}${abs.toFixed(2)}%`;
+    if (unit === 'attempts') return `${sign}${abs.toFixed(2)} attempts`;
+    return `${sign}${abs.toFixed(2)} pts`;
+}
+
+/**
+ * The chip a verified row carries: confirmed, not confirmed, worse or error, with the measured figure.
+ * @param {Object} entry - `{ verdict, mean, se, unit, stopped, error }`
+ * @returns {string} HTML
+ */
+export function verifyChipHtml(entry) {
+    const stopped = entry?.stopped ? ' (stopped)' : '';
+    const base = 'display:inline-block; margin-left:6px; padding:0 5px; border-radius:3px; font-size:10px; ';
+    const figure = Number.isFinite(entry?.mean)
+        ? `${formatVerifyFigure(entry.mean, entry.unit)} ±${formatVerifyFigure(entry.se, entry.unit, { signed: false })}`
+        : '';
+    const tip = `Re-measured on fresh seeds${figure ? `: ${figure}` : ''}${entry?.seeds ? ` over ${entry.seeds} seeds` : ''}`;
+    let style;
+    let text;
+    if (entry?.verdict === 'confirmed') {
+        style = 'background:rgba(76,175,80,0.2); color:#8bc34a;';
+        text = `✓ confirmed ${figure}`;
+    } else if (entry?.verdict === 'worse') {
+        style = 'background:rgba(244,67,54,0.2); color:#f44336;';
+        text = `✗ worse ${figure}`;
+    } else if (entry?.verdict === 'error') {
+        style = 'background:rgba(255,152,0,0.2); color:#ff9800;';
+        text = 'error';
+    } else {
+        style = 'background:rgba(150,150,150,0.2); color:#999;';
+        text = 'not confirmed';
+    }
+    const title = entry?.verdict === 'error' ? `Verify failed${entry.error ? `: ${entry.error}` : ''}` : tip;
+    return `<span data-verify-chip="${esc(entry?.verdict || 'not-confirmed')}" style="${base}${style}" title="${esc(title)}">${esc((text + stopped).trim())}</span>`;
+}
+
+/** What each refusal from the verify engine says */
+const REFUSED_TEXT = {
+    unavailable: 're-run the analysis to verify',
+    nothing: 'nothing to verify: no change was recommended',
+    seeds: 'too few seeds to judge',
+    context: 're-run the analysis to verify',
+    rows: 'no rows to verify',
+    metric: 'this metric cannot be verified',
+};
+
+/**
+ * The Verify block under a trigger result: a button (when the result can be verified), a muted
+ * "re-run to verify" line (when it is a remembered result that cannot), and the last verdict.
+ * @param {Object|null} result - A tuner result; the last verdict is `result.verifyOutcome`
+ * @param {Object} [options]
+ * @param {boolean} [options.canVerify] - `canVerifyTriggerResult(result)`
+ * @param {boolean} [options.cached] - The result is a remembered one
+ * @param {boolean} [options.running] - A verify is in flight
+ * @returns {string} HTML
+ */
+export function triggerVerifyHtml(result, { canVerify = false, cached = false, running = false } = {}) {
+    if (!result || result.noTunables) return '<div id="mwi-csim-trigger-verify"></div>';
+    const muted = (text) => `<span style="color:#888; font-size:11px;">${esc(text)}</span>`;
+    let inner = '';
+    if (canVerify) {
+        inner +=
+            `<button id="mwi-csim-trigger-verify-btn" style="${BTN_STYLE}"${running ? ' disabled' : ''} ` +
+            `title="Re-measures the recommended setting (or the best one found) against your current triggers on ` +
+            `fresh seeds, longer than the search ran">${running ? 'Verifying…' : 'Verify'}</button>`;
+    } else if (cached) {
+        inner += muted('Remembered result: re-run to verify.');
+    } else {
+        return '<div id="mwi-csim-trigger-verify"></div>';
+    }
+    const out = result.verifyOutcome;
+    if (out && !running) {
+        if (out.refused) {
+            inner += ` ${muted(`Not verified: ${REFUSED_TEXT[out.refused] || out.refused}.`)}`;
+        } else if (out.rows?.[0]) {
+            const row = out.rows[0];
+            const basis = out.basis === 'recommended' ? 'recommended changes' : out.basis ? 'best found' : '';
+            inner += verifyChipHtml({ ...row, unit: out.unit, stopped: out.stopped });
+            if (row.verdict !== 'error') {
+                inner += ` ${muted(
+                    `${formatVerifyFigure(row.mean, out.unit)} ± ${formatVerifyFigure(row.se, out.unit, { signed: false })} ` +
+                        `over ${row.seeds} fresh seeds${basis ? ` · ${basis}` : ''}`
+                )}`;
+            }
+        } else if (out.stopped) {
+            inner += ` ${muted('Verify stopped before any seed finished.')}`;
+        } else if (out.error) {
+            inner += ` ${muted(`Verify failed: ${out.error}`)}`;
+        }
+    }
+    return `<div id="mwi-csim-trigger-verify" style="margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">${inner}</div>`;
+}
+
+/**
  * The results box: changes grouped by player, sorted by impact, with the
  * all-together line at the bottom and the Apply / Copy buttons.
  * @param {Object|null} result - From `runTriggerOptimization`
  * @param {Object} gameData - Game data payload (display names)
- * @param {Object} [options] - `{ canApply, cached }`; `cached` labels a remembered result and offers Run again
+ * @param {Object} [options] - `{ canApply, cached, verify }`; `cached` labels a remembered result and offers Run again;
+ *   `verify` is `{ canVerify }` and adds the Verify block (see `triggerVerifyHtml`)
  * @returns {string} HTML
  */
-export function renderTriggerResultsHtml(result, gameData, { canApply = true, cached = false } = {}) {
+export function renderTriggerResultsHtml(result, gameData, { canApply = true, cached = false, verify = null } = {}) {
     const cachedLabel = cached
         ? ` <span style="color:#888; font-weight:400; font-size:11px;">Last result (unchanged setup)</span>` +
           ` <button id="mwi-csim-trigger-rerun" style="${BTN_STYLE} margin-left:6px;" ` +
@@ -418,5 +525,6 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
             `<button id="mwi-csim-trigger-copy" style="${BTN_STYLE}" title="Copies one line per change, to enter in the game yourself">Copy as text</button>` +
             `</div>`;
     }
+    if (verify) body += triggerVerifyHtml(result, { canVerify: Boolean(verify.canVerify), cached });
     return wrap(body);
 }

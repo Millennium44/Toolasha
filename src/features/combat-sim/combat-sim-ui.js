@@ -129,7 +129,15 @@ import {
     SIGNIFICANCE_Z,
     generateAbilityOrderCandidates,
     conflictKeys,
+    candidateAssignmentKey,
 } from './upgrade-advisor.js';
+import {
+    VERIFY_DEFAULTS,
+    verifyCombatCandidates,
+    verifyTriggerChanges,
+    canVerifyTriggerResult,
+    isCloseCall,
+} from './verify-runner.js';
 import { applyMaxTierFood } from './food-optimizer.js';
 import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
 import { simulateZoneRate } from './zone-rate-sim.js';
@@ -148,7 +156,13 @@ import {
     balancedScore,
     profitScale,
 } from './trigger-tuning.js';
-import { renderTriggerResultsHtml, triggerChipOptionsHtml } from './trigger-optimizer-view.js';
+import {
+    renderTriggerResultsHtml,
+    triggerChipOptionsHtml,
+    triggerVerifyHtml,
+    verifyChipHtml,
+    formatVerifyFigure,
+} from './trigger-optimizer-view.js';
 import { collapseHeaderHtml, enhanceCollapsibles } from './collapsible-sections.js';
 import {
     TRIGGER_LAST_RESULT_KEY,
@@ -183,6 +197,48 @@ const ABILITY_ORDER_RANKS = [
     { key: 'balanced', label: 'Balanced' },
 ];
 const DEFAULT_ABILITY_ORDER_RANK = 'profit';
+
+/** The `style` attribute of the Verify buttons */
+const VERIFY_BTN_ATTR =
+    'style="background:rgba(74,158,255,0.2); border:1px solid rgba(74,158,255,0.4); color:#4a9eff; ' +
+    'padding:1px 8px; border-radius:3px; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;"';
+
+/** The gold table's sort columns that name a verifiable metric (the Ability order Rank-by keys) */
+const GOLD_SORT_VERIFY_METRIC = {
+    profit: 'profit',
+    deltaProfit: 'profit',
+    xp: 'xp',
+    deltaXp: 'xp',
+    dps: 'dps',
+    deltaDps: 'dps',
+    encounters: 'eph',
+    deltaEph: 'eph',
+};
+
+/** The row's delta key for each verifiable metric (`eph` reads the encounters delta) */
+const VERIFY_DELTA_KEY = { profit: 'profit', xp: 'xp', dps: 'dps', eph: 'encounters' };
+
+/**
+ * A row's verify key: the verify engine's own (`candidateAssignmentKey`), with the same fallback it uses.
+ * @param {Object} row - An analysis result row
+ * @returns {string}
+ */
+function verifyKeyOf(row) {
+    try {
+        if (row?.candidate) return candidateAssignmentKey(row.candidate);
+    } catch {
+        // fall through to the description
+    }
+    return row?.key ?? row?.candidate?.description ?? '';
+}
+
+/** What each refusal of a combat verify says in the status line */
+const VERIFY_REFUSED_TEXT = {
+    context: 'Cannot verify: re-run the analysis to verify.',
+    seeds: 'Cannot verify: too few seeds to judge a difference.',
+    rows: 'Nothing to verify.',
+    metric: 'Cannot verify on this metric.',
+};
 
 /** A metrics object (`xpPerHour`, ...) in the shape the trigger tuner's `balancedScore` reads */
 const abilityOrderMetrics = (m) => ({
@@ -10419,6 +10475,8 @@ class CombatSimUI {
         // until that await completes, so without this latch a rapid second
         // click can launch a fully independent analysis against the same UI.
         this._upgradeRunning = true;
+        // A verify still in flight measured the previous analysis; its verdicts are not drawn over this one
+        this._analysisGen = (this._analysisGen || 0) + 1;
         // A remembered result a sync pull brings is no longer drawn over this panel's own runs
         this._upgradeRunStarted = true;
 
@@ -10471,6 +10529,9 @@ class CombatSimUI {
         this._upgradeRunning = true;
         this._upgradeRunStarted = true;
         let analysisFailed = false;
+        let finishedResults = null;
+        // The previous analysis' verdicts go with the table this run replaces
+        if (this._upgradeResultsData) delete this._upgradeResultsData.verifyVerdicts;
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
 
@@ -10563,6 +10624,8 @@ class CombatSimUI {
             // The token rate the scroll rows are priced at is part of the analysis: stamped here so a
             // remembered run restores with the rate its profit deltas were measured against, not today's.
             if (results) results.scrollTokenRate = scrollTokenRate();
+            // Verdicts belong to the analysis they re-measured; a result object handed back again starts clean
+            if (results) delete results.verifyVerdicts;
             // What the Ability order section needs to tell "nothing to compare" from "stopped first": whether
             // the option ran, how many orders there were to measure, and whether Stop cut the run short
             if (results && upgradeModes.includes('ability_order')) {
@@ -10590,6 +10653,8 @@ class CombatSimUI {
                 this._renderUpgradeResults(results);
                 const foodNote = results.food ? ' Food search complete.' : '';
                 this._setStatus(`Analysis complete. ${completed} upgrades evaluated.${foodNote}`);
+                // Only a run that finished is a candidate for auto-verify
+                if (completed) finishedResults = results;
             }
             // The remembered set is per character and has no undo: writing this
             // run under the character who arrived mid-analysis would delete the
@@ -10620,6 +10685,18 @@ class CombatSimUI {
 
         if (wantsTriggers && !analysisFailed && !this._upgradeAborted && this._stillSameCharacter(ownerId)) {
             await this._onTriggerAnalyze({ append: true });
+        }
+
+        // Close calls get a second look on fresh seeds when the player asked for it. Never after Stop, a failure
+        // or a character switch, and never for a remembered run (it has no live context to verify from)
+        if (
+            finishedResults &&
+            !analysisFailed &&
+            !this._upgradeAborted &&
+            this._stillSameCharacter(ownerId) &&
+            config.getSettingValue('combatSim_autoVerifyCloseCalls', false)
+        ) {
+            await this._autoVerifyCloseCalls(ownerId, finishedResults);
         }
     }
 
@@ -10748,6 +10825,7 @@ class CombatSimUI {
             box.innerHTML = renderTriggerResultsHtml(cached, gameData, {
                 canApply: Boolean(this._editor?.getEditedDTOs()),
                 cached: true,
+                verify: { canVerify: canVerifyTriggerResult(cached) },
             });
             this._enhanceCollapsibles(box);
             box.dataset.cached = '1';
@@ -10783,6 +10861,8 @@ class CombatSimUI {
         }
 
         this._upgradeRunning = true;
+        this._analysisGen = (this._analysisGen || 0) + 1;
+        this._shownTriggerResult = null;
         let party;
         try {
             party = await this._loadTriggerParty(choices.playerIndex);
@@ -10884,6 +10964,7 @@ class CombatSimUI {
 
             triggerBox.innerHTML = renderTriggerResultsHtml(result, gameData, {
                 canApply: Boolean(this._editor?.getEditedDTOs()),
+                verify: { canVerify: canVerifyTriggerResult(result) },
             });
             this._enhanceCollapsibles(triggerBox);
             this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext);
@@ -10922,6 +11003,8 @@ class CombatSimUI {
      * @private
      */
     _wireTriggerResultButtons(result, gameData, playerDTOs, runContext = null) {
+        this._shownTriggerResult = result || null;
+        this._wireTriggerVerify(result);
         const applyBtn = this.panel.querySelector('#mwi-csim-trigger-apply');
         applyBtn?.addEventListener('click', () => {
             if (!this._editor?.getEditedDTOs()) {
@@ -11521,7 +11604,20 @@ class CombatSimUI {
             summary: `${rows.length} candidate${rows.length === 1 ? '' : 's'}`,
             style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;`,
         });
-        let html = `<div>${goldHead}${this._renderUpgradeColumnMenu()}
+        // Verify measures one metric: the sort column's when it is one of the four, else profit. Chips show only
+        // for verdicts measured under that metric
+        const verifyInfo = this._goldVerifyMetric();
+        const verdicts = this._verifyEntries(this._upgradeResultsData, verifyInfo.metric);
+        this._goldVerifyRows = sorted;
+        const canVerify = this._canVerifyResults(this._upgradeResultsData);
+        const verifyBtn = `style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:0 5px; font-size:10px; cursor:pointer; font-family:inherit;"`;
+        const verifyBar =
+            `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:10px; color:#777;">` +
+            `<button id="mwi-csim-gold-verify" ${VERIFY_BTN_ATTR}${canVerify && sorted.length ? '' : ' disabled'} ` +
+            `title="${canVerify ? `Re-measures the top ${VERIFY_DEFAULTS.top} rows by the table's order against your current setup on fresh seeds` : 'Re-run the analysis to verify'}">` +
+            `Verify top ${VERIFY_DEFAULTS.top}</button>` +
+            `<span>${canVerify ? `by ${verifyInfo.label}${verifyInfo.fallback ? ' (the sorted column is not one of profit, EXP, DPS or EPH)' : ''}` : 're-run the analysis to verify'}</span></div>`;
+        let html = `<div>${goldHead}${this._renderUpgradeColumnMenu()}${verifyBar}
         <table style="width:100%; border-collapse:collapse; font-size:10px;">
             <thead><tr>`;
         for (const c of columns) {
@@ -11531,6 +11627,7 @@ class CombatSimUI {
             const heading = c.sub ? `${c.label}<br>${c.sub}${arrow(c.key)}` : `${c.label}${arrow(c.key)}`;
             html += `<th style="${thBase} ${align(c)}" data-sort-key="${c.key}"${title}>${heading}</th>`;
         }
+        html += `<th style="${thBase} text-align:left; cursor:default;" title="Re-measured on fresh seeds (${verifyInfo.label})">Verify</th>`;
         html += '</tr></thead><tbody>';
 
         sorted.forEach((r, i) => {
@@ -11549,9 +11646,16 @@ class CombatSimUI {
                 const title = c.title ? ` title="${c.title}"` : '';
                 html += `<td style="${style}"${title}>${c.render(r, value)}</td>`;
             }
+            const verdict = verdicts[verifyKeyOf(r)];
+            html +=
+                `<td style="${tdBase} text-align:left; white-space:nowrap;">` +
+                (verdict ? verifyChipHtml(verdict).replace('margin-left:6px; ', '') : '') +
+                `<button data-verify-row="${i}" ${verifyBtn}${canVerify ? '' : ' disabled'} ` +
+                `title="${canVerify ? `Re-measure this row by ${verifyInfo.label} on fresh seeds` : 'Re-run the analysis to verify'}">` +
+                `${verdict ? 'again' : 'verify'}</button></td>`;
             html += `</tr>
             <tr data-upgrade-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="${columns.length}" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
+                <td colspan="${columns.length + 1}" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
             </tr>`;
@@ -12526,11 +12630,31 @@ class CombatSimUI {
             .map((r) => ({ r, gain: gainOf(r) }))
             .filter((e) => Number.isFinite(e.gain))
             .sort((a, b) => b.gain - a.gain);
-        // The best order that improves AND clears the noise; a noisy top must not hide a significant second
-        const best = ranked.find((e) => e.gain > 0 && clearsNoise(e.r, e.gain));
+        // The Budget "for" axis calls encounters/hr 'encounters'; the section's rank key is 'eph'
+        const planKey = isScore ? 'balanced' : metric.key === 'encounters' ? 'eph' : metric.key;
+        // Verdicts measured on this same axis: a confirmed order wins over a merely significant one, and an
+        // order verified worse (or not confirmed by a finished verify) is not recommended. An error or a
+        // verify cut short proves nothing either way, so those rows stay as the analysis ranked them.
+        const verdicts = this._verifyEntries(this._upgradeResultsData, planKey);
+        const verdictOf = (r) => verdicts[verifyKeyOf(r)] || null;
+        const rejected = (r) => {
+            const v = verdictOf(r);
+            return Boolean(v) && (v.verdict === 'worse' || (v.verdict === 'not-confirmed' && !v.stopped));
+        };
+        // The orders that improve AND clear the noise (or were confirmed); a noisy top must not hide a
+        // significant second
+        const qualifying = ranked.filter(
+            (e) => e.gain > 0 && (clearsNoise(e.r, e.gain) || verdictOf(e.r)?.verdict === 'confirmed')
+        );
+        const best =
+            qualifying.find((e) => verdictOf(e.r)?.verdict === 'confirmed') || qualifying.find((e) => !rejected(e.r));
         if (!best) {
             return {
-                html: muted(`Ability order: no order beats your current one outside the noise on ${metric.label}.`),
+                html: muted(
+                    qualifying.length
+                        ? `Ability order: no order held up when verified on fresh seeds on ${metric.label}.`
+                        : `Ability order: no order beats your current one outside the noise on ${metric.label}.`
+                ),
                 gain: 0,
                 appended: false,
             };
@@ -12549,13 +12673,12 @@ class CombatSimUI {
             };
         }
         const sectionKey = this._abilityOrderRank || DEFAULT_ABILITY_ORDER_RANK;
-        // The Budget "for" axis calls encounters/hr 'encounters'; the section's rank key is 'eph'
-        const planKey = isScore ? 'balanced' : metric.key === 'encounters' ? 'eph' : metric.key;
         const sectionLabel = ABILITY_ORDER_RANKS.find((x) => x.key === sectionKey)?.label;
         const notes = [];
         if (planKey !== sectionKey) {
             notes.push(`best order for ${metric.label}; the Ability order section ranks by ${sectionLabel}`);
         }
+        if (verdictOf(best.r)?.verdict === 'confirmed') notes.push('confirmed on fresh seeds');
         if (isScore) notes.push('orders are not scored, so no gain is added to the total');
         return {
             html:
@@ -12847,6 +12970,376 @@ class CombatSimUI {
     }
 
     /**
+     * The verify verdicts measured under one metric. Verdicts live on the in-memory analysis result, by metric
+     * and then row key, so they survive every redraw and go with the result when a new analysis replaces it.
+     * @param {Object|null} results - The analysis result on screen
+     * @param {string} metric - A verify metric key (profit, xp, dps, eph, balanced)
+     * @returns {Object} Row key to `{ verdict, mean, se, seeds, unit, stopped, error }`
+     * @private
+     */
+    _verifyEntries(results, metric) {
+        return results?.verifyVerdicts?.[metric] || {};
+    }
+
+    /**
+     * Whether the analysis on screen can be re-measured: it must carry the live context a verify simulates
+     * from, and not be a remembered run (which has none, whatever it carries).
+     * @param {Object|null} results - The analysis result on screen
+     * @returns {boolean}
+     * @private
+     */
+    _canVerifyResults(results) {
+        return Boolean(results?.context?.gameData) && !this._restoredUpgradeAt;
+    }
+
+    /**
+     * The metric the gold table's Verify measures: the sorted column's when it is profit, EXP, DPS or EPH,
+     * else profit.
+     * @returns {{metric: string, label: string, fallback: boolean}}
+     * @private
+     */
+    _goldVerifyMetric() {
+        const named = GOLD_SORT_VERIFY_METRIC[this._upgradeSort?.key];
+        const metric = named || 'profit';
+        return { metric, label: ABILITY_ORDER_RANKS.find((x) => x.key === metric).label, fallback: !named };
+    }
+
+    /**
+     * Put the progress bar and Stop button up for a verify (and take them down), the way an analysis does.
+     * @param {boolean} on - True while a verify runs
+     * @private
+     */
+    _setVerifyBusy(on) {
+        const q = (selector) => this.panel?.querySelector(selector);
+        const progress = q('#mwi-csim-upgrade-progress');
+        const run = q('#mwi-csim-upgrade-run');
+        const stop = q('#mwi-csim-upgrade-stop');
+        if (progress) progress.style.display = on ? 'block' : 'none';
+        if (run) run.style.display = on ? 'none' : 'inline-block';
+        if (stop) stop.style.display = on ? 'inline-block' : 'none';
+        if (on) {
+            const fill = q('#mwi-csim-upgrade-progress-fill');
+            const text = q('#mwi-csim-upgrade-progress-text');
+            if (fill) fill.style.width = '0%';
+            if (text) text.textContent = '';
+        }
+    }
+
+    /**
+     * A progress callback for a verify run: the bar, and a status line led by `prefix`.
+     * @param {string} prefix - Status text before the current step
+     * @returns {Function} `({ current, total, description }) => void`
+     * @private
+     */
+    _verifyProgress(prefix) {
+        return ({ current, total, description }) => {
+            const fill = this.panel?.querySelector('#mwi-csim-upgrade-progress-fill');
+            const text = this.panel?.querySelector('#mwi-csim-upgrade-progress-text');
+            const fraction = total > 0 ? Math.min(1, (current || 0) / total) : 0;
+            if (fill) fill.style.width = Math.round(fraction * 100) + '%';
+            if (text) text.textContent = `${current || 0} / ${total}`;
+            this._setStatus(`${prefix} (${current || 0}/${total})${description ? ` ${description}` : ''}`);
+        };
+    }
+
+    /**
+     * Re-measure analysis rows on fresh seeds and keep the verdicts on the result.
+     *
+     * Every way it can end: refused (no live context, too few seeds) says so in the status line and stores
+     * nothing; a character switch, or an analysis started meanwhile, discards the outcome silently; Stop keeps
+     * the partial verdicts, marked stopped; an error is a verdict chip of its own (a failed baseline is a status
+     * line too); otherwise the verdicts are stored under the metric and the results are drawn again.
+     * @param {Object} params
+     * @param {Object} params.results - The analysis result the rows belong to
+     * @param {Array<Object>} params.rows - Rows of `results.results`
+     * @param {string} params.metric - A verify metric key
+     * @param {string} [params.statusPrefix] - Replaces "Verifying" at the head of the progress status
+     * @returns {Promise<Object|null>} The engine's outcome, or null when nothing ran or it was discarded
+     * @private
+     */
+    async _verifyRows({ results, rows, metric, statusPrefix = null }) {
+        if (this._isBusy() || !rows?.length || !this._canVerifyResults(results)) return null;
+        if (results !== this._upgradeResultsData) return null;
+        // Captured before the first await — see `_stillSameCharacter`
+        const ownerId = dataManager.getCurrentCharacterId();
+        const gen = this._analysisGen;
+        const current = () =>
+            this._stillSameCharacter(ownerId) && gen === this._analysisGen && results === this._upgradeResultsData;
+        this._upgradeRunning = true;
+        this._upgradeAborted = false;
+        this._setVerifyBusy(true);
+        const prefix =
+            statusPrefix ||
+            `Verifying ${rows.length} on ${ABILITY_ORDER_RANKS.find((x) => x.key === metric)?.label ?? metric}`;
+        this._setStatus(prefix);
+        let outcome;
+        try {
+            outcome = await verifyCombatCandidates({
+                context: results.context,
+                rows,
+                seeds: VERIFY_DEFAULTS.seeds,
+                hoursMultiplier: VERIFY_DEFAULTS.hoursMultiplier,
+                metric,
+                abortSignal: () => this._upgradeAborted,
+                onProgress: this._verifyProgress(prefix),
+            });
+        } catch (error) {
+            console.error('[CombatSimUI] Verify failed:', error);
+            outcome = { rows: [], metric, unit: '', seeds: 0, hoursPerSeed: 0, stopped: false, error: error.message };
+        } finally {
+            // Only the run that set the flags clears them: after a character switch the rebuilt panel owns them
+            if (current()) {
+                this._upgradeRunning = false;
+                this._setVerifyBusy(false);
+            }
+        }
+        if (!current()) return null;
+
+        // Stop also terminates the sim in flight, which the engine reports as a failed row. That row was cut
+        // short, not broken: it has no verdict, and the rows that finished keep theirs
+        if (outcome.stopped || this._upgradeAborted) {
+            outcome = {
+                ...outcome,
+                stopped: true,
+                rows: (outcome.rows || []).filter((r) => !(r.verdict === 'error' && /cancel/i.test(r.error || ''))),
+            };
+        }
+
+        if (outcome.refused) {
+            this._setStatus(VERIFY_REFUSED_TEXT[outcome.refused] || `Cannot verify (${outcome.refused}).`);
+            return outcome;
+        }
+        if (!outcome.rows.length) {
+            this._setStatus(
+                outcome.stopped
+                    ? 'Verify stopped before any row finished.'
+                    : `Verify failed${outcome.error ? `: ${outcome.error}` : '.'}`
+            );
+            return outcome;
+        }
+        if (!results.verifyVerdicts) results.verifyVerdicts = {};
+        if (!results.verifyVerdicts[metric]) results.verifyVerdicts[metric] = {};
+        for (const row of outcome.rows) {
+            results.verifyVerdicts[metric][row.key] = {
+                verdict: row.verdict,
+                mean: row.mean,
+                se: row.se,
+                seeds: row.seeds,
+                unit: outcome.unit,
+                stopped: Boolean(outcome.stopped),
+                error: row.error ?? null,
+            };
+        }
+        const count = (verdict) => outcome.rows.filter((r) => r.verdict === verdict).length;
+        const parts = [
+            `${count('confirmed')} confirmed`,
+            `${count('not-confirmed')} not confirmed`,
+            `${count('worse')} worse`,
+        ];
+        if (count('error')) parts.push(`${count('error')} failed`);
+        this._setStatus(
+            `Verify ${outcome.stopped ? 'stopped: partial result, ' : 'complete: '}${parts.join(', ')} ` +
+                `(${ABILITY_ORDER_RANKS.find((x) => x.key === metric)?.label ?? metric}).`
+        );
+        this._renderUpgradeResults(results);
+        return outcome;
+    }
+
+    /**
+     * Which close calls the auto-verify setting re-measures: up to three Ability order rows (by Rank-by) and up
+     * to three gold-table rows (by the table's verify metric) that `isCloseCall` flags and whose point estimate
+     * is an improvement.
+     * @param {Object} results - The finished analysis
+     * @returns {{rank: string, order: Array<Object>, goldMetric: string, gold: Array<Object>}}
+     * @private
+     */
+    _autoVerifyPicks(results) {
+        const rank = ABILITY_ORDER_RANKS.some((r) => r.key === this._abilityOrderRank)
+            ? this._abilityOrderRank
+            : DEFAULT_ABILITY_ORDER_RANK;
+        const all = results.results || [];
+        const orderRows = all.filter((r) => r.candidate?.abilityOrder);
+        const order = this._abilityOrderRanking(orderRows, results.baseline || {}, rank)
+            .filter((e) => e.gain > 0 && isCloseCall(e.r, { metric: rank }))
+            .slice(0, VERIFY_DEFAULTS.top)
+            .map((e) => e.r);
+        const { metric: goldMetric } = this._goldVerifyMetric();
+        const deltaKey = VERIFY_DELTA_KEY[goldMetric];
+        const gold = all
+            .filter((r) => r.candidate?.type !== 'combat_level' && !r.candidate?.abilityOrder && r.cost != null)
+            .filter((r) => r.deltas?.[deltaKey] > 0 && isCloseCall(r, { metric: goldMetric }))
+            .sort((a, b) => b.deltas[deltaKey] - a.deltas[deltaKey])
+            .slice(0, VERIFY_DEFAULTS.top);
+        return { rank, order, goldMetric, gold };
+    }
+
+    /**
+     * After a finished analysis, with the auto-verify setting on, re-measure its close calls. Never for a
+     * stopped or remembered run (the caller passes only a completed one, and this checks again).
+     * @param {string|null|undefined} ownerId - Character captured when the analysis began
+     * @param {Object} results - The finished analysis
+     * @private
+     */
+    async _autoVerifyCloseCalls(ownerId, results) {
+        if (!this._stillSameCharacter(ownerId) || results !== this._upgradeResultsData) return;
+        if (!this._canVerifyResults(results) || results.abilityOrder?.stopped) return;
+        const picks = this._autoVerifyPicks(results);
+        const total = picks.order.length + picks.gold.length;
+        if (!total) return;
+        const statusPrefix = `Auto-verifying ${total} close call${total === 1 ? '' : 's'}…`;
+        let outcome = null;
+        if (picks.order.length) {
+            outcome = await this._verifyRows({
+                results,
+                rows: picks.order,
+                metric: picks.rank,
+                statusPrefix,
+            });
+            // Stop (or a refusal) ends the whole auto-verify, not only its first half
+            if (!outcome || outcome.stopped || outcome.refused) return;
+        }
+        if (picks.gold.length && this._stillSameCharacter(ownerId) && results === this._upgradeResultsData) {
+            await this._verifyRows({ results, rows: picks.gold, metric: picks.goldMetric, statusPrefix });
+        }
+    }
+
+    /**
+     * Wire the gold table's Verify top 3 button and its per-row verify buttons.
+     * @param {HTMLElement} container - Upgrade results container
+     * @private
+     */
+    _wireGoldVerify(container) {
+        container.querySelector('#mwi-csim-gold-verify')?.addEventListener('click', () => {
+            const rows = (this._goldVerifyRows || []).slice(0, VERIFY_DEFAULTS.top);
+            this._verifyRows({ results: this._upgradeResultsData, rows, metric: this._goldVerifyMetric().metric });
+        });
+        container.querySelectorAll('[data-verify-row]').forEach((btn) => {
+            btn.addEventListener('click', (event) => {
+                // The row's own click opens its detail; this button is not that
+                event.stopPropagation();
+                const row = this._goldVerifyRows?.[Number(btn.getAttribute('data-verify-row'))];
+                if (row)
+                    this._verifyRows({
+                        results: this._upgradeResultsData,
+                        rows: [row],
+                        metric: this._goldVerifyMetric().metric,
+                    });
+            });
+        });
+    }
+
+    /**
+     * Wire the trigger result's Verify button.
+     * @param {Object|null} result - The tuner result drawn in the trigger box
+     * @private
+     */
+    _wireTriggerVerify(result) {
+        const btn = this.panel?.querySelector('#mwi-csim-trigger-verify-btn');
+        if (!btn || !result) return;
+        btn.addEventListener('click', () => this._onTriggerVerify(result));
+    }
+
+    /**
+     * Re-measure the trigger tuner's answer on fresh seeds and show the verdict under the result. A result
+     * without a live `verifyContext` (a remembered one) never gets here: it has no button.
+     * @param {Object} result - The tuner result on screen
+     * @private
+     */
+    async _onTriggerVerify(result) {
+        if (this._isBusy() || !canVerifyTriggerResult(result)) return;
+        const ownerId = dataManager.getCurrentCharacterId();
+        const gen = this._analysisGen;
+        const current = () =>
+            this._stillSameCharacter(ownerId) && gen === this._analysisGen && this._shownTriggerResult === result;
+        const redraw = (running) => {
+            const block = this.panel?.querySelector('#mwi-csim-trigger-verify');
+            if (!block) return;
+            block.outerHTML = triggerVerifyHtml(result, { canVerify: true, running });
+            if (!running) this._wireTriggerVerify(result);
+        };
+        this._upgradeRunning = true;
+        this._upgradeAborted = false;
+        this._setVerifyBusy(true);
+        redraw(true);
+        this._setStatus('Verifying the trigger changes');
+        let outcome;
+        try {
+            outcome = await verifyTriggerChanges({
+                result,
+                seeds: VERIFY_DEFAULTS.seeds,
+                hoursMultiplier: VERIFY_DEFAULTS.hoursMultiplier,
+                abortSignal: () => this._upgradeAborted,
+                onProgress: this._verifyProgress('Verifying the trigger changes'),
+            });
+        } catch (error) {
+            console.error('[CombatSimUI] Trigger verify failed:', error);
+            outcome = { rows: [], metric: '', unit: 'points', stopped: false, error: error.message };
+        } finally {
+            if (current()) {
+                this._upgradeRunning = false;
+                this._setVerifyBusy(false);
+            }
+        }
+        if (!current()) return;
+        // A Stop cuts the sim in flight, which the engine reports as a failed row: that is a stop, not an error
+        if (this._upgradeAborted && /cancel/i.test(outcome.rows?.[0]?.error || '')) {
+            outcome = { ...outcome, rows: [], stopped: true };
+        }
+        result.verifyOutcome = outcome;
+        redraw(false);
+        const verdict = outcome.rows?.[0]?.verdict;
+        this._setStatus(
+            outcome.refused
+                ? 'Cannot verify the trigger changes: nothing to compare or too few seeds.'
+                : outcome.stopped
+                  ? 'Trigger verify stopped.'
+                  : `Trigger verify complete: ${verdict === 'not-confirmed' ? 'not confirmed' : (verdict ?? 'no result')}.`
+        );
+    }
+
+    /**
+     * Every Ability order row with its ranked gain, its one standard error and whether the gain sits inside it,
+     * best gain first. Rows whose gain cannot be read are left out.
+     *
+     * Noise is the sim's own standard error for the delta (`row.noise`, a % of the metric). Balanced is an
+     * average of percentage terms that share one per-encounter error, so that same figure is read as score points.
+     * @param {Array<Object>} orderRows - Result rows of type 'ability_order'
+     * @param {Object} baseline - Baseline metrics
+     * @param {string} rank - An ABILITY_ORDER_RANKS key
+     * @returns {Array<{r: Object, gain: number, noise: number|null, within: boolean}>}
+     * @private
+     */
+    _abilityOrderRanking(orderRows, baseline, rank) {
+        const metricsOf = abilityOrderMetrics;
+        const baseMetrics = metricsOf(baseline);
+        const gainOf = (r) => {
+            if (rank === 'profit') return (r.metrics?.profitPerHour ?? NaN) - (baseline.profitPerHour ?? NaN);
+            if (rank === 'xp') return r.deltas?.xp;
+            if (rank === 'dps') return r.deltas?.dps;
+            if (rank === 'eph') return r.deltas?.encounters;
+            return balancedScore(metricsOf(r.metrics), baseMetrics);
+        };
+        const noiseOf = (r) => {
+            const n = r.noise || {};
+            if (rank === 'profit') {
+                return profitNoiseGold(r, baseline);
+            }
+            const value = rank === 'xp' ? n.xp : rank === 'eph' ? n.encounters : n.dps;
+            return Number.isFinite(value) ? value : null;
+        };
+        return orderRows
+            .map((r) => {
+                const gain = gainOf(r);
+                const noise = noiseOf(r);
+                const within =
+                    Number.isFinite(gain) && Number.isFinite(noise) ? Math.abs(gain) <= SIGNIFICANCE_Z * noise : false;
+                return { r, gain, noise, within };
+            })
+            .filter((e) => Number.isFinite(e.gain))
+            .sort((a, b) => b.gain - a.gain);
+    }
+
+    /**
      * The Ability order section: every simulated order of the equipped abilities ranked by one gain, the
      * current order as a baseline row. Orders cost nothing, so there is no Cost, Repay, ROI or Gold/… here.
      * Noise is the sim's own standard error for the delta (`row.noise`, a % of the metric; see
@@ -12886,30 +13379,11 @@ class CombatSimUI {
             return card(head(stamp.stopped ? 'stopped' : 'nothing to compare') + note(text, '#888'));
         }
 
-        const metricsOf = abilityOrderMetrics;
-        const baseMetrics = metricsOf(baseline);
         const money = (value) => {
             const sign = value > 0 ? '+' : value < 0 ? '−' : '';
             return `${sign}${formatKMB(Math.abs(Math.round(value)))}`;
         };
         const pct = (value) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(2)}%`;
-        const gainOf = (r) => {
-            if (rank === 'profit') return (r.metrics?.profitPerHour ?? NaN) - (baseline.profitPerHour ?? NaN);
-            if (rank === 'xp') return r.deltas?.xp;
-            if (rank === 'dps') return r.deltas?.dps;
-            if (rank === 'eph') return r.deltas?.encounters;
-            return balancedScore(metricsOf(r.metrics), baseMetrics);
-        };
-        // One standard error, in the unit of the ranked gain. Balanced is an average of percentage terms that
-        // share one per-encounter error, so that same figure is read as score points.
-        const noiseOf = (r) => {
-            const n = r.noise || {};
-            if (rank === 'profit') {
-                return profitNoiseGold(r, baseline);
-            }
-            const value = rank === 'xp' ? n.xp : rank === 'eph' ? n.encounters : n.dps;
-            return Number.isFinite(value) ? value : null;
-        };
         const fmtGain = (value) =>
             rank === 'profit'
                 ? money(value)
@@ -12923,16 +13397,7 @@ class CombatSimUI {
                   ? `±${value.toFixed(2)} pts`
                   : `±${value.toFixed(2)}%`;
 
-        const measured = orderRows
-            .map((r) => {
-                const gain = gainOf(r);
-                const noise = noiseOf(r);
-                const within =
-                    Number.isFinite(gain) && Number.isFinite(noise) ? Math.abs(gain) <= SIGNIFICANCE_Z * noise : false;
-                return { r, gain, noise, within };
-            })
-            .filter((e) => Number.isFinite(e.gain))
-            .sort((a, b) => b.gain - a.gain);
+        const measured = this._abilityOrderRanking(orderRows, baseline, rank);
 
         const total = measured.length;
         // The best order that improves and is not within noise; a noisy top must not hide a significant second
@@ -12954,6 +13419,51 @@ class CombatSimUI {
         if (partial) summary += ' (stopped)';
 
         const nameOf = (r) => String(r.candidate?.description || '').replace(/^Order:\s*/, '');
+        // Verdicts measured under THIS Rank-by only: a verdict on profit says nothing about DPS
+        const verdicts = this._verifyEntries(results, rank);
+        const verdictOf = (r) => verdicts[verifyKeyOf(r)] || null;
+        const verifiedRows = measured.filter((e) => verdictOf(e.r));
+        const confirmedRows = verifiedRows.filter((e) => verdictOf(e.r).verdict === 'confirmed');
+        const verifyStopped = verifiedRows.some((e) => verdictOf(e.r).stopped);
+        let verifyNote = '';
+        if (confirmedRows.length) {
+            const top = confirmedRows.reduce((a, b) => (verdictOf(b.r).mean > verdictOf(a.r).mean ? b : a));
+            const v = verdictOf(top.r);
+            summary = `best confirmed: ${nameOf(top.r)}${verifyStopped ? ' (verify stopped)' : ''}`;
+            verifyNote = note(
+                `Confirmed on fresh seeds: ${escapeAttribute(nameOf(top.r))} ` +
+                    `${formatVerifyFigure(v.mean, v.unit)} ±${formatVerifyFigure(v.se, v.unit, { signed: false })}. ` +
+                    `Free to apply: set it in the game.`,
+                '#8bc34a'
+            );
+        } else if (verifiedRows.length && verifiedRows.some((e) => verdictOf(e.r).verdict !== 'error')) {
+            summary = `none confirmed${verifyStopped ? ' (verify stopped)' : ''}`;
+            verifyNote = note(
+                `None of the ${verifiedRows.length} verified order${verifiedRows.length === 1 ? '' : 's'} held up on ` +
+                    `fresh seeds: keep your current one.`,
+                '#9ab'
+            );
+        }
+        if (verifyStopped) {
+            verifyNote += note('Verify stopped partway: the verdicts shown are partial.', '#ff9800');
+        }
+        // What the Verify button re-measures: the top three by this Rank-by, plus the best order that clears the
+        // noise when it is not among them
+        const topThree = measured.slice(0, VERIFY_DEFAULTS.top);
+        const bestSignificant = measured.find((e) => e.gain > 0 && !e.within);
+        const verifyPick = [
+            ...topThree,
+            ...(bestSignificant && !topThree.includes(bestSignificant) ? [bestSignificant] : []),
+        ];
+        this._orderVerifyRows = verifyPick.map((e) => e.r);
+        const canVerify = this._canVerifyResults(results);
+        const rankLabel = ABILITY_ORDER_RANKS.find((x) => x.key === rank).label;
+        const verifyBar =
+            `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:10px; color:#777;">` +
+            `<button id="mwi-csim-order-verify" ${VERIFY_BTN_ATTR}${canVerify && verifyPick.length ? '' : ' disabled'} ` +
+            `title="${canVerify ? `Re-measures the top ${VERIFY_DEFAULTS.top} orders by ${rankLabel} against your current order on fresh seeds` : 'Re-run the analysis to verify'}">` +
+            `Verify top ${VERIFY_DEFAULTS.top}</button>` +
+            `<span>${canVerify ? `by ${rankLabel}` : 're-run the analysis to verify'}</span></div>`;
         // The loadout's own order, when the analysis still carries it (a remembered run does not)
         const ctx = results.context;
         const detail = ctx?.gameData?.abilityDetailMap || {};
@@ -13006,6 +13516,7 @@ class CombatSimUI {
                 (e.within
                     ? `<span style="${ROW_NOTE_STYLE} background:rgba(150,150,150,0.2); color:#999;" title="The gain on the ranked metric is inside the sampling error">within noise</span>`
                     : '') +
+                (verdictOf(r) ? verifyChipHtml(verdictOf(r)) : '') +
                 `</td>` +
                 cell(e, profitAbs, money, 'profit') +
                 cell(e, r.deltas?.xp, pct, 'xp') +
@@ -13032,12 +13543,14 @@ class CombatSimUI {
                 `border-radius:3px; padding:1px 4px; font-size:11px; font-family:inherit;">${options}</select>` +
                 `<span style="margin-left:6px;">± is one standard error of the ranked gain.</span></div>` +
                 (verdict ? note(verdict, '#9ab') : '') +
+                verifyNote +
                 (partial
                     ? note(
                           `Stopped partway: ${total} of ${expected} orders measured; a better one may be among the rest.`,
                           '#ff9800'
                       )
                     : '') +
+                verifyBar +
                 `<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
                 `<th style="${th} text-align:left;">Order</th><th style="${th}">ΔProfit/hr</th><th style="${th}">ΔEXP/hr</th>` +
                 `<th style="${th}">ΔDPS</th><th style="${th}">ΔEPH</th><th style="${th}">ΔDeaths/hr</th><th style="${th}">Noise</th></tr></thead>` +
@@ -13057,6 +13570,12 @@ class CombatSimUI {
             this._abilityOrderRank = event.target.value;
             this._persistUpgradeColumnPrefs();
             this._renderUpgradeResults(this._upgradeResultsData);
+        });
+        container.querySelector('#mwi-csim-order-verify')?.addEventListener('click', () => {
+            const results = this._upgradeResultsData;
+            const rows = this._orderVerifyRows || [];
+            if (!results || !rows.length) return;
+            this._verifyRows({ results, rows, metric: this._abilityOrderRank || DEFAULT_ABILITY_ORDER_RANK });
         });
         container.querySelector('#mwi-csim-order-showall')?.addEventListener('click', () => {
             this._abilityOrderShowAll = !this._abilityOrderShowAll;
@@ -13184,6 +13703,7 @@ class CombatSimUI {
         wireSort('data-level-sort-key', '_upgradeLevelSort');
         wireSort('data-unpriced-sort-key', '_unpricedSort');
         wireSort('data-scroll-sort-key', '_scrollSort');
+        this._wireGoldVerify(container);
 
         // Forgets the saved run only — the table on screen came from this
         // render call and stays right there; there is simply nothing left to
