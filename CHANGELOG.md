@@ -11,6 +11,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - With two sell listings of one item, the higher one no longer shows your own cheaper listing as a rival's undercut.
 - Bulk Sell re-reads the live stack when you press confirm, so a stack that grew or shrank mid-run is sold as it stands (or refused with a note if the game's quantity box won't take it), and a bid above the tradable range is flagged before you press.
 
+### Audit round: alerts
+
+- Turning an alert off and back on no longer leaves it stuck on its old state: price-target, savings-goal, empty-queue, labyrinth run and entry, combat consumable and death, TTL target, enhancement target, Philosopher's Stone and task-slot alerts all start fresh, so none stays silent or announces what happened while it was off.
+- The empty-queue alert's setting now takes effect without a reload, and price-target alerts no longer briefly check the previous character's pins right after a character switch.
+
 ### Combat Sim and Lab Sim: collapsible Upgrade sections and an Ability order section
 
 - The Combat Sim Upgrade tab scrolls as a whole: the trigger tuning box is no longer squeezed into a short inner-scrolling box, and it and each results section (Upgrades, Budget, Food, Combat levels, Scrolls, unpriced) can be minimized to a one-line summary, remembered per character.
