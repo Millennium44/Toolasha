@@ -507,8 +507,9 @@ export function mergeSimConsumableRatesByZone(local, incoming) {
     return joined;
 }
 
-// Live-safe: every reader (`loadAllZonesSnapshot`, the Consumables panel, the combat stats panel, the queue
-// display) reads storage when asked rather than holding a copy, and the sweep's own writers
+// Live-safe: the readers either read storage when asked (`loadAllZonesSnapshot`, the Consumables panel) or
+// keep a cache that drops it when a pull announces these keys (`onSyncPullApplied`: the combat profit panel's
+// solo-zone cache, the queue display's snapshot cache, the sim panels), and the sweep's own writers
 // (`saveAllZonesSnapshot`, `_persistConsumableRates`) write a fresh run, which is the newest by construction
 registerSyncMerge({
     store: ALL_ZONES_SNAPSHOT_STORE,

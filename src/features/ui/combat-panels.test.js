@@ -932,6 +932,27 @@ describe('the sim forecast beside the measured revenue', () => {
     });
 });
 
+describe('a live-safe sync pull replacing the stored snapshot', () => {
+    test('the solo-zone cache is dropped and re-read, not kept until the character changes', async () => {
+        const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+        const { characterKey } = await import('../../utils/character-key.js');
+        profitPanel.show();
+        await flush();
+        profitPanel.refresh();
+        expect(profitPanel.panel.textContent).toContain('24.0M/day');
+
+        // The pull replaced the stored run with one that has no zone to quote
+        state.snapshot = { savedAt: 1, zones: [] };
+        announceSyncPullApplied({ combatExport: [characterKey('allZonesSnapshot')] });
+        await flush();
+        profitPanel.refresh();
+        await flush();
+        profitPanel.refresh();
+
+        expect(profitPanel.panel.textContent).not.toContain('24.0M/day');
+    });
+});
+
 describe('the live party lint on the Damage panel', () => {
     /** A `new_battle` player with the whole equipped kit, as the payload has it */
     const battlePlayer = (id, name, abilityHrids) => ({

@@ -60,6 +60,8 @@ import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { sellTaxMarkerHtml } from '../../utils/sell-tax-marker.js';
 import {
     ALL_ZONES_SNAPSHOT_KEY,
+    ALL_ZONES_SNAPSHOT_STORE,
+    ZONE_SIM_RATES_KEY,
     loadAllZonesSnapshot,
     loadZoneSimRates,
     loadoutSignature,
@@ -68,6 +70,7 @@ import {
     zoneSimRateKey,
 } from '../../utils/all-zones-snapshot.js';
 import { characterKey } from '../../utils/character-key.js';
+import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { loadoutSnapshot, combatSimUI } from '../../utils/bundle-bridge.js';
 
 /**
@@ -822,6 +825,26 @@ class ActionTimeDisplay {
         } finally {
             this._combatSnapshotLoading = null;
         }
+    }
+
+    /**
+     * A sync pull landed: if it wrote this character's snapshot or single-zone rates, re-read them.
+     * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+     * @returns {Promise<void>}
+     */
+    async _onSyncPullApplied(written) {
+        const landed = written?.[ALL_ZONES_SNAPSHOT_STORE] || [];
+        if (
+            !landed.includes(characterKey(ALL_ZONES_SNAPSHOT_KEY)) &&
+            !landed.includes(characterKey(ZONE_SIM_RATES_KEY))
+        ) {
+            return;
+        }
+        // Expire rather than clear: rows keep drawing from the old cache until the read lands
+        if (this._combatSnapshotCache) this._combatSnapshotCache = { ...this._combatSnapshotCache, fetchedAt: 0 };
+        // A read already in flight may have started before the pull; let it settle, then read again
+        if (this._combatSnapshotLoading) await this._combatSnapshotLoading;
+        await this.refreshCombatSnapshot({ redraw: true });
     }
 
     /**
@@ -1838,6 +1861,16 @@ class ActionTimeDisplay {
                     dataManager.off('character_initialized', this.characterInitHandler);
                     this.characterInitHandler = null;
                 }
+            });
+        }
+
+        // A live-safe sync pull replaces the stored snapshot / single-zone rates under this page: drop the
+        // cache so the next read re-reads them instead of waiting out the refresh interval
+        if (!this._unsubscribePulls) {
+            this._unsubscribePulls = onSyncPullApplied((written) => this._onSyncPullApplied(written));
+            this.cleanupRegistry.registerCleanup(() => {
+                this._unsubscribePulls?.();
+                this._unsubscribePulls = null;
             });
         }
 

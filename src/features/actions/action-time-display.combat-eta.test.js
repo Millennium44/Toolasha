@@ -82,7 +82,9 @@ vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
 }));
 
 const { default: actionTimeDisplay, estimateCombatQueueRow } = await import('./action-time-display.js');
-const { loadoutSignature } = await import('../../utils/all-zones-snapshot.js');
+const { loadoutSignature, ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE, ZONE_SIM_RATES_KEY } =
+    await import('../../utils/all-zones-snapshot.js');
+const { characterKey } = await import('../../utils/character-key.js');
 
 // Local time, so the completion clocks read the same in every timezone
 const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime();
@@ -800,5 +802,43 @@ describe('the queue hover tooltip', () => {
 
         expect(rowTexts(tooltip)[0]).toMatch(/^\[~1h 00m 00s · sim\] ~/);
         expect(tooltip.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: ~1h 00m 00s');
+    });
+});
+
+describe('a live-safe sync pull replacing the stored snapshot', () => {
+    beforeEach(async () => {
+        game.snapshot = snapshot({ rate: 500 });
+        game.rates = {};
+        await actionTimeDisplay.refreshCombatSnapshot();
+    });
+
+    afterEach(() => {
+        actionTimeDisplay._combatSnapshotCache = null;
+    });
+
+    test('re-reads the snapshot at once instead of waiting out the refresh interval', async () => {
+        const before = actionTimeDisplay.getCombatSnapshot();
+        expect(before.zones[0].encountersPerHour).toBe(500);
+
+        game.snapshot = snapshot({ rate: 900 });
+        await actionTimeDisplay._onSyncPullApplied({
+            [ALL_ZONES_SNAPSHOT_STORE]: [characterKey(ALL_ZONES_SNAPSHOT_KEY)],
+        });
+
+        expect(actionTimeDisplay.getCombatSnapshot().zones[0].encountersPerHour).toBe(900);
+    });
+
+    test('re-reads when the pull wrote the single-zone rates', async () => {
+        game.rates = { x: { encountersPerHour: 1 } };
+        await actionTimeDisplay._onSyncPullApplied({
+            [ALL_ZONES_SNAPSHOT_STORE]: [characterKey(ZONE_SIM_RATES_KEY)],
+        });
+        expect(actionTimeDisplay.getZoneSimRates()).toEqual({ x: { encountersPerHour: 1 } });
+    });
+
+    test('ignores a pull that wrote neither', async () => {
+        game.snapshot = snapshot({ rate: 900 });
+        await actionTimeDisplay._onSyncPullApplied({ [ALL_ZONES_SNAPSHOT_STORE]: ['somethingElse'] });
+        expect(actionTimeDisplay.getCombatSnapshot().zones[0].encountersPerHour).toBe(500);
     });
 });
