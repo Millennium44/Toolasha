@@ -353,6 +353,8 @@ class OverbidPanel {
         this.hidden = new Set();
         /** Whose hidden set is in memory; null until it has been loaded */
         this.hiddenOwner = null;
+        /** Keys set or cleared by the player since the last storage read began; a prune never judges them */
+        this.touchedKeys = new Set();
         /** Draw the hidden rows too. In memory only */
         this.showHidden = false;
         /** Listing ids the player closed the panel on, so they are not announced again until resolved */
@@ -425,9 +427,11 @@ class OverbidPanel {
         const handler = () => this.update();
         const loginHandler = async () => {
             const generation = this.generation;
-            await this.loadHidden();
+            // Judged against the listings as they stand now, not as they stand once the read returns
+            const live = this.liveHiddenKeys();
+            const loaded = await this.loadHidden();
             if (generation !== this.generation) return;
-            this.pruneHidden();
+            this.pruneHidden(live, loaded);
             this.prunedOwner = this.hiddenOwner;
             this.update();
         };
@@ -461,12 +465,13 @@ class OverbidPanel {
         dataManager.on('character_switching', switching);
         this.cleanup.registerCleanup(() => dataManager.off('character_switching', switching));
         this.update();
-        await this.loadHidden();
+        const live = this.liveHiddenKeys();
+        const loaded = await this.loadHidden();
         if (!this.isInitialized) return;
         // A start that follows a login (the registry may start this after `character_initialized` fired)
         // prunes once; a later start for the same character is a settings toggle and leaves the hides alone
         if (this.prunedOwner !== this.hiddenOwner) {
-            this.pruneHidden();
+            this.pruneHidden(live, loaded);
             this.prunedOwner = this.hiddenOwner;
         }
         this.update();
@@ -475,19 +480,22 @@ class OverbidPanel {
     /**
      * Read this character's hidden keys from storage. The character is captured before the read and checked
      * after it, so a read that resolves after a switch never lands on the new character.
-     * @returns {Promise<void>}
+     * @returns {Promise<string[]>} The keys read from storage (empty when the read failed or went stale),
+     *   so a prune can judge only those and leave a hide made while the read was in flight alone
      */
     async loadHidden() {
         const owner = currentOwner();
         const generation = this.generation;
+        this.touchedKeys.clear();
         try {
             const saved = await storage.get(hiddenStorageKey(owner), HIDDEN_STORE, []);
-            if (generation !== this.generation || owner !== currentOwner()) return;
+            if (generation !== this.generation || owner !== currentOwner()) return [];
             const keys = Array.isArray(saved) ? saved.filter((key) => typeof key === 'string') : [];
             // Anything hidden while the read was in flight is kept
             const merged = new Set([...keys, ...(this.hiddenOwner === owner ? this.hidden : [])]);
             this.hidden = new Set([...merged].slice(-MAX_HIDDEN));
             this.hiddenOwner = owner;
+            return keys.filter((key) => !this.touchedKeys.has(key));
         } catch (error) {
             console.error('[OverbidPanel] Loading hidden items failed:', error);
             // Without a stored set the table still works; nothing is hidden
@@ -495,6 +503,7 @@ class OverbidPanel {
                 this.hidden = new Set();
                 this.hiddenOwner = owner;
             }
+            return [];
         }
     }
 
@@ -507,21 +516,30 @@ class OverbidPanel {
     }
 
     /**
-     * Forget hidden keys with no active listing left, judged by the full snapshot at login. Does nothing
-     * until the character's data has loaded: before that `getMarketListings()` is also an empty list, and
-     * proves nothing. Once loaded, an empty list is a character with no listings, and prunes every key.
+     * The hidden keys of every active listing right now, or null while the character's data has not loaded
+     * (before that `getMarketListings()` is an empty list too, and proves nothing).
+     * @returns {Set<string>|null}
      */
-    pruneHidden() {
-        if (!this.hidden.size || this.hiddenOwner !== currentOwner()) return;
-        if (!dataManager.characterData) return;
+    liveHiddenKeys() {
+        if (!dataManager.characterData) return null;
         const listings = dataManager.getMarketListings();
-        if (!Array.isArray(listings)) return;
-        const live = new Set(
-            listings.filter((l) => l?.status === ACTIVE_STATUS && l.itemHrid).map((l) => hiddenKey(l))
-        );
+        if (!Array.isArray(listings)) return null;
+        return new Set(listings.filter((l) => l?.status === ACTIVE_STATUS && l.itemHrid).map((l) => hiddenKey(l)));
+    }
+
+    /**
+     * Forget stored hidden keys with no active listing left. `live` is the snapshot taken before the storage
+     * read began and `loaded` the keys that read returned: only loaded keys are judged, so a hide made while the
+     * read was in flight (no listing was ever checked for it) and a listing canceled during it are both safe.
+     * A null snapshot (data not loaded) prunes nothing; a loaded empty one prunes every loaded key.
+     * @param {Set<string>|null} live - Active-listing keys at snapshot time
+     * @param {string[]} loaded - Keys read from storage
+     */
+    pruneHidden(live, loaded) {
+        if (!live || !loaded?.length || this.hiddenOwner !== currentOwner()) return;
         let changed = false;
-        for (const key of this.hidden) {
-            if (!live.has(key)) {
+        for (const key of loaded) {
+            if (this.hidden.has(key) && !live.has(key)) {
                 this.hidden.delete(key);
                 changed = true;
             }
@@ -537,6 +555,7 @@ class OverbidPanel {
     setHidden(row, hide) {
         if (this.hiddenOwner === null) this.hiddenOwner = currentOwner();
         const key = hiddenKey(row);
+        this.touchedKeys.add(key);
         if (hide) {
             this.hidden.delete(key);
             this.hidden.add(key);
@@ -750,6 +769,7 @@ class OverbidPanel {
         this.hiddenRows = [];
         this.hidden = new Set();
         this.hiddenOwner = null;
+        this.touchedKeys = new Set();
         this.showHidden = false;
         this.dismissed.clear();
         this.wasOpen = false;
