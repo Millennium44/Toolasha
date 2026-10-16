@@ -431,7 +431,7 @@ class OverbidPanel {
             const live = this.liveHiddenKeys();
             const loaded = await this.loadHidden();
             if (generation !== this.generation) return;
-            this.pruneHidden(live, loaded);
+            this.pruneHidden(live, loaded, this.liveHiddenKeys());
             this.prunedOwner = this.hiddenOwner;
             this.update();
         };
@@ -471,7 +471,7 @@ class OverbidPanel {
         // A start that follows a login (the registry may start this after `character_initialized` fired)
         // prunes once; a later start for the same character is a settings toggle and leaves the hides alone
         if (this.prunedOwner !== this.hiddenOwner) {
-            this.pruneHidden(live, loaded);
+            this.pruneHidden(live, loaded, this.liveHiddenKeys());
             this.prunedOwner = this.hiddenOwner;
         }
         this.update();
@@ -531,15 +531,18 @@ class OverbidPanel {
      * Forget stored hidden keys with no active listing left. `live` is the snapshot taken before the storage
      * read began and `loaded` the keys that read returned: only loaded keys are judged, so a hide made while the
      * read was in flight (no listing was ever checked for it) and a listing canceled during it are both safe.
-     * A null snapshot (data not loaded) prunes nothing; a loaded empty one prunes every loaded key.
+     * A key is forgotten only when it is absent from the listings both before and after the read: a listing
+     * relisted during the read would otherwise lose its restored hide. A null snapshot (data not loaded) on
+     * either side prunes nothing; a loaded empty one prunes every loaded key.
      * @param {Set<string>|null} live - Active-listing keys at snapshot time
      * @param {string[]} loaded - Keys read from storage
+     * @param {Set<string>|null} liveAfter - Active-listing keys once the read returned
      */
-    pruneHidden(live, loaded) {
-        if (!live || !loaded?.length || this.hiddenOwner !== currentOwner()) return;
+    pruneHidden(live, loaded, liveAfter) {
+        if (!live || !liveAfter || !loaded?.length || this.hiddenOwner !== currentOwner()) return;
         let changed = false;
         for (const key of loaded) {
-            if (this.hidden.has(key) && !live.has(key)) {
+            if (this.hidden.has(key) && !live.has(key) && !liveAfter.has(key)) {
                 this.hidden.delete(key);
                 changed = true;
             }
