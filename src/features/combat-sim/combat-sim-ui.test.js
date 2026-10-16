@@ -1553,6 +1553,29 @@ describe('the panel', () => {
             expect(section().querySelector('[data-collapse-summary]').textContent).toBe('all within noise');
         });
 
+        test('a noisy top with a significant second: the verdict and summary name the second', () => {
+            draw([
+                orderRow('A → B', { profit: 700, se: 500, sig: false }),
+                orderRow('B → A', { profit: 300, se: 1, sig: true }),
+            ]);
+            expect(section().textContent).not.toContain('within noise of your current one');
+            ui._collapsedSections = { abilityOrder: true };
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(section().querySelector('[data-collapse-summary]').textContent).toBe('best +300 Profit/hr');
+            // every measured row stays displayed in rank order
+            expect(names()[0]).toContain('A → B');
+        });
+
+        test('a significant top is still the one named', () => {
+            draw([
+                orderRow('A → B', { profit: 700, se: 1, sig: true }),
+                orderRow('B → A', { profit: 300, se: 1, sig: true }),
+            ]);
+            ui._collapsedSections = { abilityOrder: true };
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(section().querySelector('[data-collapse-summary]').textContent).toBe('best +700 Profit/hr');
+        });
+
         test('ending: the current order is the best', () => {
             draw([orderRow('A → B', { profit: -300 })]);
             expect(section().textContent).toContain('current order is already the best');
@@ -1611,6 +1634,23 @@ describe('the panel', () => {
                 expect(budgetText()).toContain('+ order');
                 expect(budgetText()).toContain('750/hr profit');
                 expect(ui._lastBudgetPlan.picks.every((p) => !p.candidate.abilityOrder)).toBe(true);
+            });
+
+            test('a noisy top with a significant second: the plan names the second', () => {
+                ui._renderUpgradeResults({
+                    baseline: BASELINE,
+                    results: [
+                        level(),
+                        orderOf({ profit: 700, se: 500, sig: false }),
+                        {
+                            ...orderOf({ profit: 300 }),
+                            candidate: { ...orderOf({ profit: 300 }).candidate, description: 'Order: SECOND' },
+                        },
+                    ],
+                    food: null,
+                });
+                expect(planOrder().textContent).toContain('SECOND');
+                expect(budgetText()).toContain('350/hr profit');
             });
 
             test('no winner outside noise says so in one muted line', () => {
