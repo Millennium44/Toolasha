@@ -7538,3 +7538,220 @@ describe('ability order candidates', () => {
         expect(results.filter((r) => r.candidate.order[0] !== C).every((r) => (r.deltas.dps ?? 0) <= 0)).toBe(true);
     });
 });
+
+describe('the verify engine applies a candidate exactly as the analysis simulated it', () => {
+    // The analysis applies each candidate inline in runUpgradeAnalysis; verify uses applyCandidateToDTO. If the two
+    // ever differ, a verify re-measures a different change from the one the table ranked.
+    const SMACK = '/abilities/smack';
+    const FIREBALL = '/abilities/fireball';
+    const SPIRIT = '/abilities/spirit_aura';
+    const STRIKE = '/abilities/water_strike';
+    const GUARD = '/abilities/guard_aura';
+    const COFFEE = '/items/coffee';
+    const TWO_HAND = '/equipment_types/two_hand';
+
+    const loadout = () => ({
+        hrid: 'player1',
+        equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 3 } },
+        abilities: [
+            null,
+            { hrid: SMACK, level: 10, triggers: [{ value: 30 }] },
+            { hrid: FIREBALL, level: 7, triggers: null },
+            null,
+            null,
+        ],
+        drinks: [null, null, null],
+        houseRooms: { '/house_rooms/dojo': 2 },
+        scrollBuffs: [],
+        guildShrineLevels: {},
+        attackLevel: 40,
+    });
+
+    const candidates = () => [
+        // Equipment
+        {
+            slot: MAIN_HAND,
+            currentHrid: '/items/fine_sword',
+            currentLevel: 3,
+            upgradeHrid: '/items/regal_sword_refined',
+            upgradeLevel: 10,
+            description: 'Fine Sword +3 → Regal Sword (R) +10',
+            type: 'tier',
+        },
+        // Ability level
+        {
+            slot: 'ability_1',
+            currentHrid: SMACK,
+            currentLevel: 10,
+            upgradeHrid: SMACK,
+            upgradeLevel: 15,
+            description: 'Smack Lv10 → Lv15',
+            type: 'ability_level',
+        },
+        // Ability swap in place of a named ability, at that ability's level
+        {
+            slot: 'ability_2',
+            currentHrid: FIREBALL,
+            currentLevel: 7,
+            upgradeHrid: STRIKE,
+            upgradeLevel: 7,
+            replacesHrid: FIREBALL,
+            description: 'Fireball → Water Strike (Lv7)',
+            type: 'ability_swap',
+        },
+        // Ability swap into the free ordinary slot, and into the free special slot
+        {
+            slot: 'ability_3',
+            fillsFreeSlot: true,
+            currentHrid: GUARD,
+            currentLevel: 0,
+            upgradeHrid: STRIKE,
+            upgradeLevel: 1,
+            description: 'Empty slot → Water Strike (Lv1)',
+            type: 'ability_swap',
+        },
+        {
+            slot: 'ability_0',
+            fillsFreeSlot: true,
+            currentHrid: SPIRIT,
+            currentLevel: 0,
+            upgradeHrid: SPIRIT,
+            upgradeLevel: 1,
+            description: 'Empty slot → Spirit Aura (Lv1)',
+            type: 'ability_swap',
+        },
+        // Ability order (a hand-checked re-ordering)
+        {
+            type: 'ability_order',
+            slot: 'ability_1',
+            checkedAbility: true,
+            abilityOrder: true,
+            checkedAbilityKey: 'ability_order',
+            order: [FIREBALL, SMACK],
+            currentHrid: null,
+            currentLevel: 0,
+            upgradeHrid: '/abilities/__order__',
+            upgradeLevel: 0,
+            description: 'Order: Fireball → Smack',
+            cost: 0,
+            noPurchase: true,
+        },
+        // House, shrine, drink, scroll, community buff, combat level, cross-slot
+        {
+            type: 'house',
+            slot: 'house|/house_rooms/dojo',
+            roomHrid: '/house_rooms/dojo',
+            currentLevel: 2,
+            upgradeLevel: 3,
+            description: 'Dojo 2 → 3',
+        },
+        {
+            type: 'guild_shrine',
+            slot: 'guild_shrine|/guild_buffs/x',
+            buffHrid: '/guild_buffs/x',
+            currentLevel: 1,
+            upgradeLevel: 2,
+            description: 'Shrine X 1 → 2',
+        },
+        {
+            type: 'drink',
+            slot: 'drink_1',
+            drinkIndex: 1,
+            upgradeHrid: COFFEE,
+            upgradeLevel: 0,
+            triggers: [{ value: 5 }],
+            description: 'Add Coffee',
+        },
+        {
+            type: 'scroll',
+            slot: 'scroll|/buff_types/x',
+            buffTypeHrid: '/buff_types/x',
+            enable: true,
+            upgradeHrid: '/items/scroll_x',
+            upgradeLevel: 0,
+            description: 'Scroll X on',
+        },
+        {
+            type: 'combat_level',
+            slot: 'combat_level|attackLevel',
+            skillKey: 'attackLevel',
+            currentLevel: 40,
+            upgradeLevel: 45,
+            levelBoost: 5,
+            description: 'Attack 40 → 45',
+        },
+        {
+            type: 'cross_slot',
+            slot: TWO_HAND,
+            clearedSlots: [MAIN_HAND],
+            addedSlots: { [TWO_HAND]: { hrid: '/items/great_sword', enhancementLevel: 0 } },
+            currentHrid: '/items/fine_sword',
+            currentLevel: 3,
+            upgradeHrid: '/items/great_sword',
+            upgradeLevel: 0,
+            description: 'Fine Sword → Great Sword',
+        },
+    ];
+
+    test('every candidate type the Combat table emits gets the same DTO from both', async () => {
+        const gameData = {
+            ...buildGameData(),
+            abilityDetailMap: {},
+            houseRoomDetailMap: {},
+        };
+        buildGameDataPayload.mockReturnValue(gameData);
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0 });
+        resolveItemPrice.mockImplementation(() => ({ price: 1000 }));
+        getItemPrices.mockReturnValue({ ask: 2000, bid: 1500 });
+        const sims = [];
+        runSimulation.mockClear();
+        runSimulation.mockImplementation(async (params) => {
+            sims.push(JSON.stringify(params.playerDTOs[0]));
+            return {
+                simulatedTime: 3600 * 1e9,
+                encounters: 100,
+                deaths: { player1: 0 },
+                totalDamageDealt: { player1: 1000 },
+                experienceGained: { player1: { attack: 1000 } },
+            };
+        });
+        const player = loadout();
+        const { results } = await runUpgradeAnalysis({
+            playerDTOs: [player],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/zone',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: {},
+            upgradeModes: ['community_buff'],
+            extraCandidates: candidates(),
+        });
+
+        const types = new Set(results.map((r) => r.candidate.type));
+        for (const t of [
+            'tier',
+            'ability_level',
+            'ability_swap',
+            'ability_order',
+            'house',
+            'guild_shrine',
+            'drink',
+            'scroll',
+            'combat_level',
+            'cross_slot',
+            'community_buff',
+        ]) {
+            expect(types, `no row for ${t}`).toContain(t);
+        }
+        expect(results.filter((r) => r.candidate.fillsFreeSlot)).toHaveLength(2);
+
+        const pool = new Map();
+        for (const json of sims) pool.set(json, (pool.get(json) || 0) + 1);
+        for (const row of results) {
+            const expected = JSON.stringify(applyCandidateToDTO(player, row.candidate));
+            const left = pool.get(expected) || 0;
+            expect(left, `verify would simulate a different DTO for "${row.candidate.description}"`).toBeGreaterThan(0);
+            pool.set(expected, left - 1);
+        }
+    });
+});
