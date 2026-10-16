@@ -46,7 +46,8 @@ export function enhancementSweepParams(itemHrid) {
  * @param {number} startLevel - Starting enhancement level
  * @param {number} targetLevel - Target enhancement level
  * @param {Object} gameData - Game data from buildGameDataPayload()
- * @returns {number} Expected gold cost
+ * @returns {number|null} Expected gold cost, or null when it cannot be quoted (no recipe, a material with no
+ *   price, or nothing about the run priceable)
  */
 export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
     // Genuine no-op: nothing to enhance
@@ -70,10 +71,15 @@ export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel
 
     const enhancingParams = enhancementSweepParams(itemHrid);
 
-    // The shared rule: a one-sided book cross-fills, then production cost, then
-    // the vendor price, and trainee charms take the one shop-price constant.
+    // The shared rule: a one-sided book cross-fills, then production cost, and
+    // trainee charms take the one shop-price constant. A material with none of
+    // those is unpriced (`hasMissingPrices`), never a vendor price or free.
     // This used to be an inline transcription here, complete with its own 250000.
     const materials = perAttemptMaterialCost(itemDetails);
+    // An enhance run with a material nobody prices is unknown, not the cost of the materials that have one:
+    // every caller reads null as "cannot be quoted" (flags the row unpriced or drops the route), and a number
+    // here would read as a full quote and rank the upgrade cheaper than it can be done
+    if (materials.hasMissingPrices) return null;
 
     // Get cheapest protection price. Null when nothing that could protect this
     // item has a price — which makes every protecting strategy unpriceable, not
