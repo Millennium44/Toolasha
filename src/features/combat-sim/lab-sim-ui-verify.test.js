@@ -405,6 +405,22 @@ describe('the Lab Sim Verify controls', () => {
             expect(topButton().disabled).toBe(true);
         });
 
+        test('a draw that throws as the verify starts cannot leave the tab stuck busy', async () => {
+            await analyze(analysisOf(fiveRows()));
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const redraw = vi.spyOn(ui, '_redrawVerify').mockImplementationOnce(() => {
+                throw new Error('draw failed');
+            });
+            topButton().click();
+            await settle();
+            redraw.mockRestore();
+            errorSpy.mockRestore();
+            expect(ui._upgradeRunning).toBe(false);
+            expect(ui._verify.running).toBeNull();
+            expect(ui.panel.querySelector('#mwi-labsim-upgrade-run').style.display).toBe('');
+            expect(ui.panel.querySelector('#mwi-labsim-upgrade-stop').style.display).toBe('none');
+        });
+
         test('Stop mid-verify cancels the engine and marks partial results, leaving unfinished rows unmarked', async () => {
             await analyze(analysisOf(fiveRows()));
             let release;
