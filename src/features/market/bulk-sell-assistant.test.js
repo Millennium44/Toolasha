@@ -1192,6 +1192,17 @@ describe('confirming from the strip', () => {
             expect(bulkSell.current.count).toBe(18);
         });
 
+        test('grew with a same-item Buy modal open: that modal is untouched and the press refuses', () => {
+            const modal = openModal({ qty: 18, header: 'Buy Now' });
+            runAtStep0();
+            setCheese(25);
+            confirmBtn().click();
+            expect(modal.querySelector('input').value).toBe('18');
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('not a sell form');
+            expect(bulkSell.current.count).toBe(18);
+        });
+
         test('grew with another enhancement level open: that modal is untouched and the press refuses', () => {
             const modal = openModal({ qty: 18, enhancement: 3 });
             runAtStep0();

@@ -1193,11 +1193,6 @@ class BulkSellAssistant {
 
         const modal = document.querySelector('[class*="Modal_modalContainer"]');
         if (!modal) return { why: 'the sell modal is not open' };
-        const header = modal.querySelector('div[class*="MarketplacePanel_header"]')?.textContent || '';
-        if (!header.includes('Sell Now') && !header.includes('Sell Listing')) {
-            return { why: 'the open modal is not a sell form' };
-        }
-
         const wrong = this._modalIdentityProblem(modal);
         if (wrong) return { why: wrong };
         const quantity = this._modalQuantity(modal);
@@ -1213,13 +1208,18 @@ class BulkSellAssistant {
     }
 
     /**
-     * Whether the open sell modal is for the queued item at the queued enhancement level.
+     * Whether the open modal is a sell form for the queued item at the queued enhancement level.
      * Shared by the press target and the live-count rewrite, so a modal the player opened for
      * something else is judged the same way by both.
      * @param {Element} modal - The open sell modal
      * @returns {string|null} Why it is not the queued sale, or null when it is
      */
     _modalIdentityProblem(modal) {
+        // A Buy Now / Buy Listing modal of the same item and level is not ours to touch or to press
+        const header = modal.querySelector('div[class*="MarketplacePanel_header"]')?.textContent || '';
+        if (!header.includes('Sell Now') && !header.includes('Sell Listing')) {
+            return 'the open modal is not a sell form';
+        }
         const hrid = this._modalItemHrid(modal);
         if (!hrid) return 'the modal does not say what it is selling';
         if (hrid !== this.current.itemHrid) {
