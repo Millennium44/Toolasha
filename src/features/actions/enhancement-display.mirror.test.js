@@ -136,6 +136,7 @@ describe('mirrorCostColumn', () => {
         );
         expect(line).toContain('no quote');
         expect(line).toContain('+10');
+        expect(line).toContain('protection or a material has no market price');
     });
 
     test('an unpriced mirror is not a free one', () => {
