@@ -6670,6 +6670,52 @@ describe('the Lab Sim tab sections', () => {
         storage.values = {};
     });
 
+    test('collapsing a section while the stored queues are still loading keeps them, and keeps the collapse', async () => {
+        ui.destroy();
+        const stored = {
+            combat: [{ hrid: '/items/sinister_cape', level: 7 }],
+            skilling: [{ hrid: '/items/sinister_cape', level: 3 }],
+            options: { orderShowAll: true, sectionsCollapsed: { 'lab:configure-editor': true } },
+        };
+        let resolveRead;
+        storage.pending['labSimCheckedSwaps_me'] = new Promise((resolve) => {
+            resolveRead = resolve;
+        });
+        delete storage.written['labSimCheckedSwaps_me'];
+        ui.buildPanel();
+        await settle();
+
+        header('single-results').click();
+        ui.panel.querySelector('#mwi-labsim-swap-all-combat').click();
+        await settle();
+        // Nothing was written over the unread queues
+        expect(storage.written['labSimCheckedSwaps_me']).toBeUndefined();
+
+        resolveRead(stored);
+        await settle();
+        delete storage.pending['labSimCheckedSwaps_me'];
+
+        expect(ui._checkedSwaps.combat).toEqual([{ hrid: '/items/sinister_cape', level: 7 }]);
+        expect(ui._checkedSwaps.skilling).toEqual([{ hrid: '/items/sinister_cape', level: 3 }]);
+        expect(header('single-results').getAttribute('aria-expanded')).toBe('false');
+        expect(header('configure-editor').getAttribute('aria-expanded')).toBe('false');
+        const written = storage.written['labSimCheckedSwaps_me'];
+        expect(written.combat).toEqual([{ hrid: '/items/sinister_cape', level: 7 }]);
+        expect(written.skilling).toEqual([{ hrid: '/items/sinister_cape', level: 3 }]);
+        expect(written.options.orderShowAll).toBe(true);
+        expect(written.options.sectionsCollapsed).toEqual({ 'lab:configure-editor': true, 'lab:single-results': true });
+        expect(written.options.all.combat).toBe(ui._swapOptions.all.combat);
+    });
+
+    test('collapsing a section after the stored queues are loaded saves as usual', async () => {
+        await settle();
+        header('single-results').click();
+        await settle();
+        expect(storage.written['labSimCheckedSwaps_me'].options.sectionsCollapsed).toEqual({
+            'lab:single-results': true,
+        });
+    });
+
     test('Check a swap, Tune triggers and Upgrades still toggle on their own headers', () => {
         ui.panel.querySelector('#mwi-labsim-trigger-header').click();
         expect(ui._triggerChoices.open).toBe(true);

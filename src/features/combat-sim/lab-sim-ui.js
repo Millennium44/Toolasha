@@ -899,6 +899,10 @@ class LabSimUI {
         // it moved: an edit made while the read was in flight is already saved, and the read holds the older value
         this._tokenBuffEdits = 0;
         this._swapEdits = 0;
+        // Whether this character's stored queues have been read back; until then an option toggle must not write
+        this._swapsLoaded = false;
+        // Option paths toggled before then, laid over the stored options once they arrive
+        this._optionEdits = [];
     }
 
     buildPanel() {
@@ -3937,11 +3941,11 @@ class LabSimUI {
             this.panel.querySelector(`#mwi-labsim-swap-header-${kind}`)?.addEventListener('click', () => {
                 this._swapOptions.open[kind] = !this._isSwapSectionOpen(kind);
                 this._applySwapSectionState(kind);
-                void this._saveCheckedSwaps();
+                this._swapOptionChanged(['open', kind]);
             });
             this.panel.querySelector(`#mwi-labsim-swap-all-${kind}`)?.addEventListener('change', (event) => {
                 this._swapOptions.all[kind] = event.target.checked;
-                void this._saveCheckedSwaps();
+                this._swapOptionChanged(['all', kind]);
             });
             item?.addEventListener('input', () => this._fillSwapSuggestions(kind));
             for (const box of [item, level]) {
@@ -3963,7 +3967,7 @@ class LabSimUI {
             this.panel.querySelector(`#mwi-labsim-upgrades-header-${kind}`)?.addEventListener('click', () => {
                 this._swapOptions.upgradesOpen[kind] = !this._swapOptions.upgradesOpen[kind];
                 this._applySwapSectionState(kind);
-                void this._saveCheckedSwaps();
+                this._swapOptionChanged(['upgradesOpen', kind]);
             });
             this.panel.querySelector(`#mwi-labsim-swap-chips-${kind}`)?.addEventListener('click', (event) => {
                 const remove = event.target.closest('[data-swap-remove]');
@@ -4065,7 +4069,7 @@ class LabSimUI {
         container.querySelector('[data-checked-heading]')?.addEventListener('click', () => {
             this._swapOptions.checkedOpen[kind] = !this._swapOptions.checkedOpen[kind];
             this._applyCheckedCollapse(kind, container);
-            void this._saveCheckedSwaps();
+            this._swapOptionChanged(['checkedOpen', kind]);
         });
         this._applyCheckedCollapse(kind, container);
     }
@@ -4222,6 +4226,23 @@ class LabSimUI {
     }
 
     /**
+     * An option (a section's open state, a toggle) changed. Once the stored queues are loaded this saves like
+     * any edit; before then the save would write the still-empty queues over them, so the change is only
+     * noted, laid over the stored options when they arrive, and flushed then. It is not a queue edit either
+     * way, so it never makes the restore give up.
+     * @param {Array<string>} [path] - Where in the options it changed; omitted when only a save is wanted
+     * @param {boolean} [save=true] - False to note the path without saving (the caller saves right after)
+     * @private
+     */
+    _swapOptionChanged(path, save = true) {
+        if (this._swapsLoaded) {
+            if (save) void this._saveCheckedSwaps();
+            return;
+        }
+        if (path) this._optionEdits.push(path);
+    }
+
+    /**
      * Remember the queues for this character.
      * @private
      */
@@ -4257,15 +4278,38 @@ class LabSimUI {
         }
         if (!this.panel || !this._stillSameCharacter(ownerId)) return;
         // A swap queued, removed or re-optioned while the read was out is saved and on screen; keep it
-        if (this._swapEdits !== editsBefore) return;
+        if (this._swapEdits !== editsBefore) {
+            // That edit's save carried the options too
+            this._swapsLoaded = true;
+            this._optionEdits = [];
+            return;
+        }
         const restored = sanitizeSwapQueues(saved);
+        const previous = this._swapOptions;
         this._swapOptions = sanitizeSwapOptions(saved?.options);
+        // Options toggled before the read came back win over the stored ones
+        const toggled = this._optionEdits;
+        for (const path of toggled) {
+            let from = previous;
+            let to = this._swapOptions;
+            for (const key of path.slice(0, -1)) {
+                from = from?.[key];
+                if (to[key] === null || typeof to[key] !== 'object') to[key] = {};
+                to = to[key];
+            }
+            const last = path[path.length - 1];
+            if (from?.[last] === undefined) delete to[last];
+            else to[last] = from[last];
+        }
+        this._optionEdits = [];
+        this._swapsLoaded = true;
         for (const kind of ['combat', 'skilling']) {
             if (replace || !this._checkedSwaps[kind].length) this._checkedSwaps[kind] = restored[kind];
             this._renderSwapChips(kind);
         }
         // The sections' collapsed state came back with the options
         this._applyLabSectionStates();
+        if (toggled.length) void this._saveCheckedSwaps();
     }
 
     /**
@@ -6372,11 +6416,13 @@ class LabSimUI {
             {
                 get: (_target, key) => state()[key],
                 set: (_target, key, value) => {
+                    owner._swapOptionChanged(['sectionsCollapsed', key], false);
                     if (value) state()[key] = true;
                     else delete state()[key];
                     return true;
                 },
                 deleteProperty: (_target, key) => {
+                    owner._swapOptionChanged(['sectionsCollapsed', key], false);
                     delete state()[key];
                     return true;
                 },
@@ -6400,7 +6446,7 @@ class LabSimUI {
                 first
                     ? () => {
                           wrap._refreshSummary?.();
-                          void this._saveCheckedSwaps();
+                          this._swapOptionChanged();
                       }
                     : undefined,
                 first ? () => wrap._refreshSummary?.() : undefined
@@ -6686,11 +6732,11 @@ class LabSimUI {
         const map = this._swapOptions.orderCollapsed ? { abilityOrder: true } : {};
         enhanceCollapsibles(container, map, () => {
             this._swapOptions.orderCollapsed = Boolean(map.abilityOrder);
-            void this._saveCheckedSwaps();
+            this._swapOptionChanged(['orderCollapsed']);
         });
         container.querySelector('[data-order-showall]')?.addEventListener('click', () => {
             this._swapOptions.orderShowAll = !this._swapOptions.orderShowAll;
-            void this._saveCheckedSwaps();
+            this._swapOptionChanged(['orderShowAll']);
             redraw();
         });
     }
@@ -9569,6 +9615,8 @@ class LabSimUI {
         // reads its own back from storage
         this._checkedSwaps = { combat: [], skilling: [] };
         this._swapOptions = sanitizeSwapOptions(null);
+        this._swapsLoaded = false;
+        this._optionEdits = [];
         this._upgradeOrderSection = null;
         this._triggerChoices = sanitizeLabTriggerChoices(null);
         this._triggerTargets = { scopeMode: 'current', groups: [], note: '' };
