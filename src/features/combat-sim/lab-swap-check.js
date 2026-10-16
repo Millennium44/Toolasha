@@ -169,6 +169,14 @@ export function sanitizeSwapOptions(raw) {
         orderShowAll: raw?.orderShowAll === true,
         // The Trigger tuning results box: left minimized
         triggerCollapsed: raw?.triggerCollapsed === true,
+        // The Lab Sim tab sections left minimized, by section key
+        sectionsCollapsed: Object.fromEntries(
+            Object.entries(
+                raw?.sectionsCollapsed && typeof raw.sectionsCollapsed === 'object' ? raw.sectionsCollapsed : {}
+            )
+                .filter(([key, value]) => typeof key === 'string' && key.length <= 60 && value === true)
+                .slice(0, 40)
+        ),
     };
 }
 

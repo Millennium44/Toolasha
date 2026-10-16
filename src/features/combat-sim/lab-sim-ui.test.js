@@ -6354,3 +6354,117 @@ describe('the Ability order Include option', () => {
         expect(withOrder).toBeGreaterThan(without);
     });
 });
+
+describe('the Lab Sim tab sections', () => {
+    const SECTIONS = {
+        'configure-setup': 'configure',
+        'configure-editor': 'configure',
+        'single-results': 'maxlevel',
+        'skilling-goals': 'skilling',
+    };
+    const wrap = (key) => ui.panel.querySelector(`[data-lab-section="${key}"]`);
+    const header = (key) => wrap(key).querySelector('[data-collapse-key]');
+    const body = (key) => wrap(key).querySelector('[data-lab-section-body]');
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = { '/monsters/mimic': 130 };
+        ui.buildPanel();
+        await settle();
+    });
+
+    afterEach(() => {
+        game.monsters = [];
+        game.skipLevels = {};
+        ui.destroy();
+    });
+
+    test('every tab content area scrolls as a whole and no section inside it is capped', () => {
+        for (const tab of ['configure', 'maxlevel', 'upgrade', 'skilling']) {
+            const content = ui.panel.querySelector(`#mwi-labsim-${tab}-content`);
+            expect(content.style.overflowY).toBe('auto');
+            for (const el of content.querySelectorAll('*')) {
+                // A progress bar keeps its fixed height; nothing else may be capped or scroll on its own
+                if (
+                    el.style.height &&
+                    el.closest('#mwi-labsim-progress, #mwi-labsim-upgrade-progress, #mwi-labsim-skilling-progress')
+                )
+                    continue;
+                expect(el.style.maxHeight, el.id || el.tagName).toBe('');
+                expect(el.style.overflowY, el.id || el.tagName).toBe('');
+            }
+        }
+    });
+
+    test('the sections exist with a header, a body and the expanded default', () => {
+        for (const key of Object.keys(SECTIONS)) {
+            expect(wrap(key), key).toBeTruthy();
+            expect(header(key).getAttribute('aria-expanded')).toBe('true');
+            expect(body(key).style.display).not.toBe('none');
+            expect(ui.panel.querySelector(`#mwi-labsim-${SECTIONS[key]}-content`).contains(wrap(key))).toBe(true);
+        }
+    });
+
+    test('collapsing hides the body, shows a one-line summary and is saved', async () => {
+        header('single-results').click();
+        await settle();
+        expect(header('single-results').getAttribute('aria-expanded')).toBe('false');
+        expect(body('single-results').style.display).toBe('none');
+        const summary = header('single-results').querySelector('[data-collapse-summary]');
+        expect(summary.style.display).toBe('inline');
+        expect(summary.textContent).toBe('no results yet');
+        expect(storage.written['labSimCheckedSwaps_me'].options.sectionsCollapsed).toEqual({
+            'lab:single-results': true,
+        });
+
+        header('single-results').click();
+        expect(body('single-results').style.display).not.toBe('none');
+        expect(storage.written['labSimCheckedSwaps_me'].options.sectionsCollapsed).toEqual({});
+    });
+
+    test('the summary follows the body: a result drawn while collapsed shows as its first line', async () => {
+        header('single-results').click();
+        ui.panel.querySelector('#mwi-labsim-results').innerHTML = '<div>Cleared 7 of 10 fights</div><div>more</div>';
+        await settle();
+        expect(header('single-results').querySelector('[data-collapse-summary]').textContent).toContain(
+            'Cleared 7 of 10'
+        );
+    });
+
+    test('the state survives a redraw of the section content and a rebuilt-options restore', async () => {
+        header('single-results').click();
+        ui.panel.querySelector('#mwi-labsim-results').innerHTML = '<div>first</div>';
+        ui.panel.querySelector('#mwi-labsim-results').innerHTML = '<div>second</div>';
+        expect(body('single-results').style.display).toBe('none');
+        // A result container setting its own display does not reopen a collapsed section
+        ui.panel.querySelector('#mwi-labsim-results').style.display = 'block';
+        expect(body('single-results').style.display).toBe('none');
+
+        // A restore (or a sync pull) replaces the options object: the headers follow it
+        storage.values = {
+            labSimCheckedSwaps_me: {
+                combat: [],
+                skilling: [],
+                options: { sectionsCollapsed: { 'lab:configure-editor': true } },
+            },
+        };
+        await ui._restoreCheckedSwaps({ replace: true });
+        expect(header('configure-editor').getAttribute('aria-expanded')).toBe('false');
+        expect(body('configure-editor').style.display).toBe('none');
+        expect(header('single-results').getAttribute('aria-expanded')).toBe('true');
+        expect(body('single-results').style.display).not.toBe('none');
+        storage.values = {};
+    });
+
+    test('Check a swap, Tune triggers and Upgrades still toggle on their own headers', () => {
+        ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+        expect(ui._triggerChoices.open).toBe(true);
+        ui.panel.querySelector('#mwi-labsim-swap-header-combat').click();
+        expect(ui._swapOptions.open.combat).not.toBeNull();
+        const before = ui._swapOptions.upgradesOpen.combat;
+        ui.panel.querySelector('#mwi-labsim-upgrades-header-combat').click();
+        expect(ui._swapOptions.upgradesOpen.combat).toBe(!before);
+    });
+});

@@ -828,6 +828,20 @@ describe('combat: who a checked swap reaches', () => {
         });
     });
 
+    test('the minimized tab sections come back as only the true flags of short keys', () => {
+        expect(
+            sanitizeSwapOptions({
+                sectionsCollapsed: {
+                    'lab:single-results': true,
+                    'lab:x': false,
+                    'lab:y': 'yes',
+                    ['k'.repeat(61)]: true,
+                },
+            }).sectionsCollapsed
+        ).toEqual({ 'lab:single-results': true });
+        expect(sanitizeSwapOptions({ sectionsCollapsed: 'nope' }).sectionsCollapsed).toEqual({});
+    });
+
     test('the remembered options come back in shape', () => {
         expect(sanitizeSwapOptions(null)).toEqual({
             all: { combat: false, skilling: false },
@@ -837,6 +851,7 @@ describe('combat: who a checked swap reaches', () => {
             orderCollapsed: false,
             orderShowAll: false,
             triggerCollapsed: false,
+            sectionsCollapsed: {},
         });
         expect(
             sanitizeSwapOptions({ all: { combat: true, skilling: 'x' }, open: { combat: false, skilling: 3 } })
@@ -848,6 +863,7 @@ describe('combat: who a checked swap reaches', () => {
             orderCollapsed: false,
             orderShowAll: false,
             triggerCollapsed: false,
+            sectionsCollapsed: {},
         });
         expect(sanitizeSwapOptions({ checkedOpen: { combat: false, skilling: 'x' } }).checkedOpen).toEqual({
             combat: false,
