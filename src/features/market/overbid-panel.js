@@ -370,6 +370,12 @@ class OverbidPanel {
         this.sightingTimer = null;
         /** `itemHrid:level` keys already asked for, so an unknown item is not asked for again */
         this.requestedSightings = new Set();
+        /**
+         * The character whose hidden keys were last pruned against a login snapshot. Kept through
+         * `disable()`, so turning the setting off and on again mid-session does not prune a temporarily
+         * canceled listing's hide, while the first start after switching to another character still does.
+         */
+        this.prunedOwner = null;
     }
 
     /**
@@ -406,6 +412,7 @@ class OverbidPanel {
             await this.loadHidden();
             if (generation !== this.generation) return;
             this.pruneHidden();
+            this.prunedOwner = this.hiddenOwner;
             this.update();
         };
         const listingsHandler = () => {
@@ -440,7 +447,12 @@ class OverbidPanel {
         this.update();
         await this.loadHidden();
         if (!this.isInitialized) return;
-        this.pruneHidden();
+        // A start that follows a login (the registry may start this after `character_initialized` fired)
+        // prunes once; a later start for the same character is a settings toggle and leaves the hides alone
+        if (this.prunedOwner !== this.hiddenOwner) {
+            this.pruneHidden();
+            this.prunedOwner = this.hiddenOwner;
+        }
         this.update();
     }
 

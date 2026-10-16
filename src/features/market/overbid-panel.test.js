@@ -194,6 +194,7 @@ describe('panel', () => {
         document.body.innerHTML = '';
         vi.useFakeTimers();
         vi.setSystemTime(NOW);
+        overbidPanel.prunedOwner = null;
         await overbidPanel.initialize();
     });
     afterEach(() => {
@@ -605,6 +606,29 @@ describe('panel', () => {
             fire();
             expect(overbidPanel.hidden.has(`${CHEESE}:0:sell`)).toBe(true);
             expect(hoisted.storageSet).not.toHaveBeenCalled();
+        });
+
+        it('turning the setting off and on mid-session keeps a hide whose listing is briefly canceled', async () => {
+            overbidPanel.disable();
+            hoisted.store[STORE_KEY] = [`${CHEESE}:0:sell`];
+            hoisted.listings = [listing({ id: 1 }), listing({ id: 2, itemHrid: SWORD })];
+            await overbidPanel.initialize();
+            expect(overbidPanel.hidden.has(`${CHEESE}:0:sell`)).toBe(true);
+            // The cheese listing is canceled to be relisted; an unrelated sword listing keeps the snapshot nonempty
+            hoisted.listings = [listing({ id: 2, itemHrid: SWORD })];
+            overbidPanel.disable();
+            await overbidPanel.initialize();
+            expect(overbidPanel.hidden.has(`${CHEESE}:0:sell`)).toBe(true);
+            expect(hoisted.storageSet).not.toHaveBeenCalled();
+        });
+
+        it('the first start after switching to another character still prunes against its listings', async () => {
+            overbidPanel.disable();
+            hoisted.characterId = 'c2';
+            hoisted.store.overbidPanel_hidden_c2 = [`${CHEESE}:0:sell`];
+            hoisted.listings = [listing({ id: 2, itemHrid: SWORD })];
+            await overbidPanel.initialize();
+            expect(overbidPanel.hidden.size).toBe(0);
         });
 
         it('a load that resolves after a character switch does not apply to the new character', async () => {
