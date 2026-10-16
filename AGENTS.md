@@ -101,6 +101,24 @@ push to `main` or merge.
   runs (module-level, or kept between analyses)? Is anything built from a subset of the data it should
   cover (the simulated fights rather than every saved loadout, the chosen fights rather than the
   character)? Does any branch of the new code drop a rule its sibling path enforces?
+- **Every diff, before the PR, answers these** — the recurring themes of 1,441 past Codex comments, most
+  frequent first. Answer each about the diff with file:line, and fix the "yes" ones first:
+    1. If a write fails, is cancelled or loses a race (another tab, a pull), what state is left? Is a new
+       storage key registered in `sync-ownership.js`?
+    2. Is a missing or fallback price ever treated as 0, or summed without a flag? Is tax applied once, and
+       does bid vs ask follow the pricing mode? Does a path refuse to run for want of a side it never uses?
+    3. Duplicates, stacks of three or more, nonzero tiers and levels, one item in two roles — handled, and in
+       the fixtures?
+    4. After every `await`, is character or request identity re-checked before acting?
+    5. Does `disable()` or turning the setting off clear every field, node and listener, and does re-enable
+       or a login (even one while the feature was off) redo init? Is "empty" told apart from "not loaded"?
+    6. Does every input that changes a result appear in its cache key, and is no cache shared with a path
+       that must not see this one's inputs?
+    7. Does any value come from the local player where it should come from another party member?
+    8. Is every consumer redrawn after the state changes, and every listener disposed on detach?
+    9. A new export on a shared module is in every `vi.mock` factory of it, and fixtures use the game's shapes?
+    10. Does a gate include one setting too many or too few? Does every help, hover and changelog line match
+        what the code does?
 - **Review comments**: verify each point against the code first — some are wrong; reply with file:line
   for those. Fix every point of one review, then push once (each push triggers a full new review). Each
   fix gets a regression test that fails pre-fix and a one-line reply on its thread; then resolve it. A P2

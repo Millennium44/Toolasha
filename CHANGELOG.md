@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Agent rule: a pre-PR question list
+
+- Contributor rules now carry ten questions every diff answers before its PR, drawn from the recurring themes of past automated reviews, so fewer review rounds are spent rediscovering the same kinds of bug.
+
 ### Tooltip: "Instead of selling" alchemy line
 
 - An item tooltip now shows up to two alchemy routes (transmute, decompose, coinify) that beat selling the unit you hold, with outputs counted as sold after tax — useful for self-farmed items where market tax makes selling the worse deal.
