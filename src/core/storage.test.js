@@ -2270,3 +2270,15 @@ describe('Storage.set with a fold: read, fold and write in the one transaction t
         expect(dataByStore.get('settings').get('lines')).toEqual(['other tab', 'queued', 'updated']);
     });
 });
+
+describe('Storage.pendingWriteCount', () => {
+    test('counts queued and in-flight writes', () => {
+        const queued = new Map([['settings:a', {}]]);
+        const inFlight = new Set([Promise.resolve()]);
+        const probe = { pendingWrites: queued, _inFlightWrites: inFlight };
+        expect(storage.pendingWriteCount.call(probe)).toBe(2);
+        queued.clear();
+        inFlight.clear();
+        expect(storage.pendingWriteCount.call(probe)).toBe(0);
+    });
+});

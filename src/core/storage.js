@@ -3151,6 +3151,17 @@ class Storage {
     }
 
     /**
+     * How many writes are still on their way to disk: queued behind a debounce timer, or started and not yet
+     * settled. A flush that was running while a new write was debounced leaves that write queued, so a caller
+     * that needs "nothing of mine is outstanding" loops flush-until-zero (bounded: a write to a latched store
+     * or a failing one stays queued by design).
+     * @returns {number} Queued plus in-flight writes
+     */
+    pendingWriteCount() {
+        return this.pendingWrites.size + this._inFlightWrites.size;
+    }
+
+    /**
      * Latch the stores a restore just replaced, so nothing pre-restore lands on
      * top of them before the reload the UI asks for.
      *

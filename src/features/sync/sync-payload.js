@@ -975,8 +975,31 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         await storage.endRestore?.();
     }
     // The records that took the pull under a running page re-read what it wrote
-    if (announcement) announceSyncPullApplied(announcement.written, announcement.deleted);
+    if (announcement) {
+        await settlePendingWrites();
+        announceSyncPullApplied(announcement.written, announcement.deleted);
+    }
     return result;
+}
+
+/** Flushes tried before the announcement goes out regardless; a latched or failing write stays queued by design */
+const MAX_SETTLE_FLUSHES = 5;
+
+/**
+ * Flush until storage reports nothing outstanding. `endRestore` flushes once, and a write a live-safe record
+ * debounced while that flush ran is still queued behind its timer — a listener re-reading on the announcement
+ * would see (and later write back) the old stored value.
+ * @returns {Promise<void>}
+ */
+async function settlePendingWrites() {
+    try {
+        for (let attempt = 0; attempt < MAX_SETTLE_FLUSHES; attempt += 1) {
+            if (!(storage.pendingWriteCount?.() > 0)) return;
+            await storage.flushAll?.();
+        }
+    } catch (error) {
+        console.error('[Sync] Settling writes before the pull announcement failed:', error);
+    }
 }
 
 /**
