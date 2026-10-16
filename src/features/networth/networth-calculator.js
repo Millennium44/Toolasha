@@ -75,7 +75,9 @@ export async function calculateItemValue(item, priceCache = null) {
                 const enhancementParams = getEnhancingParams();
                 const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
 
-                if (enhancementPath && enhancementPath.optimalStrategy) {
+                // A path with an unpriced material or base is a partial bill, not a value: fall back to the
+                // base item's price, as the worker does
+                if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
                     itemValue = enhancementPath.optimalStrategy.totalCost;
                     // Cache the result
                     networthCache.set(itemHrid, enhancementLevel, itemValue);
@@ -100,7 +102,9 @@ export async function calculateItemValue(item, priceCache = null) {
                     const enhancementParams = getEnhancingParams();
                     const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
 
-                    if (enhancementPath && enhancementPath.optimalStrategy) {
+                    // A path with an unpriced material or base is a partial bill, not a value: fall back to the
+                    // base item's price, as the worker does
+                    if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
                         itemValue = enhancementPath.optimalStrategy.totalCost;
                         networthCache.set(itemHrid, enhancementLevel, itemValue);
                     } else {
