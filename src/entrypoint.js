@@ -2491,6 +2491,10 @@ function registerFeatures() {
             category: 'Notifications',
             module: UI.emptyQueueNotification,
             async: true,
+            // No feature-map entry under this key, so the gate used to be always open: the schema setting is
+            // the real switch, and without this it neither started live nor could be stopped live.
+            customCheck: () => config.getSetting('notifiEmptyAction'),
+            liveStop: true,
         },
         {
             key: 'communityBuffAlerts',
@@ -2511,6 +2515,7 @@ function registerFeatures() {
             // As above: no feature-map entry, so the schema setting is the only
             // gate and an unknown registry key would otherwise default to on
             customCheck: () => config.getSetting('notifications_labyrinthRunFinished'),
+            liveStop: true,
         },
         {
             key: 'combatConsumableAlerts',
@@ -2520,6 +2525,7 @@ function registerFeatures() {
             async: true,
             // Schema setting is the only gate; no feature-map entry
             customCheck: () => config.getSetting('notifications_combatConsumableLow'),
+            liveStop: true,
         },
         {
             key: 'labyrinthEntryAlerts',
@@ -2529,6 +2535,7 @@ function registerFeatures() {
             async: true,
             // Schema setting is the only gate; no feature-map entry.
             customCheck: () => config.getSetting('notifications_labyrinthEntryAvailable'),
+            liveStop: true,
         },
         {
             key: 'combatDeathAlerts',
@@ -2537,6 +2544,7 @@ function registerFeatures() {
             module: UI.combatDeathAlerts,
             async: true,
             customCheck: () => config.getSetting('notifications_combatDeath'),
+            liveStop: true,
         },
         {
             key: 'skillLevelUpAlerts',
@@ -2555,6 +2563,7 @@ function registerFeatures() {
             async: true,
             // Schema setting is the only gate; no feature-map entry.
             customCheck: () => config.getSetting('notifications_ttlTargetReached'),
+            liveStop: true,
         },
         {
             key: 'bestiaryPointsAlerts',
@@ -2615,6 +2624,7 @@ function registerFeatures() {
             module: UI.enhancementTargetAlerts,
             async: true,
             customCheck: () => config.getSetting('notifications_enhancementTarget'),
+            liveStop: true,
         },
         {
             key: 'philoStoneAlerts',
@@ -2623,6 +2633,7 @@ function registerFeatures() {
             module: UI.philoStoneAlerts,
             async: true,
             customCheck: () => config.getSetting('notifications_philosophersStone'),
+            liveStop: true,
         },
         {
             key: 'taskSlotAlerts',
@@ -2631,6 +2642,7 @@ function registerFeatures() {
             module: UI.taskSlotAlerts,
             async: true,
             customCheck: () => config.getSetting('notifications_taskSlotsFull'),
+            liveStop: true,
         },
         {
             key: 'queueMonitor',
