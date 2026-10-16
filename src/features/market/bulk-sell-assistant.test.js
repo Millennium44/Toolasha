@@ -1161,6 +1161,27 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(1);
         });
 
+        test("grew with another item's modal open: that modal is untouched and the press refuses", () => {
+            const modal = openModal({ item: 'milk', qty: 4 });
+            runAtStep0();
+            setCheese(25);
+            confirmBtn().click();
+            expect(modal.querySelector('input').value).toBe('4');
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('not Cheese');
+            expect(bulkSell.current.count).toBe(18);
+        });
+
+        test('grew with another enhancement level open: that modal is untouched and the press refuses', () => {
+            const modal = openModal({ qty: 18, enhancement: 3 });
+            runAtStep0();
+            setCheese(25);
+            confirmBtn().click();
+            expect(modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input').value).toBe('18');
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('+3');
+        });
+
         test('shrank: sells what is there', () => {
             const modal = openModal({ qty: 18 });
             runAtStep0();

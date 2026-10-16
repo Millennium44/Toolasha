@@ -1181,25 +1181,8 @@ class BulkSellAssistant {
             return { why: 'the open modal is not a sell form' };
         }
 
-        const hrid = this._modalItemHrid(modal);
-        if (!hrid) return { why: 'the modal does not say what it is selling' };
-        if (hrid !== this.current.itemHrid) {
-            const clientData = dataManager.getInitClientData();
-            const name = clientData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop();
-            return { why: `the modal is selling ${name}, not ${this.current.name}` };
-        }
-        const level = this._modalEnhancementLevel(modal);
-        const wanted = this.current.enhancementLevel || 0;
-        // No field at all is how an unenhanceable item's modal looks, so it
-        // means +0 — but only for a step that queued +0. A step that queued an
-        // enhanced stack against a modal that will not say its level is a sale
-        // whose level nothing has checked, and that is the one this guard is
-        // for, so it refuses rather than assuming
-        if (level === null) {
-            if (wanted !== 0) return { why: 'the modal does not say what enhancement level it is selling' };
-        } else if (level !== wanted) {
-            return { why: `the modal is selling +${level}, not +${wanted}` };
-        }
+        const wrong = this._modalIdentityProblem(modal);
+        if (wrong) return { why: wrong };
         const quantity = this._modalQuantity(modal);
         if (quantity === null) return { why: 'the modal quantity cannot be read' };
         if (quantity !== this.current.count) {
@@ -1210,6 +1193,36 @@ class BulkSellAssistant {
         if (!button) return { why: "the modal's own confirm button was not found" };
         if (isButtonDisabled(button)) return { why: "the modal's confirm button is disabled" };
         return { button };
+    }
+
+    /**
+     * Whether the open sell modal is for the queued item at the queued enhancement level.
+     * Shared by the press target and the live-count rewrite, so a modal the player opened for
+     * something else is judged the same way by both.
+     * @param {Element} modal - The open sell modal
+     * @returns {string|null} Why it is not the queued sale, or null when it is
+     */
+    _modalIdentityProblem(modal) {
+        const hrid = this._modalItemHrid(modal);
+        if (!hrid) return 'the modal does not say what it is selling';
+        if (hrid !== this.current.itemHrid) {
+            const clientData = dataManager.getInitClientData();
+            const name = clientData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop();
+            return `the modal is selling ${name}, not ${this.current.name}`;
+        }
+        const level = this._modalEnhancementLevel(modal);
+        const wanted = this.current.enhancementLevel || 0;
+        // No field at all is how an unenhanceable item's modal looks, so it
+        // means +0, but only for a step that queued +0. A step that queued an
+        // enhanced stack against a modal that will not say its level is a sale
+        // whose level nothing has checked, and that is the one this guard is
+        // for, so it refuses rather than assuming
+        if (level === null) {
+            if (wanted !== 0) return 'the modal does not say what enhancement level it is selling';
+        } else if (level !== wanted) {
+            return `the modal is selling +${level}, not +${wanted}`;
+        }
+        return null;
     }
 
     /**
@@ -1353,8 +1366,16 @@ class BulkSellAssistant {
         }
         const queued = this.current.count;
         if (live === queued) return true;
-        this.current.count = live;
         const modal = document.querySelector('[class*="Modal_modalContainer"]');
+        // A modal the player opened for another item or level is theirs: its quantity is not ours to
+        // rewrite, so the press refuses the way the target check does and leaves it exactly as it was
+        const wrong = modal ? this._modalIdentityProblem(modal) : null;
+        if (wrong) {
+            this.confirmNote = wrong;
+            this._render();
+            return false;
+        }
+        this.current.count = live;
         const input = modal ? marketplaceShortcuts.findQuantityInput(modal) : null;
         if (input) {
             nativeInputValueSetter.call(input, String(live));
