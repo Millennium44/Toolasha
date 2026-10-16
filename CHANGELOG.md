@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim and Lab Sim: verify the top picks
+
+- A "Verify" button re-runs the top picks (ability orders, upgrade rows and trigger tuning) against your current setup several times longer on fresh paired seeds, and marks each "confirmed", "not confirmed" or "worse" with a much tighter ±; the Ability order summary and the Budget plan's free order prefer a confirmed result.
+- A new "Auto-verify close calls" setting (off by default) runs this automatically on up to three "within noise" winners after an analysis.
+
 ### Audit round: queue times and the planner
 
 - A queued fight counted in battles is no longer timed as a minute or less: the queue tile, briefing, account panel and queue monitor show "?" or "≥ X" when part of a queue can't be timed, and no longer call a still-fighting character idle or its queue ended.
@@ -16,11 +21,6 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The enhancing panel prices trainee charms at their shop price and takes a bid when an item has no ask, matching the tracker. The mirror line no longer compares against a cost that left an unpriced material out, or shows "∞".
 - Net worth values one-sided materials, the Philosopher's Mirror and shop-sold enhanced pieces the same way the rest of Toolasha does.
 - A tracked session whose cost left out an unpriced input marks its total as partial, gold attribution no longer counts it as an inflated gain, and the XP/h table sorts partly priced rows after fully priced ones.
-
-### Combat Sim and Lab Sim: verify the top picks
-
-- A "Verify" button re-runs the top picks (ability orders, upgrade rows and trigger tuning) against your current setup several times longer on fresh paired seeds, and marks each "confirmed", "not confirmed" or "worse" with a much tighter ±; the Ability order summary and the Budget plan's free order prefer a confirmed result.
-- A new "Auto-verify close calls" setting (off by default) runs this automatically on up to three "within noise" winners after an analysis.
 
 ### Audit round: market listings and Bulk Sell
 
