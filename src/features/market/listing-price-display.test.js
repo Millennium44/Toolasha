@@ -37,6 +37,10 @@ vi.mock('../../core/config.js', () => ({
         COLOR_TEXT_SECONDARY: '#999',
     },
 }));
+const bandMax = vi.hoisted(() => ({ value: Infinity }));
+vi.mock('../../utils/market-values.js', () => ({
+    clampToBand: (price) => (typeof price === 'number' ? Math.min(price, bandMax.value) : price),
+}));
 vi.mock('../../api/marketplace.js', () => ({ default: marketMock }));
 vi.mock('./estimated-listing-age.js', () => ({ default: ageMock }));
 vi.mock('./listing-markers.js', () => ({ default: { all: () => [] }, markerStateFor: () => ({}) }));
@@ -170,6 +174,29 @@ describe('_getTopOrderPrice — fresh undercut over a stale book', () => {
             marketMock.getPrice.mockReturnValue({ ask: 890_000, bid: null });
             expect(listingPriceDisplay._getTopOrderPrice(ITEM, 0, true, new Map(), own, 920_000)).toBe(890_000);
         } finally {
+            listingPriceDisplay.allListings = {};
+        }
+    });
+
+    test('own listings above the tradable band still match the clamped snapshot price', () => {
+        const mk = (id, price) => ({
+            id,
+            isSell: true,
+            itemHrid: ITEM,
+            enhancementLevel: 0,
+            price,
+            orderQuantity: 5,
+            filledQuantity: 0,
+        });
+        listingPriceDisplay.allListings = { 1: mk(1, 90), 2: mk(2, 100) };
+        bandMax.value = 80;
+        try {
+            // The snapshot's ask is clamped to the band's top (80); both of yours are really parked there
+            marketMock.getPrice.mockReturnValue({ ask: 80, bid: null });
+            marketMock.getPriceTimestamp.mockReturnValue(2000);
+            expect(listingPriceDisplay._getTopOrderPrice(ITEM, 0, true, new Map(), new Set([1, 2]), 100)).toBeNull();
+        } finally {
+            bandMax.value = Infinity;
             listingPriceDisplay.allListings = {};
         }
     });

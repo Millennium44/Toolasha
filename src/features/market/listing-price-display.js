@@ -1155,7 +1155,10 @@ class ListingPriceDisplay {
                 Boolean(listing.isSell) === Boolean(isSell) &&
                 listing.itemHrid === itemHrid &&
                 (listing.enhancementLevel || 0) === (enhancementLevel || 0) &&
-                listing.price === price &&
+                // getPrice clamps the snapshot into the tradable band, while a listing keeps its raw price:
+                // with asks at 90 and 100 and the band's top at 80 the snapshot reads 80, which neither
+                // raw price equals. Clamp each candidate the same way before comparing
+                clampToBand(listing.price, itemHrid, enhancementLevel || 0) === price &&
                 (listing.orderQuantity || 0) > (listing.filledQuantity || 0)
         );
     }
