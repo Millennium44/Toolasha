@@ -2669,7 +2669,36 @@ export function addRefinedPathBootCandidates(candidates, gameData) {
 export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
     const cost = calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf);
     const mirror = enhancementMirrorRoute(candidate, gameData, isSelf);
-    return mirror && (cost == null || mirror.net < cost) ? mirror.net : cost;
+    const net = mirror && (cost == null || mirror.net < cost) ? mirror.net : cost;
+    return net == null ? net : net - freedPiecesCredit(candidate, net).credit;
+}
+
+/**
+ * The resale of the other pieces an enhancement row frees.
+ *
+ * A checked swap that enhances the copy one loadout wears also puts that item in the slot of every other
+ * loadout it reaches, and one physical piece serves them all, so what those loadouts wore (a different
+ * item: `freedItems`) is no longer needed and is sold. The credit is held to what the row costs, the cut
+ * the built routes make, so a stale bid on a freed piece cannot push a row below free.
+ *
+ * @param {Object} candidate - Upgrade candidate
+ * @param {number} spend - What the row costs before this credit
+ * @returns {{credit: number, entries: Array<{hrid: string, enhancementLevel: number, price: number}>,
+ *   capped: boolean, rawCredit: number}} Credit to apply and the pieces it came from
+ */
+function freedPiecesCredit(candidate, spend) {
+    const none = { credit: 0, entries: [], capped: false, rawCredit: 0 };
+    if (candidate?.type !== 'enhancement' || !candidate.freedItems?.length) return none;
+    const entries = candidate.freedItems
+        .filter((item) => item?.hrid)
+        .map((item) => ({
+            hrid: item.hrid,
+            enhancementLevel: item.enhancementLevel || 0,
+            price: sellValue(item.hrid, item.enhancementLevel || 0),
+        }));
+    const rawCredit = entries.reduce((sum, entry) => sum + entry.price, 0);
+    const credit = Math.min(rawCredit, Math.max(0, spend));
+    return { credit, entries, capped: credit < rawCredit, rawCredit };
 }
 
 /**
@@ -3941,6 +3970,37 @@ function explainAbilityCandidateCost(candidate, gameData, isSelf = true) {
  * @returns {Object} { buys, credits, gross, credit, net, unpriced, source, enhanceSource }
  */
 export function explainUpgradeCost(candidate, gameData, isSelf = true) {
+    const detail = explainUpgradeCostRoutes(candidate, gameData, isSelf);
+    if (detail.net == null) return detail;
+    const freed = freedPiecesCredit(candidate, detail.net);
+    if (!freed.entries.length) return detail;
+    const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid?.split('/').pop().replace(/_/g, ' ') || '?';
+    return {
+        ...detail,
+        credits: [
+            ...(detail.credits || []),
+            ...freed.entries.map((entry) => ({
+                hrid: entry.hrid,
+                name: nameOf(entry.hrid),
+                enhancementLevel: entry.enhancementLevel,
+                price: entry.price,
+            })),
+        ],
+        credit: (detail.credit || 0) + freed.credit,
+        net: detail.net - freed.credit,
+        creditApplied: true,
+        ...(freed.capped ? { freedCreditCapped: true, freedRawCredit: freed.rawCredit } : {}),
+    };
+}
+
+/**
+ * {@link explainUpgradeCost} before the resale of the pieces an enhancement row frees.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {Object} The breakdown
+ */
+function explainUpgradeCostRoutes(candidate, gameData, isSelf) {
     const detail = explainUpgradeCostWithoutMirror(candidate, gameData, isSelf);
     const mirror = enhancementMirrorRoute(candidate, gameData, isSelf);
     if (!mirror || !(detail.net == null || mirror.net < detail.net)) return detail;
@@ -5731,7 +5791,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
 
         results.push({
             candidate,
-            costDetail: explainLabCandidateCost(candidate, gameData, isSelf),
+            // An owned copy that is only moved buys nothing, so it has no purchase to break down beside its zero
+            costDetail: candidate.noPurchase ? null : explainLabCandidateCost(candidate, gameData, isSelf),
             costType: 'gold',
             cost: candidate.cost,
             winRate,

@@ -717,6 +717,97 @@ describe('combat: who a checked swap reaches', () => {
         });
     });
 
+    describe('an enhance frees the different pieces the other reached loadouts wear', () => {
+        const entry = (hrid, enhancementLevel) => ({ hrid, enhancementLevel });
+        const swap = { hrid: SWORD, level: 5 };
+
+        test('combat: the mace a second loadout wears is sold once the sword is enhanced for both', () => {
+            const sworded = wearing({ [MAIN]: piece(SWORD, 3) });
+            const maced = wearing({ [MAIN]: piece(MACE, 3) });
+            const alone = buildCombatSwapCandidate(swap, [sworded], gameData);
+            const both = buildCombatSwapCandidate(swap, [sworded, maced], gameData);
+
+            expect(both.type).toBe('enhancement');
+            expect(both.reach).toBe(2);
+            expect(both.freedItems).toEqual([entry(MACE, 3)]);
+            expect(both.keptItems).toBeUndefined();
+            expect(alone.freedItems).toEqual([]);
+            // The mace sells for 2M (the stubbed price) against the enhance of 40M
+            expect(both.cost).toBe(alone.cost - 2_000_000);
+            const detail = advisor.explainUpgradeCost(both, gameData);
+            expect(detail.net).toBe(both.cost);
+            expect(detail.credits).toContainEqual(expect.objectContaining({ hrid: MACE, enhancementLevel: 3 }));
+        });
+
+        test('combat: a mace a loadout outside the reach still wears is kept, not sold', () => {
+            const sworded = wearing({ [MAIN]: piece(SWORD, 3) });
+            const maced = wearing({ [MAIN]: piece(MACE, 3) });
+            const elsewhere = wearing({ [MAIN]: piece(MACE, 3) });
+            const result = buildCombatSwapCandidate(swap, [sworded, maced], gameData, true, {
+                ownershipDtos: [sworded, maced, elsewhere],
+            });
+            expect(result.reach).toBe(2);
+            expect(result.freedItems).toEqual([]);
+            expect(result.keptItems).toEqual([entry(MACE, 3)]);
+            expect(result.pricingNote).toContain('still worn by a loadout this swap does not reach');
+        });
+
+        test('combat: two loadouts wearing the same mace credit it once, and a different level is its own piece', () => {
+            const sworded = wearing({ [MAIN]: piece(SWORD, 3) });
+            const result = buildCombatSwapCandidate(
+                swap,
+                [
+                    sworded,
+                    wearing({ [MAIN]: piece(MACE, 3) }),
+                    wearing({ [MAIN]: piece(MACE, 3) }),
+                    wearing({ [MAIN]: piece(MACE, 4) }),
+                ],
+                gameData
+            );
+            expect(result.freedItems).toEqual([entry(MACE, 3), entry(MACE, 4)]);
+        });
+
+        test('combat: nothing else worn in the slot is no credit, and the cost is the plain enhance', () => {
+            const sworded = wearing({ [MAIN]: piece(SWORD, 3) });
+            const bare = wearing({});
+            const result = buildCombatSwapCandidate(swap, [sworded, bare], gameData);
+            expect(result.freedItems).toEqual([]);
+            expect(result.cost).toBe(buildCombatSwapCandidate(swap, [sworded], gameData).cost);
+        });
+
+        test('skilling: the tool another kit wears is credited beside the enhance', () => {
+            const TOOL = '/equipment_types/milking_tool';
+            ITEM_DETAIL_MAP['/items/tool_c'] = {
+                hrid: '/items/tool_c',
+                name: 'Tool C',
+                isTradable: true,
+                equipmentDetail: { type: TOOL, noncombatStats: { milkingSpeed: 0.1 } },
+            };
+            const context = (second) => ({
+                dto: { equipment: {} },
+                skillEquipmentMap: {
+                    '/skills/milking': { [TOOL]: piece(MILKING_TOOL, 3) },
+                    '/skills/foraging': { [TOOL]: second },
+                },
+                skills: ['/skills/milking', '/skills/foraging'],
+            });
+            const target = { hrid: MILKING_TOOL, level: 7 };
+            const opts = { allLoadouts: true };
+            const alone = buildSkillingSwapCandidate(target, context(null), gameData, true, opts);
+            const withTool = buildSkillingSwapCandidate(
+                target,
+                context(piece('/items/tool_c', 2)),
+                gameData,
+                true,
+                opts
+            );
+            expect(withTool.type).toBe('enhancement');
+            expect(withTool.freedItems).toEqual([entry('/items/tool_c', 2)]);
+            expect(withTool.cost).toBe(alone.cost - 2_000_000);
+            expect(withTool.costDetail.credits).toContainEqual(expect.objectContaining({ hrid: '/items/tool_c' }));
+        });
+    });
+
     describe('skilling: the item must have skilling stats, All loadouts or not', () => {
         test('a combat cape reaches no kit even with All loadouts, a tool for another skill does with it', () => {
             const TOOL = '/equipment_types/milking_tool';

@@ -419,13 +419,14 @@ const KEPT_CAVEAT =
  * kept, not sold, and the item being bought is never its own replacement.
  *
  * @param {Object} swap - `{ hrid, level }`
- * @param {string} routeName - From `routeFor`; only a `swap` replaces anything
+ * @param {string} routeName - From `routeFor`; a `swap` replaces the piece it prices against, an `enhance`
+ *   enhances the copy one loadout wears and frees the different pieces the others wear, and a `fill` has nothing in the slot
  * @param {Array<Object|null|undefined>} reachedPieces - `{ hrid, level }` worn in the slot by the loadouts reached
  * @param {Array<Object|null|undefined>} unreachedPieces - `{ hrid, enhancementLevel }` worn by the loadouts left out
  * @returns {{removed: Array<{hrid: string, enhancementLevel: number}>, kept: Array<{hrid: string, enhancementLevel: number}>}|null}
  */
 function replacedPieces(swap, routeName, reachedPieces, unreachedPieces) {
-    if (routeName !== 'swap') return null;
+    if (routeName !== 'swap' && routeName !== 'enhance') return null;
     const stillWorn = (hrid, level) =>
         unreachedPieces.some((piece) => piece?.hrid === hrid && (piece.enhancementLevel || 0) === level);
     const seen = new Set();
@@ -529,8 +530,10 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
             owned.filter((dto) => !reached.includes(dto)).map((dto) => dto?.equipment?.[slot])
         );
         if (replaced) {
-            // Each distinct piece replaced in a reached loadout is sold once
-            candidate.removedItems = replaced.removed;
+            // Each distinct piece replaced in a reached loadout is sold once. An enhance prices the copy it
+            // enhances itself, so the other pieces it frees are credited beside that, not in its place
+            if (route.route === 'enhance') candidate.freedItems = replaced.removed;
+            else candidate.removedItems = replaced.removed;
             if (replaced.kept.length) {
                 candidate.keptItems = replaced.kept;
                 candidate.pricingNote += KEPT_CAVEAT;
@@ -627,7 +630,9 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         const combatOnly = (item) => isCombatOnlyItem(gameData.itemDetailMap[item.hrid]);
         const keptCombat = replaced.removed.filter(combatOnly);
         const kept = [...replaced.kept, ...keptCombat];
-        priced.removedItems = replaced.removed.filter((item) => !combatOnly(item));
+        const sellable = replaced.removed.filter((item) => !combatOnly(item));
+        if (route.route === 'enhance') priced.freedItems = sellable;
+        else priced.removedItems = sellable;
         if (kept.length) priced.keptItems = kept;
         // Why each kept piece is kept, so the row can say so: another kit wears it, or it is combat armor
         if (replaced.kept.length) priced.keptUnreached = true;
