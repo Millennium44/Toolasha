@@ -115,6 +115,20 @@ vi.mock('./enhancement-xp.js', () => ({
     calculateAdjustedAttemptCount: () => 1,
 }));
 vi.mock('./tooltip-enhancement.js', () => ({ getEnhancementMaterialPrice: () => 0 }));
+// The shared enhancement input rule, reading the same fake book the rest of this file prices from
+vi.mock('../../utils/enhancement-input-pricing.js', () => {
+    const answer = (quote) => {
+        const price = quote?.ask > 0 ? quote.ask : quote?.bid > 0 ? quote.bid : 0;
+        return price > 0
+            ? { price, unpriced: false, estimated: false }
+            : { price: null, unpriced: true, estimated: false };
+    };
+    return {
+        priceAtLevel: (hrid, level = 0) => answer(state.prices[`${hrid}:${level}`]),
+        priceGuarded: (hrid) => answer(state.prices[`${hrid}:0`]),
+        priceMirror: () => answer(state.prices['/items/philosophers_mirror:0']),
+    };
+});
 vi.mock('./enhancement-ui.js', () => ({ default: { switchToSession: () => {}, scheduleUpdate: () => {} } }));
 vi.mock('./enhancement-tracker.js', () => ({ default: trackerMock }));
 

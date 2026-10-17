@@ -70,6 +70,20 @@ vi.mock('./enhancement-xp.js', () => ({
     calculateEnhancementPredictions: () => state.prediction,
 }));
 vi.mock('./tooltip-enhancement.js', () => ({ getEnhancementMaterialPrice: () => 0 }));
+vi.mock('../../utils/enhancement-input-pricing.js', () => {
+    const answer = (quote) => {
+        const price = quote?.ask > 0 ? quote.ask : quote?.bid > 0 ? quote.bid : 0;
+        return price > 0
+            ? { price, unpriced: false, estimated: false }
+            : { price: null, unpriced: true, estimated: false };
+    };
+    const book = (hrid) => (hrid === '/items/holy_brush' ? { ask: 700, bid: 650 } : null);
+    return {
+        priceAtLevel: (hrid) => answer(book(hrid)),
+        priceGuarded: (hrid) => answer(book(hrid)),
+        priceMirror: () => answer(null),
+    };
+});
 vi.mock('./enhancement-ui.js', () => ({ default: { switchToSession: () => {}, scheduleUpdate: () => {} } }));
 
 const { setupEnhancementHandlers, cleanupEnhancementHandlers } = await import('./enhancement-handlers.js');

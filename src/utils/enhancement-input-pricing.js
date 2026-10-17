@@ -168,6 +168,33 @@ export function priceBase(itemHrid, options = {}) {
     return { ...bought, crafted: false };
 }
 
+/**
+ * An enhanced copy bought as an input (a mirror attempt's base-item copy, a spare protection stack
+ * loaded at a level): at +0 the base-item rule, above it the resolver at that level (custom price
+ * for that level, Iron Cow, the book). An enhanced level with no quote stays unpriced; its craft
+ * cost is the price of a different thing, so there is no fallback.
+ * @param {string} itemHrid - The item
+ * @param {number} level - Enhancement level
+ * @param {Object} [options] - Same as {@link priceMaterial}
+ * @returns {{price: number|null, unpriced: boolean, estimated: boolean}}
+ */
+export function priceAtLevel(itemHrid, level = 0, options = {}) {
+    if (!itemHrid) return result(0);
+    if (!(level > 0)) return priceBase(itemHrid, { ...options, useCraftingCost: false });
+    try {
+        const { context = 'profit', mode } = options;
+        const resolved = resolveItemPrice(itemHrid, {
+            context,
+            side: 'buy',
+            enhancementLevel: level,
+            ...(mode ? { mode } : {}),
+        });
+        return result(resolved.price, resolved.estimated);
+    } catch {
+        return result(0);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Number-only shapes for the callers that import the older helpers
 // ---------------------------------------------------------------------------
