@@ -253,6 +253,18 @@ export function getRealisticBaseItemPrice(itemHrid, { quoteOf = (hrid) => getIte
  * @returns {number} Coins per unit produced
  */
 export function getProductionCost(itemHrid, mode = 'ask') {
+    return getProductionCostDetailed(itemHrid, mode).cost;
+}
+
+/**
+ * getProductionCost, plus whether the bill is partial: an input (or the upgrade item) nothing could
+ * price was counted as 0, so the figure is a lower bound, not a cost. An input whose own cost is a
+ * partial bill makes this one partial too.
+ * @param {string} itemHrid - The item
+ * @param {'ask'|'bid'} [mode='ask'] - Pricing side to use for input materials
+ * @returns {{cost: number, partial: boolean}} Coins per unit produced and whether an input was unpriced
+ */
+export function getProductionCostDetailed(itemHrid, mode = 'ask') {
     const cacheKey = `${itemHrid}|${mode}`;
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
@@ -275,18 +287,19 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
     if (!itemDetails || !itemDetails.name) {
-        return 0;
+        return { cost: 0, partial: false };
     }
 
     // Find the action whose primary output is this item
     const producer = findProducingAction(itemHrid, { primaryOnly: true, actionDetailMap: gameData.actionDetailMap });
     if (!producer) {
-        return 0;
+        return { cost: 0, partial: false };
     }
 
     const { action } = producer;
     const outputCount = producer.output.count || 1;
     let totalPrice = 0;
+    let partial = false;
 
     // Compute artisan tea reduction dynamically (same approach as material-calculator.js).
     // resolveActionContext drops a drink that is slotted but out of stock and no longer
@@ -310,8 +323,11 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
             }
             let inputPrice = getItemPrice(input.itemHrid, { mode }) || 0;
             if (inputPrice === 0) {
-                inputPrice = getProductionCost(input.itemHrid, mode);
+                const crafted = getProductionCostDetailed(input.itemHrid, mode);
+                inputPrice = crafted.cost;
+                if (crafted.partial) partial = true;
             }
+            if (!(inputPrice > 0) && input.count > 0) partial = true;
             totalPrice += inputPrice * input.count * (1 - artisanBonus);
         }
     }
@@ -320,17 +336,21 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     // Use min(market, craft) so refined items reflect the cheapest way to obtain the base item
     if (action.upgradeItemHrid) {
         const upgradeMarketPrice = getItemPrice(action.upgradeItemHrid, { mode }) || 0;
-        const upgradeCraftPrice = getProductionCost(action.upgradeItemHrid, mode);
+        const upgradeCraft = getProductionCostDetailed(action.upgradeItemHrid, mode);
+        const upgradeCraftPrice = upgradeCraft.cost;
         let upgradePrice;
         if (upgradeMarketPrice > 0 && upgradeCraftPrice > 0) {
             upgradePrice = Math.min(upgradeMarketPrice, upgradeCraftPrice);
+            if (upgradeCraftPrice < upgradeMarketPrice && upgradeCraft.partial) partial = true;
         } else {
             upgradePrice = upgradeMarketPrice || upgradeCraftPrice;
+            if (!upgradeMarketPrice && upgradeCraft.partial) partial = true;
         }
+        if (!(upgradePrice > 0)) partial = true;
         totalPrice += upgradePrice;
     }
 
-    return totalPrice / outputCount;
+    return { cost: totalPrice / outputCount, partial };
 }
 
 /**

@@ -234,7 +234,7 @@ describe('priceProtection', () => {
         game.books[SWORD] = { ask: 5000, bid: 4900 };
         game.books[PROTECTION] = { ask: 900, bid: 800 };
         game.books[PROTECT_ITEM] = { ask: 600, bid: 100 }; // guard: 600/100 > 1.3, so 100
-        expect(priceProtection(SWORD)).toEqual({
+        expect(priceProtection(SWORD)).toMatchObject({
             price: 100,
             itemHrid: PROTECT_ITEM,
             unpriced: false,
@@ -262,7 +262,7 @@ describe('priceProtection', () => {
     });
 
     test('nothing priced: null, flagged, no item', () => {
-        expect(priceProtection(SWORD)).toEqual({ price: null, itemHrid: null, unpriced: true, estimated: false });
+        expect(priceProtection(SWORD)).toMatchObject({ price: null, itemHrid: null, unpriced: true, estimated: false });
     });
 });
 
@@ -475,5 +475,49 @@ describe('pricingStamp', () => {
         expect(afterCustom).not.toBe(base);
         game.craftingSetting = true;
         expect(pricingStamp()).not.toBe(afterCustom);
+    });
+});
+
+describe('partial: a craft cost that skipped an unpriced input', () => {
+    const craftable = (out, withDust) => {
+        game.books['/items/ore'] = { ask: 100, bid: 100 };
+        game.items['/items/ore'] = { name: 'Ore' };
+        game.items['/items/dust'] = { name: 'Dust' };
+        if (withDust) game.books['/items/dust'] = { ask: 10, bid: 10 };
+        game.actions['/actions/make'] = {
+            type: '/action_types/crafting',
+            inputItems: [
+                { itemHrid: '/items/ore', count: 1 },
+                { itemHrid: '/items/dust', count: 1 },
+            ],
+            outputItems: [{ itemHrid: out, count: 1 }],
+        };
+    };
+
+    test('a crafted material, protection item and base carry the flag; a quoted one does not', () => {
+        craftable(SHARD, false);
+        expect(priceMaterial(SHARD)).toMatchObject({ estimated: true, partial: true });
+        game.books[SHARD] = { ask: 5, bid: 4 };
+        expect(priceMaterial(SHARD).partial).toBe(false);
+    });
+
+    test('the chosen crafted base is partial, a bought one is not, and a custom one never is', () => {
+        craftable(SWORD, false);
+        game.craftingSetting = true;
+        game.books[SWORD] = { ask: 1000, bid: 950 };
+        expect(priceBase(SWORD)).toMatchObject({ crafted: true, partial: true });
+        game.books[SWORD] = { ask: 50, bid: 49 };
+        expect(priceBase(SWORD)).toMatchObject({ crafted: false, partial: false });
+        game.books[SWORD] = { ask: 1000, bid: 950 };
+        game.custom[`${SWORD}:buy`] = 500;
+        expect(priceBase(SWORD).partial).toBe(false);
+    });
+
+    test('a priced protection item is partial only when its own price is a partial bill', () => {
+        craftable(PROTECTION, false);
+        expect(priceProtection(SWORD).partial).toBe(true);
+        craftable(PROTECTION, true);
+        game.buffVersion++;
+        expect(priceProtection(SWORD).partial).toBe(false);
     });
 });

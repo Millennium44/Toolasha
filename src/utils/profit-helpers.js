@@ -494,7 +494,9 @@ export function resolveItemPrice(itemHrid, options = {}) {
     if (enhancementLevel === 0) {
         const prodCost = getProductionCost(itemHrid, mode || getPricingMode(context, side));
         if (prodCost > 0) {
-            return { price: prodCost, custom: false, missing: false, estimated: true };
+            // `production` says the figure is a craft cost, so a caller that cares can ask whether that bill is
+            // partial (an input nothing prices)
+            return { price: prodCost, custom: false, missing: false, estimated: true, production: true };
         }
     }
 

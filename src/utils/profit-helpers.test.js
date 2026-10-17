@@ -611,6 +611,7 @@ describe('resolveItemPrice', () => {
             custom: false,
             missing: false,
             estimated: true,
+            production: true,
         });
     });
 
@@ -702,6 +703,6 @@ describe('resolveItemPrice', () => {
         const result = resolveItemPrice('/items/cheese', { context: 'profit', side: 'buy' });
 
         expect(chain.productionCostModes).toEqual(['bid']);
-        expect(result).toEqual({ price: 700, custom: false, missing: false, estimated: true });
+        expect(result).toEqual({ price: 700, custom: false, missing: false, estimated: true, production: true });
     });
 });

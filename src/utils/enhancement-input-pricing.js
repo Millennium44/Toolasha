@@ -49,6 +49,7 @@ import {
     TRAINEE_SHOP_PRICE,
     getCheapestProtectionPrice as getCheapestProtectionPriceFrom,
     getProductionCost,
+    getProductionCostDetailed,
     perAttemptMaterialCost as perAttemptMaterialCostFrom,
     getRealisticBaseItemPrice as getRealisticBaseItemPriceFrom,
 } from './enhancement-pricing.js';
@@ -56,10 +57,25 @@ import {
 const PHILOSOPHERS_MIRROR = '/items/philosophers_mirror';
 
 /** Build the result record from a bare price. */
-function result(price, estimated = false, custom = false) {
+function result(price, estimated = false, custom = false, partial = false) {
     return price > 0
-        ? { price, unpriced: false, estimated, custom }
-        : { price: null, unpriced: true, estimated: false, custom: false };
+        ? { price, unpriced: false, estimated, custom, partial }
+        : { price: null, unpriced: true, estimated: false, custom: false, partial: false };
+}
+
+/** The book side a buy is priced on: the forced mode, else the context's mode. */
+function buySide(options) {
+    return options.mode || getPricingMode(options.context || 'profit', 'buy');
+}
+
+/**
+ * Whether a craft-cost figure is a partial bill: a recipe input nothing could price was counted as 0.
+ * @param {string} itemHrid - The crafted item
+ * @param {'ask'|'bid'|'average'|string} side - The side the cost was taken on
+ * @returns {boolean}
+ */
+function craftPartial(itemHrid, side) {
+    return getProductionCostDetailed(itemHrid, side === 'bid' ? 'bid' : 'ask').partial;
 }
 
 /** The resolver, with the context/mode options every function here takes. */
@@ -85,7 +101,8 @@ export function priceMaterial(itemHrid, options = {}) {
     if (itemHrid.startsWith('/items/trainee_')) return result(TRAINEE_SHOP_PRICE);
     if (itemHrid === '/items/coin') return result(1);
     const resolved = resolve(itemHrid, options);
-    return result(resolved.price, resolved.estimated, Boolean(resolved.custom));
+    const partial = Boolean(resolved.production) && craftPartial(itemHrid, buySide(options));
+    return result(resolved.price, resolved.estimated, Boolean(resolved.custom), partial);
 }
 
 /**
@@ -143,7 +160,15 @@ export function priceGuarded(itemHrid, options = {}) {
     const { quotes, resolved } = guardQuotes(itemHrid, options);
     if (!quotes) return result(0);
     const price = getRealisticBaseItemPriceFrom(itemHrid, { quoteOf: () => quotes });
-    return result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom));
+    // A craft-cost figure (the resolver's own fallback, or the guard swapping an inflated ask for it)
+    // is a partial bill when a recipe input went unpriced
+    let partial = false;
+    if (resolved.production) partial = craftPartial(itemHrid, buySide(options));
+    else if (price !== resolved.price) {
+        const craft = getProductionCostDetailed(itemHrid, 'ask');
+        partial = craft.cost === price && craft.partial;
+    }
+    return result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom), partial);
 }
 
 /**
@@ -171,9 +196,15 @@ export function priceProtection(itemHrid, { includeSelf = true, context = 'profi
         includeSelf,
         priceOf: (hrid) => priceGuarded(hrid, pricing).price || 0,
     });
-    if (!(best.price > 0)) return { price: null, itemHrid: null, unpriced: true, estimated: false };
+    if (!(best.price > 0)) return { price: null, itemHrid: null, unpriced: true, estimated: false, partial: false };
     const picked = priceGuarded(best.itemHrid, pricing);
-    return { price: best.price, itemHrid: best.itemHrid, unpriced: false, estimated: picked.estimated };
+    return {
+        price: best.price,
+        itemHrid: best.itemHrid,
+        unpriced: false,
+        estimated: picked.estimated,
+        partial: picked.partial,
+    };
 }
 
 /**
@@ -195,7 +226,14 @@ export function priceBase(itemHrid, options = {}) {
     const side = mode || getPricingMode(context, 'buy');
     const craft = getProductionCost(itemHrid, side === 'bid' ? 'bid' : 'ask');
     if (craft > 0 && (bought.unpriced || craft < bought.price)) {
-        return { price: craft, unpriced: false, estimated: true, crafted: true };
+        return {
+            price: craft,
+            unpriced: false,
+            estimated: true,
+            custom: false,
+            partial: craftPartial(itemHrid, side),
+            crafted: true,
+        };
     }
     return { ...bought, crafted: false };
 }
