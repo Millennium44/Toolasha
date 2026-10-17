@@ -451,6 +451,28 @@ function oneLine(text, max = 90) {
 
 /** Orders shown per loadout before "Show all" in the Upgrade tab's Ability order section */
 const LAB_ABILITY_ORDER_TOP = 5;
+
+/**
+ * The rows of one loadout's Ability order table in the order they are drawn: the orders plus the current-order
+ * baseline, best saving first. The comparator is total: equal savings put the current row first, then keep the
+ * orders' own order, so a tie never depends on the engine's sort. The Verify top button and Auto-verify take
+ * their rows from this same list.
+ * @param {Array<Object>} orders - A group's orders
+ * @returns {Array<Object>} Order entries and one `{current: true}` baseline entry
+ */
+export function orderDisplayEntries(orders) {
+    return [
+        ...orders.map((order, index) => ({ order, index })),
+        { order: { current: true, attemptsDelta: 0 }, index: -1 },
+    ]
+        .sort(
+            (a, b) =>
+                a.order.attemptsDelta - b.order.attemptsDelta ||
+                (a.order.current ? 0 : 1) - (b.order.current ? 0 : 1) ||
+                a.index - b.index
+        )
+        .map((entry) => entry.order);
+}
 const ACCENT = '#4a9eff';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -6601,7 +6623,7 @@ class LabSimUI {
      * significant, not yet verified. `score` is the improvement against its own noise (a row with no noise
      * figure scores 0), the order the auto-verify picks its three by across both sections.
      * @param {'all'|'order'} scope - Section
-     * @returns {Array<{key: string, row: Object, delta: number, score: number}>}
+     * @returns {Array<{key: string, row: Object, delta: number, score: number, group?: number, position?: number}>}
      * @private
      */
     _closeCallItems(scope) {
@@ -6620,8 +6642,9 @@ class LabSimUI {
             }
         } else {
             (live.section.groups || []).forEach((group, gi) => {
-                for (const order of group.orders) {
-                    if (!(order.attemptsDelta < 0) || !isCloseCall(order)) continue;
+                // In table order, so exact ties are picked top row first
+                orderDisplayEntries(group.orders).forEach((order, position) => {
+                    if (order.current || !(order.attemptsDelta < 0) || !isCloseCall(order)) return;
                     const row = this._orderVerifyRow(gi, order);
                     if (row) {
                         found.push({
@@ -6629,9 +6652,11 @@ class LabSimUI {
                             row,
                             delta: order.attemptsDelta,
                             score: scoreOf(order),
+                            group: gi,
+                            position,
                         });
                     }
-                }
+                });
             });
         }
         return found.filter((item) => !this._verify[scope].has(item.key));
@@ -6658,7 +6683,15 @@ class LabSimUI {
             if (!live || live.ownerId !== ownerId) continue;
             for (const item of this._closeCallItems(scope)) candidates.push({ ...item, scope });
         }
-        const chosen = candidates.sort((a, b) => b.score - a.score || a.delta - b.delta).slice(0, VERIFY_DEFAULTS.top);
+        const chosen = candidates
+            .sort(
+                (a, b) =>
+                    b.score - a.score ||
+                    a.delta - b.delta ||
+                    // Exact ties inside one loadout's table go in the order the table draws them
+                    (a.scope === 'order' && b.scope === 'order' && a.group === b.group ? a.position - b.position : 0)
+            )
+            .slice(0, VERIFY_DEFAULTS.top);
         for (const scope of ['all', 'order']) {
             if (!isCurrent() || this._upgradeAborted) return;
             const items = chosen.filter((item) => item.scope === scope);
@@ -6904,6 +6937,28 @@ class LabSimUI {
     }
 
     /**
+     * The orders of one loadout group the Verify top button hands the engine: the first improving rows in the
+     * order the table draws them. An improving order whose raw row is gone is skipped and reported.
+     * @param {number} groupIndex - Index into the section's groups
+     * @param {Object} group - The section's group
+     * @returns {{items: Array<{key: string, row: Object}>, skipped: Array<{key: string, reason: string}>}}
+     * @private
+     */
+    _orderVerifyPicks(groupIndex, group) {
+        const items = [];
+        const skipped = [];
+        for (const order of orderDisplayEntries(group.orders || [])) {
+            if (items.length >= VERIFY_DEFAULTS.top) break;
+            if (order.current || !(order.attemptsDelta < 0)) continue;
+            const key = this._orderRowKey(groupIndex, order);
+            const row = this._orderVerifyRow(groupIndex, order);
+            if (row) items.push({ key, row });
+            else skipped.push({ key, reason: 'no raw row' });
+        }
+        return { items, skipped };
+    }
+
+    /**
      * Verify one loadout group's best orders from the Ability order section.
      * @param {number} groupIndex - Index into the section's groups
      * @returns {Promise<void>}
@@ -6914,13 +6969,12 @@ class LabSimUI {
         if (!this._isVerifyLive('order', section)) return;
         const group = section.groups?.[groupIndex];
         if (!group) return;
-        const items = [];
-        for (const order of group.orders) {
-            if (items.length >= VERIFY_DEFAULTS.top) break;
-            if (!(order.attemptsDelta < 0)) continue;
-            const row = this._orderVerifyRow(groupIndex, order);
-            if (row) items.push({ key: this._orderRowKey(groupIndex, order), row });
-        }
+        const { items, skipped } = this._orderVerifyPicks(groupIndex, group);
+        console.debug('[LabSim] Order verify picks', {
+            group: groupIndex,
+            picked: items.map((item) => item.key),
+            skipped,
+        });
         await this._runLabVerify({ scope: 'order', items });
     }
 
@@ -7214,9 +7268,7 @@ class LabSimUI {
                     '#9ab'
                 );
             }
-            const entries = [...orders, { current: true, attemptsDelta: 0 }].sort(
-                (a, b) => a.attemptsDelta - b.attemptsDelta || (a.current ? -1 : 1)
-            );
+            const entries = orderDisplayEntries(orders);
             let kept = 0;
             const shown = showAll ? entries : entries.filter((e) => e.current || ++kept <= top);
             let rows = '';
@@ -7257,15 +7309,15 @@ class LabSimUI {
                 groups.length > 1
                     ? `<div style="color:#aaa; font-size:11px; margin-top:6px;">${escapeHtmlAttribute(group.loadoutName)}</div>`
                     : '';
-            const improving = orders.filter((o) => o.attemptsDelta < 0);
+            const verifyPicks = verifyLive ? this._orderVerifyPicks(gi, group).items.length : 0;
             const verifyBusy = Boolean(verifyRunning);
             const verifyButton =
-                verifyLive && improving.length
+                verifyLive && verifyPicks
                     ? `<div style="margin:4px 0;"><button data-order-verify="${gi}" ${verifyBusy ? 'disabled' : ''} ` +
                       `title="Re-run this loadout's best improving orders longer, on fresh paired seeds" ` +
                       `style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ` +
                       `padding:2px 8px; font-size:11px; cursor:${verifyBusy ? 'default' : 'pointer'}; font-family:inherit;">` +
-                      `Verify top ${Math.min(VERIFY_DEFAULTS.top, improving.length)}</button>` +
+                      `Verify top ${verifyPicks}</button>` +
                       `${verifyRunning?.scope === 'order' ? ' <span style="color:#8ab4f8; font-size:11px;">Verifying on fresh seeds… Stop cancels.</span>' : ''}</div>`
                     : '';
             return (
