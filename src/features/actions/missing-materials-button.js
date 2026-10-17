@@ -47,6 +47,7 @@ import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { buildItemHash, parseItemHash } from '../../utils/item-hash.js';
 import { readAlchemyPanelSelection } from '../alchemy/alchemy-profit.js';
+import { getCatalystWhatIfResult, onCatalystWhatIfChange } from '../alchemy/alchemy-catalyst-whatif.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
@@ -124,6 +125,8 @@ let alchemyDomObserverUnregister = null;
 let alchemyRefreshTimeout = null;
 /** dataManager listeners that redraw the Alchemy button: inventory and queue */
 let alchemyDataHandler = null;
+/** Unsubscribe from the profit display's catalyst what-if */
+let alchemyWhatIfUnsubscribe = null;
 const ALCHEMY_PANEL_SELECTOR = '[class*="SkillActionDetail_alchemyComponent"]';
 /**
  * Its own id, not the production button's: the Alchemy panel is also a detail
@@ -223,6 +226,8 @@ export function initialize() {
     alchemyDataHandler = () => scheduleAlchemyUpdate();
     dataManager.on('items_updated', alchemyDataHandler);
     dataManager.on('actions_updated', alchemyDataHandler);
+    // A catalyst picked in the profit display's what-if joins the bill
+    alchemyWhatIfUnsubscribe = onCatalystWhatIfChange(() => scheduleAlchemyUpdate());
 
     // Process existing panels
     processActionPanels();
@@ -282,6 +287,10 @@ export function cleanup() {
         dataManager.off('items_updated', alchemyDataHandler);
         dataManager.off('actions_updated', alchemyDataHandler);
         alchemyDataHandler = null;
+    }
+    if (alchemyWhatIfUnsubscribe) {
+        alchemyWhatIfUnsubscribe();
+        alchemyWhatIfUnsubscribe = null;
     }
     for (const unwatch of alchemyPanelWatchers.values()) unwatch();
     alchemyPanelWatchers.clear();
@@ -927,6 +936,19 @@ function queuedAlchemyInput(itemHrid) {
 }
 
 /**
+ * The what-if catalyst the profit display computed for exactly this item and tab, if any.
+ * @param {string} itemHrid - The selected item
+ * @param {string|null} actionType - The selected tab
+ * @returns {{catalystHrid: string, successRate: number}|null}
+ */
+function alchemyWhatIfCatalyst(itemHrid, actionType) {
+    const result = getCatalystWhatIfResult();
+    if (!result?.catalystHrid || result.itemHrid !== itemHrid || result.actionType !== actionType) return null;
+    if (!(result.successRate > 0)) return null;
+    return { catalystHrid: result.catalystHrid, successRate: result.successRate };
+}
+
+/**
  * The Alchemy panel's bill: the selected item, bulk multiplier times per action.
  *
  * Costed by `materialsFromList`, so it follows every rule the other bills do —
@@ -934,7 +956,13 @@ function queuedAlchemyInput(itemHrid) {
  * another plan claimed is not this bill's. The coin fee is not a line: it
  * cannot be bought, and the panel's gold summary already shows it.
  *
- * @param {{itemHrid: string, numActions: number}} ctx - What the panel is set to
+ * A catalyst picked in the profit display's what-if is a second line. A catalyst
+ * is consumed once per success, so its count is an estimate: Repeat × the
+ * what-if success rate, rounded up. The equipped catalyst is not billed (as
+ * upstream): the button sizes what the player asked to try.
+ *
+ * @param {{itemHrid: string, numActions: number, catalyst?: {catalystHrid: string, successRate: number}|null}} ctx
+ *   What the panel is set to
  * @returns {Array<Object>} Material lines, or [] for no actions
  */
 function alchemyMaterials(ctx) {
@@ -948,6 +976,12 @@ function alchemyMaterials(ctx) {
             queued: ignoreQueue ? 0 : queuedAlchemyInput(ctx.itemHrid),
         },
     ];
+    if (ctx.catalyst?.catalystHrid && ctx.catalyst.successRate > 0) {
+        lines.push({
+            itemHrid: ctx.catalyst.catalystHrid,
+            count: Math.ceil(numActions * ctx.catalyst.successRate - 1e-9),
+        });
+    }
     return materialsFromList(lines, RESERVATION_OWNER);
 }
 
@@ -1038,7 +1072,12 @@ function updateAlchemyButton(panel) {
     const input = panel.querySelector('[class*="maxActionCountInput"] input');
     // "∞" parses to 0: there is no count to buy for
     const numActions = parseInt(input?.value, 10) || 0;
-    const ctx = { itemHrid: selection.itemHrid, actionType: selection.actionType, numActions };
+    const ctx = {
+        itemHrid: selection.itemHrid,
+        actionType: selection.actionType,
+        numActions,
+        catalyst: alchemyWhatIfCatalyst(selection.itemHrid, selection.actionType),
+    };
     const materials = numActions > 0 ? alchemyMaterials(ctx) : [];
     const disabled = numActions <= 0 || materials.length === 0;
 
@@ -1054,6 +1093,9 @@ function updateAlchemyButton(panel) {
     );
     button.id = ALCHEMY_BUTTON_ID;
     button.dataset.mwiState = stateKey;
+    if (ctx.catalyst && button.title) {
+        button.title += '\nCatalyst count is an estimate: Repeat × the what-if success rate.';
+    }
 
     if (existing) {
         existing.replaceWith(button);
@@ -1071,7 +1113,8 @@ function updateAlchemyButton(panel) {
 
 /**
  * Open the marketplace on the Alchemy panel's bill.
- * @param {{itemHrid: string, actionType: string|null, numActions: number}} ctx - What the panel was set to
+ * @param {{itemHrid: string, actionType: string|null, numActions: number, catalyst?: Object|null}} ctx - What
+ *   the panel was set to, the what-if catalyst included as it was when clicked
  */
 async function handleAlchemyMissingMaterialsClick(ctx) {
     storedActionHrid = null;

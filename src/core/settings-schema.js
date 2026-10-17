@@ -500,6 +500,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays profit/hour and profit/day for alchemy actions based on success rate and market prices',
             },
+            alchemy_catalystWhatIf: {
+                id: 'alchemy_catalystWhatIf',
+                label: 'Alchemy panel: Catalyst what-if picker in Profitability',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a picker to the Profitability section that recomputes it as if no catalyst, the type catalyst or a Prime Catalyst were slotted, including ones you do not own. The game keeps the catalyst you selected; the figures are marked what-if until you pick Equipped again, and the Missing Mats button then includes the picked catalyst.',
+            },
             alchemy_bestItems: {
                 id: 'alchemy_bestItems',
                 label: 'Alchemy panel: Show best items button',

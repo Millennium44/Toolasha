@@ -1348,6 +1348,93 @@ describe('the Alchemy panel button', () => {
         expect(handleGoToAction).toHaveBeenCalledWith('/actions/alchemy/transmute');
     });
 
+    test('a catalyst picked in the profit what-if joins the bill, sized by its success rate', async () => {
+        const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
+        state.items['/items/prime_catalyst'] = { name: 'Prime Catalyst', isTradable: true };
+        state.inventory.push({
+            itemHrid: '/items/prime_catalyst',
+            enhancementLevel: 0,
+            count: 2,
+            itemLocationHrid: '/item_locations/inventory',
+        });
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+        expect(button().title).not.toContain('Prime Catalyst');
+
+        whatIf.setCatalystWhatIf('prime');
+        whatIf.publishCatalystWhatIfResult({
+            itemHrid: MILK,
+            actionType: 'decompose',
+            catalystHrid: '/items/prime_catalyst',
+            successRate: 0.75,
+        });
+        await vi.advanceTimersByTimeAsync(200);
+
+        // 10 actions × 0.75 = 7.5 → 8 needed, 2 held
+        expect(button().textContent).toBe('Missing Mats Marketplace · 2 items');
+        expect(button().title).toContain('Prime Catalyst ×6');
+        expect(button().title).toContain('Catalyst count is an estimate');
+
+        // Back to Equipped: the catalyst leaves the bill
+        whatIf.setCatalystWhatIf(null);
+        await vi.advanceTimersByTimeAsync(200);
+        expect(button().title).not.toContain('Prime Catalyst');
+        whatIf.resetCatalystWhatIf();
+    });
+
+    test('a what-if result for another item or tab is not this bill’s', async () => {
+        const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
+        state.items['/items/prime_catalyst'] = { name: 'Prime Catalyst', isTradable: true };
+        whatIf.setCatalystWhatIf('prime');
+        whatIf.publishCatalystWhatIfResult({
+            itemHrid: '/items/egg',
+            actionType: 'decompose',
+            catalystHrid: '/items/prime_catalyst',
+            successRate: 0.75,
+        });
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+        expect(button().title).not.toContain('Prime Catalyst');
+        missingMaterials.cleanup();
+
+        buildMarketplaceDom();
+        whatIf.publishCatalystWhatIfResult({
+            itemHrid: MILK,
+            actionType: 'transmute',
+            catalystHrid: '/items/prime_catalyst',
+            successRate: 0.75,
+        });
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+        expect(button().title).not.toContain('Prime Catalyst');
+        whatIf.resetCatalystWhatIf();
+    });
+
+    test('the opened bill keeps the catalyst it was opened with', async () => {
+        const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
+        state.items['/items/prime_catalyst'] = { name: 'Prime Catalyst', isTradable: true };
+        const { container } = buildMarketplaceDom();
+        whatIf.setCatalystWhatIf('prime');
+        whatIf.publishCatalystWhatIfResult({
+            itemHrid: MILK,
+            actionType: 'decompose',
+            catalystHrid: '/items/prime_catalyst',
+            successRate: 0.5,
+        });
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+
+        button().click();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(container.querySelector('[data-item-hrid="/items/prime_catalyst"]')).toBeTruthy();
+        expect(ledger.reserved.at(-1).lines).toEqual([
+            { itemHrid: MILK, count: 20, enhancementLevel: 0 },
+            { itemHrid: '/items/prime_catalyst', count: 5, enhancementLevel: 0 },
+        ]);
+        whatIf.resetCatalystWhatIf();
+    });
+
     test('cleanup removes the button and every listener it added', () => {
         mountAlchemyPanel();
         missingMaterials.initialize();
