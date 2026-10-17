@@ -44,6 +44,7 @@
 import config from '../core/config.js';
 import { getItemPrices, getPricingMode } from './market-data.js';
 import { resolveItemPrice } from './profit-helpers.js';
+import { getShopCoinCost } from './game-lookups.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 import {
     TRAINEE_SHOP_PRICE,
@@ -78,10 +79,42 @@ function craftPartial(itemHrid, side) {
     return getProductionCostDetailed(itemHrid, side === 'bid' ? 'bid' : 'ask').partial;
 }
 
-/** The resolver, with the context/mode options every function here takes. */
-function resolve(itemHrid, { context = 'profit', mode } = {}) {
+/**
+ * When the side being priced has no live quote but the opposite side does, the opposite live quote
+ * stands in for it, as the old material rule did ("when only one side is quoted, both sides use it").
+ * The resolver does not: with the mode's side absent it answers from an estimate, craft cost, shop
+ * floor or nothing, whichever the book is missing a live quote for. A shop floor still competes with
+ * the cross-filled quote, as it does with any book price. Custom prices, Iron Cow valuation and the
+ * average mode are left to the resolver.
+ */
+function crossFill(itemHrid, level, side, resolved) {
+    if (resolved.custom || (side !== 'ask' && side !== 'bid')) return resolved;
+    const book = getItemPrices(itemHrid, level);
+    if (!book) return resolved;
+    const live = (price, estimated) => price > 0 && !estimated;
+    const askLive = live(book.ask, book.askEstimated);
+    const bidLive = live(book.bid, book.bidEstimated);
+    const ownLive = side === 'ask' ? askLive : bidLive;
+    const otherLive = side === 'ask' ? bidLive : askLive;
+    if (ownLive || !otherLive) return resolved;
+    let price = side === 'ask' ? book.bid : book.ask;
+    if (level === 0) {
+        const shop = getShopCoinCost(itemHrid);
+        if (shop > 0 && shop < price) price = shop;
+    }
+    return { price, custom: false, missing: false, estimated: false };
+}
+
+/** The resolver, with the context/mode options every function here takes (and the cross-fill). */
+function resolve(itemHrid, { context = 'profit', mode, level = 0 } = {}) {
     try {
-        return resolveItemPrice(itemHrid, { context, side: 'buy', ...(mode ? { mode } : {}) });
+        const resolved = resolveItemPrice(itemHrid, {
+            context,
+            side: 'buy',
+            ...(level > 0 ? { enhancementLevel: level } : {}),
+            ...(mode ? { mode } : {}),
+        });
+        return crossFill(itemHrid, level, buySide({ context, mode }), resolved);
     } catch {
         return { price: null, custom: false, missing: true, estimated: false };
     }
@@ -255,12 +288,7 @@ export function priceAtLevel(itemHrid, level = 0, options = {}) {
     if (!(level > 0)) return priceBase(itemHrid, options);
     try {
         const { context = 'profit', mode } = options;
-        const resolved = resolveItemPrice(itemHrid, {
-            context,
-            side: 'buy',
-            enhancementLevel: level,
-            ...(mode ? { mode } : {}),
-        });
+        const resolved = resolve(itemHrid, { context, mode, level });
         return result(resolved.price, resolved.estimated, Boolean(resolved.custom));
     } catch {
         return result(0);
