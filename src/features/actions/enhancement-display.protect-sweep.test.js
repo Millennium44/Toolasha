@@ -121,11 +121,6 @@ vi.mock('../../utils/profit-helpers.js', () => ({
         return { price: table[hrid] || 0, custom: false, missing: !table[hrid] };
     },
 }));
-vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => {
-    const actual = await importOriginal();
-    // Craft cost for a material with no listing, standing in for the recipe walk
-    return { ...actual, getEnhancementMaterialPrice: (hrid) => state.craftPrices[hrid] || 0 };
-});
 vi.mock('../../utils/tester-shop.js', () => ({
     testerShopEnabled: () => false,
     testerGearPrice: () => null,

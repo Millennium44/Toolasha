@@ -152,6 +152,7 @@ vi.mock('../../utils/enhancement-input-pricing.js', async () => {
     // The advisor's mirror and base prices go through the shared rule; here they read the same
     // mocked resolver every other price in this file does, so each test keeps saying what they cost
     const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
+    const { getItemPrices } = await import('../../utils/market-data.js');
     const via = (hrid) => {
         const price = resolveItemPrice(hrid, { side: 'buy', enhancementLevel: 0 })?.price;
         return price > 0
@@ -161,6 +162,13 @@ vi.mock('../../utils/enhancement-input-pricing.js', async () => {
     return {
         priceMirror: () => via('/items/philosophers_mirror'),
         priceBase: (hrid) => via(hrid),
+        priceAtLevel: (hrid, level) => {
+            if (!(level > 0)) return via(hrid);
+            const ask = getItemPrices(hrid, level)?.ask;
+            return ask > 0
+                ? { price: ask, unpriced: false, estimated: false }
+                : { price: null, unpriced: true, estimated: false };
+        },
         getCheapestProtectionPrice: vi.fn(),
         perAttemptMaterialCost: vi.fn(),
     };
