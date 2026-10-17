@@ -4,6 +4,24 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
+// The advisor's mirror and base prices go through the shared enhancement input rule; here they read the
+// same mocked resolver every other price in this file does, so each test keeps saying what they cost
+vi.mock('../../utils/enhancement-input-pricing.js', async () => {
+    const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
+    const via = (hrid) => {
+        const price = resolveItemPrice(hrid, { side: 'buy', enhancementLevel: 0 })?.price;
+        return price > 0
+            ? { price, unpriced: false, estimated: false }
+            : { price: null, unpriced: true, estimated: false };
+    };
+    return {
+        priceMirror: () => via('/items/philosophers_mirror'),
+        priceBase: (hrid) => via(hrid),
+        getCheapestProtectionPrice: () => ({ price: null, itemHrid: null }),
+        perAttemptMaterialCost: () => ({ cost: 0, hasCost: false, hasMissingPrices: true }),
+    };
+});
+
 const state = vi.hoisted(() => ({
     /** `characterItems`, inventory and equipped together, as init_character_data sends them */
     items: [],

@@ -25,13 +25,14 @@ import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { priceBase, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { shopPurchasePrice } from '../../utils/token-valuation.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
-import { MIRROR_FIRST_LEVEL, MIRROR_ITEM_HRID, cheapestWithMirror } from '../../utils/mirror-route.js';
+import { MIRROR_FIRST_LEVEL, cheapestWithMirror } from '../../utils/mirror-route.js';
 import { blessedMirrorChance } from '../../utils/enhancement-calculator.js';
 import { computeRefinementCraftCost, findRefinementAction } from '../../utils/refined-item-cost.js';
 import { findProducingAction } from '../../utils/production-index.js';
@@ -2775,7 +2776,7 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
         gameData?.itemDetailMap?.[refinedHrid]?.baseItemHrids?.[0] ||
         findRefinementAction(refinedHrid)?.upgradeItemHrid;
     if (!baseHrid) return null;
-    const mirrorPrice = resolveItemPrice(MIRROR_ITEM_HRID, { side: 'buy' }).price;
+    const mirrorPrice = priceMirror().price;
     if (!(mirrorPrice > 0)) return null;
 
     const primary = level - 1 > from ? calculateDirectEnhancementCost(refinedHrid, from, level - 1, gameData) : 0;
@@ -3246,7 +3247,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
  */
 function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_LEVEL, held = [] } = {}) {
     if (level < Math.max(MIRROR_FIRST_LEVEL, minLevel) || testerShopEnabled()) return null;
-    const mirrorPrice = resolveItemPrice(MIRROR_ITEM_HRID, { side: 'buy' }).price;
+    const mirrorPrice = priceMirror().price;
     if (!(mirrorPrice > 0)) return null;
 
     // Each input is priced as a fresh acquisition unless a held copy of exactly that level is offered
@@ -3720,7 +3721,7 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
         }
 
         // No listing at the target level: base item price + enhancement cost
-        const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        const basePrice = priceBase(itemHrid).price;
         // Enhancement materials do not buy the base item. If that piece has no
         // price, its completed version cannot be priced from the sweep alone.
         if (!(basePrice > 0)) return { price: null, source: null };
@@ -3829,7 +3830,7 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
         const data = dataManager.getInitClientData?.() || {};
         const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
         base = shopPurchasePrice(itemHrid, shops, (hrid) => getItemPrices(hrid, 0)?.ask || 0) || 0;
-        if (!(base > 0)) base = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        if (!(base > 0)) base = priceBase(itemHrid).price;
         if (!(base > 0)) return { price: null, source: null, ladder };
         ladder.baseCost = base;
     }
