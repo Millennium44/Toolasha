@@ -117,7 +117,7 @@ vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: false, calculateExpectedValue: () => null },
 }));
 vi.mock('./networth-cache.js', () => ({
-    default: { get: () => null, set: () => {}, checkAndInvalidate: () => {} },
+    default: { get: () => null, set: () => {}, isPartial: () => false, checkAndInvalidate: () => {} },
 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid, opts) => {

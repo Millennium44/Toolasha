@@ -65,7 +65,9 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
         mocks.enhancementCost === null ? null : { optimalStrategy: { totalCost: mocks.enhancementCost } },
 }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
-vi.mock('../networth/networth-cache.js', () => ({ default: { get: () => null, set: () => {} } }));
+vi.mock('../networth/networth-cache.js', () => ({
+    default: { get: () => null, set: () => {}, isPartial: () => false },
+}));
 const validation = vi.hoisted(() => ({ calls: [] }));
 vi.mock('../networth/networth-cache-validation.js', () => ({
     validateNetworthCache: (options) => validation.calls.push(options),

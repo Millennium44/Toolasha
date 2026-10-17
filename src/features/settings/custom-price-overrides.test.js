@@ -56,6 +56,7 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 
 const {
     getCustomPrice,
+    getCustomPriceVersion,
     getCustomPriceOverrides,
     getCustomPriceOverridesAsync,
     setCustomPriceOverride,
@@ -73,6 +74,35 @@ beforeEach(() => {
     storageMock.reset();
     resetCustomPriceOverridesCache();
     marketAPIMock.scheduleNotify.mockClear();
+});
+
+describe('the version a cache over prices keys on', () => {
+    test('moves when the stored map is first loaded, and on every set, remove and reset', async () => {
+        const v0 = getCustomPriceVersion();
+        seed({ '/items/milk:0': { buy: 10 } });
+        await initCustomPriceOverrides();
+        const loaded = getCustomPriceVersion();
+        expect(loaded).toBeGreaterThan(v0);
+
+        await setCustomPriceOverride('/items/milk', 0, 20, null);
+        const afterSet = getCustomPriceVersion();
+        expect(afterSet).toBeGreaterThan(loaded);
+
+        await removeCustomPriceOverride('/items/milk', 0);
+        const afterRemove = getCustomPriceVersion();
+        expect(afterRemove).toBeGreaterThan(afterSet);
+
+        resetCustomPriceOverridesCache();
+        expect(getCustomPriceVersion()).toBeGreaterThan(afterRemove);
+    });
+
+    test('a read nothing changed leaves it alone', async () => {
+        await initCustomPriceOverrides();
+        const before = getCustomPriceVersion();
+        getCustomPrice('/items/milk', 0, 'buy');
+        getCustomPriceOverrides();
+        expect(getCustomPriceVersion()).toBe(before);
+    });
 });
 
 describe('custom price overrides', () => {

@@ -28,6 +28,7 @@ vi.mock('../core/config.js', () => ({
 }));
 
 vi.mock('../features/settings/custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
     getCustomPrice: vi.fn(),
 }));
 

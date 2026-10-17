@@ -41,7 +41,10 @@ vi.mock('./house-efficiency.js', () => ({
 vi.mock('../core/config.js', () => ({
     default: { getSettingValue: (key) => settings.values[key] },
 }));
-vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
+vi.mock('../features/settings/custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
+    getCustomPrice: () => null,
+}));
 
 describe('calculateBonusRevenue', () => {
     beforeEach(() => {

@@ -24,9 +24,16 @@ vi.mock('./market-data.js', () => ({
     getItemPriceInfo: () => ({ price: null, source: null, estimated: false }),
     getPricingMode: () => 'ask',
 }));
-vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
+vi.mock('../features/settings/custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
+    getCustomPrice: () => null,
+}));
 vi.mock('./game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
 vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
+vi.mock('./enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: () => 0,
+}));
 
 const {
     bestSelfUseCandidate,

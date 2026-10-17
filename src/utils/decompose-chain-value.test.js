@@ -67,7 +67,10 @@ vi.mock('./market-data.js', () => ({
     getPricingMode: () => 'conservative',
     withProfitPricingMode: (mode, fn) => fn(),
 }));
-vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
+vi.mock('../features/settings/custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
+    getCustomPrice: () => null,
+}));
 vi.mock('./game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
 vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
 vi.mock('./enhancement-pricing.js', async (importOriginal) => ({

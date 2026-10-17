@@ -153,6 +153,7 @@ vi.mock('../../utils/tea-parser.js', () => ({
 }));
 
 vi.mock('../settings/custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
     getCustomPrice: (hrid, level = 0, side = 'sell') => settings.custom[`${hrid}:${level}:${side}`] ?? null,
 }));
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
