@@ -192,6 +192,8 @@ class PinnedActionsPage {
 
         // Cached action data (computed once per showPage, re-sorted/filtered in place)
         this.allActions = [];
+        // Bumped by every loadActions; a combat-zone load from an older one is dropped
+        this._loadGeneration = 0;
 
         // Tab state
         this.activeTab = 'overview'; // 'overview' | 'materials'
@@ -353,7 +355,11 @@ class PinnedActionsPage {
      */
     async loadActions() {
         const pinnedActions = actionPanelSort.getPinnedActions();
-        this.allActions = [];
+        // Overlapping loads (a pin change, a sync pull) each own their row list; only the newest may add the
+        // combat rows that arrive after its awaits, or a stale load duplicates or mixes them into this one
+        const generation = ++this._loadGeneration;
+        const rows = [];
+        this.allActions = rows;
         const pendingResolutions = [];
 
         for (const pinnedKey of pinnedActions) {
@@ -397,7 +403,7 @@ class PinnedActionsPage {
                 pending: !isWarm,
             };
 
-            this.allActions.push(row);
+            rows.push(row);
 
             // A figure the action tiles cached is uncapped: this page ranks by the liquidity-capped
             // pace, so such a row paints at once and is still resolved through computeStats.
@@ -412,7 +418,7 @@ class PinnedActionsPage {
         // up the first paint too.
         this.renderTable();
 
-        pendingResolutions.push(this._resolveCombatZones());
+        pendingResolutions.push(this._resolveCombatZones(generation, rows));
         pendingResolutions.push(this._resolveItemsSprite());
 
         await Promise.all(pendingResolutions);
@@ -451,8 +457,11 @@ class PinnedActionsPage {
     /**
      * Load the simulated combat zones and repaint once they're in.
      */
-    async _resolveCombatZones() {
-        await this.loadSimulatedCombatZones();
+    async _resolveCombatZones(generation, rows) {
+        const zoneRows = await this.loadSimulatedCombatZones();
+        // A newer load (or a teardown) replaced the list this one was building
+        if (generation !== this._loadGeneration || this.allActions !== rows) return;
+        rows.push(...zoneRows);
         this.repaintIfActive();
     }
 
@@ -478,7 +487,7 @@ class PinnedActionsPage {
     }
 
     /**
-     * Add the last all-zones simulation's zones to the list.
+     * Build the rows for the last all-zones simulation's zones (the caller adds them to its list).
      *
      * Read from storage rather than from the simulator panel, so the rows are
      * here on a fresh page load with the panel never opened — which is the only
@@ -488,7 +497,7 @@ class PinnedActionsPage {
     async loadSimulatedCombatZones() {
         try {
             const snapshot = await combatSimUI.loadAllZonesSnapshot();
-            if (!snapshot) return;
+            if (!snapshot) return [];
 
             const fingerprint = await combatSimUI.currentGearFingerprint();
             const rows = combatZoneRows(snapshot, fingerprint);
@@ -506,9 +515,10 @@ class PinnedActionsPage {
                 }
             }
 
-            this.allActions.push(...rows);
+            return rows;
         } catch (error) {
             console.error('[PinnedActionsPage] Loading simulated combat zones failed:', error);
+            return [];
         }
     }
 
