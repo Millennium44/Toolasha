@@ -58,6 +58,9 @@ import { mergeCurrentAndHistoricalEntries, aggregatePivotRows, computeRowRates }
 /** Panel id, which is also its geometry key */
 export const PANEL_ID = 'lootLogPivot';
 
+/** One row per Labyrinth run instead of one total over every run */
+export const SPLIT_LABYRINTH_SETTING = 'lootLogPivotSplitLabyrinth';
+
 const ACCENT = '#8fd0a0';
 
 /** Nothing on the table moves unless a loot message lands, so the timer is slow */
@@ -96,8 +99,8 @@ let currentEntries = [];
 let historicalEntries = [];
 let historyLoaded = false;
 
-/** See `aggregatedViews` — the memo of the last aggregation, keyed on its two inputs' identity */
-let aggregateCache = { current: null, historical: null, rows: null };
+/** See `aggregatedViews` — the memo of the last aggregation, keyed on its inputs */
+let aggregateCache = { current: null, historical: null, split: null, rows: null };
 
 /**
  * Forget everything the panel is holding.
@@ -118,7 +121,7 @@ export function resetPivotState() {
     historyLoaded = false;
     // A character switch must not leave the departing character's sums behind a
     // pair of array identities the arriving character could coincidentally match
-    aggregateCache = { current: null, historical: null, rows: null };
+    aggregateCache = { current: null, historical: null, split: null, rows: null };
 }
 
 /**
@@ -184,11 +187,17 @@ export function buildRowView(row) {
     const name = lootLogStats.getActionName(row.actionHrid);
     const category = lootLogStats.getActionCategory(row.actionHrid);
     const tier = row.difficultyTier ? ` (Tier ${row.difficultyTier})` : '';
+    // A split Labyrinth row is one run of a same-named action, told apart from
+    // its siblings only by when it started
+    const run = row.runStartTime ? ` · ${formatDateTime(new Date(row.runStartTime))}` : '';
+    const suffix = `${tier}${run}`;
 
     return {
         row,
-        key: `${row.actionHrid}::${row.difficultyTier ?? ''}`,
-        displayName: category ? `${category} — ${name}${tier}` : `${name}${tier}`,
+        // The same shape as the grouping key, so expanding one split run does
+        // not unfold every run of that action with it
+        key: `${row.actionHrid}::${row.difficultyTier ?? ''}${row.runStartTime ? `::${row.runStartTime}` : ''}`,
+        displayName: category ? `${category} — ${name}${suffix}` : `${name}${suffix}`,
         askTotal,
         bidTotal,
         ...rates,
@@ -200,6 +209,7 @@ export const PIVOT_CSV_COLUMNS = [
     { key: 'action', label: 'Action' },
     { key: 'actionHrid', label: 'Action Hrid' },
     { key: 'difficultyTier', label: 'Difficulty Tier' },
+    { key: 'runStart', label: 'Run Start' },
     { key: 'actionCount', label: 'Actions' },
     { key: 'sessionCount', label: 'Sessions' },
     { key: 'timeSeconds', label: 'Time (s)' },
@@ -225,6 +235,8 @@ export function buildPivotCsvRows(views) {
         action: lootLogStats.getActionName(view.row.actionHrid),
         actionHrid: view.row.actionHrid,
         difficultyTier: view.row.difficultyTier ?? '',
+        // Only a split Labyrinth row has one; it is what tells two such rows apart
+        runStart: view.row.runStartTime ?? '',
         actionCount: view.row.actionCount,
         sessionCount: view.row.entryCount,
         timeSeconds: Math.round(view.row.totalTimeMs / 1000),
@@ -248,7 +260,8 @@ export function buildPivotCsvRows(views) {
  * Keyed on array identity rather than on a hash: both arrays are replaced
  * wholesale when they change — `currentEntries` by each `loot_log_updated`
  * payload, `historicalEntries` by a fresh `_load()` — so identity changes
- * exactly when the contents do.
+ * exactly when the contents do. The Labyrinth split setting is the third
+ * input: it regroups the same entries, so it is part of the key too.
  *
  * Prices are deliberately outside the cache. `buildRowView` resolves the market
  * on every call, so a price update reaches the table on the next redraw rather
@@ -258,9 +271,19 @@ export function buildPivotCsvRows(views) {
  * @returns {Array<Object>} One priced view per action/tier
  */
 function aggregatedViews() {
-    if (aggregateCache.current !== currentEntries || aggregateCache.historical !== historicalEntries) {
+    const split = !!config.getSetting(SPLIT_LABYRINTH_SETTING);
+    if (
+        aggregateCache.current !== currentEntries ||
+        aggregateCache.historical !== historicalEntries ||
+        aggregateCache.split !== split
+    ) {
         const entries = mergeCurrentAndHistoricalEntries(currentEntries, historicalEntries);
-        aggregateCache = { current: currentEntries, historical: historicalEntries, rows: aggregatePivotRows(entries) };
+        aggregateCache = {
+            current: currentEntries,
+            historical: historicalEntries,
+            split,
+            rows: aggregatePivotRows(entries, { splitLabyrinthRuns: split }),
+        };
     }
     return aggregateCache.rows.map(buildRowView);
 }
@@ -417,10 +440,13 @@ function drawRow(tbody, view) {
     wrap.appendChild(label);
     nameCell.appendChild(wrap);
 
-    const sessions = document.createElement('div');
-    sessions.textContent = `${numberFormatter(row.entryCount)} session${row.entryCount === 1 ? '' : 's'}`;
-    Object.assign(sessions.style, { color: ROW_COLORS.dim, fontSize: '0.85em', marginTop: '1px' });
-    nameCell.appendChild(sessions);
+    // A split Labyrinth row is one run by construction; "1 session" says nothing
+    if (!row.runStartTime) {
+        const sessions = document.createElement('div');
+        sessions.textContent = `${numberFormatter(row.entryCount)} session${row.entryCount === 1 ? '' : 's'}`;
+        Object.assign(sessions.style, { color: ROW_COLORS.dim, fontSize: '0.85em', marginTop: '1px' });
+        nameCell.appendChild(sessions);
+    }
     tr.appendChild(nameCell);
 
     tr.appendChild(cell(numberFormatter(row.actionCount)));
@@ -725,6 +751,10 @@ export default {
         const onSwitch = () => resetPivotState();
         dataManager.on?.('character_switched', onSwitch);
         unregisterHandlers.push(() => dataManager.off?.('character_switched', onSwitch));
+
+        // Regroups what is already on screen; the panel's shell ignores a
+        // render while it is closed
+        unregisterHandlers.push(config.onSettingChange(SPLIT_LABYRINTH_SETTING, () => lootLogPivotPanel.render()));
 
         // The panel was reachable only through a 📊 button injected into the
         // game's own Loot Log — nothing to click if that panel was never open.

@@ -797,6 +797,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Every other XP/hr and gold/hr figure in this script is predicted from game data; this is the one built from what your runs actually paid. A sortable table over the current session plus stored history — one row per action and per difficulty tier, with time spent, drop value at ask and bid, and XP/hr per skill (plus a combined line for actions that train several). Off by default because it adds a button to the game’s own panel',
             },
+            lootLogPivotSplitLabyrinth: {
+                id: 'lootLogPivotSplitLabyrinth',
+                label: 'Loot Log: Analytics shows each Labyrinth run as its own row',
+                type: 'checkbox',
+                default: false,
+                help: 'In the Loot & XP Analytics table, gives every Labyrinth run its own row, labeled with when it started, instead of one row adding up every run. Every other action is grouped as before. Off by default because it changes how the table groups',
+            },
             lootLogDropLuck: {
                 id: 'lootLogDropLuck',
                 label: 'Loot Log: Drop luck percentile for gathering runs',
