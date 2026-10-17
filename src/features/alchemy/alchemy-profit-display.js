@@ -6,7 +6,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
-import alchemyProfit from './alchemy-profit.js';
+import alchemyProfit, { readAlchemyTabType } from './alchemy-profit.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { formatWithSeparator, formatPercentage, formatLargeNumber, timeReadable } from '../../utils/formatters.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
@@ -447,17 +447,20 @@ class AlchemyProfitDisplay {
             // through to the decompose branch and priced the refined item as a decompose
             let isUnrefine = false;
 
+            // The selected tab's position identifies it on any client language; the English
+            // label match below is only the fallback when the strip cannot be read by position
+            const positionTab = readAlchemyTabType();
             const tabContainer = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
             const selectedTab = tabContainer?.querySelector('[role="tab"][aria-selected="true"]');
             const tabText = selectedTab?.textContent?.trim()?.toLowerCase() || '';
 
-            if (tabText.includes('unrefine')) {
+            if (positionTab === 'unrefine' || (!positionTab && tabText.includes('unrefine'))) {
                 isUnrefine = true;
-            } else if (tabText.includes('coinify')) {
+            } else if (positionTab === 'coinify' || (!positionTab && tabText.includes('coinify'))) {
                 isCoinify = true;
-            } else if (tabText.includes('transmute')) {
+            } else if (positionTab === 'transmute' || (!positionTab && tabText.includes('transmute'))) {
                 isTransmute = true;
-            } else if (tabText.includes('decompose')) {
+            } else if (positionTab === 'decompose' || (!positionTab && tabText.includes('decompose'))) {
                 isDecompose = true;
             } else if (actionHrid) {
                 isCoinify = actionHrid === '/actions/alchemy/coinify';
