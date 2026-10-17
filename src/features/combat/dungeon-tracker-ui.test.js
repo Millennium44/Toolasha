@@ -854,6 +854,34 @@ describe('the key runway beside the Keys figure', () => {
         expect(text('#mwi-dt-header-keys-runway')).toBe('');
     });
 
+    test('a reset marker leaves the clears before it out of the runway', async () => {
+        const at = (day, minutes) =>
+            clear({ duration: minutes * MIN, timestamp: new Date(day * 86_400_000).toISOString() });
+        // Two slow clears before the reset, three fast ones after it
+        world.runs = [at(1, 60), at(2, 60), at(5, 10), at(6, 10), at(7, 10)];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~2h 00m 00s)');
+        world.baselines = { 'Friend,Marketcow::Pirate Cove': 3 * 86_400_000 };
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+        expect(titleOf('#mwi-dt-header-keys-runway')).toContain('last 3 clears');
+    });
+
+    test('the average window limits the clears the runway averages, and a changed window redraws it', async () => {
+        const at = (day, minutes) =>
+            clear({ duration: minutes * MIN, timestamp: new Date(day * 86_400_000).toISOString() });
+        world.runs = [at(1, 60), at(2, 60), at(5, 10), at(6, 10), at(7, 10)];
+        world.currentRun = run({ keyCountsMap: team });
+        world.settings.dungeonTrackerAverageWindow = 3;
+        await ui.update(world.currentRun);
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+
+        // Window widened: the setting listener rebuilds the cache without a completion
+        world.settings.dungeonTrackerAverageWindow = 0;
+        for (const cb of configListeners.dungeonTrackerAverageWindow || []) await cb();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~2h 00m 00s)');
+    });
+
     test('cleanup drops the cached clears', async () => {
         world.runs = [clear(), clear(), clear()];
         await draw();
