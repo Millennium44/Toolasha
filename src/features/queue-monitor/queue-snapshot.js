@@ -12,8 +12,6 @@ import { normalizeLegacySnapshot } from './queue-snapshot-legacy.js';
 
 const STORE_NAME = 'queueSnapshots';
 
-export { normalizeLegacySnapshot };
-
 class QueueSnapshot {
     constructor() {
         this.snapshots = new Map(); // characterId -> snapshot
