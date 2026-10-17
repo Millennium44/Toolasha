@@ -26,8 +26,18 @@ const characterId = vi.hoisted(() => ({ current: 'charA' }));
 // The data manager's event bus, so a test can deliver items_updated / actions_updated
 const events = vi.hoisted(() => ({ listeners: new Map() }));
 
+const settingListeners = vi.hoisted(() => new Map());
 vi.mock('../../core/config.js', () => ({
-    default: { Z_FLOATING_PANEL: 9000, getSetting: () => true, getSettingValue: (key, fallback) => fallback },
+    default: {
+        Z_FLOATING_PANEL: 9000,
+        getSetting: () => true,
+        getSettingValue: (key, fallback) => fallback,
+        onSettingChange: (key, fn) => {
+            if (!settingListeners.has(key)) settingListeners.set(key, new Set());
+            settingListeners.get(key).add(fn);
+            return () => settingListeners.get(key)?.delete(fn);
+        },
+    },
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -380,6 +390,23 @@ describe('what it says', () => {
         expect(events.listeners.get('buffs_updated')?.size ?? 0).toBe(0);
         expect(events.listeners.get('skills_updated')?.size ?? 0).toBe(0);
         expect(marketListeners.size).toBe(othersListening);
+    });
+
+    test('flipping the enhance-protection setting redraws the reserve, and closing unsubscribes', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = { stages: [{ label: 'Enhance: Cape', coinDelta: -4_000_000 }], stoppedAt: null };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+        expect(text()).toContain('20 (2 bags)');
+
+        // The setting moves what the queue walk reserves
+        coinWalk.walked = { stages: [{ label: 'Enhance: Cape', coinDelta: -20_000_000 }], stoppedAt: null };
+        for (const fn of settingListeners.get('actionPanel_enhanceMatLimitProtections') || []) fn(false);
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(text()).toContain('10 (1 bag)');
+
+        ironCowFarmPanel.hide();
+        expect(settingListeners.get('actionPanel_enhanceMatLimitProtections')?.size ?? 0).toBe(0);
     });
 
     test.each(['buffs_updated', 'skills_updated', 'equipment_buffs_updated', 'house_rooms_updated'])(

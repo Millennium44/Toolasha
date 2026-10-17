@@ -545,6 +545,11 @@ class IronCowFarmPanel {
         };
         for (const event of LIVE_EVENTS) dataManager.on(event, this._liveHandler);
         marketAPI.on(this._liveHandler);
+        // The queue walk behind the reserve reads this setting, so flipping it moves the reserve
+        this._offProtectionSetting = config.onSettingChange(
+            'actionPanel_enhanceMatLimitProtections',
+            this._liveHandler
+        );
     }
 
     /** Redraw the bells-you-can-buy lines against the coins and queue as they stand now */
@@ -554,6 +559,8 @@ class IronCowFarmPanel {
     }
 
     _remove() {
+        this._offProtectionSetting?.();
+        this._offProtectionSetting = null;
         if (this._liveHandler) {
             for (const event of LIVE_EVENTS) dataManager.off(event, this._liveHandler);
             marketAPI.off(this._liveHandler);
