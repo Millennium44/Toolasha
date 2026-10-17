@@ -25,6 +25,7 @@ vi.mock('../../core/config.js', () => ({
 import settingsStorage from '../../core/settings-storage.js';
 import config from '../../core/config.js';
 import settingsUI, { normalizeHexColor } from './settings-ui.js';
+import ironCowMode from './iron-cow-mode.js';
 
 describe('normalizeHexColor', () => {
     test('accepts 6-digit hex with or without #', () => {
@@ -80,5 +81,23 @@ describe('SettingsUI typed hex color', () => {
         expect(text.value).toBe('#112233');
         expect(picker.value).toBe('#112233');
         expect(settingsStorage.setSetting).not.toHaveBeenCalled();
+    });
+
+    test('a locked color setting reverts the typed box and shows nothing unsaved', async () => {
+        const inputHTML = settingsUI.generateSettingInput('color_invBadge_ask', { type: 'color', default: '#112233' });
+        document.body.innerHTML = `<div class="toolasha-setting" data-type="color">${inputHTML}</div>`;
+        const lockedPicker = document.getElementById('color_invBadge_ask');
+        const lockedText = document.getElementById('color_invBadge_ask_text');
+        const spy = vi.spyOn(ironCowMode, 'isEnabled').mockReturnValue(true);
+        try {
+            lockedText.value = 'F80';
+            await settingsUI.handleSettingChange({ target: lockedText });
+
+            expect(lockedPicker.value).toBe('#112233');
+            expect(lockedText.value).toBe('#112233');
+            expect(settingsStorage.setSetting).not.toHaveBeenCalled();
+        } finally {
+            spy.mockRestore();
+        }
     });
 });
