@@ -175,18 +175,14 @@ export function perAttemptMaterialCost(itemDetails, { priceMaterial = getEnhance
 }
 
 /**
- * Get realistic base item price with production cost fallback
- * Matches original MWI Tools v25.0 getRealisticBaseItemPrice logic
- * @param {string} itemHrid - The item
+ * The inflation guard on a bought item's price, as a pure function of its two quotes.
+ * @param {{ask?: number|null, bid?: number|null, productionCost?: number}} inputs - Quotes
+ *   (non-positive or missing reads as "no quote") and what the item costs to craft
  * @returns {number} Coins, 0 when nothing is known
  */
-export function getRealisticBaseItemPrice(itemHrid) {
-    const marketPrice = getItemPrices(itemHrid, 0);
-    const ask = marketPrice?.ask > 0 ? marketPrice.ask : 0;
-    const bid = marketPrice?.bid > 0 ? marketPrice.bid : 0;
-
-    // Calculate production cost as fallback
-    const productionCost = getProductionCost(itemHrid);
+export function applyInflationGuard({ ask: rawAsk, bid: rawBid, productionCost = 0 }) {
+    const ask = rawAsk > 0 ? rawAsk : 0;
+    const bid = rawBid > 0 ? rawBid : 0;
 
     // If both ask and bid exist
     if (ask > 0 && bid > 0) {
@@ -215,6 +211,25 @@ export function getRealisticBaseItemPrice(itemHrid) {
 
     // No market data - use production cost as fallback
     return productionCost;
+}
+
+/**
+ * Get realistic base item price with production cost fallback
+ * Matches original MWI Tools v25.0 getRealisticBaseItemPrice logic
+ * @param {string} itemHrid - The item
+ * @param {Object} [options] - Options
+ * @param {function(string): ({ask?: number|null, bid?: number|null}|null)} [options.quoteOf] - Where the
+ *   two quotes come from; defaults to the raw reconciled book (`getItemPrices`). The shared enhancement
+ *   input rule injects the profit resolver's reading here
+ * @returns {number} Coins, 0 when nothing is known
+ */
+export function getRealisticBaseItemPrice(itemHrid, { quoteOf = (hrid) => getItemPrices(hrid, 0) } = {}) {
+    const marketPrice = quoteOf(itemHrid);
+    return applyInflationGuard({
+        ask: marketPrice?.ask,
+        bid: marketPrice?.bid,
+        productionCost: getProductionCost(itemHrid),
+    });
 }
 
 /**
@@ -353,9 +368,11 @@ function _computeProductionChainTime(itemHrid) {
  *   itself counts as protection. The savings card turns this off: it exists for
  *   untradable gear, where there is no second copy to buy at any price, and the
  *   vendor sell price the fallback would find is not an offer anyone will honour
+ * @param {function(string): number} [options.priceOf] - Price one protection option; defaults to
+ *   {@link getRealisticBaseItemPrice} on the raw book
  * @returns {{price: number|null, itemHrid: string|null}} The cheapest option
  */
-export function getCheapestProtectionPrice(itemHrid, { includeSelf = true } = {}) {
+export function getCheapestProtectionPrice(itemHrid, { includeSelf = true, priceOf = getRealisticBaseItemPrice } = {}) {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
@@ -371,7 +388,7 @@ export function getCheapestProtectionPrice(itemHrid, { includeSelf = true } = {}
     let cheapestPrice = Infinity;
     let cheapestItemHrid = null;
     for (const protectionHrid of protectionOptions) {
-        const price = getRealisticBaseItemPrice(protectionHrid);
+        const price = priceOf(protectionHrid);
         if (price > 0 && price < cheapestPrice) {
             cheapestPrice = price;
             cheapestItemHrid = protectionHrid;
