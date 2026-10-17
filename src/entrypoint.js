@@ -1714,6 +1714,13 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.labyrinthClearRate,
             async: false,
+            // The module carries two features on two settings — the room-tile
+            // calculator and the live clear chance — and the live one must run
+            // with the calculator off. Each half starts on its own setting, and
+            // `isRunning` sends the registry back in when the second is switched
+            // on after the first brought the module up.
+            customCheck: () => config.getSetting('labyrinthClearRate') || config.getSetting('labyrinthLiveProgress'),
+            isRunning: () => Combat.labyrinthClearRate.isRunning(),
         },
         {
             key: 'labyrinthMissingSuppliesButton',

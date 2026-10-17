@@ -6559,3 +6559,112 @@ describe('the accuracy snapshot hands the browser frames on a large record', () 
         expect(worked).toHaveBeenCalled();
     });
 });
+
+describe('the live clear chance and the room-tile calculator start on their own settings', () => {
+    let webSocketHook;
+    let domObserver;
+    const toggles = { labyrinthClearRate: true, labyrinthLiveProgress: true };
+
+    const LIVE_EVENTS = ['labyrinth_room_progress', 'battle_updated', 'new_battle'];
+    const registered = () => webSocketHook.on.mock.calls.map(([event]) => event);
+    const removed = () => webSocketHook.off.mock.calls.map(([event]) => event);
+
+    beforeEach(async () => {
+        webSocketHook = (await import('../../core/websocket.js')).default;
+        domObserver = (await import('../../core/dom-observer.js')).default;
+        labyrinthClearRate.disable();
+        webSocketHook.on.mockClear();
+        webSocketHook.off.mockClear();
+        domObserver.onClass.mockClear();
+        configMock.getSetting.mockImplementation((key) => (key in toggles ? toggles[key] : true));
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.disable();
+        toggles.labyrinthClearRate = true;
+        toggles.labyrinthLiveProgress = true;
+        configMock.getSetting.mockImplementation(() => true);
+    });
+
+    test('live alone wires all three live handlers and none of the calculator', () => {
+        toggles.labyrinthClearRate = false;
+        labyrinthClearRate.initialize();
+
+        expect(registered().sort()).toEqual([...LIVE_EVENTS].sort());
+        expect(domObserver.onClass).not.toHaveBeenCalled();
+        expect(labyrinthClearRate.isInitialized).toBe(false);
+        expect(labyrinthClearRate.isRunning()).toBe(true);
+    });
+
+    test('a live progress message draws the readout with the calculator off', () => {
+        toggles.labyrinthClearRate = false;
+        document.body.innerHTML =
+            '<div class="Header_actionName__x"><div class="Header_displayName__y">Lab</div></div>';
+        labyrinthClearRate.initialize();
+
+        const handler = webSocketHook.on.mock.calls.find(([event]) => event === 'labyrinth_room_progress')[1];
+        handler({ successRate: 1, actionTimeMs: 6000, actionCounter: 0, currentWorkValue: 0, targetWorkValue: 10 });
+        expect(document.querySelector('.mwi-labyrinth-live-progress')?.textContent).toContain('Clear');
+        document.body.innerHTML = '';
+    });
+
+    test('the calculator alone leaves the live handlers unwired', () => {
+        toggles.labyrinthLiveProgress = false;
+        labyrinthClearRate.initialize();
+
+        expect(registered()).toEqual(expect.arrayContaining(['labyrinth_updated', 'setting_updated']));
+        for (const event of LIVE_EVENTS) expect(registered()).not.toContain(event);
+        expect(domObserver.onClass).toHaveBeenCalled();
+        expect(labyrinthClearRate.isRunning()).toBe(true);
+    });
+
+    test('both off wires nothing', () => {
+        toggles.labyrinthClearRate = false;
+        toggles.labyrinthLiveProgress = false;
+        labyrinthClearRate.initialize();
+
+        expect(webSocketHook.on).not.toHaveBeenCalled();
+        expect(labyrinthClearRate.isRunning()).toBe(true);
+    });
+
+    test('switching the calculator on after live brought the module up starts only the calculator', () => {
+        toggles.labyrinthClearRate = false;
+        labyrinthClearRate.initialize();
+        toggles.labyrinthClearRate = true;
+        // What the registry reads before re-entering initialize() on a setting change
+        expect(labyrinthClearRate.isRunning()).toBe(false);
+
+        labyrinthClearRate.initialize();
+        expect(registered().filter((event) => event === 'labyrinth_room_progress')).toHaveLength(1);
+        expect(registered()).toContain('labyrinth_updated');
+        expect(labyrinthClearRate.isRunning()).toBe(true);
+    });
+
+    test('switching live on after the calculator brought the module up starts the live half once', () => {
+        toggles.labyrinthLiveProgress = false;
+        labyrinthClearRate.initialize();
+        toggles.labyrinthLiveProgress = true;
+        expect(labyrinthClearRate.isRunning()).toBe(false);
+
+        labyrinthClearRate.initialize();
+        labyrinthClearRate.initialize();
+        for (const event of LIVE_EVENTS) {
+            expect(registered().filter((e) => e === event)).toHaveLength(1);
+        }
+        expect(registered().filter((e) => e === 'labyrinth_updated')).toHaveLength(1);
+    });
+
+    test('disable removes the live handlers it wired, and a fresh initialize wires them again', () => {
+        toggles.labyrinthClearRate = false;
+        labyrinthClearRate.initialize();
+        labyrinthClearRate.disable();
+
+        expect(removed()).toEqual(expect.arrayContaining(LIVE_EVENTS));
+        expect(labyrinthClearRate.liveProgressHandler).toBeNull();
+        expect(labyrinthClearRate.isRunning()).toBe(false);
+
+        webSocketHook.on.mockClear();
+        labyrinthClearRate.initialize();
+        expect(registered().sort()).toEqual([...LIVE_EVENTS].sort());
+    });
+});

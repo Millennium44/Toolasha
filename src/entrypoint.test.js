@@ -570,6 +570,34 @@ describe('overlay tab button gate', () => {
     });
 });
 
+describe('labyrinth clear rate gate', () => {
+    const entry = () => registered.find((feature) => feature.key === 'labyrinthClearRate');
+
+    afterEach(() => {
+        delete settings.labyrinthClearRate;
+        delete settings.labyrinthLiveProgress;
+    });
+
+    test('opens on the live clear chance alone, so it runs with the room-tile calculator off', () => {
+        expect(typeof entry()?.customCheck, 'labyrinthClearRate has no customCheck').toBe('function');
+        settings.labyrinthClearRate = false;
+        settings.labyrinthLiveProgress = true;
+        expect(entry().customCheck()).toBe(true);
+    });
+
+    test('opens on the calculator alone, and closes with both off', () => {
+        settings.labyrinthClearRate = true;
+        settings.labyrinthLiveProgress = false;
+        expect(entry().customCheck()).toBe(true);
+        settings.labyrinthClearRate = false;
+        expect(entry().customCheck()).toBe(false);
+    });
+
+    test('asks the module whether it is running, so switching on the second half starts it', () => {
+        expect(typeof entry()?.isRunning).toBe('function');
+    });
+});
+
 describe('overlay tab button health check', () => {
     const check = () => checkFor('overlayTabButton')();
 
