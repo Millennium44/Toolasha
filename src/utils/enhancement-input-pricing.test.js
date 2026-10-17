@@ -20,6 +20,7 @@ const game = vi.hoisted(() => ({
     mode: 'hybrid',
     networthMode: 'ask',
     craftingSetting: false,
+    customVersion: 0,
     buffVersion: 0,
 }));
 
@@ -37,6 +38,7 @@ vi.mock('./action-context.js', () => ({ resolveActionContext: () => ({ equipment
 vi.mock('./ironcow-valuation.js', () => ({ isIronCowCharacter: () => false }));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({
     getCustomPrice: (hrid, _level, side) => game.custom[`${hrid}:${side}`] ?? null,
+    getCustomPriceVersion: () => game.customVersion,
 }));
 vi.mock('./game-lookups.js', () => ({ getShopCoinCost: (hrid) => game.shop[hrid] || 0 }));
 // profit-helpers reads the production cost through the tooltip module, which re-exports this one
@@ -105,7 +107,7 @@ beforeEach(() => {
 describe('priceMaterial', () => {
     test('a quoted material is the ask, a bid-only book is the bid', () => {
         game.books[SHARD] = { ask: 1000, bid: 900 };
-        expect(priceMaterial(SHARD)).toEqual({ price: 1000, unpriced: false, estimated: false });
+        expect(priceMaterial(SHARD)).toMatchObject({ price: 1000, unpriced: false, estimated: false });
         game.books[SHARD] = { ask: null, bid: 900 };
         expect(priceMaterial(SHARD).price).toBe(900);
     });
@@ -143,12 +145,12 @@ describe('priceMaterial', () => {
             inputItems: [{ itemHrid: '/items/ore', count: 3 }],
             outputItems: [{ itemHrid: '/items/bar', count: 1 }],
         };
-        expect(priceMaterial('/items/bar')).toEqual({ price: 300, unpriced: false, estimated: true });
+        expect(priceMaterial('/items/bar')).toMatchObject({ price: 300, unpriced: false, estimated: true });
     });
 
     test('nothing prices it: null and flagged, never zero', () => {
-        expect(priceMaterial(SHARD)).toEqual({ price: null, unpriced: true, estimated: false });
-        expect(priceMaterial('')).toEqual({ price: null, unpriced: true, estimated: false });
+        expect(priceMaterial(SHARD)).toMatchObject({ price: null, unpriced: true, estimated: false });
+        expect(priceMaterial('')).toMatchObject({ price: null, unpriced: true, estimated: false });
     });
 
     test('trainee charms cost the shop price whatever the book, a mode or a custom price says', () => {
@@ -176,7 +178,7 @@ describe('priceMaterial', () => {
 describe('the inflation guard on protection, the mirror and the base', () => {
     test('an ask more than 30% over the bid is read as the bid when nothing crafts it', () => {
         game.books[PROTECTION] = { ask: 200, bid: 100 };
-        expect(priceGuarded(PROTECTION)).toEqual({ price: 100, unpriced: false, estimated: true });
+        expect(priceGuarded(PROTECTION)).toMatchObject({ price: 100, unpriced: false, estimated: true });
     });
 
     test('an ask inflated over the craft cost is read as the craft cost', () => {
@@ -216,7 +218,7 @@ describe('the inflation guard on protection, the mirror and the base', () => {
     });
 
     test('unpriced is null and flagged', () => {
-        expect(priceMirror()).toEqual({ price: null, unpriced: true, estimated: false });
+        expect(priceMirror()).toMatchObject({ price: null, unpriced: true, estimated: false });
     });
 
     test('the mirror is the guarded price of the philosopher’s mirror', () => {
@@ -369,7 +371,11 @@ describe('every entry point reads one number per input', () => {
             arrange();
             const m = await doors();
             const material = name === 'trainee charm' ? '/items/trainee_charm' : SHARD;
-            expect(m.getEnhancementMaterialPrice(material)).toBe(m.priceMaterial(material).price || 0);
+            // The drop-in names its side, so it is the rule forced to the ask whatever the profit mode says
+            expect(m.getEnhancementMaterialPrice(material)).toBe(m.priceMaterial(material, { mode: 'ask' }).price || 0);
+            expect(m.getEnhancementMaterialPrice(material, 'bid')).toBe(
+                m.priceMaterial(material, { mode: 'bid' }).price || 0
+            );
             expect(m.perAttemptMaterialCost({ enhancementCosts: [{ itemHrid: material, count: 2 }] }).cost).toBe(
                 2 * (m.priceMaterial(material).price || 0)
             );
@@ -390,5 +396,84 @@ describe('every entry point reads one number per input', () => {
         expect(m.priceProtection(SWORD).unpriced).toBe(true);
         expect(m.getCheapestProtectionPrice(SWORD).price).toBeNull();
         expect(m.getRealisticBaseItemPrice(PROTECTION)).toBe(0);
+    });
+});
+
+describe('a custom price wins absolutely', () => {
+    const arrangeCraftable = () => {
+        game.books['/items/ore'] = { ask: 100, bid: 100 };
+        game.items['/items/ore'] = { name: 'Ore' };
+        game.actions['/actions/forge'] = {
+            type: '/action_types/smithing',
+            inputItems: [{ itemHrid: '/items/ore', count: 1 }],
+            outputItems: [{ itemHrid: SWORD, count: 1 }],
+        };
+        game.craftingSetting = true;
+    };
+
+    test('the craft cost competes with market quotes, never with a custom base price', () => {
+        arrangeCraftable();
+        game.books[SWORD] = { ask: 1000, bid: 950 };
+        expect(priceBase(SWORD)).toMatchObject({ price: 100, crafted: true });
+        game.custom[`${SWORD}:buy`] = 500;
+        expect(priceBase(SWORD)).toMatchObject({ price: 500, crafted: false, custom: true });
+    });
+
+    test('a custom price of zero or less reads as unpriced', () => {
+        game.books[SHARD] = { ask: 1000, bid: 900 };
+        game.custom[`${SHARD}:buy`] = 0;
+        expect(priceMaterial(SHARD)).toMatchObject({ price: null, unpriced: true });
+    });
+});
+
+describe('+0 follows the base rule', () => {
+    test('an enhanced copy at +0 is the base item, crafting setting included; above +0 it is a quote', async () => {
+        const { priceAtLevel } = await import('./enhancement-input-pricing.js');
+        game.books['/items/ore'] = { ask: 100, bid: 100 };
+        game.items['/items/ore'] = { name: 'Ore' };
+        game.actions['/actions/forge'] = {
+            type: '/action_types/smithing',
+            inputItems: [{ itemHrid: '/items/ore', count: 1 }],
+            outputItems: [{ itemHrid: SWORD, count: 1 }],
+        };
+        game.books[SWORD] = { ask: 1000, bid: 950 };
+        game.craftingSetting = true;
+        expect(priceAtLevel(SWORD, 0).price).toBe(priceBase(SWORD).price);
+        expect(priceAtLevel(SWORD, 0).price).toBe(100);
+    });
+});
+
+describe('drop-ins keep the side they are given', () => {
+    test('getEnhancementMaterialPrice(hrid, side) is the rule forced to that side under a bid profit mode', async () => {
+        const { getEnhancementMaterialPrice } = await import('./enhancement-input-pricing.js');
+        game.books[SHARD] = { ask: 1000, bid: 900 };
+        game.mode = 'optimistic';
+        expect(getEnhancementMaterialPrice(SHARD, 'ask')).toBe(1000);
+        expect(getEnhancementMaterialPrice(SHARD, 'bid')).toBe(900);
+        expect(priceMaterial(SHARD).price).toBe(900);
+    });
+
+    test('perAttemptMaterialCost and the protection drop-in take a forced mode', async () => {
+        const { getCheapestProtectionPrice } = await import('./enhancement-input-pricing.js');
+        game.books[SHARD] = { ask: 1000, bid: 900 };
+        game.books[PROTECTION] = { ask: 900, bid: 800 };
+        game.mode = 'optimistic';
+        const details = { enhancementCosts: [{ itemHrid: SHARD, count: 2 }] };
+        expect(perAttemptMaterialCost(details).cost).toBe(1800);
+        expect(perAttemptMaterialCost(details, { mode: 'ask' }).cost).toBe(2000);
+        expect(getCheapestProtectionPrice(SWORD).price).toBe(800);
+        expect(getCheapestProtectionPrice(SWORD, { mode: 'ask' }).price).toBe(900);
+    });
+});
+
+describe('pricingStamp', () => {
+    test('moves with the profit mode, the net-worth mode, the crafting setting and the custom prices', async () => {
+        const { pricingStamp } = await import('./enhancement-input-pricing.js');
+        const base = pricingStamp();
+        game.customVersion++;
+        const afterCustom = pricingStamp();
+        expect(afterCustom).not.toBe(base);
+        game.craftingSetting = true;
+        expect(pricingStamp()).not.toBe(afterCustom);
     });
 });

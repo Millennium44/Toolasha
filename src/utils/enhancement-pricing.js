@@ -33,6 +33,7 @@ import { getItemPrice, getItemPrices } from './market-data.js';
 import { parseArtisanBonus, getDrinkConcentration } from './tea-parser.js';
 import { findProducingAction } from './production-index.js';
 import { resolveActionContext } from './action-context.js';
+import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 
 /**
  * What the game's vendor charges for a trainee charm.
@@ -71,6 +72,18 @@ let _priceVersion = 0;
 
 // Optional chaining: tests and older bundles may mock dataManager without the
 // getter, and a fingerprint that cannot be read simply never invalidates.
+// A custom price changes what the recipe's inputs cost, and the memo's keys do not name them. An edit
+// does notify the market feed (bumping the price version), but first load of the stored map does not,
+// so the override store's own version is part of every entry too. A bundle or test without the store
+// has no custom prices to version.
+function _customVersion() {
+    try {
+        return getCustomPriceVersion();
+    } catch {
+        return 0;
+    }
+}
+
 function _buffVersion() {
     return dataManager.getBuffStateVersion?.() ?? 0;
 }
@@ -242,10 +255,18 @@ export function getRealisticBaseItemPrice(itemHrid, { quoteOf = (hrid) => getIte
 export function getProductionCost(itemHrid, mode = 'ask') {
     const cacheKey = `${itemHrid}|${mode}`;
     const buffVersion = _buffVersion();
+    const customVersion = _customVersion();
     const cached = _costCache.get(cacheKey);
-    if (cached && cached.version === _priceVersion && cached.buffVersion === buffVersion) return cached.value;
+    if (
+        cached &&
+        cached.version === _priceVersion &&
+        cached.buffVersion === buffVersion &&
+        cached.customVersion === customVersion
+    ) {
+        return cached.value;
+    }
     const result = _computeProductionCost(itemHrid, mode);
-    _costCache.set(cacheKey, { version: _priceVersion, buffVersion, value: result });
+    _costCache.set(cacheKey, { version: _priceVersion, buffVersion, customVersion, value: result });
     return result;
 }
 
@@ -320,10 +341,18 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
  */
 export function getProductionChainTime(itemHrid) {
     const buffVersion = _buffVersion();
+    const customVersion = _customVersion();
     const cached = _chainTimeCache.get(itemHrid);
-    if (cached && cached.version === _priceVersion && cached.buffVersion === buffVersion) return cached.value;
+    if (
+        cached &&
+        cached.version === _priceVersion &&
+        cached.buffVersion === buffVersion &&
+        cached.customVersion === customVersion
+    ) {
+        return cached.value;
+    }
     const result = _computeProductionChainTime(itemHrid);
-    _chainTimeCache.set(itemHrid, { version: _priceVersion, buffVersion, value: result });
+    _chainTimeCache.set(itemHrid, { version: _priceVersion, buffVersion, customVersion, value: result });
     return result;
 }
 

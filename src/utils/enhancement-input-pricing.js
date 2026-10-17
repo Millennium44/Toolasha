@@ -26,6 +26,10 @@
  *     With `enhanceSim_baseItemCraftingCost` on, the base is also capped by
  *     what it costs to craft.
  *
+ * Sides: a surface that names a side (the tooltip's Ask and Bid columns, the score, the loot log)
+ * forces `mode` to it; the profit mode applies only where no side is named. A custom price of 0 or
+ * less reads as unpriced, as it does in the resolver.
+ *
  * `context` picks the pricing mode: 'profit' (default) reads the profit mode,
  * 'networth' reads the net-worth mode. The structure is shared; the mode is
  * not. `mode` forces one book side outright (the tooltip's patient-buy column).
@@ -40,6 +44,7 @@
 import config from '../core/config.js';
 import { getItemPrices, getPricingMode } from './market-data.js';
 import { resolveItemPrice } from './profit-helpers.js';
+import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 import {
     TRAINEE_SHOP_PRICE,
     getCheapestProtectionPrice as getCheapestProtectionPriceFrom,
@@ -51,8 +56,10 @@ import {
 const PHILOSOPHERS_MIRROR = '/items/philosophers_mirror';
 
 /** Build the result record from a bare price. */
-function result(price, estimated = false) {
-    return price > 0 ? { price, unpriced: false, estimated } : { price: null, unpriced: true, estimated: false };
+function result(price, estimated = false, custom = false) {
+    return price > 0
+        ? { price, unpriced: false, estimated, custom }
+        : { price: null, unpriced: true, estimated: false, custom: false };
 }
 
 /** The resolver, with the context/mode options every function here takes. */
@@ -78,7 +85,7 @@ export function priceMaterial(itemHrid, options = {}) {
     if (itemHrid.startsWith('/items/trainee_')) return result(TRAINEE_SHOP_PRICE);
     if (itemHrid === '/items/coin') return result(1);
     const resolved = resolve(itemHrid, options);
-    return result(resolved.price, resolved.estimated);
+    return result(resolved.price, resolved.estimated, Boolean(resolved.custom));
 }
 
 /**
@@ -103,6 +110,28 @@ function guardQuotes(itemHrid, options) {
 }
 
 /**
+ * A short string that changes whenever something the rule reads outside the order book changes: the
+ * profit pricing mode, the net-worth mode, the base-item crafting setting, and the custom prices. A
+ * cache over prices built by this rule puts it in its key.
+ * @returns {string}
+ */
+export function pricingStamp() {
+    let custom = 0;
+    try {
+        custom = getCustomPriceVersion();
+    } catch {
+        // A bundle or test without the override store has no custom prices to version
+    }
+    const setting = (key) => config.getSettingValue?.(key) ?? '';
+    return [
+        setting('profitCalc_pricingMode'),
+        setting('networth_pricingMode'),
+        config.isFeatureEnabled?.('enhanceSim_baseItemCraftingCost') ? 'craft' : 'buy',
+        custom,
+    ].join('|');
+}
+
+/**
  * Price an item bought as a mirror, protection item or base copy: the resolver's figure through
  * the inflation guard.
  * @param {string} itemHrid - The item
@@ -114,7 +143,7 @@ export function priceGuarded(itemHrid, options = {}) {
     const { quotes, resolved } = guardQuotes(itemHrid, options);
     if (!quotes) return result(0);
     const price = getRealisticBaseItemPriceFrom(itemHrid, { quoteOf: () => quotes });
-    return result(price, resolved.estimated || price !== resolved.price);
+    return result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom));
 }
 
 /**
@@ -158,6 +187,9 @@ export function priceProtection(itemHrid, { includeSelf = true, context = 'profi
 export function priceBase(itemHrid, options = {}) {
     const { context = 'profit', mode, useCraftingCost } = options;
     const bought = priceGuarded(itemHrid, { context, mode });
+    // A custom price is the player's own answer and wins absolutely: the craft cost only ever competes
+    // with market quotes
+    if (bought.custom) return { ...bought, crafted: false };
     const crafting = useCraftingCost ?? config.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
     if (!crafting) return { ...bought, crafted: false };
     const side = mode || getPricingMode(context, 'buy');
@@ -180,7 +212,9 @@ export function priceBase(itemHrid, options = {}) {
  */
 export function priceAtLevel(itemHrid, level = 0, options = {}) {
     if (!itemHrid) return result(0);
-    if (!(level > 0)) return priceBase(itemHrid, { ...options, useCraftingCost: false });
+    // +0 follows the base-item rule, so a tracker's base copy, the panel's mirror column and the
+    // tooltip's level 0 all quote one number
+    if (!(level > 0)) return priceBase(itemHrid, options);
     try {
         const { context = 'profit', mode } = options;
         const resolved = resolveItemPrice(itemHrid, {
@@ -189,7 +223,7 @@ export function priceAtLevel(itemHrid, level = 0, options = {}) {
             enhancementLevel: level,
             ...(mode ? { mode } : {}),
         });
-        return result(resolved.price, resolved.estimated);
+        return result(resolved.price, resolved.estimated, Boolean(resolved.custom));
     } catch {
         return result(0);
     }
@@ -200,23 +234,26 @@ export function priceAtLevel(itemHrid, level = 0, options = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Drop-in for `getEnhancementMaterialPrice`: 'ask' (the default) is the profit-mode price the cost
- * surfaces show; 'bid' forces the bid side, for the patient-buy comparison.
+ * Drop-in for `getEnhancementMaterialPrice`. The side is a label, and it is honored: 'ask' is the
+ * rule forced to the ask, 'bid' the rule forced to the bid (custom prices, the shop floor and the
+ * trainee price still apply). A surface that wants the player's profit mode with no side named calls
+ * {@link priceMaterial} instead.
  * @param {string} itemHrid - Material item HRID
- * @param {'ask'|'bid'} [side='ask'] - Profit-mode price or the forced bid
+ * @param {'ask'|'bid'} [side='ask'] - Book side to force
  * @returns {number} Unit price, 0 when nothing prices it (callers treat that as unpriced)
  */
 export function getEnhancementMaterialPrice(itemHrid, side = 'ask') {
-    return priceMaterial(itemHrid, side === 'bid' ? { mode: 'bid' } : {}).price || 0;
+    return priceMaterial(itemHrid, { mode: side === 'bid' ? 'bid' : 'ask' }).price || 0;
 }
 
 /**
  * Drop-in for `getRealisticBaseItemPrice`: the guarded profit-mode price, 0 when unpriced.
  * @param {string} itemHrid - The item
+ * @param {Object} [options] - Same as {@link priceMaterial}
  * @returns {number} Coins
  */
-export function getRealisticBaseItemPrice(itemHrid) {
-    return priceGuarded(itemHrid).price || 0;
+export function getRealisticBaseItemPrice(itemHrid, options = {}) {
+    return priceGuarded(itemHrid, options).price || 0;
 }
 
 /**
@@ -235,10 +272,11 @@ export function getCheapestProtectionPrice(itemHrid, options = {}) {
  * @param {Object} itemDetails - Item details containing `enhancementCosts`
  * @param {Object} [options] - Options
  * @param {'profit'|'networth'} [options.context='profit'] - Whose pricing mode to read
+ * @param {'ask'|'bid'|'average'} [options.mode] - Force one book side
  * @returns {{cost: number, hasCost: boolean, hasMissingPrices: boolean}}
  */
-export function perAttemptMaterialCost(itemDetails, { context = 'profit' } = {}) {
+export function perAttemptMaterialCost(itemDetails, { context = 'profit', mode } = {}) {
     return perAttemptMaterialCostFrom(itemDetails, {
-        priceMaterial: (hrid) => priceMaterial(hrid, { context }).price || 0,
+        priceMaterial: (hrid) => priceMaterial(hrid, { context, mode }).price || 0,
     });
 }
