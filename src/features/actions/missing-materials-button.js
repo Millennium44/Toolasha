@@ -936,6 +936,29 @@ function queuedAlchemyInput(itemHrid) {
 }
 
 /**
+ * Catalysts the finite action queue has already committed: queued alchemy
+ * actions name theirs in `secondaryItemHash`. A catalyst is spent only on a
+ * success, but a queued entry's success rate is not known here (it depends on
+ * the catalyst and gear it was queued under), so each remaining action counts
+ * as one catalyst — the upper bound, which can only under-state what is free,
+ * never promise stock the queue will use. Infinite actions are skipped.
+ * @param {string} catalystHrid - Catalyst item HRID
+ * @returns {number} Queued catalyst units
+ */
+function queuedAlchemyCatalyst(catalystHrid) {
+    let queued = 0;
+    for (const action of dataManager.getCurrentActions?.() || []) {
+        if (!action?.actionHrid?.startsWith('/actions/alchemy/') || !action.hasMaxCount) continue;
+        if (!action.secondaryItemHash) continue;
+        const parsed = parseItemHash(action.secondaryItemHash);
+        if (parsed.itemHrid !== catalystHrid || parsed.level !== 0) continue;
+        const remaining = (Number(action.maxCount) || 0) - (Number(action.currentCount) || 0);
+        if (remaining > 0) queued += remaining;
+    }
+    return queued;
+}
+
+/**
  * The what-if catalyst the profit display computed for exactly this item and tab, if any.
  * @param {string} itemHrid - The selected item
  * @param {string|null} actionType - The selected tab
@@ -980,6 +1003,7 @@ function alchemyMaterials(ctx) {
         lines.push({
             itemHrid: ctx.catalyst.catalystHrid,
             count: Math.ceil(numActions * ctx.catalyst.successRate - 1e-9),
+            queued: ignoreQueue ? 0 : queuedAlchemyCatalyst(ctx.catalyst.catalystHrid),
         });
     }
     return materialsFromList(lines, RESERVATION_OWNER);
