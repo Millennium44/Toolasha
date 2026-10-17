@@ -214,8 +214,53 @@ class LabyrinthClearRate {
      * mid-session (see `isRunning`).
      */
     initialize() {
+        this.watchHalfSettings();
         this.initializeClearRate();
         this.initializeLiveProgress();
+    }
+
+    /**
+     * Take each half down when its own setting is switched off. The registry's
+     * gate is the two settings OR'd and the entry is not `liveStop`, so it never
+     * stops the module for one half closing — and the calculator's handlers,
+     * observers and badges would otherwise keep running behind the live half.
+     * Only closing is handled here: opening is the registry's (`isRunning`).
+     * Dropped again by `disable()`.
+     */
+    watchHalfSettings() {
+        if (this._settingUnsubs) return;
+        this._settingUnsubs = [
+            config.onSettingChange('labyrinthClearRate', (value) => {
+                if (value) return;
+                // The calculator half is most of what `_teardown` removes; take
+                // everything down and bring the live half back if it is on
+                this._teardown();
+                this.initializeLiveProgress();
+            }),
+            config.onSettingChange('labyrinthLiveProgress', (value) => {
+                if (value) return;
+                this.disableLiveProgress();
+            }),
+        ];
+    }
+
+    /** Unwire the live clear chance: its handlers and every readout it drew */
+    disableLiveProgress() {
+        if (this.liveProgressHandler) {
+            webSocketHook.off('labyrinth_room_progress', this.liveProgressHandler);
+            this.liveProgressHandler = null;
+        }
+        if (this.battleHandler) {
+            webSocketHook.off('battle_updated', this.battleHandler);
+            this.battleHandler = null;
+        }
+        if (this.newBattleHandler) {
+            webSocketHook.off('new_battle', this.newBattleHandler);
+            this.newBattleHandler = null;
+        }
+        this.clearLiveProgress();
+        this.clearLiveCombat();
+        this._fight = null;
     }
 
     /**
@@ -522,6 +567,15 @@ class LabyrinthClearRate {
     }
 
     disable() {
+        if (this._settingUnsubs) {
+            for (const unsub of this._settingUnsubs) unsub();
+            this._settingUnsubs = null;
+        }
+        this._teardown();
+    }
+
+    /** Everything `disable()` removes except the two per-half setting watchers */
+    _teardown() {
         try {
             if (this.wsHandler) {
                 webSocketHook.off('labyrinth_updated', this.wsHandler);
@@ -538,10 +592,7 @@ class LabyrinthClearRate {
                 this.loadoutsHandler = null;
             }
 
-            if (this.liveProgressHandler) {
-                webSocketHook.off('labyrinth_room_progress', this.liveProgressHandler);
-                this.liveProgressHandler = null;
-            }
+            this.disableLiveProgress();
 
             if (this._buffInputsHandler) {
                 for (const event of BUFF_INPUT_EVENTS) dataManager.off(event, this._buffInputsHandler);
@@ -558,19 +609,6 @@ class LabyrinthClearRate {
                 this.snapshotUpdateHandler = null;
             }
 
-            if (this.battleHandler) {
-                webSocketHook.off('battle_updated', this.battleHandler);
-                this.battleHandler = null;
-            }
-
-            if (this.newBattleHandler) {
-                webSocketHook.off('new_battle', this.newBattleHandler);
-                this.newBattleHandler = null;
-            }
-
-            this.clearLiveProgress();
-            this.clearLiveCombat();
-            this._fight = null;
             this.hidePreview();
             document.getElementById(PREVIEW_ID)?.remove();
             if (this._previewWatchdog) {
