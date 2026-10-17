@@ -248,12 +248,37 @@ describe('planAlchemyImportMerge', () => {
     test('an imported id matching a stored one replaces it', () => {
         const stored = [transmuteSession({ id: 'a', totalSuccesses: 1 })];
         const imported = [transmuteSession({ id: 'a', totalSuccesses: 2 })];
-        const plan = planAlchemyImportMerge(stored, imported);
+        const plan = planAlchemyImportMerge(stored, imported, 1234);
 
         expect(plan.replaced).toBe(1);
         expect(plan.added).toBe(0);
         expect(plan.unchanged).toBe(0);
-        expect(plan.merged).toEqual([transmuteSession({ id: 'a', totalSuccesses: 2 })]);
+        // Stamped, so a later sync pull keeps the correction (see mergeSessionCopies)
+        expect(plan.merged).toEqual([{ ...transmuteSession({ id: 'a', totalSuccesses: 2 }), editedAt: 1234 }]);
+    });
+
+    test('a re-import with the keys in another order is the same copy, not an edit', () => {
+        const stored = [{ id: 'a', startTime: 1, totalAttempts: 5, results: { x: { count: 1, value: 2 } } }];
+        const imported = [{ results: { x: { value: 2, count: 1 } }, totalAttempts: 5, startTime: 1, id: 'a' }];
+        const plan = planAlchemyImportMerge(stored, imported, 500);
+
+        expect(plan.merged[0]).toBe(stored[0]);
+    });
+
+    test('a replacement that lowers the attempts is stamped, an identical re-import keeps the stored copy', () => {
+        const stored = [
+            transmuteSession({ id: 'a', totalAttempts: 50 }),
+            transmuteSession({ id: 'b', totalAttempts: 7, editedAt: 99 }),
+        ];
+        const imported = [
+            transmuteSession({ id: 'a', totalAttempts: 40 }),
+            transmuteSession({ id: 'b', totalAttempts: 7 }),
+        ];
+        const plan = planAlchemyImportMerge(stored, imported, 500);
+
+        expect(plan.merged[0]).toMatchObject({ id: 'a', totalAttempts: 40, editedAt: 500 });
+        expect(plan.merged[1]).toBe(stored[1]);
+        expect(plan.replaced).toBe(2);
     });
 
     test('an imported id absent from storage is added', () => {

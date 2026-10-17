@@ -216,6 +216,41 @@ export function recordFailure(session, previousLevel, newLevel) {
 }
 
 /**
+ * Whether a session consumed an input nothing could price, read from what it stored: its own
+ * flag, or a material, protection or mirror recorded with units and no cost (a session from
+ * before the flag existed). Once a priced unit is added to a flag-less entry the entry's total
+ * turns positive and this reading goes false, so a session must be stamped
+ * ({@link stampLegacyUnpricedInput}) before anything is added to or merged with it.
+ * @param {Object} session - Enhancement session
+ * @returns {boolean}
+ */
+export function deriveUnpricedInput(session) {
+    if (session?.hasUnpricedInput === true) return true;
+    if (Object.values(session?.materialCosts || {}).some((m) => m.count > 0 && !(m.totalCost > 0))) return true;
+    const protections = getProtectionUsage(session);
+    if (protections.count > 0 && !(protections.cost > 0)) return true;
+    // A resumed or merged session can total a positive cost while one stored entry is still unpriced
+    if (session?.protectionBreakdown) {
+        const entries = Object.values(protections.breakdown || {});
+        if (entries.some((e) => e?.count > 0 && !(e?.totalCost > 0))) return true;
+    }
+    const mirrors = getMirrorUsage(session);
+    return mirrors.count > 0 && !(mirrors.cost > 0);
+}
+
+/**
+ * Write the unpriced-input flag onto a session whose stored data already shows one. A flag-less
+ * legacy session later given a priced unit of the same input would otherwise total positive and
+ * read as fully priced forever.
+ * @param {Object} session - Session (mutated)
+ */
+export function stampLegacyUnpricedInput(session) {
+    if (session && session.hasUnpricedInput !== true && deriveUnpricedInput(session)) {
+        session.hasUnpricedInput = true;
+    }
+}
+
+/**
  * Add material cost to session
  * @param {Object} session - Session object
  * @param {string} itemHrid - Material item HRID
@@ -223,6 +258,7 @@ export function recordFailure(session, previousLevel, newLevel) {
  * @param {number} unitCost - Cost per item (from market)
  */
 export function addMaterialCost(session, itemHrid, count, unitCost) {
+    stampLegacyUnpricedInput(session);
     if (count > 0 && !(unitCost > 0)) session.hasUnpricedInput = true;
     if (!session.materialCosts[itemHrid]) {
         session.materialCosts[itemHrid] = {
@@ -256,6 +292,7 @@ export function addCoinCost(session, amount) {
  * @param {number} cost - Protection item cost
  */
 export function addProtectionCost(session, protectionItemHrid, cost) {
+    stampLegacyUnpricedInput(session);
     if (!(cost > 0)) session.hasUnpricedInput = true;
 
     // A second protection item starts a per-item breakdown, splitting off what the first one
@@ -294,6 +331,7 @@ export function addProtectionCost(session, protectionItemHrid, cost) {
  * @param {number} cost - Mirror cost
  */
 export function addMirrorCost(session, cost) {
+    stampLegacyUnpricedInput(session);
     if (!(cost > 0)) session.hasUnpricedInput = true;
     session.mirrorCost = (session.mirrorCost || 0) + cost;
     session.mirrorCount = (session.mirrorCount || 0) + 1;
@@ -609,6 +647,8 @@ function samePrediction(a, b) {
  */
 export function resumeSession(session, now = Date.now(), options = {}) {
     const { newPredictions = null, startedAt = null } = options || {};
+    // Before the resumed run adds a priced unit to an entry the old run left unpriced
+    stampLegacyUnpricedInput(session);
     const legStartLevel = Number.isFinite(session.segmentStartLevel) ? session.segmentStartLevel : session.startLevel;
     const sameLeg = session.currentLevel === legStartLevel && samePrediction(session.predictions, newPredictions);
     if (!sameLeg) {
@@ -729,6 +769,8 @@ export function planSessionMerge(sessions, { labelOf = (session) => session.id }
 export function foldSessions(ordered) {
     const newest = ordered[ordered.length - 1];
     const older = ordered.slice(0, -1);
+    // Read each run's own stored data before the sums below blend unpriced and priced units
+    stampLegacyUnpricedInput(newest);
     // The chain starts where its first run (by activity) started; the start time is the earliest
     // any of them started, for anything asking how far back the session reaches
     const chainStart = ordered[0];
@@ -784,7 +826,7 @@ export function foldSessions(ordered) {
         newest.protectionCount = (newest.protectionCount || 0) + (session.protectionCount || 0);
         newest.mirrorCost = (newest.mirrorCost || 0) + (session.mirrorCost || 0);
         newest.mirrorCount = (newest.mirrorCount || 0) + (session.mirrorCount || 0);
-        newest.hasUnpricedInput = newest.hasUnpricedInput === true || session.hasUnpricedInput === true;
+        newest.hasUnpricedInput = newest.hasUnpricedInput === true || deriveUnpricedInput(session);
         newest.longestSuccessStreak = Math.max(newest.longestSuccessStreak || 0, session.longestSuccessStreak || 0);
         newest.longestFailureStreak = Math.max(newest.longestFailureStreak || 0, session.longestFailureStreak || 0);
 
@@ -1274,6 +1316,7 @@ export function canExtendSession(session, itemHrid, currentLevel, action = null)
  * @param {number} [now] - Epoch ms
  */
 export function extendSession(session, newTargetLevel, now = Date.now()) {
+    stampLegacyUnpricedInput(session);
     // The target changes, so the old prediction describes a finished leg; the caller computes the
     // extension's own
     bankCurrentLeg(session);
@@ -1390,7 +1433,7 @@ export function mergeSessions(sessions) {
         agg.coinCount += session.coinCount || 0;
         agg.protectionCost += protections.cost;
         agg.totalCost += session.totalCost || 0;
-        agg.hasUnpricedInput ||= session.hasUnpricedInput === true;
+        agg.hasUnpricedInput ||= deriveUnpricedInput(session);
         agg.durationSeconds += getSessionDuration(session);
         if (!agg.protectionItemHrid && session.protectionItemHrid) {
             agg.protectionItemHrid = session.protectionItemHrid;

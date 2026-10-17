@@ -53,6 +53,11 @@ export function createAlchemySessionStore(baseKey, label) {
         // they open; one with no name keeps the deep-equality identity
         identityOf: (session) => session?.id ?? JSON.stringify(session),
         mergeCopies: mergeSessionCopies,
+        // A clear also deletes any copy no further along than the one cleared: an older snapshot of a live
+        // session that a peer pushed before the clear. Attempts are how the store tells copies apart
+        revisionOf: (session) => finite(session?.totalAttempts),
+        // ...except a hand-corrected import made after the clear, which is not an older snapshot of what was cleared
+        editedAtOf: (session) => finite(session?.editedAt),
         label,
     });
 }
@@ -64,6 +69,12 @@ export function createAlchemySessionStore(baseKey, label) {
  * versions of it together: the one a device pushed and the one it — or another
  * device that pulled it — kept recording into. Kept side by side, the gold
  * attribution and the totals tables counted the run twice.
+ *
+ * A hand-corrected import is the exception to "more attempts is newer": it can lower the count, and
+ * it stamps the replacement `editedAt`. When the copies carry different stamps (an unstamped copy
+ * counts as 0) the later edit wins whatever the attempts say, so a sync pull cannot revert a
+ * correction, unless the other copy recorded attempts after that edit (its `lastActivityTime` is later);
+ * when they carry the same stamp, or neither has one, the rule below decides.
  *
  * Two devices never record one session separately: its id is the moment it
  * opened on the device running it. So the copies are always an older and a
@@ -80,6 +91,16 @@ export function createAlchemySessionStore(baseKey, label) {
 export function mergeSessionCopies(a, b) {
     if (!a) return b;
     if (!b) return a;
+    const editedA = finite(a.editedAt);
+    const editedB = finite(b.editedAt);
+    if (editedA !== editedB) {
+        // The later event wins: an edit, or attempts recorded after it. A device that kept recording past
+        // someone else's import has outlived that edit
+        const eventA = Math.max(editedA, finite(a.lastActivityTime));
+        const eventB = Math.max(editedB, finite(b.lastActivityTime));
+        if (eventA !== eventB) return eventB > eventA ? b : a;
+        return editedB > editedA ? b : a;
+    }
     const attemptsA = finite(a.totalAttempts);
     const attemptsB = finite(b.totalAttempts);
     if (attemptsA !== attemptsB) return attemptsB > attemptsA ? b : a;

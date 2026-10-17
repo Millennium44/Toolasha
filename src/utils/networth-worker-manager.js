@@ -45,9 +45,11 @@ const applyMirrorOptimization = ${applyMirrorOptimization.toString()};
  * @param {string} itemHrid - Item HRID
  * @param {Object} priceMap - Price map
  * @param {Object} recipes - Action detail map from game data
+ * @param {Object} [flags] - When given, flags.partial is set true if any input (or the upgrade item)
+ *   could not be priced even by its own production cost: the figure then understates the item
  * @returns {number} Production cost
  */
-function calculateProductionCost(itemHrid, priceMap, recipes) {
+function calculateProductionCost(itemHrid, priceMap, recipes, flags) {
     // The recipe index is built on the main thread from the same any-output
     // rule calculateCraftingCost uses, and carries the matched output's count
     const action = recipes[itemHrid] || null;
@@ -73,8 +75,9 @@ function calculateProductionCost(itemHrid, priceMap, recipes) {
 
             // Recursively calculate production cost if no market price (matches main thread)
             if (inputPrice === 0) {
-                inputPrice = calculateProductionCost(input.itemHrid, priceMap, recipes);
+                inputPrice = calculateProductionCost(input.itemHrid, priceMap, recipes, flags);
             }
+            if (flags && !(inputPrice > 0) && input.count > 0) flags.partial = true;
 
             totalPrice += inputPrice * input.count;
         }
@@ -91,8 +94,9 @@ function calculateProductionCost(itemHrid, priceMap, recipes) {
 
         // Recursively calculate production cost if no market price (matches main thread)
         if (upgradePrice === 0) {
-            upgradePrice = calculateProductionCost(action.upgradeItemHrid, priceMap, recipes);
+            upgradePrice = calculateProductionCost(action.upgradeItemHrid, priceMap, recipes, flags);
         }
+        if (flags && !(upgradePrice > 0)) flags.partial = true;
 
         totalPrice += upgradePrice;
     }
@@ -108,7 +112,7 @@ function calculateProductionCost(itemHrid, priceMap, recipes) {
  * @returns {number} Total cost
  */
 function calculateEnhancementCost(params) {
-    const { itemHrid, targetLevel, enhancementParams, itemDetails, priceMap, recipes } = params;
+    const { itemHrid, targetLevel, enhancementParams, itemDetails, priceMap, recipes, flags } = params;
 
     if (!itemDetails.enhancementCosts || targetLevel < 1 || targetLevel > 20) {
         return null;
@@ -117,7 +121,7 @@ function calculateEnhancementCost(params) {
     const itemLevel = itemDetails.itemLevel || 1;
 
     // Get base item cost using realistic pricing (matches main thread logic)
-    const basePrice = getRealisticPrice(itemHrid, null, priceMap, recipes);
+    const basePrice = getRealisticPrice(itemHrid, null, priceMap, recipes, flags);
 
     // The base item is paid once whatever happens, so an unpriced one understates every level.
     // Together with an unpriced material (below) it makes the bill a partial one, not a price:
@@ -177,7 +181,11 @@ function calculateEnhancementCost(params) {
                     // enhancement-path valuation unavailable (null below) rather than a partial
                     // bill shown as the item's value.
                     if (!(materialPrice > 0)) {
-                        materialPrice = calculateProductionCost(material.itemHrid, priceMap, recipes);
+                        // A craft cost that skipped an unpriced input of its own is a partial bill:
+                        // the path is still the value, but its caller is told (flags.partial)
+                        const materialFlags = { partial: false };
+                        materialPrice = calculateProductionCost(material.itemHrid, priceMap, recipes, materialFlags);
+                        if (materialPrice > 0 && materialFlags.partial && flags) flags.partial = true;
                     }
                     if (!(materialPrice > 0) && material.count > 0) hasUnpricedMaterial = true;
                 }
@@ -336,7 +344,7 @@ function calculateStrategyRealCost(
  * Get realistic price for an item (matches main thread logic)
  * Handles inflation detection and fallbacks
  */
-function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes) {
+function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes, outFlags) {
     let ask = priceMap[itemHrid + ':0_ask'];
     if (ask === undefined) ask = priceMap[itemHrid + ':0'];
     if (ask === null || ask === undefined) ask = 0;
@@ -345,13 +353,21 @@ function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes) {
     if (bid === null || bid === undefined) bid = 0;
 
     // Calculate production cost as fallback
-    const productionCost = calculateProductionCost(itemHrid, priceMap, recipes);
+    const productionFlags = { partial: false };
+    const productionCost = calculateProductionCost(itemHrid, priceMap, recipes, productionFlags);
+
+    // The caller is told (outFlags.partial) only when the figure returned is the production cost
+    // and that cost skipped an unpriced input
+    const result = (value, usedProduction) => {
+        if (usedProduction && productionFlags.partial && outFlags) outFlags.partial = true;
+        return value;
+    };
 
     // If both ask and bid exist
     if (ask > 0 && bid > 0) {
         // If ask is significantly higher than bid (>30% markup), use max(bid, production)
         if (ask / bid > 1.3) {
-            return Math.max(bid, productionCost);
+            return result(Math.max(bid, productionCost), productionCost > bid);
         }
         // Otherwise use ask (normal market)
         return ask;
@@ -361,19 +377,19 @@ function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes) {
     if (ask > 0) {
         // If ask is inflated compared to production, use production
         if (productionCost > 0 && ask / productionCost > 1.3) {
-            return productionCost;
+            return result(productionCost, true);
         }
         // Otherwise use max of ask and production
-        return Math.max(ask, productionCost);
+        return result(Math.max(ask, productionCost), productionCost > ask);
     }
 
     // If only bid exists, use max(bid, production)
     if (bid > 0) {
-        return Math.max(bid, productionCost);
+        return result(Math.max(bid, productionCost), productionCost > bid);
     }
 
     // No market data - use production cost or known base price
-    return productionCost > 0 ? productionCost : (knownBasePrice || 0);
+    return productionCost > 0 ? result(productionCost, true) : knownBasePrice || 0;
 }
 
 /**
@@ -382,10 +398,14 @@ function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes) {
  * main thread (an openable's expected value never reaches an enhanced piece). Without the shop
  * step a shop-sold piece with no market quote was worth 0 here and its shop price there.
  */
-function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts) {
+function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags) {
     let basePrice = priceMap[itemHrid + ':0'] || 0;
     if (basePrice === 0) {
-        basePrice = calculateProductionCost(itemHrid, priceMap, recipes);
+        // A craft cost that skipped an unpriced input is a partial bill: still the value (the
+        // main thread counts the priced inputs too), but reported so the display can say so
+        const flags = { partial: false };
+        basePrice = calculateProductionCost(itemHrid, priceMap, recipes, flags);
+        if (basePrice > 0 && outFlags) outFlags.partial = flags.partial;
     }
     if (!(basePrice > 0)) {
         basePrice = (shopCosts && shopCosts[itemHrid]) || 0;
@@ -403,26 +423,30 @@ function calculateItemValue(data) {
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
 
     let itemValue = 0;
+    const flags = { partial: false };
 
     // For enhanced items (1+)
     if (enhancementLevel >= 1) {
         // For high enhancement levels, use cost instead of market price (if enabled)
         if (useHighEnhancementCost && enhancementLevel >= minLevel) {
             // Calculate enhancement cost
+            const pathFlags = { partial: false };
             const cost = calculateEnhancementCost({
                 itemHrid,
                 targetLevel: enhancementLevel,
                 enhancementParams,
                 itemDetails,
                 priceMap,
-                recipes
+                recipes,
+                flags: pathFlags
             });
 
             if (cost !== null && cost > 0) {
                 itemValue = cost;
+                if (pathFlags.partial) flags.partial = true;
             } else {
                 // Fallback to base item price, production cost or shop price
-                itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts);
+                itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags);
             }
         } else {
             // Normal logic: try market price first
@@ -432,28 +456,31 @@ function calculateItemValue(data) {
                 itemValue = marketPrice;
             } else {
                 // No market data, calculate enhancement cost
+                const pathFlags = { partial: false };
                 const cost = calculateEnhancementCost({
                     itemHrid,
                     targetLevel: enhancementLevel,
                     enhancementParams,
                     itemDetails,
                     priceMap,
-                    recipes
+                    recipes,
+                    flags: pathFlags
                 });
 
                 if (cost !== null && cost > 0) {
                     itemValue = cost;
+                    if (pathFlags.partial) flags.partial = true;
                 } else {
-                    itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts);
+                    itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags);
                 }
             }
         }
     } else {
         // Unenhanced items: use market price or production cost
-        itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts);
+        itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags);
     }
 
-    return { itemIndex, value: itemValue * count };
+    return { itemIndex, value: itemValue * count, partial: flags.partial };
 }
 
 /**
@@ -531,6 +558,7 @@ async function getWorkerPool() {
  * @param {Object} priceMap - Price map for all items
  * @param {Object} config - Configuration options
  * @param {Object} gameData - Game data with item details
+ * @param {Set<number>} [partialOut] - Receives the indexes of items valued on a partial crafting bill
  * @returns {Promise<Array>} Array of values in same order as input
  */
 /**
@@ -571,7 +599,7 @@ function recipeIndexFor(actionDetailMap) {
     return index;
 }
 
-export async function calculateItemValueBatch(items, priceMap, configOptions, gameData) {
+export async function calculateItemValueBatch(items, priceMap, configOptions, gameData, partialOut = null) {
     const pool = await getWorkerPool();
 
     const recipeIndex = recipeIndexFor(gameData.actionDetailMap || {});
@@ -681,6 +709,11 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
     // Flatten results and sort by itemIndex to maintain order
     const flatResults = results.flat();
     flatResults.sort((a, b) => a.itemIndex - b.itemIndex);
+
+    // Which items are partial crafting bills (indexes into `items`), for a caller that asks
+    if (partialOut) {
+        for (const r of flatResults) if (r.partial) partialOut.add(r.itemIndex);
+    }
 
     // Extract just the values
     return flatResults.map((r) => r.value);

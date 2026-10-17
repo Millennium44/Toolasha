@@ -135,6 +135,10 @@ function hookAtomicLifecycle() {
 export async function flushPersistedRecords() {
     // An atomic record's delayed save has not asked storage for anything yet
     for (const record of atomicRecords) record._releaseDeferred();
+    // A departing write waiting out a back-off (a character switch whose write failed) is in no record's
+    // memory any more; a backup or sync taken now would miss that character's last write
+    const departing = Array.from(atomicRecords, (record) => record._landDeparting());
+    await Promise.allSettled(departing);
     if (pendingHandoffs.size === 0) return;
     await Promise.allSettled(Array.from(runningHandoffs.values()));
     await storage.flushAll?.();
@@ -585,6 +589,17 @@ export function createPersistedRecord({
             unwritten = true;
             if (deferMs === 0) return record._queueSave({ overwrite: false });
             return deferred ? deferred.promise : armDeferred(deferMs);
+        },
+
+        /**
+         * Land the departing character's write now: any retry waiting out its back-off, and the writes
+         * already in flight. The same step `flushed()` takes, for a caller that flushes every record.
+         * @returns {Promise<Array<boolean>>} Each departing write's outcome
+         */
+        _landDeparting() {
+            if (!atomic) return Promise.resolve([]);
+            for (const entry of Array.from(departingRetries)) landDeparting(entry);
+            return Promise.all(departingWrites);
         },
 
         /** Start the delayed atomic save now, if one is waiting. */

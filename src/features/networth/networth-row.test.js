@@ -70,6 +70,26 @@ describe('the Net Worth tile', () => {
         expect(draw().textContent).toContain('1.23B');
     });
 
+    test('marks the total and its hover while some items are partial bills', () => {
+        networthFeature.currentData = { totalNetworth: 1_234_567_890, partial: { count: 2, names: ['A', 'B'] } };
+
+        const container = draw();
+        expect(container.textContent).toContain('1.23B *');
+        expect(container.title).toContain('a floor');
+        expect(game.rows.netWorth.version()).not.toBe(
+            (networthFeature.currentData = { totalNetworth: 1_234_567_890, partial: { count: 0, names: [] } }) &&
+                game.rows.netWorth.version()
+        );
+    });
+
+    test('draws no mark when nothing is partial', () => {
+        networthFeature.currentData = { totalNetworth: 1_234_567_890, partial: { count: 0, names: [] } };
+
+        const container = draw();
+        expect(container.textContent).not.toContain('*');
+        expect(container.title).not.toContain('floor');
+    });
+
     test('opens the history chart when the tile is opened', async () => {
         expect(typeof game.rows.netWorth.onOpen).toBe('function');
 

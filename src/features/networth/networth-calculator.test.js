@@ -168,6 +168,7 @@ const {
     calculateNetworth,
     calculateItemValue,
     calculateCraftingCost,
+    calculateItemValueDetailed,
     calculateAllHousesCost,
     calculateAllAbilitiesCost,
     calculateGuildShrinesCost,
@@ -732,6 +733,7 @@ describe('craft-cost parity between the main thread and the worker', () => {
      * builds no second Blob.
      */
     let workerProductionCostMemo = null;
+    let workerSource = null;
     async function loadWorkerProductionCost() {
         if (workerProductionCostMemo) return workerProductionCostMemo;
         let captured = null;
@@ -751,6 +753,7 @@ describe('craft-cost parity between the main thread and the worker', () => {
         await manager.calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} }).catch(() => {});
         vi.unstubAllGlobals();
         expect(captured).toBeTruthy();
+        workerSource = captured;
         workerProductionCostMemo = new Function('self', `${captured}\n; return calculateProductionCost;`)({
             postMessage: () => {},
             onmessage: null,
@@ -853,6 +856,242 @@ describe('craft-cost parity between the main thread and the worker', () => {
         const workerProductionCost = await loadWorkerProductionCost();
         const { priceMap, recipes } = shippedContext();
         expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
+    });
+
+    test('the same partial item in two stacks, or equipped and held, is counted and named once', async () => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            itemDetailMap: { '/items/plank': { name: 'Plank' } },
+            actionDetailMap: {
+                '/actions/saw_planks': {
+                    outputItems: [{ itemHrid: '/items/plank', count: 1 }],
+                    inputItems: [
+                        { itemHrid: '/items/log', count: 3 },
+                        { itemHrid: '/items/mystery_dust', count: 2 },
+                    ],
+                },
+            },
+        };
+        mocks.combinedData = {
+            characterItems: [
+                {
+                    itemHrid: '/items/plank',
+                    itemLocationHrid: '/item_locations/inventory',
+                    count: 2,
+                    enhancementLevel: 0,
+                },
+                {
+                    itemHrid: '/items/plank',
+                    itemLocationHrid: '/item_locations/inventory',
+                    count: 7,
+                    enhancementLevel: 0,
+                },
+                {
+                    itemHrid: '/items/plank',
+                    itemLocationHrid: '/item_locations/main_hand',
+                    count: 1,
+                    enhancementLevel: 0,
+                },
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.initData.itemDetailMap,
+        };
+
+        const result = await calculateNetworth();
+
+        expect(result.partial).toEqual({ count: 1, names: ['Plank'] });
+    });
+
+    test('an enhanced item whose base or material is a partial bill is flagged on both threads', async () => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+        const partialRecipe = (out) => ({
+            outputItems: [{ itemHrid: out, count: 1 }],
+            inputItems: [
+                { itemHrid: '/items/log', count: 3 },
+                { itemHrid: '/items/mystery_dust', count: 2 },
+            ],
+        });
+        await loadWorkerProductionCost();
+        const workerValue = new Function(
+            'self',
+            `${workerSource}
+; return calculateItemValue;`
+        )({
+            postMessage: () => {},
+            onmessage: null,
+        });
+        const params = { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1 };
+
+        // Base item crafted from a partial bill, no market quote; one coin material
+        // (the main thread's path is mocked, so only its partial reading is under test)
+        const cases = [
+            { name: 'base', costs: [], recipeFor: '/items/sword' },
+            { name: 'material', costs: [{ itemHrid: '/items/plank', count: 2 }], recipeFor: '/items/plank' },
+        ];
+        for (const c of cases) {
+            mocks.initData = {
+                houseRoomDetailMap: {},
+                actionDetailMap: { '/actions/make': partialRecipe(c.recipeFor) },
+            };
+            mocks.itemDetails['/items/sword'] = { name: 'Sword', enhancementCosts: c.costs };
+            mocks.enhancementPaths['/items/sword:3'] = 4200;
+            delete mocks.itemPrices['/items/sword'];
+
+            const fromMain = await calculateItemValueDetailed({ itemHrid: '/items/sword', enhancementLevel: 3 });
+            expect(fromMain.value).toBe(4200);
+            expect(fromMain.partial, c.name).toBe(true);
+
+            const { priceMap, recipes } = shippedContext();
+            const ctx = {
+                itemIndex: 0,
+                item: { itemHrid: '/items/sword', enhancementLevel: 3, count: 1 },
+                // A material case needs a base the worker can start the path from
+                priceMap:
+                    c.name === 'material'
+                        ? {
+                              ...priceMap,
+                              '/items/sword:0': 1000,
+                              '/items/sword:0_ask': 1000,
+                              '/items/sword:0_bid': 1000,
+                          }
+                        : priceMap,
+                recipes,
+                useHighEnhancementCost: false,
+                minLevel: 99,
+                enhancementParams: params,
+                itemDetails: { itemLevel: 10, enhancementCosts: c.costs, protectionItemHrids: [] },
+                shopCosts: {},
+            };
+            const fromWorker = workerValue(ctx);
+            expect(fromWorker.value, c.name).toBeGreaterThan(0);
+            expect(fromWorker.partial, c.name).toBe(true);
+        }
+    });
+
+    test('the worker flags a bill with an unpriced input partial, as the main thread does', async () => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            actionDetailMap: {
+                '/actions/saw_planks': {
+                    outputItems: [{ itemHrid: '/items/plank', count: 1 }],
+                    inputItems: [
+                        { itemHrid: '/items/log', count: 3 },
+                        { itemHrid: '/items/mystery_dust', count: 2 },
+                    ],
+                },
+            },
+        };
+        mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+        const fromMain = await calculateItemValueDetailed({ itemHrid: '/items/plank', count: 1 });
+
+        const workerProductionCost = await loadWorkerProductionCost();
+        const { priceMap, recipes } = shippedContext();
+        const flags = { partial: false };
+        expect(workerProductionCost('/items/plank', priceMap, recipes, flags)).toBeCloseTo(fromMain.value, 9);
+        expect(fromMain.partial).toBe(true);
+        expect(flags.partial).toBe(true);
+    });
+});
+
+describe('a crafting bill with an unpriced input', () => {
+    const recipe = (...inputs) => ({
+        houseRoomDetailMap: {},
+        itemDetailMap: { '/items/plank': { name: 'Plank' } },
+        actionDetailMap: {
+            '/actions/saw_planks': {
+                outputItems: [{ itemHrid: '/items/plank', count: 1 }],
+                inputItems: inputs,
+            },
+        },
+    });
+
+    beforeEach(() => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+    });
+
+    test('still counts the priced inputs and flags the value partial', async () => {
+        mocks.initData = recipe({ itemHrid: '/items/log', count: 3 }, { itemHrid: '/items/mystery_dust', count: 2 });
+
+        const detailed = await calculateItemValueDetailed({ itemHrid: '/items/plank', count: 4 });
+
+        // 3 logs x 10 x 0.9 per plank, the dust adds nothing
+        expect(detailed.value).toBeCloseTo(4 * 27, 9);
+        expect(detailed.partial).toBe(true);
+    });
+
+    test('a fully priced bill is not partial', async () => {
+        mocks.initData = recipe({ itemHrid: '/items/log', count: 3 });
+
+        const detailed = await calculateItemValueDetailed({ itemHrid: '/items/plank', count: 1 });
+
+        expect(detailed.value).toBeCloseTo(27, 9);
+        expect(detailed.partial).toBe(false);
+    });
+
+    test('an input that is itself a partial bill makes the outer bill partial', async () => {
+        mocks.initData = {
+            ...recipe({ itemHrid: '/items/beam', count: 1 }),
+            actionDetailMap: {
+                '/actions/saw_planks': {
+                    outputItems: [{ itemHrid: '/items/plank', count: 1 }],
+                    inputItems: [{ itemHrid: '/items/beam', count: 1 }],
+                },
+                '/actions/cut_beams': {
+                    outputItems: [{ itemHrid: '/items/beam', count: 1 }],
+                    inputItems: [
+                        { itemHrid: '/items/log', count: 1 },
+                        { itemHrid: '/items/mystery_dust', count: 1 },
+                    ],
+                },
+            },
+        };
+
+        const detailed = await calculateItemValueDetailed({ itemHrid: '/items/plank', count: 1 });
+
+        expect(detailed.value).toBeGreaterThan(0);
+        expect(detailed.partial).toBe(true);
+    });
+
+    test('the net worth total carries the flag for a counted item, and not for an excluded one', async () => {
+        mocks.initData = recipe({ itemHrid: '/items/log', count: 3 }, { itemHrid: '/items/mystery_dust', count: 2 });
+        mocks.combinedData = {
+            characterItems: [
+                {
+                    itemHrid: '/items/plank',
+                    itemLocationHrid: '/item_locations/inventory',
+                    count: 2,
+                    enhancementLevel: 0,
+                },
+                {
+                    itemHrid: '/items/log',
+                    itemLocationHrid: '/item_locations/inventory',
+                    count: 5,
+                    enhancementLevel: 0,
+                },
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.initData.itemDetailMap,
+        };
+
+        const result = await calculateNetworth();
+
+        expect(result.partial).toEqual({ count: 1, names: ['Plank'] });
+        const plank = result.currentAssets.inventory.breakdown.find((i) => i.itemHrid === '/items/plank');
+        const log = result.currentAssets.inventory.breakdown.find((i) => i.itemHrid === '/items/log');
+        expect(plank.partial).toBe(true);
+        expect(plank.value).toBeGreaterThan(0);
+        expect(log.partial).toBe(false);
     });
 });
 

@@ -39,7 +39,7 @@ const storageMock = vi.hoisted(() => {
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 
-const { createAlchemySessionStore, NO_CHARACTER } = await import('./alchemy-session-store.js');
+const { createAlchemySessionStore, mergeSessionCopies, NO_CHARACTER } = await import('./alchemy-session-store.js');
 
 /** A session as the trackers build them */
 const session = (startTime, id) => ({ id: id ?? `transmute_${startTime}`, startTime, totalAttempts: 1, results: {} });
@@ -168,5 +168,93 @@ describe('clearing the history', () => {
         // the next sync pull handing the whole history back
         expect([...storageMock.store.keys()]).toEqual(['transmuteSessionsRecTomb_char-1']);
         expect(await store.load('char-1')).toEqual([]);
+    });
+});
+
+describe('an older copy of a cleared session', () => {
+    const copy = (attempts) => ({ ...session(AUG_4, 'transmute_live'), totalAttempts: attempts });
+
+    test('does not come back from a peer after the clear, but a copy further along does', async () => {
+        await store.load('char-1');
+        await store.save('char-1', [copy(5)]);
+        await store.clear('char-1');
+
+        // The stone records how far along the cleared copy was
+        expect(storageMock.store.get('transmuteSessionsRecTomb_char-1')['transmute_live']).toMatchObject({
+            bulk: true,
+            rev: 5,
+        });
+
+        await store.load('char-1');
+        // Pushed before the clear, then pulled after it: an older snapshot, not news
+        expect(store._union([], [copy(3)])).toEqual([]);
+        expect(store._union([], [copy(5)])).toEqual([]);
+        // A device that kept recording past the clear has outlived it
+        expect(store._union([], [copy(8)])).toEqual([copy(8)]);
+    });
+});
+
+describe('a hand-corrected import against a sync pull', () => {
+    const copy = (attempts, extra = {}) => ({ ...session(AUG_4, 'transmute_live'), totalAttempts: attempts, ...extra });
+
+    test('the later edit wins even when it lowers the attempts', () => {
+        const corrected = copy(40, { editedAt: 2000 });
+        const pulled = copy(50);
+        expect(mergeSessionCopies(corrected, pulled)).toBe(corrected);
+        expect(mergeSessionCopies(pulled, corrected)).toBe(corrected);
+    });
+
+    test('of two edits the newer stamp wins', () => {
+        const older = copy(60, { editedAt: 1000 });
+        const newer = copy(10, { editedAt: 2000 });
+        expect(mergeSessionCopies(older, newer)).toBe(newer);
+        expect(mergeSessionCopies(newer, older)).toBe(newer);
+    });
+
+    test('equal stamps, or none, fall back to more attempts', () => {
+        expect(mergeSessionCopies(copy(3, { editedAt: 5 }), copy(9, { editedAt: 5 })).totalAttempts).toBe(9);
+        expect(mergeSessionCopies(copy(3), copy(9)).totalAttempts).toBe(9);
+        expect(mergeSessionCopies(copy(3, { editedAt: 'junk' }), copy(9)).totalAttempts).toBe(9);
+    });
+
+    test('a pull folds into the corrected copy rather than reverting it', async () => {
+        await store.load('char-1');
+        await store.save('char-1', [copy(40, { editedAt: 2000 })]);
+        await store.load('char-1');
+        const [kept] = store._union([copy(40, { editedAt: 2000 })], [copy(50)]);
+        expect(kept.totalAttempts).toBe(40);
+    });
+});
+
+describe('a correction against a live recorder, and against a clear', () => {
+    const copy = (attempts, extra = {}) => ({ ...session(AUG_4, 'transmute_live'), totalAttempts: attempts, ...extra });
+
+    test('the import after the other device’s last attempt wins', () => {
+        const imported = copy(40, { editedAt: 2000, lastActivityTime: 1000 });
+        const recorded = copy(50, { lastActivityTime: 1500 });
+        expect(mergeSessionCopies(imported, recorded)).toBe(imported);
+        expect(mergeSessionCopies(recorded, imported)).toBe(imported);
+    });
+
+    test('attempts recorded after the import win over it', () => {
+        const imported = copy(40, { editedAt: 2000, lastActivityTime: 1000 });
+        const recorded = copy(50, { lastActivityTime: 2500 });
+        expect(mergeSessionCopies(imported, recorded)).toBe(recorded);
+        expect(mergeSessionCopies(recorded, imported)).toBe(recorded);
+    });
+
+    test('a correction made after a clear survives the clear’s tombstone', async () => {
+        await store.load('char-1');
+        await store.save('char-1', [copy(100)]);
+        await store.clear('char-1');
+        await store.load('char-1');
+        const stone = storageMock.store.get('transmuteSessionsRecTomb_char-1')['transmute_live'];
+
+        const corrected = copy(90, { editedAt: stone.at + 1000 });
+        expect(store._union([], [corrected])).toEqual([corrected]);
+        // An unedited older snapshot is still covered
+        expect(store._union([], [copy(90)])).toEqual([]);
+        // An edit that predates the clear is not news either
+        expect(store._union([], [copy(90, { editedAt: stone.at - 1000 })])).toEqual([]);
     });
 });

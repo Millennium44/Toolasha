@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const disk = vi.hoisted(() => ({ store: {} }));
+const disk = vi.hoisted(() => ({ store: {}, failKeys: new Set() }));
 const server = vi.hoisted(() => ({ test: true }));
 
 vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => server.test, liveGameOrigin: (o) => o }));
@@ -20,6 +20,12 @@ vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => server.test, 
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => (key in disk.store ? structuredClone(disk.store[key]) : fallback),
+        tryGet: async (key) =>
+            disk.failKeys.has(key)
+                ? null
+                : key in disk.store
+                  ? { found: true, value: structuredClone(disk.store[key]) }
+                  : { found: false, value: null },
         set: async (key, value) => {
             disk.store[key] = structuredClone(value);
             return true;
@@ -39,6 +45,8 @@ const {
     ledgerCycleKey,
     ledgerCyclesByAnchor,
     loadLedgerCycles,
+    loadLedgerCyclesDetailed,
+    loadLedgerFirstRecordDetailed,
     loadLedgerFirstRecord,
     observedCoverage,
 } = await import('./guild-trial-ledger.js');
@@ -97,6 +105,7 @@ function storedWeek(weekStart) {
 
 beforeEach(() => {
     server.test = true;
+    disk.failKeys.clear();
     disk.store = {
         [ledgerCycleKey(SCOPE, LAST_WEEK)]: storedWeek(LAST_WEEK),
         [ledgerCycleKey(SCOPE, THIS_WEEK)]: storedWeek(THIS_WEEK),
@@ -135,7 +144,15 @@ describe('the ledger as stored on the test server on 2026-10-01', () => {
         expect(window.map((cycle) => cycle.trials[0].encounter)).toEqual(['chameleon', 'swarm', 'hedgehog']);
 
         const coverage = observedCoverage(window, { window: 4, now: CAPTURED_AT });
-        expect(coverage).toEqual({ watched: 3, expected: 4, missed: 1, inProgress: true, daily: true, fraction: 0.75 });
+        expect(coverage).toEqual({
+            watched: 3,
+            expected: 4,
+            unknown: 0,
+            missed: 1,
+            inProgress: true,
+            daily: true,
+            fraction: 0.75,
+        });
         // One trial per watched cycle: the table's count and the coverage line agree
         expect(foldLedgerCycles(window).trialsRun).toBe(coverage.watched);
     });
@@ -218,5 +235,60 @@ describe('the ledger as stored on the test server on 2026-10-01', () => {
             inProgress: true,
             daily: false,
         });
+    });
+});
+
+describe('a week whose record could not be read', () => {
+    test('test server: the week reads as unknown cycles, not missed, and the other week is unaffected', async () => {
+        disk.failKeys.add(ledgerCycleKey(SCOPE, LAST_WEEK));
+        const { cycles, unreadWeeks } = await loadLedgerCyclesDetailed(SCOPE, null, { cycles: 8, now: CAPTURED_AT });
+        expect(unreadWeeks).toEqual([LAST_WEEK]);
+        // Only the other week's cycles came back
+        expect(cycles.every((cycle) => cycle.weekStart === THIS_WEEK)).toBe(true);
+
+        const first = await loadLedgerFirstRecordDetailed(SCOPE, null);
+        expect(first.unreadWeeks).toEqual([LAST_WEEK]);
+
+        const blind = observedCoverage(cycles, { window: 8, now: CAPTURED_AT, first: first.first });
+        const sighted = observedCoverage(cycles, {
+            window: 8,
+            now: CAPTURED_AT,
+            first: first.first,
+            unreadWeeks,
+        });
+        // Without the read-failure state the unreadable week's days are charged as missed
+        expect(blind.missed).toBeGreaterThan(sighted.missed);
+        expect(sighted.unknown).toBeGreaterThan(0);
+        expect(sighted.watched + sighted.missed).toBe(sighted.expected);
+        expect(sighted.watched).toBe(blind.watched);
+        expect(sighted.expected + sighted.unknown).toBe(blind.expected);
+    });
+
+    test('live: the one slot of the unread week is unknown, the rest keep their verdict', async () => {
+        server.test = false;
+        disk.failKeys.add(ledgerCycleKey(SCOPE, LAST_WEEK));
+        const { cycles, unreadWeeks } = await loadLedgerCyclesDetailed(SCOPE, null, { cycles: 4, now: CAPTURED_AT });
+        expect(unreadWeeks).toEqual([LAST_WEEK]);
+        const coverage = observedCoverage(cycles, { window: 4, now: CAPTURED_AT, unreadWeeks });
+        expect(coverage).toMatchObject({ watched: 0, unknown: 1, expected: 3, missed: 3, inProgress: true });
+    });
+
+    test('an absent record still reads as before: no unread week, a missed cycle', async () => {
+        server.test = false;
+        delete disk.store[ledgerCycleKey(SCOPE, LAST_WEEK)];
+        const { cycles, unreadWeeks } = await loadLedgerCyclesDetailed(SCOPE, null, { cycles: 4, now: CAPTURED_AT });
+        expect(unreadWeeks).toEqual([]);
+        expect(observedCoverage(cycles, { window: 4, now: CAPTURED_AT, unreadWeeks })).toMatchObject({
+            unknown: 0,
+            watched: 0,
+            expected: 4,
+            missed: 4,
+        });
+    });
+
+    test('the plain loader still answers the cycles that did read', async () => {
+        disk.failKeys.add(ledgerCycleKey(SCOPE, LAST_WEEK));
+        const window = await loadLedgerCycles(SCOPE, null, { cycles: 8, now: CAPTURED_AT });
+        expect(window.length).toBeGreaterThan(0);
     });
 });

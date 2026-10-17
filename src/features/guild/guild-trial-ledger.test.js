@@ -13,7 +13,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const disk = vi.hoisted(() => ({ store: {}, failNextRead: false, reads: 0 }));
+const disk = vi.hoisted(() => ({ store: {}, failNextRead: false, failKeys: new Set(), writes: [], reads: 0 }));
 const server = vi.hoisted(() => ({ test: false }));
 
 vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => server.test, liveGameOrigin: (o) => o }));
@@ -24,11 +24,25 @@ vi.mock('../../core/storage.js', () => ({
             disk.reads += 1;
             if (disk.failNextRead) {
                 disk.failNextRead = false;
+                disk.failKeys.clear();
+                disk.writes.length = 0;
                 throw new Error('IndexedDB is having a day');
             }
             return key in disk.store ? structuredClone(disk.store[key]) : fallback;
         },
+        tryGet: async (key) => {
+            disk.reads += 1;
+            if (disk.failNextRead || disk.failKeys.has(key)) {
+                disk.failNextRead = false;
+                // The real tryGet answers null for a read it could not make
+                return null;
+            }
+            return key in disk.store
+                ? { found: true, value: structuredClone(disk.store[key]) }
+                : { found: false, value: null };
+        },
         set: async (key, value) => {
+            disk.writes.push(key);
             disk.store[key] = structuredClone(value);
             return true;
         },
@@ -757,6 +771,7 @@ describe('observedCoverage', () => {
             expect(observedCoverage(cycles, { window: 4, now, daily: false })).toEqual({
                 watched: 3,
                 expected: 4,
+                unknown: 0,
                 missed: 1,
                 inProgress: true,
                 daily: false,
@@ -805,6 +820,7 @@ describe('observedCoverage', () => {
             expect(observedCoverage([week(0)], { window: null, now, daily: false })).toEqual({
                 watched: 0,
                 expected: 0,
+                unknown: 0,
                 missed: 0,
                 inProgress: true,
                 daily: false,
@@ -916,6 +932,13 @@ describe('signupParticipation', () => {
 });
 
 describe('ledgerCsvRows', () => {
+    test('says how many cycles could not be read, zero when none', () => {
+        const row = { name: 'A', damage: 0, healing: 0, damageTaken: 0, manaSpent: 0, starvedMs: 0, lowManaMs: 0 };
+        expect(ledgerCsvRows([row], 1, 2)[0].unreadCycles).toBe(2);
+        expect(ledgerCsvRows([row], 1)[0].unreadCycles).toBe(0);
+        expect(LEDGER_CSV_COLUMNS.map((c) => c.key)).toContain('unreadCycles');
+    });
+
     test('carries raw numbers and turns milliseconds into seconds', () => {
         const [row] = ledgerCsvRows(
             [
@@ -1053,6 +1076,34 @@ describe('the ledger on disk', () => {
         await expect(
             recordFinishedTrial({ session: session([[player('Alice', { damage: 1 })]]), guildName: 'g' })
         ).resolves.toBeNull();
+    });
+
+    test('a failed read of the cycle leaves the stored record alone: nothing is written over it', async () => {
+        const first = await recordFinishedTrial({
+            session: session([[player('Alice', { damage: 7 })]]),
+            guildName: 'g',
+        });
+        expect(first).not.toBeNull();
+        const [key] = Object.keys(disk.store).filter((k) => k.includes('guildTrialLedger'));
+        const before = structuredClone(disk.store[key]);
+        disk.writes.length = 0;
+
+        disk.failKeys.add(key);
+        const second = await recordFinishedTrial({
+            session: session([[player('Bob', { damage: 9 })]], { startedAt: WEEK + 5000 }),
+            guildName: 'g',
+        });
+        expect(second).toBeNull();
+        expect(disk.writes).toEqual([]);
+        expect(disk.store[key]).toEqual(before);
+
+        // The read recovers: the same trial now lands on top of what was there
+        disk.failKeys.clear();
+        await recordFinishedTrial({
+            session: session([[player('Bob', { damage: 9 })]], { startedAt: WEEK + 5000 }),
+            guildName: 'g',
+        });
+        expect(Object.keys(disk.store[key].members)).toEqual(expect.arrayContaining(['alice', 'bob']));
     });
 
     test('two different trials finishing close together do not clobber each other', async () => {

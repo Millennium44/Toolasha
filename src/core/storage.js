@@ -2191,6 +2191,42 @@ class Storage {
     }
 
     /**
+     * Write several keys of one store in a single IndexedDB transaction: all of them land or none do.
+     *
+     * For a value and the bookkeeping that describes it (a settings map and its change stamps), where a
+     * tab close or a sync read between two separate writes would leave one half behind. Like an immediate
+     * `set`, each key supersedes whatever the debounce queue holds for it. A restore latch on any key
+     * refuses the whole write, since a partial landing is the thing this exists to avoid. While the page
+     * is closing the keys are queued together, and `flushAll` writes a store's queue in one transaction.
+     * @param {Record<string, *>} entries - Map of key → value to write
+     * @param {string} [storeName] - Object store name (default: 'settings')
+     * @returns {Promise<boolean>} True when every key was written (or, at teardown, queued)
+     */
+    async setMany(entries, storeName = 'settings') {
+        const keys = Object.keys(entries || {});
+        if (keys.length === 0) return true;
+        if (keys.some((key) => this._refuseDuringRestore(key, storeName, 'save'))) return false;
+        this._emitWrite(storeName, keys.length > WRITE_CHANNEL_KEYS_MAX ? null : keys, 'local');
+
+        if (this._closingForTeardown) {
+            const results = await Promise.all(keys.map((key) => this._debouncedSave(key, entries[key], storeName)));
+            return results.every((result) => result !== false);
+        }
+
+        if (!this.db && !(await this._awaitConnection())) {
+            console.warn(`[Storage] Database not available, cannot save keys: ${keys.join(', ')}`);
+            return false;
+        }
+        if (keys.some((key) => this._refuseDuringRestore(key, storeName, 'save'))) return false;
+
+        const superseded = keys.map((key) => this._supersedePending(`${storeName}:${key}`));
+        const written = await this._putAllWritten(storeName, entries);
+        const success = written.length === keys.length;
+        for (const entry of superseded) for (const resolve of entry?.resolvers || []) resolve(success);
+        return success;
+    }
+
+    /**
      * Delete a key from storage
      * @param {string} key - Storage key to delete
      * @param {string} storeName - Object store name (default: 'settings')

@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers round (2026-10-16): sync, net worth and records
+
+- A settings change and its sync timestamp are now saved together, so a sync pull can no longer undo an edit made just before a tab closed; a pull that lands while a history is first loading is applied instead of waiting for the next load, and a backup or sync flush includes the character you just switched away from.
+- Alchemy history: a cleared session no longer comes back from an older synced copy, and a hand-corrected import beats a sync pull unless attempts were recorded after it.
+- Net worth reacts to live price updates instead of keeping stale enhancement costs, and an item valued from a crafting cost with an unpriced input is counted at its partial cost and marked " *" (rows, inventory total and overlay tile) as a floor.
+- An enhancing session from an older version keeps its "unpriced input" mark when resumed or merged, instead of reading as fully priced.
+- The guild trial ledger shows a week it could not read as unknown (and says the figures are incomplete) instead of counting it missed, and no longer overwrites that week with an empty one.
+
 ### Leftovers round (2026-10-16): sims, queue and UI
 
 - Combat Sim's Balanced ability-order ranking and its Verify now count the death-rate error, so an order is no longer called a clear win on a deaths change inside the noise.

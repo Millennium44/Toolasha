@@ -999,10 +999,10 @@ class SettingsStorage {
         const stored = (await this._loadSharedSettings()) ?? {};
         const next = { ...stored };
         for (const id of ids) next[id] = { ...settings[id] };
-        if ((await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true)) === false) return false;
         const stampIds = userIds === undefined ? ids : userIds;
-        await this._stampDiff(SHARED_SETTINGS_KEY, stored, next, { ids: stampIds ? new Set(stampIds) : null });
-        return true;
+        return this._writeMapWithStamps(SHARED_SETTINGS_KEY, next, stored, {
+            ids: stampIds ? new Set(stampIds) : null,
+        });
     }
 
     /**
@@ -1434,16 +1434,16 @@ class SettingsStorage {
             }
         }
 
-        const written = await storage.setJSON(characterKey, toWrite, this.storageArea, true);
-        if (written === false) return false;
+        // Written in one transaction with its change stamps, so no reader sees a new value under an old
+        // stamp. Stamped as the player's: see below.
+        const userIds = this._userIds(settings, dirtyKeys);
+        if (!(await this._writeMapWithStamps(characterKey, toWrite, stored, { ids: userIds }))) return false;
         // Stamped as the player's: what this save was asked to change (a reset
         // is asked to change everything) and whose value moved. An id written
         // only because the stored map lacked it — a setting newer than the
         // save file, filled in from its default — is not a choice and is not
         // stamped. Without dirty tracking the save says nothing about intent,
         // so only ids already stored whose value moved count.
-        const userIds = this._userIds(settings, dirtyKeys);
-        await this._stampDiff(characterKey, stored, toWrite, { ids: userIds });
         await this._stampFilled(characterKey, stored, toWrite, userIds);
 
         // The account-wide settings go to their own key as well as staying in
@@ -1501,35 +1501,71 @@ class SettingsStorage {
      * @returns {Promise<void>}
      * @private
      */
-    async _stampDiff(mapKey, before, after, { system = false, pin = false, ids = null, absentIsChange = false } = {}) {
+    async _stampDiff(mapKey, before, after, options = {}) {
         try {
-            const old = before && typeof before === 'object' ? before : {};
-            const next = after && typeof after === 'object' ? after : {};
-            const absentCounts = system || absentIsChange || Boolean(ids);
-            const candidates = ids ? [...ids].filter((id) => Object.hasOwn(next, id)) : Object.keys(next);
-            const changed = candidates.filter((id) =>
-                Object.hasOwn(old, id) ? canonical(valueOf(old[id])) !== canonical(valueOf(next[id])) : absentCounts
-            );
-            const removed = Object.keys(old).filter((id) => !Object.hasOwn(next, id));
-            if (changed.length === 0 && removed.length === 0) return;
-
-            const stampKey = `${SETTING_STAMPS_PREFIX}${mapKey}`;
-            const existing = await storage.getJSON(stampKey, this.storageArea, null);
-            const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
-            let stamp;
-            if (system) {
-                stamp = pin ? { at: 0, seq: null, system: true, pin: true } : { at: 0, seq: null, system: true };
-            } else {
-                const rawSeq = await storage.get(SYNC_SEQ_KEY, this.storageArea, null);
-                const seq = Number.isSafeInteger(rawSeq) && rawSeq >= 0 ? rawSeq : null;
-                stamp = { at: Date.now(), seq };
-            }
-            for (const id of changed) stamps[id] = { ...stamp };
-            for (const id of removed) delete stamps[id];
-            await storage.setJSON(stampKey, stamps, this.storageArea, true);
+            const plan = await this._planStamps(mapKey, before, after, options);
+            if (plan) await storage.setJSON(plan.stampKey, plan.stamps, this.storageArea, true);
         } catch (error) {
             console.error('[SettingsStorage] Could not stamp changed settings:', error);
         }
+    }
+
+    /**
+     * Write a settings map together with the stamps for what it changed, in one storage transaction, so a
+     * tab close or a sync read between the two cannot see a new value under its old stamp. A stamp that
+     * cannot be planned costs only the tie-break, so the map is then written alone, as before.
+     * @param {string} mapKey - The settings map's storage key
+     * @param {Object} value - The map to write
+     * @param {Object|null} before - The map as stored before the write
+     * @param {Object} stampOptions - As for `_stampDiff`
+     * @returns {Promise<boolean>} Whether the write landed
+     * @private
+     */
+    async _writeMapWithStamps(mapKey, value, before, stampOptions) {
+        let plan = null;
+        try {
+            plan = await this._planStamps(mapKey, before, value, stampOptions);
+        } catch (error) {
+            console.error('[SettingsStorage] Could not stamp changed settings:', error);
+        }
+        if (!plan) return (await storage.setJSON(mapKey, value, this.storageArea, true)) !== false;
+        return (await storage.setMany({ [mapKey]: value, [plan.stampKey]: plan.stamps }, this.storageArea)) !== false;
+    }
+
+    /**
+     * What `_stampDiff` would write: the stamp key and its new map, or null when nothing changed.
+     * @param {string} mapKey - The settings map's storage key
+     * @param {Object|null} before - The map as stored before the write
+     * @param {Object|null} after - The map as written
+     * @param {Object} options - As for `_stampDiff`
+     * @returns {Promise<{stampKey: string, stamps: Object}|null>}
+     * @private
+     */
+    async _planStamps(mapKey, before, after, { system = false, pin = false, ids = null, absentIsChange = false } = {}) {
+        const old = before && typeof before === 'object' ? before : {};
+        const next = after && typeof after === 'object' ? after : {};
+        const absentCounts = system || absentIsChange || Boolean(ids);
+        const candidates = ids ? [...ids].filter((id) => Object.hasOwn(next, id)) : Object.keys(next);
+        const changed = candidates.filter((id) =>
+            Object.hasOwn(old, id) ? canonical(valueOf(old[id])) !== canonical(valueOf(next[id])) : absentCounts
+        );
+        const removed = Object.keys(old).filter((id) => !Object.hasOwn(next, id));
+        if (changed.length === 0 && removed.length === 0) return null;
+
+        const stampKey = `${SETTING_STAMPS_PREFIX}${mapKey}`;
+        const existing = await storage.getJSON(stampKey, this.storageArea, null);
+        const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
+        let stamp;
+        if (system) {
+            stamp = pin ? { at: 0, seq: null, system: true, pin: true } : { at: 0, seq: null, system: true };
+        } else {
+            const rawSeq = await storage.get(SYNC_SEQ_KEY, this.storageArea, null);
+            const seq = Number.isSafeInteger(rawSeq) && rawSeq >= 0 ? rawSeq : null;
+            stamp = { at: Date.now(), seq };
+        }
+        for (const id of changed) stamps[id] = { ...stamp };
+        for (const id of removed) delete stamps[id];
+        return { stampKey, stamps };
     }
 
     /**

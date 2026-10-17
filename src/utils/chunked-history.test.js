@@ -1976,6 +1976,62 @@ describe('what a pull changes in a running live-safe history', () => {
         expect(Object.keys(storageMock.store.get('livePeerDelTomb_a'))).toHaveLength(1);
     });
 
+    /** Let the first read of the chunks return what is on disk now, then hold it until `release()` */
+    const gateFirstRead = () => {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const plain = storageMock.getMany.getMockImplementation();
+        storageMock.getMany.mockImplementationOnce(async (...args) => {
+            const read = await plain(...args);
+            await gate;
+            return read;
+        });
+        return release;
+    };
+
+    test('a pull that lands while the first read is still going is applied once the read commits', async () => {
+        const history = buildLive('liveMidLoad');
+        const heard = [];
+        history.onRefreshed((_charId, fresh) => heard.push(...fresh));
+        storageMock.store.set('liveMidLoad_a_2026-08', [at(2026, 8, 1)]);
+        const release = gateFirstRead();
+
+        const loading = history.load('a');
+        await settle();
+        // The read has not committed, so the store is not loaded yet
+        expect(history._loaded).toBe(false);
+        storageMock.store.set('liveMidLoad_a_2026-08', [at(2026, 8, 1), at(2026, 8, 9)]);
+        announceSyncPullApplied({ testStore: ['liveMidLoad_a_2026-08'] });
+        await settle();
+        release();
+        await loading;
+        await settle();
+
+        expect((await history.load('a')).map((point) => point.v)).toEqual(['2026-8-1', '2026-8-9']);
+        // Either the read already saw the pulled chunk, or the refresh after it brought it in
+        expect(history._entries.map((point) => point.v)).toEqual(['2026-8-1', '2026-8-9']);
+    });
+
+    test('a pull that waited on a read superseded by a character switch refreshes nothing', async () => {
+        const history = buildLive('liveMidSwitch');
+        storageMock.store.set('liveMidSwitch_a_2026-08', [at(2026, 8, 1)]);
+        const refresh = vi.spyOn(history, 'refresh');
+        const release = gateFirstRead();
+
+        const loadingA = history.load('a');
+        await settle();
+        announceSyncPullApplied({ testStore: ['liveMidSwitch_a_2026-08'] });
+        history.forget();
+        await history.load('b');
+        release();
+        await loadingA;
+        await settle();
+
+        expect(refresh).not.toHaveBeenCalledWith('a');
+    });
+
     test('an entry pulled together with the stone that covers it is not adopted', async () => {
         const history = buildLive('liveWithStone');
         const heard = [];

@@ -145,7 +145,8 @@ describe('exportBackup → importBackupText round trip', () => {
 
         await transmuteHistoryViewer.importBackupText(backupText([corrected]));
 
-        expect(trackerState.stored).toEqual([corrected]);
+        // The replacement is stamped, so a later sync pull keeps the correction
+        expect(trackerState.stored).toEqual([{ ...corrected, editedAt: expect.any(Number) }]);
     });
 });
 
@@ -248,7 +249,7 @@ describe('merge semantics', () => {
 
         const byId = Object.fromEntries(trackerState.stored.map((s) => [s.id, s]));
         expect(byId['keep']).toEqual(session({ id: 'keep', totalSuccesses: 1 }));
-        expect(byId['replace-me']).toEqual(replaced);
+        expect(byId['replace-me']).toEqual({ ...replaced, editedAt: expect.any(Number) });
         expect(byId['brand-new']).toEqual(added);
         expect(trackerState.stored).toHaveLength(3);
     });

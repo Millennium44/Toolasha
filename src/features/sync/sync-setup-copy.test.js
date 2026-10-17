@@ -36,6 +36,10 @@ vi.mock('../../core/storage.js', () => ({
         setJSON: async (key, value) => {
             stored.map[key] = value;
         },
+        setMany: async (entries) => {
+            Object.assign(stored.map, entries);
+            return true;
+        },
         delete: async (key) => {
             delete stored.map[key];
         },

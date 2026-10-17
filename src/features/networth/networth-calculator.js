@@ -47,9 +47,23 @@ import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-cre
  * @returns {number} Total value in coins
  */
 export async function calculateItemValue(item, priceCache = null) {
+    return (await calculateItemValueDetailed(item, priceCache)).value;
+}
+
+/**
+ * calculateItemValue, plus whether the value is a partial crafting bill (an input
+ * nothing can price counted as 0). The value is the same either way.
+ * @param {Object} item - Item data {itemHrid, enhancementLevel, count}
+ * @param {Map} priceCache - Optional price cache from getPricesBatch()
+ * @returns {Promise<{value: number, partial: boolean}>} Total value in coins and the partial flag
+ */
+export async function calculateItemValueDetailed(item, priceCache = null) {
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
 
     let itemValue = 0;
+    let partial = false;
+    // Set when the value is an enhancement path's cost rather than a market or fallback price
+    let fromPath = false;
 
     // Check if high enhancement cost mode is enabled
     const useHighEnhancementCost = config.getSetting('networth_highEnhancementUseCost');
@@ -70,6 +84,7 @@ export async function calculateItemValue(item, priceCache = null) {
             const cachedCost = networthCache.get(itemHrid, enhancementLevel);
             if (cachedCost !== null) {
                 itemValue = cachedCost;
+                fromPath = true;
             } else {
                 // Calculate enhancement cost (ignore market price)
                 const enhancementParams = getEnhancingParams();
@@ -79,12 +94,13 @@ export async function calculateItemValue(item, priceCache = null) {
                 // base item's price, as the worker does
                 if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
                     itemValue = enhancementPath.optimalStrategy.totalCost;
+                    fromPath = true;
                     // Cache the result
                     networthCache.set(itemHrid, enhancementLevel, itemValue);
                 } else {
                     // Enhancement calculation failed, fallback to base item price
                     console.warn('[Networth] Enhancement calculation failed for:', itemHrid, '+' + enhancementLevel);
-                    itemValue = getMarketPrice(itemHrid, 0, priceCache);
+                    ({ price: itemValue, partial } = priceWithPartial(itemHrid, 0, priceCache));
                 }
             }
         } else {
@@ -98,6 +114,7 @@ export async function calculateItemValue(item, priceCache = null) {
                 const cachedCost = networthCache.get(itemHrid, enhancementLevel);
                 if (cachedCost !== null) {
                     itemValue = cachedCost;
+                    fromPath = true;
                 } else {
                     const enhancementParams = getEnhancingParams();
                     const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
@@ -106,6 +123,7 @@ export async function calculateItemValue(item, priceCache = null) {
                     // base item's price, as the worker does
                     if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
                         itemValue = enhancementPath.optimalStrategy.totalCost;
+                        fromPath = true;
                         networthCache.set(itemHrid, enhancementLevel, itemValue);
                     } else {
                         console.warn(
@@ -113,17 +131,28 @@ export async function calculateItemValue(item, priceCache = null) {
                             itemHrid,
                             '+' + enhancementLevel
                         );
-                        itemValue = getMarketPrice(itemHrid, 0, priceCache);
+                        ({ price: itemValue, partial } = priceWithPartial(itemHrid, 0, priceCache));
                     }
                 }
             }
         }
     } else {
         // Unenhanced items: use market price or crafting cost
-        itemValue = getMarketPrice(itemHrid, enhancementLevel, priceCache);
+        ({ price: itemValue, partial } = priceWithPartial(itemHrid, enhancementLevel, priceCache));
     }
 
-    return itemValue * count;
+    // The path refuses an unpriced base or material, but not a positive base or material that is itself a
+    // partial crafting bill; the worker flags the same cases (getRealisticPrice / calculateProductionCost)
+    if (fromPath) {
+        const details = dataManager.getItemDetails(itemHrid);
+        partial =
+            priceWithPartial(itemHrid, 0, priceCache).partial ||
+            (details?.enhancementCosts || []).some(
+                (material) => material.count > 0 && priceWithPartial(material.itemHrid, 0, priceCache).partial
+            );
+    }
+
+    return { value: itemValue * count, partial };
 }
 
 /**
@@ -318,10 +347,24 @@ export function explainTokenValue(itemHrid) {
  * @returns {number} Price per item (uses networth pricing mode setting)
  */
 function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
+    return priceWithPartial(itemHrid, enhancementLevel, priceCache).price;
+}
+
+/**
+ * getMarketPrice, plus whether the figure is a partial bill: a crafting cost
+ * with an input nothing can price, which counts the priced inputs and leaves the
+ * rest at 0. The price still counts (the maintainer's call: a partial bill beats
+ * valuing the item at 0), but whoever shows it must say so.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} enhancementLevel - Enhancement level
+ * @param {Map} priceCache - Optional price cache from getPricesBatch()
+ * @returns {{price: number, partial: boolean}} Price per item and whether it is a partial bill
+ */
+function priceWithPartial(itemHrid, enhancementLevel, priceCache = null) {
     // Special handling for currencies
     const currencyValue = calculateCurrencyValue(itemHrid);
     if (currencyValue !== null) {
-        return currencyValue;
+        return { price: currencyValue, partial: false };
     }
 
     // Determine which price field to use based on networth pricing mode
@@ -333,7 +376,7 @@ function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
     // Try selected pricing mode first
     const price = typeof prices === 'number' ? prices : prices?.[pricingMode];
     if (price && price > 0) {
-        return price;
+        return { price, partial: false };
     }
 
     // No valid price - try fallbacks (only for base items)
@@ -355,24 +398,24 @@ function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
                     netValue -= getKeyUnitCost(chestKeyHrid) ?? 0;
                 }
 
-                return netValue;
+                return { price: netValue, partial: false };
             }
         }
 
         // Try crafting cost as fallback
-        const craftingCost = calculateCraftingCost(itemHrid);
-        if (craftingCost > 0) {
-            return craftingCost;
+        const bill = craftingBill(itemHrid);
+        if (bill.cost > 0) {
+            return { price: bill.cost, partial: bill.partial };
         }
 
         // Try shop cost as final fallback (for shop-only items)
         const shopCost = getShopCoinCost(itemHrid);
         if (shopCost > 0) {
-            return shopCost;
+            return { price: shopCost, partial: false };
         }
     }
 
-    return 0;
+    return { price: 0, partial: false };
 }
 
 /**
@@ -513,17 +556,30 @@ function getActionIndexes() {
  * @returns {number} Total material cost or 0 if not craftable
  */
 export function calculateCraftingCost(itemHrid) {
+    return craftingBill(itemHrid).cost;
+}
+
+/**
+ * calculateCraftingCost, plus whether the bill is partial: an input (or the
+ * upgrade item) that nothing can price adds 0, so the cost understates the item.
+ * An input whose own price is itself a partial bill makes this one partial too.
+ * @param {string} itemHrid - Item HRID
+ * @returns {{cost: number, partial: boolean}} Per-item cost and whether an input was unpriced
+ */
+function craftingBill(itemHrid) {
     // The producing action comes from the once-built index rather than a scan
     // of every action in the game — see getActionIndexes
     const found = getActionIndexes()?.byAnyOutput.get(itemHrid);
-    if (!found) return 0;
+    if (!found) return { cost: 0, partial: false };
     const { action, output } = found;
 
+    let partial = false;
     let inputCost = 0;
     if (action.inputItems && action.inputItems.length > 0) {
         for (const input of action.inputItems) {
-            const inputPrice = getMarketPrice(input.itemHrid, 0, null);
-            inputCost += inputPrice * input.count;
+            const inputPrice = priceWithPartial(input.itemHrid, 0, null);
+            if (inputPrice.partial || (!(inputPrice.price > 0) && input.count > 0)) partial = true;
+            inputCost += inputPrice.price * input.count;
         }
     }
 
@@ -533,12 +589,13 @@ export function calculateCraftingCost(itemHrid) {
     // Add upgrade item cost (not affected by Artisan Tea)
     let upgradeCost = 0;
     if (action.upgradeItemHrid) {
-        const upgradePrice = getMarketPrice(action.upgradeItemHrid, 0, null);
-        upgradeCost = upgradePrice;
+        const upgrade = priceWithPartial(action.upgradeItemHrid, 0, null);
+        if (upgrade.partial || !(upgrade.price > 0)) partial = true;
+        upgradeCost = upgrade.price;
     }
 
     // Divide by output count to get per-item cost
-    return (inputCost + upgradeCost) / (output.count || 1);
+    return { cost: (inputCost + upgradeCost) / (output.count || 1), partial };
 }
 
 /**
@@ -858,36 +915,45 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
                   const priceMap = await priceMapFor(priceCache, pricingMode);
 
                   try {
+                      // The worker reports which of its items are partial crafting bills
+                      // (indexes into itemsNeedingWorkers) through the last argument
+                      const partialIndexes = new Set();
                       const values = await calculateItemValueBatch(
                           itemsNeedingWorkers,
                           priceMap,
                           { useHighEnhancementCost, minLevel, enhancementParams },
-                          gameData
+                          gameData,
+                          partialIndexes
                       );
-                      return values;
+                      return { values, partialIndexes };
                   } catch (error) {
                       // Fallback to sequential for worker items
                       console.warn('[NetworthCalculator] Worker failed, falling back to sequential:', error);
                       const values = [];
+                      const partialIndexes = new Set();
                       for (const item of itemsNeedingWorkers) {
-                          values.push(await calculateItemValue(item, priceCache));
+                          const detailed = await calculateItemValueDetailed(item, priceCache);
+                          if (detailed.partial) partialIndexes.add(values.length);
+                          values.push(detailed.value);
                       }
-                      return values;
+                      return { values, partialIndexes };
                   }
               })()
-            : Promise.resolve([]),
+            : Promise.resolve({ values: [], partialIndexes: new Set() }),
 
         // Sequential group
         itemsNotNeedingWorkers.length > 0
             ? (async () => {
                   const values = [];
+                  const partialIndexes = new Set();
                   // Yield on a clock, not a count: item costs vary by orders of
                   // magnitude, and what the frame budget cares about is time
                   const slow = [];
                   let sliceStart = performance.now();
                   for (const item of itemsNotNeedingWorkers) {
                       const itemStart = performance.now();
-                      const value = await calculateItemValue(item, priceCache);
+                      const { value, partial } = await calculateItemValueDetailed(item, priceCache);
+                      if (partial) partialIndexes.add(values.length);
                       const itemMs = performance.now() - itemStart;
                       // One item over the frame budget is an indivisible chunk
                       // no slicing can help — record it so the next stall hunt
@@ -906,22 +972,25 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
                       }
                   }
                   lastSlowItems = slow;
-                  return values;
+                  return { values, partialIndexes };
               })()
-            : Promise.resolve([]),
+            : Promise.resolve({ values: [], partialIndexes: new Set() }),
     ]);
 
     // Reconstruct results in original order
     const finalResults = new Array(items.length);
+    const partial = new Set();
     for (const mapping of itemMapping) {
         if (mapping.useWorker) {
-            finalResults[mapping.originalIndex] = workerResults[mapping.workerIndex];
+            finalResults[mapping.originalIndex] = workerResults.values[mapping.workerIndex];
+            if (workerResults.partialIndexes.has(mapping.workerIndex)) partial.add(mapping.originalIndex);
         } else {
-            finalResults[mapping.originalIndex] = sequentialResults[mapping.sequentialIndex];
+            finalResults[mapping.originalIndex] = sequentialResults.values[mapping.sequentialIndex];
+            if (sequentialResults.partialIndexes.has(mapping.sequentialIndex)) partial.add(mapping.originalIndex);
         }
     }
 
-    return finalResults;
+    return { values: finalResults, partial };
 }
 
 /**
@@ -956,7 +1025,7 @@ export async function calculateNetworth() {
     }
 
     // Invalidate cache if market data changed (wrap for cache compatibility)
-    networthCache.checkAndInvalidate({ marketData: marketAPI.marketData });
+    networthCache.checkAndInvalidate({ marketData: marketAPI.marketData, pricePatchs: marketAPI.pricePatchs });
 
     const characterItems = gameData.characterItems || [];
     const marketListings = gameData.myMarketListings || [];
@@ -1073,13 +1142,21 @@ export async function calculateNetworth() {
         excludedByKey.get(key).amount += amount;
     };
 
+    // Items valued on a partial crafting bill (an input nothing can price), counted ones only: the
+    // value stays in the total, and the display says it is a floor
+    const partialItems = new Map();
+
     // Calculate equipped items value using workers
     let equippedValue = 0;
     const equippedBreakdown = [];
 
     const entireEquippedExcluded = isExcluded('assetType', 'equipped');
     const equippedItems = characterItems.filter((item) => item.itemLocationHrid !== '/item_locations/inventory');
-    const equippedValues = await calculateItemValuesParallel(equippedItems, priceCache, gameData);
+    const { values: equippedValues, partial: equippedPartial } = await calculateItemValuesParallel(
+        equippedItems,
+        priceCache,
+        gameData
+    );
 
     for (let i = 0; i < equippedItems.length; i++) {
         const item = equippedItems[i];
@@ -1105,11 +1182,14 @@ export async function calculateNetworth() {
         }
 
         equippedValue += value;
+        const isPartial = equippedPartial.has(i);
+        if (isPartial) partialItems.set(`${item.itemHrid}:${item.enhancementLevel || 0}`, displayName);
         equippedBreakdown.push({
             name: displayName,
             value,
             itemHrid: item.itemHrid,
             enhancementLevel: item.enhancementLevel || 0,
+            partial: isPartial,
         });
     }
 
@@ -1134,7 +1214,11 @@ export async function calculateNetworth() {
     let countedCoins = 0;
 
     const inventoryItems = characterItems.filter((item) => item.itemLocationHrid === '/item_locations/inventory');
-    const inventoryValues = await calculateItemValuesParallel(inventoryItems, priceCache, gameData);
+    const { values: inventoryValues, partial: inventoryPartial } = await calculateItemValuesParallel(
+        inventoryItems,
+        priceCache,
+        gameData
+    );
     phase('inventoryValues');
 
     // Every token held, by hrid. Marked counted only where its value is added to
@@ -1182,6 +1266,8 @@ export async function calculateNetworth() {
             // A currency the shop cannot price yet contributes 0 — the same
             // situation the ability rows already distinguish from "worth nothing"
             unpriced: value === 0 && isUnpricedCurrency(item.itemHrid),
+            // Valued on a crafting bill with an unpriced input: counted, but a floor
+            partial: inventoryPartial.has(i),
         };
 
         // Check if this is an ability book
@@ -1206,6 +1292,7 @@ export async function calculateNetworth() {
         }
 
         if (tokenEntries.has(item.itemHrid)) tokenEntries.get(item.itemHrid).counted = true;
+        if (itemData.partial) partialItems.set(`${item.itemHrid}:${item.enhancementLevel || 0}`, displayName);
 
         if (isAbilityBook && !booksAsInventory) {
             // Add to ability books (Fixed Assets)
@@ -1271,7 +1358,7 @@ export async function calculateNetworth() {
 
             // Still on the market: the units yet to sell, taxed at what they
             // would net. Ended: the units handed back, untaxed and yours
-            const value = await calculateItemValue(
+            const { value, partial: listingPartial } = await calculateItemValueDetailed(
                 {
                     itemHrid: listing.itemHrid,
                     enhancementLevel,
@@ -1288,10 +1375,11 @@ export async function calculateNetworth() {
                 name: itemName,
                 isSell: true,
                 value: listingValue,
+                partial: listingPartial && value > 0,
             });
         } else {
             // Buying: value is locked coins + unclaimed items
-            const unclaimedValue = await calculateItemValue(
+            const { value: unclaimedValue, partial: unclaimedPartial } = await calculateItemValueDetailed(
                 { itemHrid: listing.itemHrid, enhancementLevel, count: listing.unclaimedItemCount },
                 priceCache
             );
@@ -1311,6 +1399,7 @@ export async function calculateNetworth() {
                 name: itemName,
                 isSell: false,
                 value: listingValue,
+                partial: unclaimedPartial && unclaimedValue > 0,
             });
         }
     }
@@ -1321,6 +1410,10 @@ export async function calculateNetworth() {
     if (isExcluded('assetType', 'listings') && listingsValue > 0) {
         trackExcluded('assetType', 'listings', 'All Market Listings', listingsValue);
         listingsValue = 0;
+    } else {
+        for (const listing of listingsBreakdown) {
+            if (listing.partial) partialItems.set(`${listing.itemHrid}:${listing.enhancementLevel || 0}`, listing.name);
+        }
     }
 
     phase('listings');
@@ -1448,6 +1541,9 @@ export async function calculateNetworth() {
 
     return {
         totalNetworth,
+        // Counted items valued on a crafting bill with an input nothing can price: the total
+        // includes the priced inputs' cost, so it is a floor by this much of the picture
+        partial: { count: partialItems.size, names: [...partialItems.values()] },
         coins: coinCount,
         countedCoins,
         excluded: { total: excludedTotal, items: excludedItems },
@@ -1534,6 +1630,7 @@ function createEmptyNetworthData() {
     return {
         unavailable: true,
         totalNetworth: 0,
+        partial: { count: 0, names: [] },
         coins: 0,
         countedCoins: 0,
         excluded: { total: 0, items: [] },

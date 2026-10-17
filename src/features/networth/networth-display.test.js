@@ -322,3 +322,30 @@ describe('token worth breakdown', () => {
         expect(title).toContain('tokens spent on shrines are not counted');
     });
 });
+
+describe('a partial crafting bill', () => {
+    test('marks the item row, and the total says it is a floor', () => {
+        const html = networthInventoryDisplay.renderInventoryBreakdown({
+            byCategory: {
+                Other: {
+                    totalValue: 270,
+                    items: [{ name: 'Plank', count: 10, value: 270, itemHrid: '/items/plank', partial: true }],
+                },
+            },
+            breakdown: [],
+        });
+        expect(html).toContain('Plank x10: 270 *');
+
+        const data = networthData({ totalCost: 0, tokens: 0, known: false, breakdown: [] });
+        data.partial = { count: 1, names: ['Plank'] };
+        networthInventoryDisplay.update(data);
+        expect(panelText()).toContain('Net Worth: 1.00M *');
+        expect(panelText()).toContain('a floor');
+    });
+
+    test('draws no marker when nothing is partial', () => {
+        networthInventoryDisplay.update(networthData({ totalCost: 0, tokens: 0, known: false, breakdown: [] }));
+        expect(panelText()).not.toContain('a floor');
+        expect(panelText()).not.toContain('*');
+    });
+});

@@ -36,8 +36,8 @@ import {
     foldLedgerCycles,
     ledgerCsvRows,
     ledgerTotalsRow,
-    loadLedgerCycles,
-    loadLedgerFirstRecord,
+    loadLedgerCyclesDetailed,
+    loadLedgerFirstRecordDetailed,
     observedCoverage,
     sortLedgerRows,
 } from './guild-trial-ledger.js';
@@ -79,6 +79,8 @@ const state = {
     /** Cycle records as last read; the panel never reads storage while drawing */
     cycles: [],
     firstRecord: null,
+    /** Week stamps whose record could not be read: their cycles are unknown, not missed */
+    unreadWeeks: [],
     /** Whether a read has happened at all, so "empty" and "not looked yet" differ */
     loaded: false,
     /** Which {@link LEDGER_WINDOWS} key is selected */
@@ -116,6 +118,7 @@ let refreshGeneration = 0;
 export function resetLedgerView() {
     state.cycles = [];
     state.firstRecord = null;
+    state.unreadWeeks = [];
     state.loaded = false;
     state.window = '4';
     state.sortKey = 'damageShare';
@@ -171,11 +174,18 @@ export async function refreshLedgerView() {
     const chosen = selectedWindow();
 
     try {
-        const cycles = await loadLedgerCycles(guild, characterId, { cycles: chosen.cycles });
+        const { cycles, unreadWeeks: unreadCycleWeeks } = await loadLedgerCyclesDetailed(guild, characterId, {
+            cycles: chosen.cycles,
+        });
         // A failed key read answers [] and so null, the same as an empty ledger; with cycles loaded the
         // ledger is not empty, so that null is unreadable and the window is left unclamped (undefined)
-        const firstFound = await loadLedgerFirstRecord(guild, characterId);
+        const { first: firstFound, unreadWeeks: unreadFirstWeeks } = await loadLedgerFirstRecordDetailed(
+            guild,
+            characterId
+        );
         const firstRecord = firstFound === null && cycles.length ? undefined : firstFound;
+        // Weeks whose record could not be read: unknown in coverage, never missed
+        const unreadWeeks = [...new Set([...unreadCycleWeeks, ...unreadFirstWeeks])];
         const record = await loadLoadouts(characterId, guild);
         // The accuracy card reads a different pair of stores from the ledger's:
         // this week's measured-vs-reported blob, which the ladder's rollover
@@ -197,6 +207,7 @@ export async function refreshLedgerView() {
 
         state.cycles = cycles;
         state.firstRecord = firstRecord;
+        state.unreadWeeks = unreadWeeks;
         state.loaded = true;
         state.accuracy = summarizeWeekAccuracy(stats?.trials);
         state.accuracyTrend = archivedAccuracyTrend(trialRecord?.history);
@@ -264,6 +275,7 @@ export function filterLedgerRows(rows, query) {
 export function buildLedgerTable({
     cycles = state.cycles,
     firstRecord = state.firstRecord,
+    unreadWeeks = state.unreadWeeks,
     roster = null,
     sortKey = state.sortKey,
     sortDirection = state.sortDirection,
@@ -277,7 +289,7 @@ export function buildLedgerTable({
         trialsRun: folded.trialsRun,
         trialsKnown: folded.trialsKnown,
         cycles: folded.cycles,
-        coverage: observedCoverage(cycles, { window: windowCycles, now, first: firstRecord }),
+        coverage: observedCoverage(cycles, { window: windowCycles, now, first: firstRecord, unreadWeeks }),
     };
 }
 
@@ -295,13 +307,18 @@ export function coverageLine(coverage) {
     const running = coverage?.inProgress
         ? ` ${coverage.daily ? 'This cycle' : 'This week'} is still running and is not counted yet.`
         : '';
+    const unknown = Number(coverage?.unknown) || 0;
+    const unreadable = unknown
+        ? ` ${unknown} cycle${unknown === 1 ? '' : 's'} could not be read, so the figures below are incomplete.`
+        : '';
     if (!coverage?.expected) {
+        if (unknown) return `No readable cycles.${unreadable}${running}`;
         return coverage?.inProgress ? `No completed cycles yet.${running}` : 'No cycles recorded yet.';
     }
     const missed = coverage.expected - coverage.watched;
     return (
         `Watched ${coverage.watched} of ${coverage.expected} cycle${coverage.expected === 1 ? '' : 's'}` +
-        `${missed > 0 ? ` (${missed} missed)` : ''}.${running}`
+        `${missed > 0 ? ` (${missed} missed)` : ''}.${unreadable}${running}`
     );
 }
 
@@ -443,7 +460,10 @@ export function ledgerTableText(table) {
     if (!rows.length) return 'No ledger rows to copy.';
 
     const trialsRun = table?.trialsRun || 0;
-    const header = `Guild trial ledger — ${trialsRun} trial${trialsRun === 1 ? '' : 's'} in window`;
+    const unknown = Number(table?.coverage?.unknown) || 0;
+    const header =
+        `Guild trial ledger — ${trialsRun} trial${trialsRun === 1 ? '' : 's'} in window` +
+        (unknown ? ` (${unknown} cycle${unknown === 1 ? '' : 's'} could not be read; figures incomplete)` : '');
     const lines = rows.map(ledgerRowLine);
     const totals = ledgerTotalsRow(rows, trialsRun);
 
@@ -519,7 +539,7 @@ function drawControls(card, table) {
 
     bar.appendChild(
         controlButton('Export CSV', 'The table as it stands, with raw numbers a spreadsheet can sort.', () => {
-            const csv = toCsv(ledgerCsvRows(table.rows, table.trialsRun), LEDGER_CSV_COLUMNS);
+            const csv = toCsv(ledgerCsvRows(table.rows, table.trialsRun, table.coverage?.unknown), LEDGER_CSV_COLUMNS);
             downloadCsv(csvFilename('guild-trial-ledger'), csv);
         })
     );
