@@ -28,6 +28,11 @@ vi.mock('./storage.js', () => ({
             stored.set(`json:${key}`, value);
             return Promise.resolve(true);
         }),
+        setMany: vi.fn((entries) => {
+            if (outage.on || Object.keys(entries).some((key) => refuse.has(key))) return Promise.resolve(false);
+            for (const [key, value] of Object.entries(entries)) stored.set(`json:${key}`, value);
+            return Promise.resolve(true);
+        }),
         get: vi.fn((key, _area, defaultValue) =>
             Promise.resolve(outage.on ? defaultValue : (stored.get(key) ?? defaultValue))
         ),

@@ -176,6 +176,58 @@ describe('Storage.putAll', () => {
     });
 });
 
+describe('Storage.setMany', () => {
+    beforeEach(() => {
+        storage.db = null;
+        storage.pendingWrites.clear();
+        storage.saveDebounceTimers.clear();
+        storage._closingForTeardown = false;
+    });
+
+    afterEach(() => {
+        storage._closingForTeardown = false;
+    });
+
+    test('writes every key in one transaction and reports success', async () => {
+        const { db, dataByStore } = createFakeDb(['settings']);
+        const open = vi.spyOn(db, 'transaction');
+        storage.db = db;
+
+        const ok = await storage.setMany({ map: { a: 1 }, stamps: { a: { at: 5 } } }, 'settings');
+
+        expect(ok).toBe(true);
+        expect(open).toHaveBeenCalledTimes(1);
+        expect(Object.fromEntries(dataByStore.get('settings'))).toEqual({ map: { a: 1 }, stamps: { a: { at: 5 } } });
+    });
+
+    test('supersedes a debounced write queued for one of its keys', async () => {
+        const { db, dataByStore } = createFakeDb(['settings']);
+        storage.db = db;
+        const queued = storage.set('map', { old: true }, 'settings');
+
+        const ok = await storage.setMany({ map: { fresh: true }, stamps: {} }, 'settings');
+
+        expect(ok).toBe(true);
+        expect(await queued).toBe(true);
+        expect(storage.pendingWrites.size).toBe(0);
+        expect(dataByStore.get('settings').get('map')).toEqual({ fresh: true });
+    });
+
+    test('an empty entry set is a successful no-op', async () => {
+        expect(await storage.setMany({}, 'settings')).toBe(true);
+    });
+
+    test('while the page is closing the keys are queued together for the flush', async () => {
+        storage.db = createFakeDb(['settings']).db;
+        storage._closingForTeardown = true;
+
+        void storage.setMany({ map: 1, stamps: 2 }, 'settings');
+        await Promise.resolve();
+
+        expect([...storage.pendingWrites.keys()].sort()).toEqual(['settings:map', 'settings:stamps']);
+    });
+});
+
 describe('Storage.putAll when the transaction aborts', () => {
     beforeEach(() => {
         storage.db = null;

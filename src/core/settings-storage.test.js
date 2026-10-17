@@ -19,6 +19,12 @@ vi.mock('./storage.js', () => ({
             stored.set(`json:${key}`, value);
             return Promise.resolve();
         }),
+        // One transaction: every key lands, or (in an outage / a refused key) none does
+        setMany: vi.fn((entries) => {
+            if (outage.on) return Promise.resolve(false);
+            for (const [key, value] of Object.entries(entries)) stored.set(`json:${key}`, value);
+            return Promise.resolve(true);
+        }),
         get: vi.fn((key, _area, defaultValue) =>
             Promise.resolve(outage.on ? defaultValue : (stored.get(key) ?? defaultValue))
         ),
@@ -1885,12 +1891,38 @@ describe('a save carries only what this client changed', () => {
         await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands']);
         outage.on = false;
 
-        expect(storage.setJSON).toHaveBeenCalledWith(
-            'script_settingsMap_alice',
-            { chatCommands: { isTrue: false } },
-            expect.anything(),
-            true
+        const [entries] = storage.setMany.mock.calls.at(-1);
+        expect(entries['script_settingsMap_alice']).toEqual({ chatCommands: { isTrue: false } });
+    });
+
+    test('the map and its change stamp are written in one transaction, never separately', async () => {
+        stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
+        storage.setJSON.mockClear();
+        storage.setMany.mockClear();
+
+        await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands']);
+
+        expect(storage.setMany).toHaveBeenCalledTimes(1);
+        const [entries] = storage.setMany.mock.calls[0];
+        expect(Object.keys(entries).sort()).toEqual(
+            ['script_settingsMap_alice', 'settings_changedAt_script_settingsMap_alice'].sort()
         );
+        expect(entries['settings_changedAt_script_settingsMap_alice'].chatCommands.at).toBeGreaterThan(0);
+        // Neither half goes through a lone write
+        const loneKeys = storage.setJSON.mock.calls.map(([key]) => key);
+        expect(loneKeys).not.toContain('script_settingsMap_alice');
+        expect(loneKeys).not.toContain('settings_changedAt_script_settingsMap_alice');
+    });
+
+    test('a refused transaction stamps nothing and reports the save as failed', async () => {
+        stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
+        storage.setMany.mockImplementationOnce(() => Promise.resolve(false));
+
+        const ok = await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands']);
+
+        expect(ok).toBe(false);
+        expect(stored.get('json:script_settingsMap_alice')).toEqual({ chatCommands: { isTrue: true } });
+        expect(stored.has('json:settings_changedAt_script_settingsMap_alice')).toBe(false);
     });
 });
 
