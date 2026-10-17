@@ -833,6 +833,28 @@ describe('the key runway beside the Keys figure', () => {
         expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
     });
 
+    test('a solo history of client-timed runs still gets a runway', async () => {
+        world.runs = [
+            clear({ validated: false }),
+            clear({ validated: false }),
+            clear({ validated: false }),
+            clear({ validated: false, result: 'fail', duration: 99 * MIN }),
+        ];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+    });
+
+    test('server-timed clears win over client-timed ones when both exist', async () => {
+        world.runs = [
+            clear({ duration: 20 * MIN }),
+            clear({ duration: 20 * MIN }),
+            clear({ duration: 20 * MIN }),
+            clear({ validated: false, duration: 99 * MIN }),
+        ];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~1h 20m 00s)');
+    });
+
     test('zero keys, no history and an unknown dungeon each show nothing', async () => {
         world.runs = [clear(), clear(), clear()];
         await draw({ keyCountsMap: { Marketcow: 0, Friend: 9 } });
