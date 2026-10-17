@@ -1902,6 +1902,19 @@ class ChunkedHistory {
      * @private
      */
     async _onPulled(written, deleted) {
+        // A pull that lands while the first read is still going: `_loaded` is false until that read commits,
+        // so it used to be skipped and stayed missing from memory until the next load. Wait for the read, then
+        // apply the pull to whoever the store ended up holding (the read can be superseded by a character
+        // switch, in which case there is nothing of the old character's to refresh).
+        if (!this._loaded && this._loading) {
+            const waitingFor = this._loadingCharId;
+            try {
+                await this._loading;
+            } catch {
+                return;
+            }
+            if (!this._loaded || this._charId !== waitingFor) return;
+        }
         if (!this._loaded || !this._charId) return;
         const keys = Array.isArray(written?.[this.storeName]) ? written[this.storeName] : [];
         const gone = Array.isArray(deleted?.[this.storeName]) ? deleted[this.storeName] : [];
