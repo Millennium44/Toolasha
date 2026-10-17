@@ -655,7 +655,9 @@ class InventoryBadgeManager {
                 } else {
                     // Calculate enhancement cost
                     const enhancementParams = getEnhancingParams();
-                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
+                        priceContext: 'networth',
+                    });
 
                     if (enhancementPath && enhancementPath.optimalStrategy) {
                         const enhancementCost = enhancementPath.optimalStrategy.totalCost;
@@ -704,7 +706,12 @@ class InventoryBadgeManager {
                     if (cachedCost === null) {
                         // Calculate enhancement cost
                         const enhancementParams = getEnhancingParams();
-                        const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+                        const enhancementPath = calculateEnhancementPath(
+                            itemHrid,
+                            enhancementLevel,
+                            enhancementParams,
+                            { priceContext: 'networth' }
+                        );
 
                         if (enhancementPath && enhancementPath.optimalStrategy) {
                             enhancementCost = enhancementPath.optimalStrategy.totalCost;

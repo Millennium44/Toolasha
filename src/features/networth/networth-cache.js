@@ -119,9 +119,11 @@ class NetworthCache {
     /**
      * Check if market data has changed and invalidate cache if needed
      * @param {Object} marketData - Current market data
+     * @param {string} [salt=''] - Everything else the cached costs were priced from that the market
+     *   hash does not see (the net-worth pricing mode, the custom prices): a change clears the cache
      */
-    checkAndInvalidate(marketData) {
-        const newHash = this.generateMarketHash(marketData);
+    checkAndInvalidate(marketData, salt = '') {
+        const newHash = this.generateMarketHash(marketData) + '|' + salt;
 
         if (this.marketDataHash !== null && this.marketDataHash !== newHash) {
             // Market data changed, invalidate entire cache

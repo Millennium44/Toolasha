@@ -35,6 +35,7 @@ import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
+import { getCustomPriceVersion } from '../settings/custom-price-overrides.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
@@ -88,7 +89,9 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
             } else {
                 // Calculate enhancement cost (ignore market price)
                 const enhancementParams = getEnhancingParams();
-                const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+                const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
+                    priceContext: 'networth',
+                });
 
                 // A path with an unpriced material or base is a partial bill, not a value: fall back to the
                 // base item's price, as the worker does
@@ -117,7 +120,9 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
                     fromPath = true;
                 } else {
                     const enhancementParams = getEnhancingParams();
-                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
+                        priceContext: 'networth',
+                    });
 
                     // A path with an unpriced material or base is a partial bill, not a value: fall back to the
                     // base item's price, as the worker does
@@ -1025,7 +1030,12 @@ export async function calculateNetworth() {
     }
 
     // Invalidate cache if market data changed (wrap for cache compatibility)
-    networthCache.checkAndInvalidate({ marketData: marketAPI.marketData, pricePatchs: marketAPI.pricePatchs });
+    // The enhancement costs it holds are priced from the net-worth mode and the player's custom prices
+    // as well as the book, so a change in either empties it too
+    networthCache.checkAndInvalidate(
+        { marketData: marketAPI.marketData, pricePatchs: marketAPI.pricePatchs },
+        `${config.getSettingValue('networth_pricingMode') || 'ask'}|${getCustomPriceVersion()}`
+    );
 
     const characterItems = gameData.characterItems || [];
     const marketListings = gameData.myMarketListings || [];

@@ -12,6 +12,8 @@ import {
 } from './enhancement-calculator.js';
 import { createMatrixMath } from './matrix-inverse.js';
 import { getShopCoinCost } from './game-lookups.js';
+import { TRAINEE_SHOP_PRICE } from './enhancement-pricing.js';
+import { priceBase, priceGuarded, priceMaterial } from './enhancement-input-pricing.js';
 
 // Worker pool instance
 let workerPool = null;
@@ -112,7 +114,7 @@ function calculateProductionCost(itemHrid, priceMap, recipes, flags) {
  * @returns {number} Total cost
  */
 function calculateEnhancementCost(params) {
-    const { itemHrid, targetLevel, enhancementParams, itemDetails, priceMap, recipes, flags } = params;
+    const { itemHrid, targetLevel, enhancementParams, itemDetails, priceMap, recipes, flags, inputPrices } = params;
 
     if (!itemDetails.enhancementCosts || targetLevel < 1 || targetLevel > 20) {
         return null;
@@ -121,7 +123,12 @@ function calculateEnhancementCost(params) {
     const itemLevel = itemDetails.itemLevel || 1;
 
     // Get base item cost using realistic pricing (matches main thread logic)
-    const basePrice = getRealisticPrice(itemHrid, null, priceMap, recipes, flags);
+    // The main thread prices every input with the shared rule and ships the figures (inputPrices);
+    // a price map alone, from a caller that ships none, is read the old way below
+    const basePrice =
+        inputPrices && inputPrices.base && itemHrid in inputPrices.base
+            ? inputPrices.base[itemHrid] || 0
+            : getRealisticPrice(itemHrid, null, priceMap, recipes, flags);
 
     // The base item is paid once whatever happens, so an unpriced one understates every level.
     // Together with an unpriced material (below) it makes the bill a partial one, not a price:
@@ -141,9 +148,13 @@ function calculateEnhancementCost(params) {
             for (const material of itemDetails.enhancementCosts) {
                 let materialPrice = 0;
 
-                // Special cases
-                if (material.itemHrid.startsWith('/items/trainee_')) {
-                    materialPrice = 250000; // Trainee charms are untradeable, fixed price
+                // The shared rule's figure, shipped from the main thread: trainee charms, coins, custom
+                // prices, the shop floor and the net-worth mode are all settled there
+                if (inputPrices && inputPrices.material && material.itemHrid in inputPrices.material) {
+                    materialPrice = inputPrices.material[material.itemHrid] || 0;
+                    if (!(materialPrice > 0) && material.count > 0) hasUnpricedMaterial = true;
+                } else if (material.itemHrid.startsWith('/items/trainee_')) {
+                    materialPrice = (inputPrices && inputPrices.traineePrice) || 0;
                 } else if (material.itemHrid === '/items/coin') {
                     materialPrice = 1; // Coins have face value of 1
                 } else {
@@ -208,7 +219,8 @@ function calculateEnhancementCost(params) {
             priceMap,
             itemDetails,
             itemHrid,
-            recipes
+            recipes,
+            inputPrices
         );
         if (noProtResult < minCost) {
             minCost = noProtResult;
@@ -226,7 +238,8 @@ function calculateEnhancementCost(params) {
                 priceMap,
                 itemDetails,
                 itemHrid,
-                recipes
+                recipes,
+                inputPrices
             );
             if (protResult < minCost) {
                 minCost = protResult;
@@ -241,7 +254,7 @@ function calculateEnhancementCost(params) {
     // The tooltip prices the mirror with getRealisticBaseItemPrice; so does this, rather than the
     // pricing-mode price, which on a wide ask/bid spread quotes a different mirror than the path
     // the same item takes on the main thread
-    const mirrorPrice = getRealisticPrice('/items/philosophers_mirror', null, priceMap, recipes);
+    const mirrorPrice = getRealisticPrice('/items/philosophers_mirror', null, priceMap, recipes, undefined, inputPrices);
 
     // A Blessed Tea mirror success can be +2; same chance the chain gives an ordinary success
     const mirrorBlessedChance = (enhancementParams.teas?.blessed ?? enhancementParams.blessedTea)
@@ -266,7 +279,8 @@ function calculateStrategyRealCost(
     priceMap,
     itemDetails,
     itemHrid,
-    recipes
+    recipes,
+    inputPrices
 ) {
     const { enhancingLevel, toolBonus, guzzlingBonus = 1.0, blessedTeaBonus = DEFAULT_BLESSED_TEA_CHANCE } = enhancementParams;
     // getEnhancingParams() nests Blessed at teas.blessed; older callers pass a flat blessedTea
@@ -312,26 +326,21 @@ function calculateStrategyRealCost(
         }
     }
 
-    // Get protection item price using realistic pricing (like main thread)
+    // The cheapest protection that has a price: the item itself, Mirror of Protection and the item's
+    // listed protection items, each at the shared rule's guarded price. An option nobody prices is not
+    // an option; none priced leaves the strategy with no protection bill to quote, so it is dropped
     let protectionPrice = 0;
     if (protections > 0) {
-        protectionPrice = getRealisticPrice(itemHrid, baseItemPrice, priceMap, recipes);
-
-        // Check mirror of protection
-        const mirrorPrice = getRealisticPrice('/items/mirror_of_protection', null, priceMap, recipes);
-        if (mirrorPrice > 0 && mirrorPrice < protectionPrice) {
-            protectionPrice = mirrorPrice;
-        }
-
-        // Check specific protection items
+        const options = [itemHrid, '/items/mirror_of_protection'];
         if (itemDetails.protectionItemHrids && itemDetails.protectionItemHrids.length > 0) {
-            for (const protHrid of itemDetails.protectionItemHrids) {
-                const protPrice = getRealisticPrice(protHrid, null, priceMap, recipes);
-                if (protPrice > 0 && protPrice < protectionPrice) {
-                    protectionPrice = protPrice;
-                }
-            }
+            for (const protHrid of itemDetails.protectionItemHrids) options.push(protHrid);
         }
+        protectionPrice = Infinity;
+        for (const hrid of options) {
+            const price = getRealisticPrice(hrid, hrid === itemHrid ? baseItemPrice : null, priceMap, recipes, undefined, inputPrices);
+            if (price > 0 && price < protectionPrice) protectionPrice = price;
+        }
+        if (protectionPrice === Infinity) return Infinity;
     }
 
     const materialCost = perAttemptMaterialCost * attempts;
@@ -344,7 +353,10 @@ function calculateStrategyRealCost(
  * Get realistic price for an item (matches main thread logic)
  * Handles inflation detection and fallbacks
  */
-function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes, outFlags) {
+function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes, outFlags, inputPrices) {
+    if (inputPrices && inputPrices.guarded && itemHrid in inputPrices.guarded) {
+        return inputPrices.guarded[itemHrid] || 0;
+    }
     let ask = priceMap[itemHrid + ':0_ask'];
     if (ask === undefined) ask = priceMap[itemHrid + ':0'];
     if (ask === null || ask === undefined) ask = 0;
@@ -419,7 +431,7 @@ function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags) {
  * @returns {Object} {itemIndex, value}
  */
 function calculateItemValue(data) {
-    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, recipes, shopCosts } = data;
+    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, recipes, shopCosts, inputPrices } = data;
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
 
     let itemValue = 0;
@@ -438,7 +450,8 @@ function calculateItemValue(data) {
                 itemDetails,
                 priceMap,
                 recipes,
-                flags: pathFlags
+                flags: pathFlags,
+                inputPrices
             });
 
             if (cost !== null && cost > 0) {
@@ -464,7 +477,8 @@ function calculateItemValue(data) {
                     itemDetails,
                     priceMap,
                     recipes,
-                    flags: pathFlags
+                    flags: pathFlags,
+                    inputPrices
                 });
 
                 if (cost !== null && cost > 0) {
@@ -512,7 +526,8 @@ self.onmessage = function (e) {
                 useHighEnhancementCost: params.useHighEnhancementCost,
                 minLevel: params.minLevel,
                 enhancementParams: params.enhancementParams,
-                shopCosts: params.shopCosts
+                shopCosts: params.shopCosts,
+                inputPrices: params.inputPrices
             };
             const results = calculateItemValueBatch(params.items, shared);
             self.postMessage({ taskId, result: results });
@@ -678,8 +693,35 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
         if (shopCost > 0) shopCosts[item.itemHrid] = shopCost;
     }
 
+    // The inputs' prices, resolved here with the shared rule in the net-worth mode: the worker cannot
+    // call the resolver (no custom prices, shop or pricing settings over there), so it is handed numbers
+    const inputPrices = { material: {}, guarded: {}, base: {}, traineePrice: TRAINEE_SHOP_PRICE };
+    const resolveGuarded = (hrid) => {
+        if (hrid && !(hrid in inputPrices.guarded)) {
+            inputPrices.guarded[hrid] = priceGuarded(hrid, { context: 'networth' }).price;
+        }
+    };
+    resolveGuarded('/items/philosophers_mirror');
+    resolveGuarded('/items/mirror_of_protection');
+    for (const item of items) {
+        if (!((item.enhancementLevel || 0) >= 1)) continue;
+        const itemDetails = gameData.itemDetailMap[item.itemHrid];
+        if (!itemDetails || item.itemHrid in inputPrices.base) continue;
+        inputPrices.base[item.itemHrid] = priceBase(item.itemHrid, { context: 'networth' }).price;
+        resolveGuarded(item.itemHrid);
+        for (const protHrid of itemDetails.protectionItemHrids || []) resolveGuarded(protHrid);
+        for (const material of itemDetails.enhancementCosts || []) {
+            if (!(material.itemHrid in inputPrices.material)) {
+                inputPrices.material[material.itemHrid] = priceMaterial(material.itemHrid, {
+                    context: 'networth',
+                }).price;
+            }
+        }
+    }
+
     const shared = {
         priceMap: prunedPriceMap,
+        inputPrices,
         recipes,
         shopCosts,
         useHighEnhancementCost: configOptions.useHighEnhancementCost,

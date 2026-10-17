@@ -3,9 +3,49 @@ import { describe, expect, test, vi } from 'vitest';
 
 const pool = vi.hoisted(() => ({ script: null }));
 const shop = vi.hoisted(() => ({ costs: {} }));
+// What the main thread's shared input rule reads: this suite has no market feed, so the price map
+// each test hands the batch stands in for the book, and the recipes for the craft-cost walk
+const ctx = vi.hoisted(() => ({ priceMap: {}, recipes: {} }));
 
 // The shop's coin price is read off the game data, which this suite has none of
 vi.mock('./game-lookups.js', () => ({ getShopCoinCost: (hrid) => shop.costs[hrid] || 0 }));
+
+// The shared enhancement input rule, emulated over the test's own price map: the main thread resolves
+// every input with it and ships the figures to the worker, which is what these cases exercise
+vi.mock('./enhancement-input-pricing.js', async () => {
+    const { applyInflationGuard } = await import('./enhancement-pricing.js');
+    const sides = (hrid) => {
+        const positive = (value) => (value > 0 ? value : 0);
+        const ask = positive(ctx.priceMap[hrid + ':0_ask'] ?? ctx.priceMap[hrid + ':0']);
+        const bid = positive(ctx.priceMap[hrid + ':0_bid']);
+        return { ask, bid };
+    };
+    const craftCost = (hrid) => {
+        for (const recipe of Object.values(ctx.recipes)) {
+            const out = (recipe.outputItems || []).find((o) => o.itemHrid === hrid);
+            if (!out) continue;
+            let total = 0;
+            for (const input of recipe.inputItems || []) {
+                const { ask, bid } = sides(input.itemHrid);
+                total += (ask || bid) * input.count;
+            }
+            return total / (out.count || 1);
+        }
+        return 0;
+    };
+    const answer = (price) => ({ price: price > 0 ? price : null, unpriced: !(price > 0), estimated: false });
+    const guarded = (hrid) => answer(applyInflationGuard({ ...sides(hrid), productionCost: craftCost(hrid) }));
+    return {
+        priceMaterial: (hrid) => {
+            if (hrid.startsWith('/items/trainee_')) return answer(250_000);
+            if (hrid === '/items/coin') return answer(1);
+            const { ask, bid } = sides(hrid);
+            return answer(ask || bid || craftCost(hrid));
+        },
+        priceGuarded: guarded,
+        priceBase: guarded,
+    };
+});
 
 // The pool runs the real worker script in a vm sandbox instead of a Web Worker, so the test
 // drives the exact text the browser would ship.
@@ -38,6 +78,13 @@ vi.mock('./worker-pool.js', () => {
 
 const { calculateItemValueBatch, terminateItemValueWorkerPool } = await import('./networth-worker-manager.js');
 
+/** calculateItemValueBatch, with the shared rule's fake book pointed at this call's price map */
+async function runBatch(items, priceMap, configOptions, gameData) {
+    ctx.priceMap = priceMap;
+    ctx.recipes = gameData.actionDetailMap || {};
+    return calculateItemValueBatch(items, priceMap, configOptions, gameData);
+}
+
 const ITEM = '/items/sword';
 const itemDetailMap = {
     [ITEM]: {
@@ -48,7 +95,7 @@ const itemDetailMap = {
 };
 
 async function valueWith(enhancementParams) {
-    const [value] = await calculateItemValueBatch(
+    const [value] = await runBatch(
         [{ itemHrid: ITEM, enhancementLevel: 8, count: 1 }],
         { [`${ITEM}:0`]: 1000, [`${ITEM}:0_ask`]: 1000, [`${ITEM}:0_bid`]: 1000 },
         { useHighEnhancementCost: false, minLevel: 99, enhancementParams },
@@ -77,7 +124,7 @@ describe('networth enhancement materials with no market quote', () => {
     const prices = { [`${ITEM}:0`]: 1000, [`${ITEM}:0_ask`]: 1000, [`${ITEM}:0_bid`]: 1000 };
 
     const value = async (materials, actionDetailMap, priceMap = prices) => {
-        const [v] = await calculateItemValueBatch(
+        const [v] = await runBatch(
             [{ itemHrid: ITEM, enhancementLevel: 5, count: 1 }],
             priceMap,
             { useHighEnhancementCost: false, minLevel: 99, enhancementParams: params },
@@ -149,7 +196,7 @@ describe('networth enhancement path parity with the main thread', () => {
 
     const value = async (materials, priceMap, level = 5, shopCosts = {}) => {
         shop.costs = shopCosts;
-        const [v] = await calculateItemValueBatch(
+        const [v] = await runBatch(
             [{ itemHrid: ITEM, enhancementLevel: level, count: 1 }],
             priceMap,
             { useHighEnhancementCost: false, minLevel: 99, enhancementParams: params },

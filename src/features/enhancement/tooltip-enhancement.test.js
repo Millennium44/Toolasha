@@ -7,7 +7,7 @@
  * reconcile, and only a sum can catch that.
  */
 
-import { describe, test, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import * as mathjs from 'mathjs';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { calculateSuccessXP } from './enhancement-xp.js';
@@ -127,7 +127,7 @@ vi.mock('../../api/marketplace.js', () => ({
 // does for a plain book — a one-sided quote fills the other side, the mode picks the side, and a
 // settings.values.profitMode of 'optimistic' makes the buy side the bid
 const pricingModeOf = (context, side) => {
-    if (!context) return 'ask';
+    if (!context || context === 'networth') return 'ask';
     const mode = settings.values.profitCalc_pricingMode;
     return mode === 'optimistic' && side === 'buy' ? 'bid' : 'ask';
 };
@@ -804,6 +804,27 @@ describe('mirroring a refined piece', () => {
         const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
         expect(data.optimalStrategy.consumedItems.every((item) => item.itemHrid === ITEM)).toBe(true);
         expect(data.optimalStrategy.materialBill.filter((line) => line.kind === 'base')).toHaveLength(1);
+    });
+});
+
+describe('which pricing mode the inputs are priced in', () => {
+    afterEach(() => {
+        delete settings.values.profitCalc_pricingMode;
+    });
+
+    test('the profit mode moves the tooltip path; the net-worth context does not', () => {
+        const ask = calculateEnhancementPath(ITEM, 1, enhancingConfig).optimalStrategy.materialBreakdown[0].unitPrice;
+        expect(ask).toBe(5000);
+
+        settings.values.profitCalc_pricingMode = 'optimistic';
+        expect(calculateEnhancementPath(ITEM, 1, enhancingConfig).optimalStrategy.materialBreakdown[0].unitPrice).toBe(
+            4800
+        );
+        // Net worth keeps its own mode: the structure is shared, the profit setting is not
+        expect(
+            calculateEnhancementPath(ITEM, 1, enhancingConfig, { priceContext: 'networth' }).optimalStrategy
+                .materialBreakdown[0].unitPrice
+        ).toBe(5000);
     });
 });
 
