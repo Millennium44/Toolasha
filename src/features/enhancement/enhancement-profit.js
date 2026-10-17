@@ -12,7 +12,7 @@
  */
 
 import { MARKET_TAX } from '../../utils/profit-constants.js';
-import { getMirrorUsage, getProtectionUsage } from './enhancement-session.js';
+import { deriveUnpricedInput, getMirrorUsage, getProtectionUsage } from './enhancement-session.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 
 /**
@@ -26,17 +26,7 @@ import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
  * @returns {boolean}
  */
 export function hasUnpricedInput(session) {
-    if (session?.hasUnpricedInput === true) return true;
-    if (Object.values(session?.materialCosts || {}).some((m) => m.count > 0 && !(m.totalCost > 0))) return true;
-    const protections = getProtectionUsage(session);
-    if (protections.count > 0 && !(protections.cost > 0)) return true;
-    // A resumed or merged session can total a positive cost while one stored entry is still unpriced
-    if (session?.protectionBreakdown) {
-        const entries = Object.values(protections.breakdown || {});
-        if (entries.some((e) => e?.count > 0 && !(e?.totalCost > 0))) return true;
-    }
-    const mirrors = getMirrorUsage(session);
-    return mirrors.count > 0 && !(mirrors.cost > 0);
+    return deriveUnpricedInput(session);
 }
 
 /**

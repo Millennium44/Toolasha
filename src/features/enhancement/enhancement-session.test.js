@@ -6,7 +6,9 @@ import { describe, test, expect } from 'vitest';
 import {
     createSession,
     canExtendSession,
+    addMaterialCost,
     addProtectionCost,
+    deriveUnpricedInput,
     calibrationObservation,
     summedLegPredictions,
     canResumeSession,
@@ -1182,5 +1184,97 @@ describe('resuming starts a separately predicted leg', () => {
             [0, 400],
             [3, 60],
         ]);
+    });
+});
+
+describe('a flag-less legacy session that consumed an unpriced input', () => {
+    // Stored before `hasUnpricedInput` existed: the only trace is a material with units and no cost
+    const legacy = (over = {}) => {
+        const session = createSession('/items/test_sword', 'Test Sword', 0, 5, 2);
+        delete session.hasUnpricedInput;
+        session.materialCosts = {
+            '/items/holy_cheese': { count: 5, totalCost: 0 },
+            '/items/holy_milk': { count: 3, totalCost: 900 },
+        };
+        session.state = SessionState.ENDED;
+        session.endTime = 2000;
+        session.lastUpdateTime = 2000;
+        return Object.assign(session, over);
+    };
+
+    test('resuming and then pricing the same input keeps it flagged', () => {
+        const session = legacy();
+        expect(deriveUnpricedInput(session)).toBe(true);
+
+        resumeSession(session, 3000);
+        addMaterialCost(session, '/items/holy_cheese', 3, 100);
+
+        // The entry now totals 300 over 8 units, which reads as priced unless the flag was stamped
+        expect(session.materialCosts['/items/holy_cheese']).toEqual({ count: 8, totalCost: 300 });
+        expect(session.hasUnpricedInput).toBe(true);
+        expect(deriveUnpricedInput(session)).toBe(true);
+    });
+
+    test('a session that continues without a resume is stamped when the next unit is added', () => {
+        const session = legacy({ state: SessionState.TRACKING });
+
+        addMaterialCost(session, '/items/holy_cheese', 3, 100);
+
+        expect(session.hasUnpricedInput).toBe(true);
+    });
+
+    test('a priced legacy session stays unflagged through a resume and more priced units', () => {
+        const session = legacy();
+        session.materialCosts['/items/holy_cheese'] = { count: 5, totalCost: 500 };
+
+        resumeSession(session, 3000);
+        addMaterialCost(session, '/items/holy_cheese', 3, 100);
+
+        expect(session.hasUnpricedInput).not.toBe(true);
+        expect(deriveUnpricedInput(session)).toBe(false);
+    });
+
+    test('an unpriced protection followed by a priced one resumes flagged too', () => {
+        const session = legacy({ protectionCount: 3, protectionCost: 0 });
+        session.materialCosts = {};
+
+        resumeSession(session, 3000);
+        addProtectionCost(session, '/items/mirror_of_protection', 1000);
+
+        expect(session.protectionCost).toBe(1000);
+        expect(session.hasUnpricedInput).toBe(true);
+    });
+
+    test('folding it into a priced newest run, or a priced run into it, keeps the flag', () => {
+        const priced = () => {
+            const session = legacy();
+            session.materialCosts = { '/items/holy_cheese': { count: 4, totalCost: 400 } };
+            return session;
+        };
+        const older = legacy({ id: 'older', startTime: 1000 });
+        const newest = Object.assign(priced(), { id: 'newest', startTime: 2000, state: SessionState.TRACKING });
+        const merged = foldSessions([older, newest]);
+        expect(merged.materialCosts['/items/holy_cheese']).toEqual({ count: 9, totalCost: 400 });
+        expect(merged.hasUnpricedInput).toBe(true);
+
+        const pricedOlder = Object.assign(priced(), { id: 'p-older', startTime: 1000 });
+        const legacyNewest = legacy({ id: 'l-newest', startTime: 2000, state: SessionState.TRACKING });
+        const merged2 = foldSessions([pricedOlder, legacyNewest]);
+        expect(merged2.hasUnpricedInput).toBe(true);
+
+        const bothPriced = foldSessions([
+            Object.assign(priced(), { id: 'a', startTime: 1000 }),
+            Object.assign(priced(), { id: 'b', startTime: 2000, state: SessionState.TRACKING }),
+        ]);
+        expect(bothPriced.hasUnpricedInput).toBe(false);
+    });
+
+    test('an aggregate of a legacy unpriced run and a priced run is flagged', () => {
+        const priced = legacy();
+        priced.materialCosts = { '/items/holy_cheese': { count: 4, totalCost: 400 } };
+
+        const agg = mergeSessions([legacy(), priced]);
+
+        expect(agg.hasUnpricedInput).toBe(true);
     });
 });
