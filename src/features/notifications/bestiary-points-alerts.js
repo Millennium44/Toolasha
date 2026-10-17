@@ -115,6 +115,10 @@ class BestiaryPointsAlerts {
         this.armed = false;
         /** The target value the alert last fired for (stored, so a reload stays disarmed); null if none */
         this.firedTarget = null;
+        /** Bumped by every re-arm, so a stored firedTarget read before one is not applied after it */
+        this.rearmGeneration = 0;
+        /** True once a real `monsters_updated` reading has landed since the alert started */
+        this.realSeen = false;
     }
 
     /**
@@ -169,9 +173,15 @@ class BestiaryPointsAlerts {
 
         // The target already announced, so an estimated crossing is not announced again after a reload
         const firedWho = dataManager.getCurrentCharacterId?.();
+        const generation = this.rearmGeneration;
         const fired = await readScoped(FIRED_KEY, 'settings', null);
         if (!this.isInitialized || dataManager.getCurrentCharacterId?.() !== firedWho) return;
-        if (typeof fired === 'number' && Number.isFinite(fired)) this.firedTarget = fired;
+        // A re-arm that landed while the read was pending is newer than what was stored
+        if (generation === this.rearmGeneration && typeof fired === 'number' && Number.isFinite(fired)) {
+            this.firedTarget = fired;
+        }
+        // A real reading that landed while the stored target was being read could not re-arm against it yet
+        if (this.realSeen && this.real) this._rearmIfUnder(this.real, firedWho);
 
         // A reading already held this session, else the one kept from the last page load
         const held = dataManager.getCharacterMonsters?.();
@@ -179,6 +189,7 @@ class BestiaryPointsAlerts {
         if (Array.isArray(held) && held !== stopped?.snapshot) {
             this.stoppedOn = null;
             this.real = countsByMonster(held);
+            this._rearmIfUnder(this.real, firedWho);
             // Kept too: the alert may start after the reading it is built on (the planner's fetch)
             writeScoped(BASELINE_KEY, this.real, 'settings').catch(() => {});
         } else if (!stopped) {
@@ -199,18 +210,29 @@ class BestiaryPointsAlerts {
     async onReading(monsters) {
         if (!Array.isArray(monsters)) return;
         this.real = countsByMonster(monsters);
+        this.realSeen = true;
         this.credits = {};
         this.stoppedOn = null;
         const who = dataManager.getCurrentCharacterId?.();
         if (who) writeScoped(BASELINE_KEY, this.real, 'settings').catch(() => {});
-        // The estimate fired early: a real reading still under that target says the crossing has not happened,
-        // so the alert re-arms for the real one (a second "reached" message is the accepted cost)
-        if (this.firedTarget !== null && totalBestiaryPoints(this.real) < this.firedTarget) {
-            this.firedTarget = null;
-            this.seenTarget = null;
-            if (who) writeScoped(FIRED_KEY, null, 'settings').catch(() => {});
-        }
+        this._rearmIfUnder(this.real, who);
         await this.check(true);
+    }
+
+    /**
+     * The estimate fired early: a real reading still under that target says the crossing has not happened, so
+     * the alert re-arms for the real one (a second "reached" message is the accepted cost). Only for a REAL
+     * reading, never for the stored baseline an estimated crossing is deliberately remembered against.
+     * @param {Object} counts - monsterHrid -> count from a real reading
+     * @param {string|undefined} who - Character id, for the persisted key
+     */
+    _rearmIfUnder(counts, who) {
+        if (this.firedTarget === null || !(totalBestiaryPoints(counts) < this.firedTarget)) return;
+        this.firedTarget = null;
+        this.seenTarget = null;
+        // A stored value read before this moment must not bring the old target back
+        this.rearmGeneration += 1;
+        if (who) writeScoped(FIRED_KEY, null, 'settings').catch(() => {});
     }
 
     /**
