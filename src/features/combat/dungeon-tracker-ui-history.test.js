@@ -46,7 +46,7 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
 vi.mock('./dungeon-tracker-chat-annotations.js', () => ({
     default: { refreshRunCounts: vi.fn(async () => {}) },
 }));
-vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00' }));
+vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00', timeReadable: (s) => String(s) }));
 vi.mock('../../utils/csv-export.js', async (importOriginal) => {
     const actual = await importOriginal();
     return { ...actual, downloadFile: vi.fn() };
