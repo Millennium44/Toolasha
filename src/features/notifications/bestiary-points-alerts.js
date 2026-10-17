@@ -319,7 +319,13 @@ class BestiaryPointsAlerts {
         const result = notificationService.notify(
             `${EVENT_KEY_PREFIX}:${target}`,
             `Bestiary: ${shown} points — target ${formatWithSeparator(target)} reached${real ? '' : ' (estimated from kills)'}.`,
-            { title: 'Bestiary target reached', subject: `${formatWithSeparator(target)} points` }
+            {
+                title: 'Bestiary target reached',
+                subject: `${formatWithSeparator(target)} points`,
+                // A real reading confirms the crossing: it must not be swallowed by the cooldown an earlier
+                // estimated alert for the same target started. Repeats are already stopped by `armed`.
+                ...(real ? { cooldownMs: 0 } : {}),
+            }
         );
         if (result?.fired) {
             this.armed = false;

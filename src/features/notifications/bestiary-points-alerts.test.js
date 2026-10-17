@@ -20,6 +20,7 @@ const game = vi.hoisted(() => ({
     dm: {},
     wire: {},
     notified: [],
+    lastFired: new Map(),
     readGate: null,
     requests: 0,
     fiberTouched: 0,
@@ -77,7 +78,14 @@ vi.mock('../../utils/character-key.js', () => ({
 }));
 vi.mock('./notification-service.js', () => ({
     default: {
+        // Honors the real service's per-key cooldown (10 minutes by default)
         notify: (key, message, options) => {
+            const now = Date.now();
+            const last = game.lastFired.get(key);
+            if (last !== undefined && now >= last && now - last < (options?.cooldownMs ?? 600_000)) {
+                return { fired: false, channels: [], reason: 'cooldown' };
+            }
+            game.lastFired.set(key, now);
             game.notified.push({ key, message, options });
             return { fired: true, channels: ['toast'] };
         },
@@ -162,6 +170,7 @@ describe('bestiary points alerts', () => {
         game.dm = {};
         game.wire = {};
         game.notified = [];
+        game.lastFired = new Map();
         game.readGate = null;
         game.requests = 0;
         game.fiberTouched = 0;
