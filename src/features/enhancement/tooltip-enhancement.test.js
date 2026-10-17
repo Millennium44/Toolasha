@@ -123,7 +123,25 @@ vi.mock('../../api/marketplace.js', () => ({
     default: { on: (cb) => priceListeners.push(cb), getPrice: (hrid) => prices[hrid] || null },
 }));
 
+// The profit resolver reads the book through getItemPriceInfo; this answers it the way the real one
+// does for a plain book — a one-sided quote fills the other side, the mode picks the side, and a
+// settings.values.profitMode of 'optimistic' makes the buy side the bid
+const pricingModeOf = (context, side) => {
+    if (!context) return 'ask';
+    const mode = settings.values.profitCalc_pricingMode;
+    return mode === 'optimistic' && side === 'buy' ? 'bid' : 'ask';
+};
 vi.mock('../../utils/market-data.js', () => ({
+    getPricingMode: pricingModeOf,
+    getItemPriceInfo: (hrid, { mode, context, side = 'sell' } = {}) => {
+        const quote = prices[hrid];
+        if (!quote) return { price: null, source: null, estimated: false };
+        const ask = quote.ask > 0 ? quote.ask : quote.bid > 0 ? quote.bid : null;
+        const bid = quote.bid > 0 ? quote.bid : ask;
+        if (ask === null) return { price: null, source: null, estimated: false };
+        const price = (mode || pricingModeOf(context, side)) === 'bid' ? bid : ask;
+        return { price, source: 'book', estimated: false };
+    },
     getItemPrice: (hrid) => prices[hrid]?.ask ?? 0,
     getItemPrices: (hrid, level) =>
         level === 0 ? (prices[hrid] ?? null) : (enhancedPrices[`${hrid}::${level}`] ?? null),
@@ -133,6 +151,9 @@ vi.mock('../../utils/tea-parser.js', () => ({
     parseArtisanBonus: () => 0,
     getDrinkConcentration: () => 0,
 }));
+
+vi.mock('../settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
+vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
 
 let calculateEnhancementPath;
 let buildEnhancementTooltipHTML;
@@ -767,14 +788,14 @@ describe('mirroring a refined piece', () => {
     });
 
     test('says what the primary copy costs inside the total, even when the +0 quote differs', () => {
-        // Setting off: level 0 is the realistic price (the bid, 100) while every enhanced row
-        // carries the ask (200). The primary leaf is at +1 or higher, so the total holds the ask
-        // for it, and anything taking that copy back out has to take the ask, not the bill's +0
+        // Setting off: level 0 and the base row both read the one guarded price (the bid, 100: the
+        // ask is over 1.3x it) while every enhanced row carries the ask (200). Whatever the total
+        // holds for the primary copy is what anything taking it back out has to take
         const strategy = calculateEnhancementPath(SPREAD, 8, enhancingConfig).optimalStrategy;
         expect(strategy.usedMirror).toBe(true);
 
         const traditionalBase = calculateEnhancementPath(SPREAD, 1, enhancingConfig).optimalStrategy.baseCost;
-        expect(traditionalBase).toBe(200);
+        expect(traditionalBase).toBe(100);
         expect(strategy.materialBill.find((line) => line.kind === 'base').unitPrice).toBe(100);
         expect(strategy.primaryBaseCost).toBe(traditionalBase);
     });

@@ -43,13 +43,18 @@ import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 // The pricing rules moved to utils so the sim's advisor and the inventory savings card — each
 // in a bundle that cannot reach this module — could stop carrying their own drifted copies.
 // Re-exported below because this module's own callers import them from here.
+import { getProductionCost } from '../../utils/enhancement-pricing.js';
+// The profit-mode input rule (custom prices, shop floor, the player's pricing mode) shared with the
+// panel, the advisor, the score and the net-worth map; the raw-book helpers stay in enhancement-pricing
 import {
     getEnhancementMaterialPrice,
-    perAttemptMaterialCost,
-    getProductionCost,
     getRealisticBaseItemPrice,
     getCheapestProtectionPrice,
-} from '../../utils/enhancement-pricing.js';
+    perAttemptMaterialCost,
+    priceBase,
+    priceGuarded,
+    priceMirror,
+} from '../../utils/enhancement-input-pricing.js';
 
 export { getEnhancementMaterialPrice, getProductionCost, getRealisticBaseItemPrice, getCheapestProtectionPrice };
 
@@ -141,10 +146,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
     // levels it actually builds, and there is nowhere else that number survives
     const targetProtections = new Array(currentEnhancementLevel + 1);
-    targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
-        ? Math.min(getProductionCost(itemHrid) || Infinity, getItemPrices(itemHrid, 0)?.ask || Infinity) ||
-          getRealisticBaseItemPrice(itemHrid)
-        : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
+    targetCosts[0] = priceBase(itemHrid).price || 0; // Level 0: base item
     targetTimes[0] = 0; // Level 0: no time needed
     targetAttempts[0] = 0; // Level 0: no attempts needed
     targetProtections[0] = 0; // Level 0: nothing to protect
@@ -433,23 +435,16 @@ function priceEnhancementInputs(itemHrid, itemDetails) {
         protectionInfo.price > 0 ? [{ itemHrid: protectionInfo.itemHrid, price: protectionInfo.price }] : [];
     let protectionBidPrice = 0;
     if (protectionInfo.price > 0) {
-        const protPrices = getItemPrices(protectionInfo.itemHrid, 0);
-        protectionBidPrice = protPrices?.bid > 0 ? protPrices.bid : protectionInfo.price;
+        protectionBidPrice = priceGuarded(protectionInfo.itemHrid, { mode: 'bid' }).price || protectionInfo.price;
     }
 
-    // Base item cost (initial investment) — market price or min(crafting, market) per setting
-    const craftingCostAsk = getProductionCost(itemHrid, 'ask');
-    const craftingCostBid = getProductionCost(itemHrid, 'bid');
-    const baseItemPrices = getItemPrices(itemHrid, 0);
-    const marketAsk = baseItemPrices?.ask > 0 ? baseItemPrices.ask : 0;
-    const marketBid = baseItemPrices?.bid > 0 ? baseItemPrices.bid : 0;
-    const useCraftingCost = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
-    // Ask drives the decision: use crafted if ask is missing OR crafted ask is cheaper
-    const askIsCrafted = useCraftingCost && craftingCostAsk > 0 && (marketAsk === 0 || craftingCostAsk < marketAsk);
-    const baseAskPrice = askIsCrafted ? craftingCostAsk : marketAsk || getRealisticBaseItemPrice(itemHrid);
-    const baseBidPrice = askIsCrafted
-        ? craftingCostBid || craftingCostAsk
-        : marketBid || getProductionCost(itemHrid, 'bid') || getRealisticBaseItemPrice(itemHrid);
+    // Base item cost (initial investment): the guarded profit-mode price, or the cheaper of that and
+    // the craft cost per the setting; the bid column reads the same chain with the bid forced
+    const askBase = priceBase(itemHrid);
+    const bidBase = priceBase(itemHrid, { mode: 'bid' });
+    const askIsCrafted = askBase.crafted;
+    const baseAskPrice = askBase.price || 0;
+    const baseBidPrice = bidBase.price || baseAskPrice;
 
     // The base item is paid once whatever happens, so an unpriced one understates every level
     if (!(baseAskPrice > 0)) pricesPartial = true;
@@ -941,9 +936,9 @@ export function buildEnhancementTooltipHTML(enhancementData) {
 
         // Philosopher's Mirror row
         if (optimalStrategy.philosopherMirrorCost > 0 && optimalStrategy.mirrorCount > 0) {
-            const mirrorPrices = getItemPrices('/items/philosophers_mirror', 0);
-            const mirrorAsk = mirrorPrices?.ask > 0 ? mirrorPrices.ask : 0;
-            const mirrorBid = mirrorPrices?.bid > 0 ? mirrorPrices.bid : 0;
+            // The same guarded profit-mode mirror price the plan above was costed with
+            const mirrorAsk = priceMirror().price || 0;
+            const mirrorBid = priceMirror({ mode: 'bid' }).price || 0;
             totalAsk += mirrorAsk * optimalStrategy.mirrorCount;
             totalBid += mirrorBid * optimalStrategy.mirrorCount;
             consumedRows.push({

@@ -81,7 +81,7 @@ import { describeEnhancementSource, enhancementParamsFor } from '../enhancement/
 // The one enhancement cost model: the shared protect-from sweep, and the shared
 // pricing rules. This card used to carry its own copy of both.
 import { cheapestProtectPlan } from '../../utils/enhancement-protect-sweep.js';
-import { getCheapestProtectionPrice, perAttemptMaterialCost } from '../../utils/enhancement-pricing.js';
+import { getCheapestProtectionPrice, perAttemptMaterialCost } from '../../utils/enhancement-input-pricing.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { roomSkill } from '../../utils/room-skills.js';

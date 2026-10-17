@@ -132,7 +132,12 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (itemHrid, enhancementLevel = 0) => game.navigations.push({ itemHrid, enhancementLevel }),
 }));
-vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getItemHridFromName: () => null }));
+vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
+    getShopCoinCost: () => 0,
+    getItemHridFromName: () => null,
+}));
+vi.mock('../settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
 // Kept rather than discarded, so the tile's own `version()` — which is what
 // spares the overlay this module's whole render sixty times a minute — can be
 // tested against the same fixtures the arithmetic is
@@ -154,6 +159,13 @@ vi.mock('../networth/networth-history.js', () => ({
     default: { recentSeries: (hours) => game.networthSeries(hours) },
 }));
 vi.mock('../../utils/market-data.js', () => ({
+    getPricingMode: () => 'ask',
+    // The profit resolver's book read: a one-sided quote fills the other side
+    getItemPriceInfo: (hrid) => {
+        const quote = game.prices[`${hrid}:0`];
+        const price = quote?.ask > 0 ? quote.ask : quote?.bid > 0 ? quote.bid : null;
+        return { price, source: price === null ? null : 'book', estimated: false };
+    },
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
     // The shared pricing rules fall back to a production cost when a book has
     // neither side, and that walk prices the recipe's inputs through here
