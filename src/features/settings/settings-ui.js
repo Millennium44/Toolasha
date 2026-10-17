@@ -2513,6 +2513,11 @@ class SettingsUI {
         if (input.classList.contains('toolasha-color-text-input')) {
             const picker = document.getElementById(input.id.replace(/_text$/, ''));
             if (!picker) return;
+            // A locked color must not show a typed value that was never saved
+            if (ironCowMode.isEnabled() && IRON_COW_SETTINGS.has(picker.id)) {
+                input.value = picker.value;
+                return;
+            }
             const normalized = normalizeHexColor(input.value);
             if (!normalized) {
                 input.value = picker.value;
