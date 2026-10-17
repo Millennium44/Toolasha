@@ -961,6 +961,7 @@ describe('MarketAPI endpoint origin', () => {
         'https://www.milkywayidle.com',
         'https://test.milkywayidle.com',
         'https://www.milkywayidlecn.com',
+        'https://milkywayidlecn.com',
         'https://test.milkywayidlecn.com',
     ])('%s reads its own copy', async (origin) => {
         globalThis.location = { origin, hostname: new URL(origin).hostname };
