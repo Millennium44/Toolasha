@@ -31,6 +31,21 @@ function tokensLabel(tokens) {
     return `Tokens (in inventory): ${networthFormatter(Math.round(tokens?.value || 0))}`;
 }
 
+/** Marks a figure that counts a crafting bill with an input nothing can price */
+const PARTIAL_MARK = ' *';
+
+/**
+ * The line that explains the asterisk: how many counted items rest on a partial crafting bill.
+ * @param {{count: number, names: string[]}} partial - Partial summary from the calculator
+ * @returns {string} HTML string
+ */
+function partialNetworthNote(partial) {
+    const shown = partial.names.slice(0, 5).map(escapeHtml).join(', ');
+    const more = partial.names.length > 5 ? `, +${partial.names.length - 5} more` : '';
+    const noun = partial.count === 1 ? 'item is' : 'items are';
+    return `<div style="margin-top: 4px; font-size: 0.75rem; color: #999;" title="${shown}${more}">* ${partial.count} ${noun} valued on a crafting cost with an unpriced input, so the total is a floor</div>`;
+}
+
 /**
  * Escape text for an HTML attribute or body.
  * @param {string} text - Raw text
@@ -378,7 +393,9 @@ class NetworthInventoryDisplay {
             }
         });
 
-        const totalNetworth = networthFormatter(Math.round(networthData.totalNetworth));
+        const partialCount = networthData.partial?.count ?? 0;
+        const totalNetworth = `${networthFormatter(Math.round(networthData.totalNetworth))}${partialCount > 0 ? PARTIAL_MARK : ''}`;
+        const partialNote = partialCount > 0 ? partialNetworthNote(networthData.partial) : '';
         const showChartBtn = config.getSetting('networth_historyChart');
         const showGoldSourcesBtn = config.getSetting('networth_goldSources');
         const ca = networthData.currentAssets;
@@ -441,6 +458,7 @@ class NetworthInventoryDisplay {
                 ">🔧</span>
             </div>
             <div id="mwi-networth-details" style="display: none; margin-left: 20px;">
+                ${partialNote}
                 ${
                     showCurrentAssets
                         ? `
@@ -761,7 +779,7 @@ class NetworthInventoryDisplay {
 
         return breakdown
             .map((item) => {
-                return `${item.name}: ${networthFormatter(Math.round(item.value))}`;
+                return `${item.name}: ${networthFormatter(Math.round(item.value))}${item.partial ? PARTIAL_MARK : ''}`;
             })
             .join('\n');
     }
@@ -779,7 +797,7 @@ class NetworthInventoryDisplay {
         return breakdown
             .map((listing) => {
                 const typeLabel = listing.isSell ? 'Sell' : 'Buy';
-                return `${listing.name} (${typeLabel}): ${networthFormatter(Math.round(listing.value))}`;
+                return `${listing.name} (${typeLabel}): ${networthFormatter(Math.round(listing.value))}${listing.partial ? PARTIAL_MARK : ''}`;
             })
             .join('\n');
     }
@@ -814,7 +832,7 @@ class NetworthInventoryDisplay {
                     if (item.unpriced) {
                         return `<div>${item.name} x${formatKMB(item.count)}: no price</div>`;
                     }
-                    return `<div>${item.name} x${formatKMB(item.count)}: ${networthFormatter(Math.round(item.value))}</div>`;
+                    return `<div>${item.name} x${formatKMB(item.count)}: ${networthFormatter(Math.round(item.value))}${item.partial ? PARTIAL_MARK : ''}</div>`;
                 })
                 .join('');
 
@@ -862,7 +880,7 @@ class NetworthInventoryDisplay {
         this.setupToggle(
             'mwi-networth-toggle',
             'mwi-networth-details',
-            `Net Worth: ${networthFormatter(Math.round(networthData.totalNetworth))}`
+            `Net Worth: ${networthFormatter(Math.round(networthData.totalNetworth))}${networthData.partial?.count > 0 ? PARTIAL_MARK : ''}`
         );
 
         // Chart button

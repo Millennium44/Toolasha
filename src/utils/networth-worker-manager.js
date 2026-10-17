@@ -45,9 +45,11 @@ const applyMirrorOptimization = ${applyMirrorOptimization.toString()};
  * @param {string} itemHrid - Item HRID
  * @param {Object} priceMap - Price map
  * @param {Object} recipes - Action detail map from game data
+ * @param {Object} [flags] - When given, flags.partial is set true if any input (or the upgrade item)
+ *   could not be priced even by its own production cost: the figure then understates the item
  * @returns {number} Production cost
  */
-function calculateProductionCost(itemHrid, priceMap, recipes) {
+function calculateProductionCost(itemHrid, priceMap, recipes, flags) {
     // The recipe index is built on the main thread from the same any-output
     // rule calculateCraftingCost uses, and carries the matched output's count
     const action = recipes[itemHrid] || null;
@@ -73,8 +75,9 @@ function calculateProductionCost(itemHrid, priceMap, recipes) {
 
             // Recursively calculate production cost if no market price (matches main thread)
             if (inputPrice === 0) {
-                inputPrice = calculateProductionCost(input.itemHrid, priceMap, recipes);
+                inputPrice = calculateProductionCost(input.itemHrid, priceMap, recipes, flags);
             }
+            if (flags && !(inputPrice > 0) && input.count > 0) flags.partial = true;
 
             totalPrice += inputPrice * input.count;
         }
@@ -91,8 +94,9 @@ function calculateProductionCost(itemHrid, priceMap, recipes) {
 
         // Recursively calculate production cost if no market price (matches main thread)
         if (upgradePrice === 0) {
-            upgradePrice = calculateProductionCost(action.upgradeItemHrid, priceMap, recipes);
+            upgradePrice = calculateProductionCost(action.upgradeItemHrid, priceMap, recipes, flags);
         }
+        if (flags && !(upgradePrice > 0)) flags.partial = true;
 
         totalPrice += upgradePrice;
     }
@@ -382,10 +386,14 @@ function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes) {
  * main thread (an openable's expected value never reaches an enhanced piece). Without the shop
  * step a shop-sold piece with no market quote was worth 0 here and its shop price there.
  */
-function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts) {
+function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags) {
     let basePrice = priceMap[itemHrid + ':0'] || 0;
     if (basePrice === 0) {
-        basePrice = calculateProductionCost(itemHrid, priceMap, recipes);
+        // A craft cost that skipped an unpriced input is a partial bill: still the value (the
+        // main thread counts the priced inputs too), but reported so the display can say so
+        const flags = { partial: false };
+        basePrice = calculateProductionCost(itemHrid, priceMap, recipes, flags);
+        if (basePrice > 0 && outFlags) outFlags.partial = flags.partial;
     }
     if (!(basePrice > 0)) {
         basePrice = (shopCosts && shopCosts[itemHrid]) || 0;
@@ -403,6 +411,7 @@ function calculateItemValue(data) {
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
 
     let itemValue = 0;
+    const flags = { partial: false };
 
     // For enhanced items (1+)
     if (enhancementLevel >= 1) {
@@ -422,7 +431,7 @@ function calculateItemValue(data) {
                 itemValue = cost;
             } else {
                 // Fallback to base item price, production cost or shop price
-                itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts);
+                itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags);
             }
         } else {
             // Normal logic: try market price first
@@ -444,16 +453,16 @@ function calculateItemValue(data) {
                 if (cost !== null && cost > 0) {
                     itemValue = cost;
                 } else {
-                    itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts);
+                    itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags);
                 }
             }
         }
     } else {
         // Unenhanced items: use market price or production cost
-        itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts);
+        itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags);
     }
 
-    return { itemIndex, value: itemValue * count };
+    return { itemIndex, value: itemValue * count, partial: flags.partial };
 }
 
 /**
@@ -531,6 +540,7 @@ async function getWorkerPool() {
  * @param {Object} priceMap - Price map for all items
  * @param {Object} config - Configuration options
  * @param {Object} gameData - Game data with item details
+ * @param {Set<number>} [partialOut] - Receives the indexes of items valued on a partial crafting bill
  * @returns {Promise<Array>} Array of values in same order as input
  */
 /**
@@ -571,7 +581,7 @@ function recipeIndexFor(actionDetailMap) {
     return index;
 }
 
-export async function calculateItemValueBatch(items, priceMap, configOptions, gameData) {
+export async function calculateItemValueBatch(items, priceMap, configOptions, gameData, partialOut = null) {
     const pool = await getWorkerPool();
 
     const recipeIndex = recipeIndexFor(gameData.actionDetailMap || {});
@@ -681,6 +691,11 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
     // Flatten results and sort by itemIndex to maintain order
     const flatResults = results.flat();
     flatResults.sort((a, b) => a.itemIndex - b.itemIndex);
+
+    // Which items are partial crafting bills (indexes into `items`), for a caller that asks
+    if (partialOut) {
+        for (const r of flatResults) if (r.partial) partialOut.add(r.itemIndex);
+    }
 
     // Extract just the values
     return flatResults.map((r) => r.value);
