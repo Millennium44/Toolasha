@@ -5,10 +5,17 @@ const pool = vi.hoisted(() => ({ script: null }));
 const shop = vi.hoisted(() => ({ costs: {} }));
 // What the main thread's shared input rule reads: this suite has no market feed, so the price map
 // each test hands the batch stands in for the book, and the recipes for the craft-cost walk
+const yielded = vi.hoisted(() => ({ count: 0 }));
 const ctx = vi.hoisted(() => ({ priceMap: {}, recipes: {} }));
 
 // The shop's coin price is read off the game data, which this suite has none of
 vi.mock('./game-lookups.js', () => ({ getShopCoinCost: (hrid) => shop.costs[hrid] || 0 }));
+
+vi.mock('./yield-to-browser.js', () => ({
+    yieldToBrowser: async () => {
+        yielded.count++;
+    },
+}));
 
 // The shared enhancement input rule, emulated over the test's own price map: the main thread resolves
 // every input with it and ships the figures to the worker, which is what these cases exercise
@@ -185,6 +192,82 @@ describe('networth enhancement materials with no market quote', () => {
         const quoted = await value([{ itemHrid: MAT, count: 10 }], {}, priceMap);
 
         expect(quoted).toBe(1000);
+    });
+});
+
+describe('resolving the shipped input prices', () => {
+    test('hands the browser a frame while it works through a long batch', async () => {
+        yielded.count = 0;
+        let now = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 20));
+        try {
+            const hrids = ['/items/a', '/items/b', '/items/c', '/items/d'];
+            const itemDetailMap = Object.fromEntries(
+                hrids.map((hrid) => [hrid, { itemLevel: 10, enhancementCosts: [], protectionItemHrids: [] }])
+            );
+            await runBatch(
+                hrids.map((itemHrid) => ({ itemHrid, enhancementLevel: 5, count: 1 })),
+                {},
+                { useHighEnhancementCost: false, minLevel: 99, enhancementParams: {} },
+                { itemDetailMap, actionDetailMap: {} }
+            );
+        } finally {
+            clock.mockRestore();
+        }
+        expect(yielded.count).toBeGreaterThan(0);
+    });
+});
+
+describe('the worker with nothing shipped', () => {
+    test('a trainee charm still costs the shop price, not nothing', async () => {
+        // Run any batch so the worker source is captured, then hand the worker a task that carries no
+        // inputPrices at all (an older caller, a test): it must fall back to the shop constant
+        const params = { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1 };
+        const priceMap = { [`${ITEM}:0`]: 1000, [`${ITEM}:0_ask`]: 1000, [`${ITEM}:0_bid`]: 1000 };
+        await runBatch(
+            [{ itemHrid: ITEM, enhancementLevel: 5, count: 1 }],
+            priceMap,
+            { useHighEnhancementCost: false, minLevel: 99, enhancementParams: params },
+            {
+                itemDetailMap: { [ITEM]: { itemLevel: 10, enhancementCosts: [], protectionItemHrids: [] } },
+                actionDetailMap: {},
+            }
+        );
+
+        const posted = [];
+        const sandbox = { self: { postMessage: (message) => posted.push(message) }, console };
+        vm.runInNewContext(pool.script, sandbox);
+        sandbox.self.onmessage({
+            data: {
+                taskId: 1,
+                data: {
+                    action: 'calculateBatch',
+                    params: {
+                        items: [
+                            {
+                                itemIndex: 0,
+                                item: { itemHrid: ITEM, enhancementLevel: 5, count: 1 },
+                                itemDetails: {
+                                    itemLevel: 10,
+                                    enhancementCosts: [{ itemHrid: '/items/trainee_charm', count: 1 }],
+                                    protectionItemHrids: [],
+                                },
+                            },
+                        ],
+                        priceMap,
+                        recipes: {},
+                        shopCosts: {},
+                        useHighEnhancementCost: false,
+                        minLevel: 99,
+                        enhancementParams: params,
+                    },
+                },
+            },
+        });
+
+        expect(posted[0].error).toBeUndefined();
+        // At least one attempt at 250,000 on top of the 1,000 base
+        expect(posted[0].result[0].value).toBeGreaterThan(250_000);
     });
 });
 

@@ -12,6 +12,7 @@ import {
 } from './enhancement-calculator.js';
 import { createMatrixMath } from './matrix-inverse.js';
 import { getShopCoinCost } from './game-lookups.js';
+import { yieldToBrowser } from './yield-to-browser.js';
 import { TRAINEE_SHOP_PRICE } from './enhancement-pricing.js';
 import { priceBase, priceGuarded, priceMaterial } from './enhancement-input-pricing.js';
 
@@ -154,7 +155,7 @@ function calculateEnhancementCost(params) {
                     materialPrice = inputPrices.material[material.itemHrid] || 0;
                     if (!(materialPrice > 0) && material.count > 0) hasUnpricedMaterial = true;
                 } else if (material.itemHrid.startsWith('/items/trainee_')) {
-                    materialPrice = (inputPrices && inputPrices.traineePrice) || 0;
+                    materialPrice = (inputPrices && inputPrices.traineePrice) || ${TRAINEE_SHOP_PRICE};
                 } else if (material.itemHrid === '/items/coin') {
                     materialPrice = 1; // Coins have face value of 1
                 } else {
@@ -703,10 +704,17 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
     };
     resolveGuarded('/items/philosophers_mirror');
     resolveGuarded('/items/mirror_of_protection');
+    // A big inventory is hundreds of distinct pieces; the resolving hands the browser a frame on a
+    // clock, like the price-map flatten that feeds this batch
+    let sliceStart = performance.now();
     for (const item of items) {
         if (!((item.enhancementLevel || 0) >= 1)) continue;
         const itemDetails = gameData.itemDetailMap[item.itemHrid];
         if (!itemDetails || item.itemHrid in inputPrices.base) continue;
+        if (performance.now() - sliceStart > 12) {
+            await yieldToBrowser();
+            sliceStart = performance.now();
+        }
         inputPrices.base[item.itemHrid] = priceBase(item.itemHrid, { context: 'networth' }).price;
         resolveGuarded(item.itemHrid);
         for (const protHrid of itemDetails.protectionItemHrids || []) resolveGuarded(protHrid);

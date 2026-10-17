@@ -51,6 +51,8 @@ const NETWORTH_RECALC_SETTINGS = [
     // Labyrinth tokens are priced through the profit calculator's pricing settings
     'profitCalc_pricingMode',
     'profitCalc_patientTickSell',
+    // A base item can be priced at its craft cost, which moves every enhanced piece valued by cost
+    'enhanceSim_baseItemCraftingCost',
     IRONCOW_VALUATION_SETTING,
 ];
 

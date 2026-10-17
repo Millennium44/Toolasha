@@ -35,7 +35,7 @@ import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
-import { getCustomPriceVersion } from '../settings/custom-price-overrides.js';
+import { validateNetworthCache } from './networth-cache-validation.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
@@ -1031,12 +1031,9 @@ export async function calculateNetworth() {
     }
 
     // Invalidate cache if market data changed (wrap for cache compatibility)
-    // The enhancement costs it holds are priced from the net-worth mode and the player's custom prices
-    // as well as the book, so a change in either empties it too
-    networthCache.checkAndInvalidate(
-        { marketData: marketAPI.marketData, pricePatchs: marketAPI.pricePatchs },
-        `${config.getSettingValue('networth_pricingMode') || 'ask'}|${getCustomPriceVersion()}`
-    );
+    // The enhancement costs it holds are priced from the net-worth mode, the custom prices and the
+    // base-crafting setting as well as the book, so a change in any of them empties it too
+    validateNetworthCache();
 
     const characterItems = gameData.characterItems || [];
     const marketListings = gameData.myMarketListings || [];

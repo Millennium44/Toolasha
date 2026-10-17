@@ -260,6 +260,7 @@ describe('pricing settings', () => {
             'guildTokenCreditRate',
             'profitCalc_pricingMode',
             'profitCalc_patientTickSell',
+            'enhanceSim_baseItemCraftingCost',
         ];
         for (const [index, key] of keysThatReprice.entries()) {
             calculatorMock.calculateNetworth.mockResolvedValueOnce({ totalNetworth: 20 + index, coins: 0 });
