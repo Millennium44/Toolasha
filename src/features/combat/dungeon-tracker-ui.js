@@ -1173,7 +1173,8 @@ class DungeonTrackerUI {
     /**
      * The stored clears the key-runway estimate averages: this dungeon and tier with this exact
      * team, whoever is looking at the panel. Failed and canceled attempts are excluded (a key is
-     * spent by a clear), as are runs timed by the client's own clock, which can include sleep.
+     * spent by a clear). Runs timed by the client's own clock, which can include sleep, are used only
+     * when the team has no server-timed clear (a solo player's whole history).
      * @param {Object} run - Current run state
      * @param {Array<Object>} allRuns - Every stored run
      * @param {Object} [averageLimits] - The header average's window and reset baselines; the
@@ -1187,14 +1188,18 @@ class DungeonTrackerUI {
                 r.dungeonName === run.dungeonName &&
                 (r.tier ?? null) === (run.tier ?? null) &&
                 r.teamKey === teamKey &&
-                isClearRun(r) &&
-                r.validated !== false
+                isClearRun(r)
         );
+        // Server-timed clears where there are any; a solo player's runs are all
+        // client-timed (`validated: false`, no party timestamps to check) and are
+        // fallen back to only when there is nothing better — the rule
+        // `plausibleMaxRunMs` applies, so a solo player still gets a runway.
+        const serverTimed = clears.filter((r) => r.validated !== false);
         return {
             dungeonName: run.dungeonName,
             tier: run.tier ?? null,
             teamKey,
-            clears: limitToAverageWindow(clears, averageLimits),
+            clears: limitToAverageWindow(serverTimed.length ? serverTimed : clears, averageLimits),
         };
     }
 
