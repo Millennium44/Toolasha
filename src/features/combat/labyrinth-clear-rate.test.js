@@ -6605,6 +6605,11 @@ describe('the live clear chance and the room-tile calculator start on their own 
         const handler = webSocketHook.on.mock.calls.find(([event]) => event === 'labyrinth_room_progress')[1];
         handler({ successRate: 1, actionTimeMs: 6000, actionCounter: 0, currentWorkValue: 0, targetWorkValue: 10 });
         expect(document.querySelector('.mwi-labyrinth-live-progress')?.textContent).toContain('Clear');
+
+        // Switched off mid-room: the next message takes the readout down
+        toggles.labyrinthLiveProgress = false;
+        handler({ successRate: 1, actionTimeMs: 6000, actionCounter: 1, currentWorkValue: 1, targetWorkValue: 10 });
+        expect(document.querySelector('.mwi-labyrinth-live-progress')).toBeNull();
         document.body.innerHTML = '';
     });
 
