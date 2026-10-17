@@ -42,12 +42,24 @@ vi.mock('../../utils/enhancement-worker-manager.js', () => ({
         return tasks.map(() => mocks.workerResults);
     },
 }));
-vi.mock('../enhancement/tooltip-enhancement.js', () => ({
-    getCheapestProtectionPrice: () => ({ price: 0 }),
-    // The mirror is priced out of reach so the mirror optimisation never wins:
-    // the material-cost tests below are about the per-attempt material bill and
-    // nothing else.
-    getRealisticBaseItemPrice: (hrid) => (hrid === '/items/philosophers_mirror' ? 1e12 : 0),
+// The shared enhancement input rule: the base item costs one coin and the mirror is priced out of reach
+// so the mirror optimization never wins; the material tests below are about the per-attempt bill, which
+// reads the book the test sets (the ask, else the bid, else unpriced - never the vendor price)
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({
+    priceBase: () => ({ price: 1, unpriced: false, estimated: false }),
+    priceMirror: () => ({ price: 1e12, unpriced: false, estimated: false }),
+    priceProtection: () => ({ price: null, itemHrid: null, unpriced: true, estimated: false }),
+    perAttemptMaterialCost: (details) => {
+        let cost = 0;
+        let hasMissingPrices = false;
+        for (const material of details.enhancementCosts || []) {
+            const book = mocks.books[material.itemHrid];
+            const price = book?.ask > 0 ? book.ask : book?.bid > 0 ? book.bid : 0;
+            if (price > 0) cost += price * material.count;
+            else hasMissingPrices = true;
+        }
+        return { cost, hasCost: cost > 0, hasMissingPrices };
+    },
 }));
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
 vi.mock('../../utils/guild-credit-pricing.js', () => ({
@@ -298,16 +310,16 @@ describe('enhancement material pricing', () => {
 
     test('a book with only bids costs what the bids say, not nothing', async () => {
         // 2 charms per attempt × 10 expected attempts × 3 coins
-        expect(await scoreWithCharmBook({ ask: null, bid: 3 })).toBeCloseTo(60 / 1_000_000, 12);
+        expect(await scoreWithCharmBook({ ask: null, bid: 3 })).toBeCloseTo(61 / 1_000_000, 12);
     });
 
     test('a two-sided book is costed at the ask — replacing the material is a purchase', async () => {
-        expect(await scoreWithCharmBook({ ask: 5, bid: 3 })).toBeCloseTo(100 / 1_000_000, 12);
+        expect(await scoreWithCharmBook({ ask: 5, bid: 3 })).toBeCloseTo(101 / 1_000_000, 12);
     });
 
-    test('no book at all falls back to the sell price, as it always did', async () => {
+    test('no book at all leaves the piece unpriced - the vendor price is not a stand-in', async () => {
         mocks.clientData.itemDetailMap['/items/rare_charm'] = { sellPrice: 7 };
-        expect(await scoreWithCharmBook(null)).toBeCloseTo(140 / 1_000_000, 12);
+        expect(await scoreWithCharmBook(null)).toBe(0);
     });
 });
 
