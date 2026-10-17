@@ -6412,6 +6412,35 @@ describe('the Ability order Include option', () => {
             expect(section().textContent).not.toContain('Smack → Poke → Fireball');
         });
 
+        test('a delayed first read does not paint an older section over a run that finished meanwhile', async () => {
+            game.rememberUpgradeResults = true;
+            tick('ability_order');
+            await ui._onUpgradeAnalyze();
+            const older = JSON.parse(JSON.stringify(storage.written[KEY]));
+            expect(older.orderSection.groups.length).toBeGreaterThan(0);
+
+            // A fresh panel open: the read is out, no run has started, no table is drawn
+            ui._upgradeOrderSection = null;
+            ui._drawUpgradeAbilityOrder();
+            ui.panel.querySelector('#mwi-labsim-upgrade-results').innerHTML = '';
+            ui._upgradeRunStarted = false;
+            let release;
+            storage.pending[KEY] = new Promise((resolve) => (release = resolve));
+            try {
+                const restoring = ui._restoreUpgradeResults();
+                // An order-only run starts and finishes (no table) while the read is out
+                allSpy.mockImplementation(async () => ({}));
+                await ui._onUpgradeAnalyze();
+                expect(section().textContent).toContain('no order measured');
+                release(older);
+                await restoring;
+                expect(section().textContent).toContain('no order measured');
+                expect(section().textContent).not.toContain('Smack → Poke → Fireball');
+            } finally {
+                delete storage.pending[KEY];
+            }
+        });
+
         test('a combined run with an empty order section leaves no stale section behind', async () => {
             game.rememberUpgradeResults = true;
             singleSpy.mockResolvedValue({ baseline: null, results: [], marker: 'run' });

@@ -7982,7 +7982,7 @@ class LabSimUI {
      *
      * `replace` is a sync pull's: the table on screen is itself a restored one (no analysis has
      * started on this panel), so it gives way to the pulled set, and a pulled clear empties it.
-     * An analysis started while the read was out owns the table, and nothing is drawn.
+     * An analysis started while the read was out owns the panel, replace or not, and nothing is drawn.
      * @param {{replace?: boolean}} [options] - Replace a restored table already shown
      * @private
      */
@@ -7991,7 +7991,9 @@ class LabSimUI {
             const container = this.panel?.querySelector('#mwi-labsim-upgrade-results');
             if (!container || (container.querySelector('table') && !replace)) return;
             const payload = await loadUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
-            if (replace && (this._upgradeRunning || this._upgradeRunStarted)) return;
+            // Whatever the read's kind: an analysis (an order-only one draws no table to notice) that started
+            // or finished while it was out owns the panel, and the older saved payload must not paint over it
+            if (this._upgradeRunning || this._upgradeRunStarted) return;
             if (!payload) {
                 if (replace && this.panel && (container.querySelector('table') || this._upgradeOrderSection)) {
                     this._restoredUpgradeAt = null;
