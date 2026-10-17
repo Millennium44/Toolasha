@@ -1441,6 +1441,60 @@ describe('the Alchemy panel button', () => {
         whatIf.resetCatalystWhatIf();
     });
 
+    describe('queued alchemy catalysts', () => {
+        const CAT = '/items/prime_catalyst';
+        const queuedWith = (over = {}) => ({
+            actionHrid: '/actions/alchemy/coinify',
+            hasMaxCount: true,
+            maxCount: 5,
+            currentCount: 1,
+            primaryItemHash: `char1::/item_locations/inventory::/items/egg::0`,
+            secondaryItemHash: `char1::/item_locations/inventory::${CAT}::0`,
+            ...over,
+        });
+        const publish = async () => {
+            const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
+            state.items[CAT] = { name: 'Prime Catalyst', isTradable: true };
+            state.inventory.push({
+                itemHrid: CAT,
+                enhancementLevel: 0,
+                count: 10,
+                itemLocationHrid: '/item_locations/inventory',
+            });
+            mountAlchemyPanel();
+            missingMaterials.initialize();
+            whatIf.setCatalystWhatIf('prime');
+            whatIf.publishCatalystWhatIfResult({
+                itemHrid: MILK,
+                actionType: 'decompose',
+                catalystHrid: CAT,
+                successRate: 0.75,
+            });
+            await vi.advanceTimersByTimeAsync(200);
+            return whatIf;
+        };
+
+        test('catalysts committed to finite queued alchemy are not available', async () => {
+            // 4 actions left use 4 of the 10; 8 are needed, so 2 short
+            state.currentActions = [queuedWith()];
+            const whatIf = await publish();
+            expect(button().title).toContain('Prime Catalyst ×2');
+            whatIf.resetCatalystWhatIf();
+        });
+
+        test('ignoring the queue, and infinite entries, leave the stack free', async () => {
+            state.currentActions = [queuedWith({ hasMaxCount: false })];
+            const whatIf = await publish();
+            expect(button().title).not.toContain('Prime Catalyst');
+            state.ignoreQueue = true;
+            state.currentActions = [queuedWith()];
+            whatIf.setCatalystWhatIf('prime');
+            await vi.advanceTimersByTimeAsync(200);
+            expect(button().title).not.toContain('Prime Catalyst');
+            whatIf.resetCatalystWhatIf();
+        });
+    });
+
     test('a what-if result for another item or tab is not this bill’s', async () => {
         const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
         state.items['/items/prime_catalyst'] = { name: 'Prime Catalyst', isTradable: true };
