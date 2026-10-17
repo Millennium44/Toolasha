@@ -3102,7 +3102,7 @@ export const settingsGroups = {
                 label: 'Dungeon Tracker: How long your keys will last',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds "(~1h 20m)" beside the Keys count on the in-progress dungeon panel: your held entry keys times the average of your last 20 clears of this dungeon with this team. Needs at least three clears; shows nothing with no keys',
+                help: 'Adds "(~1h 20m)" beside the Keys count on the in-progress dungeon panel: your held entry keys times the average of your recent clears of this dungeon, tier and team (up to 20, within the Dungeon Tracker average window and since any "Avg from here" reset). Needs at least three such clears; shows nothing with no keys',
             },
             combatSim: {
                 id: 'combatSim',
