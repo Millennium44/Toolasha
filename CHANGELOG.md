@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.72.1 -->
+
 ### Leftovers round (2026-10-16): sync, net worth and records
 
 - A settings change and its sync timestamp are now saved together, so a sync pull can no longer undo an edit made just before a tab closed; a pull that lands while a history is first loading is applied instead of waiting for the next load, and a backup or sync flush includes the character you just switched away from.
@@ -5585,49 +5587,46 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.72.1](https://github.com/Millennium44/Toolasha/compare/v3.72.0...v3.72.1) (2026-10-17)
 
-
 ### Bug Fixes
 
-* a backup or sync flush lands the departing character's last write ([7229369](https://github.com/Millennium44/Toolasha/commit/722936944228128fc2cf6b39f4c3074316c2c5fe))
-* a cleared alchemy session does not come back from an older pushed copy ([3a801a3](https://github.com/Millennium44/Toolasha/commit/3a801a34b1d4e1af2b7559c98deb4a3bd678296f))
-* a hand-corrected alchemy import is not reverted by the next sync pull ([e222932](https://github.com/Millennium44/Toolasha/commit/e22293239381047d2671b8d3a3ca05b41bb8df8e))
-* a settings edit and its change stamp land in one transaction ([6379963](https://github.com/Millennium44/Toolasha/commit/63799633f2bb186357876fc2e0d1ae240031dacc))
-* a sync pull that lands during a history's first load is applied afterwards ([f9c4abf](https://github.com/Millennium44/Toolasha/commit/f9c4abf14d0b29045476b48c88b442bc0db19ca9))
-* account panel normalizes pre-flag queue snapshots before reading them as busy or idle ([a157078](https://github.com/Millennium44/Toolasha/commit/a1570785cdf16929de6afc8495a0e73cca82ee2c))
-* alchemy import corrections survive a clear, a live recorder and a key reorder ([a8aff65](https://github.com/Millennium44/Toolasha/commit/a8aff657538f4172e7384386ea8b5a351e240712))
-* bestiary alert re-arms after a reload and ignores a stale stored target read before a re-arm ([5e153c2](https://github.com/Millennium44/Toolasha/commit/5e153c20bfff3029e734b28c87c952e4d0a94f70))
-* bestiary alert re-arms when a real reading is still under an estimated crossing ([d76cf0e](https://github.com/Millennium44/Toolasha/commit/d76cf0ea74ddb7f55ad188ecfcd0cfc981eec41d))
-* bestiary real crossing after a re-arm is not swallowed by the estimated alert's cooldown ([e74816c](https://github.com/Millennium44/Toolasha/commit/e74816cdab5f93379e4a7cf89b15244b7cf5f2de))
-* bulk sell holds Next while it watches the bag for a late partial sale ([efd370a](https://github.com/Millennium44/Toolasha/commit/efd370afe5e4385b8e8369218138ac00036a0830))
-* combat sim ability order balanced significance counts the deaths error ([da64758](https://github.com/Millennium44/Toolasha/commit/da647586dc306d5d2b95c3166b9150404383b493))
-* combat sim auto-verify judges Balanced close calls on the score and its deaths error ([fbeb56e](https://github.com/Millennium44/Toolasha/commit/fbeb56e465f78d48c6950cf7bb2735afa7694608))
-* enhancement sessions keep the unpriced-input flag across resume and merge ([cd082ed](https://github.com/Millennium44/Toolasha/commit/cd082ed6048cd9c9c1c90846c74f40026b2401d5))
-* guild trial ledger shows unreadable weeks as unknown instead of missed ([96b0a82](https://github.com/Millennium44/Toolasha/commit/96b0a8265d585f6ff2371d6e8027011088d661e0))
-* iron bell panel redraws its coin reserve when the enhance protection limit setting changes ([5ff2d00](https://github.com/Millennium44/Toolasha/commit/5ff2d001edf86682bdb6bbb6e47ff60588007a39))
-* lab sim ability-order verify picks the rows the table shows ([4fc875a](https://github.com/Millennium44/Toolasha/commit/4fc875a88617b6342954ec7eee9efee5289d77fa))
-* lab sim delayed upgrade-results restore never paints over a finished run ([62e3a74](https://github.com/Millennium44/Toolasha/commit/62e3a7457a0a09173347bec500fc834e742a77e1))
-* lab sim scope change always clears the trigger result and its verify state ([716efd2](https://github.com/Millennium44/Toolasha/commit/716efd2d72a2270bd97d279100cfd5efbcab91a4))
-* net worth enhancement-cost cache now sees live price patches ([2e58053](https://github.com/Millennium44/Toolasha/commit/2e580532d13a9ae2e2d2ab4eaee3248705fc769d))
-* net worth flags enhanced items whose base or material is a partial crafting bill ([51a5204](https://github.com/Millennium44/Toolasha/commit/51a52044b415e3db8fd4a755b550ec781df4e81e))
-* net worth flags items valued on a partial crafting bill ([03a1683](https://github.com/Millennium44/Toolasha/commit/03a168399fd15cb0145f3e8d63777b2d6645c209))
-* net worth partial count names distinct items, not lines ([b59b494](https://github.com/Millennium44/Toolasha/commit/b59b49495c6dbeb78b1634241d5bfa5b928d98e1))
-* opening the lab sim from a labyrinth tile unfolds a minimized panel first ([a5f2117](https://github.com/Millennium44/Toolasha/commit/a5f21177a76e4ee2dd5d6965b96d25e6baf5203a))
-* overlay net worth tile marks a total built on partial bills ([408c208](https://github.com/Millennium44/Toolasha/commit/408c208c460a311d60ecbaa3f854257f21012cb3))
-* pinned actions page ignores combat rows from a superseded load ([c5e1172](https://github.com/Millennium44/Toolasha/commit/c5e1172fe82dd37084c9aa30356838420b59de04))
-* queue monitor shows ? once an untimed fight is running instead of holding the tail behind it forever ([6cf5be7](https://github.com/Millennium44/Toolasha/commit/6cf5be70e9c2dab59d1c09eb0751c02362333b2c))
-* queue snapshots saved before the unknown-action flag no longer time a counted fight as battles x action time ([7e6a5e2](https://github.com/Millennium44/Toolasha/commit/7e6a5e237434be63008d7e7b64f6dc794e7ae672))
-* undercut check no longer mistakes a live-server quote for your own test-server listing ([90d0972](https://github.com/Millennium44/Toolasha/commit/90d09720a045004a0d8c8b5152424b7488d476bc))
-
+- a backup or sync flush lands the departing character's last write ([7229369](https://github.com/Millennium44/Toolasha/commit/722936944228128fc2cf6b39f4c3074316c2c5fe))
+- a cleared alchemy session does not come back from an older pushed copy ([3a801a3](https://github.com/Millennium44/Toolasha/commit/3a801a34b1d4e1af2b7559c98deb4a3bd678296f))
+- a hand-corrected alchemy import is not reverted by the next sync pull ([e222932](https://github.com/Millennium44/Toolasha/commit/e22293239381047d2671b8d3a3ca05b41bb8df8e))
+- a settings edit and its change stamp land in one transaction ([6379963](https://github.com/Millennium44/Toolasha/commit/63799633f2bb186357876fc2e0d1ae240031dacc))
+- a sync pull that lands during a history's first load is applied afterwards ([f9c4abf](https://github.com/Millennium44/Toolasha/commit/f9c4abf14d0b29045476b48c88b442bc0db19ca9))
+- account panel normalizes pre-flag queue snapshots before reading them as busy or idle ([a157078](https://github.com/Millennium44/Toolasha/commit/a1570785cdf16929de6afc8495a0e73cca82ee2c))
+- alchemy import corrections survive a clear, a live recorder and a key reorder ([a8aff65](https://github.com/Millennium44/Toolasha/commit/a8aff657538f4172e7384386ea8b5a351e240712))
+- bestiary alert re-arms after a reload and ignores a stale stored target read before a re-arm ([5e153c2](https://github.com/Millennium44/Toolasha/commit/5e153c20bfff3029e734b28c87c952e4d0a94f70))
+- bestiary alert re-arms when a real reading is still under an estimated crossing ([d76cf0e](https://github.com/Millennium44/Toolasha/commit/d76cf0ea74ddb7f55ad188ecfcd0cfc981eec41d))
+- bestiary real crossing after a re-arm is not swallowed by the estimated alert's cooldown ([e74816c](https://github.com/Millennium44/Toolasha/commit/e74816cdab5f93379e4a7cf89b15244b7cf5f2de))
+- bulk sell holds Next while it watches the bag for a late partial sale ([efd370a](https://github.com/Millennium44/Toolasha/commit/efd370afe5e4385b8e8369218138ac00036a0830))
+- combat sim ability order balanced significance counts the deaths error ([da64758](https://github.com/Millennium44/Toolasha/commit/da647586dc306d5d2b95c3166b9150404383b493))
+- combat sim auto-verify judges Balanced close calls on the score and its deaths error ([fbeb56e](https://github.com/Millennium44/Toolasha/commit/fbeb56e465f78d48c6950cf7bb2735afa7694608))
+- enhancement sessions keep the unpriced-input flag across resume and merge ([cd082ed](https://github.com/Millennium44/Toolasha/commit/cd082ed6048cd9c9c1c90846c74f40026b2401d5))
+- guild trial ledger shows unreadable weeks as unknown instead of missed ([96b0a82](https://github.com/Millennium44/Toolasha/commit/96b0a8265d585f6ff2371d6e8027011088d661e0))
+- iron bell panel redraws its coin reserve when the enhance protection limit setting changes ([5ff2d00](https://github.com/Millennium44/Toolasha/commit/5ff2d001edf86682bdb6bbb6e47ff60588007a39))
+- lab sim ability-order verify picks the rows the table shows ([4fc875a](https://github.com/Millennium44/Toolasha/commit/4fc875a88617b6342954ec7eee9efee5289d77fa))
+- lab sim delayed upgrade-results restore never paints over a finished run ([62e3a74](https://github.com/Millennium44/Toolasha/commit/62e3a7457a0a09173347bec500fc834e742a77e1))
+- lab sim scope change always clears the trigger result and its verify state ([716efd2](https://github.com/Millennium44/Toolasha/commit/716efd2d72a2270bd97d279100cfd5efbcab91a4))
+- net worth enhancement-cost cache now sees live price patches ([2e58053](https://github.com/Millennium44/Toolasha/commit/2e580532d13a9ae2e2d2ab4eaee3248705fc769d))
+- net worth flags enhanced items whose base or material is a partial crafting bill ([51a5204](https://github.com/Millennium44/Toolasha/commit/51a52044b415e3db8fd4a755b550ec781df4e81e))
+- net worth flags items valued on a partial crafting bill ([03a1683](https://github.com/Millennium44/Toolasha/commit/03a168399fd15cb0145f3e8d63777b2d6645c209))
+- net worth partial count names distinct items, not lines ([b59b494](https://github.com/Millennium44/Toolasha/commit/b59b49495c6dbeb78b1634241d5bfa5b928d98e1))
+- opening the lab sim from a labyrinth tile unfolds a minimized panel first ([a5f2117](https://github.com/Millennium44/Toolasha/commit/a5f21177a76e4ee2dd5d6965b96d25e6baf5203a))
+- overlay net worth tile marks a total built on partial bills ([408c208](https://github.com/Millennium44/Toolasha/commit/408c208c460a311d60ecbaa3f854257f21012cb3))
+- pinned actions page ignores combat rows from a superseded load ([c5e1172](https://github.com/Millennium44/Toolasha/commit/c5e1172fe82dd37084c9aa30356838420b59de04))
+- queue monitor shows ? once an untimed fight is running instead of holding the tail behind it forever ([6cf5be7](https://github.com/Millennium44/Toolasha/commit/6cf5be70e9c2dab59d1c09eb0751c02362333b2c))
+- queue snapshots saved before the unknown-action flag no longer time a counted fight as battles x action time ([7e6a5e2](https://github.com/Millennium44/Toolasha/commit/7e6a5e237434be63008d7e7b64f6dc794e7ae672))
+- undercut check no longer mistakes a live-server quote for your own test-server listing ([90d0972](https://github.com/Millennium44/Toolasha/commit/90d09720a045004a0d8c8b5152424b7488d476bc))
 
 ### Code Refactoring
 
-* queue snapshot module no longer re-exports the legacy normalizer ([7bbba62](https://github.com/Millennium44/Toolasha/commit/7bbba623bb77f3a95d037c93d4aa1da301dbc2e7))
-
+- queue snapshot module no longer re-exports the legacy normalizer ([7bbba62](https://github.com/Millennium44/Toolasha/commit/7bbba623bb77f3a95d037c93d4aa1da301dbc2e7))
 
 ### Documentation
 
-* changelog for the 2026-10-16 leftovers round (sims, queue, UI) ([75a88c3](https://github.com/Millennium44/Toolasha/commit/75a88c36db56578305cc0e61a95ededfad84f23c))
-* changelog for the 2026-10-16 leftovers round (sync, net worth, records) ([5007916](https://github.com/Millennium44/Toolasha/commit/5007916cf97e757e3ef2849f838bbbd1dd3f715b))
+- changelog for the 2026-10-16 leftovers round (sims, queue, UI) ([75a88c3](https://github.com/Millennium44/Toolasha/commit/75a88c36db56578305cc0e61a95ededfad84f23c))
+- changelog for the 2026-10-16 leftovers round (sync, net worth, records) ([5007916](https://github.com/Millennium44/Toolasha/commit/5007916cf97e757e3ef2849f838bbbd1dd3f715b))
 
 ## [3.72.0](https://github.com/Millennium44/Toolasha/compare/v3.71.1...v3.72.0) (2026-10-16)
 
