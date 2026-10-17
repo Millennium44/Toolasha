@@ -2026,7 +2026,12 @@ class LabyrinthClearRate {
      * Handle incoming labyrinth_room_progress WS message
      */
     onLiveProgress(data) {
-        if (!config.getSetting('labyrinthLiveProgress')) return;
+        if (!config.getSetting('labyrinthLiveProgress')) {
+            // As the combat readout does: switched off mid-room, it comes down
+            // now rather than when the stale timer gets round to it
+            this.clearLiveProgress();
+            return;
+        }
         this.refreshLiveProgress(data);
     }
 
