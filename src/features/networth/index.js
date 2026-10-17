@@ -424,17 +424,28 @@ registerRow({
     // than computed here, so nothing about reading it can be out of date
     version: () => {
         const total = networthFeature.currentData?.totalNetworth;
-        return total > 0 ? String(Math.round(total)) : 'blank';
+        if (!(total > 0)) return 'blank';
+        return `${Math.round(total)}${networthFeature.currentData?.partial?.count > 0 ? '*' : ''}`;
     },
     render: (container) => {
         const total = networthFeature.currentData?.totalNetworth;
         if (!(total > 0)) return blank(container);
 
+        const partial = networthFeature.currentData?.partial?.count > 0;
         row(container, [
             { text: 'Net Worth', color: ROW_COLORS.dim },
-            { text: formatLargeNumber(Math.round(total)), color: ROW_COLORS.good, bold: true, push: true },
+            {
+                text: `${formatLargeNumber(Math.round(total))}${partial ? ' *' : ''}`,
+                color: ROW_COLORS.good,
+                bold: true,
+                push: true,
+            },
         ]);
-        container.title = 'Everything you own, priced.\nDouble-click for the net worth history chart.';
+        container.title =
+            'Everything you own, priced.\nDouble-click for the net worth history chart.' +
+            (partial
+                ? '\n* Some items are valued on a crafting cost with an unpriced input, so the total is a floor.'
+                : '');
     },
     onOpen: openHistoryChart,
 });
