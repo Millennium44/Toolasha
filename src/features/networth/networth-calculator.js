@@ -956,7 +956,7 @@ export async function calculateNetworth() {
     }
 
     // Invalidate cache if market data changed (wrap for cache compatibility)
-    networthCache.checkAndInvalidate({ marketData: marketAPI.marketData });
+    networthCache.checkAndInvalidate({ marketData: marketAPI.marketData, pricePatchs: marketAPI.pricePatchs });
 
     const characterItems = gameData.characterItems || [];
     const marketListings = gameData.myMarketListings || [];

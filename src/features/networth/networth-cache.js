@@ -99,6 +99,20 @@ class NetworthCache {
             hash = (hash ^ entryHash) | 0;
         }
 
+        // Live price patches override the snapshot (marketAPI.getPrice), so a patch
+        // (key + timestamp + sides) must change the hash too. One entry per patched
+        // item, so this stays cheap; invalidation only happens when a calculation
+        // next asks, so a burst of patches costs one recompute, not one per patch.
+        for (const [key, patch] of Object.entries(marketData.pricePatchs || {})) {
+            if (!patch) continue;
+            const entry = `patch:${key}:${patch.timestamp || 0}:${patch.a ?? ''}:${patch.b ?? ''}`;
+            let entryHash = 0;
+            for (let i = 0; i < entry.length; i++) {
+                entryHash = (entryHash * 31 + entry.charCodeAt(i)) | 0;
+            }
+            hash = (hash ^ entryHash) | 0;
+        }
+
         return String(hash);
     }
 

@@ -97,3 +97,38 @@ describe('a character switch', () => {
         expect(networthCache.getStats().size).toBe(0);
     });
 });
+
+describe('live price patches', () => {
+    const snapshot = { '/items/cheese': [{ a: 10, b: 8 }] };
+
+    beforeEach(() => {
+        networthCache.clear();
+        networthCache.marketDataHash = null;
+    });
+
+    test('a patch with an unchanged snapshot invalidates the cache', () => {
+        networthCache.checkAndInvalidate({ marketData: snapshot, pricePatchs: {} });
+        networthCache.set('/items/sword', 5, 1234);
+        expect(networthCache.get('/items/sword', 5)).toBe(1234);
+
+        networthCache.checkAndInvalidate({
+            marketData: snapshot,
+            pricePatchs: { '/items/cheese:0': { a: 20, b: 18, timestamp: 5000 } },
+        });
+        expect(networthCache.get('/items/sword', 5)).toBeNull();
+    });
+
+    test('the same patches again keep the cache, and a newer patch for the same key clears it', () => {
+        const patches = { '/items/cheese:0': { a: 20, b: 18, timestamp: 5000 } };
+        networthCache.checkAndInvalidate({ marketData: snapshot, pricePatchs: patches });
+        networthCache.set('/items/sword', 5, 1234);
+        networthCache.checkAndInvalidate({ marketData: snapshot, pricePatchs: { ...patches } });
+        expect(networthCache.get('/items/sword', 5)).toBe(1234);
+
+        networthCache.checkAndInvalidate({
+            marketData: snapshot,
+            pricePatchs: { '/items/cheese:0': { a: 20, b: 18, timestamp: 6000 } },
+        });
+        expect(networthCache.get('/items/sword', 5)).toBeNull();
+    });
+});
