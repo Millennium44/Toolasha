@@ -11,7 +11,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({ initClientData: null, skills: [], inventory: [] }));
 const settings = vi.hoisted(() => ({}));
-const panel = vi.hoisted(() => ({ actionHrid: null, requirements: [], fingerprint: 'fp' }));
+const panel = vi.hoisted(() => ({ actionHrid: null, requirements: [], fingerprint: 'fp', tabType: null }));
 const calculator = vi.hoisted(() => ({
     coinify: vi.fn(),
     decompose: vi.fn(),
@@ -45,7 +45,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('./alchemy-profit.js', () => ({
-    readAlchemyTabType: () => null,
+    readAlchemyTabType: () => panel.tabType,
     readAlchemyPanelSelection: () => null,
     default: {
         getCurrentActionHrid: () => panel.actionHrid,
@@ -133,6 +133,7 @@ beforeEach(() => {
     game.inventory = [];
     panel.requirements = [{ itemHrid: EGG, enhancementLevel: 0 }];
     panel.fingerprint = 'fp';
+    panel.tabType = null;
     for (const fn of Object.values(calculator)) fn.mockReset();
     calculator.decompose.mockImplementation((_item, _enh, _live, _tea, _ctx, choice) =>
         choice === 'prime' ? profitData({ profit: 5000, successRate: 0.75, catalyst: PRIME }) : profitData()
@@ -166,6 +167,21 @@ describe('the equipped catalyst', () => {
         // The picker is there, Equipped pressed
         const equipped = profitSection().querySelector('[data-mwi-catalyst-choice="equipped"]');
         expect(equipped.getAttribute('aria-pressed')).toBe('true');
+    });
+});
+
+describe('a localized client', () => {
+    test('the tab position, not its label or the running action, picks the calculator', async () => {
+        selectTab('点金'); // transmute selected on a Chinese strip
+        panel.tabType = 'transmute';
+        panel.actionHrid = '/actions/alchemy/coinify';
+        whatIfState.setCatalystWhatIf('prime');
+        const container = mountPanel();
+        await display.updateDisplay(container);
+
+        expect(calculator.coinify).not.toHaveBeenCalled();
+        expect(calculator.transmute).toHaveBeenCalledWith(EGG, true, null, 'prime', null, 0);
+        expect(whatIfState.getCatalystWhatIfResult()?.actionType).toBe('transmute');
     });
 });
 
