@@ -123,6 +123,15 @@ class DungeonTrackerUI {
             this.pricingChangeUnregisters.push(config.onSettingChange(key, () => this.updateRoiBoard()));
         }
 
+        // The key runway averages the same clears as the header, so a changed
+        // average window has to rebuild its cached clears, not wait for a completion.
+        this.pricingChangeUnregisters.push(
+            config.onSettingChange('dungeonTrackerAverageWindow', () => {
+                if (!this.container) return;
+                return this.refreshHistoryAndStats();
+            })
+        );
+
         // The board's sim clear time, food, XP and gold come from the all-zones
         // snapshot, read only when it draws. A sync pull that rewrites this
         // character's snapshot no longer forces a reload, so redraw an open board.
@@ -928,7 +937,7 @@ class DungeonTrackerUI {
         this.updatePaceChip(run, drawn.allRuns, drawn.averageLimits, character);
 
         // Keys cost one clear each, so the runway reads the same stored clears
-        this.keyRunwayClears = this.pickKeyRunwayClears(run, drawn.allRuns);
+        this.keyRunwayClears = this.pickKeyRunwayClears(run, drawn.allRuns, drawn.averageLimits);
         this.drawKeyRunway(run, characterName);
 
         // Update run history list
@@ -1167,9 +1176,11 @@ class DungeonTrackerUI {
      * spent by a clear), as are runs timed by the client's own clock, which can include sleep.
      * @param {Object} run - Current run state
      * @param {Array<Object>} allRuns - Every stored run
+     * @param {Object} [averageLimits] - The header average's window and reset baselines; the
+     *   runway averages the same clears the header does
      * @returns {{dungeonName: string, tier: *, teamKey: string, clears: Array<Object>}}
      */
-    pickKeyRunwayClears(run, allRuns) {
+    pickKeyRunwayClears(run, allRuns, averageLimits = {}) {
         const teamKey = dungeonTrackerStorage.getTeamKey([...Object.keys(run.keyCountsMap || {})]);
         const clears = allRuns.filter(
             (r) =>
@@ -1179,7 +1190,12 @@ class DungeonTrackerUI {
                 isClearRun(r) &&
                 r.validated !== false
         );
-        return { dungeonName: run.dungeonName, tier: run.tier ?? null, teamKey, clears };
+        return {
+            dungeonName: run.dungeonName,
+            tier: run.tier ?? null,
+            teamKey,
+            clears: limitToAverageWindow(clears, averageLimits),
+        };
     }
 
     /**
