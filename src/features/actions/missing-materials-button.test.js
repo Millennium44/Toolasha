@@ -114,7 +114,9 @@ vi.mock('../../utils/tester-shop.js', () => ({
     // Every line of the test bill is sold, so the whole bill takes the shop path
     testerShopCoinCost: () => (state.testerShop ? 100 : 0),
 }));
-vi.mock('../../utils/react-input.js', () => ({ setReactInputValue: () => {} }));
+vi.mock('../../utils/react-input.js', () => ({
+    setReactInputValue: (...args) => globalThis.__repeatWrites?.(...args),
+}));
 
 /**
  * The reservation ledger, doubled at the seam. Its arithmetic belongs to
@@ -1320,6 +1322,61 @@ describe('the Alchemy panel button', () => {
 
         expect(handleAlchemizeItem).toHaveBeenCalledWith(STACK_HASH);
         expect(handleGoToAction).not.toHaveBeenCalled();
+    });
+
+    describe('Return selects the stored alchemy tab', () => {
+        async function returnWith({ withTransmuteTab }) {
+            const { container } = buildMarketplaceDom();
+            const order = [];
+            const root = document.createElement('div');
+            root.id = 'root';
+            root._reactRootContainer = {
+                current: {
+                    stateNode: { handleGoToAction: vi.fn(), handleAlchemizeItem: vi.fn(() => order.push('alchemize')) },
+                    child: null,
+                    sibling: null,
+                },
+            };
+            document.body.appendChild(root);
+            mountAlchemyPanel({ tab: 'Transmute' });
+            missingMaterials.initialize();
+            button().click();
+            await vi.advanceTimersByTimeAsync(1000);
+
+            // The game lands on another tab; the Transmute tab is there (or not) to be clicked
+            const strip = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
+            strip.innerHTML = '<button role="tab" aria-selected="true">Coinify</button>';
+            let transmute = null;
+            if (withTransmuteTab) {
+                transmute = document.createElement('button');
+                transmute.setAttribute('role', 'tab');
+                transmute.setAttribute('aria-selected', 'false');
+                transmute.textContent = 'Transmute';
+                transmute.addEventListener('click', () => order.push('tab'));
+                strip.appendChild(transmute);
+            }
+            globalThis.__repeatWrites = () => order.push('repeat');
+            const returnTab = Array.from(container.querySelectorAll('[data-mwi-custom-tab="true"]')).find(
+                (el) => !el.hasAttribute('data-item-hrid') && !el.hasAttribute('data-mwi-clear-all-tab')
+            );
+            returnTab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            await vi.advanceTimersByTimeAsync(3000);
+            delete globalThis.__repeatWrites;
+            return order;
+        }
+
+        test('the Transmute tab is clicked before Repeat is restored', async () => {
+            const order = await returnWith({ withTransmuteTab: true });
+            expect(order.indexOf('tab')).toBeGreaterThan(order.indexOf('alchemize'));
+            expect(order.indexOf('repeat')).toBeGreaterThan(order.indexOf('tab'));
+        });
+
+        test('a tab that never appears does not throw, and Repeat is still restored', async () => {
+            const order = await returnWith({ withTransmuteTab: false });
+            expect(order).toContain('alchemize');
+            expect(order).not.toContain('tab');
+            expect(order).toContain('repeat');
+        });
     });
 
     test('with no stack left, Return opens the alchemy action by its tab', async () => {
