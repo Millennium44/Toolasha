@@ -43,7 +43,6 @@ import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 // The pricing rules moved to utils so the sim's advisor and the inventory savings card — each
 // in a bundle that cannot reach this module — could stop carrying their own drifted copies.
 // Re-exported below because this module's own callers import them from here.
-import { getProductionCost } from '../../utils/enhancement-pricing.js';
 // The profit-mode input rule (custom prices, shop floor, the player's pricing mode) shared with the
 // panel, the advisor, the score and the net-worth map; the raw-book helpers stay in enhancement-pricing
 import {
@@ -57,7 +56,9 @@ import {
     priceMirror,
 } from '../../utils/enhancement-input-pricing.js';
 
-export { getEnhancementMaterialPrice, getProductionCost, getRealisticBaseItemPrice, getCheapestProtectionPrice };
+export { getEnhancementMaterialPrice, getRealisticBaseItemPrice, getCheapestProtectionPrice };
+// Pass-through only, like the chain time below: the raw-book cost walk lives in utils
+export { getProductionCost } from '../../utils/enhancement-pricing.js';
 
 // Pass-through only: nothing in this module reads the chain time, but the market profit
 // calculator and the goal planner import it from here. Written as a re-export rather than an

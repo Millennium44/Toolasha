@@ -83,6 +83,10 @@ vi.mock('../../utils/dungeon-level-gap.js', () => ({ partyLevelGaps: () => ({}) 
 // these market-touching modules at load; stub them so the import graph is inert.
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0, getItemPrices: () => ({}) }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
+vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: () => 0,
+}));
 vi.mock('../../utils/view-loadout.js', () => ({
     VIEW_LOADOUT_CONTEXT: { Party: 'party', GuildTrial: 'guild_trial' },
     getLoadout: (id, context) =>

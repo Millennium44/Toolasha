@@ -41,6 +41,10 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: () => ({}),
 }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
+vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: () => 0,
+}));
 vi.mock('./combat-sim-runner.js', () => ({
     getMaxWorkers: () => 1,
     runSimulation: async (params) => mocks.respond(params),

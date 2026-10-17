@@ -70,6 +70,10 @@ vi.mock('./market-data.js', () => ({
 vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
 vi.mock('./game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
 vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
+vi.mock('./enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: () => 0,
+}));
 
 const { decomposeChain, clearDecomposeChainCaches, maximizeChainRatio, MAX_RATIO_ITERATIONS } =
     await import('./decompose-chain-value.js');

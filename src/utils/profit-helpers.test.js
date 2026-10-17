@@ -30,6 +30,13 @@ vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({
         return chain.production;
     },
 }));
+vi.mock('./enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: (itemHrid, mode) => {
+        chain.productionCostModes.push(mode);
+        return chain.production;
+    },
+}));
 
 import {
     calculateActionsPerHour,

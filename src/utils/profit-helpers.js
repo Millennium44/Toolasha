@@ -20,7 +20,7 @@ import {
 import { getItemPriceInfo, getPricingMode } from './market-data.js';
 import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
 import { getShopCoinCost } from './game-lookups.js';
-import { getProductionCost } from '../features/enhancement/tooltip-enhancement.js';
+import { getProductionCost } from './enhancement-pricing.js';
 import { isIronCowCharacter } from './ironcow-valuation.js';
 
 /**

@@ -27,6 +27,10 @@ vi.mock('../../api/marketplace.js', () => ({ default: {} }));
 vi.mock('../market/expected-value-calculator.js', () => ({ default: {} }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0, getItemPrices: () => ({}) }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
+vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: () => 0,
+}));
 
 const { calculateExpectedDrops } = await import('./combat-sim-adapter.js');
 

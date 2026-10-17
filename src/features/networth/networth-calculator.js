@@ -816,10 +816,11 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
  * reconciliation inside the worker is not worth its weight; doing it once here,
  * where the flatten already runs, costs one resolve per cached entry.
  *
- * `_ask` and `_bid` stay raw on purpose. They feed the worker's enhancement-cost
- * path, whose main-thread counterpart (`calculateEnhancementPath`) reads the
- * clamped order book through `getItemPrices` and never reconciles — so
- * reconciling them here would trade one divergence for another.
+ * `_ask` and `_bid` stay raw on purpose: the worker's enhancement-cost path no longer prices
+ * its inputs from them. The inputs (materials, protection, mirror, base item) are priced on this
+ * thread by the shared enhancement input rule in the net-worth mode, with custom prices and the shop
+ * floor, and shipped beside the map (`inputPrices` in `calculateItemValueBatch`). The raw sides now
+ * only feed the worker's fallbacks, which still carry a production-cost copy of their own.
  */
 const priceMapMemo = new WeakMap();
 
