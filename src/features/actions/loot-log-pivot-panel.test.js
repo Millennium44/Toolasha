@@ -13,7 +13,16 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /** What the mocked game and storage serve, swapped between tests */
-const world = vi.hoisted(() => ({ history: [], skills: {}, settingOn: true, askPerDrop: 2 }));
+const world = vi.hoisted(() => ({
+    history: [],
+    skills: {},
+    settingOn: true,
+    // The Labyrinth split is its own setting, off by default, so it does not
+    // follow `settingOn`
+    splitLabyrinth: false,
+    settingListeners: {},
+    askPerDrop: 2,
+}));
 
 /** How many times the panel summed the history, so the memo can be pinned */
 const analytics = vi.hoisted(() => ({ aggregateCalls: 0 }));
@@ -21,9 +30,9 @@ vi.mock('./loot-log-analytics.js', async (importOriginal) => {
     const actual = await importOriginal();
     return {
         ...actual,
-        aggregatePivotRows: (entries) => {
+        aggregatePivotRows: (entries, options) => {
             analytics.aggregateCalls += 1;
-            return actual.aggregatePivotRows(entries);
+            return actual.aggregatePivotRows(entries, options);
         },
     };
 });
@@ -63,8 +72,14 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: () => world.settingOn,
+        getSetting: (key) => (key === 'lootLogPivotSplitLabyrinth' ? world.splitLabyrinth : world.settingOn),
         getSettingValue: (_key, fallback) => fallback,
+        onSettingChange: (key, callback) => {
+            (world.settingListeners[key] ||= []).push(callback);
+            return () => {
+                world.settingListeners[key] = (world.settingListeners[key] || []).filter((cb) => cb !== callback);
+            };
+        },
         Z_FLOATING_PANEL: 9000,
     },
 }));
@@ -132,6 +147,7 @@ const {
     buildRowView,
     buildPivotCsvRows,
     PIVOT_CSV_COLUMNS,
+    SPLIT_LABYRINTH_SETTING,
     PAGE_SIZE,
     COLUMNS,
 } = await import('./loot-log-pivot-panel.js');
@@ -182,6 +198,8 @@ beforeEach(() => {
         '/skills/defense': { name: 'Defense', sortIndex: 3 },
     };
     world.settingOn = true;
+    world.splitLabyrinth = false;
+    world.settingListeners = {};
     world.askPerDrop = 2;
     analytics.aggregateCalls = 0;
     socket.handlers = {};
@@ -617,5 +635,117 @@ describe('the CSV export button', () => {
         await open();
 
         expect(() => button().click()).not.toThrow();
+    });
+});
+
+describe('splitting Labyrinth runs', () => {
+    const lab = (startTime, fields = {}) =>
+        entry({
+            actionHrid: '/actions/labyrinth/explore',
+            startTime,
+            endTime: startTime,
+            actionCount: 10,
+            drops: { '/items/labyrinth_token': 1 },
+            xpGains: { '/skills/attack': 100 },
+            ...fields,
+        });
+    const history = () => [
+        lab('2026-09-01T00:00:00Z'),
+        lab('2026-09-02T00:00:00Z'),
+        lab('2026-09-03T00:00:00Z'),
+        entry({ actionHrid: '/actions/combat/dungeon', difficultyTier: 1, startTime: '2026-09-01T00:00:00Z' }),
+        entry({ actionHrid: '/actions/combat/dungeon', difficultyTier: 1, startTime: '2026-09-02T00:00:00Z' }),
+        entry({ startTime: '2026-09-04T00:00:00Z' }),
+    ];
+    const labRows = () => bodyRows().filter((tr) => tr.textContent.includes('explore'));
+
+    /** Flip the setting the way config does: value first, then its listeners */
+    function setSplit(value) {
+        world.splitLabyrinth = value;
+        for (const callback of world.settingListeners[SPLIT_LABYRINTH_SETTING] || []) callback(value);
+    }
+
+    test('off: every run of an action is one row, as before', async () => {
+        world.history = history();
+        await open();
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(labRows()).toHaveLength(1);
+        expect(text()).toContain('3 sessions');
+        expect(bodyRows()).toHaveLength(3);
+    });
+
+    test('on with no Labyrinth runs changes nothing', async () => {
+        world.splitLabyrinth = true;
+        world.history = history().filter((e) => !e.actionHrid.startsWith('/actions/labyrinth/'));
+        await open();
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(bodyRows()).toHaveLength(2);
+        expect(text()).toContain('2 sessions');
+    });
+
+    test('switching it on redraws the open panel with one row per run, other actions still summed', async () => {
+        world.history = history();
+        await lootLogPivot.initialize();
+        await open();
+        expect(labRows()).toHaveLength(1);
+
+        setSplit(true);
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(labRows()).toHaveLength(3);
+        // The dungeon's two sessions and the milking run stay one row each
+        expect(bodyRows()).toHaveLength(5);
+        expect(text()).toContain('2 sessions');
+        // The footer total is the same either way: 3 runs × 10, two dungeons × 100, one milking run
+        expect(text()).toContain('330 actions over');
+
+        setSplit(false);
+        expect(labRows()).toHaveLength(1);
+        lootLogPivot.cleanup();
+    });
+
+    test('expanding one split run unfolds only that run', async () => {
+        world.splitLabyrinth = true;
+        world.history = history();
+        await open();
+        const before = bodyRows().length;
+
+        labRows()[0].click();
+
+        expect(bodyRows()).toHaveLength(before + 1);
+    });
+
+    test('cleanup stops listening for the setting', async () => {
+        await lootLogPivot.initialize();
+        expect(world.settingListeners[SPLIT_LABYRINTH_SETTING]).toHaveLength(1);
+        lootLogPivot.cleanup();
+        expect(world.settingListeners[SPLIT_LABYRINTH_SETTING]).toHaveLength(0);
+    });
+
+    test('the CSV tells split runs apart by their start', () => {
+        const rows = buildPivotCsvRows([
+            buildRowView({
+                actionHrid: '/actions/labyrinth/explore',
+                difficultyTier: null,
+                runStartTime: '2026-09-01T00:00:00Z',
+                actionCount: 10,
+                entryCount: 1,
+                totalTimeMs: HOUR,
+                xpGains: {},
+                drops: {},
+            }),
+            buildRowView({
+                actionHrid: '/actions/milking/cow',
+                difficultyTier: 0,
+                actionCount: 10,
+                entryCount: 1,
+                totalTimeMs: HOUR,
+                xpGains: {},
+                drops: {},
+            }),
+        ]);
+        expect(rows.map((row) => row.runStart)).toEqual(['2026-09-01T00:00:00Z', '']);
     });
 });
