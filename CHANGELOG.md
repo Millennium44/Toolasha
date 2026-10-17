@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upstream sweep (2026-10-17): shop shortcuts, alchemy shopping and fixes
+
+- Token item menus (dungeon, labyrinth, task, guild tokens and guild credits) get a View Shop button that opens the matching shop, and the dungeon tracker shows how long your entry keys will last at your recent clear pace.
+- The Alchemy panel gets a Missing Mats button with a Return tab, and Alchemy Profitability gains a catalyst what-if picker that shows the profit with another catalyst without changing what is slotted.
+- The Budget calculator now counts a recipe's coin fee against the budget instead of over-buying (or giving 0 actions when short on coin).
+- The labyrinth live clear chance works with the room-tile calculator turned off; a new setting splits each Labyrinth run into its own row in Loot & XP Analytics (off by default).
+- Settings: typed numbers are clamped to their range and the color hex box accepts typed values; the sidebar XP/hr rate follows the black text border setting, the market filter lists "All" first, a few setting texts are clearer, and the script also loads on the China mirror's bare domain.
+
 ### Leftovers round (2026-10-16): sync, net worth and records
 
 - A settings change and its sync timestamp are now saved together, so a sync pull can no longer undo an edit made just before a tab closed; a pull that lands while a history is first loading is applied instead of waiting for the next load, and a backup or sync flush includes the character you just switched away from.
