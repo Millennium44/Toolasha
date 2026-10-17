@@ -1124,17 +1124,22 @@ export function ledgerCyclesByAnchor(records, { perCycle = isTestServer() } = {}
  *     nothing (no cycle is charged as missed), omitted to leave the window unclamped
  *   ({@link loadLedgerFirstRecord}). Cycles before the one holding it are not counted, neither
  *   as expected nor as missed: the ledger cannot have missed what ran before it existed
- * @returns {{watched: number, expected: number, missed: number, inProgress: boolean, daily: boolean,
- *   fraction: number|null}} The coverage, over the cycles that have run
+ * @param {Array<number>} [options.unreadWeeks] - Week stamps whose record could not be read
+ *   ({@link loadLedgerCyclesDetailed}). Their cycles are `unknown`: not watched, not missed, and left out of
+ *   `expected` and `fraction`, so an unreadable record never counts as a cycle nobody watched
+ * @returns {{watched: number, expected: number, unknown: number, missed: number, inProgress: boolean,
+ *   daily: boolean, fraction: number|null}} The coverage, over the cycles that have run
  */
 export function observedCoverage(
     cycles,
-    { window = null, now = Date.now(), daily = isTestServer(), first = undefined } = {}
+    { window = null, now = Date.now(), daily = isTestServer(), first = undefined, unreadWeeks = [] } = {}
 ) {
+    const unread = (unreadWeeks || []).filter(Number.isFinite);
     const list = (cycles || []).filter(Boolean);
 
     const watchedFrom = new Set();
     let since = null;
+    for (const stamp of unread) since = since === null ? stamp : Math.min(since, stamp);
     for (const cycle of list) {
         const places = daily ? cyclePlaces(cycle) : Number.isFinite(cycle.weekStart) ? [cycle.weekStart] : [];
         for (const place of places) since = since === null ? place : Math.min(since, place);
@@ -1143,8 +1148,16 @@ export function observedCoverage(
         for (const place of places) watchedFrom.add(scheduledCycle(place, daily).from);
     }
 
+    // A slot whose week's record could not be read: unknown, neither watched nor missed. Live a week is
+    // one slot; on the test server a week holds several daily slots, so any slot overlapping it is unknown
+    const unreadSlot = (slot) =>
+        unread.some((stamp) =>
+            daily ? slot.end > stamp && slot.from < stamp + WEEK_MS : scheduledCycle(stamp, false).from === slot.from
+        );
+
     let watched = 0;
     let expected = 0;
+    let unknown = 0;
     let inProgress = false;
     // `first` null means the ledger was checked and holds nothing, so no cycle is charged as missed;
     // omitted (undefined) leaves the window unclamped
@@ -1159,6 +1172,10 @@ export function observedCoverage(
             inProgress = true;
             continue;
         }
+        if (unreadSlot(slot)) {
+            unknown += 1;
+            continue;
+        }
         expected += 1;
         if (watchedFrom.has(slot.from)) watched += 1;
     }
@@ -1166,6 +1183,7 @@ export function observedCoverage(
     return {
         watched,
         expected,
+        unknown,
         missed: expected - watched,
         inProgress,
         daily,
@@ -1194,6 +1212,7 @@ export const LEDGER_CSV_COLUMNS = [
     { key: 'starvedSeconds', label: 'Mana-starved seconds' },
     { key: 'lowManaSeconds', label: 'Low-mana seconds' },
     { key: 'noShow', label: 'No-show' },
+    { key: 'unreadCycles', label: 'Cycles unreadable' },
 ];
 
 /**
@@ -1205,9 +1224,11 @@ export const LEDGER_CSV_COLUMNS = [
  *
  * @param {Array<Object>} rows - From {@link foldLedgerCycles}
  * @param {number} trialsRun - Trials in the window
+ * @param {number} [unreadCycles] - Cycles whose records could not be read; every figure leaves them out,
+ *   so a nonzero count says the totals are incomplete
  * @returns {Array<Object>} Rows for `toCsv`
  */
-export function ledgerCsvRows(rows, trialsRun) {
+export function ledgerCsvRows(rows, trialsRun, unreadCycles = 0) {
     return (rows || []).map((row) => ({
         name: row.name,
         trials: row.trials,
@@ -1228,6 +1249,7 @@ export function ledgerCsvRows(rows, trialsRun) {
         starvedSeconds: Math.round(row.starvedMs / 1000),
         lowManaSeconds: Math.round(row.lowManaMs / 1000),
         noShow: row.absent,
+        unreadCycles: Number.isFinite(unreadCycles) ? unreadCycles : 0,
     }));
 }
 
@@ -1252,8 +1274,48 @@ export function ledgerCsvRows(rows, trialsRun) {
  * @returns {Promise<Array<Object>>} Cycle records, oldest first: one per week on live, one per
  *   cycle on the test server ({@link ledgerCyclesByAnchor})
  */
-export async function loadLedgerCycles(guildName, characterId = null, { cycles = null, now = Date.now() } = {}) {
+export async function loadLedgerCycles(guildName, characterId = null, options = {}) {
+    return (await loadLedgerCyclesDetailed(guildName, characterId, options)).cycles;
+}
+
+/**
+ * One week's record, told apart from a week whose record could not be read.
+ *
+ * `storage.get(..., null)` answers null for both, so an aborted read looked like a week nobody
+ * recorded. `tryGet` answers null only for a failed read.
+ *
+ * @param {string} scope - From {@link ledgerScope}
+ * @param {number} stamp - The week's stamp
+ * @returns {Promise<{record: Object|null, unreadable: boolean}>} The record, or why there is none
+ */
+async function readLedgerWeek(scope, stamp) {
+    let read = null;
+    try {
+        read = await storage.tryGet(ledgerCycleKey(scope, stamp), LEDGER_STORE);
+    } catch (error) {
+        console.error('[GuildTrialLedger] Reading a ledger week failed:', error);
+    }
+    if (!read) return { record: null, unreadable: true };
+    const record = read.found && read.value && typeof read.value === 'object' ? read.value : null;
+    return { record, unreadable: false };
+}
+
+/**
+ * {@link loadLedgerCycles}, also naming the weeks whose record could not be read.
+ *
+ * @param {string|null} guildName - Guild name, or null before it is known
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback scope
+ * @param {Object} [options] - As {@link loadLedgerCycles}
+ * @returns {Promise<{cycles: Array<Object>, unreadWeeks: Array<number>}>} The cycles read, and the stamps
+ *   of the weeks that failed to read: absent from `cycles`, but not the same as a week nothing recorded
+ */
+export async function loadLedgerCyclesDetailed(
+    guildName,
+    characterId = null,
+    { cycles = null, now = Date.now() } = {}
+) {
     const scope = ledgerScope(guildName, characterId);
+    const unreadWeeks = [];
     try {
         const keys = await storage.getAllKeys(LEDGER_STORE);
         const windowed = Number.isFinite(cycles) && cycles > 0;
@@ -1263,8 +1325,9 @@ export async function loadLedgerCycles(guildName, characterId = null, { cycles =
         if (!perCycle) stamps = stamps.filter((stamp) => stamp >= windowFrom);
 
         const readWeek = async (stamp) => {
-            const record = await storage.get(ledgerCycleKey(scope, stamp), LEDGER_STORE, null);
-            return record && typeof record === 'object' ? record : null;
+            const { record, unreadable } = await readLedgerWeek(scope, stamp);
+            if (unreadable) unreadWeeks.push(stamp);
+            return record;
         };
         if (!perCycle) {
             const records = [];
@@ -1272,7 +1335,7 @@ export async function loadLedgerCycles(guildName, characterId = null, { cycles =
                 const record = await readWeek(stamp);
                 if (record) records.push(record);
             }
-            return records;
+            return { cycles: records, unreadWeeks };
         }
 
         // A test-server week holds several cycles, so the window and the
@@ -1290,10 +1353,10 @@ export async function loadLedgerCycles(guildName, characterId = null, { cycles =
             const record = await readWeek(stamps[i]);
             if (record) split = [...ledgerCyclesByAnchor([record], { perCycle }).filter(inWindow), ...split];
         }
-        return split.slice(-MAX_LEDGER_CYCLES);
+        return { cycles: split.slice(-MAX_LEDGER_CYCLES), unreadWeeks };
     } catch (error) {
         console.error('[GuildTrialLedger] Reading the ledger failed:', error);
-        return [];
+        return { cycles: [], unreadWeeks };
     }
 }
 
@@ -1312,19 +1375,35 @@ export async function loadLedgerCycles(guildName, characterId = null, { cycles =
  * @returns {Promise<number|null>} Epoch ms, or null when nothing is recorded or it cannot be read
  */
 export async function loadLedgerFirstRecord(guildName, characterId = null) {
+    return (await loadLedgerFirstRecordDetailed(guildName, characterId)).first;
+}
+
+/**
+ * {@link loadLedgerFirstRecord}, also naming the week it could not read.
+ *
+ * When the test server's oldest week fails to read, its earliest trial is not known; the week's start is
+ * answered instead and the week is named in `unreadWeeks`, so its cycles show as unknown rather than
+ * being charged as missed from a start the ledger never had.
+ *
+ * @param {string|null} guildName - Guild name, or null before it is known
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback scope
+ * @returns {Promise<{first: number|null, unreadWeeks: Array<number>}>} The start, and any unread week
+ */
+export async function loadLedgerFirstRecordDetailed(guildName, characterId = null) {
     const scope = ledgerScope(guildName, characterId);
     try {
         const keys = await storage.getAllKeys(LEDGER_STORE);
         const [oldest] = ledgerCyclesInKeys(keys, scope);
-        if (oldest === undefined) return null;
-        if (!isTestServer()) return oldest;
-        const record = await storage.get(ledgerCycleKey(scope, oldest), LEDGER_STORE, null);
-        const places = record && typeof record === 'object' ? ledgerCyclesByAnchor([record], { perCycle: true }) : [];
+        if (oldest === undefined) return { first: null, unreadWeeks: [] };
+        if (!isTestServer()) return { first: oldest, unreadWeeks: [] };
+        const { record, unreadable } = await readLedgerWeek(scope, oldest);
+        if (unreadable) return { first: oldest, unreadWeeks: [oldest] };
+        const places = record ? ledgerCyclesByAnchor([record], { perCycle: true }) : [];
         const placed = places.flatMap((cycle) => cyclePlaces(cycle));
-        return placed.length ? Math.min(...placed) : oldest;
+        return { first: placed.length ? Math.min(...placed) : oldest, unreadWeeks: [] };
     } catch (error) {
         console.error('[GuildTrialLedger] Reading the ledger start failed:', error);
-        return null;
+        return { first: null, unreadWeeks: [] };
     }
 }
 
@@ -1413,7 +1492,13 @@ export async function recordFinishedTrial({
 
     const run = async () => {
         try {
-            const stored = await storage.get(key, LEDGER_STORE, null);
+            // An unreadable record is not an empty one: a fresh cycle written over it would erase the week
+            const read = await storage.tryGet(key, LEDGER_STORE);
+            if (!read) {
+                console.error('[GuildTrialLedger] Could not read the cycle, so the trial was not recorded:', key);
+                return null;
+            }
+            const stored = read.found ? read.value : null;
             const cycle =
                 stored && typeof stored === 'object' ? stored : emptyLedgerCycle(contribution.weekStart, scope);
             const next = accrueTrial(cycle, contribution, { participation });

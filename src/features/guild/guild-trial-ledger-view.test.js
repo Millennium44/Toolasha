@@ -73,18 +73,18 @@ vi.mock('./guild-xp-tracker.js', () => ({
 vi.mock('./guild-loadouts.js', () => ({ loadLoadouts: async () => world.loadouts }));
 vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
     ...(await importOriginal()),
-    loadLedgerCycles: async (guild) => {
+    loadLedgerCyclesDetailed: async (guild) => {
         // The real read keys on the guild: no guild, no cycles
-        if (!guild) return [];
+        if (!guild) return { cycles: [], unreadWeeks: [] };
         // A queued answer, optionally gated so a test can control which of two
         // concurrent reads resolves first; falls back to the plain `world.cycles`
         const next = world.cyclesQueue?.shift();
-        if (!next) return world.cycles;
+        if (!next) return { cycles: world.cycles, unreadWeeks: world.unreadWeeks || [] };
         if (next.gate) await next.gate;
-        return next.value;
+        return { cycles: next.value, unreadWeeks: world.unreadWeeks || [] };
     },
     // Undefined unless a test sets it: the real lookup reads storage, which these tests never stand up
-    loadLedgerFirstRecord: async () => world.firstRecord,
+    loadLedgerFirstRecordDetailed: async () => ({ first: world.firstRecord, unreadWeeks: [] }),
 }));
 
 // The accuracy card reads the trial store, which is IndexedDB and is never what
@@ -395,6 +395,15 @@ describe('participationText', () => {
 });
 
 describe('coverageLine', () => {
+    test('says unreadable cycles are unknown, not missed, and the figures incomplete', () => {
+        const line = coverageLine({ watched: 6, expected: 7, unknown: 2 });
+        expect(line).toContain('Watched 6 of 7 cycles (1 missed).');
+        expect(line).toContain('2 cycles could not be read');
+        expect(line).toContain('incomplete');
+        expect(coverageLine({ watched: 0, expected: 0, unknown: 1 })).toContain('1 cycle could not be read');
+        expect(coverageLine({ watched: 6, expected: 8, unknown: 0 })).not.toContain('could not be read');
+    });
+
     test('says how many of the cycles that ran were watched, and how many were missed', () => {
         expect(coverageLine({ watched: 6, expected: 8 })).toBe('Watched 6 of 8 cycles (2 missed).');
         expect(coverageLine({ watched: 1, expected: 1 })).toBe('Watched 1 of 1 cycle.');
