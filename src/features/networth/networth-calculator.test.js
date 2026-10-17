@@ -733,6 +733,7 @@ describe('craft-cost parity between the main thread and the worker', () => {
      * builds no second Blob.
      */
     let workerProductionCostMemo = null;
+    let workerSource = null;
     async function loadWorkerProductionCost() {
         if (workerProductionCostMemo) return workerProductionCostMemo;
         let captured = null;
@@ -752,6 +753,7 @@ describe('craft-cost parity between the main thread and the worker', () => {
         await manager.calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} }).catch(() => {});
         vi.unstubAllGlobals();
         expect(captured).toBeTruthy();
+        workerSource = captured;
         workerProductionCostMemo = new Function('self', `${captured}\n; return calculateProductionCost;`)({
             postMessage: () => {},
             onmessage: null,
@@ -903,6 +905,73 @@ describe('craft-cost parity between the main thread and the worker', () => {
         const result = await calculateNetworth();
 
         expect(result.partial).toEqual({ count: 1, names: ['Plank'] });
+    });
+
+    test('an enhanced item whose base or material is a partial bill is flagged on both threads', async () => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+        const partialRecipe = (out) => ({
+            outputItems: [{ itemHrid: out, count: 1 }],
+            inputItems: [
+                { itemHrid: '/items/log', count: 3 },
+                { itemHrid: '/items/mystery_dust', count: 2 },
+            ],
+        });
+        await loadWorkerProductionCost();
+        const workerValue = new Function(
+            'self',
+            `${workerSource}
+; return calculateItemValue;`
+        )({
+            postMessage: () => {},
+            onmessage: null,
+        });
+        const params = { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1 };
+
+        // Base item crafted from a partial bill, no market quote; one coin material
+        // (the main thread's path is mocked, so only its partial reading is under test)
+        const cases = [
+            { name: 'base', costs: [], recipeFor: '/items/sword' },
+            { name: 'material', costs: [{ itemHrid: '/items/plank', count: 2 }], recipeFor: '/items/plank' },
+        ];
+        for (const c of cases) {
+            mocks.initData = {
+                houseRoomDetailMap: {},
+                actionDetailMap: { '/actions/make': partialRecipe(c.recipeFor) },
+            };
+            mocks.itemDetails['/items/sword'] = { name: 'Sword', enhancementCosts: c.costs };
+            mocks.enhancementPaths['/items/sword:3'] = 4200;
+            delete mocks.itemPrices['/items/sword'];
+
+            const fromMain = await calculateItemValueDetailed({ itemHrid: '/items/sword', enhancementLevel: 3 });
+            expect(fromMain.value).toBe(4200);
+            expect(fromMain.partial, c.name).toBe(true);
+
+            const { priceMap, recipes } = shippedContext();
+            const ctx = {
+                itemIndex: 0,
+                item: { itemHrid: '/items/sword', enhancementLevel: 3, count: 1 },
+                // A material case needs a base the worker can start the path from
+                priceMap:
+                    c.name === 'material'
+                        ? {
+                              ...priceMap,
+                              '/items/sword:0': 1000,
+                              '/items/sword:0_ask': 1000,
+                              '/items/sword:0_bid': 1000,
+                          }
+                        : priceMap,
+                recipes,
+                useHighEnhancementCost: false,
+                minLevel: 99,
+                enhancementParams: params,
+                itemDetails: { itemLevel: 10, enhancementCosts: c.costs, protectionItemHrids: [] },
+                shopCosts: {},
+            };
+            const fromWorker = workerValue(ctx);
+            expect(fromWorker.value, c.name).toBeGreaterThan(0);
+            expect(fromWorker.partial, c.name).toBe(true);
+        }
     });
 
     test('the worker flags a bill with an unpriced input partial, as the main thread does', async () => {
