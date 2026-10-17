@@ -110,17 +110,46 @@ function mergeCurrentAndHistoricalEntries(currentEntries, historicalEntries) {
     return Array.from(seen.values());
 }
 
+const LABYRINTH_ACTION_PREFIX = '/actions/labyrinth/';
+
+/**
+ * Whether a loot log entry is a Labyrinth run.
+ * @param {Object} entry - A loot log entry
+ * @returns {boolean}
+ */
+function isLabyrinthEntry(entry) {
+    return typeof entry?.actionHrid === 'string' && entry.actionHrid.startsWith(LABYRINTH_ACTION_PREFIX);
+}
+
+/**
+ * The run a Labyrinth entry gets its own row for, when runs are split: its
+ * start time. Null for every other entry, for a Labyrinth entry with no start
+ * time (it stays in the run-less row), and whenever runs are not split.
+ * @param {Object} entry - A loot log entry
+ * @param {Object} [options] - `{splitLabyrinthRuns}`
+ * @returns {string|null}
+ */
+function labyrinthRunStart(entry, options = {}) {
+    if (!options.splitLabyrinthRuns || !isLabyrinthEntry(entry)) return null;
+    return entry.startTime || null;
+}
+
 /**
  * The grouping key: the action, kept separate per difficulty tier.
  *
  * A dungeon's tiers are the same action hrid at wildly different rates, and
- * folding them into one row would report an average nobody can run.
+ * folding them into one row would report an average nobody can run. With
+ * `splitLabyrinthRuns`, a Labyrinth entry is also kept apart by its start time,
+ * so each run is its own row instead of one total over every run.
  *
  * @param {Object} entry - A loot log entry
+ * @param {Object} [options] - `{splitLabyrinthRuns}`
  * @returns {string}
  */
-function buildActionGroupKey(entry) {
-    return `${entry.actionHrid}::${entry.difficultyTier ?? ''}`;
+function buildActionGroupKey(entry, options = {}) {
+    const base = `${entry.actionHrid}::${entry.difficultyTier ?? ''}`;
+    const runStart = labyrinthRunStart(entry, options);
+    return runStart ? `${base}::${runStart}` : base;
 }
 
 /**
@@ -132,21 +161,25 @@ function buildActionGroupKey(entry) {
  * that against elapsed time says nothing.
  *
  * @param {Array} entries - Merged current + historical entries
- * @returns {Array<Object>} One row per distinct action/tier combination
+ * @param {Object} [options] - `{splitLabyrinthRuns}`: one row per Labyrinth run
+ *   rather than one total. Every other action groups as before.
+ * @returns {Array<Object>} One row per distinct action/tier combination (and
+ *   per Labyrinth run when split, with `runStartTime` set on those rows)
  */
-function aggregatePivotRows(entries) {
+function aggregatePivotRows(entries, options = {}) {
     const rows = new Map();
 
     for (const entry of entries || []) {
         if (!entry?.actionHrid) continue;
         if (entry.actionHrid === '/actions/enhancing/enhance') continue;
 
-        const key = buildActionGroupKey(entry);
+        const key = buildActionGroupKey(entry, options);
         let row = rows.get(key);
         if (!row) {
             row = {
                 actionHrid: entry.actionHrid,
                 difficultyTier: entry.difficultyTier ?? null,
+                runStartTime: labyrinthRunStart(entry, options),
                 entryCount: 0,
                 actionCount: 0,
                 totalTimeMs: 0,
@@ -230,6 +263,7 @@ export {
     lootEntryIdentity,
     isMoreCompleteEntry,
     mergeCurrentAndHistoricalEntries,
+    isLabyrinthEntry,
     buildActionGroupKey,
     aggregatePivotRows,
     computeRowRates,

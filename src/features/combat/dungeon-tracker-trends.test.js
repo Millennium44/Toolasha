@@ -36,7 +36,7 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
 vi.mock('./dungeon-tracker-chat-annotations.js', () => ({
     default: { refreshRunCounts: async () => {} },
 }));
-vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00' }));
+vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00', timeReadable: (s) => String(s) }));
 
 const {
     computeTrend,

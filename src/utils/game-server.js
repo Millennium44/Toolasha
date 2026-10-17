@@ -29,6 +29,7 @@ const GAME_ORIGINS = new Set([
     'https://milkywayidle.com',
     'https://test.milkywayidle.com',
     'https://www.milkywayidlecn.com',
+    'https://milkywayidlecn.com',
     'https://test.milkywayidlecn.com',
 ]);
 

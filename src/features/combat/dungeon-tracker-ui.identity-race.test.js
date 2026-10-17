@@ -55,7 +55,7 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
 vi.mock('./dungeon-tracker-chat-annotations.js', () => ({
     default: { refreshRunCounts: async () => {} },
 }));
-vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00' }));
+vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00', timeReadable: (s) => String(s) }));
 vi.mock('../../utils/panel-z-index.js', () => ({ PANEL_Z_CAP: 100 }));
 
 const { default: DungeonTrackerUIChart } = await import('./dungeon-tracker-ui-chart.js');

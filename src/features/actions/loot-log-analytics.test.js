@@ -14,6 +14,7 @@ import {
     isMoreCompleteEntry,
     mergeCurrentAndHistoricalEntries,
     buildActionGroupKey,
+    isLabyrinthEntry,
     aggregatePivotRows,
     computeRowRates,
     EXCLUDED_XP_SKILL_HRID,
@@ -298,5 +299,103 @@ describe('computeRowRates', () => {
 
         const rates = computeRowRates(undefined, 0, 0);
         expect(rates).toMatchObject({ hours: 0, goldPerHourAsk: 0, xpEntries: [], totalXp: 0, totalXpPerHour: 0 });
+    });
+});
+
+describe('aggregatePivotRows with splitLabyrinthRuns', () => {
+    const lab = (startTime, actionCount, fields = {}) => ({
+        actionHrid: '/actions/labyrinth/explore',
+        actionCount,
+        startTime,
+        endTime: startTime,
+        totalActiveMillis: 1000,
+        drops: { '/items/labyrinth_token::0': actionCount },
+        xpGains: { '/skills/attack': actionCount },
+        ...fields,
+    });
+    const dungeon = (tier, startTime) => ({
+        actionHrid: '/actions/combat/dungeon_a',
+        difficultyTier: tier,
+        actionCount: 1,
+        startTime,
+        endTime: startTime,
+        totalActiveMillis: 1000,
+        drops: { '/items/chest::0': 1 },
+        xpGains: {},
+    });
+    const entries = [
+        lab('2026-08-01T00:00:00Z', 10),
+        lab('2026-08-02T00:00:00Z', 20),
+        lab('2026-08-03T00:00:00Z', 30),
+        // No start time: nothing to tell it apart by, so it stays in a run-less row
+        lab(undefined, 5, { endTime: undefined }),
+        dungeon(1, '2026-08-01T00:00:00Z'),
+        dungeon(1, '2026-08-02T00:00:00Z'),
+        dungeon(3, '2026-08-01T00:00:00Z'),
+        { actionHrid: '/actions/enhancing/enhance', actionCount: 99, startTime: '2026-08-01T00:00:00Z', drops: {} },
+    ];
+    const labRows = (rows) => rows.filter((row) => row.actionHrid === '/actions/labyrinth/explore');
+
+    test('off (and by default) every Labyrinth run sums into one row', () => {
+        for (const rows of [aggregatePivotRows(entries), aggregatePivotRows(entries, { splitLabyrinthRuns: false })]) {
+            expect(labRows(rows)).toHaveLength(1);
+            expect(labRows(rows)[0].entryCount).toBe(4);
+            expect(labRows(rows)[0].actionCount).toBe(65);
+            expect(labRows(rows)[0].runStartTime).toBeNull();
+            expect(rows).toHaveLength(3);
+        }
+    });
+
+    test('on, each Labyrinth run is its own row while dungeons still group by tier', () => {
+        const rows = aggregatePivotRows(entries, { splitLabyrinthRuns: true });
+        const labs = labRows(rows);
+
+        expect(labs).toHaveLength(4);
+        expect(labs.map((row) => row.runStartTime)).toEqual([
+            '2026-08-01T00:00:00Z',
+            '2026-08-02T00:00:00Z',
+            '2026-08-03T00:00:00Z',
+            null,
+        ]);
+        expect(labs.map((row) => row.actionCount)).toEqual([10, 20, 30, 5]);
+        const dungeons = rows.filter((row) => row.actionHrid === '/actions/combat/dungeon_a');
+        expect(dungeons.map((row) => [row.difficultyTier, row.entryCount])).toEqual([
+            [1, 2],
+            [3, 1],
+        ]);
+        expect(dungeons.every((row) => row.runStartTime === null)).toBe(true);
+        expect(rows.some((row) => row.actionHrid === '/actions/enhancing/enhance')).toBe(false);
+    });
+
+    test('on with no Labyrinth runs is the same grouping as off', () => {
+        const others = entries.filter((entry) => !isLabyrinthEntry(entry));
+        expect(aggregatePivotRows(others, { splitLabyrinthRuns: true })).toEqual(aggregatePivotRows(others));
+    });
+
+    test('totals are the same in both modes', () => {
+        const total = (rows) =>
+            rows.reduce(
+                (sum, row) => ({
+                    actions: sum.actions + row.actionCount,
+                    tokens: sum.tokens + (row.drops['/items/labyrinth_token::0'] || 0),
+                    xp: sum.xp + (row.xpGains['/skills/attack'] || 0),
+                }),
+                { actions: 0, tokens: 0, xp: 0 }
+            );
+        expect(total(aggregatePivotRows(entries, { splitLabyrinthRuns: true }))).toEqual(
+            total(aggregatePivotRows(entries))
+        );
+    });
+
+    test('the group key splits only Labyrinth entries, and only when asked', () => {
+        const run = lab('2026-08-01T00:00:00Z', 1);
+        expect(buildActionGroupKey(run)).toBe('/actions/labyrinth/explore::');
+        expect(buildActionGroupKey(run, { splitLabyrinthRuns: true })).toBe(
+            '/actions/labyrinth/explore::::2026-08-01T00:00:00Z'
+        );
+        const zone = dungeon(1, '2026-08-01T00:00:00Z');
+        expect(buildActionGroupKey(zone, { splitLabyrinthRuns: true })).toBe(buildActionGroupKey(zone));
+        expect(isLabyrinthEntry({ actionHrid: '/actions/labyrinth_like/x' })).toBe(false);
+        expect(isLabyrinthEntry(null)).toBe(false);
     });
 });

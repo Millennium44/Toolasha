@@ -115,7 +115,7 @@ describe('on the live server', () => {
 });
 
 describe('on the CN mirror', () => {
-    test.each(['www.milkywayidlecn.com', 'test.milkywayidlecn.com'])(
+    test.each(['www.milkywayidlecn.com', 'milkywayidlecn.com', 'test.milkywayidlecn.com'])(
         '%s opens no socket and reports nothing',
         (host) => {
             on(host);

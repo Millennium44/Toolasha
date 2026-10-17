@@ -30,6 +30,7 @@ describe('asset manifest origin', () => {
         'https://www.milkywayidle.com',
         'https://test.milkywayidle.com',
         'https://www.milkywayidlecn.com',
+        'https://milkywayidlecn.com',
         'https://test.milkywayidlecn.com',
     ])('%s reads its own manifest', async (origin) => {
         expect(await manifestUrlFetchedFrom(origin)).toBe(`${origin}/asset-manifest.json`);

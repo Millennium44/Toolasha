@@ -26,6 +26,7 @@ import {
     pacePercent,
     paceChip,
 } from './dungeon-pace.js';
+import { estimateKeyRunway } from './dungeon-key-runway.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE } from '../../utils/all-zones-snapshot.js';
@@ -34,6 +35,7 @@ import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { isClearRun, summarizeAttempts } from '../../utils/dungeon-run-result.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { timeReadable } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel } from '../../utils/panel-z-index.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
@@ -69,6 +71,9 @@ class DungeonTrackerUI {
         // Unregister functions for the ROI-pricing config listeners set up in
         // initialize()
         this.pricingChangeUnregisters = [];
+        // The clears the key-runway estimate averages, read once per history refresh so the
+        // 1 Hz tick can re-price the estimate against a changing key count without a storage read
+        this.keyRunwayClears = null;
     }
 
     /**
@@ -117,6 +122,15 @@ class DungeonTrackerUI {
         for (const key of ROI_PRICING_SETTING_KEYS) {
             this.pricingChangeUnregisters.push(config.onSettingChange(key, () => this.updateRoiBoard()));
         }
+
+        // The key runway averages the same clears as the header, so a changed
+        // average window has to rebuild its cached clears, not wait for a completion.
+        this.pricingChangeUnregisters.push(
+            config.onSettingChange('dungeonTrackerAverageWindow', () => {
+                if (!this.container) return;
+                return this.refreshHistoryAndStats();
+            })
+        );
 
         // The board's sim clear time, food, XP and gold come from the all-zones
         // snapshot, read only when it draws. A sync pull that rewrites this
@@ -288,7 +302,7 @@ class DungeonTrackerUI {
                     <span>|</span>
                     <span>Runs: <span id="mwi-dt-header-runs" style="color: #fff; font-weight: bold;">0</span></span>
                     <span>|</span>
-                    <span>Keys: <span id="mwi-dt-header-keys" style="color: #fff; font-weight: bold;">0</span></span>
+                    <span>Keys: <span id="mwi-dt-header-keys" style="color: #fff; font-weight: bold;">0</span><span id="mwi-dt-header-keys-runway" style="color: #aaa;"></span></span>
                     <span id="mwi-dt-pace" style="display: none; font-weight: bold;"></span>
                     <span id="mwi-dt-filter-indicator" style="
                         display: none;
@@ -898,6 +912,7 @@ class DungeonTrackerUI {
             const currentKeys = (run.keyCountsMap && run.keyCountsMap[characterName]) || 0;
             headerKeys.textContent = currentKeys.toLocaleString();
         }
+        this.drawKeyRunway(run, characterName);
 
         // Update Keys section with party member key counts
         this.updateKeysDisplay(run.keyCountsMap || {}, characterName);
@@ -920,6 +935,10 @@ class DungeonTrackerUI {
         // chat line and the header above already honour, so pace honours them
         // too rather than measuring against a lifetime nobody else is quoting.
         this.updatePaceChip(run, drawn.allRuns, drawn.averageLimits, character);
+
+        // Keys cost one clear each, so the runway reads the same stored clears
+        this.keyRunwayClears = this.pickKeyRunwayClears(run, drawn.allRuns, drawn.averageLimits);
+        this.drawKeyRunway(run, characterName);
 
         // Update run history list
         await this.updateRunHistory(ticket, character);
@@ -1152,6 +1171,66 @@ class DungeonTrackerUI {
     }
 
     /**
+     * The stored clears the key-runway estimate averages: this dungeon and tier with this exact
+     * team, whoever is looking at the panel. Failed and canceled attempts are excluded (a key is
+     * spent by a clear). Runs timed by the client's own clock, which can include sleep, are used only
+     * when the team has no server-timed clear (a solo player's whole history).
+     * @param {Object} run - Current run state
+     * @param {Array<Object>} allRuns - Every stored run
+     * @param {Object} [averageLimits] - The header average's window and reset baselines; the
+     *   runway averages the same clears the header does
+     * @returns {{dungeonName: string, tier: *, teamKey: string, clears: Array<Object>}}
+     */
+    pickKeyRunwayClears(run, allRuns, averageLimits = {}) {
+        const teamKey = dungeonTrackerStorage.getTeamKey([...Object.keys(run.keyCountsMap || {})]);
+        const clears = allRuns.filter(
+            (r) =>
+                r.dungeonName === run.dungeonName &&
+                (r.tier ?? null) === (run.tier ?? null) &&
+                r.teamKey === teamKey &&
+                isClearRun(r)
+        );
+        // Server-timed clears where there are any; a solo player's runs are all
+        // client-timed (`validated: false`, no party timestamps to check) and are
+        // fallen back to only when there is nothing better — the rule
+        // `plausibleMaxRunMs` applies, so a solo player still gets a runway.
+        const serverTimed = clears.filter((r) => r.validated !== false);
+        return {
+            dungeonName: run.dungeonName,
+            tier: run.tier ?? null,
+            teamKey,
+            clears: limitToAverageWindow(serverTimed.length ? serverTimed : clears, averageLimits),
+        };
+    }
+
+    /**
+     * Write the "(~time)" estimate beside the Keys figure, or clear it. Cleared when the setting is
+     * off, the character has no keys, the cached clears belong to a different dungeon, tier or
+     * team, or there are too few clears to estimate from.
+     * @param {Object} run - Current run state
+     * @param {string} characterName - Whose key count to price
+     */
+    drawKeyRunway(run, characterName) {
+        const runway = this.container?.querySelector('#mwi-dt-header-keys-runway');
+        if (!runway) return;
+
+        let estimate = null;
+        const cache = this.keyRunwayClears;
+        if (config.getSetting('dungeonKeyRunway') && cache) {
+            const teamKey = dungeonTrackerStorage.getTeamKey([...Object.keys(run.keyCountsMap || {})]);
+            const sameScope =
+                cache.dungeonName === run.dungeonName && cache.tier === (run.tier ?? null) && cache.teamKey === teamKey;
+            const keys = (run.keyCountsMap && run.keyCountsMap[characterName]) || 0;
+            if (sameScope) estimate = estimateKeyRunway(cache.clears, keys);
+        }
+
+        runway.textContent = estimate ? ` (~${timeReadable(Math.round(estimate.seconds))})` : '';
+        runway.title = estimate
+            ? `Estimated time until your keys run out, based on your last ${estimate.sampleSize} clears of this dungeon with this team. Assumes no new keys.`
+            : '';
+    }
+
+    /**
      * Update Keys section display
      * @param {Object} keyCountsMap - Map of player names to key counts
      * @param {string} characterName - Current character name
@@ -1375,6 +1454,7 @@ class DungeonTrackerUI {
         noteTeardown(this);
         try {
             unregisterCommand('Dungeon Tracker');
+            this.keyRunwayClears = null;
             // Immediately hide UI to prevent visual artifacts during character switch
             this.hide();
 

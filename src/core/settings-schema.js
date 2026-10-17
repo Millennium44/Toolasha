@@ -113,6 +113,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Hold Alt/Option and click any item to navigate to its crafting/gathering page, or item dictionary if not craftable',
             },
+            tokenShopShortcuts: {
+                id: 'tokenShopShortcuts',
+                label: 'Add shop buttons to token item menus',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a View Shop button to the item menu of dungeon, Labyrinth, task and guild tokens (and guild credits), like the Cowbell Store button on Cowbells',
+            },
             collectionNavigation: {
                 id: 'collectionNavigation',
                 label: 'Add navigation buttons to collection items',
@@ -477,7 +484,7 @@ export const settingsGroups = {
                     { value: 'relative', label: 'Cumulative duration only' },
                     { value: 'both', label: 'Cumulative duration and clock time' },
                 ],
-                help: 'Chooses whether each reachable queue row shows when it finishes, how long it takes to reach, or both.',
+                help: 'Chooses whether each reachable queue row shows when it finishes, how long it takes to reach, or both. Clock times follow the 12/24-hour and date order set under Marketplace: Time format and Date format for date/time display.',
             },
         },
     },
@@ -492,6 +499,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Displays profit/hour and profit/day for alchemy actions based on success rate and market prices',
+            },
+            alchemy_catalystWhatIf: {
+                id: 'alchemy_catalystWhatIf',
+                label: 'Alchemy panel: Catalyst what-if picker in Profitability',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a picker to the Profitability section that recomputes it as if no catalyst, the type catalyst or a Prime Catalyst were slotted, including ones you do not own. The game keeps the catalyst you selected; the figures are marked what-if until you pick Equipped again, and the Missing Mats button then includes the picked catalyst.',
             },
             alchemy_bestItems: {
                 id: 'alchemy_bestItems',
@@ -591,10 +605,10 @@ export const settingsGroups = {
             },
             actions_missingMaterialsButton: {
                 id: 'actions_missingMaterialsButton',
-                label: 'Show "Missing Mats Marketplace" button on production panels',
+                label: 'Show "Missing Mats Marketplace" button on production, enhancing and alchemy panels',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds button to production panels that opens marketplace with tabs for missing materials',
+                help: 'Adds a button to production, enhancing and alchemy panels that opens marketplace with tabs for missing materials',
             },
             actions_missingMaterialsButton_ignoreQueue: {
                 id: 'actions_missingMaterialsButton_ignoreQueue',
@@ -608,7 +622,7 @@ export const settingsGroups = {
                 label: 'Action panel: Budget calculator',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a budget input below the Missing Mats button. Enter a gold budget (e.g. 50m) to calculate how many units you can produce by buying missing tradeable materials at ask price.',
+                help: 'Adds a budget input below the Missing Mats button. Enter a gold budget (e.g. 50m) to calculate how many units you can produce by buying missing tradeable materials at ask price. Any coin fee the recipe charges is paid out of the same budget.',
             },
             actions_costSummary: {
                 id: 'actions_costSummary',
@@ -796,6 +810,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Every other XP/hr and gold/hr figure in this script is predicted from game data; this is the one built from what your runs actually paid. A sortable table over the current session plus stored history — one row per action and per difficulty tier, with time spent, drop value at ask and bid, and XP/hr per skill (plus a combined line for actions that train several). Off by default because it adds a button to the game’s own panel',
+            },
+            lootLogPivotSplitLabyrinth: {
+                id: 'lootLogPivotSplitLabyrinth',
+                label: 'Loot Log: Analytics shows each Labyrinth run as its own row',
+                type: 'checkbox',
+                default: false,
+                help: 'In the Loot & XP Analytics table, gives every Labyrinth run its own row, labeled with when it started, instead of one row adding up every run. Every other action is grouped as before. Off by default because it changes how the table groups',
             },
             lootLogDropLuck: {
                 id: 'lootLogDropLuck',
@@ -1032,10 +1053,10 @@ export const settingsGroups = {
             },
             itemTooltip_gatheringRareDrops: {
                 id: 'itemTooltip_gatheringRareDrops',
-                label: 'Show rare drops from gathering',
+                label: 'Show rare gathering drops in item tooltips',
                 type: 'checkbox',
                 default: true,
-                help: 'Shows rare find drops from gathering zones (e.g., Thread of Expertise from Asteroid Belt)',
+                help: "When you hover an item, also list the gathering zones where it is a rare drop (under 1%), shown as items per day. For example, hovering Thread of Expertise lists Asteroid Belt. Requires 'Show gathering sources and profit'.",
             },
             itemTooltip_abilityStatus: {
                 id: 'itemTooltip_abilityStatus',
@@ -3076,6 +3097,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'A chip on the in-progress dungeon panel — "pace +6% vs your avg" — comparing this run\'s average wave time against your stored history for the same dungeon, green when faster. No stored history, or fewer than three waves in, shows nothing',
             },
+            dungeonKeyRunway: {
+                id: 'dungeonKeyRunway',
+                label: 'Dungeon Tracker: How long your keys will last',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds "(~1h 20m)" beside the Keys count on the in-progress dungeon panel: your held entry keys times the average of your recent clears of this dungeon, tier and team (up to 20, within the Dungeon Tracker average window and since any "Avg from here" reset). Needs at least three such clears; shows nothing with no keys',
+            },
             combatSim: {
                 id: 'combatSim',
                 label: 'Combat Simulator',
@@ -4247,7 +4275,7 @@ export const settingsGroups = {
         settings: {
             houseUpgradeCosts: {
                 id: 'houseUpgradeCosts',
-                label: 'Show upgrade costs with market prices and inventory comparison',
+                label: 'House: Show room upgrade costs with market prices and inventory comparison',
                 type: 'checkbox',
                 default: true,
             },
