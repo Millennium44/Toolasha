@@ -203,7 +203,60 @@ class LabyrinthClearRate {
         this._previewScrollHandler = null;
     }
 
+    /**
+     * Start whichever halves of the feature have their setting on.
+     *
+     * The room-tile calculator (badges, recommendations, the Path) and the live
+     * clear chance in the action bar are separate settings, and the live readout
+     * is on by default while the calculator can be switched off — so each half
+     * wires itself on its own toggle. Each half is idempotent, which is what lets
+     * the registry call this again when the second setting is switched on
+     * mid-session (see `isRunning`).
+     */
     initialize() {
+        this.initializeClearRate();
+        this.initializeLiveProgress();
+    }
+
+    /**
+     * Whether every half whose setting is on is wired. Read by the registry,
+     * which otherwise remembers only that it started the module once — and so
+     * would never start the second half when its setting is switched on after
+     * the first half already brought the module up.
+     * @returns {boolean}
+     */
+    isRunning() {
+        if (config.getSetting('labyrinthClearRate') && !this.isInitialized) return false;
+        if (config.getSetting('labyrinthLiveProgress') && !this.liveProgressHandler) return false;
+        return true;
+    }
+
+    /**
+     * The live clear chance: skilling and enhancing rooms from
+     * `labyrinth_room_progress`, combat rooms from `battle_updated`/`new_battle`.
+     * Each handler also checks the setting per message, so switching it off
+     * mid-session takes the readout down without a teardown.
+     *
+     * Without the calculator half, `roomData` is never filled: the attempt count
+     * is left off the skilling readout and the combat replay finds its room from
+     * the action bar rather than the grid (`liveRoomContext`).
+     */
+    initializeLiveProgress() {
+        if (!config.getSetting('labyrinthLiveProgress')) return;
+        if (this.liveProgressHandler) return;
+
+        this.liveProgressHandler = (data) => this.onLiveProgress(data);
+        webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
+
+        this.battleHandler = (data) => this.onBattleUpdated(data);
+        webSocketHook.on('battle_updated', this.battleHandler);
+
+        this.newBattleHandler = (data) => this.onNewBattle(data);
+        webSocketHook.on('new_battle', this.newBattleHandler);
+    }
+
+    /** The room-tile calculator: badges, recommendations, the Path, the room log's sim source */
+    initializeClearRate() {
         if (!config.getSetting('labyrinthClearRate')) {
             return;
         }
@@ -266,15 +319,6 @@ class LabyrinthClearRate {
             this._onBuffInputsChanged();
         };
         dataManager.on('action_completed', this._actionCompletedHandler);
-
-        this.liveProgressHandler = (data) => this.onLiveProgress(data);
-        webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
-
-        this.battleHandler = (data) => this.onBattleUpdated(data);
-        webSocketHook.on('battle_updated', this.battleHandler);
-
-        this.newBattleHandler = (data) => this.onNewBattle(data);
-        webSocketHook.on('new_battle', this.newBattleHandler);
 
         // The room log shows fights beside the rate that was predicted for them,
         // and owns none of that: the sims and the fight record both live here.
