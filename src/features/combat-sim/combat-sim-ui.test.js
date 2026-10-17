@@ -1616,6 +1616,35 @@ describe('the panel', () => {
             });
         });
 
+        describe('Balanced significance includes the deaths term', () => {
+            const DEADLY = { ...BASELINE, deathsPerHour: 2 };
+            const fewerDeaths = () => {
+                // 2 -> 1 deaths/hr is +10 score points, but deaths carry a 100% error: 20 points of it
+                const r = orderRow('A → B', { se: 0.1 });
+                r.metrics.deathsPerHour = 1;
+                r.noise.deaths = 100;
+                return r;
+            };
+            const realDps = () => orderRow('C → D', { dpsPct: 40, se: 0.1 });
+            const rowText = (name) =>
+                [...section().querySelectorAll('[data-order-row]')].find((r) => r.textContent.includes(name))
+                    .textContent;
+
+            test('the section: a deaths-only gain within deaths noise is within noise, a real dps gain is not', () => {
+                ui._abilityOrderRank = 'balanced';
+                draw([fewerDeaths(), realDps()], { baseline: DEADLY });
+                expect(rowText('A → B')).toContain('within noise');
+                expect(rowText('C → D')).not.toContain('within noise');
+            });
+
+            test('the budget line agrees: the deaths-only order is skipped, the dps order taken', () => {
+                const plan = { metric: UPGRADE_PLAN_METRICS.find((m) => m.key === 'score'), picks: [] };
+                expect(ui._planAbilityOrder(plan, [fewerDeaths()], DEADLY).appended).toBe(false);
+                const both = ui._planAbilityOrder(plan, [fewerDeaths(), realDps()], DEADLY);
+                expect(both.html).toContain('C → D');
+            });
+        });
+
         test('a noisy top with a significant second: the verdict and summary name the second', () => {
             draw([
                 orderRow('A → B', { profit: 700, se: 500, sig: false }),
