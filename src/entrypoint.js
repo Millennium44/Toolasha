@@ -1987,6 +1987,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'tokenShopShortcuts',
+            name: 'Token Shop Shortcuts',
+            category: 'Navigation',
+            module: UI.tokenShopShortcuts,
+            async: false,
+        },
+        {
             key: 'collectionNavigation',
             name: 'Collection Navigation',
             category: 'Navigation',
