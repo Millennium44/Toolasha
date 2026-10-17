@@ -3083,6 +3083,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'A chip on the in-progress dungeon panel — "pace +6% vs your avg" — comparing this run\'s average wave time against your stored history for the same dungeon, green when faster. No stored history, or fewer than three waves in, shows nothing',
             },
+            dungeonKeyRunway: {
+                id: 'dungeonKeyRunway',
+                label: 'Dungeon Tracker: How long your keys will last',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds "(~1h 20m)" beside the Keys count on the in-progress dungeon panel: your held entry keys times the average of your last 20 clears of this dungeon with this team. Needs at least three clears; shows nothing with no keys',
+            },
             combatSim: {
                 id: 'combatSim',
                 label: 'Combat Simulator',
