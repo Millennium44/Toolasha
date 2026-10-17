@@ -24,6 +24,7 @@ import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import { SNAPSHOT_PREFIX as BRIEFING_PREFIX, readSnapshotsFromKeys } from '../briefing/briefing-snapshot-store.js';
 import { remainingQueueSeconds } from '../queue-monitor/queue-projection.js';
+import { normalizeLegacySnapshot } from '../queue-monitor/queue-snapshot-legacy.js';
 import { showToast } from '../../utils/toast.js';
 import { idsFromRecordKeys, recordKeysFor } from '../../utils/chunked-history.js';
 
@@ -411,7 +412,7 @@ export async function readAccount(now = Date.now()) {
 
     const snapshotsById = {};
     for (const snapshot of Object.values(queueValues)) {
-        if (snapshot?.characterId) snapshotsById[snapshot.characterId] = snapshot;
+        if (snapshot?.characterId) snapshotsById[snapshot.characterId] = normalizeLegacySnapshot(snapshot);
     }
 
     const namesById = (await storage.get(NAMES_KEY, SETTINGS_STORE, {})) || {};

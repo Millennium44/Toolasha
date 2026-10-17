@@ -317,6 +317,34 @@ describe('reading it all back out of storage', () => {
         expect(account.characters.map((row) => row.id).sort()).toEqual(['a', 'b', 'c', 'char-1', 'd']);
     });
 
+    test('a snapshot saved before the unknown-action flag is not read as busy then idle', async () => {
+        // A counted fight timed as 3 h of battles, saved without hasUnknownAction; 4 h on, it must not read idle
+        db.stores.queueSnapshots = {
+            queueSnapshot_g: {
+                characterId: 'g',
+                characterName: 'Old',
+                timestamp: now - 4 * HOUR,
+                totalQueueSeconds: 3 * 3600,
+                hasInfiniteAction: false,
+                actions: [
+                    {
+                        actionHrid: '/actions/combat/fly',
+                        actionName: 'Fly',
+                        hasMaxCount: true,
+                        maxCount: 100,
+                        currentCount: 0,
+                        estimatedSeconds: 3 * 3600,
+                        isInfinite: false,
+                    },
+                ],
+            },
+        };
+
+        const account = await readAccount(now);
+
+        expect(account.characters.find((row) => row.id === 'g').queue.state).toBe('untimed');
+    });
+
     test('a character whose recorders have been split into records is still an account member', async () => {
         // No `networth_e`/`lootLog_f` key at all: those characters have been
         // migrated to one record per month and per hour respectively
