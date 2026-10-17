@@ -829,6 +829,21 @@ describe('atomic record', () => {
         expect(stored().map((e) => e.id)).toEqual([1]);
     });
 
+    test('flushPersistedRecords lands a departing retry still in its back-off, with nothing else pending', async () => {
+        vi.useFakeTimers();
+        const record = atomicLog();
+        record.get().push({ id: 1 });
+        record.save();
+        storageMock.update.mockImplementationOnce(async () => null);
+        record.reset();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stored()).toBeUndefined();
+
+        // A backup or sync pass flushes before it reads
+        await flushPersistedRecords();
+        expect(stored().map((e) => e.id)).toEqual([1]);
+    });
+
     test('a save whose prepare cannot read is asked for again', async () => {
         vi.useFakeTimers();
         let readable = false;
