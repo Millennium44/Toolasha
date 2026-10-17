@@ -39,7 +39,7 @@ const storageMock = vi.hoisted(() => {
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 
-const { createAlchemySessionStore, NO_CHARACTER } = await import('./alchemy-session-store.js');
+const { createAlchemySessionStore, mergeSessionCopies, NO_CHARACTER } = await import('./alchemy-session-store.js');
 
 /** A session as the trackers build them */
 const session = (startTime, id) => ({ id: id ?? `transmute_${startTime}`, startTime, totalAttempts: 1, results: {} });
@@ -191,5 +191,37 @@ describe('an older copy of a cleared session', () => {
         expect(store._union([], [copy(5)])).toEqual([]);
         // A device that kept recording past the clear has outlived it
         expect(store._union([], [copy(8)])).toEqual([copy(8)]);
+    });
+});
+
+describe('a hand-corrected import against a sync pull', () => {
+    const copy = (attempts, extra = {}) => ({ ...session(AUG_4, 'transmute_live'), totalAttempts: attempts, ...extra });
+
+    test('the later edit wins even when it lowers the attempts', () => {
+        const corrected = copy(40, { editedAt: 2000 });
+        const pulled = copy(50);
+        expect(mergeSessionCopies(corrected, pulled)).toBe(corrected);
+        expect(mergeSessionCopies(pulled, corrected)).toBe(corrected);
+    });
+
+    test('of two edits the newer stamp wins', () => {
+        const older = copy(60, { editedAt: 1000 });
+        const newer = copy(10, { editedAt: 2000 });
+        expect(mergeSessionCopies(older, newer)).toBe(newer);
+        expect(mergeSessionCopies(newer, older)).toBe(newer);
+    });
+
+    test('equal stamps, or none, fall back to more attempts', () => {
+        expect(mergeSessionCopies(copy(3, { editedAt: 5 }), copy(9, { editedAt: 5 })).totalAttempts).toBe(9);
+        expect(mergeSessionCopies(copy(3), copy(9)).totalAttempts).toBe(9);
+        expect(mergeSessionCopies(copy(3, { editedAt: 'junk' }), copy(9)).totalAttempts).toBe(9);
+    });
+
+    test('a pull folds into the corrected copy rather than reverting it', async () => {
+        await store.load('char-1');
+        await store.save('char-1', [copy(40, { editedAt: 2000 })]);
+        await store.load('char-1');
+        const [kept] = store._union([copy(40, { editedAt: 2000 })], [copy(50)]);
+        expect(kept.totalAttempts).toBe(40);
     });
 });

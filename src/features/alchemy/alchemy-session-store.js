@@ -68,6 +68,11 @@ export function createAlchemySessionStore(baseKey, label) {
  * device that pulled it — kept recording into. Kept side by side, the gold
  * attribution and the totals tables counted the run twice.
  *
+ * A hand-corrected import is the exception to "more attempts is newer": it can lower the count, and
+ * it stamps the replacement `editedAt`. When the copies carry different stamps (an unstamped copy
+ * counts as 0) the later edit wins whatever the attempts say, so a sync pull cannot revert a
+ * correction; when they carry the same stamp, or neither has one, the rule below decides.
+ *
  * Two devices never record one session separately: its id is the moment it
  * opened on the device running it. So the copies are always an older and a
  * newer version, and the newer is the one with more attempts — the counter
@@ -83,6 +88,9 @@ export function createAlchemySessionStore(baseKey, label) {
 export function mergeSessionCopies(a, b) {
     if (!a) return b;
     if (!b) return a;
+    const editedA = finite(a.editedAt);
+    const editedB = finite(b.editedAt);
+    if (editedA !== editedB) return editedB > editedA ? b : a;
     const attemptsA = finite(a.totalAttempts);
     const attemptsB = finite(b.totalAttempts);
     if (attemptsA !== attemptsB) return attemptsB > attemptsA ? b : a;

@@ -357,16 +357,19 @@ export function validateAlchemySessions(kind, sessions) {
  * Merge an imported sessions array onto the stored (unmerged) ones by id.
  *
  * An imported id already in storage REPLACES that record whole — this is how
- * a hand-corrected session goes back in. An imported id storage has never
+ * a hand-corrected session goes back in. The replacement is stamped `editedAt`
+ * (when it differs from the stored copy) so a later sync pull keeps the
+ * correction even when it lowers the attempt count (see `mergeSessionCopies`). An imported id storage has never
  * seen is added. A stored session absent from the file is left exactly as it
  * is; import is additive/corrective, never a wholesale replace.
  *
  * @param {Array<Object>} stored - The character's stored sessions, unmerged
  * @param {Array<Object>} imported - The backup's sessions array
+ * @param {number} [now] - The edit time to stamp replacements with (defaults to the clock)
  * @returns {{merged: Array<Object>, replacedIds: Array<string>, addedIds: Array<string>,
  *   replaced: number, added: number, unchanged: number}} The result to write, and a summary
  */
-export function planAlchemyImportMerge(stored, imported) {
+export function planAlchemyImportMerge(stored, imported, now = Date.now()) {
     const storedList = Array.isArray(stored) ? stored : [];
     const importedList = Array.isArray(imported) ? imported : [];
 
@@ -381,7 +384,12 @@ export function planAlchemyImportMerge(stored, imported) {
         if (incoming === undefined) return existing;
         importedById.delete(existing.id);
         replacedIds.push(existing.id);
-        return incoming;
+        // A re-import of a copy nothing was corrected in keeps the stored copy (and its stamp), so a
+        // plain restore does not outrank progress another device recorded since
+        const { editedAt: _incomingStamp, ...incomingBody } = incoming;
+        const { editedAt: _storedStamp, ...storedBody } = existing;
+        if (JSON.stringify(incomingBody) === JSON.stringify(storedBody)) return existing;
+        return { ...incomingBody, editedAt: now };
     });
 
     const addedIds = [];
