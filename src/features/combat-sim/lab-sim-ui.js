@@ -3652,11 +3652,21 @@ class LabSimUI {
         // A run in flight described the scope it started with; it checks this when it finishes
         this._triggerScopeGen++;
         const resultsEl = this.panel.querySelector('#mwi-labsim-trigger-results');
-        if (resultsEl && !this._upgradeRunning) {
+        // Cleared whatever else is running: `_upgradeRunning` is also set by the upgrade analysis, Check swaps
+        // and the skilling run, none of which redraw this box, and the tune run itself cleared it at its start
+        if (resultsEl) {
             resultsEl.innerHTML = '';
             resultsEl.style.display = 'none';
             this._triggerSummary = '';
             this._applyTriggerSummary();
+        }
+        // A Verify button on the old result must not run against it, and its verdicts described other fights.
+        // Another section's verify in flight keeps its token: only the trigger state is dropped then
+        if (!this._verify.running || this._verify.running.scope === 'trigger') {
+            this._clearVerify(['trigger']);
+        } else {
+            this._verifyLive.trigger = null;
+            this._verify.trigger = this._freshVerify().trigger;
         }
         if (this._triggerChoices.open) void this._refreshTriggerLoadouts();
     }

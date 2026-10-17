@@ -5383,6 +5383,23 @@ describe('Tune triggers', () => {
             expect(summary().style.display).toBe('none');
         });
 
+        test('a scope change clears the result even while another run holds _upgradeRunning', async () => {
+            ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            await settle();
+            await run();
+            expect(results().innerHTML).not.toBe('');
+            expect(ui._verifyLive.trigger).not.toBeNull();
+            ui._verify.trigger.set('stale', { verdict: 'confirmed' });
+            // An upgrade analysis, Check swaps or a skilling run is in flight
+            ui._upgradeRunning = true;
+            ui._onTriggerScopeChanged();
+            expect(results().innerHTML).toBe('');
+            expect(summary().textContent).toBe('');
+            expect(ui._verifyLive.trigger).toBeNull();
+            expect(ui._verify.trigger.size).toBe(0);
+            ui._upgradeRunning = false;
+        });
+
         test('the summaries: changes, none, and stopped', () => {
             const group = (changes, conditionChanges = []) => ({
                 result: { changes },
