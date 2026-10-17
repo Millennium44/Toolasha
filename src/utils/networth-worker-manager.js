@@ -130,6 +130,9 @@ function calculateEnhancementCost(params) {
         inputPrices && inputPrices.base && itemHrid in inputPrices.base
             ? inputPrices.base[itemHrid] || 0
             : getRealisticPrice(itemHrid, null, priceMap, recipes, flags);
+    // The shipped partial reading is the shared rule's: the base that was CHOSEN (the crafting-cost
+    // choice included) is a partial crafting bill
+    if (flags && inputPrices && inputPrices.basePartial && inputPrices.basePartial[itemHrid]) flags.partial = true;
 
     // The base item is paid once whatever happens, so an unpriced one understates every level.
     // Together with an unpriced material (below) it makes the bill a partial one, not a price:
@@ -141,6 +144,8 @@ function calculateEnhancementCost(params) {
     // Build cost array for each level by testing all protection strategies
     const targetCosts = new Array(targetLevel + 1);
     targetCosts[0] = basePrice;
+    // Per level: whether the cheapest traditional strategy spends a protection that is a partial bill
+    const levelPartial = new Array(targetLevel + 1).fill(false);
 
     for (let level = 1; level <= targetLevel; level++) {
         // Calculate per-attempt material cost (sum of ALL materials)
@@ -154,6 +159,15 @@ function calculateEnhancementCost(params) {
                 if (inputPrices && inputPrices.material && material.itemHrid in inputPrices.material) {
                     materialPrice = inputPrices.material[material.itemHrid] || 0;
                     if (!(materialPrice > 0) && material.count > 0) hasUnpricedMaterial = true;
+                    if (
+                        flags &&
+                        materialPrice > 0 &&
+                        inputPrices.materialPartial &&
+                        inputPrices.materialPartial[material.itemHrid] &&
+                        material.count > 0
+                    ) {
+                        flags.partial = true;
+                    }
                 } else if (material.itemHrid.startsWith('/items/trainee_')) {
                     materialPrice = (inputPrices && inputPrices.traineePrice) || ${TRAINEE_SHOP_PRICE};
                 } else if (material.itemHrid === '/items/coin') {
@@ -210,6 +224,7 @@ function calculateEnhancementCost(params) {
 
         // Test no protection (protectFrom = 0)
         let minCost = Infinity;
+        let minPartial = false;
         const noProtResult = calculateStrategyRealCost(
             enhancementParams,
             itemLevel,
@@ -221,7 +236,8 @@ function calculateEnhancementCost(params) {
             itemDetails,
             itemHrid,
             recipes,
-            inputPrices
+            inputPrices,
+            null
         );
         if (noProtResult < minCost) {
             minCost = noProtResult;
@@ -229,6 +245,7 @@ function calculateEnhancementCost(params) {
 
         // Test protection from level 2 to current level
         for (let protectFrom = 2; protectFrom <= level; protectFrom++) {
+            const strategyInfo = { protectionPartial: false };
             const protResult = calculateStrategyRealCost(
                 enhancementParams,
                 itemLevel,
@@ -240,14 +257,17 @@ function calculateEnhancementCost(params) {
                 itemDetails,
                 itemHrid,
                 recipes,
-                inputPrices
+                inputPrices,
+                strategyInfo
             );
             if (protResult < minCost) {
                 minCost = protResult;
+                minPartial = strategyInfo.protectionPartial;
             }
         }
 
         targetCosts[level] = minCost;
+        levelPartial[level] = minPartial;
     }
 
     // Apply Philosopher's Mirror optimization, through the same serialised sweep the tooltip
@@ -261,7 +281,22 @@ function calculateEnhancementCost(params) {
     const mirrorBlessedChance = (enhancementParams.teas?.blessed ?? enhancementParams.blessedTea)
         ? Math.min(1, (enhancementParams.blessedTeaBonus ?? DEFAULT_BLESSED_TEA_CHANCE) * (enhancementParams.guzzlingBonus ?? 1))
         : 0;
-    applyMirrorOptimization(targetCosts, mirrorPrice, mirrorBlessedChance);
+    const usedMirror = applyMirrorOptimization(targetCosts, mirrorPrice, mirrorBlessedChance);
+
+    // Whether the inputs the finished plan SELECTED include a partial crafting bill: a level built the
+    // traditional way is partial when its cheapest strategy spends a partial protection; a level built
+    // with the mirror is partial when the mirror is, or either level it stands on is
+    if (flags && inputPrices && inputPrices.guardedPartial) {
+        const mirrorPartial = Boolean(inputPrices.guardedPartial['/items/philosophers_mirror']);
+        const planPartial = [];
+        for (let level = 0; level <= targetLevel; level++) {
+            planPartial[level] =
+                level >= 3 && usedMirror[level]
+                    ? mirrorPartial || planPartial[level - 1] || planPartial[level - 2]
+                    : levelPartial[level];
+        }
+        if (planPartial[targetLevel]) flags.partial = true;
+    }
 
     return targetCosts[targetLevel];
 }
@@ -281,7 +316,8 @@ function calculateStrategyRealCost(
     itemDetails,
     itemHrid,
     recipes,
-    inputPrices
+    inputPrices,
+    info
 ) {
     const { enhancingLevel, toolBonus, guzzlingBonus = 1.0, blessedTeaBonus = DEFAULT_BLESSED_TEA_CHANCE } = enhancementParams;
     // getEnhancingParams() nests Blessed at teas.blessed; older callers pass a flat blessedTea
@@ -337,9 +373,16 @@ function calculateStrategyRealCost(
             for (const protHrid of itemDetails.protectionItemHrids) options.push(protHrid);
         }
         protectionPrice = Infinity;
+        let chosen = null;
         for (const hrid of options) {
             const price = getRealisticPrice(hrid, hrid === itemHrid ? baseItemPrice : null, priceMap, recipes, undefined, inputPrices);
-            if (price > 0 && price < protectionPrice) protectionPrice = price;
+            if (price > 0 && price < protectionPrice) {
+                protectionPrice = price;
+                chosen = hrid;
+            }
+        }
+        if (info && chosen && inputPrices && inputPrices.guardedPartial) {
+            info.protectionPartial = Boolean(inputPrices.guardedPartial[chosen]);
         }
         if (protectionPrice === Infinity) return Infinity;
     }
@@ -696,10 +739,21 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
 
     // The inputs' prices, resolved here with the shared rule in the net-worth mode: the worker cannot
     // call the resolver (no custom prices, shop or pricing settings over there), so it is handed numbers
-    const inputPrices = { material: {}, guarded: {}, base: {}, traineePrice: TRAINEE_SHOP_PRICE };
+    const inputPrices = {
+        material: {},
+        guarded: {},
+        base: {},
+        // Which of those figures is a partial crafting bill (a recipe input nothing prices)
+        materialPartial: {},
+        guardedPartial: {},
+        basePartial: {},
+        traineePrice: TRAINEE_SHOP_PRICE,
+    };
     const resolveGuarded = (hrid) => {
         if (hrid && !(hrid in inputPrices.guarded)) {
-            inputPrices.guarded[hrid] = priceGuarded(hrid, { context: 'networth' }).price;
+            const guarded = priceGuarded(hrid, { context: 'networth' });
+            inputPrices.guarded[hrid] = guarded.price;
+            inputPrices.guardedPartial[hrid] = Boolean(guarded.partial);
         }
     };
     resolveGuarded('/items/philosophers_mirror');
@@ -715,14 +769,16 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
             await yieldToBrowser();
             sliceStart = performance.now();
         }
-        inputPrices.base[item.itemHrid] = priceBase(item.itemHrid, { context: 'networth' }).price;
+        const base = priceBase(item.itemHrid, { context: 'networth' });
+        inputPrices.base[item.itemHrid] = base.price;
+        inputPrices.basePartial[item.itemHrid] = Boolean(base.partial);
         resolveGuarded(item.itemHrid);
         for (const protHrid of itemDetails.protectionItemHrids || []) resolveGuarded(protHrid);
         for (const material of itemDetails.enhancementCosts || []) {
             if (!(material.itemHrid in inputPrices.material)) {
-                inputPrices.material[material.itemHrid] = priceMaterial(material.itemHrid, {
-                    context: 'networth',
-                }).price;
+                const priced = priceMaterial(material.itemHrid, { context: 'networth' });
+                inputPrices.material[material.itemHrid] = priced.price;
+                inputPrices.materialPartial[material.itemHrid] = Boolean(priced.partial);
             }
         }
     }

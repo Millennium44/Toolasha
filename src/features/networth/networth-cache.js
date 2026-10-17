@@ -140,6 +140,27 @@ class NetworthCache {
      * @returns {number|null} Cached cost or null if not found
      */
     get(itemHrid, enhancementLevel) {
+        return this._entry(itemHrid, enhancementLevel)?.cost ?? null;
+    }
+
+    /**
+     * Whether the cached cost for an item is a partial crafting bill (a selected input nothing prices)
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level
+     * @returns {boolean} False when nothing is cached
+     */
+    isPartial(itemHrid, enhancementLevel) {
+        return this._entry(itemHrid, enhancementLevel)?.partial === true;
+    }
+
+    /**
+     * The cached entry, moved to most-recently-used
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level
+     * @returns {{cost: number, partial: boolean}|null}
+     * @private
+     */
+    _entry(itemHrid, enhancementLevel) {
         const key = this.generateKey(itemHrid, enhancementLevel);
 
         if (!this.cache.has(key)) {
@@ -159,8 +180,9 @@ class NetworthCache {
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level
      * @param {number} cost - Enhancement cost
+     * @param {boolean} [partial=false] - Whether the cost is a partial crafting bill
      */
-    set(itemHrid, enhancementLevel, cost) {
+    set(itemHrid, enhancementLevel, cost, partial = false) {
         const key = this.generateKey(itemHrid, enhancementLevel);
 
         // Delete if exists (to update position)
@@ -169,7 +191,7 @@ class NetworthCache {
         }
 
         // Add to end
-        this.cache.set(key, cost);
+        this.cache.set(key, { cost, partial: Boolean(partial) });
 
         // Evict oldest if over size limit
         if (this.cache.size > this.maxSize) {

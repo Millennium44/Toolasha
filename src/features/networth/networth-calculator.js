@@ -63,8 +63,6 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
 
     let itemValue = 0;
     let partial = false;
-    // Set when the value is an enhancement path's cost rather than a market or fallback price
-    let fromPath = false;
 
     // Check if high enhancement cost mode is enabled
     const useHighEnhancementCost = config.getSetting('networth_highEnhancementUseCost');
@@ -85,7 +83,7 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
             const cachedCost = networthCache.get(itemHrid, enhancementLevel);
             if (cachedCost !== null) {
                 itemValue = cachedCost;
-                fromPath = true;
+                partial = networthCache.isPartial(itemHrid, enhancementLevel);
             } else {
                 // Calculate enhancement cost (ignore market price)
                 const enhancementParams = getEnhancingParams();
@@ -97,9 +95,11 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
                 // base item's price, as the worker does
                 if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
                     itemValue = enhancementPath.optimalStrategy.totalCost;
-                    fromPath = true;
+                    // Partial when an input the path SELECTED is a partial crafting bill, as the path itself
+                    // reports it
+                    partial = enhancementPath.inputsPartial === true;
                     // Cache the result
-                    networthCache.set(itemHrid, enhancementLevel, itemValue);
+                    networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
                 } else {
                     // Enhancement calculation failed, fallback to base item price
                     console.warn('[Networth] Enhancement calculation failed for:', itemHrid, '+' + enhancementLevel);
@@ -117,7 +117,7 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
                 const cachedCost = networthCache.get(itemHrid, enhancementLevel);
                 if (cachedCost !== null) {
                     itemValue = cachedCost;
-                    fromPath = true;
+                    partial = networthCache.isPartial(itemHrid, enhancementLevel);
                 } else {
                     const enhancementParams = getEnhancingParams();
                     const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
@@ -128,8 +128,8 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
                     // base item's price, as the worker does
                     if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
                         itemValue = enhancementPath.optimalStrategy.totalCost;
-                        fromPath = true;
-                        networthCache.set(itemHrid, enhancementLevel, itemValue);
+                        partial = enhancementPath.inputsPartial === true;
+                        networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
                     } else {
                         console.warn(
                             '[Networth] Enhancement calculation failed for:',
@@ -144,17 +144,6 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
     } else {
         // Unenhanced items: use market price or crafting cost
         ({ price: itemValue, partial } = priceWithPartial(itemHrid, enhancementLevel, priceCache));
-    }
-
-    // The path refuses an unpriced base or material, but not a positive base or material that is itself a
-    // partial crafting bill; the worker flags the same cases (getRealisticPrice / calculateProductionCost)
-    if (fromPath) {
-        const details = dataManager.getItemDetails(itemHrid);
-        partial =
-            priceWithPartial(itemHrid, 0, priceCache).partial ||
-            (details?.enhancementCosts || []).some(
-                (material) => material.count > 0 && priceWithPartial(material.itemHrid, 0, priceCache).partial
-            );
     }
 
     return { value: itemValue * count, partial };

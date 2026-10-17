@@ -667,7 +667,12 @@ class InventoryBadgeManager {
                         const enhancementCost = enhancementPath.optimalStrategy.totalCost;
 
                         // Cache the result
-                        networthCache.set(itemHrid, enhancementLevel, enhancementCost);
+                        networthCache.set(
+                            itemHrid,
+                            enhancementLevel,
+                            enhancementCost,
+                            enhancementPath.inputsPartial === true || enhancementPath.pricesPartial === true
+                        );
 
                         // Use enhancement cost for both ask and bid
                         askPrice = enhancementCost;
@@ -722,7 +727,12 @@ class InventoryBadgeManager {
 
                         if (enhancementPath && enhancementPath.optimalStrategy) {
                             enhancementCost = enhancementPath.optimalStrategy.totalCost;
-                            networthCache.set(itemHrid, enhancementLevel, enhancementCost);
+                            networthCache.set(
+                                itemHrid,
+                                enhancementLevel,
+                                enhancementCost,
+                                enhancementPath.inputsPartial === true || enhancementPath.pricesPartial === true
+                            );
                         } else {
                             enhancementCost = null;
                         }

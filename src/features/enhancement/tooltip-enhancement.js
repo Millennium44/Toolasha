@@ -53,6 +53,7 @@ import {
     priceGuarded,
     priceMaterial,
     priceMirror,
+    priceProtection,
 } from '../../utils/enhancement-input-pricing.js';
 
 export { getCheapestProtectionPrice };
@@ -213,6 +214,25 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // that mirrors but is never reached from the target contributes nothing.
     const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror, mirrorBlessedChance);
 
+    // Which of the inputs the finished plan selected is a partial crafting bill. A level built the
+    // traditional way is partial when its chosen strategy spends a protection that is; a level built
+    // with the mirror is partial when the mirror is, or either level it stands on is. The base and the
+    // materials are bought on every route.
+    const mirrorPartial = Boolean(priceMirror(pricingOf(priceContext)).partial);
+    const levelPartial = [];
+    for (let level = 0; level <= currentEnhancementLevel; level++) {
+        levelPartial[level] =
+            level >= 3 && usedMirror[level]
+                ? mirrorPartial || levelPartial[level - 1] || levelPartial[level - 2]
+                : traditionalProtections[level] > 0 && prices.protectionPartial;
+    }
+    const copyHrid = unrefinedBaseOf(itemHrid);
+    const copyPartial =
+        mirrorPlan.mirrorCount > 0 && copyHrid ? Boolean(priceBase(copyHrid, pricingOf(priceContext)).partial) : false;
+    const inputsPartial = Boolean(
+        prices.basePartial || prices.materialsPartial || levelPartial[currentEnhancementLevel] || copyPartial
+    );
+
     let optimalStrategy;
 
     if (mirrorPlan.mirrorCount > 0) {
@@ -332,6 +352,8 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         // Whether anything the quote is built on could not be priced; the tooltip says so
         // rather than presenting a partial bill as a full one
         pricesPartial: prices.pricesPartial,
+        // Whether the inputs the plan SELECTED include a partial crafting bill; net worth flags its value
+        inputsPartial,
         optimalStrategy,
         allStrategies: [optimalStrategy], // Only return optimal
         xpPerHour,
@@ -431,10 +453,14 @@ function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') 
     // XP/hr table and the enhancing panel. The tooltip colors its Total green against the
     // enhanced item's ask, so an unnoticed under-quote reads as "this is profitable".
     let pricesPartial = false;
+    // Whether a priced input is itself a partial crafting bill (a recipe input nothing prices)
+    let materialsPartial = false;
     for (const material of itemDetails.enhancementCosts || []) {
         const materialDetail = gameData.itemDetailMap[material.itemHrid];
-        const price = priceMaterial(material.itemHrid, pricingOf(priceContext)).price || 0;
+        const priced = priceMaterial(material.itemHrid, pricingOf(priceContext));
+        const price = priced.price || 0;
         if (!(price > 0) && material.count > 0) pricesPartial = true;
+        if (price > 0 && priced.partial && material.count > 0) materialsPartial = true;
         materialCostPerAttempt += price * material.count;
         materials.push({
             itemHrid: material.itemHrid,
@@ -448,7 +474,7 @@ function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') 
     // Protection: the cheapest thing that will absorb a failure. A null price means nothing that
     // could protect this item has one, and then there are no protected rows to price at all —
     // rather than a set of them priced at zero, which is what used to happen
-    const protectionInfo = getCheapestProtectionPrice(itemHrid, pricingOf(priceContext));
+    const protectionInfo = priceProtection(itemHrid, pricingOf(priceContext));
     const protectionOptions =
         protectionInfo.price > 0 ? [{ itemHrid: protectionInfo.itemHrid, price: protectionInfo.price }] : [];
     let protectionBidPrice = 0;
@@ -473,6 +499,11 @@ function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') 
         protectionOptions,
         protectionBidPrice,
         pricesPartial,
+        // Which of the chosen inputs is a partial crafting bill: the base (the crafting choice
+        // included), the materials, and the protection item the protected rows use
+        basePartial: Boolean(askBase.partial),
+        materialsPartial,
+        protectionPartial: Boolean(protectionInfo.partial),
         baseCost: baseAskPrice,
         base: {
             baseCost: baseAskPrice,
