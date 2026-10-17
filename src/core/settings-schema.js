@@ -615,7 +615,7 @@ export const settingsGroups = {
                 label: 'Action panel: Budget calculator',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a budget input below the Missing Mats button. Enter a gold budget (e.g. 50m) to calculate how many units you can produce by buying missing tradeable materials at ask price.',
+                help: 'Adds a budget input below the Missing Mats button. Enter a gold budget (e.g. 50m) to calculate how many units you can produce by buying missing tradeable materials at ask price. Any coin fee the recipe charges is paid out of the same budget.',
             },
             actions_costSummary: {
                 id: 'actions_costSummary',
