@@ -29,6 +29,17 @@ const record = createCuratedRecord({
 /** @type {Object|null} In-memory cache of overrides */
 let overridesCache = null;
 
+/** Bumped whenever the map a reader sees changes, so a cache over prices built from it can tell */
+let overridesVersion = 0;
+
+/**
+ * A counter that moves whenever any custom price is added, changed, removed or first loaded.
+ * @returns {number}
+ */
+export function getCustomPriceVersion() {
+    return overridesVersion;
+}
+
 /** @type {Promise<Object>|null} The load in flight, so callers share one read */
 let loading = null;
 
@@ -49,7 +60,10 @@ async function loadOverrides() {
                 // An unreadable load is not cached, so the next read tries
                 // again; what the record holds is still the best answer there
                 // is, and the next write merges rather than overwrites
-                if (readable) overridesCache = record.get();
+                if (readable) {
+                    overridesCache = record.get();
+                    overridesVersion++;
+                }
                 return record.get();
             })();
         }
@@ -107,6 +121,7 @@ export function getCustomPrice(itemHrid, enhancementLevel = 0, side = 'sell') {
  * @returns {Promise<boolean>} Whether the write landed
  */
 async function persist() {
+    overridesVersion++;
     record.set(overridesCache);
     const written = await record.save();
     // A merge-save may have folded stored entries in; keep the cache as the
@@ -177,6 +192,7 @@ export async function initCustomPriceOverrides() {
  */
 export function resetCustomPriceOverridesCache() {
     overridesCache = null;
+    overridesVersion++;
     record.reset();
 }
 

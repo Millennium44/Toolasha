@@ -98,6 +98,7 @@ vi.mock('../../utils/protection-substitute-lookup.js', () => ({
 
 const storedOverrides = vi.hoisted(() => ({ map: {} }));
 vi.mock('../settings/custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
     setCustomPriceOverride: vi.fn(async () => {}),
     getCustomPriceOverridesAsync: vi.fn(async () => storedOverrides.map),
 }));

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     itemDetails: {},
     itemPrices: {}, // itemHrid -> {ask, bid}
     enhancementPaths: {}, // `${hrid}:${level}` -> totalCost
+    inputsPartialPaths: new Set(),
     partialPaths: new Set(), // keys whose path reports an unpriced material or base
     taskTokenValue: null,
     dungeonTokenValues: {},
@@ -81,6 +82,8 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
             ? {
                   optimalStrategy: { totalCost: mocks.enhancementPaths[key] },
                   pricesPartial: mocks.partialPaths.has(key),
+                  // The path's own report of whether an input it SELECTED is a partial crafting bill
+                  inputsPartial: mocks.inputsPartialPaths.has(key),
               }
             : null;
     },
@@ -114,7 +117,7 @@ vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: false, calculateExpectedValue: () => null },
 }));
 vi.mock('./networth-cache.js', () => ({
-    default: { get: () => null, set: () => {}, checkAndInvalidate: () => {} },
+    default: { get: () => null, set: () => {}, isPartial: () => false, checkAndInvalidate: () => {} },
 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid, opts) => {
@@ -185,6 +188,7 @@ beforeEach(() => {
     mocks.itemDetails = {};
     mocks.itemPrices = {};
     mocks.enhancementPaths = {};
+    mocks.inputsPartialPaths = new Set();
     mocks.partialPaths = new Set();
     mocks.taskTokenValue = null;
     mocks.dungeonTokenValues = {};
@@ -941,6 +945,7 @@ describe('craft-cost parity between the main thread and the worker', () => {
             };
             mocks.itemDetails['/items/sword'] = { name: 'Sword', enhancementCosts: c.costs };
             mocks.enhancementPaths['/items/sword:3'] = 4200;
+            mocks.inputsPartialPaths.add('/items/sword:3');
             delete mocks.itemPrices['/items/sword'];
 
             const fromMain = await calculateItemValueDetailed({ itemHrid: '/items/sword', enhancementLevel: 3 });

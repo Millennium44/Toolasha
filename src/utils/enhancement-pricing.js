@@ -33,6 +33,7 @@ import { getItemPrice, getItemPrices } from './market-data.js';
 import { parseArtisanBonus, getDrinkConcentration } from './tea-parser.js';
 import { findProducingAction } from './production-index.js';
 import { resolveActionContext } from './action-context.js';
+import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 
 /**
  * What the game's vendor charges for a trainee charm.
@@ -71,6 +72,18 @@ let _priceVersion = 0;
 
 // Optional chaining: tests and older bundles may mock dataManager without the
 // getter, and a fingerprint that cannot be read simply never invalidates.
+// A custom price changes what the recipe's inputs cost, and the memo's keys do not name them. An edit
+// does notify the market feed (bumping the price version), but first load of the stored map does not,
+// so the override store's own version is part of every entry too. A bundle or test without the store
+// has no custom prices to version.
+function _customVersion() {
+    try {
+        return getCustomPriceVersion();
+    } catch {
+        return 0;
+    }
+}
+
 function _buffVersion() {
     return dataManager.getBuffStateVersion?.() ?? 0;
 }
@@ -175,18 +188,14 @@ export function perAttemptMaterialCost(itemDetails, { priceMaterial = getEnhance
 }
 
 /**
- * Get realistic base item price with production cost fallback
- * Matches original MWI Tools v25.0 getRealisticBaseItemPrice logic
- * @param {string} itemHrid - The item
+ * The inflation guard on a bought item's price, as a pure function of its two quotes.
+ * @param {{ask?: number|null, bid?: number|null, productionCost?: number}} inputs - Quotes
+ *   (non-positive or missing reads as "no quote") and what the item costs to craft
  * @returns {number} Coins, 0 when nothing is known
  */
-export function getRealisticBaseItemPrice(itemHrid) {
-    const marketPrice = getItemPrices(itemHrid, 0);
-    const ask = marketPrice?.ask > 0 ? marketPrice.ask : 0;
-    const bid = marketPrice?.bid > 0 ? marketPrice.bid : 0;
-
-    // Calculate production cost as fallback
-    const productionCost = getProductionCost(itemHrid);
+export function applyInflationGuard({ ask: rawAsk, bid: rawBid, productionCost = 0 }) {
+    const ask = rawAsk > 0 ? rawAsk : 0;
+    const bid = rawBid > 0 ? rawBid : 0;
 
     // If both ask and bid exist
     if (ask > 0 && bid > 0) {
@@ -218,6 +227,25 @@ export function getRealisticBaseItemPrice(itemHrid) {
 }
 
 /**
+ * Get realistic base item price with production cost fallback
+ * Matches original MWI Tools v25.0 getRealisticBaseItemPrice logic
+ * @param {string} itemHrid - The item
+ * @param {Object} [options] - Options
+ * @param {function(string): ({ask?: number|null, bid?: number|null}|null)} [options.quoteOf] - Where the
+ *   two quotes come from; defaults to the raw reconciled book (`getItemPrices`). The shared enhancement
+ *   input rule injects the profit resolver's reading here
+ * @returns {number} Coins, 0 when nothing is known
+ */
+export function getRealisticBaseItemPrice(itemHrid, { quoteOf = (hrid) => getItemPrices(hrid, 0) } = {}) {
+    const marketPrice = quoteOf(itemHrid);
+    return applyInflationGuard({
+        ask: marketPrice?.ask,
+        bid: marketPrice?.bid,
+        productionCost: getProductionCost(itemHrid),
+    });
+}
+
+/**
  * Calculate production cost from crafting recipe
  * Matches original MWI Tools v25.0 getBaseItemProductionCost logic
  * @param {string} itemHrid - The item
@@ -225,12 +253,32 @@ export function getRealisticBaseItemPrice(itemHrid) {
  * @returns {number} Coins per unit produced
  */
 export function getProductionCost(itemHrid, mode = 'ask') {
+    return getProductionCostDetailed(itemHrid, mode).cost;
+}
+
+/**
+ * getProductionCost, plus whether the bill is partial: an input (or the upgrade item) nothing could
+ * price was counted as 0, so the figure is a lower bound, not a cost. An input whose own cost is a
+ * partial bill makes this one partial too.
+ * @param {string} itemHrid - The item
+ * @param {'ask'|'bid'} [mode='ask'] - Pricing side to use for input materials
+ * @returns {{cost: number, partial: boolean}} Coins per unit produced and whether an input was unpriced
+ */
+export function getProductionCostDetailed(itemHrid, mode = 'ask') {
     const cacheKey = `${itemHrid}|${mode}`;
     const buffVersion = _buffVersion();
+    const customVersion = _customVersion();
     const cached = _costCache.get(cacheKey);
-    if (cached && cached.version === _priceVersion && cached.buffVersion === buffVersion) return cached.value;
+    if (
+        cached &&
+        cached.version === _priceVersion &&
+        cached.buffVersion === buffVersion &&
+        cached.customVersion === customVersion
+    ) {
+        return cached.value;
+    }
     const result = _computeProductionCost(itemHrid, mode);
-    _costCache.set(cacheKey, { version: _priceVersion, buffVersion, value: result });
+    _costCache.set(cacheKey, { version: _priceVersion, buffVersion, customVersion, value: result });
     return result;
 }
 
@@ -239,18 +287,19 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
     if (!itemDetails || !itemDetails.name) {
-        return 0;
+        return { cost: 0, partial: false };
     }
 
     // Find the action whose primary output is this item
     const producer = findProducingAction(itemHrid, { primaryOnly: true, actionDetailMap: gameData.actionDetailMap });
     if (!producer) {
-        return 0;
+        return { cost: 0, partial: false };
     }
 
     const { action } = producer;
     const outputCount = producer.output.count || 1;
     let totalPrice = 0;
+    let partial = false;
 
     // Compute artisan tea reduction dynamically (same approach as material-calculator.js).
     // resolveActionContext drops a drink that is slotted but out of stock and no longer
@@ -274,8 +323,11 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
             }
             let inputPrice = getItemPrice(input.itemHrid, { mode }) || 0;
             if (inputPrice === 0) {
-                inputPrice = getProductionCost(input.itemHrid, mode);
+                const crafted = getProductionCostDetailed(input.itemHrid, mode);
+                inputPrice = crafted.cost;
+                if (crafted.partial) partial = true;
             }
+            if (!(inputPrice > 0) && input.count > 0) partial = true;
             totalPrice += inputPrice * input.count * (1 - artisanBonus);
         }
     }
@@ -284,17 +336,21 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     // Use min(market, craft) so refined items reflect the cheapest way to obtain the base item
     if (action.upgradeItemHrid) {
         const upgradeMarketPrice = getItemPrice(action.upgradeItemHrid, { mode }) || 0;
-        const upgradeCraftPrice = getProductionCost(action.upgradeItemHrid, mode);
+        const upgradeCraft = getProductionCostDetailed(action.upgradeItemHrid, mode);
+        const upgradeCraftPrice = upgradeCraft.cost;
         let upgradePrice;
         if (upgradeMarketPrice > 0 && upgradeCraftPrice > 0) {
             upgradePrice = Math.min(upgradeMarketPrice, upgradeCraftPrice);
+            if (upgradeCraftPrice < upgradeMarketPrice && upgradeCraft.partial) partial = true;
         } else {
             upgradePrice = upgradeMarketPrice || upgradeCraftPrice;
+            if (!upgradeMarketPrice && upgradeCraft.partial) partial = true;
         }
+        if (!(upgradePrice > 0)) partial = true;
         totalPrice += upgradePrice;
     }
 
-    return totalPrice / outputCount;
+    return { cost: totalPrice / outputCount, partial };
 }
 
 /**
@@ -305,10 +361,18 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
  */
 export function getProductionChainTime(itemHrid) {
     const buffVersion = _buffVersion();
+    const customVersion = _customVersion();
     const cached = _chainTimeCache.get(itemHrid);
-    if (cached && cached.version === _priceVersion && cached.buffVersion === buffVersion) return cached.value;
+    if (
+        cached &&
+        cached.version === _priceVersion &&
+        cached.buffVersion === buffVersion &&
+        cached.customVersion === customVersion
+    ) {
+        return cached.value;
+    }
     const result = _computeProductionChainTime(itemHrid);
-    _chainTimeCache.set(itemHrid, { version: _priceVersion, buffVersion, value: result });
+    _chainTimeCache.set(itemHrid, { version: _priceVersion, buffVersion, customVersion, value: result });
     return result;
 }
 
@@ -353,9 +417,11 @@ function _computeProductionChainTime(itemHrid) {
  *   itself counts as protection. The savings card turns this off: it exists for
  *   untradable gear, where there is no second copy to buy at any price, and the
  *   vendor sell price the fallback would find is not an offer anyone will honour
+ * @param {function(string): number} [options.priceOf] - Price one protection option; defaults to
+ *   {@link getRealisticBaseItemPrice} on the raw book
  * @returns {{price: number|null, itemHrid: string|null}} The cheapest option
  */
-export function getCheapestProtectionPrice(itemHrid, { includeSelf = true } = {}) {
+export function getCheapestProtectionPrice(itemHrid, { includeSelf = true, priceOf = getRealisticBaseItemPrice } = {}) {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
 
@@ -371,7 +437,7 @@ export function getCheapestProtectionPrice(itemHrid, { includeSelf = true } = {}
     let cheapestPrice = Infinity;
     let cheapestItemHrid = null;
     for (const protectionHrid of protectionOptions) {
-        const price = getRealisticBaseItemPrice(protectionHrid);
+        const price = priceOf(protectionHrid);
         if (price > 0 && price < cheapestPrice) {
             cheapestPrice = price;
             cheapestItemHrid = protectionHrid;

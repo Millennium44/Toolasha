@@ -193,6 +193,10 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     installEnhancementSourceToggle: () => {},
     uninstallEnhancementSourceToggle: () => {},
 }));
+vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: () => 0,
+}));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParamsFor: () => null }));
 vi.mock('../actions/gathering-profit.js', () => ({
     calculateGatheringProfit: async (_hrid, options) => {

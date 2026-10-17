@@ -13,7 +13,7 @@ import { enhancementParamsFor } from '../enhancement/enhancement-params-source.j
 // The one enhancement cost model: the shared protect-from sweep and the shared
 // pricing rules.
 import { cheapestProtectPlan } from '../../utils/enhancement-protect-sweep.js';
-import { getCheapestProtectionPrice, perAttemptMaterialCost } from '../../utils/enhancement-pricing.js';
+import { getCheapestProtectionPrice, perAttemptMaterialCost } from '../../utils/enhancement-input-pricing.js';
 
 /**
  * Whose bench an enhancement sweep is quoting.

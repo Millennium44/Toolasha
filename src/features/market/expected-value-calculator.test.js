@@ -82,6 +82,7 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 
 vi.mock('../settings/custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
     getCustomPrice: (hrid, enhancementLevel, side) => mocks.customPrices[`${hrid}:${enhancementLevel}:${side}`] ?? null,
 }));
 

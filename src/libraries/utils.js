@@ -51,6 +51,7 @@ import * as customPriceOverrides from '../features/settings/custom-price-overrid
 import * as houseCostCalculator from '../utils/house-cost-calculator.js';
 import * as enhancementCalculator from '../utils/enhancement-calculator.js';
 import * as enhancementPricing from '../utils/enhancement-pricing.js';
+import * as enhancementInputPricing from '../utils/enhancement-input-pricing.js';
 import * as enhancementProtectSweep from '../utils/enhancement-protect-sweep.js';
 import * as commandRegistry from '../utils/command-registry.js';
 import * as overlayRows from '../utils/overlay-rows.js';
@@ -249,6 +250,7 @@ toolashaRoot.Utils = {
         MIN_PROTECT_FROM: enhancementProtectSweep.MIN_PROTECT_FROM,
     },
     enhancementPricing,
+    enhancementInputPricing,
     enhancementProtectSweep,
     commandRegistry,
     overlayRows,

@@ -147,11 +147,32 @@ vi.mock('../../utils/enhancement-config.js', () => ({
 }));
 // The enhancement pricing rules moved to utils so every bundle could share one
 // copy; this file drives the advisor's use of them, not the rules themselves,
-// which have their own suite in src/utils/enhancement-pricing.test.js
-vi.mock('../../utils/enhancement-pricing.js', () => ({
-    getCheapestProtectionPrice: vi.fn(),
-    perAttemptMaterialCost: vi.fn(),
-}));
+// which have their own suite in src/utils/enhancement-pricing.test.js and enhancement-input-pricing.test.js
+vi.mock('../../utils/enhancement-input-pricing.js', async () => {
+    // The advisor's mirror and base prices go through the shared rule; here they read the same
+    // mocked resolver every other price in this file does, so each test keeps saying what they cost
+    const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
+    const { getItemPrices } = await import('../../utils/market-data.js');
+    const via = (hrid) => {
+        const price = resolveItemPrice(hrid, { side: 'buy', enhancementLevel: 0 })?.price;
+        return price > 0
+            ? { price, unpriced: false, estimated: false }
+            : { price: null, unpriced: true, estimated: false };
+    };
+    return {
+        priceMirror: () => via('/items/philosophers_mirror'),
+        priceBase: (hrid) => via(hrid),
+        priceAtLevel: (hrid, level) => {
+            if (!(level > 0)) return via(hrid);
+            const ask = getItemPrices(hrid, level)?.ask;
+            return ask > 0
+                ? { price: ask, unpriced: false, estimated: false }
+                : { price: null, unpriced: true, estimated: false };
+        },
+        getCheapestProtectionPrice: vi.fn(),
+        perAttemptMaterialCost: vi.fn(),
+    };
+});
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     explainAbilityLevelUpCost: vi.fn(() => ({
         bookHrid: '/items/fireball',
@@ -224,7 +245,7 @@ const {
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
 const { calculateEnhancement } = await import('../../utils/enhancement-calculator.js');
-const { getCheapestProtectionPrice, perAttemptMaterialCost } = await import('../../utils/enhancement-pricing.js');
+const { getCheapestProtectionPrice, perAttemptMaterialCost } = await import('../../utils/enhancement-input-pricing.js');
 const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
 const { explainAbilityLevelUpCost } = await import('../../utils/ability-cost-calculator.js');
 const { runSimulation, plannedWorkerCount } = await import('./combat-sim-runner.js');

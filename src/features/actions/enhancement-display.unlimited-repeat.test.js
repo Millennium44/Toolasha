@@ -18,6 +18,26 @@
  */
 
 import { describe, test, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+
+// The panel prices every input through the shared enhancement input rule; here it reads the same
+// mocked resolver (and, where a file has one, a craft-cost table) every other price in the file does
+vi.mock('../../utils/enhancement-input-pricing.js', async () => {
+    const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
+    const answer = (price) =>
+        price > 0 ? { price, unpriced: false, estimated: false } : { price: null, unpriced: true, estimated: false };
+    const via = (hrid) => answer(resolveItemPrice(hrid, { side: 'buy', enhancementLevel: 0 })?.price);
+    return {
+        priceMaterial: (hrid) => {
+            if (hrid === '/items/coin') return answer(1);
+            if (hrid?.startsWith('/items/trainee_')) return answer(250_000);
+            const quoted = via(hrid);
+            return quoted.unpriced ? answer({}[hrid]) : quoted;
+        },
+        priceGuarded: (hrid) => via(hrid),
+        priceMirror: () => via('/items/philosophers_mirror'),
+        priceBase: (hrid) => via(hrid),
+    };
+});
 import * as mathjs from 'mathjs';
 import { timeReadable } from '../../utils/formatters.js';
 

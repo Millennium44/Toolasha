@@ -49,7 +49,6 @@ import {
     calculateEnhancementPath,
     getProductionChainTime,
     getCheapestProtectionPrice,
-    getEnhancementMaterialPrice,
 } from '../enhancement/tooltip-enhancement.js';
 import { calculateSuccessXP, calculateFailureXP } from '../enhancement/enhancement-xp.js';
 import { enhancementParamsFor, describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
@@ -58,6 +57,7 @@ import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { GATHERING_TYPES, PRODUCTION_TYPES } from '../../utils/profit-constants.js';
 import { getPriceAgeString } from '../../utils/market-data.js';
+import { priceMaterial } from '../../utils/enhancement-input-pricing.js';
 import { effectiveInventory, shortfallNote } from '../../utils/inventory-reservations.js';
 import { RESERVATION_OWNER_PREFIX } from './goal-planner.js';
 import { canStartAction } from '../../utils/efficiency.js';
@@ -546,7 +546,7 @@ function measureEnhancingRates() {
             let materialPerAttempt = 0;
             let materialUnpriced = false;
             for (const cost of details.enhancementCosts || []) {
-                const price = getEnhancementMaterialPrice(cost.itemHrid, 'ask');
+                const price = priceMaterial(cost.itemHrid).price || 0;
                 if (!(price > 0) && cost.count > 0) materialUnpriced = true;
                 materialPerAttempt += (price || 0) * cost.count;
             }

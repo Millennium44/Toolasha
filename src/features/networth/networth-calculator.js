@@ -35,6 +35,7 @@ import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
+import { validateNetworthCache } from './networth-cache-validation.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
@@ -62,8 +63,6 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
 
     let itemValue = 0;
     let partial = false;
-    // Set when the value is an enhancement path's cost rather than a market or fallback price
-    let fromPath = false;
 
     // Check if high enhancement cost mode is enabled
     const useHighEnhancementCost = config.getSetting('networth_highEnhancementUseCost');
@@ -84,19 +83,23 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
             const cachedCost = networthCache.get(itemHrid, enhancementLevel);
             if (cachedCost !== null) {
                 itemValue = cachedCost;
-                fromPath = true;
+                partial = networthCache.isPartial(itemHrid, enhancementLevel);
             } else {
                 // Calculate enhancement cost (ignore market price)
                 const enhancementParams = getEnhancingParams();
-                const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+                const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
+                    priceContext: 'networth',
+                });
 
                 // A path with an unpriced material or base is a partial bill, not a value: fall back to the
                 // base item's price, as the worker does
                 if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
                     itemValue = enhancementPath.optimalStrategy.totalCost;
-                    fromPath = true;
+                    // Partial when an input the path SELECTED is a partial crafting bill, as the path itself
+                    // reports it
+                    partial = enhancementPath.inputsPartial === true;
                     // Cache the result
-                    networthCache.set(itemHrid, enhancementLevel, itemValue);
+                    networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
                 } else {
                     // Enhancement calculation failed, fallback to base item price
                     console.warn('[Networth] Enhancement calculation failed for:', itemHrid, '+' + enhancementLevel);
@@ -114,17 +117,19 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
                 const cachedCost = networthCache.get(itemHrid, enhancementLevel);
                 if (cachedCost !== null) {
                     itemValue = cachedCost;
-                    fromPath = true;
+                    partial = networthCache.isPartial(itemHrid, enhancementLevel);
                 } else {
                     const enhancementParams = getEnhancingParams();
-                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
+                        priceContext: 'networth',
+                    });
 
                     // A path with an unpriced material or base is a partial bill, not a value: fall back to the
                     // base item's price, as the worker does
                     if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
                         itemValue = enhancementPath.optimalStrategy.totalCost;
-                        fromPath = true;
-                        networthCache.set(itemHrid, enhancementLevel, itemValue);
+                        partial = enhancementPath.inputsPartial === true;
+                        networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
                     } else {
                         console.warn(
                             '[Networth] Enhancement calculation failed for:',
@@ -139,17 +144,6 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
     } else {
         // Unenhanced items: use market price or crafting cost
         ({ price: itemValue, partial } = priceWithPartial(itemHrid, enhancementLevel, priceCache));
-    }
-
-    // The path refuses an unpriced base or material, but not a positive base or material that is itself a
-    // partial crafting bill; the worker flags the same cases (getRealisticPrice / calculateProductionCost)
-    if (fromPath) {
-        const details = dataManager.getItemDetails(itemHrid);
-        partial =
-            priceWithPartial(itemHrid, 0, priceCache).partial ||
-            (details?.enhancementCosts || []).some(
-                (material) => material.count > 0 && priceWithPartial(material.itemHrid, 0, priceCache).partial
-            );
     }
 
     return { value: itemValue * count, partial };
@@ -811,10 +805,11 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
  * reconciliation inside the worker is not worth its weight; doing it once here,
  * where the flatten already runs, costs one resolve per cached entry.
  *
- * `_ask` and `_bid` stay raw on purpose. They feed the worker's enhancement-cost
- * path, whose main-thread counterpart (`calculateEnhancementPath`) reads the
- * clamped order book through `getItemPrices` and never reconciles — so
- * reconciling them here would trade one divergence for another.
+ * `_ask` and `_bid` stay raw on purpose: the worker's enhancement-cost path no longer prices
+ * its inputs from them. The inputs (materials, protection, mirror, base item) are priced on this
+ * thread by the shared enhancement input rule in the net-worth mode, with custom prices and the shop
+ * floor, and shipped beside the map (`inputPrices` in `calculateItemValueBatch`). The raw sides now
+ * only feed the worker's fallbacks, which still carry a production-cost copy of their own.
  */
 const priceMapMemo = new WeakMap();
 
@@ -1025,7 +1020,9 @@ export async function calculateNetworth() {
     }
 
     // Invalidate cache if market data changed (wrap for cache compatibility)
-    networthCache.checkAndInvalidate({ marketData: marketAPI.marketData, pricePatchs: marketAPI.pricePatchs });
+    // The enhancement costs it holds are priced from the net-worth mode, the custom prices and the
+    // base-crafting setting as well as the book, so a change in any of them empties it too
+    validateNetworthCache();
 
     const characterItems = gameData.characterItems || [];
     const marketListings = gameData.myMarketListings || [];

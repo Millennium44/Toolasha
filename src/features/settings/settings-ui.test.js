@@ -494,6 +494,7 @@ vi.mock('../sync/sync-manager.js', () => ({
     getSyncTrace: () => [],
 }));
 vi.mock('./custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
     getCustomPriceOverrides: () => ({}),
     getCustomPriceOverridesAsync: async () => ({}),
     setCustomPriceOverride: async () => {},

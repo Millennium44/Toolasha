@@ -65,7 +65,13 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
         mocks.enhancementCost === null ? null : { optimalStrategy: { totalCost: mocks.enhancementCost } },
 }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
-vi.mock('../networth/networth-cache.js', () => ({ default: { get: () => null, set: () => {} } }));
+vi.mock('../networth/networth-cache.js', () => ({
+    default: { get: () => null, set: () => {}, isPartial: () => false },
+}));
+const validation = vi.hoisted(() => ({ calls: [] }));
+vi.mock('../networth/networth-cache-validation.js', () => ({
+    validateNetworthCache: (options) => validation.calls.push(options),
+}));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: {
         get isInitialized() {
@@ -538,6 +544,13 @@ describe('high-enhancement equipment follows the net worth value source', () => 
         await inventoryBadgeManager.calculateItemPrices([el], mocks.inventory, lookup);
         return el.dataset;
     }
+
+    test('the cost cache is validated before it is read, the same way net worth validates it', async () => {
+        validation.calls.length = 0;
+        await price();
+        expect(validation.calls.length).toBeGreaterThan(0);
+        expect(validation.calls[0]).toEqual({ force: false });
+    });
 
     test('official-value mode: a +14 piece is priced by the official value', async () => {
         mocks.settings.networth_valueSource = 'officialValue';

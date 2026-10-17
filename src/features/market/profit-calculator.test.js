@@ -55,6 +55,13 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     },
     getProductionChainTime: (hrid) => mocks.chainTimes[hrid] ?? 0,
 }));
+vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: (hrid, mode) => {
+        const cost = mocks.productionCosts[hrid];
+        return (typeof cost === 'object' ? cost[mode] : cost) ?? 0;
+    },
+}));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid, options) =>
         (options?.enhancementLevel > 0

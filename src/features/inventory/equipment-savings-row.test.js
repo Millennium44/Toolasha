@@ -51,6 +51,10 @@ const game = vi.hoisted(() => ({
     // Every marketplace the panel's links opened, so a test can prove a row
     // about a +12 opens the +12 order book rather than the base item's
     navigations: [],
+    // The override store's own counter, which the tile's version() reads
+    customVersion: 0,
+    // The profit pricing mode the mocked config answers with
+    profitMode: 'hybrid',
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -95,7 +99,7 @@ vi.mock('../../core/config.js', () => ({
             if (!settingChangeCallbacks[key]) return;
             settingChangeCallbacks[key] = settingChangeCallbacks[key].filter((cb) => cb !== callback);
         },
-        getSettingValue: () => 'full',
+        getSettingValue: (key) => (key === 'profitCalc_pricingMode' ? game.profitMode : 'full'),
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
@@ -132,7 +136,15 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (itemHrid, enhancementLevel = 0) => game.navigations.push({ itemHrid, enhancementLevel }),
 }));
-vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getItemHridFromName: () => null }));
+vi.mock('../../utils/game-lookups.js', () => ({
+    getShopCoinOnlyCost: () => 0,
+    getShopCoinCost: () => 0,
+    getItemHridFromName: () => null,
+}));
+vi.mock('../settings/custom-price-overrides.js', () => ({
+    getCustomPrice: () => null,
+    getCustomPriceVersion: () => game.customVersion,
+}));
 // Kept rather than discarded, so the tile's own `version()` — which is what
 // spares the overlay this module's whole render sixty times a minute — can be
 // tested against the same fixtures the arithmetic is
@@ -154,6 +166,13 @@ vi.mock('../networth/networth-history.js', () => ({
     default: { recentSeries: (hours) => game.networthSeries(hours) },
 }));
 vi.mock('../../utils/market-data.js', () => ({
+    getPricingMode: () => 'ask',
+    // The profit resolver's book read: a one-sided quote fills the other side
+    getItemPriceInfo: (hrid) => {
+        const quote = game.prices[`${hrid}:0`];
+        const price = quote?.ask > 0 ? quote.ask : quote?.bid > 0 ? quote.bid : null;
+        return { price, source: price === null ? null : 'book', estimated: false };
+    },
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
     // The shared pricing rules fall back to a production cost when a book has
     // neither side, and that walk prices the recipe's inputs through here
@@ -211,6 +230,8 @@ const {
 const { flushSavingsWrites } = await import('../../utils/equipment-savings.js');
 
 beforeEach(() => {
+    game.customVersion = 0;
+    game.profitMode = 'hybrid';
     game.inventory = [
         { itemHrid: '/items/coin', itemLocationHrid: '/item_locations/inventory', count: 60_000_000 },
         // Coins turn up under more than one location; only the inventory one is
@@ -2243,6 +2264,18 @@ describe('the Equipment Watch tile summarises its own inputs', () => {
         // The pin decides which of several targets the tile shows
         selectTarget('/items/holy_sword');
         expect(version()).not.toBe(watched);
+    });
+
+    test('a changed profit mode or custom price moves it: both change what the run costs', () => {
+        watchTarget('/items/holy_sword', 0);
+        const before = version();
+
+        game.profitMode = 'optimistic';
+        const afterMode = version();
+        expect(afterMode).not.toBe(before);
+
+        game.customVersion++;
+        expect(version()).not.toBe(afterMode);
     });
 
     test('the trade-in switch moves it, because it changes every figure on the tile', () => {

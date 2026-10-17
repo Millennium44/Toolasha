@@ -12,6 +12,7 @@ import { describe, test, expect, vi } from 'vitest';
 
 const overridesMock = vi.hoisted(() => ({ overrides: {} }));
 vi.mock('./custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
     getCustomPriceOverrides: () => overridesMock.overrides,
 }));
 

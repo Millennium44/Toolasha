@@ -16,7 +16,6 @@ import {
 } from '../../utils/enhancement-calculator.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
-import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { testerShopEnabled, testerGearPrice, MIRROR_HRID } from '../../utils/tester-shop.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
@@ -27,8 +26,7 @@ import {
     sweepProtectFromMemo,
 } from '../../utils/enhancement-protect-sweep.js';
 import { runningAction } from '../../utils/combat-actions.js';
-import { ironCowBook } from '../../utils/ironcow-valuation.js';
-import { getEnhancementMaterialPrice } from '../../utils/enhancement-pricing.js';
+import { priceBase, priceGuarded, priceMaterial, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { effectiveInventory } from '../../utils/inventory-reservations.js';
 import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimited-action-estimate.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
@@ -376,14 +374,11 @@ function generateCostsByLevelTable(
         let protectionUnpriced = false;
         if (calc.protectionCount > 0 && protectionItemHrid && protectionItemHrid !== '/items/philosophers_mirror') {
             const protectionItemDetail = gameData.itemDetailMap[protectionItemHrid];
-            let protectionPrice = 0;
-
-            const protectionMarketData = ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
-            // No market quote leaves the protection unpriced - the vendor price is far below what
-            // one costs to buy, and a low number there reads as a cheap run. The book answers
-            // "no quote" with -1, which is not a price. A side that is missing borrows the other,
-            // as the tracker prices the same item when the run is made
-            protectionPrice = bookPrice(protectionMarketData);
+            // The one shared protection rule: the profit resolver's price through the inflation guard,
+            // so this table, the sweep's options and the tooltip read one number. No quote leaves the
+            // protection unpriced - the vendor price is far below what one costs to buy, and a low
+            // number there reads as a cheap run
+            const protectionPrice = protectionUnitPrice(protectionItemHrid);
             protectionUnpriced = !(protectionPrice > 0);
 
             protectionCost = calc.protectionCount * protectionPrice;
@@ -447,11 +442,9 @@ function generateCostsByLevelTable(
     // set it beside the protect-from plans; the column and banner below still draw only when the
     // mirror is in the slot
     const isPhilosopherMirror = protectionItemHrid === '/items/philosophers_mirror';
-    // The book answers "no quote" with -1, which is not a price
-    // The same one-sided rule the tracker books a mirror and a base copy at when the run is made
-    const askOf = (hrid) => bookPrice(ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0));
-    const mirrorPrice = askOf('/items/philosophers_mirror');
-    const basePrice = itemDetails.hrid ? askOf(itemDetails.hrid) : 0;
+    // Mirror and base copy: the shared guarded profit price, the one the tooltip and the tracker book
+    const mirrorPrice = priceMirror().price || 0;
+    const basePrice = itemDetails.hrid ? priceBase(itemDetails.hrid).price || 0 : 0;
     // The banner and the sweep's mirror line quote the route to the player's target, not +20
     const summaryTo = targetLevel >= 1 && targetLevel <= 20 ? targetLevel : 20;
     const column = mirrorCostColumn(
@@ -888,49 +881,23 @@ const SPREAD_APPROX_NOTE =
 const SPREAD_EXACT_NOTE = 'Exact: no protection is used, so every attempt costs the same.';
 
 /**
- * What a market book quotes for buying one: the ask, else the bid when that is the only side
- * quoted. A missing side is -1 or null, neither of which is a price.
- * @param {{ask?: number|null, bid?: number|null}|null|undefined} quote - Market book
- * @returns {number} Coins, 0 when neither side is quoted
- */
-function bookPrice(quote) {
-    if (quote?.ask > 0) return quote.ask;
-    return quote?.bid > 0 ? quote.bid : 0;
-}
-
-/**
- * Whether a material is sold at a fixed shop price and never traded (trainee charms).
- * @param {string} itemHrid - Material hrid
- * @returns {boolean}
- */
-function isFixedPriceMaterial(itemHrid) {
-    return typeof itemHrid === 'string' && itemHrid.startsWith('/items/trainee_');
-}
-
-/**
- * Unit price of one enhancing material: the shop price for a trainee charm, else the Iron Cow
- * book, then the market ask, then the shared rule the tracker uses (bid cross-fill, then craft
- * cost). Never the vendor price; 0 is unpriced.
+ * Unit price of one enhancing material, through the shared enhancement input rule: trainee charms
+ * and coins first, then the profit resolver (custom price, Iron Cow, the book on the profit mode's
+ * side, shop floor, craft cost). Never the vendor price; 0 is unpriced.
  * @param {string} itemHrid - Material hrid
  * @returns {number} Coins per unit, 0 when nothing prices it
  */
 function materialUnitPrice(itemHrid) {
-    if (itemHrid === '/items/coin') return 1;
-    // The shop's fixed price, ahead of any book: a trainee charm is not traded, so an Iron Cow
-    // vendor value or a stale listing would price it differently from the tracker and the tooltip
-    if (isFixedPriceMaterial(itemHrid)) return getEnhancementMaterialPrice(itemHrid, 'ask');
-    const quote = ironCowBook(itemHrid) ?? marketAPI.getPrice(itemHrid, 0);
-    if (quote?.ask > 0) return quote.ask;
-    return getEnhancementMaterialPrice(itemHrid, 'ask');
+    return priceMaterial(itemHrid).price || 0;
 }
 
-function sweepBuyPrice(itemHrid) {
-    if (itemHrid === '/items/coin') return 1;
-    try {
-        return resolveItemPrice(itemHrid, { context: 'profit', side: 'buy' })?.price || 0;
-    } catch {
-        return 0;
-    }
+/**
+ * Unit price of a protection item: the shared guarded profit price. 0 is unpriced.
+ * @param {string} itemHrid - Protection item hrid
+ * @returns {number} Coins per unit
+ */
+function protectionUnitPrice(itemHrid) {
+    return priceGuarded(itemHrid).price || 0;
 }
 
 /**
@@ -1070,7 +1037,7 @@ export function protectSweepHTML({
         const candidates = protectionCandidates({
             itemHrid: itemDetails.hrid,
             itemDetails,
-            priceOf: sweepBuyPrice,
+            priceOf: protectionUnitPrice,
             nameOf,
         });
         // A pick equal to the slot item is ignored by the sweep and drawn as Auto, so drop it: left
@@ -1084,7 +1051,7 @@ export function protectSweepHTML({
             itemDetails,
             selectedHrid: protectionItemHrid,
             pickedHrid: chosen,
-            priceOf: sweepBuyPrice,
+            priceOf: protectionUnitPrice,
             nameOf,
             ...(stockSettings.enabled
                 ? { holdingsOf, reserve: stockSettings.reserve, sellPriceOf: sweepSellPrice }
@@ -1095,11 +1062,8 @@ export function protectSweepHTML({
         let materialCostPerAttempt = 0;
         let materialsUnpriced = false;
         for (const cost of enhancementCosts || []) {
-            // The profit price first (it honors custom prices), then the rule the table above uses,
-            // so a craft-cost-only material is priced the same in both and 0 stays unpriced
-            const price = isFixedPriceMaterial(cost.itemHrid)
-                ? materialUnitPrice(cost.itemHrid)
-                : sweepBuyPrice(cost.itemHrid) || materialUnitPrice(cost.itemHrid);
+            // The same shared rule as the table above, so the sweep and the table read one number
+            const price = materialUnitPrice(cost.itemHrid);
             if (price > 0) materialCostPerAttempt += (cost.count || 0) * price;
             else materialsUnpriced = true;
         }
@@ -1675,9 +1639,7 @@ function formatEnhancementDisplay(
                 const protectionItemName = protectionItemDetail?.name || protectionItemHrid;
 
                 // Get protection item price
-                const protectionPrice = bookPrice(
-                    ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0)
-                );
+                const protectionPrice = protectionUnitPrice(protectionItemHrid);
                 const priceText = protectionPrice > 0 ? `@${protectionPrice.toLocaleString()}` : 'no price';
 
                 lines.push(
