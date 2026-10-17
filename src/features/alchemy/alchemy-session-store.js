@@ -53,6 +53,9 @@ export function createAlchemySessionStore(baseKey, label) {
         // they open; one with no name keeps the deep-equality identity
         identityOf: (session) => session?.id ?? JSON.stringify(session),
         mergeCopies: mergeSessionCopies,
+        // A clear also deletes any copy no further along than the one cleared: an older snapshot of a live
+        // session that a peer pushed before the clear. Attempts are how the store tells copies apart
+        revisionOf: (session) => finite(session?.totalAttempts),
         label,
     });
 }

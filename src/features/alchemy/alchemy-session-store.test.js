@@ -170,3 +170,26 @@ describe('clearing the history', () => {
         expect(await store.load('char-1')).toEqual([]);
     });
 });
+
+describe('an older copy of a cleared session', () => {
+    const copy = (attempts) => ({ ...session(AUG_4, 'transmute_live'), totalAttempts: attempts });
+
+    test('does not come back from a peer after the clear, but a copy further along does', async () => {
+        await store.load('char-1');
+        await store.save('char-1', [copy(5)]);
+        await store.clear('char-1');
+
+        // The stone records how far along the cleared copy was
+        expect(storageMock.store.get('transmuteSessionsRecTomb_char-1')['transmute_live']).toMatchObject({
+            bulk: true,
+            rev: 5,
+        });
+
+        await store.load('char-1');
+        // Pushed before the clear, then pulled after it: an older snapshot, not news
+        expect(store._union([], [copy(3)])).toEqual([]);
+        expect(store._union([], [copy(5)])).toEqual([]);
+        // A device that kept recording past the clear has outlived it
+        expect(store._union([], [copy(8)])).toEqual([copy(8)]);
+    });
+});
