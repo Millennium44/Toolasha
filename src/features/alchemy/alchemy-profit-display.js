@@ -21,12 +21,41 @@ import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import {
+    getCatalystWhatIf,
+    setCatalystWhatIf,
+    onCatalystWhatIfChange,
+    publishCatalystWhatIfResult,
+    resetCatalystWhatIf,
+} from './alchemy-catalyst-whatif.js';
+import {
     estimateUnlimitedAction,
     formatUnlimitedTimeText,
     formatUnlimitedProfitText,
     formatRunningActionProfitText,
     clearUnlimitedEstimateCache,
 } from '../actions/unlimited-action-estimate.js';
+
+/** The catalyst each pickable choice slots, per tab (the calculator's own constants) */
+const TYPE_CATALYST_HRIDS = {
+    coinify: '/items/catalyst_of_coinification',
+    decompose: '/items/catalyst_of_decomposition',
+    transmute: '/items/catalyst_of_transmutation',
+};
+const PRIME_CATALYST_HRID = '/items/prime_catalyst';
+/** The tabs a catalyst applies to; Unrefine takes none */
+const CATALYST_TABS = Object.keys(TYPE_CATALYST_HRIDS);
+
+/**
+ * The catalyst a what-if choice slots on a tab.
+ * @param {'none'|'typeSpecific'|'prime'} choice - The picked choice
+ * @param {string} actionType - The tab
+ * @returns {string|null} Catalyst hrid, or null for "no catalyst"
+ */
+function catalystForChoice(choice, actionType) {
+    if (choice === 'prime') return PRIME_CATALYST_HRID;
+    if (choice === 'typeSpecific') return TYPE_CATALYST_HRIDS[actionType] || null;
+    return null;
+}
 
 class AlchemyProfitDisplay {
     constructor() {
@@ -47,6 +76,7 @@ class AlchemyProfitDisplay {
         this.profitSummaryInputListeners = null; // { field, onInput, onChange } for the Profitability total
         this._alchemyTargetLevel = null;
         this.pricingUnsubscribers = []; // config listener unregister functions
+        this.catalystWhatIfUnsubscribe = null;
     }
 
     /**
@@ -63,6 +93,14 @@ class AlchemyProfitDisplay {
 
         this.isInitialized = true;
         this.setupObserver();
+
+        // A different what-if catalyst is a different Profitability figure. Only the
+        // choice redraws: the result this display publishes must not loop back into it.
+        this.catalystWhatIfUnsubscribe = onCatalystWhatIfChange((kind) => {
+            if (kind !== 'choice' || !this.isActive) return;
+            this.lastFingerprint = null;
+            this.checkAndUpdateDisplay();
+        });
 
         // Listen for equipment changes (alchemy allows equipment changes while panel is open)
         this.equipmentChangeHandler = () => {
@@ -101,7 +139,7 @@ class AlchemyProfitDisplay {
             config.onSettingsLoaded(onPricingChange),
             // The two section switches are read only when the panel is built, so a change
             // has to force a rebuild of a panel already on screen
-            ...['actionPanel_showSpeedTime', 'actionPanel_showLevelProgress'].map((key) =>
+            ...['actionPanel_showSpeedTime', 'actionPanel_showLevelProgress', 'alchemy_catalystWhatIf'].map((key) =>
                 config.onSettingChange(key, () => {
                     this.lastFingerprint = null;
                     if (this.isActive) this.checkAndUpdateDisplay();
@@ -282,7 +320,7 @@ class AlchemyProfitDisplay {
             this.removeDisplay();
         } else if (shouldShow && this.displayElement?.parentNode) {
             // Should show and exists - check if state changed
-            const fingerprint = alchemyProfit.getStateFingerprint();
+            const fingerprint = this._fingerprint();
             if (fingerprint !== this.lastFingerprint) {
                 this.handleAlchemyPanelUpdate(alchemyComponent);
             }
@@ -302,7 +340,7 @@ class AlchemyProfitDisplay {
         }
 
         // Check if state has changed
-        const fingerprint = alchemyProfit.getStateFingerprint();
+        const fingerprint = this._fingerprint();
         if (fingerprint === this.lastFingerprint && this.displayElement?.parentNode) {
             return; // No change, display still valid
         }
@@ -316,6 +354,72 @@ class AlchemyProfitDisplay {
         this.updateTimeout = this.timerRegistry.scheduleTimeout(() => {
             this.updateDisplay(infoContainer);
         }, 100);
+    }
+
+    /**
+     * The panel's visible state plus the what-if catalyst: every input that changes
+     * what this display draws. The choice is not on the panel, so the panel's own
+     * fingerprint cannot see it.
+     * @returns {string}
+     */
+    _fingerprint() {
+        return `${alchemyProfit.getStateFingerprint()}|whatif:${this._activeWhatIfChoice() ?? 'equipped'}`;
+    }
+
+    /**
+     * The what-if choice in force: null when the picker is switched off.
+     * @returns {'none'|'typeSpecific'|'prime'|null}
+     */
+    _activeWhatIfChoice() {
+        return config.getSetting('alchemy_catalystWhatIf') ? getCatalystWhatIf() : null;
+    }
+
+    /**
+     * Profitability for the what-if catalyst, beside the equipped figure.
+     *
+     * The calculator's forced-catalyst path (`catalystChoice`) is the live setup in
+     * every other respect — live drinks, live gear — with the catalyst slot replaced.
+     *
+     * @param {string|null} actionType - The tab
+     * @param {string|null} itemHrid - The selected item
+     * @param {number} enhancementLevel - Its enhancement level
+     * @param {Object} equippedData - The equipped figure
+     * @returns {{choice: string, catalystHrid: string|null, data: Object|null, sameAsEquipped: boolean}|null}
+     *   null when no what-if applies; `data` null when the pick cannot be priced
+     */
+    _computeWhatIf(actionType, itemHrid, enhancementLevel, equippedData) {
+        const choice = this._activeWhatIfChoice();
+        if (!choice || !CATALYST_TABS.includes(actionType) || !itemHrid || !equippedData) return null;
+
+        const catalystHrid = catalystForChoice(choice, actionType);
+        const equippedHrid = equippedData.catalystCost?.itemHrid || null;
+        if (catalystHrid === equippedHrid) {
+            return { choice, catalystHrid, data: null, sameAsEquipped: true };
+        }
+
+        let data = null;
+        if (actionType === 'coinify') {
+            data = alchemyProfitCalculator.calculateCoinifyProfit(itemHrid, enhancementLevel, true, null, null, choice);
+        } else if (actionType === 'decompose') {
+            data = alchemyProfitCalculator.calculateDecomposeProfit(
+                itemHrid,
+                enhancementLevel,
+                true,
+                null,
+                null,
+                choice
+            );
+        } else if (actionType === 'transmute') {
+            data = alchemyProfitCalculator.calculateTransmuteProfit(
+                itemHrid,
+                true,
+                null,
+                choice,
+                null,
+                enhancementLevel
+            );
+        }
+        return { choice, catalystHrid, data: data || null, sameAsEquipped: false };
     }
 
     /**
@@ -443,6 +547,7 @@ class AlchemyProfitDisplay {
                 } else {
                     this.removeDisplay();
                 }
+                publishCatalystWhatIfResult(null);
                 return;
             }
 
@@ -461,10 +566,25 @@ class AlchemyProfitDisplay {
             // and a +0 item are the same hrid and not the same combination
             const inputEnhancement = requirements?.length ? requirements[0].enhancementLevel || 0 : 0;
 
+            // The what-if replaces the Profitability figure only; every other section keeps
+            // describing the setup the game will actually run
+            const whatIf = this._computeWhatIf(actionType, itemHrid, inputEnhancement, profitData);
+            publishCatalystWhatIfResult(
+                whatIf?.data && whatIf.catalystHrid
+                    ? {
+                          itemHrid,
+                          actionType,
+                          catalystHrid: whatIf.catalystHrid,
+                          successRate: whatIf.data.successRate,
+                      }
+                    : null
+            );
+
             // Always recreate display (complex collapsible structure makes refresh difficult)
-            this.createDisplay(infoContainer, profitData, actionType, itemHrid, inputEnhancement);
+            this.createDisplay(infoContainer, profitData, actionType, itemHrid, inputEnhancement, whatIf);
         } catch (error) {
             console.error('[AlchemyProfitDisplay] Failed to update display:', error);
+            publishCatalystWhatIfResult(null);
             this.removeDisplay();
         }
     }
@@ -533,12 +653,17 @@ class AlchemyProfitDisplay {
     /**
      * Create profit display element with detailed breakdown
      * @param {HTMLElement} container - Container to append to
-     * @param {Object} profitData - Profit calculation results from calculateProfit()
+     * @param {Object} equippedData - Profit for the equipped setup, from the calculator
      * @param {string} actionType - Alchemy action type ('coinify', 'decompose', or 'transmute')
      * @param {string} itemHrid - Item HRID being processed
      * @param {number} [enhancementLevel] - The input item's enhancement level
+     * @param {Object|null} [whatIf] - From `_computeWhatIf`; its `data`, when present, is what the
+     *   Profitability section shows, while Action Speed & Time, Level Progress and the Repeat
+     *   estimate keep the equipped figure
      */
-    createDisplay(container, profitData, actionType, itemHrid, enhancementLevel = 0) {
+    createDisplay(container, equippedData, actionType, itemHrid, enhancementLevel = 0, whatIf = null) {
+        const profitData = whatIf?.data || equippedData;
+        const whatIfShown = Boolean(whatIf?.data);
         // Remove any existing display
         this.removeDisplay();
 
@@ -571,7 +696,9 @@ class AlchemyProfitDisplay {
         const costs = Math.round(
             profitData.materialCostPerHour + profitData.catalystCostPerHour + profitData.totalTeaCostPerHour
         );
-        const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+        const baseSummary =
+            `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day` +
+            (whatIfShown ? ' ⚠ what-if' : '');
 
         const detailsContent = document.createElement('div');
 
@@ -1042,9 +1169,15 @@ class AlchemyProfitDisplay {
 
         // Create "Detailed Breakdown" collapsible
         const topLevelContent = document.createElement('div');
-        topLevelContent.innerHTML = `
-            <div style="margin-bottom: 4px;">Actions: ${profitData.actionsPerHour.toFixed(2)}/hr | Success Rate: ${formatPercentage(profitData.successRate, 2)}</div>
-        `;
+        if (config.getSetting('alchemy_catalystWhatIf') && CATALYST_TABS.includes(actionType)) {
+            topLevelContent.appendChild(this.buildCatalystPicker(actionType, getCatalystWhatIf()));
+            const note = this.buildWhatIfNote(whatIf);
+            if (note) topLevelContent.appendChild(note);
+        }
+        const actionsLine = document.createElement('div');
+        actionsLine.style.marginBottom = '4px';
+        actionsLine.textContent = `Actions: ${profitData.actionsPerHour.toFixed(2)}/hr | Success Rate: ${formatPercentage(profitData.successRate, 2)}`;
+        topLevelContent.appendChild(actionsLine);
 
         // Add Net Profit line at top level (always visible when Profitability is expanded)
         const profitColor = profit >= 0 ? '#4ade80' : config.getSetting('color_loss') || '#f87171';
@@ -1101,12 +1234,14 @@ class AlchemyProfitDisplay {
 
         // What the panel knows about the action being looked at, so an unlimited Repeat can be
         // costed against the bag by the same calculator the queue row uses.
+        // The equipped catalyst: an unlimited Repeat stops when the bag runs out of what the
+        // game will actually consume, whatever the what-if assumes
         const estimateSpec = actionType
             ? {
                   actionHrid: `/actions/alchemy/${actionType}`,
                   itemHrid,
                   enhancementLevel,
-                  catalystHrid: profitData?.catalystCost?.itemHrid || null,
+                  catalystHrid: equippedData?.catalystCost?.itemHrid || null,
               }
             : null;
 
@@ -1192,10 +1327,10 @@ class AlchemyProfitDisplay {
         if (
             config.getSetting('actionPanel_showSpeedTime') &&
             effectiveInputField &&
-            profitData.actionTime &&
-            profitData.efficiencyBreakdown
+            equippedData.actionTime &&
+            equippedData.efficiencyBreakdown
         ) {
-            const speedTimeSection = this.createActionSpeedTimeSection(profitData, effectiveInputField, estimateSpec);
+            const speedTimeSection = this.createActionSpeedTimeSection(equippedData, effectiveInputField, estimateSpec);
             if (speedTimeSection) {
                 speedTimeSection.id = 'mwi-alchemy-speed-time';
                 speedTimeSection.classList.add('mwi-alchemy-speed-time');
@@ -1209,7 +1344,7 @@ class AlchemyProfitDisplay {
             const levelProgressSection = this.createLevelProgressSection(
                 actionType,
                 itemHrid,
-                profitData,
+                equippedData,
                 effectiveInputField
             );
             if (levelProgressSection) {
@@ -1221,6 +1356,90 @@ class AlchemyProfitDisplay {
         }
 
         this.displayElement = profitSection;
+    }
+
+    /**
+     * The catalyst what-if picker at the top of Profitability: Equipped (no what-if),
+     * None, the tab's type catalyst, Prime.
+     * @param {string} actionType - The tab
+     * @param {'none'|'typeSpecific'|'prime'|null} choice - The current choice
+     * @returns {HTMLElement}
+     */
+    buildCatalystPicker(actionType, choice) {
+        const row = document.createElement('div');
+        row.className = 'mwi-alchemy-catalyst-whatif';
+        row.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 6px;';
+
+        const label = document.createElement('span');
+        label.style.cssText = 'color: #888; font-size: 0.85em; margin-right: 2px;';
+        label.textContent = 'Catalyst what-if:';
+        row.appendChild(label);
+
+        const nameOf = (hrid) => dataManager.getItemDetails(hrid)?.name || hrid.split('/').pop().replace(/_/g, ' ');
+        const options = [
+            { value: null, text: 'Equipped' },
+            { value: 'none', text: 'None' },
+            { value: 'typeSpecific', text: nameOf(TYPE_CATALYST_HRIDS[actionType]) },
+            { value: 'prime', text: nameOf(PRIME_CATALYST_HRID) },
+        ];
+        for (const option of options) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.mwiCatalystChoice = option.value ?? 'equipped';
+            button.textContent = option.text;
+            const active = option.value === choice;
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+            button.style.cssText = `
+                padding: 2px 8px;
+                font-size: 0.85em;
+                border-radius: 4px;
+                cursor: pointer;
+                color: #fff;
+                border: 1px solid ${active ? 'rgba(91, 141, 239, 0.9)' : 'rgba(255, 255, 255, 0.2)'};
+                background: ${active ? 'rgba(91, 141, 239, 0.35)' : 'transparent'};
+            `;
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                setCatalystWhatIf(option.value);
+            });
+            row.appendChild(button);
+        }
+        return row;
+    }
+
+    /**
+     * What the what-if is doing to the figures below it, or null when nothing.
+     * @param {Object|null} whatIf - From `_computeWhatIf`
+     * @returns {HTMLElement|null}
+     */
+    buildWhatIfNote(whatIf) {
+        if (!whatIf || whatIf.sameAsEquipped) return null;
+        const note = document.createElement('div');
+        note.className = 'mwi-alchemy-catalyst-whatif-note';
+        note.style.cssText = 'color: #fbbf24; font-size: 0.85em; margin-bottom: 6px;';
+        const name = whatIf.catalystHrid
+            ? dataManager.getItemDetails(whatIf.catalystHrid)?.name || whatIf.catalystHrid
+            : null;
+
+        if (!whatIf.data) {
+            note.textContent = `⚠ What-if unavailable: ${name || 'this choice'} has no market price. The figures below are for your equipped catalyst.`;
+            return note;
+        }
+
+        const owned = whatIf.catalystHrid
+            ? (dataManager.getInventory?.() || [])
+                  .filter(
+                      (item) =>
+                          item.itemHrid === whatIf.catalystHrid &&
+                          !(item.enhancementLevel > 0) &&
+                          (!item.itemLocationHrid || item.itemLocationHrid === '/item_locations/inventory')
+                  )
+                  .reduce((sum, item) => sum + (item.count || 0), 0)
+            : null;
+        const assumed = name ? `${name} slotted` : 'no catalyst';
+        const stock = owned === 0 ? ` You have no ${name}.` : '';
+        note.textContent = `⚠ What-if: these figures assume ${assumed}, not your equipped catalyst.${stock} Pick Equipped to go back.`;
+        return note;
     }
 
     /**
@@ -1775,6 +1994,13 @@ class AlchemyProfitDisplay {
                 this.unregisterReady();
                 this.unregisterReady = null;
             }
+
+            if (this.catalystWhatIfUnsubscribe) {
+                this.catalystWhatIfUnsubscribe();
+                this.catalystWhatIfUnsubscribe = null;
+            }
+            // A what-if does not outlive the display that shows it
+            resetCatalystWhatIf();
 
             this.removeSpeedTimeInputListeners();
             this.removeProfitSummaryInputListeners();
