@@ -46,7 +46,7 @@ import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js'
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { buildItemHash, parseItemHash } from '../../utils/item-hash.js';
-import { readAlchemyPanelSelection } from '../alchemy/alchemy-profit.js';
+import { readAlchemyPanelSelection, getAlchemyTabElements, ALCHEMY_TAB_TYPES } from '../alchemy/alchemy-profit.js';
 import { getCatalystWhatIfResult, onCatalystWhatIfChange } from '../alchemy/alchemy-catalyst-whatif.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { clickThroughReact } from '../../utils/react-click.js';
@@ -1881,18 +1881,18 @@ async function handleReturnToAction() {
 }
 
 /**
- * Select the stored alchemy tab (Coinify, Decompose, Transmute...) once the panel's tab strip
+ * Select the stored alchemy tab (Coinify, Decompose, Transmute...) by its position, not its translated label, once the panel's tab strip
  * has mounted. A tab click is navigation, so a plain click is enough. Fails soft: if the tab
  * never appears the player is left on whatever tab the game shows.
  *
  * @param {string} actionType - The stored tab, e.g. 'transmute'
  * @returns {Promise<void>}
  */
-async function selectAlchemyTab(actionType) {
-    const wanted = String(actionType).toLowerCase();
+export async function selectAlchemyTab(actionType) {
+    const index = ALCHEMY_TAB_TYPES.indexOf(String(actionType).toLowerCase());
+    if (index < 0) return;
     for (let i = 0; i < 20; i++) {
-        const tabs = document.querySelectorAll('[class*="AlchemyPanel_tabsComponentContainer"] [role="tab"]');
-        const tab = Array.from(tabs).find((el) => el.textContent?.trim().toLowerCase().includes(wanted));
+        const tab = getAlchemyTabElements()[index];
         if (tab) {
             if (tab.getAttribute('aria-selected') !== 'true') tab.click();
             return;

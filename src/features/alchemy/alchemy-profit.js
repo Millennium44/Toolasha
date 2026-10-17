@@ -67,20 +67,42 @@ export function parseDropCountAndRate(text, dropRateFromGameData) {
 }
 
 /**
+ * The game's own alchemy tabs, by position. The tab elements carry no React props
+ * or icons, and their labels are translated, so the position is the identity:
+ * the game's tabs always come first in this order, and any tab after them
+ * (Current Action, Best Items, Alchemy History...) is not an alchemy action.
+ */
+export const ALCHEMY_TAB_TYPES = ['coinify', 'decompose', 'transmute', 'unrefine'];
+
+const ALCHEMY_TABS_SELECTOR = '[class*="AlchemyPanel_tabsComponentContainer"]';
+
+/**
+ * The alchemy panel's tab elements, in strip order.
+ *
+ * @param {ParentNode} [root=document] - Where to look for the tab strip
+ * @returns {Element[]} The role=tab elements, or an empty array without a strip
+ */
+export function getAlchemyTabElements(root = document) {
+    const tabContainer = root.querySelector?.(ALCHEMY_TABS_SELECTOR) || document.querySelector(ALCHEMY_TABS_SELECTOR);
+    return tabContainer ? Array.from(tabContainer.querySelectorAll('[role="tab"]')) : [];
+}
+
+/**
  * Which alchemy tab is selected, from the panel's tab strip.
  *
- * The same English-text reading `alchemy-profit-display.js` and
- * `alchemy-action-protection.js` use, so every alchemy feature agrees on the tab.
- * Unrefine is checked first: its label contains "refine", not "decompose", but it
- * is checked before the others all the same so a later label cannot shadow it.
+ * Identified by the selected tab's position (`ALCHEMY_TAB_TYPES`), so it works in
+ * any client language. The English label is only a fallback for a strip whose
+ * tabs cannot be indexed.
  *
  * @param {ParentNode} [root=document] - Where to look for the tab strip
  * @returns {'coinify'|'decompose'|'transmute'|'unrefine'|null} The selected tab, or null
  */
 export function readAlchemyTabType(root = document) {
-    const tabContainer =
-        root.querySelector?.('[class*="AlchemyPanel_tabsComponentContainer"]') ||
-        document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
+    const tabs = getAlchemyTabElements(root);
+    const index = tabs.findIndex((tab) => tab.getAttribute('aria-selected') === 'true');
+    if (index >= 0) return ALCHEMY_TAB_TYPES[index] ?? null;
+
+    const tabContainer = root.querySelector?.(ALCHEMY_TABS_SELECTOR) || document.querySelector(ALCHEMY_TABS_SELECTOR);
     const selectedTab = tabContainer?.querySelector('[role="tab"][aria-selected="true"]');
     const tabText = selectedTab?.textContent?.trim()?.toLowerCase() || '';
     if (tabText.includes('unrefine')) return 'unrefine';
