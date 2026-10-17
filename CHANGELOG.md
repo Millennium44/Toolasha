@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancing: one price rule for every surface
+
+- The enhancing panel, protect sweep, item tooltip, tracker, upgrade advisor, profile score and net worth now price materials, protection, the Philosopher's Mirror and the base item by one shared rule: your custom prices, then the market on your profit pricing mode, the shop price, then crafting cost, with the inflated-ask guard on protection, mirror and base. Net worth uses its own pricing mode; columns and records that name a side (tooltip Ask/Bid, profile score, loot log) use that side.
+- Net worth marks an enhanced item " *" when its base, protection, mirror or a material is valued from a crafting cost with an unpriced input, and its caches now notice changes to the pricing mode, custom prices and the base-crafting setting.
+
 ### Leftovers round (2026-10-16): sync, net worth and records
 
 - A settings change and its sync timestamp are now saved together, so a sync pull can no longer undo an edit made just before a tab closed; a pull that lands while a history is first loading is applied instead of waiting for the next load, and a backup or sync flush includes the character you just switched away from.
