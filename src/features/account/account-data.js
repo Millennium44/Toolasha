@@ -242,6 +242,9 @@ export function queueState(snapshot, now = Date.now()) {
     const stale = ageMs > STALE_SNAPSHOT_MS;
     const remaining = remainingQueueSeconds(snapshot, ageMs / 1000);
 
+    // An untimed row is running and the time behind it is unknown: no estimate, never idle
+    if (remaining === null) return { state: 'untimed', remainingSeconds: null, stale, ageMs };
+
     // Untimed counted work (a counted fight) makes the timed total a lower bound: `atLeast`
     if (remaining > 0) {
         return {

@@ -290,6 +290,8 @@ class QueueMonitorUI {
             let dotColor;
             if (snap.actions.length === 0 && !snap.hasUnknownAction) {
                 dotColor = '#666'; // No actions = grey
+            } else if (remaining === null) {
+                dotColor = '#666'; // Grey — an untimed row is running; nothing behind it can be dated
             } else if (remaining <= 0 && snap.hasUnknownAction) {
                 dotColor = '#666'; // Grey — counted work with no estimate may still be running
             } else if (remaining <= 0 && !snap.hasInfiniteAction) {
@@ -304,6 +306,8 @@ class QueueMonitorUI {
             let timeDisplay;
             if (snap.actions.length === 0 && !snap.hasUnknownAction) {
                 timeDisplay = 'Idle';
+            } else if (remaining === null) {
+                timeDisplay = '?';
             } else if (remaining <= 0 && snap.hasUnknownAction) {
                 timeDisplay = '?';
             } else if (snap.hasInfiniteAction && remaining <= 0) {
@@ -331,17 +335,27 @@ class QueueMonitorUI {
                 html += `<div style="margin-left:14px; margin-top:4px; font-size:11px; color:#999;">`;
                 // Actions run sequentially — consume elapsed time through the queue in order
                 let remainingElapsed = Math.max(0, elapsed);
+                // Every row ahead is finished (so the next untimed row is the one running), and whether
+                // an untimed row has started: nothing behind it can be dated then
+                let priorDone = true;
+                let noEstimate = false;
                 for (const action of snap.actions) {
                     let actionTimeStr;
                     if (action.isInfinite) {
                         actionTimeStr = '∞';
                         remainingElapsed = 0; // nothing after an infinite action has started
+                        priorDone = false;
+                    } else if (noEstimate) {
+                        actionTimeStr = '?';
                     } else if (action.estimatedSeconds !== null) {
                         const actionRemaining = Math.max(0, action.estimatedSeconds - remainingElapsed);
                         remainingElapsed = Math.max(0, remainingElapsed - action.estimatedSeconds);
                         actionTimeStr = actionRemaining <= 0 ? 'Done' : timeReadable(actionRemaining);
+                        if (actionRemaining > 0) priorDone = false;
                     } else {
                         actionTimeStr = '?';
+                        if (priorDone) noEstimate = true;
+                        priorDone = false;
                         remainingElapsed = 0; // unknown duration — nothing after it has started
                     }
 
