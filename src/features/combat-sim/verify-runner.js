@@ -93,11 +93,19 @@ export function classifyVerdict({ mean: diff, se, seeds, betterIsHigher = true }
  * `options.metric` (profit, xp, dps, eph) or, when not given, the axis with the largest gain.
  * @param {Object} row - An analysis result row
  * @param {Object} [options]
- * @param {string} [options.metric] - A VERIFY_METRICS key; `balanced` and absent both mean "best axis"
+ * @param {string} [options.metric] - A VERIFY_METRICS key; absent means "best axis"
+ * @param {{gain: number, noise: number|null, within: boolean}} [options.score] - For `balanced`: the row's
+ *   balanced score gain, its composite error (rate and deaths, score points) and whether the gain sits inside
+ *   the significance bound, as the Ability order section judges them. Without it `balanced` means "best axis"
  * @returns {boolean}
  */
-export function isCloseCall(row, { metric } = {}) {
+export function isCloseCall(row, { metric, score } = {}) {
     if (!row || typeof row !== 'object') return false;
+
+    if (metric === 'balanced' && score && Number.isFinite(score.gain)) {
+        if (score.gain > 0 && score.within) return true;
+        return Number.isFinite(score.noise) && Math.abs(score.gain) <= 2 * score.noise;
+    }
 
     if (Number.isFinite(row.attemptsDelta)) {
         const improvement = -row.attemptsDelta;

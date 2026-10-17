@@ -13213,7 +13213,12 @@ class CombatSimUI {
         // Improvement against its own noise: comparable across the two tables whatever their units
         const closeness = (gain, noise) => (Number.isFinite(noise) && noise > 0 ? gain / noise : 0);
         const orderEntries = this._abilityOrderRanking(orderRows, results.baseline || {}, rank)
-            .filter((e) => e.gain > 0 && isCloseCall(e.r, { metric: rank }))
+            // Balanced is judged on the same score and composite error the section labels it by
+            .filter(
+                (e) =>
+                    e.gain > 0 &&
+                    isCloseCall(e.r, { metric: rank, score: { gain: e.gain, noise: e.noise, within: e.within } })
+            )
             .map((e) => ({ r: e.r, gain: e.gain, score: closeness(e.gain, e.noise), table: 'order' }));
         const { metric: goldMetric } = this._goldVerifyMetric();
         const deltaKey = VERIFY_DELTA_KEY[goldMetric];

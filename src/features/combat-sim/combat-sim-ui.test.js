@@ -12134,6 +12134,20 @@ describe('verifying close calls on fresh seeds', () => {
         };
         const closeOrder = (name, over) => orderRow(name, { profit: 200, se: 500, sig: false, ...over });
 
+        test('balanced: closeness uses the score and its deaths error, as the section does', () => {
+            ui._abilityOrderRank = 'balanced';
+            const deadly = { ...BASELINE, deathsPerHour: 5 };
+            // A real dps gain (significant on the rate axes) on a build whose deaths error swamps it
+            const noisyDeaths = orderRow('A → B', { dpsPct: 40, se: 0.1, sig: true });
+            noisyDeaths.metrics.deathsPerHour = 5;
+            noisyDeaths.noise.deaths = 100;
+            const clean = orderRow('C → D', { dpsPct: 40, se: 0.1, sig: true });
+            clean.metrics.deathsPerHour = 5;
+            clean.noise.deaths = 0;
+            const picks = ui._autoVerifyPicks({ baseline: deadly, results: [noisyDeaths, clean] });
+            expect(picks.order).toEqual([noisyDeaths]);
+        });
+
         test('does nothing with the setting off', async () => {
             await run({ baseline: BASELINE, results: [closeOrder('A → B')], food: null, context: CONTEXT });
             expect(mocks.verifyCalls).toHaveLength(0);
