@@ -33,6 +33,9 @@ const market = vi.hoisted(() => ({ loaded: false, prices: {} }));
 /** The gear the mocked data manager reports as worn: slot hrid -> character item */
 const worn = vi.hoisted(() => ({ map: new Map() }));
 
+/** Callbacks registered through the mocked config.onSettingChange */
+const settingWatchers = vi.hoisted(() => []);
+
 /** Backing store for the mocked config's settings */
 const settings = vi.hoisted(() => ({ map: new Map() }));
 
@@ -40,6 +43,14 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: vi.fn(() => true),
         setSetting: vi.fn(),
+        // Records each watcher so a test can fire a setting change; returns its unsubscribe
+        onSettingChange: vi.fn((key, cb) => {
+            settingWatchers.push({ key, cb });
+            return () => {
+                const i = settingWatchers.findIndex((w) => w.cb === cb);
+                if (i >= 0) settingWatchers.splice(i, 1);
+            };
+        }),
         getSettingValue: (key, fallback) => (settings.map.has(key) ? settings.map.get(key) : fallback),
         setSettingValue: (key, value) => settings.map.set(key, value),
         Z_NOTIFICATION: 10500,
@@ -6671,5 +6682,90 @@ describe('the live clear chance and the room-tile calculator start on their own 
         webSocketHook.on.mockClear();
         labyrinthClearRate.initialize();
         expect(registered().sort()).toEqual([...LIVE_EVENTS].sort());
+    });
+});
+
+describe('each half comes down when its own setting is switched off', () => {
+    let webSocketHook;
+    let domObserver;
+    const toggles = { labyrinthClearRate: true, labyrinthLiveProgress: true };
+    const LIVE_EVENTS = ['labyrinth_room_progress', 'battle_updated', 'new_battle'];
+    const registered = () => webSocketHook.on.mock.calls.map(([event]) => event);
+    const removed = () => webSocketHook.off.mock.calls.map(([event]) => event);
+    const change = (key, value) => {
+        toggles[key] = value;
+        for (const w of [...settingWatchers]) if (w.key === key) w.cb(value);
+    };
+
+    beforeEach(async () => {
+        webSocketHook = (await import('../../core/websocket.js')).default;
+        domObserver = (await import('../../core/dom-observer.js')).default;
+        // Earlier suites mock onClass to return nothing, leaving undefined unregisters behind
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.disable();
+        webSocketHook.on.mockClear();
+        webSocketHook.off.mockClear();
+        domObserver.onClass.mockClear();
+        domObserver.onClass.mockImplementation(() => () => {});
+        configMock.getSetting.mockImplementation((key) => (key in toggles ? toggles[key] : true));
+        labyrinthClearRate.initialize();
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.disable();
+        toggles.labyrinthClearRate = true;
+        toggles.labyrinthLiveProgress = true;
+        configMock.getSetting.mockImplementation(() => true);
+    });
+
+    test('closing the calculator removes its handlers and style and leaves the live half wired', () => {
+        expect(labyrinthClearRate.isInitialized).toBe(true);
+        webSocketHook.off.mockClear();
+        webSocketHook.on.mockClear();
+        change('labyrinthClearRate', false);
+
+        expect(removed()).toEqual(expect.arrayContaining(['labyrinth_updated', 'setting_updated', 'loadouts_updated']));
+        expect(labyrinthClearRate.wsHandler).toBeNull();
+        expect(labyrinthClearRate.isInitialized).toBe(false);
+        expect(labyrinthClearRate.styleEl).toBeNull();
+        // The live half is rewired once and still answers
+        expect(labyrinthClearRate.liveProgressHandler).toBeTypeOf('function');
+        expect(registered().sort()).toEqual([...LIVE_EVENTS].sort());
+        expect(labyrinthClearRate.isRunning()).toBe(true);
+    });
+
+    test('closing the live half removes only its handlers and leaves the calculator wired', () => {
+        webSocketHook.off.mockClear();
+        change('labyrinthLiveProgress', false);
+
+        expect([...removed()].sort()).toEqual([...LIVE_EVENTS].sort());
+        expect(labyrinthClearRate.liveProgressHandler).toBeNull();
+        expect(labyrinthClearRate.battleHandler).toBeNull();
+        expect(labyrinthClearRate.isInitialized).toBe(true);
+        expect(labyrinthClearRate.wsHandler).toBeTypeOf('function');
+    });
+
+    test('both off leaves nothing wired, and reopening restores each half once', () => {
+        change('labyrinthClearRate', false);
+        change('labyrinthLiveProgress', false);
+        expect(labyrinthClearRate.wsHandler).toBeNull();
+        expect(labyrinthClearRate.liveProgressHandler).toBeNull();
+        expect(labyrinthClearRate.isInitialized).toBe(false);
+        expect(labyrinthClearRate.isRunning()).toBe(true);
+
+        // Opening is the registry's: it sees the module down and re-enters initialize()
+        webSocketHook.on.mockClear();
+        toggles.labyrinthClearRate = true;
+        toggles.labyrinthLiveProgress = true;
+        expect(labyrinthClearRate.isRunning()).toBe(false);
+        labyrinthClearRate.initialize();
+        expect(registered()).toContain('labyrinth_updated');
+        for (const event of LIVE_EVENTS) expect(registered().filter((e) => e === event)).toHaveLength(1);
+        expect(settingWatchers.filter((w) => w.key === 'labyrinthClearRate')).toHaveLength(1);
+    });
+
+    test('disable drops the setting watchers', () => {
+        labyrinthClearRate.disable();
+        expect(settingWatchers).toHaveLength(0);
     });
 });
