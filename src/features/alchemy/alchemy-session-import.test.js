@@ -257,6 +257,14 @@ describe('planAlchemyImportMerge', () => {
         expect(plan.merged).toEqual([{ ...transmuteSession({ id: 'a', totalSuccesses: 2 }), editedAt: 1234 }]);
     });
 
+    test('a re-import with the keys in another order is the same copy, not an edit', () => {
+        const stored = [{ id: 'a', startTime: 1, totalAttempts: 5, results: { x: { count: 1, value: 2 } } }];
+        const imported = [{ results: { x: { value: 2, count: 1 } }, totalAttempts: 5, startTime: 1, id: 'a' }];
+        const plan = planAlchemyImportMerge(stored, imported, 500);
+
+        expect(plan.merged[0]).toBe(stored[0]);
+    });
+
     test('a replacement that lowers the attempts is stamped, an identical re-import keeps the stored copy', () => {
         const stored = [
             transmuteSession({ id: 'a', totalAttempts: 50 }),

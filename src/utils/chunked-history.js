@@ -394,6 +394,10 @@ export function maxRecordsPerCharacter(storeName, keys) {
  * @param {Function} [options.legacyIdentitiesOf] - `(entry) => Array<*>`, the identities an entry had under
  *   an earlier `identityOf`. A deletion recorded under one of them still applies, and a new deletion is
  *   filed under them as well, so a device still running the earlier build honors it too.
+ * @param {Function} [options.editedAtOf] - `(entry) => number`, when a copy was last deliberately edited (ms). With a
+ *   `revisionOf`, a copy edited after a tombstone was made is not covered by its revision rule: the edit post-dates the
+ *   deletion, so it is not an older snapshot of what was deleted. Only the exact deleted copy (same fingerprint) still
+ *   matches.
  * @param {Function} [options.revisionOf] - `(entry) => number`, how far along a copy of an entry that is
  *   rewritten in place has got (a session's action count). A tombstone then also deletes any copy no further
  *   along than the one deleted — an older snapshot a peer still holds — where without it only the exact
@@ -426,6 +430,7 @@ class ChunkedHistory {
         pruneIncoming,
         legacyIdentitiesOf,
         revisionOf,
+        editedAtOf,
         liveSafe = false,
         floorPrefix = null,
         label = 'ChunkedHistory',
@@ -444,6 +449,7 @@ class ChunkedHistory {
         this.pruneIncoming = typeof pruneIncoming === 'function' ? pruneIncoming : null;
         this.legacyIdentitiesOf = typeof legacyIdentitiesOf === 'function' ? legacyIdentitiesOf : null;
         this.revisionOf = typeof revisionOf === 'function' ? revisionOf : null;
+        this.editedAtOf = typeof editedAtOf === 'function' ? editedAtOf : null;
         this.liveSafe = liveSafe === true;
         this.floorPrefix = typeof floorPrefix === 'string' && floorPrefix ? floorPrefix : null;
         this.label = label;
@@ -886,9 +892,31 @@ class ChunkedHistory {
             if (stone.fp !== '' && stone.fp === fp) return key;
             // An older snapshot of the deleted copy — a peer's, or a partial row
             // folded into the one that was deleted — is no news to the deletion
-            if (rev !== undefined && Number.isFinite(stone.rev) && rev <= stone.rev) return key;
+            if (
+                rev !== undefined &&
+                Number.isFinite(stone.rev) &&
+                rev <= stone.rev &&
+                !this._editedAfter(entry, stone)
+            ) {
+                return key;
+            }
         }
         return undefined;
+    }
+
+    /**
+     * @param {Object} entry - A copy being judged
+     * @param {{at: number}} stone - A tombstone
+     * @returns {boolean} Whether the copy was deliberately edited after the deletion was made
+     * @private
+     */
+    _editedAfter(entry, stone) {
+        if (!this.editedAtOf) return false;
+        try {
+            return Number(this.editedAtOf(entry)) > stone.at;
+        } catch {
+            return false;
+        }
     }
 
     /**

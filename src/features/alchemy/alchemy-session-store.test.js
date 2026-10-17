@@ -225,3 +225,36 @@ describe('a hand-corrected import against a sync pull', () => {
         expect(kept.totalAttempts).toBe(40);
     });
 });
+
+describe('a correction against a live recorder, and against a clear', () => {
+    const copy = (attempts, extra = {}) => ({ ...session(AUG_4, 'transmute_live'), totalAttempts: attempts, ...extra });
+
+    test('the import after the other device’s last attempt wins', () => {
+        const imported = copy(40, { editedAt: 2000, lastActivityTime: 1000 });
+        const recorded = copy(50, { lastActivityTime: 1500 });
+        expect(mergeSessionCopies(imported, recorded)).toBe(imported);
+        expect(mergeSessionCopies(recorded, imported)).toBe(imported);
+    });
+
+    test('attempts recorded after the import win over it', () => {
+        const imported = copy(40, { editedAt: 2000, lastActivityTime: 1000 });
+        const recorded = copy(50, { lastActivityTime: 2500 });
+        expect(mergeSessionCopies(imported, recorded)).toBe(recorded);
+        expect(mergeSessionCopies(recorded, imported)).toBe(recorded);
+    });
+
+    test('a correction made after a clear survives the clear’s tombstone', async () => {
+        await store.load('char-1');
+        await store.save('char-1', [copy(100)]);
+        await store.clear('char-1');
+        await store.load('char-1');
+        const stone = storageMock.store.get('transmuteSessionsRecTomb_char-1')['transmute_live'];
+
+        const corrected = copy(90, { editedAt: stone.at + 1000 });
+        expect(store._union([], [corrected])).toEqual([corrected]);
+        // An unedited older snapshot is still covered
+        expect(store._union([], [copy(90)])).toEqual([]);
+        // An edit that predates the clear is not news either
+        expect(store._union([], [copy(90, { editedAt: stone.at - 1000 })])).toEqual([]);
+    });
+});

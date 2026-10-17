@@ -83,6 +83,8 @@
  *     `catalystOfDecompositionUsed`, `primeCatalystUsed`.
  */
 
+import { stableStringify } from '../../utils/stable-stringify.js';
+
 /** Marks a file as one of these backups, distinct from the CSV export. */
 export const ALCHEMY_BACKUP_FORMAT = 'toolasha-alchemy-history';
 
@@ -388,7 +390,7 @@ export function planAlchemyImportMerge(stored, imported, now = Date.now()) {
         // plain restore does not outrank progress another device recorded since
         const { editedAt: _incomingStamp, ...incomingBody } = incoming;
         const { editedAt: _storedStamp, ...storedBody } = existing;
-        if (JSON.stringify(incomingBody) === JSON.stringify(storedBody)) return existing;
+        if (stableStringify(incomingBody) === stableStringify(storedBody)) return existing;
         return { ...incomingBody, editedAt: now };
     });
 
