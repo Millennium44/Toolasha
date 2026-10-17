@@ -519,7 +519,7 @@ class LootLogStats {
                 // figures line up with it — getEnhancementMaterialPrice carries the
                 // production-cost/NPC fallbacks that a raw market lookup lacks.
                 materialPrice: (hrid) => getEnhancementMaterialPrice(hrid, 'ask') || 0,
-                protectionPrice: (baseHrid) => getCheapestProtectionPrice(baseHrid)?.price || 0,
+                protectionPrice: (baseHrid) => getCheapestProtectionPrice(baseHrid, { mode: 'ask' })?.price || 0,
                 itemValue: (hrid, level) => {
                     const prices = getItemPrices(hrid, level);
                     return prices ? prices.bid : null;

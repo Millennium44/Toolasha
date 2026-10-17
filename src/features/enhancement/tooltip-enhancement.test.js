@@ -39,7 +39,7 @@ const prices = {
 };
 
 /** Settings the mocked config answers with, reset per test */
-const settings = vi.hoisted(() => ({ checkboxes: {}, values: {} }));
+const settings = vi.hoisted(() => ({ checkboxes: {}, values: {}, custom: {} }));
 
 /** Market prices for enhanced levels, keyed `hrid::level`; empty unless a test sets one */
 const enhancedPrices = vi.hoisted(() => ({}));
@@ -133,8 +133,8 @@ const pricingModeOf = (context, side) => {
 };
 vi.mock('../../utils/market-data.js', () => ({
     getPricingMode: pricingModeOf,
-    getItemPriceInfo: (hrid, { mode, context, side = 'sell' } = {}) => {
-        const quote = prices[hrid];
+    getItemPriceInfo: (hrid, { mode, context, side = 'sell', enhancementLevel = 0 } = {}) => {
+        const quote = enhancementLevel > 0 ? enhancedPrices[`${hrid}::${enhancementLevel}`] : prices[hrid];
         if (!quote) return { price: null, source: null, estimated: false };
         const ask = quote.ask > 0 ? quote.ask : quote.bid > 0 ? quote.bid : null;
         const bid = quote.bid > 0 ? quote.bid : ask;
@@ -152,7 +152,9 @@ vi.mock('../../utils/tea-parser.js', () => ({
     getDrinkConcentration: () => 0,
 }));
 
-vi.mock('../settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
+vi.mock('../settings/custom-price-overrides.js', () => ({
+    getCustomPrice: (hrid, level = 0, side = 'sell') => settings.custom[`${hrid}:${level}:${side}`] ?? null,
+}));
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
 
 let calculateEnhancementPath;
@@ -179,6 +181,7 @@ beforeAll(async () => {
 beforeEach(() => {
     settings.checkboxes = {};
     settings.values = {};
+    settings.custom = {};
     for (const key of Object.keys(enhancedPrices)) delete enhancedPrices[key];
 });
 
@@ -804,6 +807,42 @@ describe('mirroring a refined piece', () => {
         const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
         expect(data.optimalStrategy.consumedItems.every((item) => item.itemHrid === ITEM)).toBe(true);
         expect(data.optimalStrategy.materialBill.filter((line) => line.kind === 'base')).toHaveLength(1);
+    });
+});
+
+describe('labeled sides stay true', () => {
+    afterEach(() => {
+        delete settings.values.profitCalc_pricingMode;
+    });
+
+    test('the Ask and Bid columns are the rule forced to each side, whatever the profit mode says', () => {
+        settings.values.profitCalc_pricingMode = 'optimistic';
+        const row = calculateEnhancementPath(ITEM, 1, enhancingConfig, { priceContext: 'ask' }).optimalStrategy
+            .materialBreakdown[0];
+        expect(row.unitPrice).toBe(5000);
+        expect(row.bidPrice).toBe(4800);
+    });
+
+    test('a custom buy price shows in the Ask column and the bid column alike', () => {
+        settings.custom[`${MATERIAL}:0:buy`] = 4321;
+        const row = calculateEnhancementPath(ITEM, 1, enhancingConfig, { priceContext: 'ask' }).optimalStrategy
+            .materialBreakdown[0];
+        expect(row.unitPrice).toBe(4321);
+    });
+});
+
+describe('consumed copies in a mirror plan', () => {
+    test('are priced by the shared rule, so a custom price for that level shows in the table', () => {
+        settings.values.formatting_precision = '3';
+        for (let level = 1; level <= 8; level++) {
+            enhancedPrices[`${ITEM}::${level}`] = { ask: 77777, bid: 66666 };
+            settings.custom[`${ITEM}:${level}:buy`] = 55555;
+        }
+        const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
+        expect(data.optimalStrategy.usedMirror).toBe(true);
+        const out = buildEnhancementTooltipHTML(data);
+        expect(out).toContain('55.555K');
+        expect(out).not.toContain('77.777K');
     });
 });
 

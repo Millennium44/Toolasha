@@ -20,6 +20,10 @@ import {
     priceMirror,
     priceProtection,
 } from '../../utils/enhancement-input-pricing.js';
+
+// A profile score prices every piece at the ask, so another player's score never moves with the
+// viewer's profit mode
+const ASK = { mode: 'ask' };
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 
@@ -705,9 +709,10 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
             // Build targetCosts[0..N], matching tooltip's calculateEnhancementPath. Inputs are priced by the
             // shared enhancement rule; one nothing can price makes the piece unpriced (itemCost stays 0
             // and the row says "no price"), never a cheaper piece with a free input
-            const basePrice = priceBase(item.itemHrid).price;
+            const basePrice = priceBase(item.itemHrid, ASK).price;
             const targetCosts = [basePrice ?? 0]; // level 0 = base item
-            const enhancementUnpriced = !(basePrice > 0) || perAttemptMaterialCost(item.itemDetails).hasMissingPrices;
+            const enhancementUnpriced =
+                !(basePrice > 0) || perAttemptMaterialCost(item.itemDetails, ASK).hasMissingPrices;
             for (let subLevel = 1; subLevel <= item.enhancementLevel && !enhancementUnpriced; subLevel++) {
                 const { workerStartIndex, strategies } = item.subLevelTasks[subLevel - 1];
                 let minCost = null;
@@ -725,7 +730,11 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
             if (!enhancementUnpriced) {
                 // Apply Philosopher's Mirror optimization — literally the tooltip's pass, so the two
                 // cannot drift (it starts at +3: the game will not mirror an item below +2)
-                applyMirrorOptimization(targetCosts, priceMirror().price || 0, blessedMirrorChance(enhancementParams));
+                applyMirrorOptimization(
+                    targetCosts,
+                    priceMirror(ASK).price || 0,
+                    blessedMirrorChance(enhancementParams)
+                );
             }
             itemCost = enhancementUnpriced ? 0 : targetCosts[item.enhancementLevel];
         } else {
@@ -801,11 +810,11 @@ function calculateEnhancementCostFromWorkerResult(itemHrid, protectFrom, workerR
     const itemDetails = gameData.itemDetailMap[itemHrid];
     if (!itemDetails || !itemDetails.enhancementCosts) return null;
 
-    const baseItemCost = priceBase(itemHrid).price;
+    const baseItemCost = priceBase(itemHrid, ASK).price;
     if (!(baseItemCost > 0)) return null;
 
     // Material cost per attempt: a material nobody prices is a partial bill, not a cheaper run
-    const materials = perAttemptMaterialCost(itemDetails);
+    const materials = perAttemptMaterialCost(itemDetails, ASK);
     if (materials.hasMissingPrices) return null;
 
     // Total material cost = per-action cost × total expected attempts
@@ -815,7 +824,7 @@ function calculateEnhancementCostFromWorkerResult(itemHrid, protectFrom, workerR
     // protect with is not offered at all, rather than offered free
     let protectionCost = 0;
     if (protectFrom > 0 && workerResult.protectionCount > 0) {
-        const protectionInfo = priceProtection(itemHrid);
+        const protectionInfo = priceProtection(itemHrid, ASK);
         if (protectionInfo.unpriced) return null;
         protectionCost = protectionInfo.price * workerResult.protectionCount;
     }

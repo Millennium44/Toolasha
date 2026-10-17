@@ -46,17 +46,18 @@ import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 // The profit-mode input rule (custom prices, shop floor, the player's pricing mode) shared with the
 // panel, the advisor, the score and the net-worth map; the raw-book helpers stay in enhancement-pricing
 import {
-    getEnhancementMaterialPrice,
-    getRealisticBaseItemPrice,
     getCheapestProtectionPrice,
     perAttemptMaterialCost,
+    priceAtLevel,
     priceBase,
     priceGuarded,
     priceMaterial,
     priceMirror,
 } from '../../utils/enhancement-input-pricing.js';
 
-export { getEnhancementMaterialPrice, getRealisticBaseItemPrice, getCheapestProtectionPrice };
+export { getCheapestProtectionPrice };
+// Pass-through only: nothing in this module calls these two
+export { getEnhancementMaterialPrice, getRealisticBaseItemPrice } from '../../utils/enhancement-input-pricing.js';
 // Pass-through only, like the chain time below: the raw-book cost walk lives in utils
 export { getProductionCost } from '../../utils/enhancement-pricing.js';
 
@@ -104,10 +105,20 @@ function expectedXPFromRun(run, itemHrid, wisdom) {
  * @param {number} currentEnhancementLevel - Current enhancement level (1-20)
  * @param {Object} config - Enhancement configuration from enhancement-config.js
  * @param {Object} [options] - Options
- * @param {'profit'|'networth'} [options.priceContext='profit'] - Whose pricing mode the inputs are
- *   priced in; net worth passes its own so a player's profit mode never moves a net-worth figure
+ * @param {'profit'|'networth'|'ask'} [options.priceContext='profit'] - How the inputs are priced:
+ *   'profit' is the player's profit mode (no side named), 'networth' the net-worth mode, 'ask' the rule
+ *   forced to the ask - what a surface that labels its columns Ask and Bid passes
  * @returns {Object|null} Enhancement analysis or null if not enhanceable
  */
+/**
+ * The pricing options of a `priceContext`: 'ask' forces the ask, anything else names a context.
+ * @param {'profit'|'networth'|'ask'} priceContext - See {@link calculateEnhancementPath}
+ * @returns {{mode: string}|{context: string}}
+ */
+function pricingOf(priceContext) {
+    return priceContext === 'ask' ? { mode: 'ask' } : { context: priceContext };
+}
+
 export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, config, { priceContext = 'profit' } = {}) {
     // Validate inputs
     if (!itemHrid || currentEnhancementLevel < 1 || currentEnhancementLevel > 20) {
@@ -151,7 +162,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
     // levels it actually builds, and there is nowhere else that number survives
     const targetProtections = new Array(currentEnhancementLevel + 1);
-    targetCosts[0] = priceBase(itemHrid, { context: priceContext }).price || 0; // Level 0: base item
+    targetCosts[0] = priceBase(itemHrid, pricingOf(priceContext)).price || 0; // Level 0: base item
     targetTimes[0] = 0; // Level 0: no time needed
     targetAttempts[0] = 0; // Level 0: no attempts needed
     targetProtections[0] = 0; // Level 0: nothing to protect
@@ -181,7 +192,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
     // Like Enhancelator lines 456-465. The pass itself lives in the calculator so the networth
     // worker and the profile score run the identical sweep instead of three copies of it.
-    const mirrorPrice = priceMirror({ context: priceContext }).price || 0;
+    const mirrorPrice = priceMirror(pricingOf(priceContext)).price || 0;
     const mirrorBlessedChance = blessedMirrorChance(config);
     const usedMirror = applyMirrorOptimization(targetCosts, mirrorPrice, mirrorBlessedChance);
 
@@ -405,7 +416,7 @@ function sweepStrategiesForLevel(targetLevel, itemLevel, config, prices) {
  *
  * @param {string} itemHrid - The item being enhanced
  * @param {Object} itemDetails - Its game data
- * @param {'profit'|'networth'} [priceContext='profit'] - Whose pricing mode to read
+ * @param {'profit'|'networth'|'ask'} [priceContext='profit'] - See {@link calculateEnhancementPath}
  * @returns {Object} Per-attempt material cost and breakdown, the base item's prices, and the
  *   protection options the sweep should price the protected rows with
  */
@@ -422,7 +433,7 @@ function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') 
     let pricesPartial = false;
     for (const material of itemDetails.enhancementCosts || []) {
         const materialDetail = gameData.itemDetailMap[material.itemHrid];
-        const price = priceMaterial(material.itemHrid, { context: priceContext }).price || 0;
+        const price = priceMaterial(material.itemHrid, pricingOf(priceContext)).price || 0;
         if (!(price > 0) && material.count > 0) pricesPartial = true;
         materialCostPerAttempt += price * material.count;
         materials.push({
@@ -430,26 +441,25 @@ function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') 
             name: materialDetail?.name || material.itemHrid,
             countPerAction: material.count,
             unitPrice: price,
-            bidPrice: priceMaterial(material.itemHrid, { mode: 'bid', context: priceContext }).price || 0,
+            bidPrice: priceMaterial(material.itemHrid, { mode: 'bid' }).price || 0,
         });
     }
 
     // Protection: the cheapest thing that will absorb a failure. A null price means nothing that
     // could protect this item has one, and then there are no protected rows to price at all —
     // rather than a set of them priced at zero, which is what used to happen
-    const protectionInfo = getCheapestProtectionPrice(itemHrid, { context: priceContext });
+    const protectionInfo = getCheapestProtectionPrice(itemHrid, pricingOf(priceContext));
     const protectionOptions =
         protectionInfo.price > 0 ? [{ itemHrid: protectionInfo.itemHrid, price: protectionInfo.price }] : [];
     let protectionBidPrice = 0;
     if (protectionInfo.price > 0) {
-        protectionBidPrice =
-            priceGuarded(protectionInfo.itemHrid, { mode: 'bid', context: priceContext }).price || protectionInfo.price;
+        protectionBidPrice = priceGuarded(protectionInfo.itemHrid, { mode: 'bid' }).price || protectionInfo.price;
     }
 
     // Base item cost (initial investment): the guarded profit-mode price, or the cheaper of that and
     // the craft cost per the setting; the bid column reads the same chain with the bid forced
-    const askBase = priceBase(itemHrid, { context: priceContext });
-    const bidBase = priceBase(itemHrid, { mode: 'bid', context: priceContext });
+    const askBase = priceBase(itemHrid, pricingOf(priceContext));
+    const bidBase = priceBase(itemHrid, { mode: 'bid' });
     const askIsCrafted = askBase.crafted;
     const baseAskPrice = askBase.price || 0;
     const baseBidPrice = bidBase.price || baseAskPrice;
@@ -469,7 +479,7 @@ function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') 
             baseAskPrice,
             baseBidPrice,
             baseAskIsCrafted: askIsCrafted,
-            baseBidIsCrafted: askIsCrafted,
+            baseBidIsCrafted: bidBase.crafted,
         },
     };
 }
@@ -704,7 +714,7 @@ function buildMirrorOptimizedResult(
     // the refined item, every consumed copy is the unrefined base at its
     // level — the same enhancement bill on a far cheaper +0
     const copyHrid = unrefinedBaseOf(itemHrid);
-    const copyBasePrice = copyHrid ? priceGuarded(copyHrid, { context: priceContext }).price || 0 : null;
+    const copyBasePrice = copyHrid ? priceBase(copyHrid, pricingOf(priceContext)).price || 0 : null;
     const costOf = (level, primary) => {
         if (primary || !copyHrid || !(copyBasePrice > 0)) return traditionalCosts[level];
         return Math.max(0, traditionalCosts[level] - traditionalCosts[0]) + copyBasePrice;
@@ -788,11 +798,11 @@ function buildMirrorOptimizedResult(
             materialMultiplier,
             protectionItemHrid:
                 optimalTraditional.protectionItemHrid ||
-                getCheapestProtectionPrice(itemHrid, { context: priceContext })?.itemHrid,
+                getCheapestProtectionPrice(itemHrid, pricingOf(priceContext))?.itemHrid,
             protectionCount: totalProtections,
             protectionUnitPrice:
                 optimalTraditional.protectionAskPrice ||
-                getCheapestProtectionPrice(itemHrid, { context: priceContext })?.price ||
+                getCheapestProtectionPrice(itemHrid, pricingOf(priceContext))?.price ||
                 0,
             mirrorCount,
             mirrorPrice,
@@ -939,9 +949,9 @@ export function buildEnhancementTooltipHTML(enhancementData) {
             // copy a refined piece is mirrored with
             const hrid = item.itemHrid || consumedHrid;
             const name = gameData?.itemDetailMap?.[hrid]?.name || hrid;
-            const prices = getItemPrices(hrid, item.level);
-            const askPrice = prices?.ask > 0 ? prices.ask : item.costEach;
-            const bidPrice = prices?.bid > 0 ? prices.bid : item.costEach;
+            // The same rule as every other row of this table, with the side its column names
+            const askPrice = priceAtLevel(hrid, item.level, { mode: 'ask' }).price || item.costEach;
+            const bidPrice = priceAtLevel(hrid, item.level, { mode: 'bid' }).price || item.costEach;
             totalAsk += askPrice * item.quantity;
             totalBid += bidPrice * item.quantity;
             return { name: name + ' +' + item.level, count: item.quantity, askPrice, bidPrice };
@@ -949,8 +959,8 @@ export function buildEnhancementTooltipHTML(enhancementData) {
 
         // Philosopher's Mirror row
         if (optimalStrategy.philosopherMirrorCost > 0 && optimalStrategy.mirrorCount > 0) {
-            // The same guarded profit-mode mirror price the plan above was costed with
-            const mirrorAsk = priceMirror().price || 0;
+            // The same rule as the plan above, with the side each column names
+            const mirrorAsk = priceMirror({ mode: 'ask' }).price || 0;
             const mirrorBid = priceMirror({ mode: 'bid' }).price || 0;
             totalAsk += mirrorAsk * optimalStrategy.mirrorCount;
             totalBid += mirrorBid * optimalStrategy.mirrorCount;
@@ -1178,7 +1188,8 @@ export function rerenderOpenEnhancementSections() {
                 html = buildEnhancementMilestonesHTML(itemHrid, params);
             } else {
                 const level = parseInt(section.getAttribute('data-toolasha-enh-level'), 10);
-                const data = level > 0 ? calculateEnhancementPath(itemHrid, level, params) : null;
+                const data =
+                    level > 0 ? calculateEnhancementPath(itemHrid, level, params, { priceContext: 'ask' }) : null;
                 html = data ? buildEnhancementTooltipHTML(data) : '';
             }
 
@@ -1275,7 +1286,7 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
 
     const rows = [];
     for (const level of MILESTONE_LEVELS) {
-        const data = calculateEnhancementPath(itemHrid, level, enhancementConfig);
+        const data = calculateEnhancementPath(itemHrid, level, enhancementConfig, { priceContext: 'ask' });
         if (!data) continue;
 
         const cost = fmtCost(data.optimalStrategy.totalCost);

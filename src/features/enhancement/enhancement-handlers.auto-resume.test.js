@@ -82,6 +82,7 @@ vi.mock('../../utils/enhancement-input-pricing.js', () => {
         priceAtLevel: (hrid) => answer(book(hrid)),
         priceGuarded: (hrid) => answer(book(hrid)),
         priceMirror: () => answer(null),
+        priceMaterial: (hrid) => answer(book(hrid)),
     };
 });
 vi.mock('./enhancement-ui.js', () => ({ default: { switchToSession: () => {}, scheduleUpdate: () => {} } }));

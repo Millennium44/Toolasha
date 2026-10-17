@@ -127,6 +127,7 @@ vi.mock('../../utils/enhancement-input-pricing.js', () => {
         priceAtLevel: (hrid, level = 0) => answer(state.prices[`${hrid}:${level}`]),
         priceGuarded: (hrid) => answer(state.prices[`${hrid}:0`]),
         priceMirror: () => answer(state.prices['/items/philosophers_mirror:0']),
+        priceMaterial: (hrid) => answer(state.prices[`${hrid}:0`]),
     };
 });
 vi.mock('./enhancement-ui.js', () => ({ default: { switchToSession: () => {}, scheduleUpdate: () => {} } }));

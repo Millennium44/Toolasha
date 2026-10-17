@@ -530,7 +530,9 @@ class XPHCalculator {
         );
         let data = null;
         try {
-            data = calculateEnhancementPath(hrid, target, enhancementParamsFor('lab:route', hrid));
+            data = calculateEnhancementPath(hrid, target, enhancementParamsFor('lab:route', hrid), {
+                priceContext: 'ask',
+            });
         } catch (error) {
             console.error('[XPHCalculator] Route failed:', error);
         }
