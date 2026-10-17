@@ -1045,6 +1045,12 @@ class BulkSellAssistant {
             setMainEnabled(true, 'Open this item again for what is left. Its own click, one game action.');
             show(skipBtn, true);
             skipBtn.title = 'Leave the remainder and move on to the next item';
+        } else if (this.state === 'awaiting_next' && this._afterCloseWatch) {
+            // The bag is still being watched for a late sale: Next now would skip its remainder
+            say(`${progress} · ${this.current?.name || ''}: checking the bag for a sale the game has not reported yet`);
+            setMain('⏳ Checking…');
+            setMainEnabled(false, 'Waiting a moment for the inventory to report any sale before moving on');
+            show(skipBtn, false);
         } else if (this.state === 'awaiting_next') {
             const outcome = this.statusNote ? `skipped (${this.statusNote})` : 'dealt with';
             say(`${progress} · ${this.current?.name || ''} ${outcome} — press Next for the next item`);
@@ -1791,6 +1797,8 @@ class BulkSellAssistant {
             this._navigatedSinceClick = false;
             this._start();
         } else if (this.state === 'awaiting_next') {
+            // Refuse while the late-sale watch runs (the disabled button already does; this covers a direct call)
+            if (this._afterCloseWatch) return;
             this._navigatedSinceClick = false;
             // A remainder left by a sale is this same step again, with its live count; anything else moves on
             if (!(this._sellAgain > 0)) this.index++;
@@ -2491,6 +2499,8 @@ class BulkSellAssistant {
             if (check() || Date.now() >= until) {
                 clearInterval(this._afterCloseWatch);
                 this._afterCloseWatch = null;
+                // The watch gates the Next button; redraw so it arms again however the watch ended
+                if (this.state === 'awaiting_next') this._render();
             }
         }, 200);
     }

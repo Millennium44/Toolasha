@@ -1459,6 +1459,29 @@ describe('confirming from the strip', () => {
             expect(statusText()).toContain('7 left after the sale');
         });
 
+        test('Next is disabled while the late-sale watch runs, and arms again when it ends', () => {
+            const modal = openModal({ qty: 18 });
+            runAtStep0();
+            setCheese(25);
+            vi.advanceTimersByTime(200);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            // Stack unchanged so far: the bag is still being watched for a late sale
+            expect(bulkSell._afterCloseWatch).not.toBeNull();
+            expect(confirmBtn().disabled).toBe(true);
+            confirmBtn().click();
+            bulkSell._onMainClick();
+            expect(bulkSell.index).toBe(0);
+            expect(bulkSell.state).toBe('awaiting_next');
+
+            // The watch ends with nothing sold: Next arms and moves on
+            vi.advanceTimersByTime(2000);
+            expect(bulkSell._afterCloseWatch).toBeNull();
+            expect(confirmBtn().disabled).toBe(false);
+            confirmBtn().click();
+            expect(bulkSell.index).toBe(1);
+        });
+
         test('Skip leaves the remainder and moves on', () => {
             const modal = openModal({ qty: 18 });
             runAtStep0();
