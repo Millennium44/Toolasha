@@ -477,7 +477,7 @@ export const settingsGroups = {
                     { value: 'relative', label: 'Cumulative duration only' },
                     { value: 'both', label: 'Cumulative duration and clock time' },
                 ],
-                help: 'Chooses whether each reachable queue row shows when it finishes, how long it takes to reach, or both.',
+                help: 'Chooses whether each reachable queue row shows when it finishes, how long it takes to reach, or both. Clock times follow the 12/24-hour and date order set under Marketplace: Time format and Date format for date/time display.',
             },
         },
     },
@@ -1032,10 +1032,10 @@ export const settingsGroups = {
             },
             itemTooltip_gatheringRareDrops: {
                 id: 'itemTooltip_gatheringRareDrops',
-                label: 'Show rare drops from gathering',
+                label: 'Show rare gathering drops in item tooltips',
                 type: 'checkbox',
                 default: true,
-                help: 'Shows rare find drops from gathering zones (e.g., Thread of Expertise from Asteroid Belt)',
+                help: "When you hover an item, also list the gathering zones where it is a rare drop (under 1%), shown as items per day. For example, hovering Thread of Expertise lists Asteroid Belt. Requires 'Show gathering sources and profit'.",
             },
             itemTooltip_abilityStatus: {
                 id: 'itemTooltip_abilityStatus',
@@ -4247,7 +4247,7 @@ export const settingsGroups = {
         settings: {
             houseUpgradeCosts: {
                 id: 'houseUpgradeCosts',
-                label: 'Show upgrade costs with market prices and inventory comparison',
+                label: 'House: Show room upgrade costs with market prices and inventory comparison',
                 type: 'checkbox',
                 default: true,
             },

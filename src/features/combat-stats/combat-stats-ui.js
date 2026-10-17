@@ -1782,7 +1782,7 @@ class CombatStatsUI {
                                 if (!hasActualData) {
                                     trackingNote.textContent = `📊 Tracked ${formatTrackingDuration(trackingDuration)} - No consumption yet (rate decreases over time)`;
                                 } else {
-                                    trackingNote.textContent = `📊 Tracked ${formatTrackingDuration(trackingDuration)} - 90% actual + 10% baseline blend`;
+                                    trackingNote.textContent = `📊 Rate measured over ${formatTrackingDuration(trackingDuration)} (90% actual + 10% baseline). Consumed = rate × run duration. Remaining = inventory ÷ rate.`;
                                 }
 
                                 breakdownDiv.appendChild(trackingNote);
