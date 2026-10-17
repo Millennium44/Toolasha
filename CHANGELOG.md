@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers round (2026-10-16): sims, queue and UI
+
+- Combat Sim's Balanced ability-order ranking and its Verify now count the death-rate error, so an order is no longer called a clear win on a deaths change inside the noise.
+- The queue monitor and account panel show "?" once an untimed fight is running instead of a stale "≥" time, and queue snapshots saved by older versions no longer time a counted fight as battles × action time (or call that character idle).
+- Opening the Lab Sim from a labyrinth tile unfolds a minimized panel instead of drawing it half-collapsed with no tabs; changing Tune triggers' targets always clears the old result, and a slow restore no longer paints over a run you just finished.
+- Bulk Sell holds Next for the 1.5 s it watches for a late partial sale; the pinned-actions page no longer lists combat rows twice; the Iron Bell reserve redraws when the protection-limit setting changes; a bestiary target alert re-arms (also after a reload) when a real reading comes in under an early estimated crossing; and the undercut check no longer hides a live-server quote on a test client.
+
 <!-- shipped in 3.72.0 -->
 
 ### Tasks: the reroll walk claims first and sorts when done
