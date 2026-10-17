@@ -1093,7 +1093,9 @@ describe('the Alchemy panel button', () => {
     function mountAlchemyPanel({ itemId = 'holy_milk', enhancement = '', repeat = '10', tab = 'Decompose' } = {}) {
         document.body.insertAdjacentHTML(
             'beforeend',
-            `<div class="AlchemyPanel_tabsComponentContainer__x"><button role="tab" aria-selected="true">${tab}</button></div>` +
+            `<div class="AlchemyPanel_tabsComponentContainer__x">${['Coinify', 'Decompose', 'Transmute', 'Unrefine']
+                .map((t) => `<button role="tab" aria-selected="${t === tab}">${t}</button>`)
+                .join('')}</div>` +
                 '<div class="SkillActionDetail_alchemyComponent__x">' +
                 '<div class="SkillActionDetail_info__x">' +
                 '<div class="SkillActionDetail_alchemyCosts__x"><div class="SkillActionDetail_itemRequirements__x">' +
@@ -1345,15 +1347,15 @@ describe('the Alchemy panel button', () => {
 
             // The game lands on another tab; the Transmute tab is there (or not) to be clicked
             const strip = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
-            strip.innerHTML = '<button role="tab" aria-selected="true">Coinify</button>';
-            let transmute = null;
+            strip.innerHTML = ['Coinify', 'Decompose', 'Transmute', 'Unrefine']
+                .map((t) => `<button role="tab" aria-selected="${t === 'Coinify'}">${t}</button>`)
+                .join('');
+            let transmute = strip.querySelectorAll('[role="tab"]')[2];
             if (withTransmuteTab) {
-                transmute = document.createElement('button');
-                transmute.setAttribute('role', 'tab');
-                transmute.setAttribute('aria-selected', 'false');
-                transmute.textContent = 'Transmute';
                 transmute.addEventListener('click', () => order.push('tab'));
-                strip.appendChild(transmute);
+            } else {
+                strip.innerHTML = '<button role="tab" aria-selected="true">Coinify</button>';
+                transmute = null;
             }
             globalThis.__repeatWrites = () => order.push('repeat');
             const returnTab = Array.from(container.querySelectorAll('[data-mwi-custom-tab="true"]')).find(

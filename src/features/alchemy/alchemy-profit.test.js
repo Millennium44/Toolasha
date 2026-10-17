@@ -118,3 +118,34 @@ describe('parseRequirementCount / parseDropCountAndRate — locale-grouped DOM t
         });
     });
 });
+
+describe('readAlchemyTabType positional identity', () => {
+    const { readAlchemyTabType, ALCHEMY_TAB_TYPES } = alchemyProfitModule;
+
+    function mountTabs(labels, selectedIndex) {
+        document.body.innerHTML = `<div class="AlchemyPanel_tabsComponentContainer__x">${labels
+            .map((l, i) => `<button role="tab" aria-selected="${i === selectedIndex}">${l}</button>`)
+            .join('')}</div>`;
+    }
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('a Chinese-labelled strip still resolves each game tab', () => {
+        const labels = ['点金', '分解', '转化', '重铸', 'Current Action'];
+        ALCHEMY_TAB_TYPES.forEach((type, i) => {
+            mountTabs(labels, i);
+            expect(readAlchemyTabType()).toBe(type);
+        });
+    });
+
+    test('a Toolasha or extra tab (index 4+) is not an alchemy action', () => {
+        mountTabs(['Coinify', 'Decompose', 'Transmute', 'Unrefine', 'Best Items'], 4);
+        expect(readAlchemyTabType()).toBeNull();
+    });
+
+    test('no strip yields null', () => {
+        expect(readAlchemyTabType()).toBeNull();
+    });
+});
