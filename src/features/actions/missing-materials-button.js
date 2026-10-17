@@ -1854,6 +1854,11 @@ async function handleReturnToAction() {
         return;
     }
 
+    // The game's alchemize call selects the item but not the tab, so a Transmute
+    // bill would come back on whatever tab the game shows. Select it first: the
+    // switch can reset the Repeat input restored below.
+    if (alchemyContext?.actionType) await selectAlchemyTab(alchemyContext.actionType);
+
     // Restore the Repeat count - poll for the input to appear
     if (restoreCount > 0) {
         const maxAttempts = 20;
@@ -1872,6 +1877,29 @@ async function handleReturnToAction() {
                 break;
             }
         }
+    }
+}
+
+/**
+ * Select the stored alchemy tab (Coinify, Decompose, Transmute...) once the panel's tab strip
+ * has mounted. A tab click is navigation, so a plain click is enough. Fails soft: if the tab
+ * never appears the player is left on whatever tab the game shows.
+ *
+ * @param {string} actionType - The stored tab, e.g. 'transmute'
+ * @returns {Promise<void>}
+ */
+async function selectAlchemyTab(actionType) {
+    const wanted = String(actionType).toLowerCase();
+    for (let i = 0; i < 20; i++) {
+        const tabs = document.querySelectorAll('[class*="AlchemyPanel_tabsComponentContainer"] [role="tab"]');
+        const tab = Array.from(tabs).find((el) => el.textContent?.trim().toLowerCase().includes(wanted));
+        if (tab) {
+            if (tab.getAttribute('aria-selected') !== 'true') tab.click();
+            return;
+        }
+        await new Promise((resolve) => {
+            timerRegistry.scheduleTimeout(resolve, 100);
+        });
     }
 }
 
