@@ -203,6 +203,13 @@ class BestiaryPointsAlerts {
         this.stoppedOn = null;
         const who = dataManager.getCurrentCharacterId?.();
         if (who) writeScoped(BASELINE_KEY, this.real, 'settings').catch(() => {});
+        // The estimate fired early: a real reading still under that target says the crossing has not happened,
+        // so the alert re-arms for the real one (a second "reached" message is the accepted cost)
+        if (this.firedTarget !== null && totalBestiaryPoints(this.real) < this.firedTarget) {
+            this.firedTarget = null;
+            this.seenTarget = null;
+            if (who) writeScoped(FIRED_KEY, null, 'settings').catch(() => {});
+        }
         await this.check(true);
     }
 

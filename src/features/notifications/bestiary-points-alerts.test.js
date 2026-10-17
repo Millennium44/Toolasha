@@ -264,6 +264,25 @@ describe('bestiary points alerts', () => {
         expect(game.notified).toHaveLength(1);
     });
 
+    test('a real reading still under an estimated crossing re-arms the alert for the real one', async () => {
+        await reading({ fly: 9 }); // 1 point, target 3
+        await alerts.initialize();
+        wave(['fly', 'fly']);
+        await kill(0); // estimate crosses 3 points: announced
+        expect(game.notified).toHaveLength(1);
+        expect(game.stored.get(`${FIRED_KEY}_char-a`)).toBe(3);
+
+        await reading({ fly: 9 }); // the game says the estimate ran ahead: still 1 point
+        expect(alerts.firedTarget).toBeNull();
+        expect(game.stored.get(`${FIRED_KEY}_char-a`) ?? null).toBeNull();
+        expect(game.notified).toHaveLength(1);
+
+        await reading({ fly: 10 }); // the real crossing
+        expect(game.notified).toHaveLength(2);
+        expect(game.notified[1].message).toBe('Bestiary: 3 points — target 3 reached.');
+        expect(alerts.firedTarget).toBe(3);
+    });
+
     test('with no baseline nothing is estimated and nothing fires', async () => {
         await alerts.initialize();
         wave(['fly']);
