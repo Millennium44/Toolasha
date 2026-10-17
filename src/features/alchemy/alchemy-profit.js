@@ -66,6 +66,57 @@ export function parseDropCountAndRate(text, dropRateFromGameData) {
     return { count, dropRate };
 }
 
+/**
+ * Which alchemy tab is selected, from the panel's tab strip.
+ *
+ * The same English-text reading `alchemy-profit-display.js` and
+ * `alchemy-action-protection.js` use, so every alchemy feature agrees on the tab.
+ * Unrefine is checked first: its label contains "refine", not "decompose", but it
+ * is checked before the others all the same so a later label cannot shadow it.
+ *
+ * @param {ParentNode} [root=document] - Where to look for the tab strip
+ * @returns {'coinify'|'decompose'|'transmute'|'unrefine'|null} The selected tab, or null
+ */
+export function readAlchemyTabType(root = document) {
+    const tabContainer =
+        root.querySelector?.('[class*="AlchemyPanel_tabsComponentContainer"]') ||
+        document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
+    const selectedTab = tabContainer?.querySelector('[role="tab"][aria-selected="true"]');
+    const tabText = selectedTab?.textContent?.trim()?.toLowerCase() || '';
+    if (tabText.includes('unrefine')) return 'unrefine';
+    if (tabText.includes('coinify')) return 'coinify';
+    if (tabText.includes('transmute')) return 'transmute';
+    if (tabText.includes('decompose')) return 'decompose';
+    return null;
+}
+
+/**
+ * The item the alchemy panel is set to work on, read synchronously: the first
+ * Costs entry, which is the selected item (the coin fee and catalyst sit in
+ * their own slots).
+ *
+ * @param {ParentNode} [root=document] - The alchemy component, or the document
+ * @returns {{itemHrid: string, enhancementLevel: number, actionType: string|null}|null}
+ *   The selection, or null when no item is selected
+ */
+export function readAlchemyPanelSelection(root = document) {
+    const container = root.querySelector?.(
+        '[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]'
+    );
+    const use = container?.querySelector('svg use');
+    const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
+    const itemId = href.split('#')[1];
+    if (!itemId) return null;
+
+    const enhancementText = container.querySelector('[class*="Item_enhancementLevel"]')?.textContent || '';
+    const match = enhancementText.match(/\+(\d+)/);
+    return {
+        itemHrid: `/items/${itemId}`,
+        enhancementLevel: match ? parseInt(match[1], 10) : 0,
+        actionType: readAlchemyTabType(root),
+    };
+}
+
 class AlchemyProfit {
     /**
      * Get current alchemy action HRID

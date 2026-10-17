@@ -89,6 +89,8 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
 }));
 vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
 vi.mock('../alchemy/alchemy-profit.js', () => ({
+    readAlchemyTabType: () => null,
+    readAlchemyPanelSelection: () => null,
     default: {
         getCurrentActionHrid: () => null,
         getStateFingerprint: () => 'fp',
