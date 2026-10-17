@@ -1127,7 +1127,7 @@ export async function calculateNetworth() {
 
     // Items valued on a partial crafting bill (an input nothing can price), counted ones only: the
     // value stays in the total, and the display says it is a floor
-    const partialNames = [];
+    const partialItems = new Map();
 
     // Calculate equipped items value using workers
     let equippedValue = 0;
@@ -1166,7 +1166,7 @@ export async function calculateNetworth() {
 
         equippedValue += value;
         const isPartial = equippedPartial.has(i);
-        if (isPartial) partialNames.push(displayName);
+        if (isPartial) partialItems.set(`${item.itemHrid}:${item.enhancementLevel || 0}`, displayName);
         equippedBreakdown.push({
             name: displayName,
             value,
@@ -1275,7 +1275,7 @@ export async function calculateNetworth() {
         }
 
         if (tokenEntries.has(item.itemHrid)) tokenEntries.get(item.itemHrid).counted = true;
-        if (itemData.partial) partialNames.push(displayName);
+        if (itemData.partial) partialItems.set(`${item.itemHrid}:${item.enhancementLevel || 0}`, displayName);
 
         if (isAbilityBook && !booksAsInventory) {
             // Add to ability books (Fixed Assets)
@@ -1395,7 +1395,7 @@ export async function calculateNetworth() {
         listingsValue = 0;
     } else {
         for (const listing of listingsBreakdown) {
-            if (listing.partial) partialNames.push(listing.name);
+            if (listing.partial) partialItems.set(`${listing.itemHrid}:${listing.enhancementLevel || 0}`, listing.name);
         }
     }
 
@@ -1526,7 +1526,7 @@ export async function calculateNetworth() {
         totalNetworth,
         // Counted items valued on a crafting bill with an input nothing can price: the total
         // includes the priced inputs' cost, so it is a floor by this much of the picture
-        partial: { count: partialNames.length, names: partialNames },
+        partial: { count: partialItems.size, names: [...partialItems.values()] },
         coins: coinCount,
         countedCoins,
         excluded: { total: excludedTotal, items: excludedItems },

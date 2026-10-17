@@ -856,6 +856,55 @@ describe('craft-cost parity between the main thread and the worker', () => {
         expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
     });
 
+    test('the same partial item in two stacks, or equipped and held, is counted and named once', async () => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            itemDetailMap: { '/items/plank': { name: 'Plank' } },
+            actionDetailMap: {
+                '/actions/saw_planks': {
+                    outputItems: [{ itemHrid: '/items/plank', count: 1 }],
+                    inputItems: [
+                        { itemHrid: '/items/log', count: 3 },
+                        { itemHrid: '/items/mystery_dust', count: 2 },
+                    ],
+                },
+            },
+        };
+        mocks.combinedData = {
+            characterItems: [
+                {
+                    itemHrid: '/items/plank',
+                    itemLocationHrid: '/item_locations/inventory',
+                    count: 2,
+                    enhancementLevel: 0,
+                },
+                {
+                    itemHrid: '/items/plank',
+                    itemLocationHrid: '/item_locations/inventory',
+                    count: 7,
+                    enhancementLevel: 0,
+                },
+                {
+                    itemHrid: '/items/plank',
+                    itemLocationHrid: '/item_locations/main_hand',
+                    count: 1,
+                    enhancementLevel: 0,
+                },
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.initData.itemDetailMap,
+        };
+
+        const result = await calculateNetworth();
+
+        expect(result.partial).toEqual({ count: 1, names: ['Plank'] });
+    });
+
     test('the worker flags a bill with an unpriced input partial, as the main thread does', async () => {
         mocks.settings.networth_pricingMode = 'ask';
         mocks.initData = {
