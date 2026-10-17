@@ -66,6 +66,8 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('./alchemy-profit.js', () => ({
+    readAlchemyTabType: () => null,
+    readAlchemyPanelSelection: () => null,
     default: {
         getCurrentActionHrid: () => panel.actionHrid,
         getStateFingerprint: () => panel.fingerprint,

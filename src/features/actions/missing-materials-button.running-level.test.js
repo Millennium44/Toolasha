@@ -15,6 +15,8 @@ vi.mock('../../core/data-manager.js', () => ({
         getActionDetails: () => null,
         getItemDetails: () => null,
         getCurrentActions: () => state.actions,
+        on: () => {},
+        off: () => {},
     },
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
@@ -41,6 +43,7 @@ vi.mock('../../utils/material-calculator.js', () => ({
         return [];
     },
     calculateEnhancementWholeAttempts: () => 3,
+    calculateQueuedMaterialsForAction: () => new Map(),
     unclaimedBoughtCount: () => 0,
 }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
