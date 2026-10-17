@@ -6613,6 +6613,60 @@ describe('the Ability order Include option', () => {
     });
 });
 
+describe('opening the Lab Sim panel from a labyrinth tile while it is minimized', () => {
+    beforeEach(async () => {
+        // A remembered size gives the panel the inline height a fold must give back
+        geometry.saved = { left: 120, top: 40, width: 640, height: 480 };
+        geometry.wasOpen = false;
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = { '/monsters/mimic': 130 };
+        ui.buildPanel();
+        await settle();
+    });
+
+    afterEach(() => {
+        game.monsters = [];
+        game.skipLevels = {};
+        ui.destroy();
+    });
+
+    const shown = (sel) => ui.panel.querySelector(sel).style.display !== 'none';
+    const expectUnfolded = () => {
+        expect(shown('#mwi-labsim-tabbar')).toBe(true);
+        expect(ui.panel.dataset.minimized).toBe('false');
+        expect(ui.panel.style.height).toBe('480px');
+        expect(ui.minimizeCtl.collapsed).toBe(false);
+    };
+
+    test('a combat tile unfolds the panel and shows Configure under the tab bar', async () => {
+        ui.minimizeCtl.setCollapsed(true);
+        expect(ui.panel.dataset.minimized).toBe('true');
+        await ui.openPreconfigured({ monsterHrid: '/monsters/mimic', roomLevel: 40 });
+        expectUnfolded();
+        expect(shown('#mwi-labsim-configure-content')).toBe(true);
+        for (const tab of ['maxlevel', 'upgrade', 'skilling']) {
+            expect(shown(`#mwi-labsim-${tab}-content`)).toBe(false);
+        }
+    });
+
+    test('a skilling tile unfolds the panel and shows only the Skilling tab', async () => {
+        ui.minimizeCtl.setCollapsed(true);
+        await ui.openPreconfigured({ skillHrid: '/skills/cooking', roomLevel: 40 });
+        expectUnfolded();
+        expect(shown('#mwi-labsim-skilling-content')).toBe(true);
+        for (const tab of ['configure', 'maxlevel', 'upgrade']) {
+            expect(shown(`#mwi-labsim-${tab}-content`)).toBe(false);
+        }
+    });
+
+    test('a panel that was never minimized is left as it was', async () => {
+        await ui.openPreconfigured({ monsterHrid: '/monsters/mimic', roomLevel: 40 });
+        expectUnfolded();
+        expect(shown('#mwi-labsim-configure-content')).toBe(true);
+        expect(shown('#mwi-labsim-skilling-content')).toBe(false);
+    });
+});
+
 describe('the Lab Sim tab sections', () => {
     const SECTIONS = {
         'configure-setup': 'configure',

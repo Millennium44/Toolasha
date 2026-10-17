@@ -10193,6 +10193,10 @@ class LabSimUI {
         } else {
             bringPanelToFront(this.panel);
         }
+        // A minimized panel has its tab bar and every body hidden; switching a
+        // tab on it would show one body under no tab bar. Unfold first so the
+        // requested tab, switched to below, is what ends up visible.
+        this.minimizeCtl?.setCollapsed(false);
 
         const roomLevel = Math.round(Number(detail.roomLevel) || 0);
 
