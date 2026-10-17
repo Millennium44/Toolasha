@@ -3674,11 +3674,21 @@ class LabSimUI {
         // A run in flight described the scope it started with; it checks this when it finishes
         this._triggerScopeGen++;
         const resultsEl = this.panel.querySelector('#mwi-labsim-trigger-results');
-        if (resultsEl && !this._upgradeRunning) {
+        // Cleared whatever else is running: `_upgradeRunning` is also set by the upgrade analysis, Check swaps
+        // and the skilling run, none of which redraw this box, and the tune run itself cleared it at its start
+        if (resultsEl) {
             resultsEl.innerHTML = '';
             resultsEl.style.display = 'none';
             this._triggerSummary = '';
             this._applyTriggerSummary();
+        }
+        // A Verify button on the old result must not run against it, and its verdicts described other fights.
+        // Another section's verify in flight keeps its token: only the trigger state is dropped then
+        if (!this._verify.running || this._verify.running.scope === 'trigger') {
+            this._clearVerify(['trigger']);
+        } else {
+            this._verifyLive.trigger = null;
+            this._verify.trigger = this._freshVerify().trigger;
         }
         if (this._triggerChoices.open) void this._refreshTriggerLoadouts();
     }
@@ -8024,7 +8034,7 @@ class LabSimUI {
      *
      * `replace` is a sync pull's: the table on screen is itself a restored one (no analysis has
      * started on this panel), so it gives way to the pulled set, and a pulled clear empties it.
-     * An analysis started while the read was out owns the table, and nothing is drawn.
+     * An analysis started while the read was out owns the panel, replace or not, and nothing is drawn.
      * @param {{replace?: boolean}} [options] - Replace a restored table already shown
      * @private
      */
@@ -8033,7 +8043,9 @@ class LabSimUI {
             const container = this.panel?.querySelector('#mwi-labsim-upgrade-results');
             if (!container || (container.querySelector('table') && !replace)) return;
             const payload = await loadUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
-            if (replace && (this._upgradeRunning || this._upgradeRunStarted)) return;
+            // Whatever the read's kind: an analysis (an order-only one draws no table to notice) that started
+            // or finished while it was out owns the panel, and the older saved payload must not paint over it
+            if (this._upgradeRunning || this._upgradeRunStarted) return;
             if (!payload) {
                 if (replace && this.panel && (container.querySelector('table') || this._upgradeOrderSection)) {
                     this._restoredUpgradeAt = null;
@@ -10233,6 +10245,10 @@ class LabSimUI {
         } else {
             bringPanelToFront(this.panel);
         }
+        // A minimized panel has its tab bar and every body hidden; switching a
+        // tab on it would show one body under no tab bar. Unfold first so the
+        // requested tab, switched to below, is what ends up visible.
+        this.minimizeCtl?.setCollapsed(false);
 
         const roomLevel = Math.round(Number(detail.roomLevel) || 0);
 

@@ -252,24 +252,51 @@ describe('snapshot freshness', () => {
     const fight = { actionName: 'Fight', estimatedSeconds: null, isInfinite: false, hasMaxCount: true };
     const gather = (s) => ({ actionName: 'Gather', estimatedSeconds: s, isInfinite: false, hasMaxCount: true });
 
-    test('elapsed time is not taken off timed work queued behind an untimed fight', async () => {
+    test('once an untimed fight is running, the timed work behind it has no estimate', async () => {
         vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
         game.snapshots = [mixedSnapshot([fight, gather(3600)], 3600)];
 
         await queueMonitorUI.initialize();
 
-        expect(document.body.textContent).toContain('≥ 1h');
+        expect(document.body.textContent).toContain('?');
+        expect(document.body.textContent).not.toContain('≥ 1h');
+        expect(document.body.textContent).not.toContain('Done');
+        expect(document.body.textContent).not.toContain('Idle');
+        expect(document.querySelector('[data-char-id="other"] span').style.background).toBe('#666');
     });
 
-    test('elapsed time burns down timed work ahead of the untimed row, up to its length', async () => {
+    test('timed work ahead of the untimed row still counts down, with the tail behind it whole', async () => {
         vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
-        // 30 min elapsed: the 20 min of timed work before the fight is gone, the 1 h after it is whole
+        // 30 min elapsed of a 1 h prefix: 30 min left, plus the 1 h after the fight
+        game.snapshots = [mixedSnapshot([gather(3600), fight, gather(3600)], 7200)];
+
+        await queueMonitorUI.initialize();
+
+        expect(document.body.textContent).toContain('≥ 1h 30m');
+    });
+
+    test('past the timed prefix before the untimed row, the countdown ends in a question mark', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        // 30 min elapsed: the 20 min of timed work before the fight is gone and the fight is running
         game.snapshots = [mixedSnapshot([gather(1200), fight, gather(3600)], 4800)];
 
         await queueMonitorUI.initialize();
 
-        expect(document.body.textContent).toContain('≥ 1h');
-        expect(document.body.textContent).not.toContain('1h 20m');
+        expect(document.body.textContent).toContain('?');
+        expect(document.body.textContent).not.toContain('≥');
+        expect(document.body.textContent).not.toContain('Done');
+    });
+
+    test('the expanded rows behind a running untimed row say ? instead of a full length', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [mixedSnapshot([gather(1200), fight, gather(3600)], 4800)];
+        await queueMonitorUI.initialize();
+        queueMonitorUI._expandedChars.add('other');
+        queueMonitorUI._updateDisplay();
+
+        const text = document.body.textContent;
+        expect(text).toContain('Done');
+        expect(text).not.toContain('1h');
     });
 
     test('an all-timed queue still burns down by the full elapsed time', async () => {

@@ -8,6 +8,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { compareActionQueueOrder } from '../../utils/combat-actions.js';
+import { normalizeLegacySnapshot } from './queue-snapshot-legacy.js';
 
 const STORE_NAME = 'queueSnapshots';
 
@@ -188,8 +189,9 @@ class QueueSnapshot {
             // One transaction for the whole store rather than one read per
             // key: this runs on every re-init, including every character switch.
             const snapshots = await storage.getAll(STORE_NAME);
-            for (const snapshot of Object.values(snapshots)) {
+            for (let snapshot of Object.values(snapshots)) {
                 if (snapshot?.characterId) {
+                    snapshot = normalizeLegacySnapshot(snapshot);
                     const existing = this.snapshots.get(snapshot.characterId);
                     if (!existing || existing.timestamp <= snapshot.timestamp) {
                         this.snapshots.set(snapshot.characterId, snapshot);

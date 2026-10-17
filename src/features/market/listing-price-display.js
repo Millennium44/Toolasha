@@ -1149,6 +1149,9 @@ class ListingPriceDisplay {
      * @returns {boolean}
      */
     _isOwnRestingPrice(itemHrid, enhancementLevel, isSell, price) {
+        // A live-server snapshot on a test client is a foreign quote: your listings are test-server ones, so
+        // neither a price match nor the page server's band says anything about it
+        if (marketAPI.liveSourced) return false;
         return Object.values(this.allListings || {}).some(
             (listing) =>
                 listing &&

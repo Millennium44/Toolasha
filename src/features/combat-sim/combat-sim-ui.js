@@ -155,6 +155,7 @@ import {
     DEFAULT_OBJECTIVE,
     balancedScore,
     profitScale,
+    DEATH_POINTS_PER_PER_HOUR,
 } from './trigger-tuning.js';
 import {
     renderTriggerResultsHtml,
@@ -269,6 +270,25 @@ export function profitNoiseGold(row, baseline) {
         cost: baseline?.costPerHour,
     });
     return (pctNoise / 100) * scale;
+}
+/**
+ * One standard error of an order row's Balanced score gain, in score points. The mean of the four rate
+ * terms shares one per-encounter error (`noise.dps`, read as points); the deaths term is
+ * `DEATH_POINTS_PER_PER_HOUR` per extra death/hr and carries its own, much larger, error: `noise.deaths`
+ * is a percent of the deaths/hr rate, so it is scaled by the larger of the two runs' rates (a baseline of
+ * zero deaths must not make the error zero). The two add in quadrature.
+ * @param {Object} row - A result row carrying `noise` and `metrics.deathsPerHour`
+ * @param {Object} baseline - Baseline metrics (`deathsPerHour`)
+ * @returns {number|null} Null when the row has no readable rate noise
+ */
+export function balancedScoreNoise(row, baseline) {
+    const rate = row?.noise?.dps;
+    if (!Number.isFinite(rate)) return null;
+    const pctDeaths = row?.noise?.deaths;
+    if (!Number.isFinite(pctDeaths)) return rate;
+    const rateOfDeaths = Math.max(Math.abs(baseline?.deathsPerHour || 0), Math.abs(row?.metrics?.deathsPerHour || 0));
+    const deathPoints = DEATH_POINTS_PER_PER_HOUR * rateOfDeaths * (pctDeaths / 100);
+    return Math.sqrt(rate * rate + deathPoints * deathPoints);
 }
 /** Orders shown before "Show all" */
 const ABILITY_ORDER_TOP = 5;
@@ -12630,7 +12650,10 @@ class CombatSimUI {
                 ? balancedScore(abilityOrderMetrics(r.metrics), abilityOrderMetrics(baseline))
                 : metric.gain(r, baseline);
         const clearsNoise = (r, gain) => {
-            if (isScore) return Number.isFinite(r.noise?.dps) && gain > SIGNIFICANCE_Z * r.noise.dps;
+            if (isScore) {
+                const noise = balancedScoreNoise(r, baseline);
+                return noise !== null && gain > SIGNIFICANCE_Z * noise;
+            }
             if (metric.key === 'profit') {
                 // Absolute gold against a gross-scaled error; the row's percent verdict is of net profit
                 const noise = profitNoiseGold(r, baseline);
@@ -13190,7 +13213,12 @@ class CombatSimUI {
         // Improvement against its own noise: comparable across the two tables whatever their units
         const closeness = (gain, noise) => (Number.isFinite(noise) && noise > 0 ? gain / noise : 0);
         const orderEntries = this._abilityOrderRanking(orderRows, results.baseline || {}, rank)
-            .filter((e) => e.gain > 0 && isCloseCall(e.r, { metric: rank }))
+            // Balanced is judged on the same score and composite error the section labels it by
+            .filter(
+                (e) =>
+                    e.gain > 0 &&
+                    isCloseCall(e.r, { metric: rank, score: { gain: e.gain, noise: e.noise, within: e.within } })
+            )
             .map((e) => ({ r: e.r, gain: e.gain, score: closeness(e.gain, e.noise), table: 'order' }));
         const { metric: goldMetric } = this._goldVerifyMetric();
         const deltaKey = VERIFY_DELTA_KEY[goldMetric];
@@ -13358,6 +13386,7 @@ class CombatSimUI {
             if (rank === 'profit') {
                 return profitNoiseGold(r, baseline);
             }
+            if (rank !== 'xp' && rank !== 'eph' && rank !== 'dps') return balancedScoreNoise(r, baseline);
             const value = rank === 'xp' ? n.xp : rank === 'eph' ? n.encounters : n.dps;
             return Number.isFinite(value) ? value : null;
         };

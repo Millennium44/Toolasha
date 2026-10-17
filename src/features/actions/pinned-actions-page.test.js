@@ -486,6 +486,26 @@ describe('loadActions', () => {
 
         expect(page.allActions[0]).toMatchObject({ pending: false, profitPerHour: null, expPerHour: null });
     });
+
+    test('overlapping loads add the combat rows once: a stale load resolving late adds nothing', async () => {
+        vi.spyOn(page, 'computeStats').mockResolvedValue({ profitPerHour: 1, expPerHour: 2 });
+        const resolvers = [];
+        vi.spyOn(page, 'loadSimulatedCombatZones').mockImplementation(
+            () => new Promise((resolve) => resolvers.push(resolve))
+        );
+        const zoneRow = (tag) => ({ actionHrid: `/actions/combat/${tag}|T0`, name: tag, skill: 'Combat' });
+
+        const first = page.loadActions();
+        const second = page.loadActions();
+        // The newer load's zones land first, then the older one's, with different rows
+        resolvers[1]([zoneRow('new')]);
+        await second;
+        resolvers[0]([zoneRow('old'), zoneRow('old2')]);
+        await first;
+
+        const names = page.allActions.map((a) => a.name);
+        expect(names).toEqual(['Artificer Cape', 'new']);
+    });
 });
 
 describe('a sync pull that rewrites the all-zones snapshot', () => {

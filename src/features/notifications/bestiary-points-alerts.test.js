@@ -20,6 +20,7 @@ const game = vi.hoisted(() => ({
     dm: {},
     wire: {},
     notified: [],
+    lastFired: new Map(),
     readGate: null,
     requests: 0,
     fiberTouched: 0,
@@ -77,7 +78,14 @@ vi.mock('../../utils/character-key.js', () => ({
 }));
 vi.mock('./notification-service.js', () => ({
     default: {
+        // Honors the real service's per-key cooldown (10 minutes by default)
         notify: (key, message, options) => {
+            const now = Date.now();
+            const last = game.lastFired.get(key);
+            if (last !== undefined && now >= last && now - last < (options?.cooldownMs ?? 600_000)) {
+                return { fired: false, channels: [], reason: 'cooldown' };
+            }
+            game.lastFired.set(key, now);
             game.notified.push({ key, message, options });
             return { fired: true, channels: ['toast'] };
         },
@@ -162,6 +170,7 @@ describe('bestiary points alerts', () => {
         game.dm = {};
         game.wire = {};
         game.notified = [];
+        game.lastFired = new Map();
         game.readGate = null;
         game.requests = 0;
         game.fiberTouched = 0;
@@ -264,6 +273,25 @@ describe('bestiary points alerts', () => {
         expect(game.notified).toHaveLength(1);
     });
 
+    test('a real reading still under an estimated crossing re-arms the alert for the real one', async () => {
+        await reading({ fly: 9 }); // 1 point, target 3
+        await alerts.initialize();
+        wave(['fly', 'fly']);
+        await kill(0); // estimate crosses 3 points: announced
+        expect(game.notified).toHaveLength(1);
+        expect(game.stored.get(`${FIRED_KEY}_char-a`)).toBe(3);
+
+        await reading({ fly: 9 }); // the game says the estimate ran ahead: still 1 point
+        expect(alerts.firedTarget).toBeNull();
+        expect(game.stored.get(`${FIRED_KEY}_char-a`) ?? null).toBeNull();
+        expect(game.notified).toHaveLength(1);
+
+        await reading({ fly: 10 }); // the real crossing
+        expect(game.notified).toHaveLength(2);
+        expect(game.notified[1].message).toBe('Bestiary: 3 points — target 3 reached.');
+        expect(alerts.firedTarget).toBe(3);
+    });
+
     test('with no baseline nothing is estimated and nothing fires', async () => {
         await alerts.initialize();
         wave(['fly']);
@@ -309,6 +337,61 @@ describe('bestiary points alerts', () => {
         expect(game.notified).toHaveLength(1);
         await reading({ fly: 100 }); // 6 points
         expect(game.notified).toHaveLength(2);
+    });
+
+    test('after an estimated fire and a reload, a held real reading under the target re-arms', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        wave(['fly']);
+        await kill(); // estimated crossing, announced
+        expect(game.notified).toHaveLength(1);
+
+        // Reload: the game's fresh reading is held when the alert starts, and says 1 point
+        alerts.disable();
+        game.monsters = rows({ fly: 9 });
+        await alerts.initialize();
+        expect(alerts.firedTarget).toBeNull();
+        expect(game.stored.get(`${FIRED_KEY}_char-a`) ?? null).toBeNull();
+
+        await reading({ fly: 10 }); // the real crossing
+        expect(game.notified).toHaveLength(2);
+    });
+
+    test('after a reload, a held real reading at or over the fired target stays disarmed', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        wave(['fly']);
+        await kill();
+        expect(game.notified).toHaveLength(1);
+
+        alerts.disable();
+        game.monsters = rows({ fly: 10 });
+        await alerts.initialize();
+        expect(alerts.firedTarget).toBe(3);
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a stored fired target read before a re-arm does not bring the old target back', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        wave(['fly']);
+        await kill();
+        expect(game.stored.get(`${FIRED_KEY}_char-a`)).toBe(3);
+
+        // Reload with the stored read still pending when a real reading below the target lands
+        alerts.disable();
+        game.monsters = null;
+        let release;
+        game.readGate = new Promise((resolve) => (release = resolve));
+        const starting = alerts.initialize();
+        await tick();
+        const reading9 = alerts.onReading(rows({ fly: 9 }));
+        expect(alerts.firedTarget).toBeNull();
+        game.readGate = null;
+        release();
+        await Promise.all([starting, reading9]);
+
+        expect(alerts.firedTarget).toBeNull();
     });
 
     test('a target already reached at load is not announced', async () => {

@@ -5383,6 +5383,23 @@ describe('Tune triggers', () => {
             expect(summary().style.display).toBe('none');
         });
 
+        test('a scope change clears the result even while another run holds _upgradeRunning', async () => {
+            ui.panel.querySelector('#mwi-labsim-trigger-header').click();
+            await settle();
+            await run();
+            expect(results().innerHTML).not.toBe('');
+            expect(ui._verifyLive.trigger).not.toBeNull();
+            ui._verify.trigger.set('stale', { verdict: 'confirmed' });
+            // An upgrade analysis, Check swaps or a skilling run is in flight
+            ui._upgradeRunning = true;
+            ui._onTriggerScopeChanged();
+            expect(results().innerHTML).toBe('');
+            expect(summary().textContent).toBe('');
+            expect(ui._verifyLive.trigger).toBeNull();
+            expect(ui._verify.trigger.size).toBe(0);
+            ui._upgradeRunning = false;
+        });
+
         test('the summaries: changes, none, and stopped', () => {
             const group = (changes, conditionChanges = []) => ({
                 result: { changes },
@@ -6395,6 +6412,35 @@ describe('the Ability order Include option', () => {
             expect(section().textContent).not.toContain('Smack → Poke → Fireball');
         });
 
+        test('a delayed first read does not paint an older section over a run that finished meanwhile', async () => {
+            game.rememberUpgradeResults = true;
+            tick('ability_order');
+            await ui._onUpgradeAnalyze();
+            const older = JSON.parse(JSON.stringify(storage.written[KEY]));
+            expect(older.orderSection.groups.length).toBeGreaterThan(0);
+
+            // A fresh panel open: the read is out, no run has started, no table is drawn
+            ui._upgradeOrderSection = null;
+            ui._drawUpgradeAbilityOrder();
+            ui.panel.querySelector('#mwi-labsim-upgrade-results').innerHTML = '';
+            ui._upgradeRunStarted = false;
+            let release;
+            storage.pending[KEY] = new Promise((resolve) => (release = resolve));
+            try {
+                const restoring = ui._restoreUpgradeResults();
+                // An order-only run starts and finishes (no table) while the read is out
+                allSpy.mockImplementation(async () => ({}));
+                await ui._onUpgradeAnalyze();
+                expect(section().textContent).toContain('no order measured');
+                release(older);
+                await restoring;
+                expect(section().textContent).toContain('no order measured');
+                expect(section().textContent).not.toContain('Smack → Poke → Fireball');
+            } finally {
+                delete storage.pending[KEY];
+            }
+        });
+
         test('a combined run with an empty order section leaves no stale section behind', async () => {
             game.rememberUpgradeResults = true;
             singleSpy.mockResolvedValue({ baseline: null, results: [], marker: 'run' });
@@ -6564,6 +6610,60 @@ describe('the Ability order Include option', () => {
         const without = estimateLabUpgradeSims(['equipment'], 3).sims;
         const withOrder = estimateLabUpgradeSims(['equipment', 'ability_order'], 3).sims;
         expect(withOrder).toBeGreaterThan(without);
+    });
+});
+
+describe('opening the Lab Sim panel from a labyrinth tile while it is minimized', () => {
+    beforeEach(async () => {
+        // A remembered size gives the panel the inline height a fold must give back
+        geometry.saved = { left: 120, top: 40, width: 640, height: 480 };
+        geometry.wasOpen = false;
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = { '/monsters/mimic': 130 };
+        ui.buildPanel();
+        await settle();
+    });
+
+    afterEach(() => {
+        game.monsters = [];
+        game.skipLevels = {};
+        ui.destroy();
+    });
+
+    const shown = (sel) => ui.panel.querySelector(sel).style.display !== 'none';
+    const expectUnfolded = () => {
+        expect(shown('#mwi-labsim-tabbar')).toBe(true);
+        expect(ui.panel.dataset.minimized).toBe('false');
+        expect(ui.panel.style.height).toBe('480px');
+        expect(ui.minimizeCtl.collapsed).toBe(false);
+    };
+
+    test('a combat tile unfolds the panel and shows Configure under the tab bar', async () => {
+        ui.minimizeCtl.setCollapsed(true);
+        expect(ui.panel.dataset.minimized).toBe('true');
+        await ui.openPreconfigured({ monsterHrid: '/monsters/mimic', roomLevel: 40 });
+        expectUnfolded();
+        expect(shown('#mwi-labsim-configure-content')).toBe(true);
+        for (const tab of ['maxlevel', 'upgrade', 'skilling']) {
+            expect(shown(`#mwi-labsim-${tab}-content`)).toBe(false);
+        }
+    });
+
+    test('a skilling tile unfolds the panel and shows only the Skilling tab', async () => {
+        ui.minimizeCtl.setCollapsed(true);
+        await ui.openPreconfigured({ skillHrid: '/skills/cooking', roomLevel: 40 });
+        expectUnfolded();
+        expect(shown('#mwi-labsim-skilling-content')).toBe(true);
+        for (const tab of ['configure', 'maxlevel', 'upgrade']) {
+            expect(shown(`#mwi-labsim-${tab}-content`)).toBe(false);
+        }
+    });
+
+    test('a panel that was never minimized is left as it was', async () => {
+        await ui.openPreconfigured({ monsterHrid: '/monsters/mimic', roomLevel: 40 });
+        expectUnfolded();
+        expect(shown('#mwi-labsim-configure-content')).toBe(true);
+        expect(shown('#mwi-labsim-skilling-content')).toBe(false);
     });
 });
 

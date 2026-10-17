@@ -212,7 +212,7 @@ describe('what a queue snapshot still implies', () => {
         expect(queueState(snapshot, now).remainingSeconds).toBeCloseTo(600);
     });
 
-    test('timed work behind an untimed fight keeps its whole length', () => {
+    test('timed work behind an untimed fight that has started has no estimate, and is never idle', () => {
         const snapshot = {
             timestamp: now - HOUR,
             totalQueueSeconds: 3600,
@@ -222,6 +222,21 @@ describe('what a queue snapshot still implies', () => {
                 { estimatedSeconds: 3600, isInfinite: false },
             ],
         };
+        expect(queueState(snapshot, now)).toMatchObject({ state: 'untimed', remainingSeconds: null });
+    });
+
+    test('timed work behind an untimed fight keeps its whole length while the prefix before it runs', () => {
+        const snapshot = {
+            timestamp: now - HOUR / 2,
+            totalQueueSeconds: 5400,
+            hasUnknownAction: true,
+            actions: [
+                { estimatedSeconds: 3600, isInfinite: false },
+                { estimatedSeconds: null, isInfinite: false },
+                { estimatedSeconds: 1800, isInfinite: false },
+            ],
+        };
+        expect(queueState(snapshot, now)).toMatchObject({ state: 'busy', atLeast: true });
         expect(queueState(snapshot, now).remainingSeconds).toBeCloseTo(3600);
     });
 
@@ -300,6 +315,34 @@ describe('reading it all back out of storage', () => {
         const account = await readAccount(now);
 
         expect(account.characters.map((row) => row.id).sort()).toEqual(['a', 'b', 'c', 'char-1', 'd']);
+    });
+
+    test('a snapshot saved before the unknown-action flag is not read as busy then idle', async () => {
+        // A counted fight timed as 3 h of battles, saved without hasUnknownAction; 4 h on, it must not read idle
+        db.stores.queueSnapshots = {
+            queueSnapshot_g: {
+                characterId: 'g',
+                characterName: 'Old',
+                timestamp: now - 4 * HOUR,
+                totalQueueSeconds: 3 * 3600,
+                hasInfiniteAction: false,
+                actions: [
+                    {
+                        actionHrid: '/actions/combat/fly',
+                        actionName: 'Fly',
+                        hasMaxCount: true,
+                        maxCount: 100,
+                        currentCount: 0,
+                        estimatedSeconds: 3 * 3600,
+                        isInfinite: false,
+                    },
+                ],
+            },
+        };
+
+        const account = await readAccount(now);
+
+        expect(account.characters.find((row) => row.id === 'g').queue.state).toBe('untimed');
     });
 
     test('a character whose recorders have been split into records is still an account member', async () => {

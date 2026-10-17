@@ -201,6 +201,41 @@ describe('_getTopOrderPrice — fresh undercut over a stale book', () => {
         }
     });
 
+    test('a live-server snapshot is never mistaken for one of your own test-server listings', () => {
+        listingPriceDisplay.allListings = {
+            1: {
+                id: 1,
+                isSell: true,
+                itemHrid: ITEM,
+                enhancementLevel: 0,
+                price: 920_000,
+                orderQuantity: 5,
+                filledQuantity: 0,
+            },
+            3: {
+                id: 3,
+                isSell: true,
+                itemHrid: ITEM,
+                enhancementLevel: 0,
+                price: 900_000,
+                orderQuantity: 5,
+                filledQuantity: 0,
+            },
+        };
+        marketMock.liveSourced = true;
+        try {
+            // The live ask happens to equal your test listing's price: still a rival's quote
+            marketMock.getPrice.mockReturnValue({ ask: 900_000, bid: null });
+            marketMock.getPriceTimestamp.mockReturnValue(2000);
+            expect(listingPriceDisplay._isOwnRestingPrice(ITEM, 0, true, 900_000)).toBe(false);
+            marketMock.liveSourced = false;
+            expect(listingPriceDisplay._isOwnRestingPrice(ITEM, 0, true, 900_000)).toBe(true);
+        } finally {
+            marketMock.liveSourced = false;
+            listingPriceDisplay.allListings = {};
+        }
+    });
+
     test('with no opened book, a snapshot undercut is surfaced directly', () => {
         marketMock.getPrice.mockReturnValue({ ask: null, bid: 17_000_000 });
         marketMock.getPriceTimestamp.mockReturnValue(2000);

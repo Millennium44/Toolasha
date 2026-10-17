@@ -347,6 +347,90 @@ describe('queue snapshot', () => {
         expect(queueSnapshot.getSnapshot('char1').totalQueueSeconds).toBe(2);
     });
 
+    describe('snapshots saved before hasUnknownAction existed', () => {
+        const row = (actionHrid, estimatedSeconds, extra = {}) => ({
+            actionHrid,
+            actionName: actionHrid,
+            maxCount: 10,
+            currentCount: 0,
+            hasMaxCount: true,
+            estimatedSeconds,
+            isInfinite: false,
+            ...extra,
+        });
+        const load = async (snapshot) => {
+            game.stored['queueSnapshot_char9'] = { characterId: 'char9', timestamp: 1, ...snapshot };
+            game.storedKeys = ['queueSnapshot_char9'];
+            await queueSnapshot._loadSnapshots();
+            return queueSnapshot.getSnapshot('char9');
+        };
+
+        test('a counted fight ahead of everything is untimed and leaves the total', async () => {
+            const snap = await load({
+                actions: [row('/actions/combat/fly', 100), row('/actions/milking/basic', 30)],
+                totalQueueSeconds: 130,
+                hasInfiniteAction: false,
+            });
+            expect(snap.hasUnknownAction).toBe(true);
+            expect(snap.totalQueueSeconds).toBe(30);
+            expect(snap.actions[0].estimatedSeconds).toBeNull();
+            expect(snap.actions[1].estimatedSeconds).toBe(30);
+        });
+
+        test('a fight behind the first endless row is untimed but the total and flag are left alone', async () => {
+            const snap = await load({
+                actions: [
+                    row('/actions/milking/basic', 30),
+                    row('/actions/foraging/x', null, { isInfinite: true, hasMaxCount: false, maxCount: null }),
+                    row('/actions/combat/fly', 100),
+                ],
+                totalQueueSeconds: 30,
+                hasInfiniteAction: true,
+            });
+            expect(snap.hasUnknownAction).toBe(false);
+            expect(snap.totalQueueSeconds).toBe(30);
+            expect(snap.actions[2].estimatedSeconds).toBeNull();
+        });
+
+        test('a fight found by action type, and three fights, all leave the total', async () => {
+            game.actionDetails['/actions/dungeon/odd'] = { type: '/action_types/combat' };
+            const snap = await load({
+                actions: [
+                    row('/actions/combat/fly', 100),
+                    row('/actions/dungeon/odd', 50),
+                    row('/actions/combat/bear', 25),
+                ],
+                totalQueueSeconds: 175,
+            });
+            expect(snap.totalQueueSeconds).toBe(0);
+            expect(snap.actions.map((a) => a.estimatedSeconds)).toEqual([null, null, null]);
+            expect(snap.hasUnknownAction).toBe(true);
+        });
+
+        test('an all-timed legacy queue is just marked as having no unknown work', async () => {
+            const snap = await load({ actions: [row('/actions/milking/basic', 30)], totalQueueSeconds: 30 });
+            expect(snap.hasUnknownAction).toBe(false);
+            expect(snap.totalQueueSeconds).toBe(30);
+        });
+
+        test('a legacy untimed row before the first endless one sets the flag; an empty queue stays empty', async () => {
+            const a = await load({ actions: [row('/actions/x/y', null)], totalQueueSeconds: 0 });
+            expect(a.hasUnknownAction).toBe(true);
+            const b = await load({ actions: [], totalQueueSeconds: 0 });
+            expect(b.hasUnknownAction).toBe(false);
+        });
+
+        test('a snapshot that already carries the flag is not touched', async () => {
+            const snap = await load({
+                actions: [row('/actions/combat/fly', 100)],
+                totalQueueSeconds: 100,
+                hasUnknownAction: false,
+            });
+            expect(snap.totalQueueSeconds).toBe(100);
+            expect(snap.actions[0].estimatedSeconds).toBe(100);
+        });
+    });
+
     test('the character_switching listener survives disable() (it must fire during feature teardown)', async () => {
         queueSnapshot.initialize();
         await Promise.resolve();
