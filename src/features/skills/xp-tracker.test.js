@@ -81,7 +81,10 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
+const settings = vi.hoisted(() => ({}));
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: (key) => (key in settings ? settings[key] : true) },
+}));
 vi.mock('./skill-checkpoints.js', () => ({ monthToDateFor: () => game.month }));
 vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'char1',
@@ -608,6 +611,46 @@ describe('skills named by their icon, in any game language', () => {
         xpTracker._updateNavBars();
 
         expect(nav.querySelector('.mwi-xp-rate')).not.toBeNull();
+    });
+
+    describe('sidebar rate text border', () => {
+        beforeEach(() => {
+            game.skills = [{ skillHrid: '/skills/melee', experience: 1_100_000, level: 30 }];
+        });
+
+        afterEach(() => {
+            delete settings.skillRemainingXP_blackBorder;
+        });
+
+        test('carries the black border with Remaining XP off (no element of its own to inherit from)', () => {
+            const nav = navEntry('melee', 'Melee');
+            document.body.appendChild(nav);
+
+            xpTracker._updateNavBars();
+
+            expect(nav.querySelector('.mwi-xp-rate').style.textShadow).toContain('#000');
+        });
+
+        test('omits the border when the setting is off', () => {
+            settings.skillRemainingXP_blackBorder = false;
+            const nav = navEntry('melee', 'Melee');
+            document.body.appendChild(nav);
+
+            xpTracker._updateNavBars();
+
+            expect(nav.querySelector('.mwi-xp-rate').style.textShadow).toBe('');
+        });
+
+        test('follows a toggle on the next refresh', () => {
+            const nav = navEntry('melee', 'Melee');
+            document.body.appendChild(nav);
+            xpTracker._updateNavBars();
+            settings.skillRemainingXP_blackBorder = false;
+
+            xpTracker._updateNavBars();
+
+            expect(nav.querySelector('.mwi-xp-rate').style.textShadow).toBe('');
+        });
     });
 });
 

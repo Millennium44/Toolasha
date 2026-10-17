@@ -550,6 +550,11 @@ class XPTracker {
             if (rate <= 0) return;
 
             const rateText = `${formatKMB(rate)} xp/h`;
+            // The shared black-border setting applies here too: with Remaining XP off there is no
+            // .mwi-remaining-xp element of the feature's own for the rate to take the shadow from.
+            const textShadow = config.getSetting('skillRemainingXP_blackBorder', true)
+                ? 'text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 3px #000;'
+                : '';
             const rateSpan = document.createElement('span');
             rateSpan.className = 'mwi-xp-rate';
             rateSpan.textContent = rateText;
@@ -559,6 +564,7 @@ class XPTracker {
                 font-weight: 600;
                 pointer-events: none;
                 white-space: nowrap;
+                ${textShadow}
             `;
 
             // Always place inline in a flex row — create the container if XP Left feature is off
