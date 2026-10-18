@@ -109,7 +109,8 @@ class RiskOfRuinUI {
      * already drawn from it.
      */
     _clearDepthCapContext() {
-        if (!this.lastDepthCapContext) return;
+        // Redraw even when the context is already null: a run in flight drops it at its start
+        // while the previous figure stays drawn until the run ends.
         this.lastDepthCapContext = null;
         marketDepthCap()?.repaint?.();
     }

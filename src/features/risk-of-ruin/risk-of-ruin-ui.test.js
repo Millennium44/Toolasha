@@ -785,6 +785,17 @@ describe('sell-depth context ownership', () => {
         expect(repaint).toHaveBeenCalledTimes(1);
     });
 
+    test('teardown redraws even when a run in flight already dropped the context', async () => {
+        await startRun();
+        // A new run nulls the context at its start but leaves the old figure drawn until it ends
+        riskOfRuinUI.lastDepthCapContext = null;
+
+        repaint.mockClear();
+        riskOfRuinUI.disable();
+
+        expect(repaint).toHaveBeenCalledTimes(1);
+    });
+
     test('turning Risk of Ruin off in settings stops it supplying a context', async () => {
         await startRun();
 
