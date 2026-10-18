@@ -153,14 +153,15 @@ function drawNetworth(body, data) {
         )
     );
 
-    const dayChange = windowChange(data.combined, DAY_MS, data.at);
-    const weekChange = windowChange(data.combined, 7 * DAY_MS, data.at);
+    // Read off the full series by `readAccount`; the thinned chart series is only a fallback
+    const dayChange = data.changes ? data.changes.day : windowChange(data.combined, DAY_MS, data.at);
+    const weekChange = data.changes ? data.changes.week : windowChange(data.combined, 7 * DAY_MS, data.at);
     const day = changeText(dayChange);
     const week = changeText(weekChange);
     card.appendChild(panelLine(changeLabel('Last 24h', dayChange, DAY_MS), day.text, day.color));
     card.appendChild(panelLine(changeLabel('Last 7d', weekChange, 7 * DAY_MS), week.text, week.color));
 
-    const trend = sparkline(comparableSegment(data.combined));
+    const trend = sparkline(data.trend ?? comparableSegment(data.combined));
     if (trend) card.appendChild(trend);
     else card.appendChild(panelNote('Not enough history for a trend yet.'));
 

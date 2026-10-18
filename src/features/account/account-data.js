@@ -64,6 +64,8 @@ const CACHE_TTL_MS = 60 * 1000;
 /** Enough points for a trend, few enough to keep the merge cheap */
 const MAX_COMBINED_POINTS = 400;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * The character ids a set of keys names.
  *
@@ -414,7 +416,7 @@ export async function rememberCurrentCharacter() {
  * Read every character's residue out of storage.
  *
  * @param {number} [now] - Clock, injectable for tests
- * @returns {Promise<Object>} `{at, currentId, characters, combined, briefings}`
+ * @returns {Promise<Object>} `{at, currentId, characters, combined, trend, changes, briefings}`
  */
 export async function readAccount(now = Date.now()) {
     const currentId = dataManager.getCurrentCharacterId();
@@ -460,11 +462,18 @@ export async function readAccount(now = Date.now()) {
         now,
     });
 
+    // The day/week figures are read off the full series: thinning it for the
+    // chart drops the point just before the window opens, and the change then
+    // quietly covers a longer span than its label says
+    const full = combineSeries(seriesById, { maxPoints: Infinity });
+
     return {
         at: now,
         currentId,
         characters,
-        combined: combineSeries(seriesById),
+        combined: downsample(full, MAX_COMBINED_POINTS),
+        trend: downsample(comparableSegment(full), MAX_COMBINED_POINTS),
+        changes: { day: windowChange(full, DAY_MS, now), week: windowChange(full, 7 * DAY_MS, now) },
         // Read off the key list already in hand rather than with a scan of its
         // own — a snapshot lives in the settings store beside everything else
         // keyed per character

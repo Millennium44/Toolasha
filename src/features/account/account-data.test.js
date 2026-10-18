@@ -412,6 +412,63 @@ describe('reading it all back out of storage', () => {
         expect(account.characters.map((row) => row.id).sort()).toEqual(['a', 'b', 'c', 'char-1', 'd']);
     });
 
+    test('the 24h and 7d changes come from the full history, not the chart series', async () => {
+        // Hourly +1000 for a year: more points than the chart budget, so thinning drops the 24h baseline
+        const end = 8760 * HOUR;
+        const history = Array.from({ length: 8761 }, (_, i) => ({ t: i * HOUR, total: 1_000_000 + i * 1000 }));
+        db.stores.networthHistory = { networth_a: history };
+
+        const account = await readAccount(end);
+
+        expect(account.changes.day).toMatchObject({ delta: 24_000, spanMs: 24 * HOUR });
+        expect(account.changes.week).toMatchObject({ delta: 168_000, spanMs: 7 * DAY });
+        expect(account.combined.length).toBeLessThanOrEqual(400);
+        expect(account.trend.length).toBeLessThanOrEqual(400);
+    });
+
+    test('a jump just outside the window is excluded however the chart is thinned', async () => {
+        const end = 8760 * HOUR;
+        const history = Array.from({ length: 8761 }, (_, i) => ({ t: i * HOUR, total: i < 8730 ? 1000 : 9_000_000 }));
+        history[8736] = { t: 8736 * HOUR, total: 9_000_000 };
+        db.stores.networthHistory = { networth_a: history };
+
+        const account = await readAccount(end);
+
+        // The jump (at hour 8730) is before the 24h cutoff (hour 8736): no gain inside the window
+        expect(account.changes.day).toMatchObject({ delta: 0, from: 9_000_000 });
+    });
+
+    test.each([399, 400, 401])('crossing the chart budget (%i points) does not change the recent change', async (n) => {
+        const history = Array.from({ length: n }, (_, i) => ({ t: i * HOUR, total: i * 1000 }));
+        db.stores.networthHistory = { networth_a: history };
+
+        const account = await readAccount((n - 1) * HOUR);
+
+        expect(account.changes.day).toMatchObject({ delta: 24_000, spanMs: 24 * HOUR });
+    });
+
+    test('staggered characters use the full combined cutoff total, and a newly added one is not growth', async () => {
+        const end = 8760 * HOUR;
+        db.stores.networthHistory = {
+            networth_a: Array.from({ length: 8761 }, (_, i) => ({ t: i * HOUR, total: 1000 + i })),
+            networth_b: [{ t: end - 12 * HOUR + 17, total: 500_000 }],
+        };
+
+        const account = await readAccount(end);
+
+        expect(account.changes.day.delta).toBeLessThan(100);
+        expect(account.changes.day.spanMs).toBeLessThan(13 * HOUR);
+    });
+
+    test('an empty history has no changes and no trend', async () => {
+        db.stores.networthHistory = {};
+
+        const account = await readAccount(5 * DAY);
+
+        expect(account.changes).toEqual({ day: null, week: null });
+        expect(account.trend).toEqual([]);
+    });
+
     test('a snapshot saved before the unknown-action flag is not read as busy then idle', async () => {
         // A counted fight timed as 3 h of battles, saved without hasUnknownAction; 4 h on, it must not read idle
         db.stores.queueSnapshots = {
