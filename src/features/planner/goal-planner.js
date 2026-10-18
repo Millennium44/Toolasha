@@ -1110,9 +1110,12 @@ function planEquipmentGoal(goal, context) {
 /**
  * The coins a step needs in hand, which is more than its net cost for a training
  * step: one completion's inputs have to be bought before the first sale can pay
- * for them. That startup bill is working capital the sales return, so it is not
- * added to the net loss; the requirement is whichever is larger, the way the
- * money-making ranking refuses a method whose first completion it cannot afford.
+ * for them, and a loss-making grind also has to carry the losses it has booked
+ * by the time it buys the last batch. So the requirement is the startup bill
+ * plus the net loss. That is slightly high (the final completion's own loss is
+ * counted although its inputs are what the startup already covers), and chosen
+ * over a max() because a max guarantees either the first purchase or the total
+ * loss, never both. A profitable recipe needs only its startup.
  *
  * @param {Object} step - A plan step
  * @returns {number} Coins needed, never negative
@@ -1121,7 +1124,7 @@ function stepSpend(step) {
     if (step.done) return 0;
     const net = Math.max(0, -step.goldDelta);
     const startup = step.kind === 'train' && step.costKnown !== false ? Math.max(0, num(step.details?.upfrontCost)) : 0;
-    return Math.max(net, startup);
+    return net + startup;
 }
 
 /**
