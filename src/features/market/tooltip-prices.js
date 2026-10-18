@@ -1094,8 +1094,8 @@ class TooltipPrices {
         try {
             const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
             if (!tooltipText || tooltipText.querySelector(`.${SELLING_SECTION_CLASS}`)) return;
-            const { sellValue, routes } = liveSellRoutes(itemHrid);
-            if (!routes.length) return;
+            const { sellValue, routes, bestLoser } = liveSellRoutes(itemHrid);
+            if (!routes.length && !bestLoser) return;
             // Under an "Instead of buying" section the rule above it already divides the tooltip
             const divided = !tooltipText.querySelector(`.${INSTEAD_SECTION_CLASS}`);
             const div = dom.createStyledDiv(
@@ -1103,7 +1103,7 @@ class TooltipPrices {
                 '',
                 SELLING_SECTION_CLASS
             );
-            div.innerHTML = this.buildInsteadOfSellingHTML(sellValue, routes, divided);
+            div.innerHTML = this.buildInsteadOfSellingHTML(sellValue, routes, divided, bestLoser);
             tooltipText.appendChild(div);
         } catch (error) {
             console.error('[TooltipPrices] Instead-of-selling lines failed:', error);
@@ -1115,9 +1115,10 @@ class TooltipPrices {
      * @param {number} sellValue - The unit's bid after tax
      * @param {Array<Object>} routes - From `liveSellRoutes`, best margin first
      * @param {boolean} [divided=true] - Draw the rule above the first line
+     * @param {Object|null} [bestLoser] - With no winning route, the best action that lost to selling
      * @returns {string}
      */
-    buildInsteadOfSellingHTML(sellValue, routes, divided = true) {
+    buildInsteadOfSellingHTML(sellValue, routes, divided = true, bestLoser = null) {
         let html = divided ? '<div style="border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">' : '<div>';
         for (const route of routes) {
             const atLeast = route.partlyUnpriced ? '≥' : '';
@@ -1137,6 +1138,14 @@ class TooltipPrices {
             html += `Instead of selling: ${route.actionType} — `;
             html += `<span style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">${figure}</span>`;
             html += ` vs ${formatKMB(sellValue)} after tax${caveat}</div>`;
+        }
+        if (!routes.length && bestLoser) {
+            const atLeast = bestLoser.partlyUnpriced ? '≥' : '';
+            const caveat = bestLoser.partlyUnpriced ? ' (an output unpriced)' : '';
+            const hover = escapeAttribute(sellingTitle());
+            html += `<div style="opacity: 0.7;" title="${hover}">`;
+            html += `Instead of selling: selling wins — ${formatKMB(sellValue)} after tax vs best alchemy `;
+            html += `${atLeast}${formatKMB(bestLoser.valuePerUnit)}/unit (${bestLoser.actionType})${caveat}</div>`;
         }
         html += '</div>';
         return html;
