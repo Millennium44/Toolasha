@@ -265,6 +265,38 @@ describe('the widget under the button belongs to the item on screen', () => {
         }
     });
 
+    test('a repaint after a character switch to a setting-off character draws nothing; setting on still draws', async () => {
+        const { default: config } = await import('../../core/config.js');
+        const { buttons, cleanup } = panel('cheese');
+        try {
+            const books = { '/items/cheese': { data: { orderBooks: [{ bids: [{ price: 1000, quantity: 900 }] }] } } };
+            bridge.context = { costPerAction: 100, items: [{ itemHrid: '/items/cheese', quantityPerAction: 1 }] };
+
+            // Character A has the widget on and has seen the book...
+            marketDepthCap.initialize();
+            marketDepthCap.orderBooksCache = { ...books };
+            marketDepthCap.processOrderBook();
+            expect(buttons.querySelector('.mwi-depth-cap')).not.toBeNull();
+
+            // ...the switch tears it down, and B has the setting off
+            marketDepthCap.disable();
+            expect(marketDepthCap.orderBooksCache).toEqual({});
+            config.getSetting.mockImplementation(() => false);
+            marketDepthCap.initialize();
+            marketDepthCap.orderBooksCache = { ...books }; // even with a book somehow retained
+            marketDepthCap.repaint();
+            expect(buttons.querySelector('.mwi-depth-cap')).toBeNull();
+
+            config.getSetting.mockImplementation(() => true);
+            marketDepthCap.repaint();
+            expect(buttons.querySelector('.mwi-depth-cap')).not.toBeNull();
+        } finally {
+            config.getSetting.mockImplementation(() => true);
+            marketDepthCap.disable();
+            cleanup();
+        }
+    });
+
     test('charges a drop its costShare, not the whole action cost, when the context carries one', () => {
         const { buttons, cleanup } = panel('cheese');
         try {
