@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-17): sim verify
+
+- Combat Sim auto-verify now judges Profit/h close calls in gold against the same error the Ability order section shows, so an order labelled "within noise" is no longer skipped.
+- A stopped trigger verify keeps the seeds that finished (shown as partial) instead of reporting none, and one with no seed finished is reported as failed.
+- An order whose profit could not be valued, or whose verify was stopped, no longer reads as "did not hold up" or drops out of the plan; the trigger verify status says "failed" instead of "complete: error".
+
 ### Upstream sweep (2026-10-17): shop shortcuts, alchemy shopping and fixes
 
 - Token item menus (dungeon, labyrinth, task, guild tokens and guild credits) get a View Shop button that opens the matching shop, and the dungeon tracker shows how long your entry keys will last at your recent clear pace.
