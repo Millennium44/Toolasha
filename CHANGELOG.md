@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Queue times and worker pools: two reported bugs
+
+- Queue summaries (the live queue tile and the idle notice) measure alchemy efficiency from the item's level, like the action bar, instead of overstating it.
+- A background worker pool that fails part-way through starting no longer leaves workers running, and retrying builds exactly the configured number.
+
 ### Combat Sim and Goal Planner: three reported bugs
 
 - Combat Sim no longer counts a monster killed by your parry during its own ability twice (deaths, loot and task kills were doubled); the same held for a player killed by a monster's parry mid-cast.
