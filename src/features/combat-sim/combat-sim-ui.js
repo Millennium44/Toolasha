@@ -216,9 +216,6 @@ const GOLD_SORT_VERIFY_METRIC = {
     deltaEph: 'eph',
 };
 
-/** The row's delta key for each verifiable metric (`eph` reads the encounters delta) */
-const VERIFY_DELTA_KEY = { profit: 'profit', xp: 'xp', dps: 'dps', eph: 'encounters' };
-
 /**
  * A row's verify key: the verify engine's own (`candidateAssignmentKey`), with the same fallback it uses.
  * @param {Object} row - An analysis result row
@@ -13221,16 +13218,19 @@ class CombatSimUI {
             )
             .map((e) => ({ r: e.r, gain: e.gain, score: closeness(e.gain, e.noise), table: 'order' }));
         const { metric: goldMetric } = this._goldVerifyMetric();
-        const deltaKey = VERIFY_DELTA_KEY[goldMetric];
-        const goldEntries = all
-            .filter((r) => r.candidate?.type !== 'combat_level' && !r.candidate?.abilityOrder && r.cost != null)
-            .filter((r) => r.deltas?.[deltaKey] > 0 && isCloseCall(r, { metric: goldMetric }))
-            .map((r) => ({
-                r,
-                gain: r.deltas[deltaKey],
-                score: closeness(r.deltas[deltaKey], r.noise?.[deltaKey]),
-                table: 'gold',
-            }));
+        // Judged on the scale the verify measures and the order section ranks by: profit in gold against its
+        // gross-scaled error, not the row's percent-of-net-profit delta (which near break-even reads every gain as
+        // significant and puts its closeness on another scale from the order rows')
+        const goldRows = all.filter(
+            (r) => r.candidate?.type !== 'combat_level' && !r.candidate?.abilityOrder && r.cost != null
+        );
+        const goldEntries = this._abilityOrderRanking(goldRows, results.baseline || {}, goldMetric)
+            .filter(
+                (e) =>
+                    e.gain > 0 &&
+                    isCloseCall(e.r, { metric: goldMetric, score: { gain: e.gain, noise: e.noise, within: e.within } })
+            )
+            .map((e) => ({ r: e.r, gain: e.gain, score: closeness(e.gain, e.noise), table: 'gold' }));
         const chosen = [...orderEntries, ...goldEntries]
             .sort((a, b) => b.score - a.score || b.gain - a.gain)
             .slice(0, VERIFY_DEFAULTS.top);

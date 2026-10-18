@@ -258,6 +258,23 @@ describe('isCloseCall', () => {
         expect(isCloseCall(rowValue, { metric: 'eph' })).toBe(true);
     });
 
+    test('a score the caller ranked on decides for profit too, not the percent-of-net delta', () => {
+        // +5000% of a near-zero net profit is "significant" by the row's own rule, but +500 gold against a
+        // 2,500 gold error is inside the noise
+        const nearBreakEven = {
+            deltas: { dps: 0, xp: 0, profit: 5000 },
+            noise: { profit: 5 },
+            significantBy: { profit: true },
+        };
+        expect(isCloseCall(nearBreakEven, { metric: 'profit' })).toBe(false);
+        expect(isCloseCall(nearBreakEven, { metric: 'profit', score: { gain: 500, noise: 2500, within: true } })).toBe(
+            true
+        );
+        expect(
+            isCloseCall(nearBreakEven, { metric: 'profit', score: { gain: 50000, noise: 2500, within: false } })
+        ).toBe(false);
+    });
+
     test('reads a Lab row by attempts', () => {
         expect(isCloseCall({ attemptsDelta: -3, attemptsDeltaNoise: 5, significant: false })).toBe(true);
         expect(isCloseCall({ attemptsDelta: -30, attemptsDeltaNoise: 5, significant: true })).toBe(false);

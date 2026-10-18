@@ -11671,7 +11671,9 @@ describe('verifying close calls on fresh seeds', () => {
     /** A purchasable row whose profit gain is a close call (positive, not significant) */
     const closeGold = (name) => {
         const r = row(name, { slot: '/equipment_types/ring', cost: 100, profitGain: 50 });
-        r.noise = { dps: 1, xp: 1, profit: 1, encounters: 1, deaths: 1 };
+        // +50 gold on a 1,000 gold/hr baseline (+5%) against a 5% (50 gold) error: inside the noise
+        r.deltas = { ...r.deltas, profit: 5 };
+        r.noise = { dps: 1, xp: 1, profit: 5, encounters: 1, deaths: 1 };
         r.significantBy = { dps: false, xp: false, profit: false, encounters: false, deaths: false };
         return r;
     };
@@ -12146,6 +12148,28 @@ describe('verifying close calls on fresh seeds', () => {
             clean.noise.deaths = 0;
             const picks = ui._autoVerifyPicks({ baseline: deadly, results: [noisyDeaths, clean] });
             expect(picks.order).toEqual([noisyDeaths]);
+        });
+
+        test('profit: closeness is judged in gold against the gross-scaled error, in both tables', () => {
+            // Near break-even: 10 gold/hr net on 50k gold/hr of loot. A +500 gold/hr gain is +5000% of net profit
+            // (significant on the row's own percent rule) but well inside its 2,500 gold error (5% of the gross)
+            const breakEven = { ...BASELINE, profitPerHour: 10, revenuePerHour: 50000, costPerHour: 49990 };
+            const order = orderRow('A → B', { profit: 0, se: 5, sig: true });
+            order.metrics.profitPerHour = 510;
+            order.deltas.profit = 5000;
+            const gold = row('R1', { slot: '/equipment_types/ring', cost: 100, profitGain: 0 });
+            gold.metrics.profitPerHour = 510;
+            gold.deltas = { ...gold.deltas, profit: 5000 };
+            gold.noise = { dps: 5, xp: 5, profit: 5, encounters: 5, deaths: 5 };
+            gold.significantBy = { dps: true, xp: true, profit: true, encounters: true, deaths: true };
+
+            const picks = ui._autoVerifyPicks({ baseline: breakEven, results: [order, gold] });
+
+            // The section calls the order "within noise", so auto-verify takes it, and the gold row the same way
+            const section = ui._abilityOrderRanking([order], breakEven, 'profit');
+            expect(section[0].within).toBe(true);
+            expect(picks.order).toEqual([order]);
+            expect(picks.gold).toEqual([gold]);
         });
 
         test('does nothing with the setting off', async () => {

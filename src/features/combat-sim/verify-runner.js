@@ -94,15 +94,20 @@ export function classifyVerdict({ mean: diff, se, seeds, betterIsHigher = true }
  * @param {Object} row - An analysis result row
  * @param {Object} [options]
  * @param {string} [options.metric] - A VERIFY_METRICS key; absent means "best axis"
- * @param {{gain: number, noise: number|null, within: boolean}} [options.score] - For `balanced`: the row's
- *   balanced score gain, its composite error (rate and deaths, score points) and whether the gain sits inside
- *   the significance bound, as the Ability order section judges them. Without it `balanced` means "best axis"
+ * @param {{gain: number, noise: number|null, within: boolean}} [options.score] - The row's gain on the scale its
+ *   table ranks it by, that gain's error in the same unit and whether the gain sits inside the significance
+ *   bound, as the Ability order section judges them (balanced: score points with the deaths error; profit: gold
+ *   against the gross-scaled error). When given it decides, whatever the metric. Without it `balanced` means
+ *   "best axis"
  * @returns {boolean}
  */
 export function isCloseCall(row, { metric, score } = {}) {
     if (!row || typeof row !== 'object') return false;
 
-    if (metric === 'balanced' && score && Number.isFinite(score.gain)) {
+    // A caller that ranked the row on its own scale (balanced score points, profit in gold against the gross-scaled
+    // error) judges it on that, not on the row's percentage deltas: a profit delta is a percent of net profit, which
+    // near break-even makes any gain look significant
+    if (score && Number.isFinite(score.gain)) {
         if (score.gain > 0 && score.within) return true;
         return Number.isFinite(score.noise) && Math.abs(score.gain) <= 2 * score.noise;
     }
