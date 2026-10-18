@@ -1529,9 +1529,28 @@ describe('instead of selling', () => {
         expect(section(await hover('Cheese Sword +3'))).toBeNull();
     });
 
-    test('a loss draws nothing', async () => {
-        alchemyState.candidates['decompose|/items/cheese_sword'] = [swordDecompose({ catalystCostPerHour: 1e6 })];
-        expect(section(await hover())).toBeNull();
+    test('a loss to selling draws one muted line with both figures', async () => {
+        // 10.8 cheese at a bid of 9 = 97.2 less a 60 catalyst spend: worth 37 an action against a bid of 45
+        alchemyState.candidates['decompose|/items/cheese_sword'] = [swordDecompose({ catalystCostPerHour: 6000 })];
+        const line = section(await hover());
+        expect(line.textContent).toMatch(
+            /^Instead of selling: selling wins — 45 after tax vs best alchemy \d+\/unit \(decompose\)$/
+        );
+        expect(line.innerHTML).toContain('opacity: 0.7;');
+        expect(line.innerHTML).not.toContain('#0f0');
+        expect(line.querySelector('[title^="Instead of selling"]')).not.toBeNull();
+    });
+
+    test('a losing route with an unpriced output keeps the lower-bound form', async () => {
+        priceState.info['/items/twin_sword'] = { ask: 80, bid: 400 };
+        priceState.info['/items/cheese_sword'] = {};
+        alchemyState.candidates['decompose|/items/twin_sword'] = [
+            swordDecompose({ itemHrid: '/items/twin_sword', successRate: 1, requirementCosts: [{ count: 1 }] }),
+        ];
+        const line = section(await hover('Twin Sword'));
+        expect(line.textContent).toContain(
+            'selling wins — 400 after tax vs best alchemy ≥45/unit (decompose) (an output unpriced)'
+        );
     });
 
     test('no bid draws nothing', async () => {
@@ -1547,6 +1566,10 @@ describe('instead of selling', () => {
     test('an item with no alchemy action draws nothing', async () => {
         priceState.info['/items/apple'] = { ask: 5, bid: 4 };
         expect(section(await hover('Apple'))).toBeNull();
+    });
+
+    test('a winning route draws no "selling wins" line', async () => {
+        expect(section(await hover()).textContent).not.toContain('selling wins');
     });
 
     test('every output unpriced draws nothing', async () => {
