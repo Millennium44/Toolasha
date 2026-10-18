@@ -156,6 +156,27 @@ export const settingsGroups = {
                     'or opened is lost. Only if that has not worked a few seconds later does the page reload. A ' +
                     'page that comes back broken always asks rather than trying again.',
             },
+            takeoverAutoReload: {
+                id: 'takeoverAutoReload',
+                label: 'Reload by itself after the game was opened elsewhere',
+                type: 'select',
+                default: 'off',
+                options: [
+                    { value: 'off', label: 'Off' },
+                    { value: '5', label: 'After 5 minutes' },
+                    { value: '10', label: 'After 10 minutes' },
+                    { value: '15', label: 'After 15 minutes (recommended)' },
+                    { value: '30', label: 'After 30 minutes' },
+                    { value: '60', label: 'After 60 minutes' },
+                ],
+                help:
+                    'When this tab is disconnected because the game was opened from another device or window, ' +
+                    'wait the chosen time, then reload this tab to take the character back. A notice shows when ' +
+                    'it will happen, with Reload now and Cancel. It never reloads while you are using the page: ' +
+                    'if you click, type or scroll during the wait, it asks instead. A tab already disconnected when ' +
+                    'you turn this on waits for the next time. If two tabs keep taking the ' +
+                    'character from each other, each wait doubles and it stops after 3 reloads in a row.',
+            },
             // Toggled by the PFormance panel's header button, never listed as a row. It
             // has to exist here: the config store only writes keys the schema declares,
             // so without this the button's choice was silently dropped.

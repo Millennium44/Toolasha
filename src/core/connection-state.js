@@ -91,14 +91,14 @@ class ConnectionState {
             if (!this._isFromActiveSocket(socket)) {
                 return;
             }
-            this.setDisconnected('socket_close', event);
+            this.setDisconnected('socket_close', event, socket);
         });
 
         webSocketHook.onSocketEvent('error', (event, socket) => {
             if (!this._isFromActiveSocket(socket)) {
                 return;
             }
-            this.setDisconnected('socket_error', event);
+            this.setDisconnected('socket_error', event, socket);
         });
 
         webSocketHook.on('init_character_data', () => {
@@ -140,7 +140,13 @@ class ConnectionState {
         });
     }
 
-    setDisconnected(reason, event) {
+    /**
+     * @param {string} reason - 'socket_close' or 'socket_error'
+     * @param {Object} event - The raw close/error event
+     * @param {Object} [socket] - The socket it came from, passed on so a
+     *   listener can ask webSocketHook whether this script closed it
+     */
+    setDisconnected(reason, event, socket) {
         if (this.state === CONNECTION_STATES.DISCONNECTED) {
             return;
         }
@@ -149,6 +155,7 @@ class ConnectionState {
         this.updateState(CONNECTION_STATES.DISCONNECTED, {
             reason,
             event,
+            socket,
             disconnectedAt: this.lastDisconnectedAt,
         });
     }

@@ -274,6 +274,14 @@ class WebSocketHook {
          * The one reader is {@link closeActiveGameSocket}.
          */
         this.activeGameSocket = null;
+
+        /**
+         * Sockets this script closed itself ({@link closeActiveGameSocket}).
+         * Their close looks exactly like the game's "opened from another device
+         * or window" close — 1005, clean — so a reader that acts on that close
+         * asks {@link wasClosedByToolasha} first.
+         */
+        this.selfClosedSockets = new WeakSet();
         this.messageCleanupInterval = null;
         this.isSocketWrapped = false;
         this.originalWebSocket = null;
@@ -594,6 +602,16 @@ class WebSocketHook {
      *   when there was nothing to close or the close itself threw. False is the
      *   caller's signal to fall back to the recovery it had before this.
      */
+    /**
+     * Whether a socket was closed by this script rather than by the game or the
+     * server.
+     * @param {Object} socket - The socket a close event came from
+     * @returns {boolean} True for a socket {@link closeActiveGameSocket} closed
+     */
+    wasClosedByToolasha(socket) {
+        return !!socket && typeof socket === 'object' && this.selfClosedSockets.has(socket);
+    }
+
     closeActiveGameSocket() {
         const socket = this.activeGameSocket;
         if (!socket || typeof socket.close !== 'function') {
@@ -605,9 +623,13 @@ class WebSocketHook {
         }
 
         try {
+            // Marked before close(): the close event may be dispatched before
+            // control comes back here in some hosts
+            this.selfClosedSockets.add(socket);
             socket.close();
             return true;
         } catch (error) {
+            this.selfClosedSockets.delete(socket);
             console.error('[WebSocket] Could not close the game socket for recovery:', error);
             return false;
         }

@@ -315,3 +315,15 @@ describe('instead-of-buying headline default', () => {
         expect(def.options.map((o) => o.value)).toEqual(['perUnit', 'perHour', 'grossPerHour']);
     });
 });
+
+describe('takeover auto-reload defaults', () => {
+    test('is off by default, with 15 minutes marked as the natural pick', () => {
+        const setting = getSettingDefinition('takeoverAutoReload');
+        // Reloading a page by itself is intrusive; a player opts in
+        expect(setting.default).toBe('off');
+        expect(setting.options.map((o) => o.value)).toEqual(['off', '5', '10', '15', '30', '60']);
+        expect(setting.options.find((o) => o.value === '15').label).toMatch(/recommended/i);
+        expect(setting.help).toMatch(/another device or window/);
+        expect(setting.help).toMatch(/never reloads while you are using the page/);
+    });
+});
