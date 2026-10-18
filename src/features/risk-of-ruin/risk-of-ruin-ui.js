@@ -32,6 +32,7 @@ import {
 import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/alchemy-adapter.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { marketDepthCap } from '../../utils/bundle-bridge.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
 import { setCustomPriceOverride, getCustomPriceOverridesAsync } from '../settings/custom-price-overrides.js';
@@ -90,6 +91,19 @@ class RiskOfRuinUI {
         // live order-book widget to read — null whenever the last run had no revenue distribution
         // to key off (enhancement mode, or no successful run yet).
         this.lastDepthCapContext = null;
+        // Bumped by every run start and every teardown, so a calculation that was still simulating
+        // when the panel was disabled (or the character changed) can tell it no longer owns the panel
+        this.runGeneration = 0;
+    }
+
+    /**
+     * Withdraw the sell-depth context and have the marketplace widget take down a figure it has
+     * already drawn from it.
+     */
+    _clearDepthCapContext() {
+        if (!this.lastDepthCapContext) return;
+        this.lastDepthCapContext = null;
+        marketDepthCap()?.repaint?.();
     }
 
     /**
@@ -596,7 +610,25 @@ class RiskOfRuinUI {
      *   single-output modes (enhancement), where the full cost is correct.
      */
     getDepthCapContext() {
-        return this.lastDepthCapContext;
+        const context = this.lastDepthCapContext;
+        // A disabled calculator, or one holding another character's run, has nothing to offer: the
+        // costs in that context were priced from that character's skills, gear and teas
+        if (!context || !this.isInitialized) return null;
+        if (context.characterId !== this._currentCharacterId()) return null;
+        return context;
+    }
+
+    /** @returns {string|null} The logged-in character's id, or null before one is known */
+    _currentCharacterId() {
+        return dataManager.getCurrentCharacterId?.() ?? null;
+    }
+
+    /**
+     * Publish a run's sell-depth context, stamped with the character it was priced for.
+     * @param {{costPerAction: number, items: Array}} context
+     */
+    _setDepthCapContext(context) {
+        this.lastDepthCapContext = { ...context, characterId: this._currentCharacterId() };
     }
 
     _run() {
@@ -625,7 +657,10 @@ class RiskOfRuinUI {
         let maxSinglePossibleLoss;
         let detailInfo;
         let optimalCommit = null;
-        this.lastDepthCapContext = null;
+        const generation = ++this.runGeneration;
+        const panelAtStart = this.panel;
+        const characterAtStart = this._currentCharacterId();
+        this._clearDepthCapContext();
 
         if (mode === 'chest') {
             const hrid = this.panel.querySelector('#mwi-ror-chest').value;
@@ -648,10 +683,10 @@ class RiskOfRuinUI {
                 dropBreakdown,
                 minimumGuaranteedPayout: chestModel.minimumGuaranteedPayout,
             };
-            this.lastDepthCapContext = {
+            this._setDepthCapContext({
                 costPerAction: chestModel.cost,
                 items: this._chestDepthCapItems(dropBreakdown, chestModel.cost),
-            };
+            });
             optimalCommit = calculateOptimalCommit({
                 outcomeDistribution: chestModel.outcomeDistribution,
                 costPerAction: chestModel.cost,
@@ -694,10 +729,10 @@ class RiskOfRuinUI {
                 targetActionCount,
             };
             detailInfo = { mode: 'alchemy', breakdown: alchemyModel.breakdown };
-            this.lastDepthCapContext = {
+            this._setDepthCapContext({
                 costPerAction: alchemyModel.cost,
                 items: this._alchemyDepthCapItems(alchemyModel.breakdown, alchemyModel.cost),
-            };
+            });
             detailInfo.untrackedOutputs = this._findUntrackedAlchemyOutputs(hrid, alchemyModel.breakdown);
             optimalCommit = calculateOptimalCommit({
                 outcomeDistribution: alchemyModel.outcomeDistribution,
@@ -764,17 +799,26 @@ class RiskOfRuinUI {
                 targetLevel,
             };
             if (itemDetails.isTradable !== false) {
-                this.lastDepthCapContext = {
+                this._setDepthCapContext({
                     costPerAction: enhancementModel.expectedTotalCost,
                     // The run produces the +targetLevel variant, so only that variant's bid book applies
                     items: [{ itemHrid: hrid, enhancementLevel: targetLevel, quantityPerAction: 1 }],
-                };
+                });
             } else {
                 detailInfo.untradeableOutput = itemDetails.name || hrid.split('/').pop();
             }
         }
 
         const simResult = await simulateRuinAsync(simModel);
+        // Torn down, re-run, or logged into another character while the simulation ran: the panel
+        // this run was drawing into (and the context it published) is not this run's any more
+        if (
+            generation !== this.runGeneration ||
+            this.panel !== panelAtStart ||
+            this._currentCharacterId() !== characterAtStart
+        ) {
+            return;
+        }
         const minActions = minActionsForNonZeroRisk(startingBalance, maxSinglePossibleLoss);
         this._renderResults(results, simResult, minActions);
         if (optimalCommit) {
@@ -1243,6 +1287,8 @@ class RiskOfRuinUI {
     }
 
     disable() {
+        this.runGeneration++;
+        this._clearDepthCapContext();
         unregisterCommand('Risk of Ruin');
         this.timerRegistry.clearAll();
         this.tabUnregister?.();
