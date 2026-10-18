@@ -6778,6 +6778,18 @@ describe('each half comes down when its own setting is switched off', () => {
         spy.mockRestore();
     });
 
+    test('disable() retires the sim source for Room Logs to drop after its flush', async () => {
+        const { default: labyrinthRoomLogs } = await import('./labyrinth-room-logs.js');
+        const useSpy = vi.spyOn(labyrinthRoomLogs, 'useSimSource');
+        const retireSpy = vi.spyOn(labyrinthRoomLogs, 'retireSimSource');
+        useSpy.mockClear();
+        labyrinthClearRate.disable();
+        expect(retireSpy).toHaveBeenCalledTimes(1);
+        expect(useSpy).not.toHaveBeenCalledWith(null);
+        useSpy.mockRestore();
+        retireSpy.mockRestore();
+    });
+
     test('disable drops the setting watchers', () => {
         labyrinthClearRate.disable();
         expect(settingWatchers).toHaveLength(0);

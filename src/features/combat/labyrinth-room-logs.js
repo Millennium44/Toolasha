@@ -282,6 +282,7 @@ class LabyrinthRoomLogs {
         this.expandedPoolGroups = new Set();
         this.poolAllGear = false;
         this.simSource = null;
+        this.retireSourceOnDisable = false;
         this.fight = null;
         this.fightTimer = null;
         this.renderToken = 0;
@@ -385,6 +386,18 @@ class LabyrinthRoomLogs {
      */
     useSimSource(source) {
         this.simSource = source || null;
+        this.retireSourceOnDisable = false;
+    }
+
+    /**
+     * The source's owner has been disabled for good (a character switch). Drop it
+     * once this log has reported its last room through it: now if the log is
+     * already down, otherwise at the end of its own `disable()`. A log disabled on
+     * its own, with the source's owner still running, keeps the source.
+     */
+    retireSimSource() {
+        if (this.isInitialized) this.retireSourceOnDisable = true;
+        else this.simSource = null;
     }
 
     async initialize() {
@@ -561,6 +574,10 @@ class LabyrinthRoomLogs {
         // waiting would either drop the room or file it under whichever
         // character has arrived by then.
         this.flushReport();
+        if (this.retireSourceOnDisable) {
+            this.simSource = null;
+            this.retireSourceOnDisable = false;
+        }
         document.getElementById(TAB_ID)?.remove();
         this.tabButton = null;
         document.getElementById(PANEL_ID)?.remove();
@@ -4174,4 +4191,5 @@ export default {
     },
     togglePanel: () => labyrinthRoomLogs.togglePanel(),
     useSimSource: (source) => labyrinthRoomLogs.useSimSource(source),
+    retireSimSource: () => labyrinthRoomLogs.retireSimSource(),
 };
