@@ -217,6 +217,20 @@ const GOLD_SORT_VERIFY_METRIC = {
 };
 
 /**
+ * Whether a stored verify verdict proves nothing either way: an error, a "not confirmed" from a verify Stop cut
+ * short, or one whose profit could not be valued (an unpriced item: the engine returns no figure). Such a row is
+ * neither held up nor knocked down by its verify.
+ * @param {Object|null} entry - A `verifyVerdicts` entry
+ * @returns {boolean}
+ */
+function verdictUnjudged(entry) {
+    if (!entry) return true;
+    if (entry.verdict === 'error') return true;
+    if (entry.verdict !== 'not-confirmed') return false;
+    return Boolean(entry.stopped) || (Boolean(entry.profitLeftOut) && !Number.isFinite(entry.mean));
+}
+
+/**
  * A row's verify key: the verify engine's own (`candidateAssignmentKey`), with the same fallback it uses.
  * @param {Object} row - An analysis result row
  * @returns {string}
@@ -12671,7 +12685,7 @@ class CombatSimUI {
         const verdictOf = (r) => verdicts[verifyKeyOf(r)] || null;
         const rejected = (r) => {
             const v = verdictOf(r);
-            return Boolean(v) && (v.verdict === 'worse' || (v.verdict === 'not-confirmed' && !v.stopped));
+            return Boolean(v) && (v.verdict === 'worse' || (v.verdict === 'not-confirmed' && !verdictUnjudged(v)));
         };
         // The orders that improve AND clear the noise (or were confirmed); a noisy top must not hide a
         // significant second
@@ -13499,12 +13513,25 @@ class CombatSimUI {
                     `Free to apply: set it in the game.`,
                 '#8bc34a'
             );
-        } else if (verifiedRows.length && verifiedRows.some((e) => verdictOf(e.r).verdict !== 'error')) {
+        } else if (verifiedRows.some((e) => !verdictUnjudged(verdictOf(e.r)))) {
+            // Only the verdicts that judged something: an error, a cut-short run or an unvalued profit did not
+            const judged = verifiedRows.filter((e) => !verdictUnjudged(verdictOf(e.r)));
             summary = `none confirmed${verifyStopped ? ' (verify stopped)' : ''}`;
             verifyNote = note(
-                `None of the ${verifiedRows.length} verified order${verifiedRows.length === 1 ? '' : 's'} held up on ` +
+                `None of the ${judged.length} verified order${judged.length === 1 ? '' : 's'} held up on ` +
                     `fresh seeds: keep your current one.`,
                 '#9ab'
+            );
+        }
+        const unvalued = verifiedRows.filter((e) => {
+            const v = verdictOf(e.r);
+            return v.profitLeftOut && !Number.isFinite(v.mean);
+        });
+        if (unvalued.length) {
+            verifyNote += note(
+                `Profit could not be valued on fresh seeds for ${unvalued.length} order${unvalued.length === 1 ? '' : 's'} ` +
+                    `(an item has no price), so ${unvalued.length === 1 ? 'it was' : 'they were'} not judged.`,
+                '#ff9800'
             );
         }
         if (verifyStopped) {

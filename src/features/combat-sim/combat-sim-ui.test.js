@@ -12014,6 +12014,43 @@ describe('verifying close calls on fresh seeds', () => {
             expect(planOrder().textContent).not.toContain('A → B');
         });
 
+        test('an order whose profit could not be valued on fresh seeds is not rejected', async () => {
+            drawPlan([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 300 })]);
+            // The engine's answer on Profit/h when an item has no price: not confirmed, no figure, flagged
+            const unvalued = answer({ 'Order: A → B': 'not-confirmed', 'Order: C → D': 'worse' });
+            mocks.verifyImpl = (params) => {
+                const out = unvalued(params);
+                out.rows = out.rows.map((r) =>
+                    r.description === 'Order: A → B'
+                        ? { ...r, mean: null, se: null, profitLeftOut: true, unpriced: ['/items/mystery'] }
+                        : r
+                );
+                return out;
+            };
+            await verifyOrders();
+            expect(planOrder().textContent).toContain('A → B');
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-budget').textContent).not.toContain(
+                'held up when verified'
+            );
+            // The section says it was not judged, and does not call it a failed order
+            expect(section().textContent).toContain('Profit could not be valued on fresh seeds for 1 order');
+            expect(section().textContent).not.toContain('None of the 2 verified orders held up');
+            expect(section().textContent).toContain('None of the 1 verified order held up');
+        });
+
+        test('a verify cut short is not read as orders that failed to hold up', async () => {
+            drawPlan([orderRow('A → B', { profit: 900 })]);
+            mocks.verifyImpl = (params) => ({
+                ...answer({ 'Order: A → B': 'not-confirmed' })(params),
+                stopped: true,
+            });
+            ui._upgradeAborted = false;
+            await verifyOrders();
+            expect(section().textContent).toContain('Verify stopped partway');
+            expect(section().textContent).not.toContain('held up on fresh seeds');
+            expect(planOrder().textContent).toContain('A → B');
+        });
+
         test('with every order rejected the plan says none held up', async () => {
             drawPlan([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 300 })]);
             mocks.verifyImpl = answer({ 'Order: A → B': 'worse', 'Order: C → D': 'not-confirmed' });
