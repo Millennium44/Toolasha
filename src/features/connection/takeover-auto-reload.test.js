@@ -488,6 +488,43 @@ describe('takeover auto-reload', () => {
         expect(reloadSpy).not.toHaveBeenCalled();
     });
 
+    test('raising the delay while connected re-times the stable window', () => {
+        // Count 1 at 5 min: window is 20 min. At 60 min it is 240 min.
+        state.setting = '5';
+        window.sessionStorage.setItem(
+            RECORD_KEY,
+            JSON.stringify({ count: 1, lastAt: Date.now(), characterId: 'char-a' })
+        );
+        takeover.initialize();
+        vi.advanceTimersByTime(MIN);
+        state.setting = '60';
+        for (const cb of [...state.settingCallbacks]) cb('60');
+
+        vi.advanceTimersByTime(30 * MIN);
+        expect(readRecord()?.count).toBe(1);
+        vi.advanceTimersByTime(240 * MIN - 31 * MIN - 1);
+        expect(readRecord()?.count).toBe(1);
+        vi.advanceTimersByTime(1);
+        expect(window.sessionStorage.getItem(RECORD_KEY)).toBeNull();
+    });
+
+    test('lowering the delay while connected clears on the new, shorter window', () => {
+        // Count 1 at 60 min (240-min window) lowered to 5 min (20-min window)
+        state.setting = '60';
+        window.sessionStorage.setItem(
+            RECORD_KEY,
+            JSON.stringify({ count: 1, lastAt: Date.now(), characterId: 'char-a' })
+        );
+        takeover.initialize();
+        vi.advanceTimersByTime(MIN);
+        state.setting = '5';
+        for (const cb of [...state.settingCallbacks]) cb('5');
+        vi.advanceTimersByTime(19 * MIN - 1);
+        expect(readRecord()?.count).toBe(1);
+        vi.advanceTimersByTime(1);
+        expect(window.sessionStorage.getItem(RECORD_KEY)).toBeNull();
+    });
+
     describe('storage failure', () => {
         let original;
         beforeEach(() => {

@@ -266,11 +266,14 @@ class TakeoverAutoReload {
         // means no reload
         if (!record || record.count <= 0) return;
 
+        // Measured from the last reload, like the read-time expiry in
+        // _readRecord, and on the current setting, so the two always agree
         const windowMs = stableWindowMs(record.count);
+        const delayMs = record.lastAt > 0 ? Math.max(0, record.lastAt + windowMs - Date.now()) : windowMs;
         this.stableTimer = setTimeout(() => {
             this.stableTimer = null;
             if (connectionState.isConnected()) this._clearRecord();
-        }, windowMs);
+        }, delayMs);
     }
 
     /** @private */
@@ -390,7 +393,12 @@ class TakeoverAutoReload {
 
     /** @private */
     _onSettingChanged() {
-        if (!this.episode) return;
+        if (!this.episode) {
+            // The stability window scales with the delay: re-time it so a
+            // changed setting cannot clear the count on the old window
+            if (getConfiguredMinutes() > 0 && connectionState.isConnected()) this._startStableTimer();
+            return;
+        }
         const minutes = getConfiguredMinutes();
         if (minutes <= 0) {
             this._cancelEpisode();
