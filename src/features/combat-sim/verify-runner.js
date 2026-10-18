@@ -737,9 +737,17 @@ export async function verifyTriggerChanges({
         });
     }
 
-    // Stopped before any seed finished on both setups: a stop with nothing measured, not a verdict on zero seeds
-    if (outcome.scoreDiffs.length === 0 && stopped()) {
-        return empty({ hoursPerSeed, basis: setting.basis, stopped: true });
+    // No seed finished on both setups: after Stop that is a stop with nothing measured; on a run nobody stopped (every
+    // simulation cancelled from elsewhere) nothing was measured, which is a failure. Never a verdict on zero seeds
+    if (outcome.scoreDiffs.length === 0) {
+        if (stopped()) return empty({ hoursPerSeed, basis: setting.basis, stopped: true });
+        const error = 'No seed produced a usable result';
+        return empty({
+            hoursPerSeed,
+            basis: setting.basis,
+            error,
+            rows: [{ key: 'triggers', mean: null, se: null, seeds: 0, verdict: 'error', error }],
+        });
     }
     const scored = rowFromDiffs('triggers', outcome.scoreDiffs, true, seeds);
     const row = {

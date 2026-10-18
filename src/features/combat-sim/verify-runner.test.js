@@ -954,6 +954,17 @@ describe('Stop never reads as a confirmation or a failure', () => {
         expect(out.rows[0].verdict).toBe('not-confirmed');
     });
 
+    test('a trigger verify whose every simulation was cancelled with no Stop is a failure, not a zero-seed verdict', async () => {
+        sim.onRun = () => {
+            throw new Error('Cancelled');
+        };
+        const out = await verifyTriggerChanges({ result: triggerResult(), seeds: 2, abortSignal: () => false });
+        expect(out.stopped).toBe(false);
+        expect(out.rows).toHaveLength(1);
+        expect(out.rows[0].verdict).toBe('error');
+        expect(out.rows[0].seeds).toBe(0);
+    });
+
     test('Stop terminating a lab trigger verify in flight keeps the seeds that finished', async () => {
         const state = { stop: false };
         sim.onLabRun = () => {
