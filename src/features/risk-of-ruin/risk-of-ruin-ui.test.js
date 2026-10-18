@@ -129,6 +129,7 @@ const { PANEL_ID, LAUNCHER_ID, TAB_ID, PANEL_KEY } = vi.hoisted(() => ({
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/alchemy-adapter.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import { reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import riskOfRuinUI from './risk-of-ruin-ui.js';
@@ -811,5 +812,78 @@ describe('sell-depth context ownership', () => {
         await startRun();
 
         expect(riskOfRuinUI.getDepthCapContext().items[0].itemHrid).toBe('/items/cheese_sword');
+    });
+});
+
+describe('transmute sell-depth cost includes the catalyst', () => {
+    afterEach(() => {
+        riskOfRuinUI.disable();
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap: {} }));
+        dataManager.getItemDetails.mockImplementation(() => null);
+    });
+
+    async function runTransmute(model) {
+        const itemDetailMap = {
+            '/items/cheese': {
+                name: 'Cheese',
+                alchemyDetail: { transmuteDropTable: [{ itemHrid: '/items/moonstone', dropRate: 1 }] },
+            },
+        };
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap }));
+        dataManager.getItemDetails.mockImplementation((hrid) => itemDetailMap[hrid] ?? null);
+        buildAlchemyTransmuteModel.mockReturnValueOnce(model);
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'alchemy';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/cheese';
+        await riskOfRuinUI._compute();
+        return riskOfRuinUI.getDepthCapContext();
+    }
+
+    const breakdown = (extra = {}) => ({
+        successRate: 0.5,
+        mainBranches: [{ itemHrid: '/items/moonstone', dropRate: 1, count: 1, payout: 1000, isSelfReturn: false }],
+        bonusDrops: [],
+        ...extra,
+    });
+
+    test('a catalyst-assisted transmute is charged its expected spend, not just the unconditional cost', async () => {
+        const context = await runTransmute({
+            cost: 100,
+            expectedCost: 600,
+            maxSinglePossibleLoss: 1100,
+            outcomeDistribution: [
+                { prob: 0.5, net: -100 },
+                { prob: 0.5, net: -100 - 1000 + 1000 },
+            ],
+            breakdown: breakdown(),
+        });
+
+        expect(context.costPerAction).toBe(600);
+        expect(context.items).toEqual([
+            { itemHrid: '/items/moonstone', enhancementLevel: 0, quantityPerAction: 0.5, costShare: 600 },
+        ]);
+    });
+
+    test('multi-output cost shares sum to the expected spend and a self-return keeps its slice', async () => {
+        const context = await runTransmute({
+            cost: 100,
+            expectedCost: 600,
+            maxSinglePossibleLoss: 1100,
+            outcomeDistribution: [{ prob: 1, net: -100 }],
+            breakdown: breakdown({
+                mainBranches: [
+                    { itemHrid: '/items/moonstone', dropRate: 0.5, count: 1, payout: 1000, isSelfReturn: false },
+                    { itemHrid: '/items/cheese', dropRate: 0.5, count: 1, payout: 1000, isSelfReturn: true },
+                ],
+                bonusDrops: [{ itemHrid: '/items/ess', dropRate: 0.25, count: 1, payout: 500 }],
+            }),
+        });
+
+        // EV: moonstone 250, self-return 250 (not tracked), essence 125 -> 625 total
+        expect(context.items.map((i) => i.itemHrid)).toEqual(['/items/moonstone', '/items/ess']);
+        expect(context.items[0].costShare).toBeCloseTo((600 * 250) / 625, 6);
+        expect(context.items[1].costShare).toBeCloseTo((600 * 125) / 625, 6);
     });
 });
