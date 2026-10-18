@@ -30,6 +30,11 @@ const mocks = vi.hoisted(() => ({
     lastChoiceOptions: null,
     written: [],
     appliedPresets: [],
+    // What the spied applyPreset returns; null models an unsaved undo snapshot
+    presetResult: {},
+    // Character the data-manager mock reports; a test can move it mid-apply
+    characterId: 'char-1',
+    switchOnApply: null,
     // Setting definitions the mocked schema knows about; only their shape
     // matters — conservativeOverrides forces off the checkboxes that ship on.
     definitions: {},
@@ -90,7 +95,7 @@ vi.mock('../../core/storage.js', () => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getCurrentCharacterId: () => 'char-1',
+        getCurrentCharacterId: () => mocks.characterId,
     },
 }));
 
@@ -110,7 +115,8 @@ vi.mock('./setting-presets.js', async (importOriginal) => {
         ...actual,
         applyPreset: async (id) => {
             mocks.appliedPresets.push(id);
-            return {};
+            if (mocks.switchOnApply) mocks.characterId = mocks.switchOnApply;
+            return mocks.presetResult;
         },
     };
 });
@@ -171,6 +177,9 @@ beforeEach(() => {
     mocks.lastChoiceOptions = null;
     mocks.written = [];
     mocks.appliedPresets = [];
+    mocks.presetResult = {};
+    mocks.characterId = 'char-1';
+    mocks.switchOnApply = null;
     mocks.candidates = [];
     mocks.copiedFrom = null;
     mocks.copySucceeds = true;
@@ -244,6 +253,30 @@ describe('the returning-user picker', () => {
         expect(mocks.written).toEqual([]);
         expect(whatsNew._pending.newIds).toEqual([]);
         expect(whatsNew._pending.turnedOff).toEqual(new Set());
+    });
+
+    test('a preset that could not be applied is not announced, and the keep-current path runs', async () => {
+        defineSchema(['newFeatureA'], []);
+        mocks.answer = 'combat';
+        mocks.presetResult = null;
+
+        await whatsNew._offerFirstRunChoice(['newFeatureA'], CURRENT);
+
+        expect(whatsNew._pending.headline).not.toContain('preset');
+        expect(whatsNew._pending.newIds).toEqual(['newFeatureA']);
+        expect(mocks.written.some(([id]) => id === 'whatsNew_newDefaultsOff')).toBe(true);
+    });
+
+    test('a preset that finished for another character announces nothing', async () => {
+        defineSchema(['newFeatureA'], []);
+        mocks.answer = 'combat';
+        mocks.switchOnApply = 'char-2';
+        whatsNew._pending = null;
+
+        await whatsNew._offerFirstRunChoice(['newFeatureA'], CURRENT);
+
+        expect(whatsNew._pending).toBe(null);
+        expect(mocks.written).toEqual([]);
     });
 
     test('keepCurrent is the first, primary option and every preset follows', async () => {
@@ -421,6 +454,22 @@ describe('the fresh-install picker', () => {
 
         // Choosing Defaults explicitly applies it
         expect(mocks.appliedPresets).toEqual([DEFAULT_PRESET_ID]);
+    });
+
+    test('a fresh-install preset that could not be applied is announced as no change', async () => {
+        mocks.answer = 'combat';
+        mocks.presetResult = null;
+        await whatsNew._offerFirstRunPreset(CURRENT);
+        expect(whatsNew._pending.headline).not.toContain('preset');
+        expect(mocks.written).toEqual([]);
+    });
+
+    test('a fresh-install preset that finished for another character announces nothing', async () => {
+        mocks.answer = 'combat';
+        mocks.switchOnApply = 'char-2';
+        whatsNew._pending = null;
+        await whatsNew._offerFirstRunPreset(CURRENT);
+        expect(whatsNew._pending).toBe(null);
     });
 
     test('No change applies nothing and touches no setting', async () => {

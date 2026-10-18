@@ -416,26 +416,27 @@ export function bulkSnapshotKey(characterId = dataManager.getCurrentCharacterId?
 }
 
 /**
- * Who a bulk write belongs to, captured before its first await. The settings
- * map object is part of the identity: a character switch (even A -> B -> A)
- * loads a fresh map, so a stale operation cannot pass for the current one.
+ * Who a bulk write belongs to, captured before its first await. Identity is
+ * the character, not the settings map object: a reload or reset replaces the
+ * map even for the same character, and writes go through the live
+ * `config.settingsMap`, so continuing on the new map is correct there. An
+ * A -> B -> A round trip is the same character again and may continue too.
  *
- * @returns {{characterId: (string|undefined), key: string, settingsMap: Object}}
+ * @returns {{characterId: (string|undefined), key: string}}
  */
 export function captureBulkOwner() {
     const characterId = dataManager.getCurrentCharacterId?.();
-    return { characterId, key: bulkSnapshotKey(characterId), settingsMap: config.settingsMap };
+    return { characterId, key: bulkSnapshotKey(characterId) };
 }
 
 /**
- * Whether the character and settings map a bulk write started on are still the
- * live ones. Check after every await, before touching config or a snapshot.
+ * Whether the character a bulk write started on is still the live one. Check after every await, before touching config or a snapshot.
  *
- * @param {{characterId: (string|undefined), settingsMap: Object}} owner - From `captureBulkOwner`
+ * @param {{characterId: (string|undefined)}} owner - From `captureBulkOwner`
  * @returns {boolean}
  */
 export function isBulkOwnerCurrent(owner) {
-    return dataManager.getCurrentCharacterId?.() === owner.characterId && config.settingsMap === owner.settingsMap;
+    return dataManager.getCurrentCharacterId?.() === owner.characterId;
 }
 
 /**
