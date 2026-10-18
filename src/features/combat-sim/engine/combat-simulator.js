@@ -213,6 +213,41 @@ class CombatSimulator {
     }
 
     /**
+     * Finish a unit's death exactly once per life: the count, the loot bucket,
+     * the task kill and the alive-time window all close together.
+     *
+     * Several branches of one action can each see the same corpse (a monster
+     * killed by the player's parry mid-ability is seen by the parry branch and
+     * again by the end-of-cast check). Keyed by the unit object, not its hrid:
+     * a pack of one monster type is several lives. A life begins again at a
+     * revive, a player respawn, a wave spawn and a run reset (`_beginLife`).
+     *
+     * @private
+     * @param {Object} unit - The unit that just died
+     * @returns {boolean} False when this life's death was already finished
+     */
+    _finalizeDeath(unit) {
+        const finished = (this._finalizedDeaths ??= new WeakSet());
+        if (finished.has(unit)) return false;
+        finished.add(unit);
+        this.recordDeath(unit);
+        if (!unit.isPlayer) {
+            this.simResult.updateTimeSpentAlive(unit.hrid, false, this.simulationTime);
+        }
+        return true;
+    }
+
+    /**
+     * Open a fresh life for a unit, so its next death counts.
+     *
+     * @private
+     * @param {Object} unit - The unit that is alive again
+     */
+    _beginLife(unit) {
+        this._finalizedDeaths?.delete(unit);
+    }
+
+    /**
      * Take a death back when a revive undoes it, tasks included.
      *
      * @param {Object} unit - The revived unit
@@ -220,6 +255,7 @@ class CombatSimulator {
      */
     undoRecordedDeath(unit, time) {
         this.simResult.undoDeath(unit, time);
+        this._beginLife(unit);
         if (!unit?.isPlayer) this._creditTaskKill(unit, -1);
     }
 
@@ -502,6 +538,7 @@ class CombatSimulator {
     }
 
     reset() {
+        this._finalizedDeaths = new WeakSet();
         this.tempDungeonCount = 0;
         this._pendingDungeonQty = null;
         // Clear-time pairing state (see SimResult.dungeonCleanClearTimeTotal):
@@ -588,6 +625,7 @@ class CombatSimulator {
             if (this.labyrinth) {
                 // Labyrinth: full reset every encounter (independent fights)
                 this.players[i].reset(0);
+                this._beginLife(this.players[i]);
             } else {
                 // A wipe restart deliberately keeps the party's running buffs
                 // (reset() only prunes the expired ones), but every one of those
@@ -596,6 +634,7 @@ class CombatSimulator {
                 // for the rest of the run.
                 const wasDown = this.players[i].combatDetails.currentHitpoints <= 0;
                 this.players[i].reset(this.simulationTime);
+                this._beginLife(this.players[i]);
                 if (wasDown) {
                     this._rescheduleBuffExpirations(this.players[i]);
                 }
@@ -626,6 +665,7 @@ class CombatSimulator {
         // and a respawn quietly handed the build hitpoints and manapoints it does
         // not have. A debuff that lowered the max inverted it: the player came
         // back short of full.
+        this._beginLife(respawningPlayer);
         respawningPlayer.clearBuffs();
         respawningPlayer.clearCCs();
         respawningPlayer.combatDetails.currentHitpoints = respawningPlayer.combatDetails.maxHitpoints;
@@ -789,6 +829,7 @@ class CombatSimulator {
 
         this.enemies.forEach((enemy) => {
             enemy.reset(this.simulationTime);
+            this._beginLife(enemy);
             this.simResult.updateTimeSpentAlive(enemy.hrid, true, this.simulationTime);
         });
 
@@ -1058,10 +1099,7 @@ class CombatSimulator {
 
             if (targetWasAlive && target.combatDetails.currentHitpoints === 0) {
                 this.eventQueue.clearEventsForUnit(target);
-                this.recordDeath(target);
-                if (!target.isPlayer) {
-                    this.simResult.updateTimeSpentAlive(target.hrid, false, this.simulationTime);
-                }
+                this._finalizeDeath(target);
             }
 
             // Could die from reflect damage
@@ -1070,10 +1108,7 @@ class CombatSimulator {
                 (attackResult.thornDamageDone !== 0 || attackResult.retaliationDamageDone !== 0)
             ) {
                 this.eventQueue.clearEventsForUnit(source);
-                this.recordDeath(source);
-                if (!source.isPlayer) {
-                    this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);
-                }
+                this._finalizeDeath(source);
                 break;
             }
 
@@ -1518,10 +1553,7 @@ class CombatSimulator {
 
         if (targetWasAlive && event.target.combatDetails.currentHitpoints === 0) {
             this.eventQueue.clearEventsForUnit(event.target);
-            this.recordDeath(event.target);
-            if (!event.target.isPlayer) {
-                this.simResult.updateTimeSpentAlive(event.target.hrid, false, this.simulationTime);
-            }
+            this._finalizeDeath(event.target);
         }
 
         this.checkEncounterEnd();
@@ -1947,10 +1979,7 @@ class CombatSimulator {
         // Could die from reflect damage
         if (source.combatDetails.currentHitpoints === 0) {
             this.eventQueue.clearEventsForUnit(source);
-            this.recordDeath(source);
-            if (!source.isPlayer) {
-                this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);
-            }
+            this._finalizeDeath(source);
         }
 
         this.checkEncounterEnd();
@@ -2088,10 +2117,7 @@ class CombatSimulator {
 
                 if (tempTarget.combatDetails.currentHitpoints === 0) {
                     this.eventQueue.clearEventsForUnit(tempTarget);
-                    this.recordDeath(tempTarget);
-                    if (!tempTarget.isPlayer) {
-                        this.simResult.updateTimeSpentAlive(tempTarget.hrid, false, this.simulationTime);
-                    }
+                    this._finalizeDeath(tempTarget);
                 }
 
                 // Could die from reflect damage
@@ -2100,10 +2126,7 @@ class CombatSimulator {
                     (attackResult.thornDamageDone !== 0 || attackResult.retaliationDamageDone !== 0)
                 ) {
                     this.eventQueue.clearEventsForUnit(tempSource);
-                    this.recordDeath(tempSource);
-                    if (!tempSource.isPlayer) {
-                        this.simResult.updateTimeSpentAlive(tempSource.hrid, false, this.simulationTime);
-                    }
+                    this._finalizeDeath(tempSource);
                 }
             } else {
                 targets = targets.filter(
@@ -2315,10 +2338,7 @@ class CombatSimulator {
 
                 if (target.combatDetails.currentHitpoints === 0) {
                     this.eventQueue.clearEventsForUnit(target);
-                    this.recordDeath(target);
-                    if (!target.isPlayer) {
-                        this.simResult.updateTimeSpentAlive(target.hrid, false, this.simulationTime);
-                    }
+                    this._finalizeDeath(target);
                 }
 
                 if (attackResult.didHit && abilityEffect.pierceChance > random()) {

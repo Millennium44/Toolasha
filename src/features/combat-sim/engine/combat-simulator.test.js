@@ -2653,3 +2653,139 @@ describe('loot is recorded at the buffs a downed player still has', () => {
         expect(down.combatBuffs[COFFEE.uniqueHrid]).toBeDefined();
     });
 });
+
+/**
+ * A death is finished once per life. A monster killed by the player's parry in
+ * the middle of its own ability was recorded by the parry branch and again by
+ * the end-of-cast check, doubling its kill count, loot bucket, task progress
+ * and alive-time window.
+ */
+describe('a death is finished once per life', () => {
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    const DAMAGE_ABILITY = () => ({
+        hrid: '/abilities/test_smash',
+        manaCost: 0,
+        cooldownDuration: 10 * ONE_SECOND,
+        lastUsed: Number.MIN_SAFE_INTEGER,
+        abilityEffects: [
+            {
+                effectType: '/ability_effect_types/damage',
+                targetType: 'enemy',
+                combatStyleHrid: '/combat_styles/smash',
+                damageType: '/damage_types/physical',
+                damageFlat: 5,
+                damageOverTimeRatio: 0,
+                damageRatio: 1,
+                armorDamageRatio: 0,
+                hpDrainRatio: 0,
+                bleedChance: 0,
+                bleedRatio: 0,
+                bleedDuration: 0,
+                blindChance: 0,
+                blindDuration: 0,
+                stunChance: 0,
+                stunDuration: 0,
+                silenceChance: 0,
+                silenceDuration: 0,
+                pierceChance: 0,
+                buffs: null,
+            },
+        ],
+    });
+
+    /**
+     * One monster at 1 HP casts a single-target damage ability while the player
+     * parries it; the parry kills the caster.
+     * @param {number} seed - RNG seed
+     * @returns {Object|null} The sim and monster, or null when the parry missed
+     */
+    function parryKill(seed) {
+        installGameData();
+        seedSimRng(seed);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        player.taskMonsterHrids = new Set([RAT_HRID]);
+        player.taskMonsterRemaining = null;
+        const sim = new CombatSimulator([player], zone, null, null, 'perMonster');
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+        player.reset(sim.simulationTime);
+        const rat = new Monster(RAT_HRID, 0);
+        rat.reset(sim.simulationTime);
+        rat.combatDetails.currentHitpoints = 1;
+        sim.enemies = [rat, new Monster(TOAD_HRID, 0)];
+        sim.enemies[1].reset(sim.simulationTime);
+        sim.simResult.updateTimeSpentAlive(RAT_HRID, true, sim.simulationTime);
+        sim.checkParry = () => player;
+        sim.tryUseAbility(rat, DAMAGE_ABILITY());
+        return rat.combatDetails.currentHitpoints === 0 ? { sim, rat, player } : null;
+    }
+
+    test('a caster killed by the parry is one death, one loot kill, one task kill, one alive window', () => {
+        let killed = 0;
+        for (let seed = 1; seed <= 60; seed++) {
+            const run = parryKill(seed);
+            if (!run) continue;
+            killed++;
+            const { sim, player } = run;
+            expect(sim.simResult.deaths[RAT_HRID]).toBe(1);
+            expect(sim.taskDamageKills[RAT_HRID]).toEqual({ onTask: 1, offTask: 0 });
+            expect(player.taskMonsterKills.get(RAT_HRID)).toBe(1);
+            const alive = sim.simResult.timeSpentAlive.find((e) => e.name === RAT_HRID);
+            expect(alive.count).toBe(1);
+            expect(alive.timeSpentAlive).toBe(0);
+            const buckets = Object.values(sim.simResult.lootStates?.[player.hrid]?.[RAT_HRID] ?? {});
+            expect(buckets.reduce((a, b) => a + b, 0)).toBe(1);
+        }
+        expect(killed).toBeGreaterThan(0);
+    });
+
+    test('a unit that is revived and dies again counts its second death', () => {
+        const run = (() => {
+            for (let seed = 1; seed <= 60; seed++) {
+                const r = parryKill(seed);
+                if (r) return r;
+            }
+            return null;
+        })();
+        expect(run).not.toBeNull();
+        const { sim, rat } = run;
+        sim.simulationTime += ONE_SECOND;
+        sim.undoRecordedDeath(rat, sim.simulationTime);
+        expect(sim.simResult.deaths[RAT_HRID]).toBe(0);
+        rat.combatDetails.currentHitpoints = 0;
+        sim._finalizeDeath(rat);
+        sim._finalizeDeath(rat);
+        expect(sim.simResult.deaths[RAT_HRID]).toBe(1);
+        // A respawn also opens a new life
+        sim._beginLife(rat);
+        sim._finalizeDeath(rat);
+        expect(sim.simResult.deaths[RAT_HRID]).toBe(2);
+    });
+
+    test('a normal kill by an auto attack still records one death', () => {
+        installGameData();
+        seedSimRng(3);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+        const rat = new Monster(RAT_HRID, 0);
+        rat.reset(sim.simulationTime);
+        sim.enemies = [rat, new Monster(TOAD_HRID, 0)];
+        sim.simResult.updateTimeSpentAlive(RAT_HRID, true, sim.simulationTime);
+        rat.combatDetails.currentHitpoints = 0;
+        sim._finalizeDeath(rat);
+        expect(sim.simResult.deaths[RAT_HRID]).toBe(1);
+        expect(sim.simResult.timeSpentAlive.find((e) => e.name === RAT_HRID).count).toBe(1);
+    });
+});
