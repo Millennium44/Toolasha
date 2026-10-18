@@ -1096,15 +1096,32 @@ function planEquipmentGoal(goal, context) {
         );
     }
 
-    const spend = steps.reduce((sum, step) => (step.done ? sum : sum + Math.max(0, -step.goldDelta)), 0);
+    const spend = steps.reduce((sum, step) => sum + stepSpend(step), 0);
     const { step: funding, warnings: fundingWarnings } = fundingStep(
         context,
         spend,
-        steps.filter((step) => step.goldDelta < 0).map((step) => step.id)
+        steps.filter((step) => stepSpend(step) > 0).map((step) => step.id)
     );
     warnings.push(...fundingWarnings);
 
     return { steps: withFunding(funding, steps), warnings, satisfied: false };
+}
+
+/**
+ * The coins a step needs in hand, which is more than its net cost for a training
+ * step: one completion's inputs have to be bought before the first sale can pay
+ * for them. That startup bill is working capital the sales return, so it is not
+ * added to the net loss; the requirement is whichever is larger, the way the
+ * money-making ranking refuses a method whose first completion it cannot afford.
+ *
+ * @param {Object} step - A plan step
+ * @returns {number} Coins needed, never negative
+ */
+function stepSpend(step) {
+    if (step.done) return 0;
+    const net = Math.max(0, -step.goldDelta);
+    const startup = step.kind === 'train' && step.costKnown !== false ? Math.max(0, num(step.details?.upfrontCost)) : 0;
+    return Math.max(net, startup);
 }
 
 /**
@@ -1232,6 +1249,8 @@ function planSkillGoal(goal, context, stepId = 'train') {
             level,
             targetLevel: target,
             rate: best,
+            // One completion's inputs, which must be in hand before the first one can run
+            upfrontCost: best && rateKnown ? Math.max(0, num(best.upfrontCost)) : 0,
             actionsNeeded,
             alternatives: rates.slice(0, 5),
         },
@@ -1239,7 +1258,7 @@ function planSkillGoal(goal, context, stepId = 'train') {
     });
 
     const steps = [step];
-    const spend = Math.max(0, -step.goldDelta);
+    const spend = stepSpend(step);
     const { step: funding, warnings: fundingWarnings } = fundingStep(context, spend, [step.id]);
     warnings.push(...fundingWarnings);
 
