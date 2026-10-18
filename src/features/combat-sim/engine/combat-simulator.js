@@ -817,6 +817,8 @@ class CombatSimulator {
                     // it back.
                     const wasDown = this.players[i].combatDetails.currentHitpoints <= 0;
                     this.players[i].combatDetails.currentHitpoints = this.players[i].combatDetails.maxHitpoints;
+                    // A downed player stood back up by the clear is a new life
+                    this._beginLife(this.players[i]);
                     this.players[i].combatDetails.currentManapoints = this.players[i].combatDetails.maxManapoints;
                     if (wasDown) {
                         this.players[i].clearCCStatuses();

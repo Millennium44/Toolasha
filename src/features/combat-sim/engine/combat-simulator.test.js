@@ -795,6 +795,23 @@ describe('encounter teardown', () => {
         setGameData(null);
     });
 
+    test('a player stood up by a dungeon clear can die again and count', () => {
+        const sim = dungeonSim();
+        const player = sim.players[0];
+        player.combatDetails.currentHitpoints = 0;
+        sim._finalizeDeath(player);
+        expect(sim.simResult.deaths[player.hrid]).toBe(1);
+
+        // The clear: the next spawn sees a completed dungeon and revives the player
+        sim.zone.dungeonsCompleted += 1;
+        sim.startNewEncounter();
+        expect(player.combatDetails.currentHitpoints).toBe(player.combatDetails.maxHitpoints);
+
+        player.combatDetails.currentHitpoints = 0;
+        sim._finalizeDeath(player);
+        expect(sim.simResult.deaths[player.hrid]).toBe(2);
+    });
+
     test('a wipe moments after a wave was cleared leaves nothing queued to respawn', () => {
         const sim = dungeonSim();
 

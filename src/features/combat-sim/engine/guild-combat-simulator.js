@@ -121,6 +121,7 @@ export class GuildCombatSimulator extends CombatSimulator {
                 player.clearCCs();
                 player.resetCooldowns(event.time);
                 player.combatDetails.currentHitpoints = player.combatDetails.maxHitpoints;
+                this._beginLife(player);
                 player.combatDetails.currentManapoints = player.combatDetails.maxManapoints;
             }
             this.eventQueue.addEvent(new RegenTickEvent(event.time + 10 * SECOND));
@@ -154,6 +155,7 @@ export class GuildCombatSimulator extends CombatSimulator {
                 // Pruning can lower max HP/MP. Fill only after the final maxima
                 // have been recomputed so a removed buff cannot leave surplus.
                 player.combatDetails.currentHitpoints = player.combatDetails.maxHitpoints;
+                this._beginLife(player);
                 player.combatDetails.currentManapoints = player.combatDetails.maxManapoints;
             }
         }
