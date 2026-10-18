@@ -11671,7 +11671,9 @@ describe('verifying close calls on fresh seeds', () => {
     /** A purchasable row whose profit gain is a close call (positive, not significant) */
     const closeGold = (name) => {
         const r = row(name, { slot: '/equipment_types/ring', cost: 100, profitGain: 50 });
-        r.noise = { dps: 1, xp: 1, profit: 1, encounters: 1, deaths: 1 };
+        // +50 gold on a 1,000 gold/hr baseline (+5%) against a 5% (50 gold) error: inside the noise
+        r.deltas = { ...r.deltas, profit: 5 };
+        r.noise = { dps: 1, xp: 1, profit: 5, encounters: 1, deaths: 1 };
         r.significantBy = { dps: false, xp: false, profit: false, encounters: false, deaths: false };
         return r;
     };
@@ -11851,6 +11853,7 @@ describe('verifying close calls on fresh seeds', () => {
                 signalDuring = params.abortSignal();
                 const done = answer({})(params);
                 // The row cut off by the terminated sim finished no seed
+                done.rows[0] = { ...done.rows[0], seeds: 5 };
                 done.rows[1] = { ...done.rows[1], verdict: 'not-confirmed', seeds: 0, mean: null, se: null };
                 return { ...done, stopped: true };
             };
@@ -12012,6 +12015,71 @@ describe('verifying close calls on fresh seeds', () => {
             expect(planOrder().textContent).not.toContain('A → B');
         });
 
+        test('an order whose profit could not be valued on fresh seeds is not rejected', async () => {
+            drawPlan([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 300 })]);
+            // The engine's answer on Profit/h when an item has no price: not confirmed, no figure, flagged
+            const unvalued = answer({ 'Order: A → B': 'not-confirmed', 'Order: C → D': 'worse' });
+            mocks.verifyImpl = (params) => {
+                const out = unvalued(params);
+                out.rows = out.rows.map((r) =>
+                    r.description === 'Order: A → B'
+                        ? { ...r, mean: null, se: null, profitLeftOut: true, unpriced: ['/items/mystery'] }
+                        : r
+                );
+                return out;
+            };
+            await verifyOrders();
+            expect(planOrder().textContent).toContain('A → B');
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-budget').textContent).not.toContain(
+                'held up when verified'
+            );
+            // The section says it was not judged, and does not call it a failed order
+            expect(section().textContent).toContain('Profit could not be valued on fresh seeds for 1 order');
+            expect(section().textContent).not.toContain('None of the 2 verified orders held up');
+            expect(section().textContent).toContain('None of the 1 verified order held up');
+        });
+
+        test('a verify cut short is not read as orders that failed to hold up', async () => {
+            drawPlan([orderRow('A → B', { profit: 900 })]);
+            mocks.verifyImpl = (params) => {
+                const out = answer({ 'Order: A → B': 'not-confirmed' })(params);
+                return { ...out, rows: out.rows.map((r) => ({ ...r, seeds: 3 })), stopped: true };
+            };
+            ui._upgradeAborted = false;
+            await verifyOrders();
+            expect(section().textContent).toContain('Verify stopped partway');
+            expect(section().textContent).not.toContain('held up on fresh seeds');
+            expect(planOrder().textContent).toContain('A → B');
+        });
+
+        test('a stopped multi-row verify judges the row that finished every seed and leaves the partial one', async () => {
+            drawPlan([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 800 })]);
+            mocks.verifyImpl = (params) => {
+                const out = answer({ 'Order: A → B': 'not-confirmed', 'Order: C → D': 'not-confirmed' })(params);
+                // A finished all 8 seeds; C → D was cut off after 3
+                return {
+                    ...out,
+                    rows: out.rows.map((r) => (r.description?.includes('C → D') ? { ...r, seeds: 3 } : r)),
+                    stopped: true,
+                };
+            };
+            ui._upgradeAborted = false;
+            await verifyOrders();
+            const entries = ui._upgradeResultsData.verifyVerdicts.profit;
+            const stoppedFlags = Object.values(entries).map((e) => [e.seeds, e.stopped]);
+            expect(stoppedFlags).toEqual(
+                expect.arrayContaining([
+                    [8, false],
+                    [3, true],
+                ])
+            );
+            expect(section().textContent).toContain('None of the 1 verified order held up');
+            expect(section().textContent).toContain('Verify stopped partway');
+            // A → B did not hold up; the partial C → D is not rejected
+            expect(planOrder().textContent).toContain('C → D');
+            expect(planOrder().textContent).not.toContain('A → B');
+        });
+
         test('with every order rejected the plan says none held up', async () => {
             drawPlan([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 300 })]);
             mocks.verifyImpl = answer({ 'Order: A → B': 'worse', 'Order: C → D': 'not-confirmed' });
@@ -12029,10 +12097,13 @@ describe('verifying close calls on fresh seeds', () => {
                 'confirmed on fresh seeds'
             );
 
-            mocks.verifyImpl = answer(
-                { 'Order: A → B': 'not-confirmed', 'Order: C → D': 'not-confirmed' },
-                { stopped: true }
-            );
+            mocks.verifyImpl = (params) => {
+                const out = answer(
+                    { 'Order: A → B': 'not-confirmed', 'Order: C → D': 'not-confirmed' },
+                    { stopped: true }
+                )(params);
+                return { ...out, rows: out.rows.map((r) => ({ ...r, seeds: 3 })) };
+            };
             ui._upgradeResultsData.verifyVerdicts = undefined;
             await verifyOrders();
             // A stopped run's "not confirmed" is a run that did not get far enough: A → B stays
@@ -12146,6 +12217,28 @@ describe('verifying close calls on fresh seeds', () => {
             clean.noise.deaths = 0;
             const picks = ui._autoVerifyPicks({ baseline: deadly, results: [noisyDeaths, clean] });
             expect(picks.order).toEqual([noisyDeaths]);
+        });
+
+        test('profit: closeness is judged in gold against the gross-scaled error, in both tables', () => {
+            // Near break-even: 10 gold/hr net on 50k gold/hr of loot. A +500 gold/hr gain is +5000% of net profit
+            // (significant on the row's own percent rule) but well inside its 2,500 gold error (5% of the gross)
+            const breakEven = { ...BASELINE, profitPerHour: 10, revenuePerHour: 50000, costPerHour: 49990 };
+            const order = orderRow('A → B', { profit: 0, se: 5, sig: true });
+            order.metrics.profitPerHour = 510;
+            order.deltas.profit = 5000;
+            const gold = row('R1', { slot: '/equipment_types/ring', cost: 100, profitGain: 0 });
+            gold.metrics.profitPerHour = 510;
+            gold.deltas = { ...gold.deltas, profit: 5000 };
+            gold.noise = { dps: 5, xp: 5, profit: 5, encounters: 5, deaths: 5 };
+            gold.significantBy = { dps: true, xp: true, profit: true, encounters: true, deaths: true };
+
+            const picks = ui._autoVerifyPicks({ baseline: breakEven, results: [order, gold] });
+
+            // The section calls the order "within noise", so auto-verify takes it, and the gold row the same way
+            const section = ui._abilityOrderRanking([order], breakEven, 'profit');
+            expect(section[0].within).toBe(true);
+            expect(picks.order).toEqual([order]);
+            expect(picks.gold).toEqual([gold]);
         });
 
         test('does nothing with the setting off', async () => {
@@ -12391,6 +12484,19 @@ describe('verifying close calls on fresh seeds', () => {
             const error = await verdictText({ verdict: 'error', mean: null, se: null, error: 'boom' });
             expect(error).toContain('error');
             expect(error).not.toContain('NaN');
+            // The status line says it failed rather than "complete: error"
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe('Trigger verify failed: boom');
+        });
+
+        test('a verify that throws says it failed, in the box and the status line', async () => {
+            await runTriggers();
+            mocks.triggerVerifyImpl = () => {
+                throw new Error('worker died');
+            };
+            block().querySelector('#mwi-csim-trigger-verify-btn').click();
+            await settle();
+            expect(block().textContent).toContain('Verify failed: worker died');
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe('Trigger verify failed: worker died');
         });
 
         test('a refusal and a Stop each say what happened', async () => {

@@ -363,7 +363,7 @@ export function triggerVerifyHtml(result, { canVerify = false, cached = false, r
         } else if (out.rows?.[0]) {
             const row = out.rows[0];
             const basis = out.basis === 'recommended' ? 'recommended changes' : out.basis ? 'best found' : '';
-            inner += verifyChipHtml({ ...row, unit: out.unit, stopped: out.stopped });
+            inner += verifyChipHtml({ ...row, unit: out.unit, stopped: Boolean(out.stopped) && row.seeds < out.seeds });
             if (row.verdict !== 'error') {
                 inner += ` ${muted(
                     `${formatVerifyFigure(row.mean, out.unit)} ± ${formatVerifyFigure(row.se, out.unit, { signed: false })} ` +

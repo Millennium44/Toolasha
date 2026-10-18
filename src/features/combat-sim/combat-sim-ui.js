@@ -216,8 +216,19 @@ const GOLD_SORT_VERIFY_METRIC = {
     deltaEph: 'eph',
 };
 
-/** The row's delta key for each verifiable metric (`eph` reads the encounters delta) */
-const VERIFY_DELTA_KEY = { profit: 'profit', xp: 'xp', dps: 'dps', eph: 'encounters' };
+/**
+ * Whether a stored verify verdict proves nothing either way: an error, a "not confirmed" from a verify Stop cut
+ * short, or one whose profit could not be valued (an unpriced item: the engine returns no figure). Such a row is
+ * neither held up nor knocked down by its verify.
+ * @param {Object|null} entry - A `verifyVerdicts` entry
+ * @returns {boolean}
+ */
+function verdictUnjudged(entry) {
+    if (!entry) return true;
+    if (entry.verdict === 'error') return true;
+    if (entry.verdict !== 'not-confirmed') return false;
+    return Boolean(entry.stopped) || (Boolean(entry.profitLeftOut) && !Number.isFinite(entry.mean));
+}
 
 /**
  * A row's verify key: the verify engine's own (`candidateAssignmentKey`), with the same fallback it uses.
@@ -12674,7 +12685,7 @@ class CombatSimUI {
         const verdictOf = (r) => verdicts[verifyKeyOf(r)] || null;
         const rejected = (r) => {
             const v = verdictOf(r);
-            return Boolean(v) && (v.verdict === 'worse' || (v.verdict === 'not-confirmed' && !v.stopped));
+            return Boolean(v) && (v.verdict === 'worse' || (v.verdict === 'not-confirmed' && !verdictUnjudged(v)));
         };
         // The orders that improve AND clear the noise (or were confirmed); a noisy top must not hide a
         // significant second
@@ -13174,7 +13185,9 @@ class CombatSimUI {
                 se: row.se,
                 seeds: row.seeds,
                 unit: outcome.unit,
-                stopped: Boolean(outcome.stopped),
+                // Per row: a stopped run still finished every seed of the rows that got them all, and those
+                // rows' "not confirmed" is a real verdict (the lab applies the same rule)
+                stopped: Boolean(outcome.stopped) && row.seeds < outcome.seeds,
                 error: row.error ?? null,
                 profitLeftOut: Boolean(row.profitLeftOut),
                 unpriced: row.unpriced ?? [],
@@ -13221,16 +13234,19 @@ class CombatSimUI {
             )
             .map((e) => ({ r: e.r, gain: e.gain, score: closeness(e.gain, e.noise), table: 'order' }));
         const { metric: goldMetric } = this._goldVerifyMetric();
-        const deltaKey = VERIFY_DELTA_KEY[goldMetric];
-        const goldEntries = all
-            .filter((r) => r.candidate?.type !== 'combat_level' && !r.candidate?.abilityOrder && r.cost != null)
-            .filter((r) => r.deltas?.[deltaKey] > 0 && isCloseCall(r, { metric: goldMetric }))
-            .map((r) => ({
-                r,
-                gain: r.deltas[deltaKey],
-                score: closeness(r.deltas[deltaKey], r.noise?.[deltaKey]),
-                table: 'gold',
-            }));
+        // Judged on the scale the verify measures and the order section ranks by: profit in gold against its
+        // gross-scaled error, not the row's percent-of-net-profit delta (which near break-even reads every gain as
+        // significant and puts its closeness on another scale from the order rows')
+        const goldRows = all.filter(
+            (r) => r.candidate?.type !== 'combat_level' && !r.candidate?.abilityOrder && r.cost != null
+        );
+        const goldEntries = this._abilityOrderRanking(goldRows, results.baseline || {}, goldMetric)
+            .filter(
+                (e) =>
+                    e.gain > 0 &&
+                    isCloseCall(e.r, { metric: goldMetric, score: { gain: e.gain, noise: e.noise, within: e.within } })
+            )
+            .map((e) => ({ r: e.r, gain: e.gain, score: closeness(e.gain, e.noise), table: 'gold' }));
         const chosen = [...orderEntries, ...goldEntries]
             .sort((a, b) => b.score - a.score || b.gain - a.gain)
             .slice(0, VERIFY_DEFAULTS.top);
@@ -13350,12 +13366,17 @@ class CombatSimUI {
         result.verifyOutcome = outcome;
         redraw(false);
         const verdict = outcome.rows?.[0]?.verdict;
+        // A failure says so, as the table verifies and the Lab Sim do: "complete: error" read as a verdict
+        const failure =
+            verdict === 'error' || (!verdict && outcome.error) ? outcome.rows?.[0]?.error || outcome.error : null;
         this._setStatus(
             outcome.refused
                 ? 'Cannot verify the trigger changes: nothing to compare or too few seeds.'
                 : outcome.stopped
                   ? 'Trigger verify stopped.'
-                  : `Trigger verify complete: ${verdict === 'not-confirmed' ? 'not confirmed' : (verdict ?? 'no result')}.`
+                  : failure !== null
+                    ? `Trigger verify failed${failure ? `: ${failure}` : '.'}`
+                    : `Trigger verify complete: ${verdict === 'not-confirmed' ? 'not confirmed' : (verdict ?? 'no result')}.`
         );
     }
 
@@ -13499,12 +13520,25 @@ class CombatSimUI {
                     `Free to apply: set it in the game.`,
                 '#8bc34a'
             );
-        } else if (verifiedRows.length && verifiedRows.some((e) => verdictOf(e.r).verdict !== 'error')) {
+        } else if (verifiedRows.some((e) => !verdictUnjudged(verdictOf(e.r)))) {
+            // Only the verdicts that judged something: an error, a cut-short run or an unvalued profit did not
+            const judged = verifiedRows.filter((e) => !verdictUnjudged(verdictOf(e.r)));
             summary = `none confirmed${verifyStopped ? ' (verify stopped)' : ''}`;
             verifyNote = note(
-                `None of the ${verifiedRows.length} verified order${verifiedRows.length === 1 ? '' : 's'} held up on ` +
+                `None of the ${judged.length} verified order${judged.length === 1 ? '' : 's'} held up on ` +
                     `fresh seeds: keep your current one.`,
                 '#9ab'
+            );
+        }
+        const unvalued = verifiedRows.filter((e) => {
+            const v = verdictOf(e.r);
+            return v.profitLeftOut && !Number.isFinite(v.mean);
+        });
+        if (unvalued.length) {
+            verifyNote += note(
+                `Profit could not be valued on fresh seeds for ${unvalued.length} order${unvalued.length === 1 ? '' : 's'} ` +
+                    `(an item has no price), so ${unvalued.length === 1 ? 'it was' : 'they were'} not judged.`,
+                '#ff9800'
             );
         }
         if (verifyStopped) {

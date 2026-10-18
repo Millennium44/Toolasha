@@ -258,6 +258,23 @@ describe('isCloseCall', () => {
         expect(isCloseCall(rowValue, { metric: 'eph' })).toBe(true);
     });
 
+    test('a score the caller ranked on decides for profit too, not the percent-of-net delta', () => {
+        // +5000% of a near-zero net profit is "significant" by the row's own rule, but +500 gold against a
+        // 2,500 gold error is inside the noise
+        const nearBreakEven = {
+            deltas: { dps: 0, xp: 0, profit: 5000 },
+            noise: { profit: 5 },
+            significantBy: { profit: true },
+        };
+        expect(isCloseCall(nearBreakEven, { metric: 'profit' })).toBe(false);
+        expect(isCloseCall(nearBreakEven, { metric: 'profit', score: { gain: 500, noise: 2500, within: true } })).toBe(
+            true
+        );
+        expect(
+            isCloseCall(nearBreakEven, { metric: 'profit', score: { gain: 50000, noise: 2500, within: false } })
+        ).toBe(false);
+    });
+
     test('reads a Lab row by attempts', () => {
         expect(isCloseCall({ attemptsDelta: -3, attemptsDeltaNoise: 5, significant: false })).toBe(true);
         expect(isCloseCall({ attemptsDelta: -30, attemptsDeltaNoise: 5, significant: true })).toBe(false);
@@ -918,6 +935,119 @@ describe('Stop never reads as a confirmation or a failure', () => {
         expect(out.stopped).toBe(true);
         expect(out.rows[0].seeds).toBeLessThan(8);
         expect(out.rows[0].verdict).not.toBe('confirmed');
+    });
+
+    test('Stop terminating a combat trigger verify in flight keeps the seeds that finished', async () => {
+        const state = { stop: false };
+        sim.onRun = () => {
+            // Four seeds' pairs finish; then Stop, whose cancel rejects every simulation still running
+            if (sim.calls.length > 8) {
+                state.stop = true;
+                throw new Error('Cancelled');
+            }
+        };
+        const out = await verifyTriggerChanges({ result: triggerResult(), seeds: 8, abortSignal: () => state.stop });
+        expect(out.stopped).toBe(true);
+        expect(out.error).toBeUndefined();
+        expect(out.rows).toHaveLength(1);
+        expect(out.rows[0].seeds).toBe(4);
+        expect(out.rows[0].verdict).toBe('not-confirmed');
+    });
+
+    test('a trigger verify whose every simulation was cancelled with no Stop is a failure, not a zero-seed verdict', async () => {
+        sim.onRun = () => {
+            throw new Error('Cancelled');
+        };
+        const out = await verifyTriggerChanges({ result: triggerResult(), seeds: 2, abortSignal: () => false });
+        expect(out.stopped).toBe(false);
+        expect(out.rows).toHaveLength(1);
+        expect(out.rows[0].verdict).toBe('error');
+        expect(out.rows[0].seeds).toBe(0);
+    });
+
+    test('another simulator cancelling a trigger verify mid-run (no Stop of ours) is a failure, not a partial', async () => {
+        sim.onRun = () => {
+            // Four seeds' pairs finish; then someone else's cancelActiveSimulations() rejects the rest
+            if (sim.calls.length > 8) throw new Error('Cancelled');
+        };
+        const out = await verifyTriggerChanges({ result: triggerResult(), seeds: 8, abortSignal: () => false });
+        expect(out.stopped).toBe(false);
+        expect(out.rows).toHaveLength(1);
+        expect(out.rows[0].verdict).toBe('error');
+        expect(out.error).toBeTruthy();
+    });
+
+    test('another simulator cancelling a lab trigger verify mid-run is a failure, not a partial', async () => {
+        sim.onLabRun = () => {
+            if (sim.labCalls.length > 4) throw new Error('Cancelled');
+        };
+        const labResult = {
+            ...triggerResult(),
+            verifyContext: {
+                kind: 'lab',
+                gameData: {},
+                fights: [
+                    { monsterHrid: '/monsters/a', roomLevel: 1, dto: triggerResult().verifyContext.playerDTOs[0] },
+                ],
+                hrid: 'p1',
+                zoneHrid: '/actions/combat/fly',
+                crates: [],
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                tunables: triggerResult().verifyContext.tunables,
+            },
+        };
+        const out = await verifyTriggerChanges({ result: labResult, seeds: 8, abortSignal: () => false });
+        expect(out.stopped).toBe(false);
+        expect(out.rows[0].verdict).toBe('error');
+        expect(out.error).toBeTruthy();
+    });
+
+    test('another simulator cancelling a Combat candidate (no Stop of ours) is an error row, not a dropped seed', async () => {
+        // One seed finishes; the other is cancelled from elsewhere
+        let goodRuns = 0;
+        sim.onRun = (marker) => {
+            if (marker === 'good' && ++goodRuns === 2) throw new Error('Cancelled');
+        };
+        const out = await verifyCombatCandidates({
+            context: makeContext(),
+            rows: [row('good', 'good')],
+            seeds: 2,
+            abortSignal: () => false,
+        });
+        expect(out.stopped).toBe(false);
+        expect(out.rows[0].verdict).toBe('error');
+    });
+
+    test('Stop terminating a lab trigger verify in flight keeps the seeds that finished', async () => {
+        const state = { stop: false };
+        sim.onLabRun = () => {
+            if (sim.labCalls.length > 4) {
+                state.stop = true;
+                throw new Error('Cancelled');
+            }
+        };
+        const labResult = {
+            ...triggerResult(),
+            verifyContext: {
+                kind: 'lab',
+                gameData: {},
+                fights: [
+                    { monsterHrid: '/monsters/a', roomLevel: 1, dto: triggerResult().verifyContext.playerDTOs[0] },
+                ],
+                hrid: 'p1',
+                zoneHrid: '/actions/combat/fly',
+                crates: [],
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                tunables: triggerResult().verifyContext.tunables,
+            },
+        };
+        const out = await verifyTriggerChanges({ result: labResult, seeds: 8, abortSignal: () => state.stop });
+        expect(out.stopped).toBe(true);
+        expect(out.error).toBeUndefined();
+        expect(out.rows[0].seeds).toBe(2);
+        expect(out.rows[0].verdict).toBe('not-confirmed');
     });
 
     test('Stop during the Combat baseline is a stop, not an error', async () => {

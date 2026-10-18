@@ -494,6 +494,24 @@ describe('the Verify block', () => {
         expect(html).toContain('over 8 fresh seeds');
     });
 
+    test('a stopped run tags only a row that finished fewer seeds than requested', () => {
+        const draw = (seeds) =>
+            triggerVerifyHtml(
+                {
+                    ...result,
+                    verifyOutcome: {
+                        unit: 'points',
+                        seeds: 8,
+                        stopped: true,
+                        rows: [{ verdict: 'confirmed', mean: 3, se: 1, seeds }],
+                    },
+                },
+                { canVerify: true }
+            );
+        expect(draw(8)).not.toContain('(stopped)');
+        expect(draw(5)).toContain('(stopped)');
+    });
+
     test('says when a confirmed verdict is below the minimum gain or profit could not be valued', () => {
         const draw = (row) =>
             triggerVerifyHtml(

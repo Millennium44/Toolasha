@@ -94,15 +94,20 @@ export function classifyVerdict({ mean: diff, se, seeds, betterIsHigher = true }
  * @param {Object} row - An analysis result row
  * @param {Object} [options]
  * @param {string} [options.metric] - A VERIFY_METRICS key; absent means "best axis"
- * @param {{gain: number, noise: number|null, within: boolean}} [options.score] - For `balanced`: the row's
- *   balanced score gain, its composite error (rate and deaths, score points) and whether the gain sits inside
- *   the significance bound, as the Ability order section judges them. Without it `balanced` means "best axis"
+ * @param {{gain: number, noise: number|null, within: boolean}} [options.score] - The row's gain on the scale its
+ *   table ranks it by, that gain's error in the same unit and whether the gain sits inside the significance
+ *   bound, as the Ability order section judges them (balanced: score points with the deaths error; profit: gold
+ *   against the gross-scaled error). When given it decides, whatever the metric. Without it `balanced` means
+ *   "best axis"
  * @returns {boolean}
  */
 export function isCloseCall(row, { metric, score } = {}) {
     if (!row || typeof row !== 'object') return false;
 
-    if (metric === 'balanced' && score && Number.isFinite(score.gain)) {
+    // A caller that ranked the row on its own scale (balanced score points, profit in gold against the gross-scaled
+    // error) judges it on that, not on the row's percentage deltas: a profit delta is a percent of net profit, which
+    // near break-even makes any gain look significant
+    if (score && Number.isFinite(score.gain)) {
         if (score.gain > 0 && score.within) return true;
         return Number.isFinite(score.noise) && Math.abs(score.gain) <= 2 * score.noise;
     }
@@ -146,16 +151,15 @@ const plain = (value) => (Number.isFinite(value) ? value : null);
 /** The error text of anything thrown */
 const messageOf = (error) => (error instanceof Error ? error.message : String(error));
 
-/** What a simulation rejects with when Stop (or a teardown) terminates it in flight */
-const CANCEL_MESSAGE = /^(Cancelled|Aborted)$/i;
-
 /**
- * Whether a thrown error is only a cancelled simulation: after Stop it means "did not finish", not "broke".
- * @param {*} error - What was thrown
+ * Whether a thrown error is only a simulation THIS verify's own Stop terminated: after Stop it means "did not
+ * finish", not "broke". A cancel with no Stop of ours (another simulator calling `cancelActiveSimulations()`) is a
+ * real failure: swallowing it would leave a partial result that reads as a completed verification.
+ * @param {*} _error - What was thrown (not inspected: only our own stop signal tells a cancel from a failure)
  * @param {Function} stopped - `() => boolean`, true once the run was asked to stop
  * @returns {boolean}
  */
-const isCancel = (error, stopped) => stopped() || CANCEL_MESSAGE.test(messageOf(error));
+const isCancel = (_error, stopped) => stopped();
 
 /**
  * Turn per-seed paired differences into one row result.
@@ -732,6 +736,18 @@ export async function verifyTriggerChanges({
         });
     }
 
+    // No seed finished on both setups: after Stop that is a stop with nothing measured; on a run nobody stopped (every
+    // simulation cancelled from elsewhere) nothing was measured, which is a failure. Never a verdict on zero seeds
+    if (outcome.scoreDiffs.length === 0) {
+        if (stopped()) return empty({ hoursPerSeed, basis: setting.basis, stopped: true });
+        const error = 'No seed produced a usable result';
+        return empty({
+            hoursPerSeed,
+            basis: setting.basis,
+            error,
+            rows: [{ key: 'triggers', mean: null, se: null, seeds: 0, verdict: 'error', error }],
+        });
+    }
     const scored = rowFromDiffs('triggers', outcome.scoreDiffs, true, seeds);
     const row = {
         ...scored,
@@ -779,20 +795,27 @@ async function measureCombatTriggers({
     const sampleOn = (dtos, seed) =>
         limit(async () => {
             if (stopped()) return null;
-            const simResult = await runSimulation(
-                {
-                    gameData,
-                    playerDTOs: dtos,
-                    zoneHrid,
-                    difficultyTier,
-                    hours: hoursPerSeed,
-                    communityBuffs,
-                    seed,
-                    taskDamageMode: TASK_DAMAGE_OFF,
-                },
-                null,
-                { preempt: false, workers: 1 }
-            );
+            let simResult;
+            try {
+                simResult = await runSimulation(
+                    {
+                        gameData,
+                        playerDTOs: dtos,
+                        zoneHrid,
+                        difficultyTier,
+                        hours: hoursPerSeed,
+                        communityBuffs,
+                        seed,
+                        taskDamageMode: TASK_DAMAGE_OFF,
+                    },
+                    null,
+                    { preempt: false, workers: 1 }
+                );
+            } catch (error) {
+                // Stop terminates the sims in flight: this seed did not finish, and the seeds that did still count
+                if (isCancel(error, stopped)) return null;
+                throw error;
+            }
             tally.done++;
             report('Verify: triggers');
             return sampleFromResult(simResult, gameData, allHrids, hoursPerSeed, { priceCache });
@@ -851,20 +874,27 @@ async function measureLabTriggers({ ctx, setting, seeds, hoursPerSeed, fresh, li
     const runFight = (dto, fight, seed) =>
         limit(async () => {
             if (stopped()) return null;
-            const simResult = await runLabyrinthSimulation({
-                gameData,
-                playerDTOs: [dto],
-                zoneHrid,
-                monsterHrid: fight.monsterHrid,
-                roomLevel: fight.roomLevel,
-                crates,
-                hours: ceiling,
-                // A fixed count, so both setups on this seed play the same attempts
-                precision: { minTrials: trials, maxTrials: trials },
-                communityBuffs,
-                labyrinthCombatBuffs,
-                seed,
-            });
+            let simResult;
+            try {
+                simResult = await runLabyrinthSimulation({
+                    gameData,
+                    playerDTOs: [dto],
+                    zoneHrid,
+                    monsterHrid: fight.monsterHrid,
+                    roomLevel: fight.roomLevel,
+                    crates,
+                    hours: ceiling,
+                    // A fixed count, so both setups on this seed play the same attempts
+                    precision: { minTrials: trials, maxTrials: trials },
+                    communityBuffs,
+                    labyrinthCombatBuffs,
+                    seed,
+                });
+            } catch (error) {
+                // Stop terminates the sims in flight: this seed did not finish, and the seeds that did still count
+                if (isCancel(error, stopped)) return null;
+                throw error;
+            }
             tally.done++;
             report('Verify: triggers');
             return simResult;
