@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-17): alchemy shopping and labyrinth logs
+
+- Alchemy Missing Mats no longer says nothing is missing when you alchemize a catalyst that is also the what-if catalyst; both uses now come out of one stack.
+- Turning off the labyrinth calculator (or switching character) detaches Room Logs from it, so fights are no longer saved without a forecast beside them.
+
 ### Upstream sweep (2026-10-17): shop shortcuts, alchemy shopping and fixes
 
 - Token item menus (dungeon, labyrinth, task, guild tokens and guild credits) get a View Shop button that opens the matching shop, and the dungeon tracker shows how long your entry keys will last at your recent clear pace.
