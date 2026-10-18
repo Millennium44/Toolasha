@@ -53,6 +53,7 @@ class ListingDragOrder {
         this.storageKey = null;
         this.draggedRow = null;
         this.dragState = null;
+        this.touchDrag = null;
         this.decorateQueued = new WeakSet();
         this.initPromise = null;
     }
@@ -159,6 +160,20 @@ class ListingDragOrder {
         this.draggedRow.classList.remove('mwi-listing-dragging');
         this.draggedRow = null;
         this.dragState = null;
+        this._clearTouchDrag();
+    }
+
+    /** Forget a finger-driven drag and give its handle back to native drag. */
+    _clearTouchDrag() {
+        if (!this.touchDrag) return;
+        const { handle, pointerId } = this.touchDrag;
+        this.touchDrag = null;
+        handle.draggable = true;
+        try {
+            handle.releasePointerCapture?.(pointerId);
+        } catch {
+            // Already released
+        }
     }
 
     /** @param {HTMLElement} table */
@@ -267,6 +282,47 @@ class ListingDragOrder {
         resources.registerListener(tbody, 'dragend', (event) => {
             if (handleFor(event)) this._finishDrag(table, event);
         });
+        // Touch path. Native drag-and-drop does not start from a finger in every
+        // mobile browser (Firefox Android), so a finger or pen on the handle
+        // carries the row through a pointer stream instead. The mouse keeps
+        // the native drag events above.
+        resources.registerListener(tbody, 'pointerdown', (event) => {
+            if (event.pointerType === 'mouse' || this.touchDrag) return;
+            const handle = handleFor(event);
+            const row = handle?.closest('tr[data-listing-id]');
+            if (!row) return;
+            if (this._hasColumnSort(table)) {
+                handle.title = 'Clear the active column sort before arranging listings manually.';
+                return;
+            }
+            event.preventDefault();
+            // Stops the browser also starting a native drag of the same row
+            handle.draggable = false;
+            this._startDrag(event, row, table);
+            this.touchDrag = { pointerId: event.pointerId, handle };
+            try {
+                handle.setPointerCapture?.(event.pointerId);
+            } catch {
+                // Pointer already gone
+            }
+        });
+        resources.registerListener(tbody, 'pointermove', (event) => {
+            if (!this.touchDrag || event.pointerId !== this.touchDrag.pointerId) return;
+            const row = this._rowAtPoint(event.clientX, event.clientY, tbody);
+            if (row) this._dragOver(event, row);
+        });
+        resources.registerListener(tbody, 'pointerup', (event) => {
+            if (!this.touchDrag || event.pointerId !== this.touchDrag.pointerId) return;
+            this._clearTouchDrag();
+            this._finishDrag(table);
+        });
+        resources.registerListener(tbody, 'pointercancel', (event) => {
+            if (!this.touchDrag || event.pointerId !== this.touchDrag.pointerId) return;
+            this._clearTouchDrag();
+            // A `none` drop effect with no drop seen is how a cancelled native drag
+            // reads: rows go back and nothing is saved
+            this._finishDrag(table, { dataTransfer: { dropEffect: 'none' } });
+        });
         resources.registerListener(tbody, 'keydown', (event) => {
             const handle = handleFor(event);
             const row = handle?.closest('tr[data-listing-id]');
@@ -353,6 +409,12 @@ class ListingDragOrder {
         const after = event.clientY >= rect.top + rect.height / 2;
         this._moveRow(this.draggedRow, targetRow, after);
         targetRow.classList.add('mwi-listing-drag-over');
+    }
+
+    /** @param {number} x @param {number} y @param {HTMLElement} tbody @returns {HTMLElement|null} */
+    _rowAtPoint(x, y, tbody) {
+        const row = document.elementFromPoint?.(x, y)?.closest?.('tr[data-listing-id]');
+        return row && row.parentElement === tbody ? row : null;
     }
 
     /** @param {HTMLElement} row @param {HTMLElement} targetRow @param {boolean} after */
@@ -485,6 +547,7 @@ class ListingDragOrder {
         this.storageKey = null;
         this.draggedRow = null;
         this.dragState = null;
+        this.touchDrag = null;
         this.initPromise = null;
         this.isInitialized = false;
     }

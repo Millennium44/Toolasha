@@ -14,6 +14,8 @@ import storage from '../../core/storage.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 const STORAGE_KEY_PREFIX = 'tabOrder';
+const TOUCH_HOLD_MS = 350;
+const TOUCH_SLOP_PX = 10;
 
 /**
  * Get character-scoped storage key.
@@ -44,6 +46,7 @@ class TabReorder {
         this.savedOrder = null;
         this.unregisterHandlers = [];
         this._dragLabel = null;
+        this.touchTeardowns = [];
     }
 
     async initialize() {
@@ -139,26 +142,7 @@ class TabReorder {
         tab.addEventListener('dragover', (e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
-
-            // Show drop indicator
-            const rect = tab.getBoundingClientRect();
-            const midX = rect.left + rect.width / 2;
-            const isLeft = e.clientX < midX;
-
-            // Clear all indicators first
-            const tabList = tab.closest('[role="tablist"]');
-            if (tabList) {
-                for (const t of tabList.querySelectorAll('[role="tab"]')) {
-                    t.style.removeProperty('border-left');
-                    t.style.removeProperty('border-right');
-                }
-            }
-
-            if (isLeft) {
-                tab.style.borderLeft = '2px solid #4a9eff';
-            } else {
-                tab.style.borderRight = '2px solid #4a9eff';
-            }
+            this._showIndicator(tab, e.clientX);
         });
 
         tab.addEventListener('dragleave', () => {
@@ -170,43 +154,201 @@ class TabReorder {
             e.preventDefault();
             tab.style.removeProperty('border-left');
             tab.style.removeProperty('border-right');
+            this._dropOn(tab, e.dataTransfer.getData('text/plain'), e.clientX);
+        });
 
-            const draggedLabel = e.dataTransfer.getData('text/plain');
-            const targetLabel = tab.textContent.trim();
-            if (!draggedLabel || draggedLabel === targetLabel) return;
+        this._wireTouchDrag(tab);
+    }
 
-            // Determine drop position (before or after target)
-            const rect = tab.getBoundingClientRect();
-            const midX = rect.left + rect.width / 2;
-            const dropBefore = e.clientX < midX;
+    /**
+     * Show the blue insertion line on the side of `tab` the pointer is nearest.
+     * @param {HTMLElement} tab
+     * @param {number} clientX
+     * @private
+     */
+    _showIndicator(tab, clientX) {
+        const rect = tab.getBoundingClientRect();
+        const isLeft = clientX < rect.left + rect.width / 2;
 
-            // Build current visual order
-            const tabList = tab.closest('[role="tablist"]');
-            if (!tabList) return;
-
-            const tabs = [...tabList.querySelectorAll('[role="tab"]')];
-            const currentOrder = tabs
-                .map((t) => ({ label: t.textContent.trim(), order: parseInt(t.style.order) || 0 }))
-                .sort((a, b) => a.order - b.order)
-                .map((t) => t.label);
-
-            // Remove dragged from current position
-            const newOrder = currentOrder.filter((l) => l !== draggedLabel);
-
-            // Insert at new position
-            const targetIdx = newOrder.indexOf(targetLabel);
-            if (targetIdx < 0) return;
-
-            if (dropBefore) {
-                newOrder.splice(targetIdx, 0, draggedLabel);
-            } else {
-                newOrder.splice(targetIdx + 1, 0, draggedLabel);
+        const tabList = tab.closest('[role="tablist"]');
+        if (tabList) {
+            for (const t of tabList.querySelectorAll('[role="tab"]')) {
+                t.style.removeProperty('border-left');
+                t.style.removeProperty('border-right');
             }
+        }
 
-            // Save and apply
-            this.savedOrder = newOrder;
-            this._saveOrder(newOrder);
-            this._applyOrder();
+        if (isLeft) {
+            tab.style.borderLeft = '2px solid #4a9eff';
+        } else {
+            tab.style.borderRight = '2px solid #4a9eff';
+        }
+    }
+
+    /**
+     * Move `draggedLabel` before or after `tab` and persist the result.
+     * @param {HTMLElement} tab - The tab it was dropped on
+     * @param {string} draggedLabel
+     * @param {number} clientX
+     * @private
+     */
+    _dropOn(tab, draggedLabel, clientX) {
+        const targetLabel = tab.textContent.trim();
+        if (!draggedLabel || draggedLabel === targetLabel) return;
+
+        // Determine drop position (before or after target)
+        const rect = tab.getBoundingClientRect();
+        const dropBefore = clientX < rect.left + rect.width / 2;
+
+        // Build current visual order
+        const tabList = tab.closest('[role="tablist"]');
+        if (!tabList) return;
+
+        const tabs = [...tabList.querySelectorAll('[role="tab"]')];
+        const currentOrder = tabs
+            .map((t) => ({ label: t.textContent.trim(), order: parseInt(t.style.order) || 0 }))
+            .sort((a, b) => a.order - b.order)
+            .map((t) => t.label);
+
+        // Remove dragged from current position
+        const newOrder = currentOrder.filter((l) => l !== draggedLabel);
+
+        // Insert at new position
+        const targetIdx = newOrder.indexOf(targetLabel);
+        if (targetIdx < 0) return;
+
+        if (dropBefore) {
+            newOrder.splice(targetIdx, 0, draggedLabel);
+        } else {
+            newOrder.splice(targetIdx + 1, 0, draggedLabel);
+        }
+
+        // Save and apply
+        this.savedOrder = newOrder;
+        this._saveOrder(newOrder);
+        this._applyOrder();
+    }
+
+    /**
+     * Touch path: native drag-and-drop does not start from a finger in every
+     * mobile browser (Firefox Android), so a press held for a moment on a tab
+     * picks it up and a pointer stream carries it. A quick tap or a swipe is
+     * left to the game. Mouse stays on the native path.
+     * @param {HTMLElement} tab
+     * @private
+     */
+    _wireTouchDrag(tab) {
+        // React replaces tab nodes; release the ones that left the page
+        this.touchTeardowns = this.touchTeardowns.filter((t) => {
+            if (t.tab.isConnected) return true;
+            t.run();
+            return false;
+        });
+        let pointerId = null;
+        let timer = null;
+        let active = false;
+        let startX = 0;
+        let startY = 0;
+        const listeners = [];
+
+        const tabAt = (x, y) => {
+            const hit = document.elementFromPoint?.(x, y)?.closest?.('[role="tab"]');
+            return hit && hit.closest('[role="tablist"]') === tab.closest('[role="tablist"]') ? hit : null;
+        };
+        const clearIndicators = () => {
+            const tabList = tab.closest('[role="tablist"]');
+            for (const t of tabList?.querySelectorAll('[role="tab"]') || []) {
+                t.style.removeProperty('border-left');
+                t.style.removeProperty('border-right');
+            }
+        };
+        const end = (commit, event) => {
+            clearTimeout(timer);
+            timer = null;
+            if (pointerId === null) return;
+            const wasActive = active;
+            const label = this._dragLabel;
+            try {
+                tab.releasePointerCapture?.(pointerId);
+            } catch {
+                // Already released
+            }
+            pointerId = null;
+            active = false;
+            tab.style.opacity = '';
+            this._dragLabel = null;
+            clearIndicators();
+            if (wasActive && commit && event) {
+                const target = tabAt(event.clientX, event.clientY);
+                if (target) this._dropOn(target, label, event.clientX);
+                // The click that follows a held press must not switch tabs
+                const swallow = (e) => {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                };
+                tab.addEventListener('click', swallow, { capture: true, once: true });
+                setTimeout(() => tab.removeEventListener('click', swallow, { capture: true }), 400);
+            }
+        };
+
+        const on = (type, handler, options) => {
+            tab.addEventListener(type, handler, options);
+            listeners.push([type, handler, options]);
+        };
+
+        on('pointerdown', (event) => {
+            if (event.pointerType === 'mouse' || pointerId !== null) return;
+            pointerId = event.pointerId;
+            startX = event.clientX;
+            startY = event.clientY;
+            timer = setTimeout(() => {
+                timer = null;
+                active = true;
+                this._dragLabel = tab.textContent.trim();
+                tab.style.opacity = '0.4';
+                try {
+                    tab.setPointerCapture?.(pointerId);
+                } catch {
+                    // Pointer already gone
+                }
+            }, TOUCH_HOLD_MS);
+        });
+        on('pointermove', (event) => {
+            if (event.pointerId !== pointerId) return;
+            if (!active) {
+                // Moving before the hold completes is a swipe, not a pick-up
+                if (Math.hypot(event.clientX - startX, event.clientY - startY) > TOUCH_SLOP_PX) end(false);
+                return;
+            }
+            const target = tabAt(event.clientX, event.clientY);
+            if (target && target !== tab) this._showIndicator(target, event.clientX);
+            else clearIndicators();
+        });
+        on('pointerup', (event) => {
+            if (event.pointerId === pointerId) end(true, event);
+        });
+        on('pointercancel', (event) => {
+            if (event.pointerId === pointerId) end(false);
+        });
+        // Stops the page scrolling under a held, moving finger; the long press
+        // would otherwise also open the browser's context menu
+        on(
+            'touchmove',
+            (event) => {
+                if (active) event.preventDefault();
+            },
+            { passive: false }
+        );
+        on('contextmenu', (event) => {
+            if (pointerId !== null) event.preventDefault();
+        });
+
+        this.touchTeardowns.push({
+            tab,
+            run: () => {
+                end(false);
+                for (const [type, handler, options] of listeners) tab.removeEventListener(type, handler, options);
+            },
         });
     }
 
@@ -225,6 +367,8 @@ class TabReorder {
             unregister();
         }
         this.unregisterHandlers = [];
+        for (const teardown of this.touchTeardowns) teardown.run();
+        this.touchTeardowns = [];
 
         // Remove all CSS order and draggable attributes
         const tabList = findCharacterTabList();

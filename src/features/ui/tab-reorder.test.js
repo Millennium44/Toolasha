@@ -21,7 +21,8 @@
  * this API and none is needed here.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import storage from '../../core/storage.js';
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true },
@@ -56,6 +57,7 @@ let tabToolasha;
 
 beforeEach(async () => {
     vi.resetModules();
+    storage.setJSON.mockClear();
     onReadyCallback = undefined;
     document.body.innerHTML = `
         <div role="tablist">
@@ -130,6 +132,67 @@ describe('a drag that ends without a drop', () => {
         tabToolasha.dispatchEvent(dragEvent('dragstart', dt2));
 
         expect(tabToolasha.style.opacity).toBe('0.4');
+        expect(tabInventory.style.opacity).toBe('');
+    });
+});
+
+describe('finger-driven reordering (no native drag events)', () => {
+    const ptr = (target, type, id, x = 0, y = 0, pointerType = 'touch') => {
+        const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+        Object.defineProperty(e, 'pointerId', { value: id });
+        Object.defineProperty(e, 'pointerType', { value: pointerType });
+        target.dispatchEvent(e);
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.elementFromPoint = vi.fn();
+        tabToolasha.getBoundingClientRect = () => ({ left: 100, width: 100, top: 0, height: 20 });
+    });
+    afterEach(() => vi.useRealTimers());
+
+    test('holding a tab and releasing over another saves the new order', () => {
+        ptr(tabInventory, 'pointerdown', 3, 10, 10);
+        vi.advanceTimersByTime(400);
+        expect(tabInventory.style.opacity).toBe('0.4');
+        document.elementFromPoint.mockReturnValue(tabToolasha);
+        ptr(tabInventory, 'pointermove', 3, 190, 10);
+        expect(tabToolasha.style.borderRight).not.toBe('');
+        ptr(tabInventory, 'pointerup', 3, 190, 10);
+
+        expect(storage.setJSON).toHaveBeenCalledWith('tabOrder_char1', ['Toolasha', 'Inventory'], 'settings', true);
+        expect(tabInventory.style.opacity).toBe('');
+        expect(tabToolasha.style.borderRight).toBe('');
+    });
+
+    test('a tap or an early swipe never picks the tab up', () => {
+        ptr(tabInventory, 'pointerdown', 3, 10, 10);
+        ptr(tabInventory, 'pointermove', 3, 60, 10);
+        vi.advanceTimersByTime(400);
+        expect(tabInventory.style.opacity).toBe('');
+        ptr(tabInventory, 'pointerup', 3, 60, 10);
+        expect(storage.setJSON).not.toHaveBeenCalled();
+    });
+
+    test('another finger and a cancel do not drop', () => {
+        ptr(tabInventory, 'pointerdown', 3, 10, 10);
+        vi.advanceTimersByTime(400);
+        document.elementFromPoint.mockReturnValue(tabToolasha);
+        ptr(tabInventory, 'pointerup', 4, 190, 10);
+        expect(tabInventory.style.opacity).toBe('0.4');
+        ptr(tabInventory, 'pointercancel', 3);
+        expect(tabInventory.style.opacity).toBe('');
+        expect(storage.setJSON).not.toHaveBeenCalled();
+    });
+
+    test('a mouse leaves the native path alone and disable removes the listeners', () => {
+        ptr(tabInventory, 'pointerdown', 1, 10, 10, 'mouse');
+        vi.advanceTimersByTime(400);
+        expect(tabInventory.style.opacity).toBe('');
+
+        tabReorder.disable();
+        ptr(tabInventory, 'pointerdown', 3, 10, 10);
+        vi.advanceTimersByTime(400);
         expect(tabInventory.style.opacity).toBe('');
     });
 });
