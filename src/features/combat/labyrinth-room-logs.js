@@ -574,6 +574,7 @@ class LabyrinthRoomLogs {
         // waiting would either drop the room or file it under whichever
         // character has arrived by then.
         reports.push(this.flushReport());
+        const retiredSource = this.retireSourceOnDisable ? this.simSource : null;
         if (this.retireSourceOnDisable) {
             this.simSource = null;
             this.retireSourceOnDisable = false;
@@ -604,6 +605,16 @@ class LabyrinthRoomLogs {
         // the last room is dropped or filed under the arriving character. A
         // failing write is logged by `reportRoomResult` and cannot block here.
         await Promise.all(reports);
+        // The final report above reloaded the departing character's fight record
+        // into the source's (single, module-level) cache, which its owner had
+        // already dropped in its own teardown. Drop it again, now that the write
+        // has landed in the departing character's record, so the arriving
+        // character's load reads its own rather than reusing these totals.
+        try {
+            retiredSource?.forget?.();
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Dropping the retired source failed:', error);
+        }
         // The log belongs to the character that walked those rooms. Dropped so
         // that a re-initialize — which is how a character switch arrives here —
         // reads the arriving character's log rather than persisting this one's

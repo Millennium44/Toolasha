@@ -372,6 +372,8 @@ class LabyrinthClearRate {
         labyrinthRoomLogs.useSimSource({
             forecast: (hrid, level, kind) => this.roomForecast(hrid, level, kind),
             record: (result) => this.recordRoomResult(result),
+            // Dropped by the room log after its final report on a character switch
+            forget: () => this.forgetOutcomes(),
             accuracy: (options) => this.accuracySnapshot(options),
             reset: () => {
                 // The Accuracy tab shows the clear-chance tallies and the recorded

@@ -1870,6 +1870,38 @@ describe('teardown is awaitable, so the switch waits for the log to land', () =>
         expect(labyrinthRoomLogs.simSource).toBeNull();
     });
 
+    test('a character switch has the source forget its record only after the final report lands', async () => {
+        const order = [];
+        labyrinthRoomLogs.useSimSource({
+            record: async () => {
+                await Promise.resolve();
+                order.push('record');
+            },
+            forget: () => order.push('forget'),
+        });
+        labyrinthRoomLogs.isInitialized = true;
+        labyrinthRoomLogs.activeSession = room({
+            subjectHrid: '/monsters/cyclops',
+            roomLevel: 200,
+            mode: 'combat',
+            startedAt: 1,
+            endedAt: 0,
+            cleared: true,
+            actions: [],
+        });
+        labyrinthRoomLogs.retireSimSource();
+        await labyrinthRoomLogs.disable();
+        expect(order).toEqual(['record', 'forget']);
+    });
+
+    test('disabling the log alone does not make a live source forget its record', async () => {
+        const forget = vi.fn();
+        labyrinthRoomLogs.useSimSource({ record: () => {}, forget });
+        labyrinthRoomLogs.isInitialized = true;
+        await labyrinthRoomLogs.disable();
+        expect(forget).not.toHaveBeenCalled();
+    });
+
     test('retiring a source while the log is already down drops it at once', () => {
         labyrinthRoomLogs.useSimSource({ record: () => {} });
         labyrinthRoomLogs.isInitialized = false;
