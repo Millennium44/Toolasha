@@ -25,6 +25,7 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../actions/action-panel-sort.js', () => ({ default: {} }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     actionPanelSort: () => null,
 }));

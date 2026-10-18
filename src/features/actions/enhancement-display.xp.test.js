@@ -100,6 +100,7 @@ vi.mock('../../utils/tester-shop.js', () => ({
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     missingMaterialsButton: () => null,
 }));

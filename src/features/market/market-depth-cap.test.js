@@ -10,6 +10,7 @@ vi.mock('../../core/config.js', () => ({ default: { getSetting: vi.fn(() => true
 const bridge = vi.hoisted(() => ({ context: null }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     riskOfRuinUI: () => ({ getDepthCapContext: () => bridge.context }),
 }));

@@ -18,6 +18,7 @@ vi.mock('../inventory-badge-manager.js', () => ({ default: {} }));
 vi.mock('../../combat/loadout-snapshot.js', () => ({ default: {} }));
 vi.mock('../../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     loadoutSnapshot: () => null,
 }));

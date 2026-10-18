@@ -60,6 +60,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     enhancementCalculator: () => null,
     enhancementConfig: () => null,

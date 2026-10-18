@@ -62,6 +62,7 @@ vi.mock('../../combat/loadout-snapshot.js', () => ({
 }));
 vi.mock('../../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     loadoutSnapshot: () => null,
 }));
