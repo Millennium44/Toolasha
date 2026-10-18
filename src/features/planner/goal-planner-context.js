@@ -236,6 +236,28 @@ export function gatheringSells(profit) {
 }
 
 /**
+ * The level bonuses the character's active drinks give an action: a skill-level
+ * bonus (raises the level) and, for production skills, an Action Level bonus
+ * (Artisan Tea — raises the requirement). They are different numbers and
+ * `canStartAction` treats them differently, so they travel separately.
+ *
+ * @param {Object} action - The action detail
+ * @param {Object} itemDetailMap - Item details, for reading the drinks
+ * @param {number} drinkConcentration - The character's drink concentration
+ * @returns {{teaSkillLevelBonus: number, actionLevelBonus: number}}
+ */
+function startBonuses(action, itemDetailMap, drinkConcentration) {
+    const activeDrinks = dataManager.getActionDrinkSlots?.(action.type) || [];
+    const teaSkillLevelBonus = parseTeaSkillLevelBonus(action.type, activeDrinks, itemDetailMap, drinkConcentration);
+    // Action Level teas (Artisan Tea) only exist for production skills — see
+    // profit-constants.js's PRODUCTION_TYPES/GATHERING_TYPES split.
+    const actionLevelBonus = PRODUCTION_TYPES.includes(action.type)
+        ? parseActionLevelBonus(activeDrinks, itemDetailMap, drinkConcentration)
+        : 0;
+    return { teaSkillLevelBonus, actionLevelBonus };
+}
+
+/**
  * The signed hourly margin of an action, for costing the XP it trains.
  *
  * Null when it cannot be trusted: no result, a non-finite margin, or a cost
@@ -278,26 +300,8 @@ function availableActions(types) {
         const requirement = action.levelRequirement;
         if (requirement?.skillHrid) {
             const skillLevel = levels.get(requirement.skillHrid) ?? 1;
-            const activeDrinks = dataManager.getActionDrinkSlots?.(action.type) || [];
-            const teaSkillLevelBonus = parseTeaSkillLevelBonus(
-                action.type,
-                activeDrinks,
-                itemDetailMap,
-                drinkConcentration
-            );
-            // Action Level teas (Artisan Tea) only exist for production skills — see
-            // profit-constants.js's PRODUCTION_TYPES/GATHERING_TYPES split.
-            const actionLevelBonus = PRODUCTION_TYPES.includes(action.type)
-                ? parseActionLevelBonus(activeDrinks, itemDetailMap, drinkConcentration)
-                : 0;
-            if (
-                !canStartAction({
-                    requiredLevel: requirement.level || 1,
-                    skillLevel,
-                    teaSkillLevelBonus,
-                    actionLevelBonus,
-                })
-            ) {
+            const bonuses = startBonuses(action, itemDetailMap, drinkConcentration);
+            if (!canStartAction({ requiredLevel: requirement.level || 1, skillLevel, ...bonuses })) {
                 continue;
             }
         }
@@ -476,6 +480,9 @@ function measureXpRates(skillHrid, goldByAction) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return [];
 
+    const itemDetailMap = gameData.itemDetailMap || {};
+    const drinkConcentration = getDrinkConcentration(dataManager.getEquipment(), itemDetailMap);
+
     const rates = [];
     for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
         if (action.experienceGain?.skillHrid !== skillHrid) continue;
@@ -489,6 +496,8 @@ function measureXpRates(skillHrid, goldByAction) {
                 actionHrid: hrid,
                 label: action.name || humanise(hrid),
                 requiredLevel: action.levelRequirement?.level || 1,
+                // Kept apart so the planner applies the same start rule as the gold ranking
+                ...startBonuses(action, itemDetailMap, drinkConcentration),
                 xpPerHour: experience.expPerHour,
                 xpPerAction: experience.modifiedXP,
                 actionTime: experience.actionTime,

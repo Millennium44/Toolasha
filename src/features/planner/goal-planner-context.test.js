@@ -517,3 +517,31 @@ describe('training rates keep the signed margin the rankings drop', () => {
         expect(cooking.goldKnown).toBe(false);
     });
 });
+
+describe('training rates carry the drink bonuses the start rule needs', () => {
+    test('Artisan Tea Action Level bonus rides on the rate apart from the raw requirement', async () => {
+        game.actionDetailMap['/actions/cooking/stew'].levelRequirement = { skillHrid: '/skills/cooking', level: 45 };
+        game.itemDetailMap['/items/artisan_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_level', flatBoost: 6 }] },
+        };
+        game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/artisan_tea' }];
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.requiredLevel).toBe(45);
+        expect(cooking.actionLevelBonus).toBe(6);
+        expect(cooking.teaSkillLevelBonus).toBe(0);
+    });
+
+    test('a skill-level tea is a different field from an Action Level tea', async () => {
+        game.itemDetailMap['/items/cooking_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/cooking_level', flatBoost: 3 }] },
+        };
+        game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/cooking_tea' }];
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.teaSkillLevelBonus).toBe(3);
+        expect(cooking.actionLevelBonus).toBe(0);
+    });
+});
