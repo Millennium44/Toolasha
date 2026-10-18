@@ -16,7 +16,13 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
-import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import {
+    clampPanelToViewport,
+    restoreGeometry,
+    saveGeometry,
+    saveOpenState,
+    reopenIfLeftOpen,
+} from '../../utils/panel-geometry.js';
 import {
     wilsonConfidenceInterval,
     minActionsForNonZeroRisk,
@@ -42,6 +48,8 @@ const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
 const TAB_ID = 'mwi-risk-of-ruin-tab';
 /** Geometry/open-state key, shared with the rest of the floating panels */
 const PANEL_KEY = 'riskOfRuin';
+/** Smallest size the panel may be fitted or restored to */
+const PANEL_MIN_SIZE = { width: 320, height: 200 };
 /** Whether the corner launcher is drawn at all; its ✕ writes this */
 const LAUNCHER_SETTING = 'riskOfRuin_showLauncher';
 const MAX_STEPS = 20000;
@@ -337,6 +345,13 @@ class RiskOfRuinUI {
         this.panel.style.display = this.panelOpen ? 'flex' : 'none';
         if (this.panelOpen) {
             bringPanelToFront(this.panel);
+            // The registration clamp ran while the panel was display:none (zero-sized, so a no-op);
+            // fit it now that it has a size, or a phone shows it wider than the screen
+            try {
+                clampPanelToViewport(this.panel, PANEL_MIN_SIZE);
+            } catch (error) {
+                console.error('[RiskOfRuin] Fitting the panel to the window failed:', error);
+            }
             this._refillBankroll();
         }
         if (remember) saveOpenState(PANEL_KEY, this.panelOpen);
@@ -431,7 +446,7 @@ class RiskOfRuinUI {
         this.detachDrag = makeDraggable(this.panel, header, (position) => {
             saveGeometry(PANEL_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
-        restoreGeometry(this.panel, PANEL_KEY, { width: 320, height: 200 });
+        restoreGeometry(this.panel, PANEL_KEY, PANEL_MIN_SIZE);
 
         this.panel.addEventListener('mousedown', () => bringPanelToFront(this.panel));
 
