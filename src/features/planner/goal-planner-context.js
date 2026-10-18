@@ -236,6 +236,22 @@ export function gatheringSells(profit) {
 }
 
 /**
+ * The signed hourly margin of an action, for costing the XP it trains.
+ *
+ * Null when it cannot be trusted: no result, a non-finite margin, or a cost
+ * side with an item that has no market listing (that margin treats the item as
+ * free, and a cost that cannot be read is not a cost of zero).
+ *
+ * @param {Object|null} profit - A profit calculator result
+ * @returns {number|null} Gold per hour, negative for a loss, or null if unknown
+ */
+function trainingMarginOf(profit) {
+    const margin = profit?.profitPerHour;
+    if (typeof margin !== 'number' || !Number.isFinite(margin)) return null;
+    return costSideIncomplete(profit) ? null : margin;
+}
+
+/**
  * Every action the character's levels allow, of a set of types.
  *
  * "Allow" means what the game itself would let you start right now: the base
@@ -331,12 +347,17 @@ function availableActions(types) {
 async function measureGoldRates() {
     const rates = [];
     const byAction = new Map();
+    // Signed, and apart from `rates`: the rankings only want what pays, but training
+    // an XP skill costs its margin whether that is positive, zero or negative.
+    // null = the margin could not be read (no price on something it consumes).
+    const trainingMargin = new Map();
     const notes = [];
     let unpriceable = 0;
 
     for (const { hrid, action } of availableActions(GATHERING_TYPES)) {
         try {
             const profit = await calculateGatheringProfit(hrid, { keepSellTax: true });
+            trainingMargin.set(hrid, trainingMarginOf(profit));
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -362,6 +383,7 @@ async function measureGoldRates() {
     for (const { hrid, action } of availableActions(PRODUCTION_TYPES)) {
         try {
             const profit = await calculateProductionProfit(hrid, { keepSellTax: true });
+            trainingMargin.set(hrid, trainingMarginOf(profit));
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -436,7 +458,7 @@ async function measureGoldRates() {
     }
 
     liquidity.rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
-    return { rates: liquidity.rates, byAction, notes, combatStatus };
+    return { rates: liquidity.rates, byAction, trainingMargin, notes, combatStatus };
 }
 
 /**
@@ -458,6 +480,7 @@ function measureXpRates(skillHrid, goldByAction) {
     for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
         if (action.experienceGain?.skillHrid !== skillHrid) continue;
         if (!(action.experienceGain.value > 0)) continue;
+        const measuredType = GATHERING_TYPES.includes(action.type) || PRODUCTION_TYPES.includes(action.type);
 
         try {
             const experience = calculateExpPerHour(hrid);
@@ -470,7 +493,10 @@ function measureXpRates(skillHrid, goldByAction) {
                 xpPerAction: experience.modifiedXP,
                 actionTime: experience.actionTime,
                 totalEfficiency: experience.totalEfficiency,
-                goldPerHour: goldByAction.get(hrid) || 0,
+                // Gathering and production are costed above; a missing or unreadable margin
+                // there is unknown, not free. Other types have no calculator to ask.
+                goldPerHour: measuredType ? (goldByAction.get(hrid) ?? null) : 0,
+                goldKnown: !measuredType || Number.isFinite(goldByAction.get(hrid)),
             });
         } catch (error) {
             console.error(`[GoalPlanner] Rating ${hrid} failed:`, error);
@@ -752,9 +778,9 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
     const gameData = dataManager.getInitClientData();
     const measured = measureRates
         ? await measureGoldRates()
-        : { rates: [], byAction: new Map(), notes: [], combatStatus: null };
+        : { rates: [], byAction: new Map(), trainingMargin: new Map(), notes: [], combatStatus: null };
     const rates = measured.rates;
-    const goldByAction = measured.byAction;
+    const goldByAction = measured.trainingMargin;
 
     const acquisitions = new Map();
     const runs = new Map();

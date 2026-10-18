@@ -1182,13 +1182,16 @@ function planSkillGoal(goal, context, stepId = 'train') {
     // Training is usually not free and occasionally pays; either way it is the
     // same number, so it rides on the step as a signed delta rather than being
     // dropped because production skills would make it negative.
-    const goldDelta = timeHours !== null && best ? num(best.goldPerHour) * timeHours : 0;
+    // A rate that could not be read is unknown, not free: it adds nothing to the
+    // total but says so (costKnown false), rather than passing as a costless grind.
+    const rateKnown = !best || (best.goldKnown !== false && Number.isFinite(best.goldPerHour));
+    const goldDelta = timeHours !== null && best && rateKnown ? num(best.goldPerHour) * timeHours : 0;
 
     // The gold on a training step is a rate multiplied by a duration, and both
     // are estimates. Naming the rate is what makes an implausible total
     // attributable — "+523.2M" alone reads as a promise, "+523.2M at 7.4B/hr"
     // reads as the broken rate it came from.
-    const goldNote = best && goldDelta !== 0 ? `, ${coins(best.goldPerHour)}/hr` : '';
+    const goldNote = best && rateKnown && goldDelta !== 0 ? `, ${coins(best.goldPerHour)}/hr` : '';
 
     const step = makeStep({
         id: stepId,
@@ -1199,6 +1202,7 @@ function planSkillGoal(goal, context, stepId = 'train') {
               goldNote
             : `Train ${label} ${level} → ${target}`,
         goldDelta,
+        costKnown: rateKnown,
         timeHours,
         details: {
             skillHrid,
