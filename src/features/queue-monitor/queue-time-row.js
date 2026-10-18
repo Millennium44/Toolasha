@@ -31,6 +31,7 @@ import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
+import { alchemyLevelRequirement } from '../../utils/alchemy-level.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
 
@@ -106,6 +107,7 @@ export function queueTimeLeft() {
             itemDetailMap,
             actionHrid: action.actionHrid,
             includeCommunityBuff: true,
+            levelRequirementOverride: alchemyLevelRequirement(details, action, itemDetailMap),
         });
         if (!stats) {
             unknown = true;

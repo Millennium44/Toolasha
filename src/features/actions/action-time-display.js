@@ -23,6 +23,7 @@ import itemFlowRecorder from '../networth/item-flow-recorder.js';
 import { GATHERING_ACTION_TYPES, lootEntryValue } from '../networth/gold-sources.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
+import { alchemyLevelRequirement as sharedAlchemyLevelRequirement } from '../../utils/alchemy-level.js';
 import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
 import { timeReadable, formatWithSeparator, formatDateTime, formatLargeNumber } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
@@ -3836,11 +3837,9 @@ class ActionTimeDisplay {
      * @returns {number|undefined} The item level, or undefined for anything else
      */
     alchemyLevelRequirement(actionDetails, actionObj, itemDetailMap = null) {
-        if (actionDetails?.type !== '/action_types/alchemy' || !actionObj?.primaryItemHash) return undefined;
-        const { itemHrid } = this.parseItemHash(actionObj.primaryItemHash);
-        if (!itemHrid) return undefined;
-        const itemLevel = (itemDetailMap?.[itemHrid] ?? dataManager.getItemDetails(itemHrid))?.itemLevel;
-        return itemLevel || undefined;
+        return sharedAlchemyLevelRequirement(actionDetails, actionObj, itemDetailMap, (hrid) =>
+            dataManager.getItemDetails(hrid)
+        );
     }
 
     /**

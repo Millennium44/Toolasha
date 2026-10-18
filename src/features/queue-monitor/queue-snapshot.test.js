@@ -11,6 +11,7 @@ const game = vi.hoisted(() => ({
     storedKeys: [],
     stored: {},
     dmHandlers: {},
+    calls: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -49,7 +50,10 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 vi.mock('../../utils/action-calculator.js', () => ({
-    calculateActionStats: () => game.stats,
+    calculateActionStats: (details, options) => {
+        game.calls.push({ details, options });
+        return game.stats;
+    },
 }));
 
 const queueSnapshot = (await import('./queue-snapshot.js')).default;
@@ -64,6 +68,7 @@ describe('queue snapshot', () => {
         game.storedKeys = [];
         game.stored = {};
         game.dmHandlers = {};
+        game.calls = [];
         queueSnapshot.snapshots = new Map();
         queueSnapshot._boundOnSwitching = null;
     });
@@ -452,5 +457,30 @@ describe('queue snapshot', () => {
         await Promise.resolve();
 
         expect(queueSnapshot._boundOnSwitching).toBe(firstHandler);
+    });
+
+    test('each alchemy action is measured from its own item level, enhanced or not', async () => {
+        game.itemDetailMap = { '/items/low': { itemLevel: 10 }, '/items/high': { itemLevel: 100 } };
+        game.actionDetails['/actions/alchemy/coinify'] = { name: 'Coinify', type: '/action_types/alchemy' };
+        game.actionDetails['/actions/milking/basic'] = { name: 'Basic Milking', type: '/action_types/milking' };
+        const alchemy = (hash) => ({
+            actionHrid: '/actions/alchemy/coinify',
+            primaryItemHash: hash,
+            isDone: false,
+            hasMaxCount: true,
+            maxCount: 100,
+            currentCount: 0,
+        });
+        game.actions = [
+            alchemy('/item_locations/inventory::/items/low::0'),
+            alchemy('161296::/item_locations/inventory::/items/high::5'),
+            { actionHrid: '/actions/milking/basic', isDone: false, hasMaxCount: true, maxCount: 5, currentCount: 0 },
+        ];
+        queueSnapshot.initialize();
+        await Promise.resolve();
+
+        game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'Someone' });
+
+        expect(game.calls.map((c) => c.options.levelRequirementOverride)).toEqual([10, 100, undefined]);
     });
 });

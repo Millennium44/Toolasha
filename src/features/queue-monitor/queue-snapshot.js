@@ -7,6 +7,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
+import { alchemyLevelRequirement } from '../../utils/alchemy-level.js';
 import { compareActionQueueOrder } from '../../utils/combat-actions.js';
 import { normalizeLegacySnapshot } from './queue-snapshot-legacy.js';
 
@@ -129,6 +130,7 @@ class QueueSnapshot {
                               itemDetailMap,
                               actionHrid: action.actionHrid,
                               includeCommunityBuff: true,
+                              levelRequirementOverride: alchemyLevelRequirement(actionDetails, action, itemDetailMap),
                           });
 
                     if (stats) {
