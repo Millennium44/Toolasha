@@ -335,3 +335,72 @@ describe('createIdlePoolReaper', () => {
         expect(terminate).not.toHaveBeenCalled();
     });
 });
+
+describe('WorkerPool partial initialization', () => {
+    /** Make the Nth worker construction (1-based, counted from now) throw. */
+    function failOnConstruction(n) {
+        let count = 0;
+        vi.stubGlobal(
+            'Worker',
+            class extends SilentWorker {
+                constructor(url) {
+                    count += 1;
+                    if (count === n) throw new Error('worker refused');
+                    super(url);
+                }
+            }
+        );
+    }
+
+    test('a failure part-way terminates the workers already built and leaves an empty pool', async () => {
+        failOnConstruction(3);
+        const pool = new WorkerPool({}, 4, { taskTimeoutMs: 0 });
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await expect(pool.initialize()).rejects.toThrow('worker refused');
+
+        expect(created).toHaveLength(2);
+        expect(created.every((w) => w.terminated)).toBe(true);
+        expect(pool.workers).toHaveLength(0);
+        expect(pool.initialized).toBe(false);
+        expect(urls.every((entry) => entry.revoked)).toBe(true);
+    });
+
+    test('a retry through execute() builds exactly poolSize workers, however often it failed before', async () => {
+        const pool = new WorkerPool({}, 4, { taskTimeoutMs: 0 });
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        for (const n of [2, 3]) {
+            failOnConstruction(n);
+            await expect(pool.execute({ a: 1 })).rejects.toThrow('worker refused');
+        }
+        created = [];
+        vi.stubGlobal('Worker', SilentWorker);
+
+        const pending = pool.execute({ a: 1 });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(created).toHaveLength(4);
+        expect(pool.workers).toHaveLength(4);
+        pool.terminate();
+        await expect(pending).rejects.toThrow();
+    });
+
+    test('executeAll retries a failed initialization with a pool of exactly poolSize', async () => {
+        failOnConstruction(2);
+        const pool = new WorkerPool({}, 3, { taskTimeoutMs: 0 });
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await expect(pool.executeAll([{ a: 1 }])).rejects.toThrow('worker refused');
+        created = [];
+        vi.stubGlobal('Worker', SilentWorker);
+
+        const pending = pool.executeAll([{ a: 1 }]);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(pool.workers).toHaveLength(3);
+        expect(created).toHaveLength(3);
+        pool.terminate();
+        await expect(pending).rejects.toThrow();
+    });
+});
