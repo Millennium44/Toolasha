@@ -187,6 +187,8 @@ export function pricingStamp() {
     return [
         setting('profitCalc_pricingMode'),
         setting('networth_pricingMode'),
+        // Market / Vendor / Best replaces the book outright on an Iron Cow character
+        setting('profitCalc_ironCowValuation'),
         config.isFeatureEnabled?.('enhanceSim_baseItemCraftingCost') ? 'craft' : 'buy',
         // A buy at the bid is priced one tick up when this is on, so it moves every bid-side input
         config.getSetting?.('profitCalc_patientTickBuy') === true ? 'tick' : '',

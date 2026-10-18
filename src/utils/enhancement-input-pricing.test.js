@@ -21,6 +21,7 @@ const game = vi.hoisted(() => ({
     networthMode: 'ask',
     craftingSetting: false,
     customVersion: 0,
+    ironCowMode: 'market',
     buffVersion: 0,
 }));
 
@@ -33,6 +34,7 @@ vi.mock('../core/data-manager.js', () => ({
 vi.mock('../core/config.js', () => ({
     default: {
         isFeatureEnabled: (key) => key === 'enhanceSim_baseItemCraftingCost' && game.craftingSetting,
+        getSettingValue: (key) => (key === 'profitCalc_ironCowValuation' ? game.ironCowMode : ''),
         getSetting: (key) => (key === 'profitCalc_patientTickBuy' ? game.patientTickBuy === true : undefined),
     },
 }));
@@ -487,6 +489,20 @@ describe('pricingStamp', () => {
         game.patientTickBuy = true;
         expect(pricingStamp()).not.toBe(without);
         game.patientTickBuy = false;
+    });
+});
+
+describe('pricingStamp and the Iron Cow valuation', () => {
+    test('moves when Market / Vendor / Best is switched, which replaces the book on an Iron Cow character', async () => {
+        const { pricingStamp } = await import('./enhancement-input-pricing.js');
+        game.ironCowMode = 'market';
+        const market = pricingStamp();
+        game.ironCowMode = 'vendor';
+        const vendor = pricingStamp();
+        game.ironCowMode = 'best';
+        const best = pricingStamp();
+        expect(new Set([market, vendor, best]).size).toBe(3);
+        game.ironCowMode = 'market';
     });
 });
 

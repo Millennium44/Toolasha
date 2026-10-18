@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
     version: 0,
     items: {},
     actions: {},
+    ironCow: null,
 }));
 
 vi.mock('../core/data-manager.js', () => ({
@@ -45,7 +46,7 @@ vi.mock('../api/marketplace.js', () => ({
     },
 }));
 vi.mock('./ironcow-valuation.js', () => ({
-    getIronCowValue: () => null,
+    getIronCowValue: (_hrid, level = 0) => (level ? null : state.ironCow),
     isIronCowCharacter: () => false,
 }));
 vi.mock('./action-context.js', () => ({ resolveActionContext: () => ({ equipment: new Map(), drinks: [] }) }));
@@ -71,6 +72,7 @@ beforeEach(() => {
     state.shop = {};
     state.items = {};
     state.actions = {};
+    state.ironCow = null;
     state.books = {
         [`${ASK_ONLY}:0`]: { ask: 1000, bid: -1 },
         [`${BID_ONLY}:0`]: { ask: -1, bid: 800 },
@@ -233,5 +235,32 @@ describe('a shop price that beats a cross-filled quote keeps its provenance', ()
         state.shop[BID_ONLY] = 5000;
         // One-sided bid 300 under a craft cost of 500: max(bid, production)
         expect(priceGuarded(BID_ONLY, { mode: 'ask' }).price).toBe(500);
+    });
+});
+
+describe('an Iron Cow value is the same on both sides', () => {
+    beforeEach(() => {
+        state.ironCow = { price: 100, source: 'vendor' };
+        state.items['/items/ore'] = { name: 'Ore' };
+        state.items[BID_ONLY] = { name: 'Bid Only' };
+        state.books['/items/ore:0'] = { ask: 2000, bid: 2000 };
+        state.actions['/actions/make'] = {
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/ore', count: 1 }],
+            outputItems: [{ itemHrid: BID_ONLY, count: 1 }],
+        };
+    });
+
+    test.each(['ask', 'bid'])('a bid-only or ask-only book never replaces the vendor value in %s mode', (mode) => {
+        expect(priceMaterial(BID_ONLY, { mode }).price).toBe(100);
+        expect(priceMaterial(ASK_ONLY, { mode }).price).toBe(100);
+    });
+
+    test('it skips the inflation guard, so a dearer craft cost does not lift it', () => {
+        for (const mode of ['ask', 'bid']) {
+            expect(priceGuarded(BID_ONLY, { mode }).price).toBe(100);
+            expect(priceBase(BID_ONLY, { mode }).price).toBe(100);
+        }
+        expect(priceProtection(BID_ONLY, { mode: 'ask' }).price).toBe(100);
     });
 });
