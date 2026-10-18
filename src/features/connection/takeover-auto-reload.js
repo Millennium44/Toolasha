@@ -24,8 +24,11 @@
  *   after {@link MAX_AUTO_RELOADS} it stops and says so. The record is cleared
  *   only once a connection has stayed up for at least {@link STABLE_RESET_MS}
  *   and twice the next wait (see `_startStableTimer`), so a takeover after our
- *   own reload — even one a peer tab waited its full delay for — still counts. A record
- *   that cannot be read or written counts as spent: no reload.
+ *   own reload — even one a peer tab waited its full delay for — still counts.
+ *   The same window, measured from the last reload, expires a record left
+ *   while the feature was off, and a record written for another character in
+ *   this tab is ignored. A record that cannot be read or written counts as
+ *   spent: no reload.
  */
 
 import config from '../../core/config.js';
@@ -59,6 +62,18 @@ export function getConfiguredMinutes() {
     const raw = config.getSettingValue(SETTING_KEY, 'off');
     const minutes = Number(raw);
     return Number.isFinite(minutes) && minutes > 0 ? minutes : 0;
+}
+
+/**
+ * How long a reload count stays meaningful: at least {@link STABLE_RESET_MS},
+ * and twice this tab's next wait, so a peer tab on an equal or shorter setting
+ * always takes the character back inside it.
+ * @param {number} count - Consecutive automatic reloads so far
+ * @returns {number} Milliseconds
+ */
+export function stableWindowMs(count) {
+    const minutes = getConfiguredMinutes() || 60;
+    return Math.max(STABLE_RESET_MS, 2 * minutes * 60 * 1000 * 2 ** count);
 }
 
 /**
@@ -152,6 +167,13 @@ class TakeoverAutoReload {
 
     /**
      * Read the consecutive-auto-reload record.
+     *
+     * A record left by another character in this tab, or older than its own
+     * stability window (see {@link stableWindowMs}), counts as no record: the
+     * count is about this character being traded back and forth, and a gap
+     * that long — the feature off, the tab idle — means the trading stopped.
+     * Both still let two fighting tabs reach the cap, since each reads its
+     * record a peer's wait after writing it.
      * @returns {{count: number, lastAt: number}|null} Null when storage cannot be read
      * @private
      */
@@ -162,7 +184,30 @@ class TakeoverAutoReload {
             const parsed = JSON.parse(raw);
             const count = Number(parsed?.count);
             if (!Number.isFinite(count) || count < 0) return null;
-            return { count: Math.floor(count), lastAt: Number(parsed?.lastAt) || 0 };
+            const record = { count: Math.floor(count), lastAt: Number(parsed?.lastAt) || 0 };
+
+            const owner = parsed?.characterId ?? null;
+            const current = this._currentCharacterId();
+            // An unknown current character keeps the count: the side that cannot loop
+            if (owner !== null && current !== null && String(owner) !== String(current)) {
+                return { count: 0, lastAt: 0 };
+            }
+            if (record.count > 0 && record.lastAt > 0 && Date.now() - record.lastAt >= stableWindowMs(record.count)) {
+                return { count: 0, lastAt: 0 };
+            }
+            return record;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * @returns {string|number|null} The character this tab is logged in as
+     * @private
+     */
+    _currentCharacterId() {
+        try {
+            return dataManager.getCurrentCharacterId?.() ?? null;
         } catch {
             return null;
         }
@@ -176,7 +221,10 @@ class TakeoverAutoReload {
      */
     _writeRecord(count) {
         try {
-            window.sessionStorage.setItem(RECORD_KEY, JSON.stringify({ count, lastAt: Date.now() }));
+            window.sessionStorage.setItem(
+                RECORD_KEY,
+                JSON.stringify({ count, lastAt: Date.now(), characterId: this._currentCharacterId() })
+            );
             return true;
         } catch (error) {
             console.error('[TakeoverAutoReload] Could not record the reload; not reloading:', error);
@@ -218,8 +266,7 @@ class TakeoverAutoReload {
         // means no reload
         if (!record || record.count <= 0) return;
 
-        const minutes = getConfiguredMinutes() || 60;
-        const windowMs = Math.max(STABLE_RESET_MS, 2 * minutes * 60 * 1000 * 2 ** record.count);
+        const windowMs = stableWindowMs(record.count);
         this.stableTimer = setTimeout(() => {
             this.stableTimer = null;
             if (connectionState.isConnected()) this._clearRecord();

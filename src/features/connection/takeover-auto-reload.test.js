@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
     socket: {},
     dm: {},
     selfClosed: new Set(),
+    characterId: 'char-a',
 }));
 
 function addTo(map, event, cb) {
@@ -57,6 +58,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         on: (e, cb) => addTo(state.dm, e, cb),
         off: (e, cb) => removeFrom(state.dm, e, cb),
+        getCurrentCharacterId: () => state.characterId,
     },
 }));
 
@@ -104,6 +106,7 @@ beforeEach(() => {
     state.socket = {};
     state.dm = {};
     state.selfClosed = new Set();
+    state.characterId = 'char-a';
     window.sessionStorage.clear();
     document.body.innerHTML = '';
     reloadSpy = vi.spyOn(takeover, '_performReload').mockImplementation(() => {});
@@ -410,6 +413,79 @@ describe('takeover auto-reload', () => {
         vi.advanceTimersByTime(30 * MIN);
         expect(reloadSpy).toHaveBeenCalledTimes(1);
         expect(readRecord().count).toBe(2);
+    });
+
+    test("another character's reloads in this tab do not count for this one", () => {
+        // Character A was auto-reloaded up to the cap in this tab
+        takeover.initialize();
+        showOverlay();
+        for (let i = 0; i < MAX_AUTO_RELOADS; i++) {
+            disconnect();
+            vi.advanceTimersByTime(15 * MIN * 2 ** i);
+            takeover.disable();
+            state.connected = true;
+            takeover.initialize();
+        }
+        expect(reloadSpy).toHaveBeenCalledTimes(MAX_AUTO_RELOADS);
+        expect(readRecord()).toMatchObject({ count: MAX_AUTO_RELOADS, characterId: 'char-a' });
+
+        // Switch to B: its takeover uses the base delay and is not capped
+        takeover.disable();
+        state.characterId = 'char-b';
+        state.connected = true;
+        takeover.initialize();
+        disconnect();
+        expect(toastText()).not.toContain('has stopped reloading by itself');
+        vi.advanceTimersByTime(15 * MIN);
+        expect(reloadSpy).toHaveBeenCalledTimes(MAX_AUTO_RELOADS + 1);
+        expect(readRecord()).toMatchObject({ count: 1, characterId: 'char-b' });
+    });
+
+    test('a record still counts for the same character inside its window', () => {
+        window.sessionStorage.setItem(
+            RECORD_KEY,
+            JSON.stringify({ count: 1, lastAt: Date.now(), characterId: 'char-a' })
+        );
+        takeover.initialize();
+        showOverlay();
+        disconnect();
+        vi.advanceTimersByTime(30 * MIN - 1);
+        expect(reloadSpy).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(1);
+        expect(reloadSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('a record left while the feature was off expires from its last reload', () => {
+        // Count 2 at 15 min: window is 2 x 60 = 120 min from the last reload
+        takeover.initialize();
+        window.sessionStorage.setItem(
+            RECORD_KEY,
+            JSON.stringify({ count: 2, lastAt: Date.now(), characterId: 'char-a' })
+        );
+        takeover.disable();
+        vi.advanceTimersByTime(3 * 24 * 60 * MIN);
+
+        state.connected = true;
+        takeover.initialize();
+        showOverlay();
+        disconnect();
+        vi.advanceTimersByTime(15 * MIN);
+        expect(reloadSpy).toHaveBeenCalledTimes(1);
+        expect(readRecord().count).toBe(1);
+    });
+
+    test('a record just inside its window after a disable still counts', () => {
+        window.sessionStorage.setItem(
+            RECORD_KEY,
+            JSON.stringify({ count: 2, lastAt: Date.now(), characterId: 'char-a' })
+        );
+        vi.advanceTimersByTime(120 * MIN - 2 * MIN);
+        state.connected = true;
+        takeover.initialize();
+        showOverlay();
+        disconnect();
+        vi.advanceTimersByTime(15 * MIN);
+        expect(reloadSpy).not.toHaveBeenCalled();
     });
 
     describe('storage failure', () => {
