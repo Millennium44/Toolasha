@@ -351,6 +351,34 @@ describe('applying a preset', () => {
         expect(mocks.written).toEqual([]);
     });
 
+    test('it writes nothing to a character that arrived while the snapshot saved', async () => {
+        let release;
+        mocks.snapshotGate = new Promise((resolve) => (release = resolve));
+        mocks.settingsMap.combatSim.isTrue = false;
+        const pending = applyPreset('combat');
+        // Character B loads: a fresh map and a new id
+        mocks.characterId = 'char-2';
+        mocks.settingsMap = { ...mocks.settingsMap, combatSim: { id: 'combatSim', type: 'checkbox', isTrue: false } };
+        release();
+        expect(await pending).toBe(null);
+        expect(mocks.written).toEqual([]);
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(false);
+        // A's undo copy went to A's key, not B's
+        expect(mocks.storageWrites.map(([key]) => key)).toEqual([bulkSnapshotKey('char-1')]);
+    });
+
+    test('an A to B to A round trip is still a different load', async () => {
+        let release;
+        mocks.snapshotGate = new Promise((resolve) => (release = resolve));
+        const pending = applyPreset('combat');
+        mocks.characterId = 'char-2';
+        mocks.characterId = 'char-1';
+        mocks.settingsMap = { ...mocks.settingsMap };
+        release();
+        expect(await pending).toBe(null);
+        expect(mocks.written).toEqual([]);
+    });
+
     test('it never writes an excluded setting', async () => {
         await applyPreset('essentials');
         expect(mocks.written.map(([id]) => id)).not.toContain('ironCow_enabled');

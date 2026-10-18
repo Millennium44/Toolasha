@@ -411,46 +411,71 @@ export function resolvePresetValues(preset, groups = settingsGroups) {
  *
  * @returns {string}
  */
-export function bulkSnapshotKey() {
-    const characterId = dataManager.getCurrentCharacterId?.();
+export function bulkSnapshotKey(characterId = dataManager.getCurrentCharacterId?.()) {
     return characterId ? `${SNAPSHOT_KEY_PREFIX}_${characterId}` : SNAPSHOT_KEY_PREFIX;
+}
+
+/**
+ * Who a bulk write belongs to, captured before its first await. The settings
+ * map object is part of the identity: a character switch (even A -> B -> A)
+ * loads a fresh map, so a stale operation cannot pass for the current one.
+ *
+ * @returns {{characterId: (string|undefined), key: string, settingsMap: Object}}
+ */
+export function captureBulkOwner() {
+    const characterId = dataManager.getCurrentCharacterId?.();
+    return { characterId, key: bulkSnapshotKey(characterId), settingsMap: config.settingsMap };
+}
+
+/**
+ * Whether the character and settings map a bulk write started on are still the
+ * live ones. Check after every await, before touching config or a snapshot.
+ *
+ * @param {{characterId: (string|undefined), settingsMap: Object}} owner - From `captureBulkOwner`
+ * @returns {boolean}
+ */
+export function isBulkOwnerCurrent(owner) {
+    return dataManager.getCurrentCharacterId?.() === owner.characterId && config.settingsMap === owner.settingsMap;
 }
 
 /**
  * Record every bulk-writable setting's current value, so Restore has something
  * to put back.
+ * @param {{key: string}} [owner] - Captured owner; defaults to the current character
  * @returns {Promise<Object<string, boolean>>} The snapshot that was saved
  * @throws {Error} When storage refuses the write — the caller must not go on
  *   to change anything it could not then undo
  */
-export async function saveBulkSnapshot() {
+export async function saveBulkSnapshot(owner = captureBulkOwner()) {
     const snapshot = {};
     for (const id of presetTargetIds()) {
         const entry = config.settingsMap[id];
         if (!entry) continue;
         snapshot[id] = entry.isTrue ?? false;
     }
-    const saved = await storage.setJSON(bulkSnapshotKey(), snapshot, 'settings', true);
+    const saved = await storage.setJSON(owner.key, snapshot, 'settings', true);
     if (saved === false) throw new Error('The undo snapshot could not be saved');
     return snapshot;
 }
 
 /**
  * The saved snapshot, or null when no bulk write has happened.
+ * @param {{key: string}} [owner] - Captured owner; defaults to the current character
  * @returns {Promise<Object<string, boolean>|null>}
  */
-export async function loadBulkSnapshot() {
-    return storage.getJSON(bulkSnapshotKey(), 'settings', null);
+export async function loadBulkSnapshot(owner = captureBulkOwner()) {
+    return storage.getJSON(owner.key, 'settings', null);
 }
 
 /**
  * Forget the snapshot — after Restore has used it.
+ * @param {{key: string}} [owner] - Captured owner; defaults to the current character
  * @returns {Promise<void>}
  */
-export async function clearBulkSnapshot() {
+export async function clearBulkSnapshot(owner = captureBulkOwner()) {
     // null, not a delete: sync carries whole keys, so a deleted snapshot comes back from the gist on the next pull
     // and the Restore button with it. A null is a newer value the whole-key rule carries; readers treat it as absent.
-    await storage.set(bulkSnapshotKey(), null, 'settings', true);
+    await storage.set(owner.key, null, 'settings', true);
 }
 
 /**
@@ -487,8 +512,8 @@ export function writeCheckboxValues(values) {
  *
  * @param {string} presetId - An id from `SETTING_PRESETS`
  * @returns {Promise<Object<string, boolean>|null>} The values written, or null
- *   when the preset is unknown or its undo snapshot could not be saved (nothing
- *   is written in either case)
+ *   when the preset is unknown, its undo snapshot could not be saved, or the
+ *   character changed mid-write (nothing is written in any of those)
  */
 export async function applyPreset(presetId) {
     try {
@@ -498,8 +523,14 @@ export async function applyPreset(presetId) {
             return null;
         }
 
+        const owner = captureBulkOwner();
         const values = resolvePresetValues(preset);
-        await saveBulkSnapshot();
+        await saveBulkSnapshot(owner);
+        if (!isBulkOwnerCurrent(owner)) {
+            // The character changed while the snapshot was saving; these values were chosen for the old one
+            console.warn('[SettingPresets] Character changed while applying a preset; nothing was written');
+            return null;
+        }
         writeCheckboxValues(values);
         return values;
     } catch (error) {
