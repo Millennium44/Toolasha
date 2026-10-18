@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     storageWrites: [],
     stored: new Map(),
     characterId: 'char-1',
+    snapshotWrite: true,
+    snapshotGate: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -38,7 +40,11 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         setJSON: async (key, value) => {
+            if (mocks.snapshotGate) await mocks.snapshotGate;
+            if (mocks.snapshotWrite === 'throw') throw new Error('disk full');
+            if (mocks.snapshotWrite === false) return false;
             mocks.storageWrites.push([key, value]);
+            return true;
         },
         getJSON: async (key) => mocks.stored.get(key) ?? null,
         set: async (key, value) => {
@@ -278,6 +284,8 @@ describe('applying a preset', () => {
         mocks.written = [];
         mocks.storageWrites = [];
         mocks.characterId = 'char-1';
+        mocks.snapshotWrite = true;
+        mocks.snapshotGate = null;
         mocks.settingsMap = {};
         for (const group of Object.values(settingsGroups)) {
             for (const [id, definition] of Object.entries(group.settings)) {
@@ -326,6 +334,21 @@ describe('applying a preset', () => {
         // Snapshot is the state from before the write, not after it
         expect(snapshot.combatSim).toBe(false);
         expect(mocks.settingsMap.combatSim.isTrue).toBe(true);
+    });
+
+    test('it writes nothing when the undo snapshot reports failure', async () => {
+        mocks.settingsMap.combatSim.isTrue = false;
+        mocks.snapshotWrite = false;
+        expect(await applyPreset('combat')).toBe(null);
+        expect(mocks.written).toEqual([]);
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(false);
+    });
+
+    test('it writes nothing when the undo snapshot throws', async () => {
+        mocks.settingsMap.combatSim.isTrue = false;
+        mocks.snapshotWrite = 'throw';
+        expect(await applyPreset('combat')).toBe(null);
+        expect(mocks.written).toEqual([]);
     });
 
     test('it never writes an excluded setting', async () => {
