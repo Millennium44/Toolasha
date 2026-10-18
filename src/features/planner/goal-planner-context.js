@@ -258,6 +258,22 @@ function startBonuses(action, itemDetailMap, drinkConcentration) {
 }
 
 /**
+ * The part of an action's hourly margin that is a per-hour drink or tea bill.
+ * It is charged by the hour, so it is costed by the duration of a climb, not by
+ * the completions in it.
+ *
+ * @param {Object|null} profit - A profit calculator result
+ * @returns {number} Gold per hour (positive), 0 when the result reports none
+ */
+function trainingDrinkCostOf(profit) {
+    // Gathering reports drinkCostPerHour, production totalTeaCostPerHour; both are a positive
+    // per-HOUR cost already subtracted inside profitPerHour. A result with neither field gives 0,
+    // so its whole margin is costed per completion, as before this split.
+    const cost = Number(profit?.drinkCostPerHour ?? profit?.totalTeaCostPerHour);
+    return Number.isFinite(cost) && cost > 0 ? cost : 0;
+}
+
+/**
  * The signed hourly margin of an action, for costing the XP it trains.
  *
  * Null when it cannot be trusted: no result, a non-finite margin, or a cost
@@ -355,6 +371,7 @@ async function measureGoldRates() {
     // an XP skill costs its margin whether that is positive, zero or negative.
     // null = the margin could not be read (no price on something it consumes).
     const trainingMargin = new Map();
+    const trainingDrinkCost = new Map();
     const notes = [];
     let unpriceable = 0;
 
@@ -362,6 +379,7 @@ async function measureGoldRates() {
         try {
             const profit = await calculateGatheringProfit(hrid, { keepSellTax: true });
             trainingMargin.set(hrid, trainingMarginOf(profit));
+            trainingDrinkCost.set(hrid, trainingDrinkCostOf(profit));
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -388,6 +406,7 @@ async function measureGoldRates() {
         try {
             const profit = await calculateProductionProfit(hrid, { keepSellTax: true });
             trainingMargin.set(hrid, trainingMarginOf(profit));
+            trainingDrinkCost.set(hrid, trainingDrinkCostOf(profit));
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -462,7 +481,7 @@ async function measureGoldRates() {
     }
 
     liquidity.rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
-    return { rates: liquidity.rates, byAction, trainingMargin, notes, combatStatus };
+    return { rates: liquidity.rates, byAction, trainingMargin, trainingDrinkCost, notes, combatStatus };
 }
 
 /**
@@ -476,7 +495,7 @@ async function measureGoldRates() {
  * @param {Map<string, number>} goldByAction - Gold per hour, by action
  * @returns {Array<Object>} Rates, best first
  */
-function measureXpRates(skillHrid, goldByAction) {
+function measureXpRates(skillHrid, goldByAction, drinkCostByAction = new Map()) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return [];
 
@@ -507,6 +526,8 @@ function measureXpRates(skillHrid, goldByAction) {
                 // Gathering and production are costed above; a missing or unreadable margin
                 // there is unknown, not free. Other types have no calculator to ask.
                 goldPerHour: measuredType ? (goldByAction.get(hrid) ?? null) : 0,
+                // The per-hour drink bill inside goldPerHour, which the planner charges by duration
+                drinkCostPerHour: measuredType ? (drinkCostByAction.get(hrid) ?? 0) : 0,
                 goldKnown: !measuredType || Number.isFinite(goldByAction.get(hrid)),
             });
         } catch (error) {
@@ -789,9 +810,17 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
     const gameData = dataManager.getInitClientData();
     const measured = measureRates
         ? await measureGoldRates()
-        : { rates: [], byAction: new Map(), trainingMargin: new Map(), notes: [], combatStatus: null };
+        : {
+              rates: [],
+              byAction: new Map(),
+              trainingMargin: new Map(),
+              trainingDrinkCost: new Map(),
+              notes: [],
+              combatStatus: null,
+          };
     const rates = measured.rates;
     const goldByAction = measured.trainingMargin;
+    const drinkCostByAction = measured.trainingDrinkCost;
 
     const acquisitions = new Map();
     const runs = new Map();
@@ -833,7 +862,9 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
         xpRates: (skillHrid) => {
             if (xpCache.has(skillHrid)) return xpCache.get(skillHrid);
             const measured =
-                skillHrid === ENHANCING_SKILL ? measureEnhancingRates() : measureXpRates(skillHrid, goldByAction);
+                skillHrid === ENHANCING_SKILL
+                    ? measureEnhancingRates()
+                    : measureXpRates(skillHrid, goldByAction, drinkCostByAction);
             xpCache.set(skillHrid, measured);
             return measured;
         },

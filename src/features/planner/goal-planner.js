@@ -1197,13 +1197,16 @@ function planSkillGoal(goal, context, stepId = 'train') {
     // The margin is per hour at the starting level, but efficiency rises as the climb goes
     // and shortens later cycles; the completions (and what each consumes) do not shrink.
     // So a multi-level climb is costed per completion, not by the shrinking duration.
+    // The hourly margin has a per-hour drink bill folded in. Drinks are charged by the clock, so
+    // they follow the (shorter) duration; everything else follows the completions.
+    const drinkPerHour = best ? Math.max(0, num(best.drinkCostPerHour)) : 0;
     const perCompletion =
-        best && !best.flatRate && num(best.actionsPerHour) > 0 && Number.isFinite(actionsNeeded)
-            ? num(best.goldPerHour) / num(best.actionsPerHour)
+        best && !best.flatRate && num(best.actionsPerHour) > 0 && Number.isFinite(actionsNeeded) && timeHours !== null
+            ? (num(best.goldPerHour) + drinkPerHour) / num(best.actionsPerHour)
             : null;
     let goldDelta = 0;
     if (best && rateKnown) {
-        if (perCompletion !== null) goldDelta = perCompletion * num(actionsNeeded);
+        if (perCompletion !== null) goldDelta = perCompletion * num(actionsNeeded) - drinkPerHour * timeHours;
         else if (timeHours !== null) goldDelta = num(best.goldPerHour) * timeHours;
     }
 
