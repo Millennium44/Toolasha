@@ -12452,6 +12452,19 @@ describe('verifying close calls on fresh seeds', () => {
             const error = await verdictText({ verdict: 'error', mean: null, se: null, error: 'boom' });
             expect(error).toContain('error');
             expect(error).not.toContain('NaN');
+            // The status line says it failed rather than "complete: error"
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe('Trigger verify failed: boom');
+        });
+
+        test('a verify that throws says it failed, in the box and the status line', async () => {
+            await runTriggers();
+            mocks.triggerVerifyImpl = () => {
+                throw new Error('worker died');
+            };
+            block().querySelector('#mwi-csim-trigger-verify-btn').click();
+            await settle();
+            expect(block().textContent).toContain('Verify failed: worker died');
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe('Trigger verify failed: worker died');
         });
 
         test('a refusal and a Stop each say what happened', async () => {

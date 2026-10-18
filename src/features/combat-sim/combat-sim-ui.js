@@ -13364,12 +13364,17 @@ class CombatSimUI {
         result.verifyOutcome = outcome;
         redraw(false);
         const verdict = outcome.rows?.[0]?.verdict;
+        // A failure says so, as the table verifies and the Lab Sim do: "complete: error" read as a verdict
+        const failure =
+            verdict === 'error' || (!verdict && outcome.error) ? outcome.rows?.[0]?.error || outcome.error : null;
         this._setStatus(
             outcome.refused
                 ? 'Cannot verify the trigger changes: nothing to compare or too few seeds.'
                 : outcome.stopped
                   ? 'Trigger verify stopped.'
-                  : `Trigger verify complete: ${verdict === 'not-confirmed' ? 'not confirmed' : (verdict ?? 'no result')}.`
+                  : failure !== null
+                    ? `Trigger verify failed${failure ? `: ${failure}` : '.'}`
+                    : `Trigger verify complete: ${verdict === 'not-confirmed' ? 'not confirmed' : (verdict ?? 'no result')}.`
         );
     }
 
