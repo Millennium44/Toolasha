@@ -302,7 +302,9 @@ describe('a cost that could not be priced is not a cost of zero', () => {
 
         const context = await buildPlannerContext();
         const [cooking] = context.xpRates('/skills/cooking');
-        expect(cooking.goldPerHour).toBe(0);
+        // Unknown, not free
+        expect(cooking.goldPerHour).toBeNull();
+        expect(cooking.goldKnown).toBe(false);
     });
 
     test('an unpriceable drink costs a gathering rate its place too', async () => {
@@ -457,5 +459,61 @@ describe('what one goal may plan against', () => {
         const context = await contextOver500Logs();
         expect(context.reservationNote(120, '/items/log', 'mine')).toBe('');
         expect(context.reservationNote(120, '/items/log', 'other')).toBe('120 short — reserved');
+    });
+});
+
+describe('training rates keep the signed margin the rankings drop', () => {
+    test('a fully priced loss is carried as a negative rate, and stays out of the rankings', async () => {
+        rates.production = { '/actions/cooking/stew': { profitPerHour: -50_000, materialCosts: [{}] } };
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBe(-50_000);
+        expect(cooking.goldKnown).toBe(true);
+        expect(context.goldRates().map((rate) => rate.kind)).toEqual(['gathering']);
+    });
+
+    test('a genuine zero margin is a known zero', async () => {
+        rates.production = { '/actions/cooking/stew': { profitPerHour: 0 } };
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBe(0);
+        expect(cooking.goldKnown).toBe(true);
+    });
+
+    test('a positive margin is carried as before', async () => {
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBe(50_000);
+        expect(cooking.goldKnown).toBe(true);
+    });
+
+    test('a loss with an unpriced material is unknown, not a quoted loss', async () => {
+        rates.production = {
+            '/actions/cooking/stew': { profitPerHour: -1, materialCosts: [{ missingPrice: true }] },
+        };
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBeNull();
+        expect(cooking.goldKnown).toBe(false);
+    });
+
+    test('an action the calculator returned nothing for is unknown, not free', async () => {
+        rates.production = {};
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBeNull();
+        expect(cooking.goldKnown).toBe(false);
+    });
+
+    test('a non-finite margin is unknown', async () => {
+        rates.production = { '/actions/cooking/stew': { profitPerHour: NaN } };
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.goldKnown).toBe(false);
     });
 });

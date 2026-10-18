@@ -1153,6 +1153,62 @@ describe('a skill target', () => {
     });
 });
 
+describe('a skill target - what training costs', () => {
+    const cooking = '/skills/cooking';
+    // 1000 xp for level 1 -> 2 at 1000 xp/hour: exactly one hour
+    const rate = (extra = {}) => ({
+        label: 'Cook Stew',
+        requiredLevel: 1,
+        xpPerHour: 1000,
+        xpPerAction: 100,
+        actionTime: 10,
+        totalEfficiency: 0,
+        flatRate: true,
+        goldKnown: true,
+        ...extra,
+    });
+    const plan = (rates, gold = 0) =>
+        planGoal(
+            { type: 'skill', skillHrid: cooking, targetLevel: 2 },
+            context({ gold, skill: () => ({ level: 1, experience: 1000 }), xpRates: () => rates })
+        );
+
+    test('a fully priced loss is a signed negative delta and is not free with no gold', () => {
+        const result = plan([rate({ goldPerHour: -50_000 })]);
+        const train = step(result, 'train');
+        expect(train.goldDelta).toBeCloseTo(-50_000, 6);
+        expect(train.costKnown).toBe(true);
+        expect(step(result, 'fund')?.goldDelta).toBeCloseTo(50_000, 6);
+        expect(summarize(result.steps).goldSpend).toBeGreaterThan(0);
+    });
+
+    test('a loss covered by held gold needs no funding step', () => {
+        const result = plan([rate({ goldPerHour: -50_000 })], 1_000_000);
+        expect(step(result, 'train').goldDelta).toBeCloseTo(-50_000, 6);
+        expect(step(result, 'fund')).toBeUndefined();
+    });
+
+    test('a genuinely zero margin is a known zero', () => {
+        const result = plan([rate({ goldPerHour: 0 })]);
+        expect(step(result, 'train').goldDelta).toBe(0);
+        expect(step(result, 'train').costKnown).toBe(true);
+        expect(step(result, 'fund')).toBeUndefined();
+    });
+
+    test('a positive margin earns', () => {
+        const result = plan([rate({ goldPerHour: 20_000 })]);
+        expect(step(result, 'train').goldDelta).toBeCloseTo(20_000, 6);
+    });
+
+    test('a margin that could not be priced is unknown, not free', () => {
+        const result = plan([rate({ goldPerHour: null, goldKnown: false })]);
+        const train = step(result, 'train');
+        expect(train.costKnown).toBe(false);
+        expect(summarize(result.steps).costKnown).toBe(false);
+        expect(result.warnings.join(' ')).toContain('unknown');
+    });
+});
+
 describe('a house room target', () => {
     const observatory = '/house_rooms/observatory';
 
