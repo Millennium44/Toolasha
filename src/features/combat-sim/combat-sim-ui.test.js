@@ -11853,6 +11853,7 @@ describe('verifying close calls on fresh seeds', () => {
                 signalDuring = params.abortSignal();
                 const done = answer({})(params);
                 // The row cut off by the terminated sim finished no seed
+                done.rows[0] = { ...done.rows[0], seeds: 5 };
                 done.rows[1] = { ...done.rows[1], verdict: 'not-confirmed', seeds: 0, mean: null, se: null };
                 return { ...done, stopped: true };
             };
@@ -12040,15 +12041,43 @@ describe('verifying close calls on fresh seeds', () => {
 
         test('a verify cut short is not read as orders that failed to hold up', async () => {
             drawPlan([orderRow('A → B', { profit: 900 })]);
-            mocks.verifyImpl = (params) => ({
-                ...answer({ 'Order: A → B': 'not-confirmed' })(params),
-                stopped: true,
-            });
+            mocks.verifyImpl = (params) => {
+                const out = answer({ 'Order: A → B': 'not-confirmed' })(params);
+                return { ...out, rows: out.rows.map((r) => ({ ...r, seeds: 3 })), stopped: true };
+            };
             ui._upgradeAborted = false;
             await verifyOrders();
             expect(section().textContent).toContain('Verify stopped partway');
             expect(section().textContent).not.toContain('held up on fresh seeds');
             expect(planOrder().textContent).toContain('A → B');
+        });
+
+        test('a stopped multi-row verify judges the row that finished every seed and leaves the partial one', async () => {
+            drawPlan([orderRow('A → B', { profit: 900 }), orderRow('C → D', { profit: 800 })]);
+            mocks.verifyImpl = (params) => {
+                const out = answer({ 'Order: A → B': 'not-confirmed', 'Order: C → D': 'not-confirmed' })(params);
+                // A finished all 8 seeds; C → D was cut off after 3
+                return {
+                    ...out,
+                    rows: out.rows.map((r) => (r.description?.includes('C → D') ? { ...r, seeds: 3 } : r)),
+                    stopped: true,
+                };
+            };
+            ui._upgradeAborted = false;
+            await verifyOrders();
+            const entries = ui._upgradeResultsData.verifyVerdicts.profit;
+            const stoppedFlags = Object.values(entries).map((e) => [e.seeds, e.stopped]);
+            expect(stoppedFlags).toEqual(
+                expect.arrayContaining([
+                    [8, false],
+                    [3, true],
+                ])
+            );
+            expect(section().textContent).toContain('None of the 1 verified order held up');
+            expect(section().textContent).toContain('Verify stopped partway');
+            // A → B did not hold up; the partial C → D is not rejected
+            expect(planOrder().textContent).toContain('C → D');
+            expect(planOrder().textContent).not.toContain('A → B');
         });
 
         test('with every order rejected the plan says none held up', async () => {
@@ -12068,10 +12097,13 @@ describe('verifying close calls on fresh seeds', () => {
                 'confirmed on fresh seeds'
             );
 
-            mocks.verifyImpl = answer(
-                { 'Order: A → B': 'not-confirmed', 'Order: C → D': 'not-confirmed' },
-                { stopped: true }
-            );
+            mocks.verifyImpl = (params) => {
+                const out = answer(
+                    { 'Order: A → B': 'not-confirmed', 'Order: C → D': 'not-confirmed' },
+                    { stopped: true }
+                )(params);
+                return { ...out, rows: out.rows.map((r) => ({ ...r, seeds: 3 })) };
+            };
             ui._upgradeResultsData.verifyVerdicts = undefined;
             await verifyOrders();
             // A stopped run's "not confirmed" is a run that did not get far enough: A → B stays

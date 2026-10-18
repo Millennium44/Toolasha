@@ -13185,7 +13185,9 @@ class CombatSimUI {
                 se: row.se,
                 seeds: row.seeds,
                 unit: outcome.unit,
-                stopped: Boolean(outcome.stopped),
+                // Per row: a stopped run still finished every seed of the rows that got them all, and those
+                // rows' "not confirmed" is a real verdict (the lab applies the same rule)
+                stopped: Boolean(outcome.stopped) && row.seeds < outcome.seeds,
                 error: row.error ?? null,
                 profitLeftOut: Boolean(row.profitLeftOut),
                 unpriced: row.unpriced ?? [],
