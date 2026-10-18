@@ -1306,16 +1306,23 @@ describe('a skill target - the coins needed to start the first completion', () =
         );
 
     test('a small net loss on expensive inputs still needs the inputs in hand', () => {
-        // 100K of materials sells back for 99K: a 1K loss, but not startable with no coins
+        // 100K of materials sells back for 99K: a 1K loss, and the 100K has to be in hand first
         const result = plan([rate({ upfrontCost: 100_000 })], 0);
         const train = step(result, 'train');
         expect(train.goldDelta).toBeCloseTo(-1000, 6);
-        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(100_000, 6);
+        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(101_000, 6);
     });
 
-    test('the startup bill is working capital, not added on top of the loss', () => {
+    test('the startup bill and the losses booked before the last purchase are both carried', () => {
+        // Ten completions each buying 100K and returning 99.9K: 100K covers the first,
+        // but the second needs the 99.9K that came back plus what the first lost
         const result = plan([rate({ upfrontCost: 100_000 })], 40_000);
-        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(60_000, 6);
+        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(61_000, 6);
+    });
+
+    test('coins between the startup bill and the full requirement still fall short', () => {
+        const result = plan([rate({ upfrontCost: 100_000 })], 100_500);
+        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(500, 6);
     });
 
     test('enough coins to start needs no extra funding', () => {
@@ -1329,9 +1336,9 @@ describe('a skill target - the coins needed to start the first completion', () =
         expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(100_000, 6);
     });
 
-    test('a loss larger than the startup bill is still what is funded', () => {
+    test('a loss larger than the startup bill is funded on top of it', () => {
         const result = plan([rate({ upfrontCost: 100, goldPerHour: -540_000 })], 0);
-        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(10_000, 6);
+        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(10_100, 6);
     });
 
     test('an action with no inputs is unaffected', () => {
