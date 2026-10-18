@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reload by itself after the game was opened elsewhere
+
+- New setting (off by default): when this tab is disconnected because the game was opened from another device or window, it waits 5–60 minutes, then reloads to take the character back. A notice shows when it will happen with Reload now and Cancel; it never reloads while you are using the page, and two tabs fighting over one character back off and stop after 3 reloads.
+
 ### Combat Sim and Goal Planner: three reported bugs
 
 - Combat Sim no longer counts a monster killed by your parry during its own ability twice (deaths, loot and task kills were doubled); the same held for a player killed by a monster's parry mid-cast.
