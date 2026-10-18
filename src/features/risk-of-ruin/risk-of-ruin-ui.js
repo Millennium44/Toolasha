@@ -730,8 +730,9 @@ class RiskOfRuinUI {
             };
             detailInfo = { mode: 'alchemy', breakdown: alchemyModel.breakdown };
             this._setDepthCapContext({
-                costPerAction: alchemyModel.cost,
-                items: this._alchemyDepthCapItems(alchemyModel.breakdown, alchemyModel.cost),
+                // Sell depth recoups everything an attempt costs on average, catalyst included
+                costPerAction: alchemyModel.expectedCost,
+                items: this._alchemyDepthCapItems(alchemyModel.breakdown, alchemyModel.expectedCost),
             });
             detailInfo.untrackedOutputs = this._findUntrackedAlchemyOutputs(hrid, alchemyModel.breakdown);
             optimalCommit = calculateOptimalCommit({

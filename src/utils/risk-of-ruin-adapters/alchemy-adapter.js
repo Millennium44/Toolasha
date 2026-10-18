@@ -119,6 +119,7 @@ function buildOutcomeDistribution(profit, attemptCost, catalystCostOnSuccess) {
  *   catalyst instead of searching for the best one or reading the live panel.
  * @returns {{
  *   cost: number,
+ *   expectedCost: number,
  *   maxSinglePossibleLoss: number,
  *   outcomeDistribution: Array<{prob: number, net: number}>,
  *   stepFn: function(state: Object, rng: function(): number): Object,
@@ -172,6 +173,10 @@ export function buildAlchemyTransmuteModel(itemHrid, { useLiveSetup = false, cat
 
     return {
         cost: attemptCost,
+        // Everything one attempt is expected to spend: the unconditional cost plus the catalyst,
+        // which is only consumed on a success. `cost` stays the unconditional part because the
+        // outcome distribution charges the catalyst on its success branches itself.
+        expectedCost: attemptCost + profit.successRate * catalystCostOnSuccess,
         maxSinglePossibleLoss,
         outcomeDistribution,
         stepFn: (state, rng) => ({ balance: state.balance + drawFromDistribution(outcomeDistribution, rng).net }),
