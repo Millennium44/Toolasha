@@ -560,3 +560,29 @@ describe('training rates carry completions per hour', () => {
         expect(cooking.goldPerHour).toBe(50_000);
     });
 });
+
+describe('training rates carry the per-hour drink bill inside the margin', () => {
+    test('gathering reports it as drinkCostPerHour', async () => {
+        rates.gathering = { '/actions/milking/cow': { profitPerHour: 100_000, drinkCostPerHour: 7_000 } };
+
+        const context = await buildPlannerContext();
+        const [milking] = context.xpRates('/skills/milking');
+        expect(milking.drinkCostPerHour).toBe(7_000);
+        expect(milking.goldPerHour).toBe(100_000);
+    });
+
+    test('production reports it as totalTeaCostPerHour', async () => {
+        rates.production = { '/actions/cooking/stew': { profitPerHour: -50_000, totalTeaCostPerHour: 9_000 } };
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.drinkCostPerHour).toBe(9_000);
+        expect(cooking.goldPerHour).toBe(-50_000);
+    });
+
+    test('a result with no drink field has none to split out', async () => {
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.drinkCostPerHour).toBe(0);
+    });
+});

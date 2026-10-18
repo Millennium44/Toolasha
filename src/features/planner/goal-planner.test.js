@@ -1258,6 +1258,26 @@ describe('a skill target - costing a climb that spans levels', () => {
         expect(step(result, 'train').costKnown).toBe(false);
     });
 
+    test('a per-hour drink bill follows the duration while materials follow the completions', () => {
+        // -54,000/hr in all: 18,000 of it is drinks, the other -36,000 is materials net of sales
+        const train = step(plan(10, [rate({ drinkCostPerHour: 18_000 })]), 'train');
+        const expected = (-36_000 / 540) * train.details.actionsNeeded - 18_000 * train.timeHours;
+        expect(train.goldDelta).toBeCloseTo(expected, 6);
+        // Charging the drinks per completion would have billed them for the starting pace
+        expect(train.goldDelta).toBeGreaterThan((-54_000 / 540) * train.details.actionsNeeded);
+    });
+
+    test('with no drink bill the result is the per-completion figure', () => {
+        const train = step(plan(10, [rate({ drinkCostPerHour: 0 })]), 'train');
+        expect(train.goldDelta).toBeCloseTo((-54_000 / 540) * train.details.actionsNeeded, 6);
+    });
+
+    test('an unknown margin with a drink bill stays unknown', () => {
+        const result = plan(10, [rate({ goldPerHour: null, goldKnown: false, drinkCostPerHour: 18_000 })]);
+        expect(step(result, 'train').goldDelta).toBe(0);
+        expect(step(result, 'train').costKnown).toBe(false);
+    });
+
     test('a rate without completions per hour falls back to the duration', () => {
         const train = step(plan(10, [rate({ actionsPerHour: undefined })]), 'train');
         expect(train.goldDelta).toBeCloseTo(-54_000 * train.timeHours, 6);
