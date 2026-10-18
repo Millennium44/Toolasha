@@ -80,6 +80,7 @@
 
 import { formatKMB } from '../../utils/formatters.js';
 import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
+import { canStartAction } from '../../utils/efficiency.js';
 
 /** The goal kinds this version plans, and what to call them */
 export const GOAL_TYPES = {
@@ -1146,7 +1147,15 @@ function planSkillGoal(goal, context, stepId = 'train') {
     }
 
     const rates = (ask(context, 'xpRates', [skillHrid], []) || []).filter(
-        (rate) => rate && num(rate.xpPerHour) > 0 && num(rate.requiredLevel, 1) <= level
+        (rate) =>
+            rate &&
+            num(rate.xpPerHour) > 0 &&
+            canStartAction({
+                requiredLevel: num(rate.requiredLevel, 1),
+                skillLevel: level,
+                teaSkillLevelBonus: num(rate.teaSkillLevelBonus),
+                actionLevelBonus: num(rate.actionLevelBonus),
+            })
     );
     rates.sort((a, b) => num(b.xpPerHour) - num(a.xpPerHour));
     const best = rates[0] || null;

@@ -1209,6 +1209,50 @@ describe('a skill target - what training costs', () => {
     });
 });
 
+describe('a skill target - which actions the level allows', () => {
+    const rate = (extra = {}) => ({
+        label: 'Cook Stew',
+        requiredLevel: 45,
+        xpPerHour: 1000,
+        xpPerAction: 100,
+        actionTime: 10,
+        totalEfficiency: 0,
+        goldPerHour: 0,
+        goldKnown: true,
+        ...extra,
+    });
+    const plan = (level, rates) =>
+        planGoal(
+            { type: 'skill', skillHrid: '/skills/cooking', targetLevel: level + 1 },
+            context({ skill: () => ({ level, experience: level * 1000 }), xpRates: () => rates })
+        );
+
+    test('Artisan Tea raises the requirement: level 50 cannot start 45 + 6', () => {
+        const result = plan(50, [rate({ actionLevelBonus: 6 })]);
+        expect(step(result, 'train').details.rate).toBeNull();
+        expect(result.warnings.join(' ')).toContain('could be costed');
+    });
+
+    test('level 51 can start 45 + 6', () => {
+        const result = plan(51, [rate({ actionLevelBonus: 6 })]);
+        expect(step(result, 'train').details.rate.label).toBe('Cook Stew');
+    });
+
+    test('with no tea the raw requirement applies', () => {
+        expect(step(plan(50, [rate()]), 'train').details.rate.label).toBe('Cook Stew');
+        expect(step(plan(44, [rate()]), 'train').details.rate).toBeNull();
+    });
+
+    test('a skill-level tea raises the level, an Action Level tea raises the requirement', () => {
+        // 49 + 2 skill-level bonus = 51 clears 45 + 6
+        expect(
+            step(plan(49, [rate({ actionLevelBonus: 6, teaSkillLevelBonus: 2 })]), 'train').details.rate
+        ).not.toBeNull();
+        // 49 + 1 = 50 does not
+        expect(step(plan(49, [rate({ actionLevelBonus: 6, teaSkillLevelBonus: 1 })]), 'train').details.rate).toBeNull();
+    });
+});
+
 describe('a house room target', () => {
     const observatory = '/house_rooms/observatory';
 
