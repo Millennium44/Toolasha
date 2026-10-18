@@ -6790,6 +6790,43 @@ describe('each half comes down when its own setting is switched off', () => {
         retireSpy.mockRestore();
     });
 
+    test("a character switch's final report lands in the departing record and leaves nothing for the arriving one", async () => {
+        const { default: labyrinthRoomLogs } = await import('./labyrinth-room-logs.js');
+        const dm = await import('../../core/data-manager.js');
+        const useSpy = vi.spyOn(labyrinthRoomLogs, 'useSimSource');
+        useSpy.mockClear();
+        labyrinthClearRate.disable();
+        labyrinthClearRate.initialize();
+        const source = useSpy.mock.calls[0][0];
+        useSpy.mockRestore();
+        db.map.clear();
+        db.hold = null;
+        labyrinthClearRate.forgetOutcomes();
+        const aKey = 'settings:labyrinthFightOutcomes_me';
+        const bKey = 'settings:labyrinthFightOutcomes_iron456';
+        db.map.set(aKey, { version: 2, totals: { 'A:1': { attempts: 1, clears: 1 } } });
+        db.map.set(bKey, { version: 2, totals: { 'B:1': { attempts: 5, clears: 2 } } });
+
+        try {
+            // The registry's order: the calculator is disabled (dropping its record), Room Logs then
+            // reports its last room through the retired source, then drops the source's state, then the id moves
+            labyrinthClearRate.disable();
+            await source.record({ subjectHrid: '/monsters/imp', roomLevel: 200, kind: 'combat', actions: 0 });
+            source.forget();
+            dm.default.getCurrentCharacterId.mockReturnValue('iron456');
+            await labyrinthClearRate.loadOutcomes();
+
+            expect(Object.keys(db.map.get(aKey).totals).sort()).toEqual(['/monsters/imp@200', 'A:1']);
+            expect(Object.keys(labyrinthClearRate._outcomes)).toEqual(['B:1']);
+
+            await labyrinthClearRate.saveOutcomes();
+            expect(Object.keys(db.map.get(bKey).totals)).toEqual(['B:1']);
+        } finally {
+            dm.default.getCurrentCharacterId.mockReturnValue('me');
+            labyrinthClearRate.forgetOutcomes();
+        }
+    });
+
     test('disable drops the setting watchers', () => {
         labyrinthClearRate.disable();
         expect(settingWatchers).toHaveLength(0);
