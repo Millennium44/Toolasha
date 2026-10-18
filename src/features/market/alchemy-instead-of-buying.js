@@ -425,6 +425,8 @@ export function findAlchemySellRoutes(itemHrid, deps) {
         sellContainerValue,
     };
     const routes = [];
+    // The best action that did NOT beat selling, so the tooltip can say why nothing is drawn
+    let bestLoser = null;
     for (const actionType of alchemyActionsOf(details)) {
         const pick = bestSelfUseCandidate(
             candidatesOf(actionType, itemHrid),
@@ -465,7 +467,21 @@ export function findAlchemySellRoutes(itemHrid, deps) {
             { rankPartial: true }
         );
         const evaluation = pick?.evaluation;
-        if (!evaluation || !(evaluation.margin > 0)) continue;
+        if (!evaluation) continue;
+        if (!(evaluation.margin > 0)) {
+            // A route worth nothing (every output unpriced) is not a comparison
+            if (!(sellValue + evaluation.margin > 0)) continue;
+            if (!bestLoser || evaluation.margin > bestLoser.margin) {
+                bestLoser = {
+                    actionType,
+                    valuePerUnit: sellValue + evaluation.margin,
+                    sellValue,
+                    margin: evaluation.margin,
+                    partlyUnpriced: evaluation.partlyUnpriced,
+                };
+            }
+            continue;
+        }
         routes.push({
             actionType,
             valuePerUnit: sellValue + evaluation.margin,
@@ -478,7 +494,10 @@ export function findAlchemySellRoutes(itemHrid, deps) {
         });
     }
     routes.sort((a, b) => b.margin - a.margin);
-    return { sellValue, routes: routes.slice(0, deps.limit ?? MAX_ALTERNATIVES) };
+    const found = { sellValue, routes: routes.slice(0, deps.limit ?? MAX_ALTERNATIVES) };
+    // Only when no route wins: the best one that lost, `{actionType, valuePerUnit, sellValue, margin, partlyUnpriced}`
+    if (!found.routes.length && bestLoser) found.bestLoser = bestLoser;
+    return found;
 }
 
 // ---- Live wiring: the market, the calculator and the keep list ----
