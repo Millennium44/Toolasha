@@ -61,6 +61,7 @@ import { getPriceAgeString } from '../../utils/market-data.js';
 import { effectiveInventory, shortfallNote } from '../../utils/inventory-reservations.js';
 import { RESERVATION_OWNER_PREFIX } from './goal-planner.js';
 import { canStartAction } from '../../utils/efficiency.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { getDrinkConcentration, parseActionLevelBonus, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
 
 const COIN_HRID = '/items/coin';
@@ -236,18 +237,24 @@ export function gatheringSells(profit) {
 }
 
 /**
- * The level bonuses the character's active drinks give an action: a skill-level
+ * The level bonuses the drinks that will actually buff an action give it: a skill-level
  * bonus (raises the level) and, for production skills, an Action Level bonus
  * (Artisan Tea — raises the requirement). They are different numbers and
  * `canStartAction` treats them differently, so they travel separately.
  *
+ *
+ * The drinks and gear come from `resolveActionContext`, the same resolution the
+ * profit and experience calculators use: a tea that is slotted but out of stock
+ * neither lifts the level nor raises the requirement, and a saved loadout's
+ * drinks count the way they do everywhere else.
+ *
  * @param {Object} action - The action detail
  * @param {Object} itemDetailMap - Item details, for reading the drinks
- * @param {number} drinkConcentration - The character's drink concentration
  * @returns {{teaSkillLevelBonus: number, actionLevelBonus: number}}
  */
-function startBonuses(action, itemDetailMap, drinkConcentration) {
-    const activeDrinks = dataManager.getActionDrinkSlots?.(action.type) || [];
+function startBonuses(action, itemDetailMap) {
+    const { equipment, drinks: activeDrinks } = resolveActionContext(action.type);
+    const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
     const teaSkillLevelBonus = parseTeaSkillLevelBonus(action.type, activeDrinks, itemDetailMap, drinkConcentration);
     // Action Level teas (Artisan Tea) only exist for production skills — see
     // profit-constants.js's PRODUCTION_TYPES/GATHERING_TYPES split.
@@ -321,7 +328,6 @@ function availableActions(types) {
     const skills = dataManager.getSkills() || [];
     const levels = new Map(skills.map((skill) => [skill.skillHrid, skill.level]));
     const itemDetailMap = gameData.itemDetailMap || {};
-    const drinkConcentration = getDrinkConcentration(dataManager.getEquipment(), itemDetailMap);
 
     const found = [];
     for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
@@ -329,7 +335,7 @@ function availableActions(types) {
         const requirement = action.levelRequirement;
         if (requirement?.skillHrid) {
             const skillLevel = levels.get(requirement.skillHrid) ?? 1;
-            const bonuses = startBonuses(action, itemDetailMap, drinkConcentration);
+            const bonuses = startBonuses(action, itemDetailMap);
             if (!canStartAction({ requiredLevel: requirement.level || 1, skillLevel, ...bonuses })) {
                 continue;
             }
@@ -524,7 +530,6 @@ function measureXpRates(skillHrid, goldByAction, drinkCostByAction = new Map(), 
     if (!gameData?.actionDetailMap) return [];
 
     const itemDetailMap = gameData.itemDetailMap || {};
-    const drinkConcentration = getDrinkConcentration(dataManager.getEquipment(), itemDetailMap);
 
     const rates = [];
     for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
@@ -540,7 +545,7 @@ function measureXpRates(skillHrid, goldByAction, drinkCostByAction = new Map(), 
                 label: action.name || humanise(hrid),
                 requiredLevel: action.levelRequirement?.level || 1,
                 // Kept apart so the planner applies the same start rule as the gold ranking
-                ...startBonuses(action, itemDetailMap, drinkConcentration),
+                ...startBonuses(action, itemDetailMap),
                 xpPerHour: experience.expPerHour,
                 xpPerAction: experience.modifiedXP,
                 actionTime: experience.actionTime,
