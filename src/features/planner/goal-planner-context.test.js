@@ -586,3 +586,30 @@ describe('training rates carry the per-hour drink bill inside the margin', () =>
         expect(cooking.drinkCostPerHour).toBe(0);
     });
 });
+
+describe('training rates carry the cost of starting one completion', () => {
+    test('production carries one action of materials, as the ranking does', async () => {
+        rates.production = { '/actions/cooking/stew': { profitPerHour: -1000, totalMaterialCost: 100_000 } };
+
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.upfrontCost).toBe(100_000);
+        expect(context.xpRates('/skills/cooking')[0].upfrontCost).toBe(
+            (await buildPlannerContext()).xpRates('/skills/cooking')[0].upfrontCost
+        );
+    });
+
+    test('the ranking and the training rate agree on the same recipe', async () => {
+        rates.production = { '/actions/cooking/stew': { profitPerHour: 50_000, totalMaterialCost: 2_500 } };
+
+        const context = await buildPlannerContext();
+        const ranked = context.goldRates().find((rate) => rate.kind === 'production');
+        expect(ranked.upfrontCost).toBe(2_500);
+        expect(context.xpRates('/skills/cooking')[0].upfrontCost).toBe(ranked.upfrontCost);
+    });
+
+    test('gathering consumes nothing', async () => {
+        const context = await buildPlannerContext();
+        expect(context.xpRates('/skills/milking')[0].upfrontCost).toBe(0);
+    });
+});

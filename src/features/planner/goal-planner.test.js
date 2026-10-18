@@ -1284,6 +1284,68 @@ describe('a skill target - costing a climb that spans levels', () => {
     });
 });
 
+describe('a skill target - the coins needed to start the first completion', () => {
+    // Level 1 -> 2 is 10 completions at 540 an hour
+    const rate = (extra = {}) => ({
+        label: 'Cook Stew',
+        requiredLevel: 1,
+        xpPerHour: 54_000,
+        xpPerAction: 100,
+        actionTime: 10,
+        totalEfficiency: 50,
+        actionsPerHour: 540,
+        goldPerHour: -54_000,
+        goldKnown: true,
+        upfrontCost: 0,
+        ...extra,
+    });
+    const plan = (rates, gold) =>
+        planGoal(
+            { type: 'skill', skillHrid: '/skills/cooking', targetLevel: 2 },
+            context({ gold, skill: () => ({ level: 1, experience: 1000 }), xpRates: () => rates })
+        );
+
+    test('a small net loss on expensive inputs still needs the inputs in hand', () => {
+        // 100K of materials sells back for 99K: a 1K loss, but not startable with no coins
+        const result = plan([rate({ upfrontCost: 100_000 })], 0);
+        const train = step(result, 'train');
+        expect(train.goldDelta).toBeCloseTo(-1000, 6);
+        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(100_000, 6);
+    });
+
+    test('the startup bill is working capital, not added on top of the loss', () => {
+        const result = plan([rate({ upfrontCost: 100_000 })], 40_000);
+        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(60_000, 6);
+    });
+
+    test('enough coins to start needs no extra funding', () => {
+        const result = plan([rate({ upfrontCost: 100_000 })], 150_000);
+        expect(step(result, 'fund')).toBeUndefined();
+    });
+
+    test('a profitable recipe with expensive inputs still needs the startup with no coins', () => {
+        const result = plan([rate({ upfrontCost: 100_000, goldPerHour: 54_000 })], 0);
+        expect(step(result, 'train').goldDelta).toBeGreaterThan(0);
+        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(100_000, 6);
+    });
+
+    test('a loss larger than the startup bill is still what is funded', () => {
+        const result = plan([rate({ upfrontCost: 100, goldPerHour: -540_000 })], 0);
+        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(10_000, 6);
+    });
+
+    test('an action with no inputs is unaffected', () => {
+        const result = plan([rate()], 0);
+        expect(step(result, 'fund')?.details.shortfall).toBeCloseTo(1000, 6);
+    });
+
+    test('an unpriced margin stays unknown rather than being funded as free or as its inputs', () => {
+        const result = plan([rate({ goldPerHour: null, goldKnown: false, upfrontCost: 100_000 })], 0);
+        expect(step(result, 'train').costKnown).toBe(false);
+        expect(step(result, 'fund')).toBeUndefined();
+    });
+});
+
 describe('a skill target - which actions the level allows', () => {
     const rate = (extra = {}) => ({
         label: 'Cook Stew',
