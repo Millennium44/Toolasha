@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim and Goal Planner: three reported bugs
+
+- Combat Sim no longer counts a monster killed by your parry during its own ability twice (deaths, loot and task kills were doubled); the same held for a player killed by a monster's parry mid-cast.
+- Goal Planner charges training that loses money at its real loss instead of calling it free, and shows an unpriced training action's cost as unknown.
+- Goal Planner no longer recommends training an action that Artisan Tea's raised level requirement puts out of reach.
+
 ### Audit round (2026-10-17): sim verify
 
 - Combat Sim auto-verify now judges Profit/h close calls in gold against the same error the Ability order section shows, so an order labelled "within noise" is no longer skipped.
