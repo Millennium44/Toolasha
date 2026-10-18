@@ -3107,7 +3107,14 @@ class SettingsUI {
      * @param {HTMLElement} [restoreBtn]
      */
     async handleAllOff(restoreBtn = this.restoreButton) {
-        const snapshot = await saveBulkSnapshot();
+        let snapshot;
+        try {
+            snapshot = await saveBulkSnapshot();
+        } catch (error) {
+            console.error('[SettingsUI] All Off: saving the undo snapshot failed:', error);
+            alert('All Off was not applied: the undo copy of your switches could not be saved.');
+            return;
+        }
 
         const off = {};
         for (const id of Object.keys(snapshot)) off[id] = false;

@@ -420,6 +420,8 @@ export function bulkSnapshotKey() {
  * Record every bulk-writable setting's current value, so Restore has something
  * to put back.
  * @returns {Promise<Object<string, boolean>>} The snapshot that was saved
+ * @throws {Error} When storage refuses the write — the caller must not go on
+ *   to change anything it could not then undo
  */
 export async function saveBulkSnapshot() {
     const snapshot = {};
@@ -428,7 +430,8 @@ export async function saveBulkSnapshot() {
         if (!entry) continue;
         snapshot[id] = entry.isTrue ?? false;
     }
-    await storage.setJSON(bulkSnapshotKey(), snapshot, 'settings', true);
+    const saved = await storage.setJSON(bulkSnapshotKey(), snapshot, 'settings', true);
+    if (saved === false) throw new Error('The undo snapshot could not be saved');
     return snapshot;
 }
 
@@ -484,7 +487,8 @@ export function writeCheckboxValues(values) {
  *
  * @param {string} presetId - An id from `SETTING_PRESETS`
  * @returns {Promise<Object<string, boolean>|null>} The values written, or null
- *   when the preset is unknown
+ *   when the preset is unknown or its undo snapshot could not be saved (nothing
+ *   is written in either case)
  */
 export async function applyPreset(presetId) {
     try {
