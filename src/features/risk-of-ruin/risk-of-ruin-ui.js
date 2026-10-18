@@ -660,7 +660,21 @@ class RiskOfRuinUI {
         }, 10);
     }
 
+    /**
+     * Run one calculation. The widget is redrawn once, when the run ends (published, refused or
+     * abandoned), rather than when it starts: the previous figure stays up while the simulation
+     * runs, so recalculating with the marketplace open does not flicker the figure away, and a
+     * run that ends without publishing still takes the withdrawn figure down.
+     */
     async _compute() {
+        try {
+            await this._computeRun();
+        } finally {
+            marketDepthCap()?.repaint?.();
+        }
+    }
+
+    async _computeRun() {
         const status = this.panel.querySelector('#mwi-ror-status');
         const results = this.panel.querySelector('#mwi-ror-results');
         const mode = this.panel.querySelector('#mwi-ror-mode').value;
@@ -675,7 +689,8 @@ class RiskOfRuinUI {
         const generation = ++this.runGeneration;
         const panelAtStart = this.panel;
         const characterAtStart = this._currentCharacterId();
-        this._clearDepthCapContext();
+        // Withdrawn silently: the widget is redrawn when the run ends (see _compute)
+        this.lastDepthCapContext = null;
 
         if (mode === 'chest') {
             const hrid = this.panel.querySelector('#mwi-ror-chest').value;
@@ -833,6 +848,9 @@ class RiskOfRuinUI {
             this.panel !== panelAtStart ||
             this._currentCharacterId() !== characterAtStart
         ) {
+            // Same panel, different character (no teardown ran): it would otherwise read
+            // "Calculating…" forever. A newer run or a torn-down panel needs nothing.
+            if (generation === this.runGeneration && this.panel === panelAtStart) status.textContent = '';
             return;
         }
         const minActions = minActionsForNonZeroRisk(startingBalance, maxSinglePossibleLoss);
