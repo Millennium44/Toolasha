@@ -525,6 +525,74 @@ describe('takeover auto-reload', () => {
         expect(window.sessionStorage.getItem(RECORD_KEY)).toBeNull();
     });
 
+    test('#532: a backed-off countdown does not age the count out (30 min up, then 30 min wait)', () => {
+        takeover.initialize();
+        showOverlay();
+        disconnect();
+        vi.advanceTimersByTime(15 * MIN);
+        expect(readRecord().count).toBe(1);
+
+        for (let expected = 2; expected <= MAX_AUTO_RELOADS; expected++) {
+            takeover.disable();
+            dismissAllToasts();
+            state.connected = true;
+            takeover.initialize();
+            // Up for half the window, then taken again; the wait runs to the boundary
+            vi.advanceTimersByTime(15 * MIN * 2 ** (expected - 1));
+            disconnect();
+            vi.advanceTimersByTime(15 * MIN * 2 ** (expected - 1));
+            expect(readRecord().count).toBe(expected);
+        }
+
+        takeover.disable();
+        state.connected = true;
+        takeover.initialize();
+        vi.advanceTimersByTime(60 * MIN);
+        disconnect();
+        expect(toastText()).toContain('has stopped reloading by itself');
+        vi.advanceTimersByTime(480 * MIN);
+        expect(reloadSpy).toHaveBeenCalledTimes(MAX_AUTO_RELOADS);
+    });
+
+    test('two tabs, the trailing side: the peer waits as long as we will, and we still reach the cap', () => {
+        // After our reload k the peer, on the same count, waits 15 x 2^k and
+        // takes the character back; our own wait is then 15 x 2^k as well
+        takeover.initialize();
+        showOverlay();
+        disconnect();
+        vi.advanceTimersByTime(15 * MIN);
+
+        for (let ours = 1; ours <= MAX_AUTO_RELOADS; ours++) {
+            takeover.disable();
+            dismissAllToasts();
+            state.connected = true;
+            takeover.initialize();
+            vi.advanceTimersByTime(15 * MIN * 2 ** ours);
+            expect(readRecord().count).toBe(ours);
+            disconnect();
+            vi.advanceTimersByTime(15 * MIN * 2 ** ours);
+        }
+
+        expect(reloadSpy).toHaveBeenCalledTimes(MAX_AUTO_RELOADS);
+        expect(toastText()).toContain('has stopped reloading by itself');
+    });
+
+    test('a record that aged out before the disconnect still restarts the count', () => {
+        // Count 2 left 3 hours ago (window 120 min): the episode starts fresh
+        window.sessionStorage.setItem(
+            RECORD_KEY,
+            JSON.stringify({ count: 2, lastAt: Date.now(), characterId: 'char-a' })
+        );
+        vi.advanceTimersByTime(180 * MIN);
+        state.connected = true;
+        takeover.initialize();
+        showOverlay();
+        disconnect();
+        vi.advanceTimersByTime(15 * MIN);
+        expect(reloadSpy).toHaveBeenCalledTimes(1);
+        expect(readRecord().count).toBe(1);
+    });
+
     describe('storage failure', () => {
         let original;
         beforeEach(() => {

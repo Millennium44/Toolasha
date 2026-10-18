@@ -172,12 +172,19 @@ class TakeoverAutoReload {
      * stability window (see {@link stableWindowMs}), counts as no record: the
      * count is about this character being traded back and forth, and a gap
      * that long — the feature off, the tab idle — means the trading stopped.
-     * Both still let two fighting tabs reach the cap, since each reads its
-     * record a peer's wait after writing it.
+     * Both still let two fighting tabs reach the cap, since each is taken
+     * back a peer's wait after writing its record.
+     *
+     * Age is judged at `asOf`. During an episode that is the disconnect, not
+     * now: the stability window measures how long the connection survived, and
+     * the episode's own countdown is time spent disconnected. Judged at fire
+     * time, a backed-off countdown could age the record out and restart the
+     * count at 1 for ever (#532).
+     * @param {number} [asOf] - Epoch ms to judge the record's age at
      * @returns {{count: number, lastAt: number}|null} Null when storage cannot be read
      * @private
      */
-    _readRecord() {
+    _readRecord(asOf = Date.now()) {
         try {
             const raw = window.sessionStorage.getItem(RECORD_KEY);
             if (raw === null) return { count: 0, lastAt: 0 };
@@ -192,7 +199,7 @@ class TakeoverAutoReload {
             if (owner !== null && current !== null && String(owner) !== String(current)) {
                 return { count: 0, lastAt: 0 };
             }
-            if (record.count > 0 && record.lastAt > 0 && Date.now() - record.lastAt >= stableWindowMs(record.count)) {
+            if (record.count > 0 && record.lastAt > 0 && asOf - record.lastAt >= stableWindowMs(record.count)) {
                 return { count: 0, lastAt: 0 };
             }
             return record;
@@ -314,7 +321,7 @@ class TakeoverAutoReload {
     _arm(minutes) {
         this._clearReloadTimer();
 
-        const record = this._readRecord();
+        const record = this._readRecord(this.episode.disconnectedAt);
         if (!record) {
             this._endWithOffer(
                 'This character was opened from another device or window. Toolasha cannot keep count of its ' +
@@ -378,7 +385,7 @@ class TakeoverAutoReload {
             return;
         }
 
-        const record = this._readRecord();
+        const record = this._readRecord(this.episode.disconnectedAt);
         if (!record || record.count >= MAX_AUTO_RELOADS || !this._writeRecord(record.count + 1)) {
             this._endWithOffer(
                 'This character was opened from another device or window. Toolasha could not safely reload by ' +
