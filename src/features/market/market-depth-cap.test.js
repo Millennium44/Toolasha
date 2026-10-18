@@ -209,6 +209,61 @@ describe('the widget under the button belongs to the item on screen', () => {
             cleanup();
         }
     });
+    test('a +10 enhancing result only prices the +10 book, switching levels on the reused row', () => {
+        const { buttons, cleanup } = panel('cheese');
+        const showLevel = (level) => {
+            document.querySelector('[class*="MarketplacePanel_currentItem"]').innerHTML =
+                '<svg><use href="#cheese"></use></svg>' +
+                (level ? `<div class="Item_enhancementLevel__a">+${level}</div>` : '');
+            marketDepthCap.repaint();
+        };
+        try {
+            bridge.context = {
+                costPerAction: 1000,
+                items: [{ itemHrid: '/items/cheese', enhancementLevel: 10, quantityPerAction: 1 }],
+            };
+            const book = (price, quantity) => ({ bids: [{ price, quantity }] });
+            const levels = [];
+            levels[0] = book(10, 100);
+            levels[10] = book(2000, 7);
+            levels[20] = book(10000, 99);
+            marketDepthCap.orderBooksCache = { '/items/cheese': { data: { orderBooks: levels } } };
+
+            showLevel(0);
+            expect(buttons.querySelector('.mwi-depth-cap')).toBeNull();
+            showLevel(10);
+            expect(buttons.querySelector('.mwi-depth-cap').textContent).toContain('7');
+            showLevel(20);
+            expect(buttons.querySelector('.mwi-depth-cap')).toBeNull();
+            showLevel(0);
+            expect(buttons.querySelector('.mwi-depth-cap')).toBeNull();
+        } finally {
+            cleanup();
+        }
+    });
+
+    test('a +0 chest or transmute drop prices the +0 book and not an enhanced one', () => {
+        const { buttons, cleanup } = panel('cheese');
+        try {
+            bridge.context = {
+                costPerAction: 100,
+                items: [{ itemHrid: '/items/cheese', enhancementLevel: 0, quantityPerAction: 1 }],
+            };
+            const levels = [{ bids: [{ price: 1000, quantity: 900 }] }];
+            levels[5] = { bids: [{ price: 1000, quantity: 33 }] };
+            marketDepthCap.orderBooksCache = { '/items/cheese': { data: { orderBooks: levels } } };
+            marketDepthCap.processOrderBook();
+            expect(buttons.querySelector('.mwi-depth-cap').textContent).toContain('900');
+
+            document.querySelector('[class*="MarketplacePanel_currentItem"]').innerHTML =
+                '<svg><use href="#cheese"></use></svg><div class="Item_enhancementLevel__a">+5</div>';
+            marketDepthCap.repaint();
+            expect(buttons.querySelector('.mwi-depth-cap')).toBeNull();
+        } finally {
+            cleanup();
+        }
+    });
+
     test('charges a drop its costShare, not the whole action cost, when the context carries one', () => {
         const { buttons, cleanup } = panel('cheese');
         try {

@@ -80,6 +80,23 @@ vi.mock('../../utils/risk-of-ruin-adapters/enhancement-adapter.js', () => ({
     buildEnhancementModel: vi.fn(() => null),
 }));
 
+// The worker pool is not what these tests are about. `sim.gate`, when set, holds a run open so a
+// teardown can land while the simulation is still pending.
+const sim = vi.hoisted(() => ({ gate: null }));
+vi.mock('../../utils/risk-of-ruin-worker-manager.js', () => ({
+    simulateRuinAsync: vi.fn(async () => {
+        if (sim.gate) await sim.gate;
+        return {
+            ruinProbability: 0,
+            ruinCount: 0,
+            trials: 10,
+            ruinStepCounts: [],
+            meanStepsToRuin: null,
+            undecidedCount: 0,
+        };
+    }),
+}));
+
 vi.mock('../../utils/enhancement-config.js', () => ({
     getEnhancingParams: vi.fn(() => ({
         enhancingLevel: 100,
@@ -522,8 +539,8 @@ describe('depth-cap cost attribution', () => {
         );
 
         expect(items).toEqual([
-            { itemHrid: '/items/a', quantityPerAction: 1, costShare: 750 },
-            { itemHrid: '/items/b', quantityPerAction: 0.1, costShare: 250 },
+            { itemHrid: '/items/a', enhancementLevel: 0, quantityPerAction: 1, costShare: 750 },
+            { itemHrid: '/items/b', enhancementLevel: 0, quantityPerAction: 0.1, costShare: 250 },
         ]);
     });
 
@@ -554,6 +571,7 @@ describe('depth-cap cost attribution', () => {
         expect(items.map((i) => i.itemHrid)).toEqual(['/items/x', '/items/ess']);
         expect(items[0].quantityPerAction).toBe(0.5);
         expect(items[1].quantityPerAction).toBe(0.2);
+        expect(items.map((i) => i.enhancementLevel)).toEqual([0, 0]);
         expect(items[0].costShare).toBeCloseTo((800 * 300) / 700, 6);
         expect(items[1].costShare).toBeCloseTo((800 * 100) / 700, 6);
     });
@@ -638,5 +656,50 @@ describe('protection-substitute proxy price', () => {
         expect(setCustomPriceOverride).not.toHaveBeenCalled();
         expect(runSpy).not.toHaveBeenCalled();
         runSpy.mockRestore();
+    });
+});
+
+describe('sell-depth context from a real enhancing run', () => {
+    afterEach(() => {
+        riskOfRuinUI.disable();
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap: {} }));
+        dataManager.getItemDetails.mockImplementation(() => null);
+    });
+
+    /** Run a +0 to +target enhancement of a tradable cheese sword through the real producer */
+    async function runEnhancement(targetLevel) {
+        const itemDetailMap = {
+            '/items/cheese_sword': {
+                name: 'Cheese Sword',
+                itemLevel: 1,
+                isTradable: true,
+                enhancementCosts: [{ itemHrid: '/items/coin', count: 12 }],
+            },
+        };
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap }));
+        dataManager.getItemDetails.mockImplementation((hrid) => itemDetailMap[hrid] ?? null);
+        buildEnhancementModel.mockReturnValueOnce({
+            expectedTotalCost: 1000,
+            maxSinglePossibleLoss: 100,
+            perLevelOutcomeDistributions: [],
+            costPerAttempt: 10,
+            protectionCostOnFailure: 0,
+        });
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'enhancement';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/cheese_sword';
+        root.querySelector('#mwi-ror-target').value = String(targetLevel);
+        await riskOfRuinUI._compute();
+    }
+
+    test('the output is the target-level variant, not the base item', async () => {
+        await runEnhancement(10);
+
+        expect(riskOfRuinUI.getDepthCapContext()).toEqual({
+            costPerAction: 1000,
+            items: [{ itemHrid: '/items/cheese_sword', enhancementLevel: 10, quantityPerAction: 1 }],
+        });
     });
 });

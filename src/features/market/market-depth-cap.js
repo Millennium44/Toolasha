@@ -171,15 +171,19 @@ class MarketDepthCap {
             return;
         }
 
+        // The run's output is one specific enhancement variant (a +10 enhancing result is not the
+        // +0 or +20 item), so the entry must match the displayed level as well as the item
+        const enhancementLevel = this.getCurrentEnhancementLevel();
         const depthContext = riskOfRuinUI()?.getDepthCapContext?.() ?? null;
-        const item = depthContext?.items.find((i) => i.itemHrid === itemHrid);
+        const item = depthContext?.items.find(
+            (i) => i.itemHrid === itemHrid && (i.enhancementLevel ?? 0) === enhancementLevel
+        );
         const cached = this.orderBooksCache[itemHrid];
         if (!depthContext || !item || !cached) {
             forget();
             return;
         }
 
-        const enhancementLevel = this.getCurrentEnhancementLevel();
         const orderBookAtLevel = cached.data.orderBooks?.[enhancementLevel];
         const bids = orderBookAtLevel?.bids;
         if (!bids?.length) {

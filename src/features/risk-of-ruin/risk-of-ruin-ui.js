@@ -589,7 +589,7 @@ class RiskOfRuinUI {
      * The last computed cost-per-action + per-item output quantities, for market-depth-cap.js to
      * check the currently-viewed marketplace item against. Null when the enhanced item is
      * untradeable, or nothing has been calculated yet.
-     * @returns {{costPerAction: number, items: Array<{itemHrid: string, quantityPerAction: number, costShare?: number}>}|null}
+     * @returns {{costPerAction: number, items: Array<{itemHrid: string, enhancementLevel: number, quantityPerAction: number, costShare?: number}>}|null}
      *   costShare, when present (chest/alchemy modes), is this item's share of costPerAction by its
      *   share of total expected value - market-depth-cap.js prefers it over the shared costPerAction,
      *   since no single multi-output drop alone needs to recoup the whole action cost. Absent for
@@ -766,7 +766,8 @@ class RiskOfRuinUI {
             if (itemDetails.isTradable !== false) {
                 this.lastDepthCapContext = {
                     costPerAction: enhancementModel.expectedTotalCost,
-                    items: [{ itemHrid: hrid, quantityPerAction: 1 }],
+                    // The run produces the +targetLevel variant, so only that variant's bid book applies
+                    items: [{ itemHrid: hrid, enhancementLevel: targetLevel, quantityPerAction: 1 }],
                 };
             } else {
                 detailInfo.untradeableOutput = itemDetails.name || hrid.split('/').pop();
@@ -801,13 +802,14 @@ class RiskOfRuinUI {
      * (a zero-EV item would get a zero cost share and falsely look like unlimited depth).
      * @param {Array} dropBreakdown - expectedValueCalculator.getDropBreakdown() output.
      * @param {number} costPerAction
-     * @returns {Array<{itemHrid: string, quantityPerAction: number, costShare: number}>}
+     * @returns {Array<{itemHrid: string, enhancementLevel: number, quantityPerAction: number, costShare: number}>}
      */
     _chestDepthCapItems(dropBreakdown, costPerAction) {
         const tracked = dropBreakdown.filter((d) => d.dropRate > 0 && d.avgCount > 0 && d.hasPriceData);
         const totalEV = tracked.reduce((sum, d) => sum + d.expectedValue, 0);
         return tracked.map((d) => ({
             itemHrid: d.itemHrid,
+            enhancementLevel: 0,
             quantityPerAction: d.avgCount * d.dropRate,
             costShare: totalEV > 0 ? costPerAction * (d.expectedValue / totalEV) : costPerAction,
         }));
@@ -822,7 +824,7 @@ class RiskOfRuinUI {
      * probability to recover the item's per-action EV.
      * @param {Object} breakdown - alchemyModel.breakdown from buildAlchemyTransmuteModel().
      * @param {number} costPerAction
-     * @returns {Array<{itemHrid: string, quantityPerAction: number, costShare: number}>}
+     * @returns {Array<{itemHrid: string, enhancementLevel: number, quantityPerAction: number, costShare: number}>}
      */
     _alchemyDepthCapItems(breakdown, costPerAction) {
         const candidates = [];
@@ -855,6 +857,7 @@ class RiskOfRuinUI {
         const totalEV = tracked.reduce((sum, c) => sum + c.expectedValue, 0) + selfReturnEV;
         return tracked.map((c) => ({
             itemHrid: c.itemHrid,
+            enhancementLevel: 0,
             quantityPerAction: c.quantityPerAction,
             costShare: totalEV > 0 ? costPerAction * (c.expectedValue / totalEV) : costPerAction,
         }));
