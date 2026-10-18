@@ -102,7 +102,7 @@ function crossFill(itemHrid, level, side, resolved) {
         const shop = getShopCoinCost(itemHrid);
         if (shop > 0 && shop < price) price = shop;
     }
-    return { price, custom: false, missing: false, estimated: false };
+    return { price, custom: false, missing: false, estimated: false, crossFilled: true };
 }
 
 /** The resolver, with the context/mode options every function here takes (and the cross-fill). */
@@ -147,14 +147,20 @@ function guardQuotes(itemHrid, options) {
     if (!(resolved.price > 0)) return { quotes: null, resolved };
     const same = { ask: resolved.price, bid: resolved.price };
     const mode = options.mode || getPricingMode(options.context || 'profit', 'buy');
-    if (resolved.custom || resolved.estimated || mode !== 'ask') return { quotes: same, resolved };
-    const book = getItemPrices(itemHrid, 0);
-    // Only a plain book quote is weighed; a shop floor or patient tick is not the book's ask
-    if (book?.ask > 0 && book.ask === resolved.price) {
-        return { quotes: { ask: book.ask, bid: book.bid > 0 ? book.bid : 0 }, resolved };
+    if (resolved.custom || resolved.estimated) return { quotes: same, resolved };
+    // A figure taken from the opposite side because its own side had no live quote is a one-sided book
+    // to the guard, whichever mode asked: the quote it holds is the only one there is (an estimate
+    // filling the other side is not a quote)
+    if (resolved.crossFilled) {
+        return { quotes: mode === 'ask' ? { ask: 0, bid: resolved.price } : { ask: resolved.price, bid: 0 }, resolved };
     }
-    if (!(book?.ask > 0) && book?.bid > 0 && book.bid === resolved.price) {
-        return { quotes: { ask: 0, bid: book.bid }, resolved };
+    if (mode !== 'ask') return { quotes: same, resolved };
+    const book = getItemPrices(itemHrid, 0);
+    // Only a plain, live book quote is weighed; a shop floor or patient tick is not the book's ask, and
+    // an official-value estimate filling an empty side is not a quote at all
+    const askLive = book?.ask > 0 && !book.askEstimated;
+    if (askLive && book.ask === resolved.price) {
+        return { quotes: { ask: book.ask, bid: book.bid > 0 ? book.bid : 0 }, resolved };
     }
     return { quotes: same, resolved };
 }

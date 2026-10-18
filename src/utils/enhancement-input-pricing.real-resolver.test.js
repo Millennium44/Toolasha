@@ -18,11 +18,13 @@ const state = vi.hoisted(() => ({
     shop: {},
     profitMode: 'hybrid',
     version: 0,
+    items: {},
+    actions: {},
 }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ itemDetailMap: {}, actionDetailMap: {} }),
+        getInitClientData: () => ({ itemDetailMap: state.items, actionDetailMap: state.actions }),
         getItemDetails: () => null,
         getBuffStateVersion: () => state.version,
         on: () => {},
@@ -67,6 +69,8 @@ beforeEach(() => {
     state.version++;
     state.profitMode = 'hybrid';
     state.shop = {};
+    state.items = {};
+    state.actions = {};
     state.books = {
         [`${ASK_ONLY}:0`]: { ask: 1000, bid: -1 },
         [`${BID_ONLY}:0`]: { ask: -1, bid: 800 },
@@ -159,5 +163,40 @@ describe('protection, mirror and base use the same cross-fill', () => {
         state.books[`${ASK_ONLY}:5`] = { ask: -1, bid: 640 };
         expect(priceAtLevel(ASK_ONLY, 5, { mode: 'ask' }).price).toBe(640);
         expect(priceAtLevel(ASK_ONLY, 6, { mode: 'ask' })).toMatchObject({ price: null, unpriced: true });
+    });
+});
+
+describe('the inflation guard after a cross-fill onto a value-filled book', () => {
+    /** An item crafted from ore: 2 ore at 1000 = 2000 */
+    const craftable = (hrid, oreAsk) => {
+        state.items[hrid] = { name: hrid };
+        state.items['/items/ore'] = { name: 'Ore' };
+        state.books['/items/ore:0'] = { ask: oreAsk, bid: oreAsk };
+        state.actions['/actions/make'] = {
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/ore', count: 2 }],
+            outputItems: [{ itemHrid: hrid, count: 1 }],
+        };
+    };
+
+    test('ask mode: a live bid with an estimated ask is a one-sided bid book, so the craft cost lifts it', () => {
+        // The ask is the official-value estimate (900); only the bid (850) is a quote. One-sided bid:
+        // max(bid, production) = 2000, not the bare 850
+        craftable(VALUED_BID_ONLY, 1000);
+        expect(priceGuarded(VALUED_BID_ONLY, { mode: 'ask' }).price).toBe(2000);
+        expect(priceBase(VALUED_BID_ONLY, { mode: 'ask' }).price).toBe(2000);
+        expect(priceProtection(VALUED_BID_ONLY, { mode: 'ask' }).price).toBe(2000);
+    });
+
+    test('bid mode: a live ask with an estimated bid is a one-sided ask book, so an inflated ask falls to the craft cost', () => {
+        // Ask 950 over a craft cost of 500 is inflated (> 1.3x): the craft cost stands, not the ask
+        craftable(VALUED_ASK_ONLY, 250);
+        expect(priceGuarded(VALUED_ASK_ONLY, { mode: 'bid' }).price).toBe(500);
+    });
+
+    test('a genuinely two-sided book keeps the ordinary guard', () => {
+        state.books[`${ASK_ONLY}:0`] = { ask: 1000, bid: 900 };
+        craftable(ASK_ONLY, 1000);
+        expect(priceGuarded(ASK_ONLY, { mode: 'ask' }).price).toBe(1000);
     });
 });
