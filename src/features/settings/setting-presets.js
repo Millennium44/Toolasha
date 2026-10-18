@@ -454,7 +454,7 @@ export async function saveBulkSnapshot(owner = captureBulkOwner()) {
         if (!entry) continue;
         snapshot[id] = entry.isTrue ?? false;
     }
-    const saved = await storage.setJSON(owner.key, snapshot, 'settings', true);
+    const saved = await storage.setJSON(bulkSnapshotKey(owner.characterId), snapshot, 'settings', true);
     if (saved === false) throw new Error('The undo snapshot could not be saved');
     return snapshot;
 }
@@ -465,7 +465,7 @@ export async function saveBulkSnapshot(owner = captureBulkOwner()) {
  * @returns {Promise<Object<string, boolean>|null>}
  */
 export async function loadBulkSnapshot(owner = captureBulkOwner()) {
-    return storage.getJSON(owner.key, 'settings', null);
+    return storage.getJSON(bulkSnapshotKey(owner.characterId), 'settings', null);
 }
 
 /**
@@ -476,7 +476,7 @@ export async function loadBulkSnapshot(owner = captureBulkOwner()) {
 export async function clearBulkSnapshot(owner = captureBulkOwner()) {
     // null, not a delete: sync carries whole keys, so a deleted snapshot comes back from the gist on the next pull
     // and the Restore button with it. A null is a newer value the whole-key rule carries; readers treat it as absent.
-    await storage.set(owner.key, null, 'settings', true);
+    await storage.set(bulkSnapshotKey(owner.characterId), null, 'settings', true);
 }
 
 /**
