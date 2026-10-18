@@ -6764,6 +6764,20 @@ describe('each half comes down when its own setting is switched off', () => {
         expect(settingWatchers.filter((w) => w.key === 'labyrinthClearRate')).toHaveLength(1);
     });
 
+    test('closing the calculator also detaches the room log from its sim source', async () => {
+        const { default: labyrinthRoomLogs } = await import('./labyrinth-room-logs.js');
+        const spy = vi.spyOn(labyrinthRoomLogs, 'useSimSource');
+        change('labyrinthClearRate', false);
+        expect(spy).toHaveBeenLastCalledWith(null);
+        // Reopening hands it back
+        spy.mockClear();
+        toggles.labyrinthClearRate = true;
+        labyrinthClearRate.initialize();
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy.mock.calls[0][0]).toEqual(expect.objectContaining({ forecast: expect.any(Function) }));
+        spy.mockRestore();
+    });
+
     test('disable drops the setting watchers', () => {
         labyrinthClearRate.disable();
         expect(settingWatchers).toHaveLength(0);

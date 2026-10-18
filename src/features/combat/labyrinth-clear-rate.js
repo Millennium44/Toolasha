@@ -594,6 +594,11 @@ class LabyrinthClearRate {
 
             this.disableLiveProgress();
 
+            // The room log's forecast, record and recompute hooks are this calculator's. Left
+            // registered, a closed calculator (or the arriving character's, off) still has
+            // recorded fights folded in with no forecast beside them.
+            labyrinthRoomLogs.useSimSource?.(null);
+
             if (this._buffInputsHandler) {
                 for (const event of BUFF_INPUT_EVENTS) dataManager.off(event, this._buffInputsHandler);
                 this._buffInputsHandler = null;
