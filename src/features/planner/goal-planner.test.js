@@ -1209,6 +1209,61 @@ describe('a skill target - what training costs', () => {
     });
 });
 
+describe('a skill target - costing a climb that spans levels', () => {
+    // Efficiency starts at 50 and gains a point per level, so later cycles are shorter
+    // while the completions (and what each consumes) are not
+    const rate = (extra = {}) => ({
+        label: 'Cook Stew',
+        requiredLevel: 1,
+        xpPerHour: 36_000,
+        xpPerAction: 100,
+        actionTime: 10,
+        totalEfficiency: 50,
+        actionsPerHour: 540,
+        goldPerHour: -54_000,
+        goldKnown: true,
+        ...extra,
+    });
+    const plan = (target, rates) =>
+        planGoal(
+            { type: 'skill', skillHrid: '/skills/cooking', targetLevel: target },
+            context({ gold: 1e9, skill: () => ({ level: 1, experience: 1000 }), xpRates: () => rates })
+        );
+
+    test('a loss scales with the completions needed, not with the shrinking duration', () => {
+        const train = step(plan(10, [rate()]), 'train');
+        const perCompletion = -54_000 / 540;
+        expect(train.details.actionsNeeded).toBeGreaterThan(0);
+        expect(train.goldDelta).toBeCloseTo(perCompletion * train.details.actionsNeeded, 6);
+        // The old figure: starting-level hourly margin times the efficiency-shortened time
+        expect(train.goldDelta).toBeLessThan(-54_000 * train.timeHours);
+    });
+
+    test('a profit is costed the same way', () => {
+        const train = step(plan(10, [rate({ goldPerHour: 54_000 })]), 'train');
+        expect(train.goldDelta).toBeCloseTo(100 * train.details.actionsNeeded, 6);
+    });
+
+    test('a single level agrees with the duration figure to within one cycle', () => {
+        const train = step(plan(2, [rate()]), 'train');
+        expect(train.goldDelta).toBeCloseTo((-54_000 / 540) * train.details.actionsNeeded, 6);
+        // The duration is rounded up to whole cycles, which is all that separates them
+        const oneCycle = (54_000 * 10) / 3600;
+        expect(Math.abs(train.goldDelta - -54_000 * train.timeHours)).toBeLessThanOrEqual(oneCycle);
+    });
+
+    test('an unknown margin stays unknown, never zero', () => {
+        const result = plan(10, [rate({ goldPerHour: null, goldKnown: false })]);
+        expect(step(result, 'train').goldDelta).toBe(0);
+        expect(step(result, 'train').costKnown).toBe(false);
+    });
+
+    test('a rate without completions per hour falls back to the duration', () => {
+        const train = step(plan(10, [rate({ actionsPerHour: undefined })]), 'train');
+        expect(train.goldDelta).toBeCloseTo(-54_000 * train.timeHours, 6);
+    });
+});
+
 describe('a skill target - which actions the level allows', () => {
     const rate = (extra = {}) => ({
         label: 'Cook Stew',
