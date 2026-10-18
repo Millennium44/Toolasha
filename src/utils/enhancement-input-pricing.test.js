@@ -31,7 +31,10 @@ vi.mock('../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../core/config.js', () => ({
-    default: { isFeatureEnabled: (key) => key === 'enhanceSim_baseItemCraftingCost' && game.craftingSetting },
+    default: {
+        isFeatureEnabled: (key) => key === 'enhanceSim_baseItemCraftingCost' && game.craftingSetting,
+        getSetting: (key) => (key === 'profitCalc_patientTickBuy' ? game.patientTickBuy === true : undefined),
+    },
 }));
 vi.mock('../api/marketplace.js', () => ({ default: { on: () => {} } }));
 vi.mock('./action-context.js', () => ({ resolveActionContext: () => ({ equipment: new Map(), drinks: [] }) }));
@@ -475,6 +478,15 @@ describe('pricingStamp', () => {
         expect(afterCustom).not.toBe(base);
         game.craftingSetting = true;
         expect(pricingStamp()).not.toBe(afterCustom);
+    });
+
+    test('moves when the patient-buy tick is switched, which reprices bid-side inputs', async () => {
+        const { pricingStamp } = await import('./enhancement-input-pricing.js');
+        game.patientTickBuy = false;
+        const without = pricingStamp();
+        game.patientTickBuy = true;
+        expect(pricingStamp()).not.toBe(without);
+        game.patientTickBuy = false;
     });
 });
 

@@ -177,6 +177,8 @@ export function pricingStamp() {
         setting('profitCalc_pricingMode'),
         setting('networth_pricingMode'),
         config.isFeatureEnabled?.('enhanceSim_baseItemCraftingCost') ? 'craft' : 'buy',
+        // A buy at the bid is priced one tick up when this is on, so it moves every bid-side input
+        config.getSetting?.('profitCalc_patientTickBuy') === true ? 'tick' : '',
         custom,
     ].join('|');
 }
