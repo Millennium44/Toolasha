@@ -871,6 +871,58 @@ describe('sell-depth context ownership', () => {
         expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
     });
 
+    test('a simulation that rejects after the context was set leaves no figure', async () => {
+        const seen = [];
+        repaint.mockImplementation(() => seen.push(riskOfRuinUI.getDepthCapContext() !== null));
+        sim.gate = Promise.reject(new Error('worker died'));
+        sim.gate.catch(() => {});
+
+        await expect(startRun()).rejects.toThrow('worker died');
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        expect(seen.at(-1)).toBe(false);
+        repaint.mockReset();
+    });
+
+    test('a rendering throw after publishing leaves no figure', async () => {
+        const render = vi.spyOn(riskOfRuinUI, '_renderResults').mockImplementation(() => {
+            throw new Error('render failed');
+        });
+        try {
+            await expect(startRun()).rejects.toThrow('render failed');
+            expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        } finally {
+            render.mockRestore();
+        }
+    });
+
+    test('an older run failing after a newer run published leaves the newer context', async () => {
+        let fail;
+        sim.gate = new Promise((_, reject) => {
+            fail = reject;
+        });
+        sim.gate.catch(() => {});
+        const older = startRun();
+        older.catch(() => {});
+
+        // A newer run starts and publishes while the older one is still simulating
+        sim.gate = null;
+        buildEnhancementModel.mockReturnValueOnce({
+            expectedTotalCost: 3000,
+            maxSinglePossibleLoss: 100,
+            perLevelOutcomeDistributions: [],
+            costPerAttempt: 10,
+            protectionCostOnFailure: 0,
+        });
+        await riskOfRuinUI._compute();
+        expect(riskOfRuinUI.getDepthCapContext().costPerAction).toBe(3000);
+
+        fail(new Error('older failed'));
+        await expect(older).rejects.toThrow('older failed');
+
+        expect(riskOfRuinUI.getDepthCapContext().costPerAction).toBe(3000);
+    });
+
     test('a new run for the same character is still served', async () => {
         await startRun();
         riskOfRuinUI.disable();

@@ -667,8 +667,15 @@ class RiskOfRuinUI {
      * run that ends without publishing still takes the withdrawn figure down.
      */
     async _compute() {
+        // _computeRun takes the next generation synchronously as it starts
+        const generation = this.runGeneration + 1;
         try {
             await this._computeRun();
+        } catch (err) {
+            // A failed run leaves no figure in the marketplace while the panel reports the error.
+            // Only if this run still owns the context: a newer run's must survive an older failure.
+            if (this.runGeneration === generation) this.lastDepthCapContext = null;
+            throw err;
         } finally {
             marketDepthCap()?.repaint?.();
         }
