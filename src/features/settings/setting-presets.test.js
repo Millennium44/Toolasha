@@ -367,16 +367,19 @@ describe('applying a preset', () => {
         expect(mocks.storageWrites.map(([key]) => key)).toEqual([bulkSnapshotKey('char-1')]);
     });
 
-    test('an A to B to A round trip is still a different load', async () => {
+    test('a settings reload for the same character during the snapshot save still applies, to the reloaded map', async () => {
         let release;
         mocks.snapshotGate = new Promise((resolve) => (release = resolve));
+        mocks.settingsMap.combatSim.isTrue = false;
         const pending = applyPreset('combat');
-        mocks.characterId = 'char-2';
-        mocks.characterId = 'char-1';
-        mocks.settingsMap = { ...mocks.settingsMap };
+        // loadSettings/resetToDefaults replace the map object; the character is unchanged
+        const reloaded = {};
+        for (const [id, entry] of Object.entries(mocks.settingsMap)) reloaded[id] = { ...entry };
+        mocks.settingsMap = reloaded;
         release();
-        expect(await pending).toBe(null);
-        expect(mocks.written).toEqual([]);
+        expect(await pending).not.toBe(null);
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(true);
+        expect(mocks.written.length).toBeGreaterThan(0);
     });
 
     test('it never writes an excluded setting', async () => {
