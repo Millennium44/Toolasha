@@ -1000,11 +1000,16 @@ function alchemyMaterials(ctx) {
         },
     ];
     if (ctx.catalyst?.catalystHrid && ctx.catalyst.successRate > 0) {
-        lines.push({
-            itemHrid: ctx.catalyst.catalystHrid,
-            count: Math.ceil(numActions * ctx.catalyst.successRate - 1e-9),
-            queued: ignoreQueue ? 0 : queuedAlchemyCatalyst(ctx.catalyst.catalystHrid),
-        });
+        const catalystCount = Math.ceil(numActions * ctx.catalyst.successRate - 1e-9);
+        const catalystQueued = ignoreQueue ? 0 : queuedAlchemyCatalyst(ctx.catalyst.catalystHrid);
+        if (ctx.catalyst.catalystHrid === ctx.itemHrid) {
+            // The item being alchemized is also the catalyst (a catalyst coinified or decomposed):
+            // one stack feeds both roles, so it is one line, not two that each see the whole bag
+            lines[0].count += catalystCount;
+            lines[0].queued += catalystQueued;
+        } else {
+            lines.push({ itemHrid: ctx.catalyst.catalystHrid, count: catalystCount, queued: catalystQueued });
+        }
     }
     return materialsFromList(lines, RESERVATION_OWNER);
 }
