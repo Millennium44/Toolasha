@@ -1845,6 +1845,46 @@ describe('teardown is awaitable, so the switch waits for the log to land', () =>
         labyrinthRoomLogs.simSource = null;
     });
 
+    test('a character switch reports the last room through the source, then drops it', async () => {
+        // The registry disables the calculator before Room Logs. The calculator
+        // retires the source rather than clearing it, so this disable() still
+        // has something to record the departing character's final room with.
+        const recorded = [];
+        labyrinthRoomLogs.useSimSource({ record: (entry) => recorded.push(entry) });
+        labyrinthRoomLogs.isInitialized = true;
+        labyrinthRoomLogs.activeSession = room({
+            subjectHrid: '/monsters/cyclops',
+            roomLevel: 200,
+            mode: 'combat',
+            startedAt: 1,
+            endedAt: 0,
+            cleared: true,
+            actions: [],
+        });
+
+        labyrinthRoomLogs.retireSimSource();
+        expect(labyrinthRoomLogs.simSource).not.toBeNull();
+        await labyrinthRoomLogs.disable();
+
+        expect(recorded).toHaveLength(1);
+        expect(labyrinthRoomLogs.simSource).toBeNull();
+    });
+
+    test('retiring a source while the log is already down drops it at once', () => {
+        labyrinthRoomLogs.useSimSource({ record: () => {} });
+        labyrinthRoomLogs.isInitialized = false;
+        labyrinthRoomLogs.retireSimSource();
+        expect(labyrinthRoomLogs.simSource).toBeNull();
+    });
+
+    test('disabling the log alone keeps the calculator source for the next enable', async () => {
+        const source = { record: () => {} };
+        labyrinthRoomLogs.useSimSource(source);
+        await labyrinthRoomLogs.disable();
+        expect(labyrinthRoomLogs.simSource).toBe(source);
+        labyrinthRoomLogs.simSource = null;
+    });
+
     test('disable() forgets the accuracy snapshot and the replay verdict', async () => {
         // Both are readings of one character's fight record. `exportAccuracy`
         // and `exportSanitized` fall back to `lastAccuracy` when no accuracy
