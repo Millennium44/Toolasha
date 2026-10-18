@@ -37,6 +37,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: vi.fn(() => ({ itemDetailMap: {} })),
         getItemDetails: vi.fn(() => null),
         getInventory: vi.fn(() => []),
+        getCurrentCharacterId: vi.fn(() => 'char-A'),
     },
 }));
 
@@ -698,8 +699,117 @@ describe('sell-depth context from a real enhancing run', () => {
         await runEnhancement(10);
 
         expect(riskOfRuinUI.getDepthCapContext()).toEqual({
+            characterId: 'char-A',
             costPerAction: 1000,
             items: [{ itemHrid: '/items/cheese_sword', enhancementLevel: 10, quantityPerAction: 1 }],
         });
+    });
+});
+
+describe('sell-depth context ownership', () => {
+    const repaint = vi.fn();
+
+    beforeEach(() => {
+        mocks.settings = { riskOfRuin: true, riskOfRuin_showLauncher: true };
+        mocks.openState = {};
+        document.body.innerHTML = '';
+        riskOfRuinUI.disable();
+        repaint.mockClear();
+        globalThis.window.Toolasha = { Market: { marketDepthCap: { repaint } } };
+        dataManager.getCurrentCharacterId.mockImplementation(() => 'char-A');
+    });
+
+    afterEach(() => {
+        riskOfRuinUI.disable();
+        sim.gate = null;
+        delete globalThis.window.Toolasha;
+        dataManager.getCurrentCharacterId.mockImplementation(() => 'char-A');
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap: {} }));
+        dataManager.getItemDetails.mockImplementation(() => null);
+    });
+
+    /** Start a +0 to +10 cheese sword run under whoever is logged in; resolves when the run ends */
+    function startRun() {
+        const itemDetailMap = {
+            '/items/cheese_sword': {
+                name: 'Cheese Sword',
+                itemLevel: 1,
+                isTradable: true,
+                enhancementCosts: [{ itemHrid: '/items/coin', count: 12 }],
+            },
+        };
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap }));
+        dataManager.getItemDetails.mockImplementation((hrid) => itemDetailMap[hrid] ?? null);
+        buildEnhancementModel.mockReturnValueOnce({
+            expectedTotalCost: 1000,
+            maxSinglePossibleLoss: 100,
+            perLevelOutcomeDistributions: [],
+            costPerAttempt: 10,
+            protectionCostOnFailure: 0,
+        });
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'enhancement';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/cheese_sword';
+        root.querySelector('#mwi-ror-target').value = '10';
+        return riskOfRuinUI._compute();
+    }
+
+    test('teardown withdraws the context and has the widget redraw', async () => {
+        await startRun();
+        expect(riskOfRuinUI.getDepthCapContext()).not.toBeNull();
+
+        riskOfRuinUI.disable();
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        expect(riskOfRuinUI.lastDepthCapContext).toBeNull();
+        expect(repaint).toHaveBeenCalledTimes(1);
+    });
+
+    test('turning Risk of Ruin off in settings stops it supplying a context', async () => {
+        await startRun();
+
+        mocks.settingChangeHandlers.riskOfRuin(false);
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+    });
+
+    test('a run priced for character A is not offered to character B who never ran one', async () => {
+        await startRun();
+        expect(riskOfRuinUI.getDepthCapContext()).not.toBeNull();
+
+        dataManager.getCurrentCharacterId.mockImplementation(() => 'char-B');
+        // Even before teardown has run on the switch, B is never served A's costs
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+
+        riskOfRuinUI.disable();
+        riskOfRuinUI.initialize();
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+    });
+
+    test('a calculation still simulating when the panel is torn down publishes nothing afterward', async () => {
+        let release;
+        sim.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const pending = startRun();
+        expect(riskOfRuinUI.getDepthCapContext()).not.toBeNull();
+
+        riskOfRuinUI.disable();
+        riskOfRuinUI.initialize();
+        release();
+        await pending;
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        expect(riskOfRuinUI.lastDepthCapContext).toBeNull();
+    });
+
+    test('a new run for the same character is still served', async () => {
+        await startRun();
+        riskOfRuinUI.disable();
+        await startRun();
+
+        expect(riskOfRuinUI.getDepthCapContext().items[0].itemHrid).toBe('/items/cheese_sword');
     });
 });
