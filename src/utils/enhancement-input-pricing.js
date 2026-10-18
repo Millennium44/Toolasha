@@ -207,7 +207,9 @@ export function pricingStamp() {
 export function priceGuarded(itemHrid, options = {}) {
     if (!itemHrid) return result(0);
     const { quotes, resolved } = guardQuotes(itemHrid, options);
-    if (!quotes) return result(0);
+    // A custom price of 0 or less is the player's own "unpriced": it stays unpriced but keeps its custom
+    // provenance, so priceBase does not let a craft cost replace that choice
+    if (!quotes) return { ...result(0), custom: Boolean(resolved.custom) };
     const price = getRealisticBaseItemPriceFrom(itemHrid, { quoteOf: () => quotes });
     // A craft-cost figure (the resolver's own fallback, or the guard swapping an inflated ask for it)
     // is a partial bill when a recipe input went unpriced
@@ -217,7 +219,8 @@ export function priceGuarded(itemHrid, options = {}) {
         const craft = getProductionCostDetailed(itemHrid, 'ask');
         partial = craft.cost === price && craft.partial;
     }
-    return result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom), partial);
+    const guarded = result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom), partial);
+    return guarded.unpriced ? { ...guarded, custom: Boolean(resolved.custom) } : guarded;
 }
 
 /**

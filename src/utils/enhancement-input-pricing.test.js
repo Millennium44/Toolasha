@@ -307,6 +307,21 @@ describe('priceBase', () => {
         expect(priceBase(SWORD).price).toBe(400);
     });
 
+    test.each([true, false])('a custom base price wins over a craft quote (crafting %s)', (crafting) => {
+        game.books['/items/ore'] = { ask: 100, bid: 100 };
+        game.items['/items/ore'] = { name: 'Ore' };
+        game.actions['/actions/forge'] = {
+            type: '/action_types/smithing',
+            inputItems: [{ itemHrid: '/items/ore', count: 4 }],
+            outputItems: [{ itemHrid: SWORD, count: 1 }],
+        };
+        game.craftingSetting = crafting;
+        game.custom[`${SWORD}:buy`] = 0;
+        expect(priceBase(SWORD)).toMatchObject({ price: null, unpriced: true, custom: true, crafted: false });
+        game.custom[`${SWORD}:buy`] = 900;
+        expect(priceBase(SWORD)).toMatchObject({ price: 900, unpriced: false, custom: true, crafted: false });
+    });
+
     test('unpriced is null and flagged', () => {
         expect(priceBase(SWORD)).toMatchObject({ price: null, unpriced: true });
     });
