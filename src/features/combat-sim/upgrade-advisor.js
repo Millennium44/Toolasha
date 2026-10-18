@@ -2776,7 +2776,7 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
         gameData?.itemDetailMap?.[refinedHrid]?.baseItemHrids?.[0] ||
         findRefinementAction(refinedHrid)?.upgradeItemHrid;
     if (!baseHrid) return null;
-    const mirrorPrice = priceMirror().price;
+    const mirrorPrice = completePrice(priceMirror());
     if (!(mirrorPrice > 0)) return null;
 
     const primary = level - 1 > from ? calculateDirectEnhancementCost(refinedHrid, from, level - 1, gameData) : 0;
@@ -3228,6 +3228,16 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
 }
 
 /**
+ * A shared-rule input price the advisor can quote: null for a partial crafting bill (a recipe input
+ * nothing could price was counted as 0), so a candidate never looks cheaper by the missing ingredients.
+ * @param {{price: number|null, partial?: boolean}} priced - From the shared input-pricing rule
+ * @returns {number|null}
+ */
+function completePrice(priced) {
+    return priced && !priced.partial && priced.price > 0 ? priced.price : null;
+}
+
+/**
  * What the base item costs to hold at a level when a Philosopher's Mirror may build it: a +L made from
  * a +(L-1) and a +(L-2) copy of the base item (game client `getPhilosophersMirrorCost`; a refined
  * item's copy is its unrefined `baseItemHrids[0]`), each copy the cheapest way to hold its level.
@@ -3247,7 +3257,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
  */
 function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_LEVEL, held = [] } = {}) {
     if (level < Math.max(MIRROR_FIRST_LEVEL, minLevel) || testerShopEnabled()) return null;
-    const mirrorPrice = priceMirror().price;
+    const mirrorPrice = completePrice(priceMirror());
     if (!(mirrorPrice > 0)) return null;
 
     // Each input is priced as a fresh acquisition unless a held copy of exactly that level is offered
@@ -3723,7 +3733,7 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
         }
 
         // No listing at the target level: base item price + enhancement cost
-        const basePrice = priceBase(itemHrid).price;
+        const basePrice = completePrice(priceBase(itemHrid));
         // Enhancement materials do not buy the base item. If that piece has no
         // price, its completed version cannot be priced from the sweep alone.
         if (!(basePrice > 0)) return { price: null, source: null };
@@ -3747,7 +3757,7 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
 
     // The +0 rung follows the same base rule as the +N rung above (guard, custom price, crafting setting)
     const base = priceBase(itemHrid);
-    const direct = base.price;
+    const direct = completePrice(base);
     if (!(direct > 0)) return { price: null, source: null };
     // A listing beats the production-cost fallback inside resolveItemPrice, so
     // an ask at +0 is the market speaking and anything else is a craft estimate
@@ -3834,7 +3844,7 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
         const data = dataManager.getInitClientData?.() || {};
         const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
         base = shopPurchasePrice(itemHrid, shops, (hrid) => getItemPrices(hrid, 0)?.ask || 0) || 0;
-        if (!(base > 0)) base = priceBase(itemHrid).price;
+        if (!(base > 0)) base = completePrice(priceBase(itemHrid));
         if (!(base > 0)) return { price: null, source: null, ladder };
         ladder.baseCost = base;
     }
