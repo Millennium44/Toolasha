@@ -222,6 +222,21 @@ describe('a shop price that beats a cross-filled quote keeps its provenance', ()
         expect(priceProtection(BID_ONLY, { mode: 'ask' }).price).toBe(100);
     });
 
+    test('a shop price equal to the quote is still the shop price, not a guarded one-sided quote', () => {
+        state.items[BID_ONLY] = { name: 'Bid Only' };
+        state.items['/items/ore'] = { name: 'Ore' };
+        state.books[`${BID_ONLY}:0`] = { ask: -1, bid: 100 };
+        state.books['/items/ore:0'] = { ask: 250, bid: 250 };
+        state.actions['/actions/make'] = {
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/ore', count: 2 }],
+            outputItems: [{ itemHrid: BID_ONLY, count: 1 }],
+        };
+        state.shop[BID_ONLY] = 100;
+        expect(priceGuarded(BID_ONLY, { mode: 'ask' }).price).toBe(100);
+        expect(priceProtection(BID_ONLY, { mode: 'ask' }).price).toBe(100);
+    });
+
     test('a shop price dearer than the quote leaves the cross-filled quote guarded as before', () => {
         state.items[BID_ONLY] = { name: 'Bid Only' };
         state.items['/items/ore'] = { name: 'Ore' };

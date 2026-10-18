@@ -103,7 +103,8 @@ function crossFill(itemHrid, level, side, resolved) {
         // The shop's price is guaranteed, not a one-sided market quote: it keeps its provenance, so the
         // inflation guard leaves it alone as it does on the ordinary shop path. (A custom price returned
         // above and never reaches here.)
-        if (shop > 0 && shop < price) {
+        // At a tie the shop still wins: the item can be bought for that price either way
+        if (shop > 0 && shop <= price) {
             return { price: shop, custom: false, missing: false, estimated: false };
         }
     }
