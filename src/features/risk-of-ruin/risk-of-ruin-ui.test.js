@@ -777,6 +777,7 @@ describe('sell-depth context ownership', () => {
         await startRun();
         expect(riskOfRuinUI.getDepthCapContext()).not.toBeNull();
 
+        repaint.mockClear();
         riskOfRuinUI.disable();
 
         expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
@@ -820,6 +821,54 @@ describe('sell-depth context ownership', () => {
 
         expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
         expect(riskOfRuinUI.lastDepthCapContext).toBeNull();
+    });
+
+    test('recalculating with the marketplace open leaves the widget drawn from the new context', async () => {
+        const seen = [];
+        repaint.mockImplementation(() => seen.push(riskOfRuinUI.getDepthCapContext() !== null));
+        await startRun();
+        seen.length = 0;
+
+        buildEnhancementModel.mockReturnValueOnce({
+            expectedTotalCost: 2000,
+            maxSinglePossibleLoss: 100,
+            perLevelOutcomeDistributions: [],
+            costPerAction: 10,
+            protectionCostOnFailure: 0,
+        });
+        await riskOfRuinUI._compute();
+
+        // The last redraw happens with the new context in place, so the figure is not left down
+        expect(seen.length).toBeGreaterThan(0);
+        expect(seen.at(-1)).toBe(true);
+        expect(riskOfRuinUI.getDepthCapContext().costPerAction).toBe(2000);
+        repaint.mockReset();
+    });
+
+    test('a run refused after an earlier one still redraws, taking the withdrawn figure down', async () => {
+        await startRun();
+        repaint.mockClear();
+        panel().querySelector('#mwi-ror-item').value = 'Not An Item';
+
+        await riskOfRuinUI._compute();
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        expect(repaint).toHaveBeenCalled();
+    });
+
+    test('a character change mid-run on a live panel does not leave "Calculating…" showing', async () => {
+        let release;
+        sim.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const pending = startRun();
+        panel().querySelector('#mwi-ror-status').textContent = 'Calculating…';
+        dataManager.getCurrentCharacterId.mockImplementation(() => 'char-B');
+        release();
+        await pending;
+
+        expect(panel().querySelector('#mwi-ror-status').textContent).toBe('');
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
     });
 
     test('a new run for the same character is still served', async () => {
