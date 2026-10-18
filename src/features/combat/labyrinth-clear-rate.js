@@ -571,11 +571,20 @@ class LabyrinthClearRate {
             for (const unsub of this._settingUnsubs) unsub();
             this._settingUnsubs = null;
         }
-        this._teardown();
+        // A character switch: the registry disables this module before Room Logs,
+        // whose own `disable()` still has the departing character's last room to
+        // report through the source. Detaching here would drop that room, so the
+        // detach is left to Room Logs, after its flush.
+        this._teardown({ retireSourceLater: true });
     }
 
-    /** Everything `disable()` removes except the two per-half setting watchers */
-    _teardown() {
+    /**
+     * Everything `disable()` removes except the two per-half setting watchers
+     *
+     * @param {Object} [options]
+     * @param {boolean} [options.retireSourceLater] - Leave the room log's sim source for its own `disable()` to drop
+     */
+    _teardown({ retireSourceLater = false } = {}) {
         try {
             if (this.wsHandler) {
                 webSocketHook.off('labyrinth_updated', this.wsHandler);
@@ -593,6 +602,12 @@ class LabyrinthClearRate {
             }
 
             this.disableLiveProgress();
+
+            // The room log's forecast, record and recompute hooks are this calculator's. Left
+            // registered, a closed calculator (or the arriving character's, off) still has
+            // recorded fights folded in with no forecast beside them.
+            if (retireSourceLater) labyrinthRoomLogs.retireSimSource?.();
+            else labyrinthRoomLogs.useSimSource?.(null);
 
             if (this._buffInputsHandler) {
                 for (const event of BUFF_INPUT_EVENTS) dataManager.off(event, this._buffInputsHandler);

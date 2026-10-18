@@ -282,6 +282,7 @@ class LabyrinthRoomLogs {
         this.expandedPoolGroups = new Set();
         this.poolAllGear = false;
         this.simSource = null;
+        this.retireSourceOnDisable = false;
         this.fight = null;
         this.fightTimer = null;
         this.renderToken = 0;
@@ -385,6 +386,18 @@ class LabyrinthRoomLogs {
      */
     useSimSource(source) {
         this.simSource = source || null;
+        this.retireSourceOnDisable = false;
+    }
+
+    /**
+     * The source's owner has been disabled for good (a character switch). Drop it
+     * once this log has reported its last room through it: now if the log is
+     * already down, otherwise at the end of its own `disable()`. A log disabled on
+     * its own, with the source's owner still running, keeps the source.
+     */
+    retireSimSource() {
+        if (this.isInitialized) this.retireSourceOnDisable = true;
+        else this.simSource = null;
     }
 
     async initialize() {
@@ -544,7 +557,7 @@ class LabyrinthRoomLogs {
         // in memory here is what keeps the arriving character from seeing it.
         labTickCapture.stopCapture();
         labTickCapture.forgetForCharacterSwitch();
-        this.flushReport();
+        const reports = [this.flushReport()];
         if (this.unregisterTab) {
             this.unregisterTab();
             this.unregisterTab = null;
@@ -560,7 +573,11 @@ class LabyrinthRoomLogs {
         // is no experience grace to wait out once the feature is down, and
         // waiting would either drop the room or file it under whichever
         // character has arrived by then.
-        this.flushReport();
+        reports.push(this.flushReport());
+        if (this.retireSourceOnDisable) {
+            this.simSource = null;
+            this.retireSourceOnDisable = false;
+        }
         document.getElementById(TAB_ID)?.remove();
         this.tabButton = null;
         document.getElementById(PANEL_ID)?.remove();
@@ -581,6 +598,12 @@ class LabyrinthRoomLogs {
         // here is what lets the registry's teardown, and through it
         // data-manager's awaited `character_switching`, wait for it.
         await this.record.flushed();
+        // The accuracy write is async too (it loads and saves the departing
+        // character's outcomes, keyed by whoever is current when it runs). It
+        // has to land before this resolves and `currentCharacterId` moves, or
+        // the last room is dropped or filed under the arriving character. A
+        // failing write is logged by `reportRoomResult` and cannot block here.
+        await Promise.all(reports);
         // The log belongs to the character that walked those rooms. Dropped so
         // that a re-initialize — which is how a character switch arrives here —
         // reads the arriving character's log rather than persisting this one's
@@ -1507,7 +1530,10 @@ class LabyrinthRoomLogs {
         this.renderIfOpen();
     }
 
-    /** Report whichever room has been waiting for its experience, if any */
+    /**
+     * Report whichever room has been waiting for its experience, if any
+     * @returns {Promise<void>} Settles when the accuracy write has; never rejects
+     */
     flushReport() {
         if (this.reportTimer) {
             clearTimeout(this.reportTimer);
@@ -1515,7 +1541,7 @@ class LabyrinthRoomLogs {
         }
         const session = this.pendingReport;
         this.pendingReport = null;
-        if (session) this.reportRoomResult(session);
+        return session ? this.reportRoomResult(session) : Promise.resolve();
     }
 
     /**
@@ -1529,9 +1555,10 @@ class LabyrinthRoomLogs {
      * question.
      *
      * @param {Object} session - The finalized session
+     * @returns {Promise<void>} Settles when the source's record has; never rejects
      */
     reportRoomResult(session) {
-        if (!session.subjectHrid || !this.simSource?.record) return;
+        if (!session.subjectHrid || !this.simSource?.record) return Promise.resolve();
 
         const seconds = Math.max(0, (session.endedAt - session.startedAt) / 1000);
         const skilling = session.mode !== 'combat';
@@ -1548,7 +1575,7 @@ class LabyrinthRoomLogs {
         const fightSeconds = fights.reduce((sum, attempt) => sum + (Number(attempt.seconds) || 0), 0);
         const fightSquares = fights.reduce((sum, attempt) => sum + (Number(attempt.seconds) || 0) ** 2, 0);
 
-        Promise.resolve(
+        return Promise.resolve(
             this.simSource.record({
                 subjectHrid: session.subjectHrid,
                 roomLevel: session.roomLevel,
@@ -4174,4 +4201,5 @@ export default {
     },
     togglePanel: () => labyrinthRoomLogs.togglePanel(),
     useSimSource: (source) => labyrinthRoomLogs.useSimSource(source),
+    retireSimSource: () => labyrinthRoomLogs.retireSimSource(),
 };

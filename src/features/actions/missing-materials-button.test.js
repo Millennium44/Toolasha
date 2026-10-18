@@ -1441,6 +1441,30 @@ describe('the Alchemy panel button', () => {
         whatIf.resetCatalystWhatIf();
     });
 
+    test('a catalyst that is also the selected item is billed once, from one stack', async () => {
+        const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
+        const CAT = '/items/prime_catalyst';
+        state.items[CAT] = { name: 'Prime Catalyst', isTradable: true, alchemyDetail: { bulkMultiplier: 1 } };
+        state.inventory = [
+            { itemHrid: CAT, enhancementLevel: 0, count: 10, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        mountAlchemyPanel({ itemId: 'prime_catalyst' });
+        missingMaterials.initialize();
+        whatIf.setCatalystWhatIf('prime');
+        whatIf.publishCatalystWhatIfResult({
+            itemHrid: CAT,
+            actionType: 'decompose',
+            catalystHrid: CAT,
+            successRate: 0.75,
+        });
+        await vi.advanceTimersByTimeAsync(200);
+
+        // 10 to alchemize + 8 spent as the catalyst = 18 from one stack of 10
+        expect(button().textContent).toBe('Missing Mats Marketplace · 1 item');
+        expect(button().title).toContain('Prime Catalyst ×8');
+        whatIf.resetCatalystWhatIf();
+    });
+
     describe('queued alchemy catalysts', () => {
         const CAT = '/items/prime_catalyst';
         const queuedWith = (over = {}) => ({

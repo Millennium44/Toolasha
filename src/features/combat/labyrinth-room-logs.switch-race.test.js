@@ -293,3 +293,71 @@ describe('a character switch landing inside the room log read', () => {
         expect(labyrinthRoomLogs.cohortNotice).toBe('');
     });
 });
+
+describe('a character switch with a room still waiting to be reported', () => {
+    const room = {
+        subjectHrid: '/skills/foraging',
+        roomLevel: 5,
+        mode: 'skilling',
+        completed: true,
+        startedAt: 0,
+        endedAt: 60_000,
+        xp: 10,
+    };
+
+    beforeEach(async () => {
+        world.gate = null;
+        world.characterId = 'char1';
+        await labyrinthRoomLogs.disable();
+        socket.handlers = {};
+    });
+
+    afterEach(async () => {
+        await labyrinthRoomLogs.disable();
+        labyrinthRoomLogs.simSource = null;
+        labyrinthRoomLogs.pendingReport = null;
+    });
+
+    test('disable() waits for a slow accuracy write, which lands under the departing character', async () => {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const wroteFor = [];
+        labyrinthRoomLogs.simSource = {
+            record: async () => {
+                const departing = world.characterId;
+                await gate;
+                wroteFor.push(departing);
+            },
+        };
+        labyrinthRoomLogs.pendingReport = room;
+
+        let done = false;
+        const disabling = labyrinthRoomLogs.disable().then(() => {
+            done = true;
+        });
+        // The switch moves the pointer while the write is still out
+        world.characterId = 'char2';
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(done).toBe(false);
+
+        release();
+        await disabling;
+        expect(done).toBe(true);
+        expect(wroteFor).toEqual(['char1']);
+    });
+
+    test('a rejecting accuracy write does not throw out of disable()', async () => {
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        labyrinthRoomLogs.simSource = {
+            record: async () => {
+                throw new Error('disk full');
+            },
+        };
+        labyrinthRoomLogs.pendingReport = room;
+        await expect(labyrinthRoomLogs.disable()).resolves.toBeUndefined();
+        expect(errors).toHaveBeenCalled();
+        errors.mockRestore();
+    });
+});

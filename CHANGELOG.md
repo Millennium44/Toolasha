@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A stopped trigger verify keeps the seeds that finished (shown as partial) instead of reporting none, and one with no seed finished is reported as failed.
 - An order whose profit could not be valued, or whose verify was stopped, no longer reads as "did not hold up" or drops out of the plan; the trigger verify status says "failed" instead of "complete: error".
 
+### Audit round (2026-10-17): alchemy shopping and labyrinth logs
+
+- Alchemy Missing Mats no longer says nothing is missing when you alchemize a catalyst that is also the what-if catalyst; both uses now come out of one stack.
+- Turning off the labyrinth calculator (or switching character) detaches Room Logs from it, so fights are no longer saved without a forecast beside them.
+
 ### Tooltip: "selling wins" line
 
 - When no alchemy route beats selling an item, the "Instead of selling" section now says so in a muted line ("selling wins — 564K after tax vs best alchemy 410K/unit (transmute)") instead of showing nothing.
