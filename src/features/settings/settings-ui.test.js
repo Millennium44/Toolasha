@@ -823,6 +823,25 @@ describe('a mode stacks with a preset', () => {
 describe('bulk writes and their undo snapshot', () => {
     const snapshotKey = (characterId) => `toolasha_allOffSnapshot_${characterId}`;
 
+    /** @returns {Object} A fresh settings map, as a character switch loads one */
+    function freshMap() {
+        const map = {};
+        for (const group of Object.values(schema)) {
+            for (const [id, definition] of Object.entries(group.settings)) {
+                map[id] = { id, type: 'checkbox', isTrue: definition.default ?? false };
+            }
+        }
+        return map;
+    }
+
+    /** Move the page to character B while A's operation is parked on storage. */
+    function switchToB() {
+        mocks.characterId = 'char-2';
+        mocks.settingsMap = freshMap();
+        mocks.settingsMap.combatSim.isTrue = false;
+        settingsUI.currentSettings = mocks.settingsMap;
+    }
+
     test('All Off writes nothing when its undo snapshot reports failure', async () => {
         mocks.settingsMap.combatSim.isTrue = true;
         mocks.snapshotWrite = false;
@@ -844,6 +863,40 @@ describe('bulk writes and their undo snapshot', () => {
         await settingsUI.handleAllOff();
         expect(mocks.settingsMap.combatSim.isTrue).toBe(false);
         expect(mocks.store.get(snapshotKey('char-1')).combatSim).toBe(true);
+    });
+
+    test('All Off does not turn off a character that arrived while the snapshot saved', async () => {
+        let release;
+        mocks.snapshotGate = new Promise((resolve) => (release = resolve));
+        mocks.settingsMap.combatSim.isTrue = true;
+        const pending = settingsUI.handleAllOff();
+        switchToB();
+        mocks.settingsMap.combatSim.isTrue = true;
+        release();
+        await pending;
+        expect(mocks.written).toEqual([]);
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(true);
+    });
+
+    test('Restore neither writes to nor clears the snapshot of a character that arrived mid-read', async () => {
+        mocks.store.set(snapshotKey('char-1'), { combatSim: true });
+        mocks.store.set(snapshotKey('char-2'), { combatSim: false });
+        let release;
+        mocks.snapshotGate = new Promise((resolve) => (release = resolve));
+        const pending = settingsUI.handleRestore();
+        switchToB();
+        release();
+        await pending;
+        expect(mocks.written).toEqual([]);
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(false);
+        expect(mocks.store.get(snapshotKey('char-2'))).toEqual({ combatSim: false });
+    });
+
+    test('Restore puts back the snapshot and clears this character own key (control)', async () => {
+        mocks.store.set(snapshotKey('char-1'), { combatSim: true });
+        await settingsUI.handleRestore();
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(true);
+        expect(mocks.store.get(snapshotKey('char-1'))).toBeNull();
     });
 });
 

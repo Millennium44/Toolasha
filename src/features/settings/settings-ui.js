@@ -57,6 +57,8 @@ import {
     saveBulkSnapshot,
     loadBulkSnapshot,
     clearBulkSnapshot,
+    captureBulkOwner,
+    isBulkOwnerCurrent,
     writeCheckboxValues,
 } from './setting-presets.js';
 import { isSettingRowChanged, refreshRequiredIds } from './settings-inspection.js';
@@ -1685,7 +1687,10 @@ class SettingsUI {
         );
         if (!confirmed) return;
 
+        const owner = captureBulkOwner();
         const applied = await applyPreset(preset.id);
+        // Applied for a character that is no longer on screen: applyPreset wrote nothing, so say nothing
+        if (!isBulkOwnerCurrent(owner)) return;
         if (!applied) {
             alert('Applying the preset failed. See the console for details.');
             return;
@@ -3107,14 +3112,19 @@ class SettingsUI {
      * @param {HTMLElement} [restoreBtn]
      */
     async handleAllOff(restoreBtn = this.restoreButton) {
+        const owner = captureBulkOwner();
         let snapshot;
         try {
-            snapshot = await saveBulkSnapshot();
+            snapshot = await saveBulkSnapshot(owner);
         } catch (error) {
             console.error('[SettingsUI] All Off: saving the undo snapshot failed:', error);
-            alert('All Off was not applied: the undo copy of your switches could not be saved.');
+            if (isBulkOwnerCurrent(owner)) {
+                alert('All Off was not applied: the undo copy of your switches could not be saved.');
+            }
             return;
         }
+        // The character may have changed while the snapshot saved; its switches are not ours to turn off
+        if (!isBulkOwnerCurrent(owner)) return;
 
         const off = {};
         for (const id of Object.keys(snapshot)) off[id] = false;
@@ -3137,14 +3147,15 @@ class SettingsUI {
      * @param {HTMLElement} [restoreBtn]
      */
     async handleRestore(restoreBtn = this.restoreButton) {
-        const snapshot = await loadBulkSnapshot();
-        if (!snapshot) return;
+        const owner = captureBulkOwner();
+        const snapshot = await loadBulkSnapshot(owner);
+        if (!snapshot || !isBulkOwnerCurrent(owner)) return;
 
         writeCheckboxValues(snapshot);
         for (const [id, value] of Object.entries(snapshot)) {
             if (this.currentSettings[id]) this.currentSettings[id].isTrue = value;
         }
-        await clearBulkSnapshot();
+        await clearBulkSnapshot(owner);
 
         this._reapplyModes();
         this._syncAllCheckboxInputs();
