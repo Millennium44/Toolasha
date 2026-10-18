@@ -16,6 +16,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Alchemy Missing Mats no longer says nothing is missing when you alchemize a catalyst that is also the what-if catalyst; both uses now come out of one stack.
 - Turning off the labyrinth calculator (or switching character) detaches Room Logs from it, so fights are no longer saved without a forecast beside them.
+- Switching character mid-labyrinth no longer carries the previous character's lab fight record into the next one; the last room still lands in the character it belongs to.
 
 ### Tooltip: "selling wins" line
 
