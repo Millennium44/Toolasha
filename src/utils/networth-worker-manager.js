@@ -296,6 +296,11 @@ function calculateEnhancementCost(params) {
                     : levelPartial[level];
         }
         if (planPartial[targetLevel]) flags.partial = true;
+        // A refined piece's mirror route consumes copies of the unrefined base, priced separately: when
+        // the route is the one chosen, that base's crafting bill counts too
+        if (usedMirror[targetLevel] && inputPrices.copyPartial && inputPrices.copyPartial[itemHrid]) {
+            flags.partial = true;
+        }
     }
 
     return targetCosts[targetLevel];
@@ -612,6 +617,18 @@ async function getWorkerPool() {
 }
 
 /**
+ * The plain item a refined piece is built from, when the game data has it (the tooltip's rule).
+ * @param {string} itemHrid - Item HRID
+ * @param {Object} gameData - Game data with `itemDetailMap`
+ * @returns {string|null}
+ */
+function unrefinedBaseOf(itemHrid, gameData) {
+    if (!String(itemHrid || '').endsWith('_refined')) return null;
+    const base = String(itemHrid).replace(/_refined$/, '');
+    return gameData?.itemDetailMap?.[base] ? base : null;
+}
+
+/**
  * Calculate values for multiple items in parallel
  * @param {Array} items - Array of item objects
  * @param {Object} priceMap - Price map for all items
@@ -747,6 +764,10 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
         materialPartial: {},
         guardedPartial: {},
         basePartial: {},
+        // A refined piece's mirror route consumes copies of the unrefined base: its price and whether
+        // that base is a partial crafting bill, keyed by the refined item
+        copyPrice: {},
+        copyPartial: {},
         traineePrice: TRAINEE_SHOP_PRICE,
     };
     const resolveGuarded = (hrid) => {
@@ -772,6 +793,12 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
         const base = priceBase(item.itemHrid, { context: 'networth' });
         inputPrices.base[item.itemHrid] = base.price;
         inputPrices.basePartial[item.itemHrid] = Boolean(base.partial);
+        const copyHrid = unrefinedBaseOf(item.itemHrid, gameData);
+        if (copyHrid) {
+            const copy = priceBase(copyHrid, { context: 'networth' });
+            inputPrices.copyPrice[item.itemHrid] = copy.price;
+            inputPrices.copyPartial[item.itemHrid] = Boolean(copy.partial);
+        }
         resolveGuarded(item.itemHrid);
         for (const protHrid of itemDetails.protectionItemHrids || []) resolveGuarded(protHrid);
         for (const material of itemDetails.enhancementCosts || []) {

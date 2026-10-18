@@ -13,6 +13,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import * as mathjs from 'mathjs';
 
 const SWORD = '/items/cheese_sword';
+const REFINED = '/items/cheese_sword_refined';
 const PROT = '/items/cheese_guard';
 const MIRROR = '/items/philosophers_mirror';
 const ORE = '/items/ore';
@@ -31,6 +32,13 @@ const ITEM_DETAIL_MAP = {
     [SWORD]: {
         hrid: SWORD,
         name: 'Cheese Sword',
+        itemLevel: 10,
+        enhancementCosts: [{ itemHrid: '/items/coin', count: 1_000_000 }],
+        protectionItemHrids: [PROT],
+    },
+    [REFINED]: {
+        hrid: REFINED,
+        name: 'Cheese Sword (Refined)',
         itemLevel: 10,
         enhancementCosts: [{ itemHrid: '/items/coin', count: 1_000_000 }],
         protectionItemHrids: [PROT],
@@ -164,8 +172,8 @@ beforeEach(() => {
 });
 
 /** Both threads' reading of the same item at the same level */
-async function bothThreads(level) {
-    const path = calculateEnhancementPath(SWORD, level, params, { priceContext: 'networth' });
+async function bothThreads(level, hrid = SWORD) {
+    const path = calculateEnhancementPath(hrid, level, params, { priceContext: 'networth' });
     const priceMap = {};
     for (const [key, book] of Object.entries(state.books)) {
         priceMap[`${key}_ask`] = book.ask ?? null;
@@ -174,7 +182,7 @@ async function bothThreads(level) {
     }
     const partial = new Set();
     const [value] = await calculateItemValueBatch(
-        [{ itemHrid: SWORD, enhancementLevel: level, count: 1 }],
+        [{ itemHrid: hrid, enhancementLevel: level, count: 1 }],
         priceMap,
         { useHighEnhancementCost: true, minLevel: 1, enhancementParams: params },
         { itemDetailMap: ITEM_DETAIL_MAP, actionDetailMap: state.actions },
@@ -250,5 +258,32 @@ describe('net worth partial flag follows the inputs the path selected, on both t
         expect(read.path.optimalStrategy.protectionItemHrid).toBe('/items/mirror_of_protection');
         expect(read.main).toBe(false);
         expect(read.worker).toBe(false);
+    });
+
+    describe('a refined piece whose chosen route mirrors copies of the unrefined base', () => {
+        beforeEach(() => {
+            // The refined piece is bought; protection is dear and the mirror cheap, so the plan mirrors;
+            // the copies are the plain sword, crafted when that is cheaper than its 5000 quote
+            state.craftingSetting = true;
+            state.books[`${REFINED}:0`] = { ask: 90_000, bid: 89_000 };
+            state.books[`${PROT}:0`] = { ask: 400_000, bid: 390_000 };
+            state.books[`${MIRROR}:0`] = { ask: 100, bid: 90 };
+            state.actions['/actions/forge'] = recipeFor(SWORD);
+        });
+
+        test('the copy base crafted from an unpriced recipe input flags the item on both threads', async () => {
+            const read = await bothThreads(6, REFINED);
+            expect(read.path.optimalStrategy.usedMirror).toBe(true);
+            expect(read.main).toBe(true);
+            expect(read.worker).toBe(true);
+        });
+
+        test('the same copy base with every recipe input priced does not', async () => {
+            state.books[`${DUST}:0`] = { ask: 50, bid: 45 };
+            const read = await bothThreads(6, REFINED);
+            expect(read.path.optimalStrategy.usedMirror).toBe(true);
+            expect(read.main).toBe(false);
+            expect(read.worker).toBe(false);
+        });
     });
 });
