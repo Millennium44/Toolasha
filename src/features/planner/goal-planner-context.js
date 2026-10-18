@@ -502,6 +502,8 @@ function measureXpRates(skillHrid, goldByAction) {
                 xpPerAction: experience.modifiedXP,
                 actionTime: experience.actionTime,
                 totalEfficiency: experience.totalEfficiency,
+                // Completions per hour at the level the margin was measured, efficiency repeats included
+                actionsPerHour: experience.actionsPerHour,
                 // Gathering and production are costed above; a missing or unreadable margin
                 // there is unknown, not free. Other types have no calculator to ask.
                 goldPerHour: measuredType ? (goldByAction.get(hrid) ?? null) : 0,

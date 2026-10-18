@@ -1194,7 +1194,18 @@ function planSkillGoal(goal, context, stepId = 'train') {
     // A rate that could not be read is unknown, not free: it adds nothing to the
     // total but says so (costKnown false), rather than passing as a costless grind.
     const rateKnown = !best || (best.goldKnown !== false && Number.isFinite(best.goldPerHour));
-    const goldDelta = timeHours !== null && best && rateKnown ? num(best.goldPerHour) * timeHours : 0;
+    // The margin is per hour at the starting level, but efficiency rises as the climb goes
+    // and shortens later cycles; the completions (and what each consumes) do not shrink.
+    // So a multi-level climb is costed per completion, not by the shrinking duration.
+    const perCompletion =
+        best && !best.flatRate && num(best.actionsPerHour) > 0 && Number.isFinite(actionsNeeded)
+            ? num(best.goldPerHour) / num(best.actionsPerHour)
+            : null;
+    let goldDelta = 0;
+    if (best && rateKnown) {
+        if (perCompletion !== null) goldDelta = perCompletion * num(actionsNeeded);
+        else if (timeHours !== null) goldDelta = num(best.goldPerHour) * timeHours;
+    }
 
     // The gold on a training step is a rate multiplied by a duration, and both
     // are estimates. Naming the rate is what makes an implausible total

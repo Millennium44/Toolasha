@@ -95,7 +95,13 @@ vi.mock('../../utils/enhancement-calculator.js', () => ({
     mirrorLandingOdds: (usedMirror) => usedMirror.map(() => 1),
 }));
 vi.mock('../../utils/experience-calculator.js', () => ({
-    calculateExpPerHour: () => ({ expPerHour: 1000, modifiedXP: 10, actionTime: 10, totalEfficiency: 0 }),
+    calculateExpPerHour: () => ({
+        expPerHour: 1000,
+        modifiedXP: 10,
+        actionTime: 10,
+        totalEfficiency: 0,
+        actionsPerHour: 360,
+    }),
 }));
 vi.mock('../../utils/market-data.js', () => ({ getPriceAgeString: () => 'a moment ago' }));
 
@@ -543,5 +549,14 @@ describe('training rates carry the drink bonuses the start rule needs', () => {
         const [cooking] = context.xpRates('/skills/cooking');
         expect(cooking.teaSkillLevelBonus).toBe(3);
         expect(cooking.actionLevelBonus).toBe(0);
+    });
+});
+
+describe('training rates carry completions per hour', () => {
+    test('the margin and the completions it was measured over travel together', async () => {
+        const context = await buildPlannerContext();
+        const [cooking] = context.xpRates('/skills/cooking');
+        expect(cooking.actionsPerHour).toBe(360);
+        expect(cooking.goldPerHour).toBe(50_000);
     });
 });
