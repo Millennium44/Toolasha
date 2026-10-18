@@ -151,16 +151,15 @@ const plain = (value) => (Number.isFinite(value) ? value : null);
 /** The error text of anything thrown */
 const messageOf = (error) => (error instanceof Error ? error.message : String(error));
 
-/** What a simulation rejects with when Stop (or a teardown) terminates it in flight */
-const CANCEL_MESSAGE = /^(Cancelled|Aborted)$/i;
-
 /**
- * Whether a thrown error is only a cancelled simulation: after Stop it means "did not finish", not "broke".
- * @param {*} error - What was thrown
+ * Whether a thrown error is only a simulation THIS verify's own Stop terminated: after Stop it means "did not
+ * finish", not "broke". A cancel with no Stop of ours (another simulator calling `cancelActiveSimulations()`) is a
+ * real failure: swallowing it would leave a partial result that reads as a completed verification.
+ * @param {*} _error - What was thrown (not inspected: only our own stop signal tells a cancel from a failure)
  * @param {Function} stopped - `() => boolean`, true once the run was asked to stop
  * @returns {boolean}
  */
-const isCancel = (error, stopped) => stopped() || CANCEL_MESSAGE.test(messageOf(error));
+const isCancel = (_error, stopped) => stopped();
 
 /**
  * Turn per-seed paired differences into one row result.
