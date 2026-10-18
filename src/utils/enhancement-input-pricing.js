@@ -97,10 +97,15 @@ function crossFill(itemHrid, level, side, resolved) {
     const ownLive = side === 'ask' ? askLive : bidLive;
     const otherLive = side === 'ask' ? bidLive : askLive;
     if (ownLive || !otherLive) return resolved;
-    let price = side === 'ask' ? book.bid : book.ask;
+    const price = side === 'ask' ? book.bid : book.ask;
     if (level === 0) {
         const shop = getShopCoinCost(itemHrid);
-        if (shop > 0 && shop < price) price = shop;
+        // The shop's price is guaranteed, not a one-sided market quote: it keeps its provenance, so the
+        // inflation guard leaves it alone as it does on the ordinary shop path. (A custom price returned
+        // above and never reaches here.)
+        if (shop > 0 && shop < price) {
+            return { price: shop, custom: false, missing: false, estimated: false };
+        }
     }
     return { price, custom: false, missing: false, estimated: false, crossFilled: true };
 }

@@ -200,3 +200,38 @@ describe('the inflation guard after a cross-fill onto a value-filled book', () =
         expect(priceGuarded(ASK_ONLY, { mode: 'ask' }).price).toBe(1000);
     });
 });
+
+describe('a shop price that beats a cross-filled quote keeps its provenance', () => {
+    test('is not weighed as a one-sided market quote by the inflation guard', () => {
+        // Bid-only book at 1000, shop sells it for 100, and crafting it would cost 500: the guard would
+        // lift a one-sided bid to the craft cost, but the shop price is guaranteed
+        state.items[BID_ONLY] = { name: 'Bid Only' };
+        state.items['/items/ore'] = { name: 'Ore' };
+        state.books[`${BID_ONLY}:0`] = { ask: -1, bid: 1000 };
+        state.books['/items/ore:0'] = { ask: 250, bid: 250 };
+        state.actions['/actions/make'] = {
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/ore', count: 2 }],
+            outputItems: [{ itemHrid: BID_ONLY, count: 1 }],
+        };
+        state.shop[BID_ONLY] = 100;
+        expect(priceGuarded(BID_ONLY, { mode: 'ask' }).price).toBe(100);
+        expect(priceBase(BID_ONLY, { mode: 'ask' }).price).toBe(100);
+        expect(priceProtection(BID_ONLY, { mode: 'ask' }).price).toBe(100);
+    });
+
+    test('a shop price dearer than the quote leaves the cross-filled quote guarded as before', () => {
+        state.items[BID_ONLY] = { name: 'Bid Only' };
+        state.items['/items/ore'] = { name: 'Ore' };
+        state.books[`${BID_ONLY}:0`] = { ask: -1, bid: 300 };
+        state.books['/items/ore:0'] = { ask: 250, bid: 250 };
+        state.actions['/actions/make'] = {
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/ore', count: 2 }],
+            outputItems: [{ itemHrid: BID_ONLY, count: 1 }],
+        };
+        state.shop[BID_ONLY] = 5000;
+        // One-sided bid 300 under a craft cost of 500: max(bid, production)
+        expect(priceGuarded(BID_ONLY, { mode: 'ask' }).price).toBe(500);
+    });
+});
