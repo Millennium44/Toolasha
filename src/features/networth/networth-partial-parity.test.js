@@ -278,6 +278,15 @@ describe('net worth partial flag follows the inputs the path selected, on both t
             expect(read.worker).toBe(true);
         });
 
+        test('both threads total the same refined plan: secondary leaves cost the plain base, not the refined one', async () => {
+            state.books[`${DUST}:0`] = { ask: 50, bid: 45 };
+            const read = await bothThreads(6, REFINED);
+            expect(read.path.optimalStrategy.usedMirror).toBe(true);
+            expect(read.path.optimalStrategy.copyItemHrid).toBe(SWORD);
+            // The plain copy is far cheaper than the 90,000 refined base, so the saving is large
+            expect(read.workerValue).toBeCloseTo(read.path.optimalStrategy.totalCost, 6);
+        });
+
         test('the same copy base with every recipe input priced does not', async () => {
             state.books[`${DUST}:0`] = { ask: 50, bid: 45 };
             const read = await bothThreads(6, REFINED);

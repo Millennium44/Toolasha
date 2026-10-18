@@ -6,6 +6,7 @@
 import WorkerPool, { createIdlePoolReaper } from './worker-pool.js';
 import {
     applyMirrorOptimization,
+    expandMirrorPlan,
     BASE_SUCCESS_RATES,
     BLESSED_TEA_BASE_CHANCE,
     buildEnhancementMarkov,
@@ -42,6 +43,7 @@ const BASE_SUCCESS_RATES = ${JSON.stringify(BASE_SUCCESS_RATES)};
 const DEFAULT_BLESSED_TEA_CHANCE = ${BLESSED_TEA_BASE_CHANCE};
 const buildEnhancementMarkov = ${buildEnhancementMarkov.toString()};
 const applyMirrorOptimization = ${applyMirrorOptimization.toString()};
+const expandMirrorPlan = ${expandMirrorPlan.toString()};
 
 /**
  * Calculate production cost from crafting/upgrading recipe
@@ -281,6 +283,7 @@ function calculateEnhancementCost(params) {
     const mirrorBlessedChance = (enhancementParams.teas?.blessed ?? enhancementParams.blessedTea)
         ? Math.min(1, (enhancementParams.blessedTeaBonus ?? DEFAULT_BLESSED_TEA_CHANCE) * (enhancementParams.guzzlingBonus ?? 1))
         : 0;
+    const traditionalCosts = [...targetCosts];
     const usedMirror = applyMirrorOptimization(targetCosts, mirrorPrice, mirrorBlessedChance);
 
     // Whether the inputs the finished plan SELECTED include a partial crafting bill: a level built the
@@ -303,7 +306,25 @@ function calculateEnhancementCost(params) {
         }
     }
 
-    return targetCosts[targetLevel];
+    let total = targetCosts[targetLevel];
+
+    // A refined piece is mirrored with plain copies: the primary lineage is the refined item and every
+    // other leaf the plan buys is the unrefined base at its level, the same enhancement bill on a far
+    // cheaper +0 (the main thread's leaf rule, so both threads total the same plan)
+    const copyPrice = inputPrices && inputPrices.copyPrice ? inputPrices.copyPrice[itemHrid] : 0;
+    if (copyPrice > 0 && usedMirror[targetLevel]) {
+        const plan = expandMirrorPlan(targetLevel, usedMirror, mirrorBlessedChance);
+        if (plan.mirrorCount > 0) {
+            for (const leaf of plan.leaves) {
+                if (leaf.primary) continue;
+                const level = leaf.level;
+                const copyCost = Math.max(0, traditionalCosts[level] - traditionalCosts[0]) + copyPrice;
+                total -= leaf.quantity * (traditionalCosts[level] - copyCost);
+            }
+        }
+    }
+
+    return total;
 }
 
 /**
