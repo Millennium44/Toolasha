@@ -144,6 +144,7 @@ vi.mock('../enhancement/enhancement-tracker.js', () => ({
 
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     guildXpTracker: () =>
         game.guildMeta

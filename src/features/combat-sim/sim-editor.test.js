@@ -142,6 +142,7 @@ vi.mock('../../utils/character-key.js', () => ({
 const bridge = vi.hoisted(() => ({ snapshots: [], applied: [], mutate: null }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     loadoutSnapshot: () => ({ getAllSnapshots: () => bridge.snapshots, resolveEquipment: () => [] }),
 }));

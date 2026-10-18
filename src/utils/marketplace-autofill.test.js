@@ -14,6 +14,7 @@ vi.mock('../core/config.js', () => ({
 
 vi.mock('./bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     estimatedListingAge: () => ({
         cachedBookSide: (itemHrid, enhancementLevel, isSell) => {
