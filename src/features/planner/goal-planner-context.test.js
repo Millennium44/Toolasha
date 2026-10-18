@@ -23,6 +23,8 @@ const game = vi.hoisted(() => ({
     drinkSlots: {},
 }));
 
+const loadout = vi.hoisted(() => ({ drinks: null, equipment: null }));
+
 const rates = vi.hoisted(() => ({
     gathering: {},
     production: {},
@@ -46,6 +48,13 @@ vi.mock('../../core/data-manager.js', () => ({
         getInventory: () => game.inventory,
         getHouseRoomLevel: () => 0,
         getActionDrinkSlots: (actionType) => game.drinkSlots[actionType] || [],
+    },
+}));
+// The saved-loadout store resolveActionContext consults; null = no saved loadout
+vi.mock('../combat/loadout-snapshot.js', () => ({
+    default: {
+        getSnapshotDrinksForSkill: () => loadout.drinks,
+        getSnapshotForSkill: () => loadout.equipment,
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({
@@ -177,6 +186,8 @@ beforeEach(() => {
     game.inventory = [];
     game.itemDetailMap = {};
     game.drinkSlots = {};
+    loadout.drinks = null;
+    loadout.equipment = null;
 
     rates.gathering = { '/actions/milking/cow': { profitPerHour: 100_000 } };
     rates.production = { '/actions/cooking/stew': { profitPerHour: 50_000 } };
@@ -273,6 +284,7 @@ describe('goldRates — four providers, one ranking', () => {
             consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_level', flatBoost: 6 }] },
         };
         game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/artisan_tea' }];
+        game.inventory = [{ itemHrid: '/items/artisan_tea', count: 5 }];
 
         const context = await buildPlannerContext();
         expect(context.goldRates().map((rate) => rate.actionHrid)).not.toContain('/actions/cooking/stew');
@@ -531,6 +543,7 @@ describe('training rates carry the drink bonuses the start rule needs', () => {
             consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_level', flatBoost: 6 }] },
         };
         game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/artisan_tea' }];
+        game.inventory = [{ itemHrid: '/items/artisan_tea', count: 5 }];
 
         const context = await buildPlannerContext();
         const [cooking] = context.xpRates('/skills/cooking');
@@ -544,6 +557,7 @@ describe('training rates carry the drink bonuses the start rule needs', () => {
             consumableDetail: { buffs: [{ typeHrid: '/buff_types/cooking_level', flatBoost: 3 }] },
         };
         game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/cooking_tea' }];
+        game.inventory = [{ itemHrid: '/items/cooking_tea', count: 5 }];
 
         const context = await buildPlannerContext();
         const [cooking] = context.xpRates('/skills/cooking');
@@ -611,5 +625,70 @@ describe('training rates carry the cost of starting one completion', () => {
     test('gathering consumes nothing', async () => {
         const context = await buildPlannerContext();
         expect(context.xpRates('/skills/milking')[0].upfrontCost).toBe(0);
+    });
+});
+
+describe('which drinks count toward starting an action', () => {
+    const artisan = () => {
+        game.actionDetailMap['/actions/cooking/stew'].levelRequirement = { skillHrid: '/skills/cooking', level: 45 };
+        game.itemDetailMap['/items/artisan_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_level', flatBoost: 6 }] },
+        };
+    };
+    const levelTea = () => {
+        // Level 50 is short of an action that needs 52; a +3 cooking tea would clear it
+        game.actionDetailMap['/actions/cooking/stew'].levelRequirement = { skillHrid: '/skills/cooking', level: 52 };
+        game.itemDetailMap['/items/cooking_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/cooking_level', flatBoost: 3 }] },
+        };
+    };
+    const ranked = async () => (await buildPlannerContext()).goldRates().map((rate) => rate.actionHrid);
+
+    test('an out-of-stock skill-level tea does not unlock a locked action', async () => {
+        levelTea();
+        game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/cooking_tea' }];
+        game.inventory = [];
+
+        expect(await ranked()).not.toContain('/actions/cooking/stew');
+        const context = await buildPlannerContext();
+        expect(context.xpRates('/skills/cooking')[0].teaSkillLevelBonus).toBe(0);
+    });
+
+    test('the same tea in stock does unlock it', async () => {
+        levelTea();
+        game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/cooking_tea' }];
+        game.inventory = [{ itemHrid: '/items/cooking_tea', count: 2 }];
+
+        expect(await ranked()).toContain('/actions/cooking/stew');
+    });
+
+    test('an out-of-stock Artisan Tea does not raise the requirement', async () => {
+        artisan();
+        game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/artisan_tea' }];
+        game.inventory = [];
+
+        expect(await ranked()).toContain('/actions/cooking/stew');
+        const context = await buildPlannerContext();
+        expect(context.xpRates('/skills/cooking')[0].actionLevelBonus).toBe(0);
+    });
+
+    test('a tea still running on its last cup counts even with the stack gone', async () => {
+        artisan();
+        game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/artisan_tea', isActive: true, duration: 60 }];
+        game.inventory = [];
+
+        expect(await ranked()).not.toContain('/actions/cooking/stew');
+    });
+
+    test('a saved loadout drink is honored the way the rate calculators honor it', async () => {
+        artisan();
+        // Nothing slotted right now; the saved loadout would auto-equip Artisan Tea
+        game.drinkSlots['/action_types/cooking'] = [];
+        loadout.drinks = [{ itemHrid: '/items/artisan_tea' }];
+        game.inventory = [{ itemHrid: '/items/artisan_tea', count: 3 }];
+
+        expect(await ranked()).not.toContain('/actions/cooking/stew');
+        const context = await buildPlannerContext();
+        expect(context.xpRates('/skills/cooking')[0].actionLevelBonus).toBe(6);
     });
 });
