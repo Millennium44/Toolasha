@@ -18,6 +18,7 @@ import listingPriceDisplay from './listing-price-display.js';
 const TABLE_CLASS = 'MarketplacePanel_myListingsTable';
 const STORAGE_KEY_PREFIX = 'marketListingDragOrder';
 const STYLE_ID = 'mwi-listing-drag-order-styles';
+const TOUCH_SLOP_PX = 10;
 const SORT_INDICATOR_PATTERN = /[▲▼#]/;
 
 const CSS = `
@@ -166,8 +167,9 @@ class ListingDragOrder {
     /** Forget a finger-driven drag and give its handle back to native drag. */
     _clearTouchDrag() {
         if (!this.touchDrag) return;
-        const { handle, pointerId } = this.touchDrag;
+        const { handle, pointerId, listeners } = this.touchDrag;
         this.touchDrag = null;
+        for (const [type, fn] of listeners) document.removeEventListener(type, fn);
         handle.draggable = true;
         try {
             handle.releasePointerCapture?.(pointerId);
@@ -182,6 +184,7 @@ class ListingDragOrder {
         if (!held) return;
         held.resources.cleanupAll();
         this.tableResources.delete(table);
+        if (this.touchDrag && !this.touchDrag.handle.isConnected) this._clearTouchDrag();
     }
 
     /** @param {HTMLElement} table */
@@ -298,30 +301,55 @@ class ListingDragOrder {
             event.preventDefault();
             // Stops the browser also starting a native drag of the same row
             handle.draggable = false;
-            this._startDrag(event, row, table);
-            this.touchDrag = { pointerId: event.pointerId, handle };
+            const own = (e) => this.touchDrag && e.pointerId === this.touchDrag.pointerId;
+            // On the document for the life of the gesture: moving the captured
+            // row can drop pointer capture, and a release outside the table
+            // must still end the gesture
+            const onMove = (e) => {
+                if (!own(e)) return;
+                const gesture = this.touchDrag;
+                if (!gesture.started) {
+                    // A tap or jitter is not a reorder; nothing is claimed or saved
+                    if (Math.hypot(e.clientX - gesture.startX, e.clientY - gesture.startY) <= TOUCH_SLOP_PX) return;
+                    gesture.started = true;
+                    this._startDrag(e, row, table);
+                }
+                const target = this._rowAtPoint(e.clientX, e.clientY, tbody);
+                if (target) this._dragOver(e, target);
+            };
+            const onUp = (e) => {
+                if (!own(e)) return;
+                const started = this.touchDrag.started;
+                this._clearTouchDrag();
+                if (started) this._finishDrag(table);
+            };
+            const onCancel = (e) => {
+                if (!own(e)) return;
+                const started = this.touchDrag.started;
+                this._clearTouchDrag();
+                // A `none` drop effect with no drop seen is how a cancelled native drag
+                // reads: rows go back and nothing is saved
+                if (started) this._finishDrag(table, { dataTransfer: { dropEffect: 'none' } });
+            };
+            const listeners = [
+                ['pointermove', onMove],
+                ['pointerup', onUp],
+                ['pointercancel', onCancel],
+            ];
+            for (const [type, fn] of listeners) document.addEventListener(type, fn);
+            this.touchDrag = {
+                pointerId: event.pointerId,
+                handle,
+                listeners,
+                startX: event.clientX,
+                startY: event.clientY,
+                started: false,
+            };
             try {
                 handle.setPointerCapture?.(event.pointerId);
             } catch {
                 // Pointer already gone
             }
-        });
-        resources.registerListener(tbody, 'pointermove', (event) => {
-            if (!this.touchDrag || event.pointerId !== this.touchDrag.pointerId) return;
-            const row = this._rowAtPoint(event.clientX, event.clientY, tbody);
-            if (row) this._dragOver(event, row);
-        });
-        resources.registerListener(tbody, 'pointerup', (event) => {
-            if (!this.touchDrag || event.pointerId !== this.touchDrag.pointerId) return;
-            this._clearTouchDrag();
-            this._finishDrag(table);
-        });
-        resources.registerListener(tbody, 'pointercancel', (event) => {
-            if (!this.touchDrag || event.pointerId !== this.touchDrag.pointerId) return;
-            this._clearTouchDrag();
-            // A `none` drop effect with no drop seen is how a cancelled native drag
-            // reads: rows go back and nothing is saved
-            this._finishDrag(table, { dataTransfer: { dropEffect: 'none' } });
         });
         resources.registerListener(tbody, 'keydown', (event) => {
             const handle = handleFor(event);
@@ -547,7 +575,7 @@ class ListingDragOrder {
         this.storageKey = null;
         this.draggedRow = null;
         this.dragState = null;
-        this.touchDrag = null;
+        this._clearTouchDrag();
         this.initPromise = null;
         this.isInitialized = false;
     }

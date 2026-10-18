@@ -395,6 +395,49 @@ describe('finger-driven reordering (no native drag events)', () => {
         expect(listingDragOrder.touchDrag).toBeNull();
     });
 
+    test('a tap on the handle claims and saves nothing', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
+        ptr(handleOf(rows[0]), 'pointerup', 7, 0, 0);
+        expect(game.set).not.toHaveBeenCalled();
+        expect(table.dataset.mwiManualListingOrder).toBeUndefined();
+        expect(listingDragOrder.touchDrag).toBeNull();
+        expect(handleOf(rows[0]).draggable).toBe(true);
+    });
+
+    test('jitter under the slop saves nothing, a real move saves', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
+        ptr(handleOf(rows[0]), 'pointermove', 7, 3, 4);
+        ptr(handleOf(rows[0]), 'pointerup', 7, 3, 4);
+        expect(game.set).not.toHaveBeenCalled();
+        expect(table.dataset.mwiManualListingOrder).toBeUndefined();
+
+        ptr(handleOf(rows[0]), 'pointerdown', 8, 0, 0);
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(handleOf(rows[0]), 'pointermove', 8, 0, 119);
+        ptr(handleOf(rows[0]), 'pointerup', 8, 0, 119);
+        expect(game.set).toHaveBeenCalledTimes(1);
+    });
+
+    test('a release on the document alone ends the gesture', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(handleOf(rows[0]), 'pointermove', 7, 0, 119);
+        ptr(document.body, 'pointerup', 7, 0, 119);
+        expect(listingDragOrder.touchDrag).toBeNull();
+        expect(game.set).toHaveBeenCalledTimes(1);
+    });
+
+    test('disabling mid-gesture gives the handle back to native drag', () => {
+        const handle = handleOf(rows[0]);
+        ptr(handle, 'pointerdown', 7, 0, 0);
+        expect(handle.draggable).toBe(false);
+        listingDragOrder.cleanup();
+        expect(handle.draggable).toBe(true);
+        expect(listingDragOrder.touchDrag).toBeNull();
+    });
+
     test('mouse pointer events leave the native drag path alone', () => {
         ptr(handleOf(rows[0]), 'pointerdown', 1, 0, 0, 'mouse');
         expect(listingDragOrder.touchDrag).toBeNull();
