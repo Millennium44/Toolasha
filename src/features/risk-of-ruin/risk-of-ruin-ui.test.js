@@ -131,7 +131,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/alchemy-adapter.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
-import { reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { reopenIfLeftOpen, clampPanelToViewport } from '../../utils/panel-geometry.js';
 import riskOfRuinUI from './risk-of-ruin-ui.js';
 import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
 import { setCustomPriceOverride } from '../settings/custom-price-overrides.js';
@@ -234,6 +234,22 @@ describe('RiskOfRuinUI close and reopen', () => {
         panel().querySelector('#mwi-ror-close').click();
         expect(isOpen()).toBe(false);
         expect(mocks.openState[PANEL_KEY]).toBe(false);
+    });
+
+    test('opening fits the panel to the window, since the registration clamp ran while it was hidden', () => {
+        riskOfRuinUI.initialize();
+        vi.mocked(clampPanelToViewport).mockClear();
+        expect(isOpen()).toBe(false);
+
+        document.getElementById(`${LAUNCHER_ID}-open`).click();
+        expect(clampPanelToViewport).toHaveBeenCalledTimes(1);
+        expect(clampPanelToViewport.mock.calls[0][0]).toBe(panel());
+        // Fitted after it is visible, not before
+        expect(panel().style.display).toBe('flex');
+
+        // Closing does not fit a hidden panel
+        panel().querySelector('#mwi-ror-close').click();
+        expect(clampPanelToViewport).toHaveBeenCalledTimes(1);
     });
 
     test('a panel left open reopens on the next load, and a closed one stays closed', () => {
