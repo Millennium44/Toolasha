@@ -737,6 +737,10 @@ export async function verifyTriggerChanges({
         });
     }
 
+    // Stopped before any seed finished on both setups: a stop with nothing measured, not a verdict on zero seeds
+    if (outcome.scoreDiffs.length === 0 && stopped()) {
+        return empty({ hoursPerSeed, basis: setting.basis, stopped: true });
+    }
     const scored = rowFromDiffs('triggers', outcome.scoreDiffs, true, seeds);
     const row = {
         ...scored,
@@ -784,20 +788,27 @@ async function measureCombatTriggers({
     const sampleOn = (dtos, seed) =>
         limit(async () => {
             if (stopped()) return null;
-            const simResult = await runSimulation(
-                {
-                    gameData,
-                    playerDTOs: dtos,
-                    zoneHrid,
-                    difficultyTier,
-                    hours: hoursPerSeed,
-                    communityBuffs,
-                    seed,
-                    taskDamageMode: TASK_DAMAGE_OFF,
-                },
-                null,
-                { preempt: false, workers: 1 }
-            );
+            let simResult;
+            try {
+                simResult = await runSimulation(
+                    {
+                        gameData,
+                        playerDTOs: dtos,
+                        zoneHrid,
+                        difficultyTier,
+                        hours: hoursPerSeed,
+                        communityBuffs,
+                        seed,
+                        taskDamageMode: TASK_DAMAGE_OFF,
+                    },
+                    null,
+                    { preempt: false, workers: 1 }
+                );
+            } catch (error) {
+                // Stop terminates the sims in flight: this seed did not finish, and the seeds that did still count
+                if (isCancel(error, stopped)) return null;
+                throw error;
+            }
             tally.done++;
             report('Verify: triggers');
             return sampleFromResult(simResult, gameData, allHrids, hoursPerSeed, { priceCache });
@@ -856,20 +867,27 @@ async function measureLabTriggers({ ctx, setting, seeds, hoursPerSeed, fresh, li
     const runFight = (dto, fight, seed) =>
         limit(async () => {
             if (stopped()) return null;
-            const simResult = await runLabyrinthSimulation({
-                gameData,
-                playerDTOs: [dto],
-                zoneHrid,
-                monsterHrid: fight.monsterHrid,
-                roomLevel: fight.roomLevel,
-                crates,
-                hours: ceiling,
-                // A fixed count, so both setups on this seed play the same attempts
-                precision: { minTrials: trials, maxTrials: trials },
-                communityBuffs,
-                labyrinthCombatBuffs,
-                seed,
-            });
+            let simResult;
+            try {
+                simResult = await runLabyrinthSimulation({
+                    gameData,
+                    playerDTOs: [dto],
+                    zoneHrid,
+                    monsterHrid: fight.monsterHrid,
+                    roomLevel: fight.roomLevel,
+                    crates,
+                    hours: ceiling,
+                    // A fixed count, so both setups on this seed play the same attempts
+                    precision: { minTrials: trials, maxTrials: trials },
+                    communityBuffs,
+                    labyrinthCombatBuffs,
+                    seed,
+                });
+            } catch (error) {
+                // Stop terminates the sims in flight: this seed did not finish, and the seeds that did still count
+                if (isCancel(error, stopped)) return null;
+                throw error;
+            }
             tally.done++;
             report('Verify: triggers');
             return simResult;

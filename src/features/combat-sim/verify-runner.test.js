@@ -937,6 +937,54 @@ describe('Stop never reads as a confirmation or a failure', () => {
         expect(out.rows[0].verdict).not.toBe('confirmed');
     });
 
+    test('Stop terminating a combat trigger verify in flight keeps the seeds that finished', async () => {
+        const state = { stop: false };
+        sim.onRun = () => {
+            // Four seeds' pairs finish; then Stop, whose cancel rejects every simulation still running
+            if (sim.calls.length > 8) {
+                state.stop = true;
+                throw new Error('Cancelled');
+            }
+        };
+        const out = await verifyTriggerChanges({ result: triggerResult(), seeds: 8, abortSignal: () => state.stop });
+        expect(out.stopped).toBe(true);
+        expect(out.error).toBeUndefined();
+        expect(out.rows).toHaveLength(1);
+        expect(out.rows[0].seeds).toBe(4);
+        expect(out.rows[0].verdict).toBe('not-confirmed');
+    });
+
+    test('Stop terminating a lab trigger verify in flight keeps the seeds that finished', async () => {
+        const state = { stop: false };
+        sim.onLabRun = () => {
+            if (sim.labCalls.length > 4) {
+                state.stop = true;
+                throw new Error('Cancelled');
+            }
+        };
+        const labResult = {
+            ...triggerResult(),
+            verifyContext: {
+                kind: 'lab',
+                gameData: {},
+                fights: [
+                    { monsterHrid: '/monsters/a', roomLevel: 1, dto: triggerResult().verifyContext.playerDTOs[0] },
+                ],
+                hrid: 'p1',
+                zoneHrid: '/actions/combat/fly',
+                crates: [],
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                tunables: triggerResult().verifyContext.tunables,
+            },
+        };
+        const out = await verifyTriggerChanges({ result: labResult, seeds: 8, abortSignal: () => state.stop });
+        expect(out.stopped).toBe(true);
+        expect(out.error).toBeUndefined();
+        expect(out.rows[0].seeds).toBe(2);
+        expect(out.rows[0].verdict).toBe('not-confirmed');
+    });
+
     test('Stop during the Combat baseline is a stop, not an error', async () => {
         const state = { stop: false };
         sim.onRun = () => {
