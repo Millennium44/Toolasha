@@ -21,7 +21,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const world = vi.hoisted(() => ({
     currentRun: null,
     pending: null,
-    settings: { dungeonTrackerUI: true, dungeonPace: true, dungeonTrackerAverageWindow: 0 },
+    settings: { dungeonTrackerUI: true, dungeonPace: true, dungeonKeyRunway: true, dungeonTrackerAverageWindow: 0 },
     runs: [],
     baselines: {},
 }));
@@ -79,6 +79,7 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
         getAverageBaselines: vi.fn(async () => world.baselines),
         getStats: vi.fn(async () => ({ totalRuns: 0, avgTime: 0, fastestTime: 0, slowestTime: 0, avgWaveTime: 0 })),
         getDungeonInfo: () => null,
+        getTeamKey: (names) => names.sort().join(','),
     },
     filterRunsForCharacter: (runs) => runs,
     currentCharacter: () => ({ id: 'market123', name: 'Marketcow' }),
@@ -155,6 +156,8 @@ beforeEach(async () => {
     world.runs = [];
     world.baselines = {};
     world.settings.dungeonTrackerAverageWindow = 0;
+    world.settings.dungeonKeyRunway = true;
+    ui.keyRunwayClears = null;
     world.settings.dungeonTracker_recordFailedRuns = false;
     ui.isInitialized = false;
     ui.container = null;
@@ -786,5 +789,126 @@ describe('history filters auto-scope to the run being shown', () => {
 
         expect(ui.chart.render).not.toHaveBeenCalled();
         state.isChartExpanded = false;
+    });
+});
+
+describe('the key runway beside the Keys figure', () => {
+    const MIN = 60_000;
+    const team = { Marketcow: 4, Friend: 9 };
+    const clear = (over = {}) => ({
+        dungeonName: 'Pirate Cove',
+        tier: 1,
+        teamKey: 'Friend,Marketcow',
+        duration: 10 * MIN,
+        timestamp: new Date().toISOString(),
+        ...over,
+    });
+    const draw = async (runOver = {}) => {
+        world.currentRun = run({ keyCountsMap: team, ...runOver });
+        await ui.update(world.currentRun);
+    };
+
+    test('keys times the average clear, for this dungeon, tier and exact team', async () => {
+        world.runs = [clear(), clear(), clear()];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+        expect(titleOf('#mwi-dt-header-keys-runway')).toContain('last 3 clears');
+    });
+
+    test('other dungeons, tiers, teams, failures and client-timed runs are not averaged in', async () => {
+        world.runs = [
+            clear(),
+            clear(),
+            clear({ dungeonName: 'Other', duration: 99 * MIN }),
+            clear({ tier: 2, duration: 99 * MIN }),
+            clear({ teamKey: 'Marketcow', duration: 99 * MIN }),
+            clear({ result: 'fail', duration: 99 * MIN }),
+            clear({ validated: false, duration: 99 * MIN }),
+        ];
+        await draw();
+        // Only two usable clears: below the three-sample floor, so nothing is shown
+        expect(text('#mwi-dt-header-keys-runway')).toBe('');
+        world.runs.push(clear());
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+    });
+
+    test('a solo history of client-timed runs still gets a runway', async () => {
+        world.runs = [
+            clear({ validated: false }),
+            clear({ validated: false }),
+            clear({ validated: false }),
+            clear({ validated: false, result: 'fail', duration: 99 * MIN }),
+        ];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+    });
+
+    test('server-timed clears win over client-timed ones when both exist', async () => {
+        world.runs = [
+            clear({ duration: 20 * MIN }),
+            clear({ duration: 20 * MIN }),
+            clear({ duration: 20 * MIN }),
+            clear({ validated: false, duration: 99 * MIN }),
+        ];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~1h 20m 00s)');
+    });
+
+    test('zero keys, no history and an unknown dungeon each show nothing', async () => {
+        world.runs = [clear(), clear(), clear()];
+        await draw({ keyCountsMap: { Marketcow: 0, Friend: 9 } });
+        expect(text('#mwi-dt-header-keys-runway')).toBe('');
+        world.runs = [];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('');
+        world.runs = [clear(), clear(), clear()];
+        await draw({ dungeonName: 'Never Run' });
+        expect(text('#mwi-dt-header-keys-runway')).toBe('');
+    });
+
+    test('turning the setting off clears it on the next tick', async () => {
+        world.runs = [clear(), clear(), clear()];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).not.toBe('');
+        world.settings.dungeonKeyRunway = false;
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('');
+    });
+
+    test('a reset marker leaves the clears before it out of the runway', async () => {
+        const at = (day, minutes) =>
+            clear({ duration: minutes * MIN, timestamp: new Date(day * 86_400_000).toISOString() });
+        // Two slow clears before the reset, three fast ones after it
+        world.runs = [at(1, 60), at(2, 60), at(5, 10), at(6, 10), at(7, 10)];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~2h 00m 00s)');
+        world.baselines = { 'Friend,Marketcow::Pirate Cove': 3 * 86_400_000 };
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+        expect(titleOf('#mwi-dt-header-keys-runway')).toContain('last 3 clears');
+    });
+
+    test('the average window limits the clears the runway averages, and a changed window redraws it', async () => {
+        const at = (day, minutes) =>
+            clear({ duration: minutes * MIN, timestamp: new Date(day * 86_400_000).toISOString() });
+        world.runs = [at(1, 60), at(2, 60), at(5, 10), at(6, 10), at(7, 10)];
+        world.currentRun = run({ keyCountsMap: team });
+        world.settings.dungeonTrackerAverageWindow = 3;
+        await ui.update(world.currentRun);
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+
+        // Window widened: the setting listener rebuilds the cache without a completion
+        world.settings.dungeonTrackerAverageWindow = 0;
+        for (const cb of configListeners.dungeonTrackerAverageWindow || []) await cb();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~2h 00m 00s)');
+    });
+
+    test('cleanup drops the cached clears', async () => {
+        world.runs = [clear(), clear(), clear()];
+        await draw();
+        expect(ui.keyRunwayClears).not.toBeNull();
+        ui.cleanup();
+        expect(ui.keyRunwayClears).toBeNull();
     });
 });

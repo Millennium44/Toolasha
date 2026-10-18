@@ -32,6 +32,7 @@ import { partyLootPanel } from '../features/ui/party-loot-panel.js';
 
 // Navigation features
 import altClickNavigation from '../features/navigation/alt-click-navigation.js';
+import tokenShopShortcuts from '../features/navigation/token-shop-shortcuts.js';
 import collectionNavigation from '../features/collection/collection-navigation.js';
 import collectionFilters from '../features/collection/collection-filters.js';
 
@@ -213,6 +214,7 @@ toolashaRoot.UI = {
     modalScrollCaps,
     dragSizeRestore,
     altClickNavigation,
+    tokenShopShortcuts,
     collectionNavigation,
     collectionFilters,
     chatCommands,

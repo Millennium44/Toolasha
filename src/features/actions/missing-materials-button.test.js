@@ -10,7 +10,7 @@
  * hrid.
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const state = vi.hoisted(() => ({
     inventory: [],
@@ -33,6 +33,11 @@ const state = vi.hoisted(() => ({
     wsOff: vi.fn(),
     // Off unless a test asks for the Tester shop hand-off
     testerShop: false,
+    // The action queue, the production-input part of it, and dataManager listeners
+    currentActions: [],
+    queuedInputs: new Map(),
+    dataListeners: [],
+    ignoreQueue: false,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -41,9 +46,20 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({ itemDetailMap: state.items, actionDetailMap: {} }),
         getActionDetails: () => null,
         getItemDetails: (hrid) => state.items[hrid] || null,
+        getCurrentActions: () => state.currentActions,
+        getCurrentCharacterId: () => 'char1',
+        on: (event, handler) => state.dataListeners.push({ event, handler }),
+        off: (event, handler) => {
+            state.dataListeners = state.dataListeners.filter((l) => !(l.event === event && l.handler === handler));
+        },
     },
 }));
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => state.settingsEnabled } }));
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: (key) =>
+            key === 'actions_missingMaterialsButton_ignoreQueue' ? state.ignoreQueue : state.settingsEnabled,
+    },
+}));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../core/websocket.js', () => ({
     default: { on: (...args) => state.wsOn(...args), off: (...args) => state.wsOff(...args) },
@@ -69,6 +85,7 @@ vi.mock('../../utils/material-calculator.js', () => ({
         return state.enhancementMaterials;
     },
     calculateEnhancementWholeAttempts: () => state.wholeAttempts,
+    calculateQueuedMaterialsForAction: () => state.queuedInputs,
     unclaimedBoughtCount: (itemHrid) => state.unclaimed?.[itemHrid] || 0,
 }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
@@ -97,7 +114,9 @@ vi.mock('../../utils/tester-shop.js', () => ({
     // Every line of the test bill is sold, so the whole bill takes the shop path
     testerShopCoinCost: () => (state.testerShop ? 100 : 0),
 }));
-vi.mock('../../utils/react-input.js', () => ({ setReactInputValue: () => {} }));
+vi.mock('../../utils/react-input.js', () => ({
+    setReactInputValue: (...args) => globalThis.__repeatWrites?.(...args),
+}));
 
 /**
  * The reservation ledger, doubled at the seam. Its arithmetic belongs to
@@ -1059,5 +1078,505 @@ describe('a live inventory update redraws a tab without losing what it says', ()
         fireInventoryUpdate();
 
         expect(tab.title).toBe('Not sold in the Tester shop — opens the marketplace');
+    });
+});
+
+/**
+ * The Alchemy panel's Missing Mats button: the selected item, bulk multiplier
+ * times per Repeat, costed by the same bill builder as every other bill.
+ */
+describe('the Alchemy panel button', () => {
+    const MILK = '/items/holy_milk';
+    const STACK_HASH = `char1::/item_locations/inventory::${MILK}::0`;
+
+    /** The alchemy component as the game draws it: tab strip, Costs, Repeat. */
+    function mountAlchemyPanel({ itemId = 'holy_milk', enhancement = '', repeat = '10', tab = 'Decompose' } = {}) {
+        document.body.insertAdjacentHTML(
+            'beforeend',
+            `<div class="AlchemyPanel_tabsComponentContainer__x">${['Coinify', 'Decompose', 'Transmute', 'Unrefine']
+                .map((t) => `<button role="tab" aria-selected="${t === tab}">${t}</button>`)
+                .join('')}</div>` +
+                '<div class="SkillActionDetail_alchemyComponent__x">' +
+                '<div class="SkillActionDetail_info__x">' +
+                '<div class="SkillActionDetail_alchemyCosts__x"><div class="SkillActionDetail_itemRequirements__x">' +
+                (itemId
+                    ? `<div class="Item_itemContainer__x"><svg><use href="/sprites#${itemId}"></use></svg>` +
+                      (enhancement ? `<div class="Item_enhancementLevel__x">${enhancement}</div>` : '') +
+                      '</div>'
+                    : '') +
+                '</div></div>' +
+                `<div class="SkillActionDetail_maxActionCountInput__x"><input value="${repeat}"></div>` +
+                '</div></div>'
+        );
+        return document.querySelector('[class*="SkillActionDetail_alchemyComponent"]');
+    }
+
+    const button = () => document.getElementById('mwi-alchemy-missing-mats-button');
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        state.settingsEnabled = true;
+        state.ignoreQueue = false;
+        state.currentActions = [];
+        state.queuedInputs = new Map();
+        state.dataListeners = [];
+        state.unclaimed = {};
+        ledger.claims = {};
+        ledger.reserved = [];
+        ledger.released = [];
+        state.items = {
+            [MILK]: { name: 'Holy Milk', isTradable: true, alchemyDetail: { bulkMultiplier: 2 } },
+            '/items/star_cape_refined': { name: 'Star Cape', isTradable: false, alchemyDetail: {} },
+        };
+        state.inventory = [
+            { itemHrid: MILK, enhancementLevel: 0, count: 5, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        buildMarketplaceDom();
+    });
+
+    afterEach(() => {
+        missingMaterials.cleanup();
+        vi.useRealTimers();
+        state.settingsEnabled = false;
+        state.currentActions = [];
+        state.queuedInputs = new Map();
+    });
+
+    test('sizes the bill from Repeat × the bulk multiplier, less what the bag holds', () => {
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+
+        // 10 actions × 2 per action = 20, 5 held
+        expect(button().textContent).toBe('Missing Mats Marketplace · 1 item');
+        expect(button().title).toContain('Holy Milk ×15');
+        expect(button().disabled).toBe(false);
+        // Placed beneath the Costs block
+        expect(document.querySelector('[class*="SkillActionDetail_alchemyCosts"]').nextElementSibling).toBe(button());
+        // The production button's id is left to the production panels
+        expect(document.getElementById('mwi-missing-mats-button')).toBeNull();
+    });
+
+    test('the finite queue eats stock first — production inputs and queued alchemy on the same +0 item', () => {
+        state.inventory[0].count = 25;
+        state.queuedInputs = new Map([[MILK, 4]]);
+        state.currentActions = [
+            // 3 left × 2 = 6 queued
+            {
+                actionHrid: '/actions/alchemy/decompose',
+                hasMaxCount: true,
+                maxCount: 5,
+                currentCount: 2,
+                primaryItemHash: STACK_HASH,
+            },
+            // Not counted: infinite, enhanced, another item, not alchemy
+            { actionHrid: '/actions/alchemy/decompose', hasMaxCount: false, primaryItemHash: STACK_HASH },
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                hasMaxCount: true,
+                maxCount: 9,
+                currentCount: 0,
+                primaryItemHash: `char1::/item_locations/inventory::${MILK}::3`,
+            },
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                hasMaxCount: true,
+                maxCount: 9,
+                currentCount: 0,
+                primaryItemHash: 'char1::/item_locations/inventory::/items/egg::0',
+            },
+            {
+                actionHrid: '/actions/cooking/cake',
+                hasMaxCount: true,
+                maxCount: 9,
+                currentCount: 0,
+                primaryItemHash: STACK_HASH,
+            },
+        ];
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+
+        // 25 held − 10 queued = 15 available against 20
+        expect(button().title).toContain('Holy Milk ×5');
+    });
+
+    test('ignoring the queue counts the whole bag', () => {
+        state.inventory[0].count = 25;
+        state.ignoreQueue = true;
+        state.queuedInputs = new Map([[MILK, 4]]);
+        state.currentActions = [
+            {
+                actionHrid: '/actions/alchemy/decompose',
+                hasMaxCount: true,
+                maxCount: 5,
+                currentCount: 2,
+                primaryItemHash: STACK_HASH,
+            },
+        ];
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+
+        expect(button().textContent).toBe('Missing Mats Marketplace');
+    });
+
+    test('an infinite Repeat leaves the button disabled, asking for a quantity', () => {
+        mountAlchemyPanel({ repeat: '∞' });
+        missingMaterials.initialize();
+
+        expect(button().disabled).toBe(true);
+        expect(button().title).toBe('Enter a quantity to check missing materials');
+    });
+
+    test('no button with no item selected, an enhanced selection, or the setting off', () => {
+        mountAlchemyPanel({ itemId: '' });
+        missingMaterials.initialize();
+        expect(button()).toBeNull();
+        missingMaterials.cleanup();
+
+        buildMarketplaceDom();
+        mountAlchemyPanel({ enhancement: '+3' });
+        missingMaterials.initialize();
+        expect(button()).toBeNull();
+        missingMaterials.cleanup();
+
+        buildMarketplaceDom();
+        state.settingsEnabled = false;
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+        expect(button()).toBeNull();
+    });
+
+    test('an untradable input (a refined cape to unrefine) has nothing to buy', () => {
+        mountAlchemyPanel({ itemId: 'star_cape_refined', tab: 'Unrefine' });
+        missingMaterials.initialize();
+
+        expect(button().textContent).toBe('Missing Mats Marketplace');
+        expect(button().title).toBe('');
+    });
+
+    test('a new item, a new count and a bag change redraw it; another feature writing into the panel does not', async () => {
+        const panel = mountAlchemyPanel();
+        missingMaterials.initialize();
+        const first = button();
+
+        // Another Alchemy feature's node: the bill is unchanged, so the button is left alone
+        panel
+            .querySelector('[class*="SkillActionDetail_info"]')
+            .insertAdjacentHTML('beforeend', '<div class="mwi-alchemy-gold-summary">Gold</div>');
+        await vi.advanceTimersByTimeAsync(200);
+        expect(button()).toBe(first);
+
+        panel.querySelector('input').value = '3';
+        panel.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(200);
+        expect(button().title).toContain('Holy Milk ×1');
+
+        state.inventory[0].count = 0;
+        state.dataListeners.find((l) => l.event === 'items_updated').handler();
+        await vi.advanceTimersByTimeAsync(200);
+        expect(button().title).toContain('Holy Milk ×6');
+
+        state.items['/items/egg'] = { name: 'Egg', isTradable: true, alchemyDetail: { bulkMultiplier: 1 } };
+        panel.querySelector('use').setAttribute('href', '/sprites#egg');
+        await vi.advanceTimersByTimeAsync(200);
+        expect(button().title).toContain('Egg ×3');
+    });
+
+    test('opens a tab for the item, claims the bill, and the Return tab names the item and count', async () => {
+        const { container } = buildMarketplaceDom();
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+
+        button().click();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const tab = container.querySelector(`[data-item-hrid="${MILK}"]`);
+        expect(tab).toBeTruthy();
+        expect(ledger.reserved.at(-1)).toEqual({
+            ownerId: 'missingMats',
+            lines: [{ itemHrid: MILK, count: 20, enhancementLevel: 0 }],
+        });
+        const returnTab = Array.from(container.querySelectorAll('[data-mwi-custom-tab="true"]')).find(
+            (el) => !el.hasAttribute('data-item-hrid') && !el.hasAttribute('data-mwi-clear-all-tab')
+        );
+        expect(returnTab.textContent).toContain('Holy Milk (×10)');
+    });
+
+    test('Return reopens Alchemy on the +0 stack through the game handler and restores the count', async () => {
+        const { container } = buildMarketplaceDom();
+        const handleAlchemizeItem = vi.fn();
+        const handleGoToAction = vi.fn();
+        const root = document.createElement('div');
+        root.id = 'root';
+        root._reactRootContainer = {
+            current: { stateNode: { handleGoToAction, handleAlchemizeItem }, child: null, sibling: null },
+        };
+        document.body.appendChild(root);
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+
+        button().click();
+        await vi.advanceTimersByTimeAsync(1000);
+        const returnTab = Array.from(container.querySelectorAll('[data-mwi-custom-tab="true"]')).find(
+            (el) => !el.hasAttribute('data-item-hrid') && !el.hasAttribute('data-mwi-clear-all-tab')
+        );
+        returnTab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        await vi.advanceTimersByTimeAsync(300);
+
+        expect(handleAlchemizeItem).toHaveBeenCalledWith(STACK_HASH);
+        expect(handleGoToAction).not.toHaveBeenCalled();
+    });
+
+    describe('Return selects the stored alchemy tab', () => {
+        async function returnWith({ withTransmuteTab }) {
+            const { container } = buildMarketplaceDom();
+            const order = [];
+            const root = document.createElement('div');
+            root.id = 'root';
+            root._reactRootContainer = {
+                current: {
+                    stateNode: { handleGoToAction: vi.fn(), handleAlchemizeItem: vi.fn(() => order.push('alchemize')) },
+                    child: null,
+                    sibling: null,
+                },
+            };
+            document.body.appendChild(root);
+            mountAlchemyPanel({ tab: 'Transmute' });
+            missingMaterials.initialize();
+            button().click();
+            await vi.advanceTimersByTimeAsync(1000);
+
+            // The game lands on another tab; the Transmute tab is there (or not) to be clicked
+            const strip = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
+            strip.innerHTML = ['Coinify', 'Decompose', 'Transmute', 'Unrefine']
+                .map((t) => `<button role="tab" aria-selected="${t === 'Coinify'}">${t}</button>`)
+                .join('');
+            let transmute = strip.querySelectorAll('[role="tab"]')[2];
+            if (withTransmuteTab) {
+                transmute.addEventListener('click', () => order.push('tab'));
+            } else {
+                strip.innerHTML = '<button role="tab" aria-selected="true">Coinify</button>';
+                transmute = null;
+            }
+            globalThis.__repeatWrites = () => order.push('repeat');
+            const returnTab = Array.from(container.querySelectorAll('[data-mwi-custom-tab="true"]')).find(
+                (el) => !el.hasAttribute('data-item-hrid') && !el.hasAttribute('data-mwi-clear-all-tab')
+            );
+            returnTab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            await vi.advanceTimersByTimeAsync(3000);
+            delete globalThis.__repeatWrites;
+            return order;
+        }
+
+        test('the Transmute tab is clicked before Repeat is restored', async () => {
+            const order = await returnWith({ withTransmuteTab: true });
+            expect(order.indexOf('tab')).toBeGreaterThan(order.indexOf('alchemize'));
+            expect(order.indexOf('repeat')).toBeGreaterThan(order.indexOf('tab'));
+        });
+
+        test('a tab that never appears does not throw, and Repeat is still restored', async () => {
+            const order = await returnWith({ withTransmuteTab: false });
+            expect(order).toContain('alchemize');
+            expect(order).not.toContain('tab');
+            expect(order).toContain('repeat');
+        });
+    });
+
+    test('with no stack left, Return opens the alchemy action by its tab', async () => {
+        const { container } = buildMarketplaceDom();
+        const handleAlchemizeItem = vi.fn();
+        const handleGoToAction = vi.fn();
+        const root = document.createElement('div');
+        root.id = 'root';
+        root._reactRootContainer = {
+            current: { stateNode: { handleGoToAction, handleAlchemizeItem }, child: null, sibling: null },
+        };
+        document.body.appendChild(root);
+        state.inventory = [];
+        mountAlchemyPanel({ tab: 'Transmute' });
+        missingMaterials.initialize();
+
+        button().click();
+        await vi.advanceTimersByTimeAsync(1000);
+        const returnTab = Array.from(container.querySelectorAll('[data-mwi-custom-tab="true"]')).find(
+            (el) => !el.hasAttribute('data-item-hrid') && !el.hasAttribute('data-mwi-clear-all-tab')
+        );
+        returnTab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        await vi.advanceTimersByTimeAsync(300);
+
+        expect(handleAlchemizeItem).not.toHaveBeenCalled();
+        expect(handleGoToAction).toHaveBeenCalledWith('/actions/alchemy/transmute');
+    });
+
+    test('a catalyst picked in the profit what-if joins the bill, sized by its success rate', async () => {
+        const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
+        state.items['/items/prime_catalyst'] = { name: 'Prime Catalyst', isTradable: true };
+        state.inventory.push({
+            itemHrid: '/items/prime_catalyst',
+            enhancementLevel: 0,
+            count: 2,
+            itemLocationHrid: '/item_locations/inventory',
+        });
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+        expect(button().title).not.toContain('Prime Catalyst');
+
+        whatIf.setCatalystWhatIf('prime');
+        whatIf.publishCatalystWhatIfResult({
+            itemHrid: MILK,
+            actionType: 'decompose',
+            catalystHrid: '/items/prime_catalyst',
+            successRate: 0.75,
+        });
+        await vi.advanceTimersByTimeAsync(200);
+
+        // 10 actions × 0.75 = 7.5 → 8 needed, 2 held
+        expect(button().textContent).toBe('Missing Mats Marketplace · 2 items');
+        expect(button().title).toContain('Prime Catalyst ×6');
+        expect(button().title).toContain('Catalyst count is an estimate');
+
+        // Back to Equipped: the catalyst leaves the bill
+        whatIf.setCatalystWhatIf(null);
+        await vi.advanceTimersByTimeAsync(200);
+        expect(button().title).not.toContain('Prime Catalyst');
+        whatIf.resetCatalystWhatIf();
+    });
+
+    describe('queued alchemy catalysts', () => {
+        const CAT = '/items/prime_catalyst';
+        const queuedWith = (over = {}) => ({
+            actionHrid: '/actions/alchemy/coinify',
+            hasMaxCount: true,
+            maxCount: 5,
+            currentCount: 1,
+            primaryItemHash: `char1::/item_locations/inventory::/items/egg::0`,
+            secondaryItemHash: `char1::/item_locations/inventory::${CAT}::0`,
+            ...over,
+        });
+        const publish = async () => {
+            const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
+            state.items[CAT] = { name: 'Prime Catalyst', isTradable: true };
+            state.inventory.push({
+                itemHrid: CAT,
+                enhancementLevel: 0,
+                count: 10,
+                itemLocationHrid: '/item_locations/inventory',
+            });
+            mountAlchemyPanel();
+            missingMaterials.initialize();
+            whatIf.setCatalystWhatIf('prime');
+            whatIf.publishCatalystWhatIfResult({
+                itemHrid: MILK,
+                actionType: 'decompose',
+                catalystHrid: CAT,
+                successRate: 0.75,
+            });
+            await vi.advanceTimersByTimeAsync(200);
+            return whatIf;
+        };
+
+        test('catalysts committed to finite queued alchemy are not available', async () => {
+            // 4 actions left use 4 of the 10; 8 are needed, so 2 short
+            state.currentActions = [queuedWith()];
+            const whatIf = await publish();
+            expect(button().title).toContain('Prime Catalyst ×2');
+            whatIf.resetCatalystWhatIf();
+        });
+
+        test('ignoring the queue, and infinite entries, leave the stack free', async () => {
+            state.currentActions = [queuedWith({ hasMaxCount: false })];
+            const whatIf = await publish();
+            expect(button().title).not.toContain('Prime Catalyst');
+            state.ignoreQueue = true;
+            state.currentActions = [queuedWith()];
+            whatIf.setCatalystWhatIf('prime');
+            await vi.advanceTimersByTimeAsync(200);
+            expect(button().title).not.toContain('Prime Catalyst');
+            whatIf.resetCatalystWhatIf();
+        });
+    });
+
+    test('a what-if result for another item or tab is not this bill’s', async () => {
+        const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
+        state.items['/items/prime_catalyst'] = { name: 'Prime Catalyst', isTradable: true };
+        whatIf.setCatalystWhatIf('prime');
+        whatIf.publishCatalystWhatIfResult({
+            itemHrid: '/items/egg',
+            actionType: 'decompose',
+            catalystHrid: '/items/prime_catalyst',
+            successRate: 0.75,
+        });
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+        expect(button().title).not.toContain('Prime Catalyst');
+        missingMaterials.cleanup();
+
+        buildMarketplaceDom();
+        whatIf.publishCatalystWhatIfResult({
+            itemHrid: MILK,
+            actionType: 'transmute',
+            catalystHrid: '/items/prime_catalyst',
+            successRate: 0.75,
+        });
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+        expect(button().title).not.toContain('Prime Catalyst');
+        whatIf.resetCatalystWhatIf();
+    });
+
+    test('the opened bill keeps the catalyst it was opened with', async () => {
+        const whatIf = await import('../alchemy/alchemy-catalyst-whatif.js');
+        state.items['/items/prime_catalyst'] = { name: 'Prime Catalyst', isTradable: true };
+        const { container } = buildMarketplaceDom();
+        whatIf.setCatalystWhatIf('prime');
+        whatIf.publishCatalystWhatIfResult({
+            itemHrid: MILK,
+            actionType: 'decompose',
+            catalystHrid: '/items/prime_catalyst',
+            successRate: 0.5,
+        });
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+
+        button().click();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(container.querySelector('[data-item-hrid="/items/prime_catalyst"]')).toBeTruthy();
+        expect(ledger.reserved.at(-1).lines).toEqual([
+            { itemHrid: MILK, count: 20, enhancementLevel: 0 },
+            { itemHrid: '/items/prime_catalyst', count: 5, enhancementLevel: 0 },
+        ]);
+        whatIf.resetCatalystWhatIf();
+    });
+
+    test('cleanup removes the button and every listener it added', () => {
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+        expect(button()).not.toBeNull();
+        expect(state.dataListeners.length).toBe(2);
+
+        missingMaterials.cleanup();
+
+        expect(button()).toBeNull();
+        expect(state.dataListeners).toEqual([]);
+    });
+
+    test('a production bill opened afterwards drops the alchemy context', async () => {
+        const { container } = buildMarketplaceDom();
+        mountAlchemyPanel();
+        missingMaterials.initialize();
+        button().click();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        state.actionMaterials = [
+            { itemHrid: '/items/plank', itemName: 'Plank', missing: 4, required: 4, isTradeable: true },
+        ];
+        const opening = openMissingMaterials('/actions/crafting/plank', 2);
+        await vi.advanceTimersByTimeAsync(1000);
+        await opening;
+
+        const returnTab = Array.from(container.querySelectorAll('[data-mwi-custom-tab="true"]')).find(
+            (el) => !el.hasAttribute('data-item-hrid') && !el.hasAttribute('data-mwi-clear-all-tab')
+        );
+        expect(returnTab.textContent).not.toContain('Holy Milk');
     });
 });

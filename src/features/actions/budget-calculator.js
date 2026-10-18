@@ -25,6 +25,9 @@ const PRODUCTION_TYPES = [
 ];
 
 const UI_ID = 'mwi-budget-calculator';
+// A recipe's coin fee (refinement crafts carry one) is paid out of the budget
+// itself, so it is spent at face value whatever the wallet holds.
+const COIN_HRID = '/items/coin';
 // artisanInputTotal changes from per-action to expected rounding at 100 actions.
 const ARTISAN_ROUNDING_THRESHOLD = 100;
 const MAX_AFFORDABLE_ACTIONS = 10_000_000;
@@ -88,12 +91,16 @@ function findMaxActions(actionHrid, budget) {
         const mats = calculateMaterialRequirements(actionHrid, n, false, { ownerId: RESERVATION_OWNER });
         let total = 0;
         for (const mat of mats) {
+            if (mat.itemHrid === COIN_HRID) {
+                total += mat.required;
+                continue;
+            }
             if (!mat.isTradeable || mat.missing <= 0) continue;
             const price = marketAPI.getPrice(mat.itemHrid);
             if (!(price?.ask > 0)) return Infinity;
             total += mat.missing * price.ask;
         }
-        if (mats.some((mat) => !mat.isTradeable && mat.missing > 0)) return Infinity;
+        if (mats.some((mat) => mat.itemHrid !== COIN_HRID && !mat.isTradeable && mat.missing > 0)) return Infinity;
         return total;
     };
 
@@ -108,7 +115,8 @@ function findMaxActions(actionHrid, budget) {
             ...new Set(
                 mats
                     .filter((mat) => {
-                        if (mat.missing <= 0) return false;
+                        // The coin fee is priced by the budget, never "cannot buy"
+                        if (mat.itemHrid === COIN_HRID || mat.missing <= 0) return false;
                         if (!mat.isTradeable) return true;
                         return !(marketAPI.getPrice(mat.itemHrid)?.ask > 0);
                     })
@@ -218,10 +226,12 @@ function showBreakdownModal(budget, result) {
 
     const rows = result.materials
         .map((mat) => {
-            const price = mat.isTradeable ? marketAPI.getPrice(mat.itemHrid) : null;
-            const ask = price?.ask > 0 ? price.ask : null;
-            const lineCost = ask && mat.missing > 0 ? mat.missing * ask : 0;
-            if (mat.isTradeable && mat.missing > 0 && !ask) hasUnpricedShortfall = true;
+            const isCoin = mat.itemHrid === COIN_HRID;
+            const price = mat.isTradeable && !isCoin ? marketAPI.getPrice(mat.itemHrid) : null;
+            const ask = isCoin ? 1 : price?.ask > 0 ? price.ask : null;
+            // The coin fee is spent in full out of the budget, as the search counted it
+            const lineCost = isCoin ? mat.required : ask && mat.missing > 0 ? mat.missing * ask : 0;
+            if (!isCoin && mat.isTradeable && mat.missing > 0 && !ask) hasUnpricedShortfall = true;
             totalSpend += lineCost;
             if (ask) perActionCost += ask * (mat.required / (result.n || 1));
 

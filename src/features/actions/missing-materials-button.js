@@ -1,6 +1,6 @@
 /**
  * Missing Materials Marketplace Button
- * Adds button to production and enhancement panels that opens marketplace with tabs for missing materials
+ * Adds button to production, enhancement and alchemy panels that opens marketplace with tabs for missing materials
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -19,6 +19,7 @@ import {
     calculateMaterialRequirements,
     calculateEnhancementMaterialRequirements,
     calculateEnhancementWholeAttempts,
+    calculateQueuedMaterialsForAction,
     unclaimedBoughtCount,
 } from '../../utils/material-calculator.js';
 import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
@@ -44,7 +45,9 @@ import {
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import { buildItemHash } from '../../utils/item-hash.js';
+import { buildItemHash, parseItemHash } from '../../utils/item-hash.js';
+import { readAlchemyPanelSelection, getAlchemyTabElements, ALCHEMY_TAB_TYPES } from '../alchemy/alchemy-profit.js';
+import { getCatalystWhatIfResult, onCatalystWhatIfChange } from '../alchemy/alchemy-catalyst-whatif.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
@@ -110,6 +113,27 @@ const ADJUST_MAX = 9999;
 let storedMaterialList = null;
 /** The level the open bill's upgrade item is wanted at, kept so live updates do not lose it */
 let storedUpgradeItemLevel = 0;
+/**
+ * The Alchemy panel's bill, kept for live updates and the Return tab:
+ * `{itemHrid, actionType, numActions}`.
+ * @type {{itemHrid: string, actionType: string|null, numActions: number}|null}
+ */
+let storedAlchemyContext = null;
+/** Alchemy panels being watched → their teardown */
+const alchemyPanelWatchers = new Map();
+let alchemyDomObserverUnregister = null;
+let alchemyRefreshTimeout = null;
+/** dataManager listeners that redraw the Alchemy button: inventory and queue */
+let alchemyDataHandler = null;
+/** Unsubscribe from the profit display's catalyst what-if */
+let alchemyWhatIfUnsubscribe = null;
+const ALCHEMY_PANEL_SELECTOR = '[class*="SkillActionDetail_alchemyComponent"]';
+/**
+ * Its own id, not the production button's: the Alchemy panel is also a detail
+ * panel, and the production path removes `#mwi-missing-mats-button` from every
+ * panel it is handed before deciding the panel is not a production one.
+ */
+const ALCHEMY_BUTTON_ID = 'mwi-alchemy-missing-mats-button';
 const timerRegistry = createTimerRegistry();
 const autofillManager = createAutofillManager('MissingMats-Actions');
 
@@ -192,9 +216,23 @@ export function initialize() {
     // must redraw a panel already on screen
     unsubscribeRefresh = onActionPanelsRefresh((panel, value) => updateButtonForPanel(panel, value));
 
+    // Watch for Alchemy panels appearing
+    alchemyDomObserverUnregister = domObserver.onClass(
+        'MissingMaterialsButton-AlchemyPanel',
+        'SkillActionDetail_alchemyComponent',
+        (panel) => processAlchemyPanel(panel)
+    );
+    // The Alchemy bill reads the bag and the queue; either moving redraws it
+    alchemyDataHandler = () => scheduleAlchemyUpdate();
+    dataManager.on('items_updated', alchemyDataHandler);
+    dataManager.on('actions_updated', alchemyDataHandler);
+    // A catalyst picked in the profit display's what-if joins the bill
+    alchemyWhatIfUnsubscribe = onCatalystWhatIfChange(() => scheduleAlchemyUpdate());
+
     // Process existing panels
     processActionPanels();
     processExistingEnhancingPanels();
+    document.querySelectorAll(ALCHEMY_PANEL_SELECTOR).forEach((panel) => processAlchemyPanel(panel));
 }
 
 /**
@@ -238,6 +276,27 @@ export function cleanup() {
     if (enhancementDebounceTimeout) {
         clearTimeout(enhancementDebounceTimeout);
         enhancementDebounceTimeout = null;
+    }
+
+    // Alchemy: the panel watchers (each removes its own button), the observer and the data listeners
+    if (alchemyDomObserverUnregister) {
+        alchemyDomObserverUnregister();
+        alchemyDomObserverUnregister = null;
+    }
+    if (alchemyDataHandler) {
+        dataManager.off('items_updated', alchemyDataHandler);
+        dataManager.off('actions_updated', alchemyDataHandler);
+        alchemyDataHandler = null;
+    }
+    if (alchemyWhatIfUnsubscribe) {
+        alchemyWhatIfUnsubscribe();
+        alchemyWhatIfUnsubscribe = null;
+    }
+    for (const unwatch of alchemyPanelWatchers.values()) unwatch();
+    alchemyPanelWatchers.clear();
+    if (alchemyRefreshTimeout) {
+        clearTimeout(alchemyRefreshTimeout);
+        alchemyRefreshTimeout = null;
     }
 
     timerRegistry.clearAll();
@@ -820,6 +879,7 @@ async function handleEnhancementMissingMaterialsClick(
     storedActionHrid = null;
     storedNumActions = 0;
     storedUpgradeItemLevel = 0;
+    storedAlchemyContext = null;
 
     // Recalculate materials fresh (inventory may have changed since button was rendered)
     const freshMaterials = calculateEnhancementMaterialRequirements(
@@ -844,14 +904,267 @@ async function handleEnhancementMissingMaterialsClick(
 }
 
 /**
+ * Items one alchemy action on this item consumes: its bulk multiplier, as the
+ * profit calculator and the gold summary read it.
+ * @param {string} itemHrid - Item HRID
+ * @returns {number} Items per action, at least 1
+ */
+function alchemyItemsPerAction(itemHrid) {
+    const bulk = Number(dataManager.getItemDetails(itemHrid)?.alchemyDetail?.bulkMultiplier);
+    return Number.isFinite(bulk) && bulk >= 1 ? bulk : 1;
+}
+
+/**
+ * Units of an unenhanced item the finite action queue will already consume:
+ * production inputs (as the action panel bill counts them) plus queued alchemy
+ * actions on the same +0 item, which name their input by stack hash rather
+ * than in `inputItems`. Infinite actions are skipped, as for production.
+ * @param {string} itemHrid - Item HRID
+ * @returns {number} Queued units
+ */
+function queuedAlchemyInput(itemHrid) {
+    let queued = calculateQueuedMaterialsForAction(null).get(itemHrid) || 0;
+    const perAction = alchemyItemsPerAction(itemHrid);
+    for (const action of dataManager.getCurrentActions?.() || []) {
+        if (!action?.actionHrid?.startsWith('/actions/alchemy/') || !action.hasMaxCount) continue;
+        const parsed = parseItemHash(action.primaryItemHash);
+        if (parsed.itemHrid !== itemHrid || parsed.level !== 0) continue;
+        const remaining = (Number(action.maxCount) || 0) - (Number(action.currentCount) || 0);
+        if (remaining > 0) queued += remaining * perAction;
+    }
+    return queued;
+}
+
+/**
+ * Catalysts the finite action queue has already committed: queued alchemy
+ * actions name theirs in `secondaryItemHash`. A catalyst is spent only on a
+ * success, but a queued entry's success rate is not known here (it depends on
+ * the catalyst and gear it was queued under), so each remaining action counts
+ * as one catalyst — the upper bound, which can only under-state what is free,
+ * never promise stock the queue will use. Infinite actions are skipped.
+ * @param {string} catalystHrid - Catalyst item HRID
+ * @returns {number} Queued catalyst units
+ */
+function queuedAlchemyCatalyst(catalystHrid) {
+    let queued = 0;
+    for (const action of dataManager.getCurrentActions?.() || []) {
+        if (!action?.actionHrid?.startsWith('/actions/alchemy/') || !action.hasMaxCount) continue;
+        if (!action.secondaryItemHash) continue;
+        const parsed = parseItemHash(action.secondaryItemHash);
+        if (parsed.itemHrid !== catalystHrid || parsed.level !== 0) continue;
+        const remaining = (Number(action.maxCount) || 0) - (Number(action.currentCount) || 0);
+        if (remaining > 0) queued += remaining;
+    }
+    return queued;
+}
+
+/**
+ * The what-if catalyst the profit display computed for exactly this item and tab, if any.
+ * @param {string} itemHrid - The selected item
+ * @param {string|null} actionType - The selected tab
+ * @returns {{catalystHrid: string, successRate: number}|null}
+ */
+function alchemyWhatIfCatalyst(itemHrid, actionType) {
+    const result = getCatalystWhatIfResult();
+    if (!result?.catalystHrid || result.itemHrid !== itemHrid || result.actionType !== actionType) return null;
+    if (!(result.successRate > 0)) return null;
+    return { catalystHrid: result.catalystHrid, successRate: result.successRate };
+}
+
+/**
+ * The Alchemy panel's bill: the selected item, bulk multiplier times per action.
+ *
+ * Costed by `materialsFromList`, so it follows every rule the other bills do —
+ * unenhanced copies in the bag only, bought-but-unclaimed units count, stock
+ * another plan claimed is not this bill's. The coin fee is not a line: it
+ * cannot be bought, and the panel's gold summary already shows it.
+ *
+ * A catalyst picked in the profit display's what-if is a second line. A catalyst
+ * is consumed once per success, so its count is an estimate: Repeat × the
+ * what-if success rate, rounded up. The equipped catalyst is not billed (as
+ * upstream): the button sizes what the player asked to try.
+ *
+ * @param {{itemHrid: string, numActions: number, catalyst?: {catalystHrid: string, successRate: number}|null}} ctx
+ *   What the panel is set to
+ * @returns {Array<Object>} Material lines, or [] for no actions
+ */
+function alchemyMaterials(ctx) {
+    const numActions = Math.max(0, Math.floor(Number(ctx?.numActions) || 0));
+    if (!ctx?.itemHrid || numActions <= 0) return [];
+    const ignoreQueue = config.getSetting('actions_missingMaterialsButton_ignoreQueue') || false;
+    const lines = [
+        {
+            itemHrid: ctx.itemHrid,
+            count: numActions * alchemyItemsPerAction(ctx.itemHrid),
+            queued: ignoreQueue ? 0 : queuedAlchemyInput(ctx.itemHrid),
+        },
+    ];
+    if (ctx.catalyst?.catalystHrid && ctx.catalyst.successRate > 0) {
+        lines.push({
+            itemHrid: ctx.catalyst.catalystHrid,
+            count: Math.ceil(numActions * ctx.catalyst.successRate - 1e-9),
+            queued: ignoreQueue ? 0 : queuedAlchemyCatalyst(ctx.catalyst.catalystHrid),
+        });
+    }
+    return materialsFromList(lines, RESERVATION_OWNER);
+}
+
+/**
+ * Watch one Alchemy panel: the selected item, the tab and the Repeat count all
+ * redraw its button.
+ *
+ * Every mutation in the panel only schedules a redraw; the redraw itself does
+ * nothing unless the bill it computes differs from the one on the button, so
+ * the other Alchemy features that write into this panel cannot loop with it.
+ *
+ * @param {HTMLElement} panel - The alchemy component
+ */
+function processAlchemyPanel(panel) {
+    if (!panel || alchemyPanelWatchers.has(panel)) return;
+
+    for (const [tracked, unwatch] of alchemyPanelWatchers) {
+        if (tracked.isConnected) continue;
+        unwatch();
+        alchemyPanelWatchers.delete(tracked);
+    }
+
+    const schedule = () => scheduleAlchemyUpdate();
+    const observer = new MutationObserver(schedule);
+    observer.observe(panel, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['href', 'xlink:href'],
+    });
+    // The tab strip sits outside the component
+    const tabContainer = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
+    if (tabContainer) {
+        observer.observe(tabContainer, { attributes: true, attributeFilter: ['aria-selected'], subtree: true });
+    }
+    // Typing in Repeat, and the quick 1 / infinity buttons, which set it without an input event
+    panel.addEventListener('input', schedule);
+    panel.addEventListener('click', schedule);
+
+    alchemyPanelWatchers.set(panel, () => {
+        observer.disconnect();
+        panel.removeEventListener('input', schedule);
+        panel.removeEventListener('click', schedule);
+        panel.querySelector(`#${ALCHEMY_BUTTON_ID}`)?.remove();
+    });
+
+    updateAlchemyButton(panel);
+}
+
+/**
+ * Redraw every watched Alchemy panel's button, debounced.
+ */
+function scheduleAlchemyUpdate() {
+    if (alchemyPanelWatchers.size === 0) return;
+    if (alchemyRefreshTimeout) clearTimeout(alchemyRefreshTimeout);
+    alchemyRefreshTimeout = setTimeout(() => {
+        alchemyRefreshTimeout = null;
+        for (const [panel, unwatch] of alchemyPanelWatchers) {
+            if (!panel.isConnected) {
+                unwatch();
+                alchemyPanelWatchers.delete(panel);
+                continue;
+            }
+            updateAlchemyButton(panel);
+        }
+    }, 100);
+}
+
+/**
+ * Draw, redraw or remove the Alchemy panel's Missing Mats button.
+ *
+ * Gone when the setting is off, when no item is selected, and for an enhanced
+ * selection (the bill counts +0 copies only). Disabled for an infinite or empty
+ * Repeat count, as on the production panels.
+ *
+ * @param {HTMLElement} panel - The alchemy component
+ */
+function updateAlchemyButton(panel) {
+    if (!panel?.isConnected) return;
+    const existing = panel.querySelector(`#${ALCHEMY_BUTTON_ID}`);
+
+    const selection = config.getSetting('actions_missingMaterialsButton') ? readAlchemyPanelSelection(panel) : null;
+    if (!selection?.itemHrid || selection.enhancementLevel > 0) {
+        existing?.remove();
+        return;
+    }
+
+    const input = panel.querySelector('[class*="maxActionCountInput"] input');
+    // "∞" parses to 0: there is no count to buy for
+    const numActions = parseInt(input?.value, 10) || 0;
+    const ctx = {
+        itemHrid: selection.itemHrid,
+        actionType: selection.actionType,
+        numActions,
+        catalyst: alchemyWhatIfCatalyst(selection.itemHrid, selection.actionType),
+    };
+    const materials = numActions > 0 ? alchemyMaterials(ctx) : [];
+    const disabled = numActions <= 0 || materials.length === 0;
+
+    const stateKey = JSON.stringify([
+        ctx,
+        disabled,
+        materials.map((m) => [m.itemHrid, m.required, m.have, m.queued, m.available, m.missing, m.reservedNote]),
+    ]);
+    if (existing?.dataset.mwiState === stateKey) return;
+
+    const button = createMissingMaterialsButton(materials, null, numActions, disabled, () =>
+        handleAlchemyMissingMaterialsClick(ctx)
+    );
+    button.id = ALCHEMY_BUTTON_ID;
+    button.dataset.mwiState = stateKey;
+    if (ctx.catalyst && button.title) {
+        button.title += '\nCatalyst count is an estimate: Repeat × the what-if success rate.';
+    }
+
+    if (existing) {
+        existing.replaceWith(button);
+        return;
+    }
+    const anchor =
+        panel.querySelector('.mwi-alchemy-gold-summary') ||
+        panel.querySelector('[class*="SkillActionDetail_alchemyCosts"]');
+    if (anchor) {
+        anchor.after(button);
+    } else {
+        (panel.querySelector('[class*="SkillActionDetail_info"]') || panel).prepend(button);
+    }
+}
+
+/**
+ * Open the marketplace on the Alchemy panel's bill.
+ * @param {{itemHrid: string, actionType: string|null, numActions: number, catalyst?: Object|null}} ctx - What
+ *   the panel was set to, the what-if catalyst included as it was when clicked
+ */
+async function handleAlchemyMissingMaterialsClick(ctx) {
+    storedActionHrid = null;
+    storedNumActions = 0;
+    storedEnhancementContext = null;
+    storedMaterialList = null;
+    storedUpgradeItemLevel = 0;
+    storedAlchemyContext = { ...ctx };
+
+    // Fresh: the bag may have moved since the button was drawn
+    const freshMaterials = alchemyMaterials(storedAlchemyContext);
+    if (!(await openWhereBought(freshMaterials))) return;
+    await claimOpenBill(freshMaterials);
+    setupInventoryListener();
+}
+
+/**
  * Create missing materials marketplace button
  * @param {Array} missingMaterials - Array of missing material objects
  * @param {string} actionHrid - Action HRID for recalculating materials
  * @param {number} numActions - Number of actions for recalculating materials
  * @param {boolean} disabled - Whether the button should be rendered in a disabled state
+ * @param {Function|null} [onClick] - Opens a bill other than this action's (the Alchemy panel's)
  * @returns {HTMLElement} Button element
  */
-function createMissingMaterialsButton(missingMaterials, actionHrid, numActions, disabled = false) {
+function createMissingMaterialsButton(missingMaterials, actionHrid, numActions, disabled = false, onClick = null) {
     const button = document.createElement('button');
     button.id = 'mwi-missing-mats-button';
     const summary = describeMissingMaterials(missingMaterials);
@@ -894,7 +1207,7 @@ function createMissingMaterialsButton(missingMaterials, actionHrid, numActions, 
 
         // Click handler
         button.addEventListener('click', async () => {
-            await handleMissingMaterialsClick(actionHrid, numActions);
+            await (onClick ? onClick() : handleMissingMaterialsClick(actionHrid, numActions));
         });
     }
 
@@ -913,6 +1226,7 @@ async function handleMissingMaterialsClick(actionHrid, numActions, upgradeItemLe
     storedNumActions = numActions;
     storedEnhancementContext = null;
     storedMaterialList = null;
+    storedAlchemyContext = null;
     storedUpgradeItemLevel = Math.max(0, Math.floor(Number(upgradeItemLevel) || 0));
 
     // Recalculate materials fresh (inventory may have changed since button was rendered)
@@ -1466,6 +1780,10 @@ function createReturnTab(referenceTab) {
         const ctx = storedEnhancementContext;
         const itemName = dataManager.getItemDetails(ctx.itemHrid)?.name || '...';
         displayName = `${itemName} +${ctx.startLevel}\u2192+${ctx.targetLevel}`;
+    } else if (storedAlchemyContext) {
+        const ctx = storedAlchemyContext;
+        const itemName = dataManager.getItemDetails(ctx.itemHrid)?.name || '...';
+        displayName = `${itemName} (\u00d7${formatWithSeparator(ctx.numActions)})`;
     } else {
         return null;
     }
@@ -1542,16 +1860,31 @@ async function handleReturnToAction() {
     const game = getGameObject();
     if (!game) return;
 
+    // Captured before navigating: leaving the marketplace runs the cleanup that
+    // clears the stored context, and the count is restored after that
+    const alchemyContext = storedAlchemyContext;
+    const restoreCount = storedActionHrid ? storedNumActions : alchemyContext ? alchemyContext.numActions : 0;
+    const inputSelector = alchemyContext
+        ? `${ALCHEMY_PANEL_SELECTOR} [class*="maxActionCountInput"] input`
+        : '[class*="maxActionCountInput"] input';
+
     if (storedActionHrid) {
         game.handleGoToAction(storedActionHrid);
     } else if (storedEnhancementContext) {
         openEnhancingPanel(game, storedEnhancementContext);
+    } else if (alchemyContext) {
+        if (!openAlchemyPanel(game, alchemyContext)) return;
     } else {
         return;
     }
 
-    // Restore input value for production actions — poll for the input to appear
-    if (storedActionHrid && storedNumActions > 0) {
+    // The game's alchemize call selects the item but not the tab, so a Transmute
+    // bill would come back on whatever tab the game shows. Select it first: the
+    // switch can reset the Repeat input restored below.
+    if (alchemyContext?.actionType) await selectAlchemyTab(alchemyContext.actionType);
+
+    // Restore the Repeat count - poll for the input to appear
+    if (restoreCount > 0) {
         const maxAttempts = 20;
         for (let i = 0; i < maxAttempts; i++) {
             await new Promise((resolve) => {
@@ -1559,14 +1892,77 @@ async function handleReturnToAction() {
             });
 
             const input =
-                document.querySelector('[class*="maxActionCountInput"] input') ||
-                document.querySelector('[class*="SkillActionDetail_skillActionDetail"] input[type="number"]');
+                document.querySelector(inputSelector) ||
+                (alchemyContext
+                    ? null
+                    : document.querySelector('[class*="SkillActionDetail_skillActionDetail"] input[type="number"]'));
             if (input) {
-                setReactInputValue(input, storedNumActions);
+                setReactInputValue(input, restoreCount);
                 break;
             }
         }
     }
+}
+
+/**
+ * Select the stored alchemy tab (Coinify, Decompose, Transmute...) by its position, not its translated label, once the panel's tab strip
+ * has mounted. A tab click is navigation, so a plain click is enough. Fails soft: if the tab
+ * never appears the player is left on whatever tab the game shows.
+ *
+ * @param {string} actionType - The stored tab, e.g. 'transmute'
+ * @returns {Promise<void>}
+ */
+export async function selectAlchemyTab(actionType) {
+    const index = ALCHEMY_TAB_TYPES.indexOf(String(actionType).toLowerCase());
+    if (index < 0) return;
+    for (let i = 0; i < 20; i++) {
+        const tab = getAlchemyTabElements()[index];
+        if (tab) {
+            if (tab.getAttribute('aria-selected') !== 'true') tab.click();
+            return;
+        }
+        await new Promise((resolve) => {
+            timerRegistry.scheduleTimeout(resolve, 100);
+        });
+    }
+}
+
+/**
+ * Open the Alchemy panel on the item the bill was for.
+ *
+ * The game's own `handleAlchemizeItem` takes a stack hash and opens Alchemy with
+ * that stack selected, which is the call its inventory menu makes; the hash is
+ * the +0 stack now in the bag (the trip was to buy it). With no stack, or no
+ * such handler, the panel is opened on the action alone.
+ *
+ * @param {Object} game - Game component instance
+ * @param {{itemHrid: string, actionType: string|null}} ctx - Stored alchemy context
+ * @returns {boolean} Whether a navigation was made
+ */
+function openAlchemyPanel(game, ctx) {
+    const inventory = dataManager.getInventory?.() || [];
+    const stack = inventory.find(
+        (item) =>
+            item &&
+            item.itemHrid === ctx.itemHrid &&
+            (item.itemLocationHrid || ENHANCE_INVENTORY_LOCATION) === ENHANCE_INVENTORY_LOCATION &&
+            !(Number(item.enhancementLevel) > 0) &&
+            (item.count == null || item.count > 0)
+    );
+    const hash = stack
+        ? stack.hash ||
+          buildItemHash(dataManager.getCurrentCharacterId?.(), ENHANCE_INVENTORY_LOCATION, ctx.itemHrid, 0)
+        : null;
+
+    if (hash && typeof game.handleAlchemizeItem === 'function') {
+        game.handleAlchemizeItem(hash);
+        return true;
+    }
+    if (ctx.actionType && typeof game.handleGoToAction === 'function') {
+        game.handleGoToAction(`/actions/alchemy/${ctx.actionType}`);
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -1706,6 +2102,8 @@ function updateTabsOnInventoryChange() {
             }),
             storedUpgradeItemLevel
         );
+    } else if (storedAlchemyContext) {
+        updatedMaterials = alchemyMaterials(storedAlchemyContext);
     } else if (storedMaterialList) {
         updatedMaterials = materialsFromList(storedMaterialList.lines, storedMaterialList.ownerId || RESERVATION_OWNER);
     } else {
@@ -1774,6 +2172,7 @@ function handleMarketplaceCleanup() {
     storedNumActions = 0;
     storedEnhancementContext = null;
     storedMaterialList = null;
+    storedAlchemyContext = null;
     autofillManager.clearQuantity();
 }
 
@@ -1792,7 +2191,12 @@ function handleMarketplaceCleanup() {
  * levelled line does not consult it — a buy order for the unenhanced item is
  * not progress towards a +7.
  *
- * @param {Array<{itemHrid: string, count: number, enhancementLevel?: number}>} lines - What is needed, in total
+ * A line may also carry `queued`: units the finite action queue will already
+ * consume, which are not this bill's to spend either (the Alchemy panel's bill
+ * passes it; every other caller leaves it out and gets 0, as before).
+ *
+ * @param {Array<{itemHrid: string, count: number, enhancementLevel?: number, queued?: number}>} lines - What
+ *   is needed, in total
  * @param {string|null} [ownerId] - Who is asking, for the reservation ledger. The asking
  *   owner's own claim is never deducted, and nothing is deducted while the ledger is off
  *   or when no owner is named — omitting it is how every caller that predates the ledger
@@ -1828,15 +2232,17 @@ export function materialsFromList(lines, ownerId = null) {
                         (!i.itemLocationHrid || i.itemLocationHrid === INVENTORY_LOCATION)
                 )
                 .reduce((sum, i) => sum + (i.count || 0), 0);
-        // Stock another plan has claimed is not this bill's to spend
-        const available = ownerId
+        const queued = Math.max(0, Math.floor(Number(line.queued) || 0));
+        // Stock another plan has claimed is not this bill's to spend, nor stock the queue will eat
+        const unclaimed = ownerId
             ? effectiveInventory(line.itemHrid, level, { excludeOwner: ownerId, held: have })
             : have;
+        const available = Math.max(0, unclaimed - queued);
         const missing = Math.max(0, required - available);
         const reserved = ownerId ? reservedElsewhere(line.itemHrid, level, { excludeOwner: ownerId }) : 0;
         // Only when a claim is what put the line short: an empty bag needs no explanation
         const reservedNote =
-            missing > 0 && have >= required
+            missing > 0 && have - queued >= required
                 ? shortfallNote(missing, line.itemHrid, level, { excludeOwner: ownerId })
                 : '';
         out.push({
@@ -1845,7 +2251,7 @@ export function materialsFromList(lines, ownerId = null) {
             ...(level > 0 ? { enhancementLevel: level } : {}),
             required,
             have,
-            queued: 0,
+            queued,
             available,
             missing,
             isTradeable: details?.isTradable === true,
@@ -1879,6 +2285,7 @@ export async function openMaterialsList(lines, { ownerId = null } = {}) {
     storedNumActions = 0;
     storedEnhancementContext = null;
     storedUpgradeItemLevel = 0;
+    storedAlchemyContext = null;
     storedMaterialList = { lines: wanted, ownerId };
 
     // A caller that keeps a claim of its own has already made it (the crafting

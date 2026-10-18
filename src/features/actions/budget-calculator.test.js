@@ -325,6 +325,86 @@ describe('budget calculator unpriced materials', () => {
     });
 });
 
+describe('budget calculator coin fees', () => {
+    const ACTION = '/actions/crafting/refined_cape';
+
+    /**
+     * A refinement-style recipe: one priced material plus a coin fee of 300 per
+     * action. The wallet holds `coins`; coin is not tradable, as in game data.
+     */
+    function stageCoinRecipe({ coins = 1e9, oreHave = 0 } = {}) {
+        world.gameData = {
+            actionDetailMap: {
+                [ACTION]: {
+                    type: '/action_types/crafting',
+                    inputItems: [
+                        { itemHrid: '/items/coin', count: 300 },
+                        { itemHrid: '/items/ore', count: 10 },
+                    ],
+                },
+            },
+            itemDetailMap: {
+                '/items/coin': { name: 'Coin', isTradable: false },
+                '/items/ore': { name: 'Ore', isTradable: true },
+            },
+        };
+        world.prices = { '/items/ore': { ask: 50 } };
+        world.materials = [
+            { itemHrid: '/items/coin', itemName: 'Coin', perUnit: 300, have: coins, isTradeable: false },
+            { itemHrid: '/items/ore', itemName: 'Ore', perUnit: 10, have: oreHave, isTradeable: true },
+        ];
+    }
+
+    function calculate(budget) {
+        budgetCalculator.initialize();
+        const panel = mountPanel();
+        panel.dataset.actionHrid = ACTION;
+        dispatcher.callback(resolveDetailPanel(panel));
+        const ui = document.getElementById('mwi-budget-calculator');
+        ui.querySelector('input').value = String(budget);
+        ui.querySelector('button').click();
+        return document.getElementById('mwi-budget-modal-overlay');
+    }
+
+    test('the coin fee is spent out of the budget even when the wallet holds plenty', () => {
+        // 300 coin + 10 × 50 ore = 800 per action → 8000 buys 10, not the 16 ore alone would
+        stageCoinRecipe();
+        const modal = calculate(8000);
+        expect(modal.textContent).toContain('10 actions');
+        expect(world.actionCounts).toEqual([10]);
+    });
+
+    test('a wallet below the coin fee does not zero the count', () => {
+        stageCoinRecipe({ coins: 0 });
+        const modal = calculate(8000);
+        expect(modal.textContent).toContain('10 actions');
+        expect(modal.querySelector('#mwi-budget-unpriced-note')?.textContent || '').not.toContain('Coin');
+    });
+
+    test('held materials leave only the coin fee to pay', () => {
+        stageCoinRecipe({ oreHave: 1e6 });
+        const modal = calculate(3000);
+        expect(modal.textContent).toContain('10 actions');
+    });
+
+    test('the breakdown shows the coin line and totals it with the spend', () => {
+        stageCoinRecipe();
+        const modal = calculate(8000);
+        const coinRow = Array.from(modal.querySelectorAll('tbody tr')).find((tr) => tr.textContent.includes('Coin'));
+        expect(coinRow).toBeTruthy();
+        expect(coinRow.lastElementChild.textContent).toBe('3.0K');
+        const footer = modal.querySelector('tfoot').textContent;
+        expect(footer).toContain('800');
+        expect(footer).toContain('8.0K');
+    });
+
+    test('a zero budget affords nothing on a recipe with a coin fee', () => {
+        stageCoinRecipe({ oreHave: 1e6 });
+        calculate(0);
+        expect(world.actionCounts).toEqual([]);
+    });
+});
+
 describe('budget calculator breakdown modal Escape listener', () => {
     const ACTION = '/actions/cooking/omelette';
 

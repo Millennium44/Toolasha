@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upstream sweep (2026-10-17): shop shortcuts, alchemy shopping and fixes
+
+- Token item menus (dungeon, labyrinth, task, guild tokens and guild credits) get a View Shop button that opens the matching shop, and the dungeon tracker shows how long your entry keys will last at your recent clear pace.
+- The Alchemy panel gets a Missing Mats button with a Return tab, and Alchemy Profitability gains a catalyst what-if picker that shows the profit with another catalyst without changing what is slotted.
+- The Budget calculator now counts a recipe's coin fee against the budget instead of over-buying (or giving 0 actions when short on coin).
+- The labyrinth live clear chance works with the room-tile calculator turned off; a new setting splits each Labyrinth run into its own row in Loot & XP Analytics (off by default).
+- Settings: typed numbers are clamped to their range and the color hex box accepts typed values; the sidebar XP/hr rate follows the black text border setting, the market filter lists "All" first, a few setting texts are clearer, and the script also loads on the China mirror's bare domain.
+
 ### Enhancing: one price rule for every surface
 
 - The enhancing panel, protect sweep, item tooltip, tracker, upgrade advisor, profile score and net worth now price materials, protection, the Philosopher's Mirror and the base item by one shared rule: your custom prices, then the market on your profit pricing mode, the shop price, then crafting cost, with the inflated-ask guard on protection, mirror and base. Net worth uses its own pricing mode; columns and records that name a side (tooltip Ask/Bid, profile score, loot log) use that side.

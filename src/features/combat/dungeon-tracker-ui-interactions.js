@@ -372,6 +372,8 @@ class DungeonTrackerUIInteractions {
                 await dungeonTrackerStorage.setAverageBaseline(statsKey, Date.now());
                 // Re-annotate so the chat lines already on screen recompute
                 await dungeonTrackerChatAnnotations.refreshRunCounts();
+                // The header average, pace chip and key runway all read the marker
+                if (this.callbacks?.onUpdateHistory) this.callbacks.onUpdateHistory();
             } catch (error) {
                 console.error('[Dungeon Tracker UI Interactions] Average baseline error:', error);
                 alert('Failed to set the average baseline. Check console for details.');

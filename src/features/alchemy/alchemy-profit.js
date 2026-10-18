@@ -66,6 +66,79 @@ export function parseDropCountAndRate(text, dropRateFromGameData) {
     return { count, dropRate };
 }
 
+/**
+ * The game's own alchemy tabs, by position. The tab elements carry no React props
+ * or icons, and their labels are translated, so the position is the identity:
+ * the game's tabs always come first in this order, and any tab after them
+ * (Current Action, Best Items, Alchemy History...) is not an alchemy action.
+ */
+export const ALCHEMY_TAB_TYPES = ['coinify', 'decompose', 'transmute', 'unrefine'];
+
+const ALCHEMY_TABS_SELECTOR = '[class*="AlchemyPanel_tabsComponentContainer"]';
+
+/**
+ * The alchemy panel's tab elements, in strip order.
+ *
+ * @param {ParentNode} [root=document] - Where to look for the tab strip
+ * @returns {Element[]} The role=tab elements, or an empty array without a strip
+ */
+export function getAlchemyTabElements(root = document) {
+    const tabContainer = root.querySelector?.(ALCHEMY_TABS_SELECTOR) || document.querySelector(ALCHEMY_TABS_SELECTOR);
+    return tabContainer ? Array.from(tabContainer.querySelectorAll('[role="tab"]')) : [];
+}
+
+/**
+ * Which alchemy tab is selected, from the panel's tab strip.
+ *
+ * Identified by the selected tab's position (`ALCHEMY_TAB_TYPES`), so it works in
+ * any client language. The English label is only a fallback for a strip whose
+ * tabs cannot be indexed.
+ *
+ * @param {ParentNode} [root=document] - Where to look for the tab strip
+ * @returns {'coinify'|'decompose'|'transmute'|'unrefine'|null} The selected tab, or null
+ */
+export function readAlchemyTabType(root = document) {
+    const tabs = getAlchemyTabElements(root);
+    const index = tabs.findIndex((tab) => tab.getAttribute('aria-selected') === 'true');
+    if (index >= 0) return ALCHEMY_TAB_TYPES[index] ?? null;
+
+    const tabContainer = root.querySelector?.(ALCHEMY_TABS_SELECTOR) || document.querySelector(ALCHEMY_TABS_SELECTOR);
+    const selectedTab = tabContainer?.querySelector('[role="tab"][aria-selected="true"]');
+    const tabText = selectedTab?.textContent?.trim()?.toLowerCase() || '';
+    if (tabText.includes('unrefine')) return 'unrefine';
+    if (tabText.includes('coinify')) return 'coinify';
+    if (tabText.includes('transmute')) return 'transmute';
+    if (tabText.includes('decompose')) return 'decompose';
+    return null;
+}
+
+/**
+ * The item the alchemy panel is set to work on, read synchronously: the first
+ * Costs entry, which is the selected item (the coin fee and catalyst sit in
+ * their own slots).
+ *
+ * @param {ParentNode} [root=document] - The alchemy component, or the document
+ * @returns {{itemHrid: string, enhancementLevel: number, actionType: string|null}|null}
+ *   The selection, or null when no item is selected
+ */
+export function readAlchemyPanelSelection(root = document) {
+    const container = root.querySelector?.(
+        '[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]'
+    );
+    const use = container?.querySelector('svg use');
+    const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
+    const itemId = href.split('#')[1];
+    if (!itemId) return null;
+
+    const enhancementText = container.querySelector('[class*="Item_enhancementLevel"]')?.textContent || '';
+    const match = enhancementText.match(/\+(\d+)/);
+    return {
+        itemHrid: `/items/${itemId}`,
+        enhancementLevel: match ? parseInt(match[1], 10) : 0,
+        actionType: readAlchemyTabType(root),
+    };
+}
+
 class AlchemyProfit {
     /**
      * Get current alchemy action HRID
