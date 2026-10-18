@@ -53,6 +53,7 @@ const {
     idsFromKeys,
     combineSeries,
     windowChange,
+    comparableSegment,
     queueState,
     summarizeCharacters,
     readAccount,
@@ -152,6 +153,100 @@ describe('what changed over a window', () => {
         ];
 
         expect(windowChange(points, DAY, now)).toMatchObject({ delta: 90, percent: null });
+    });
+});
+
+describe('a window change across characters recorded from different times', () => {
+    const now = 10 * DAY;
+
+    test('a newly recorded wealthy character is not counted as growth', () => {
+        const combined = combineSeries({
+            a: [
+                { t: now - 2 * DAY, total: 100 },
+                { t: now, total: 100 },
+            ],
+            b: [{ t: now - 12 * HOUR, total: 500 }],
+        });
+
+        // Total 600 now, but b had no earlier reading: nothing observed has grown
+        expect(combined[combined.length - 1].total).toBe(600);
+        expect(windowChange(combined, DAY, now)).toMatchObject({ delta: 0, to: 600, spanMs: 12 * HOUR });
+        expect(windowChange(combined, 7 * DAY, now)).toMatchObject({ delta: 0, from: 600 });
+    });
+
+    test('the same characters at both ends still report an ordinary gain', () => {
+        const combined = combineSeries({
+            a: [
+                { t: now - 3 * DAY, total: 100 },
+                { t: now - HOUR, total: 150 },
+            ],
+            b: [
+                { t: now - 4 * DAY, total: 500 },
+                { t: now - 2 * HOUR, total: 480 },
+            ],
+        });
+
+        expect(windowChange(combined, DAY, now)).toMatchObject({ delta: 30, from: 600, to: 630 });
+        expect(windowChange(combined, 7 * DAY, now)).toMatchObject({ delta: 30, from: 600, to: 630 });
+    });
+
+    test('a character that joined before the baseline is part of the comparison', () => {
+        const combined = combineSeries({
+            a: [{ t: now - 5 * DAY, total: 100 }],
+            b: [
+                { t: now - 3 * DAY, total: 500 },
+                { t: now, total: 560 },
+            ],
+        });
+
+        expect(windowChange(combined, DAY, now)).toMatchObject({ delta: 60, from: 600, to: 660 });
+    });
+
+    test('only one fully covered point claims no trend', () => {
+        const combined = combineSeries({
+            a: [{ t: now - 2 * DAY, total: 100 }],
+            b: [{ t: now, total: 500 }],
+        });
+
+        expect(windowChange(combined, DAY, now)).toBeNull();
+        expect(comparableSegment(combined)).toHaveLength(1);
+    });
+
+    test('a character with no history does not stop the recorded cohort being compared', () => {
+        const combined = combineSeries({
+            a: [
+                { t: now - 2 * DAY, total: 100 },
+                { t: now, total: 130 },
+            ],
+            ghost: [],
+        });
+
+        expect(windowChange(combined, DAY, now)).toMatchObject({ delta: 30 });
+    });
+
+    test('three staggered first readings compare from the last one to join', () => {
+        const combined = combineSeries({
+            a: [
+                { t: now - 9 * DAY, total: 100 },
+                { t: now, total: 110 },
+            ],
+            b: [
+                { t: now - 6 * DAY, total: 200 },
+                { t: now, total: 210 },
+            ],
+            c: [
+                { t: now - 3 * DAY, total: 300 },
+                { t: now, total: 330 },
+            ],
+        });
+
+        expect(windowChange(combined, 7 * DAY, now)).toMatchObject({ delta: 50, from: 600, spanMs: 3 * DAY });
+        expect(comparableSegment(combined).every((p) => p.contributors === 3)).toBe(true);
+    });
+
+    test('an empty history claims nothing', () => {
+        expect(windowChange(combineSeries({}), DAY, now)).toBeNull();
+        expect(comparableSegment([])).toEqual([]);
     });
 });
 

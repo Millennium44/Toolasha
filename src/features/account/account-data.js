@@ -184,7 +184,35 @@ export function downsample(points, maxPoints) {
 }
 
 /**
+ * The trailing run of a combined series that counted the same characters as its
+ * last point.
+ *
+ * `combineSeries` holds a character out until its first reading, so an earlier
+ * point with fewer `contributors` is a smaller account, not a poorer one:
+ * subtracting it from today's total reads a newly recorded character's whole
+ * balance as growth. Contributors only ever grow, so the run is contiguous.
+ * Points with no `contributors` field (a single character's plain series) are
+ * all comparable.
+ *
+ * @param {Array<{t: number, total: number, contributors?: number}>} points - Combined series, oldest first
+ * @returns {Array<Object>} The suffix covering the same characters as the last point
+ */
+export function comparableSegment(points) {
+    if (!Array.isArray(points) || points.length === 0) return [];
+    const count = points[points.length - 1].contributors;
+    if (count === undefined) return points;
+
+    let start = points.length - 1;
+    while (start > 0 && points[start - 1].contributors === count) start -= 1;
+    return start === 0 ? points : points.slice(start);
+}
+
+/**
  * What a series did over the last `windowMs`.
+ *
+ * Only the part of the series that counted the same characters as its latest
+ * point is compared (see `comparableSegment`); `spanMs` is how far back that
+ * comparison actually reaches.
  *
  * The baseline is the last point at or before the window opens rather than the
  * first point inside it — a character recorded hourly and then not touched for
@@ -199,16 +227,17 @@ export function downsample(points, maxPoints) {
  *   Null when there is nothing to compare against
  */
 export function windowChange(points, windowMs, now = Date.now()) {
-    if (!Array.isArray(points) || points.length < 2) return null;
+    const comparable = comparableSegment(points);
+    if (comparable.length < 2) return null;
 
-    const last = points[points.length - 1];
+    const last = comparable[comparable.length - 1];
     const cutoff = now - windowMs;
 
     let base = null;
-    for (const point of points) {
+    for (const point of comparable) {
         if (point.t <= cutoff) base = point;
     }
-    if (!base) base = points[0];
+    if (!base) base = comparable[0];
     if (base === last || base.t >= last.t) return null;
 
     const delta = last.total - base.total;

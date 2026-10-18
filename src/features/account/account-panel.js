@@ -18,7 +18,7 @@ import { row, blank, ROW_COLORS, shortDuration } from '../../utils/overlay-forma
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { accountBriefings, nextAttentionText, rankAttention } from './account-briefing.js';
-import { accountReadFailure, cachedAccount, refreshAccount, windowChange } from './account-data.js';
+import { accountReadFailure, cachedAccount, comparableSegment, refreshAccount, windowChange } from './account-data.js';
 
 const ACCENT = '#c9a0ff';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -56,6 +56,18 @@ function changeText(change) {
     const percent = change.percent === null ? '' : ` (${sign}${change.percent.toFixed(1)}%)`;
     const color = change.delta > 0 ? ROW_COLORS.good : change.delta < 0 ? ROW_COLORS.bad : ROW_COLORS.dim;
     return { text: `${sign}${coins(change.delta)}${percent}`, color };
+}
+
+/**
+ * A change's label, saying so when the comparable history is shorter than the window.
+ * @param {string} label - e.g. `Last 24h`
+ * @param {{spanMs: number}|null} change - From `windowChange`
+ * @param {number} windowMs - The window the label names
+ * @returns {string}
+ */
+function changeLabel(label, change, windowMs) {
+    if (!change || change.spanMs >= windowMs * 0.9) return label;
+    return `${label} (over ${formatRelativeTime(change.spanMs)})`;
 }
 
 /**
@@ -141,12 +153,14 @@ function drawNetworth(body, data) {
         )
     );
 
-    const day = changeText(windowChange(data.combined, DAY_MS, data.at));
-    const week = changeText(windowChange(data.combined, 7 * DAY_MS, data.at));
-    card.appendChild(panelLine('Last 24h', day.text, day.color));
-    card.appendChild(panelLine('Last 7d', week.text, week.color));
+    const dayChange = windowChange(data.combined, DAY_MS, data.at);
+    const weekChange = windowChange(data.combined, 7 * DAY_MS, data.at);
+    const day = changeText(dayChange);
+    const week = changeText(weekChange);
+    card.appendChild(panelLine(changeLabel('Last 24h', dayChange, DAY_MS), day.text, day.color));
+    card.appendChild(panelLine(changeLabel('Last 7d', weekChange, 7 * DAY_MS), week.text, week.color));
 
-    const trend = sparkline(data.combined);
+    const trend = sparkline(comparableSegment(data.combined));
     if (trend) card.appendChild(trend);
     else card.appendChild(panelNote('Not enough history for a trend yet.'));
 
