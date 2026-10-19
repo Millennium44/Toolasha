@@ -382,6 +382,8 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: () => mocks.gameData,
     buildAllPlayerDTOs: async () =>
         mocks.buildPlayerDTOs
@@ -1215,6 +1217,36 @@ describe('the panel', () => {
         expect(ui._restoredUpgradeNote(Date.now(), { stopped: ui._upgradeResultsData.stopped })).toContain(
             'stopped early — 1 of 4 candidates'
         );
+    });
+
+    test('Stop during the food search, after every candidate, says only that the food search stopped', async () => {
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 })],
+            candidateCount: 1,
+            food: null,
+        };
+        selectZone();
+        ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+            box.checked = box.dataset.upgradeMode === 'equipment' || box.dataset.upgradeMode === 'food';
+        });
+        ui._upgradeBudget = 500_000_000;
+        let params = null;
+        mocks.onRun = (runParams) => {
+            params = runParams;
+            ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+        };
+
+        await ui._onUpgradeAnalyze();
+        ui._upgradeBudget = 0;
+
+        expect(params.optimizeFood).toBe(true);
+        expect(ui._upgradeResultsData.stopped).toBeUndefined();
+        expect(ui._upgradeResultsData.foodStopped).toBe(true);
+        const results = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        expect(results.querySelector('[data-food-stopped]')).toBeTruthy();
+        expect(results.querySelector('[data-upgrade-stopped]')).toBeNull();
+        expect(results.querySelector('[data-budget-partial]')).toBeNull();
     });
 
     test('a run that finished carries no stopped stamp', async () => {

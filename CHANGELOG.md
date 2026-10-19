@@ -17,6 +17,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Profit gains are judged against the profit error in gold (the same scale the Ability order section uses), so small net-profit baselines no longer make noise look significant.
 - Stopping an analysis keeps the candidates that finished, marked "stopped early — N of M"; the budget no longer picks colliding coffees or confirms a basket missing a drink, and a confirmation is tied to the analysis it measured.
 
+### Iron Bell, dungeon revive and Lab Replay: three reported bugs
+
+- The Iron Bell panel drops a slow load, costing or stage toggle from a character you just switched away from.
+- Combat Sim's dungeon-clear revive removes expired buffs before refilling HP and MP.
+- Lab Replay's damage-per-hit check on older pools no longer flags a false gap when damage over time is involved.
+
 ### Queue times, net worth trends, touch dragging and worker pools: six reported bugs
 
 - Queue summaries (the live queue tile and the idle notice) measure alchemy efficiency from the item's level, like the action bar, instead of overstating it.

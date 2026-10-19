@@ -101,7 +101,10 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     },
 }));
 vi.mock('../combat-sim/combat-sim-ui.js', () => ({ default: {} }));
-vi.mock('../combat-sim/combat-sim-adapter.js', () => ({ buildPlayerDTOFromProfile: () => ({}) }));
+vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+    buildPlayerDTOFromProfile: () => ({}),
+}));
 vi.mock('../../utils/enhancement-worker-manager.js', () => ({ terminateWorkerPool: () => {} }));
 // Modelled on the real panel api rather than on what the caller happens to
 // reach for. The old stub offered `panel`, `render` and `toggle` only, so a

@@ -17,6 +17,8 @@ vi.mock('./combat-sim-runner.js', () => ({
     getMaxWorkers: () => 4,
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     calculateSimRevenue: (result, gameData, hrid) => {
         if (result.valuationThrows) throw new Error('no price data');
         return { netPerHour: result.profit?.[hrid] || 0, unpricedConsumables: result.unpriced?.[hrid] || [] };

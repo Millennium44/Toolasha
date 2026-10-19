@@ -2,7 +2,10 @@ import { describe, expect, test, vi } from 'vitest';
 vi.mock('../../core/data-manager.js', () => ({
     default: { getInitClientData: () => ({ guildTrialDetailMap: { test: true } }) },
 }));
-vi.mock('./combat-sim-adapter.js', () => ({ buildGameDataPayload: () => ({ combatMonsterDetailMap: {} }) }));
+vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+    buildGameDataPayload: () => ({ combatMonsterDetailMap: {} }),
+}));
 import {
     buildTrialGameData,
     trialBuildingBuffs,

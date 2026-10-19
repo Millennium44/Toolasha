@@ -51,7 +51,10 @@ vi.mock('../../utils/simple-panel.js', () => ({
     },
 }));
 vi.mock('./guild-trial-runner.js', () => ({ runGuildTrialSimulation: (...args) => game.simulate(...args) }));
-vi.mock('./combat-sim-adapter.js', () => ({ buildGameDataPayload: () => ({ combatMonsterDetailMap: {} }) }));
+vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+    buildGameDataPayload: () => ({ combatMonsterDetailMap: {} }),
+}));
 
 import {
     TrialAssignPlanner,

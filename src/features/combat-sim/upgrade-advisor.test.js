@@ -47,6 +47,9 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
+    // Filled up front by the analysis; a test that cares about the snapshot gives it a body
+    seedSimPriceCache: vi.fn((cache) => cache),
+
     buildGameDataPayload: vi.fn(),
     calculateSimRevenue: vi.fn(),
     // The synthesis itself is the adapter's business and is tested there; what
@@ -260,7 +263,7 @@ const { getCheapestProtectionPrice, perAttemptMaterialCost } = await import('../
 const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
 const { explainAbilityLevelUpCost } = await import('../../utils/ability-cost-calculator.js');
 const { runSimulation, plannedWorkerCount } = await import('./combat-sim-runner.js');
-const { buildGameDataPayload, calculateSimRevenue } = await import('./combat-sim-adapter.js');
+const { buildGameDataPayload, calculateSimRevenue, seedSimPriceCache } = await import('./combat-sim-adapter.js');
 const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 const { findMaxLabyrinthLevel } = await import('./labyrinth-level-finder.js');
 const { settingsGroups } = await import('../../core/settings-schema.js');
@@ -8659,5 +8662,159 @@ describe('pinned and excluded picks in a budget plan (#545)', () => {
         const forward = planWithinBudget([a, b], 1000, { excluded: [candidateKey(a)] });
         const reversed = planWithinBudget([b, a], 1000, { excluded: [candidateKey(a)] });
         expect(names(forward)).toEqual(names(reversed));
+    });
+});
+
+describe('the analysis price snapshot covers what only a candidate uses (#560 review)', () => {
+    const COFFEE = '/items/wisdom_coffee';
+    const market = { coffee: 100 };
+    const addCoffee = {
+        type: 'drink',
+        slot: 'drink_0',
+        drinkIndex: 0,
+        currentHrid: null,
+        upgradeHrid: COFFEE,
+        upgradeLevel: 0,
+        triggers: null,
+        buffFamily: '/buff_uniques/wisdom_coffee',
+        fillsFreeDrinkSlot: true,
+        freeDrinkSlots: 3,
+        description: 'Add Wisdom Coffee',
+    };
+
+    beforeEach(() => {
+        market.coffee = 100;
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+        plannedWorkerCount.mockReturnValue(1);
+        // The seed reads the coffee's price into the snapshot, as the adapter's does
+        seedSimPriceCache.mockImplementation((cache, _gameData, { consumableHrids = [] } = {}) => {
+            for (const hrid of consumableHrids)
+                if (hrid && !cache.has(`buy|${hrid}`)) cache.set(`buy|${hrid}`, market.coffee);
+            return cache;
+        });
+        // Lazy, like the real one: an item is priced the first time a result uses it
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockImplementation((result, _g, _h, _hrs, { priceCache } = {}) => {
+            let cost = 0;
+            for (const [hrid, count] of Object.entries(result.drank || {})) {
+                if (!priceCache.has(`buy|${hrid}`)) priceCache.set(`buy|${hrid}`, market.coffee);
+                cost += count * priceCache.get(`buy|${hrid}`);
+            }
+            return { netPerHour: 10_000 - cost, revenuePerHour: 10_000, costPerHour: cost };
+        });
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(async ({ playerDTOs }) => {
+            const drinks = playerDTOs[0].drinks || [];
+            const drank = drinks.some((d) => d?.hrid === COFFEE) ? { [COFFEE]: 1 } : {};
+            // The market moves while every run is in flight
+            market.coffee += 50;
+            return { simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 100, drank };
+        });
+    });
+
+    afterEach(() => {
+        seedSimPriceCache.mockImplementation((cache) => cache);
+    });
+
+    test('a coffee the baseline never drinks is valued at the price when the analysis started', async () => {
+        const { results, context } = await runUpgradeAnalysis(
+            {
+                playerDTOs: [{ equipment: {}, abilities: [], drinks: [null, null, null], hrid: '/players/me' }],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/fly',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeMode: 'equipment',
+                extraCandidates: [addCoffee],
+            },
+            null,
+            {}
+        );
+
+        const row = results.find((r) => r.candidate.upgradeHrid === COFFEE);
+        expect(row.metrics.costPerHour).toBe(100);
+        expect(context.priceCache.get(`buy|${COFFEE}`)).toBe(100);
+        // Seeded once, before the first simulation started, for this zone
+        expect(seedSimPriceCache.mock.invocationCallOrder[0]).toBeLessThan(runSimulation.mock.invocationCallOrder[0]);
+        expect(seedSimPriceCache.mock.calls[0][2].zoneHrid).toBe('/actions/combat/fly');
+    });
+});
+
+describe('resale is taxed as the analysed character pays it, not the live one (#561 review)', () => {
+    const swap = {
+        type: 'tier',
+        slot: MAIN_HAND,
+        currentHrid: '/items/fine_sword',
+        currentLevel: 10,
+        upgradeHrid: '/items/regal_sword_refined',
+        upgradeLevel: 10,
+        description: 'Taxed swap',
+    };
+
+    /** The analysed player, with the game mode their DTO carries (none when undefined) */
+    async function costFor({ gameMode, self = false } = {}) {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        getItemPrices.mockReturnValue({ ask: 200_000_000, bid: 150_000_000 });
+        resolveItemPrice.mockImplementation((_hrid, { side }) => ({ price: side === 'sell' ? 1_000_000 : 5_000_000 }));
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0, revenuePerHour: 0, costPerHour: 0 });
+        runSimulation.mockReset();
+        runSimulation.mockResolvedValue({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 10 });
+        plannedWorkerCount.mockReturnValue(1);
+        const player = {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 10 } },
+            abilities: [],
+            hrid: '/players/target',
+            ...(gameMode ? { gameMode } : {}),
+        };
+        const { results } = await runUpgradeAnalysis(
+            {
+                playerDTOs: [player],
+                playerIndex: 0,
+                selfHrid: self ? '/players/target' : null,
+                zoneHrid: '/actions/combat/fly',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeMode: 'equipment',
+                extraCandidates: [swap],
+            },
+            null,
+            {}
+        );
+        // The mode may generate the same swap; either way it is this trade
+        return results.find(
+            (r) =>
+                r.candidate.slot === MAIN_HAND &&
+                r.candidate.upgradeHrid === '/items/regal_sword_refined' &&
+                r.candidate.upgradeLevel === 10
+        ).cost;
+    }
+
+    afterEach(() => {
+        saleTax.ironCow = false;
+    });
+
+    test('a live Iron Cow analysing a market player charges that player the tax', async () => {
+        saleTax.ironCow = true;
+        expect(await costFor({ gameMode: 'standard' })).toBe(200_000_000 - 960_000);
+        // A profile that does not say which mode it is gets the common case: taxed
+        expect(await costFor({})).toBe(200_000_000 - 960_000);
+    });
+
+    test('a live market player analysing an Iron Cow credits the resale whole', async () => {
+        saleTax.ironCow = false;
+        expect(await costFor({ gameMode: 'legacy_ironcow' })).toBe(200_000_000 - 1_000_000);
+    });
+
+    test("the live character's own analysis follows their own status", async () => {
+        saleTax.ironCow = true;
+        expect(await costFor({ self: true })).toBe(200_000_000 - 1_000_000);
+        saleTax.ironCow = false;
+        expect(await costFor({ self: true })).toBe(200_000_000 - 960_000);
     });
 });

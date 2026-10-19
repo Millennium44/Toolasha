@@ -48,6 +48,8 @@ vi.mock('../combat-sim/combat-sim-runner.js', () => ({
     runSimulation: vi.fn(),
 }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildAllPlayerDTOs: vi.fn(),
     buildGameDataPayload: vi.fn(),
     getCommunityBuffs: vi.fn(() => ({})),

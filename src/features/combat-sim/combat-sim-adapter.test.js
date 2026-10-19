@@ -1752,3 +1752,19 @@ describe('buildShykaiExportPlayer round trips through parseShykaiImport', () => 
         });
     });
 });
+
+describe("buildPlayerDTOFromProfile — the player's game mode", () => {
+    test('carries the game mode the shared profile reports, and nothing when it reports none', () => {
+        const withMode = buildPlayerDTOFromProfile({
+            characterID: 'char1',
+            profile: { characterSkills: [], wearableItemMap: {}, sharableCharacter: { gameMode: 'ironcow' } },
+        });
+        const without = buildPlayerDTOFromProfile({
+            characterID: 'char2',
+            profile: { characterSkills: [], wearableItemMap: {} },
+        });
+
+        expect(withMode.gameMode).toBe('ironcow');
+        expect(without.gameMode).toBeUndefined();
+    });
+});

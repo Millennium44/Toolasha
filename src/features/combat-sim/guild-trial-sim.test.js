@@ -96,6 +96,8 @@ vi.mock('../../utils/simple-panel.js', () => ({
     },
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildPlayerDTO: () => build(),
     buildPlayerDTOFromLoadout: (...args) => harness.loadoutBuilder(...args),
     parseShykaiImport: () => null,

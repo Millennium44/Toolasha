@@ -91,6 +91,8 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: vi.fn(() => ({
         itemDetailMap: ITEM_DETAIL_MAP,
         abilityDetailMap: ABILITY_DETAIL_MAP,

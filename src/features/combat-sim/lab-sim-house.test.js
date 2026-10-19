@@ -49,6 +49,8 @@ vi.mock('./combat-sim-ui.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: () => ({ itemDetailMap: {}, houseRoomDetailMap: {} }),
     buildAllPlayerDTOs: async () => ({ players: [] }),
     getCombatZones: () => [{ hrid: '/actions/combat/fly' }],
