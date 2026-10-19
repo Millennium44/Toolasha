@@ -50,6 +50,8 @@ vi.mock('./combat-sim-runner.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: vi.fn(() => ({ actionDetailMap: { '/actions/combat/fly': {} } })),
     calculateSimRevenue: vi.fn(),
 }));

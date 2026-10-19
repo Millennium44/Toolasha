@@ -16,6 +16,8 @@ vi.mock('./combat-sim-runner.js', () => ({
     getMaxWorkers: () => 4,
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     calculateSimRevenue: (result) => ({
         netPerHour: result.profitRate || 0,
         unpricedDrops: result.unpricedDrops || [],

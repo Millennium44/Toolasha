@@ -980,7 +980,7 @@ export function upgradeCostCell(result) {
                 text: 'free',
                 color: '#ff9800',
                 title:
-                    `Resale credit capped at the purchase: the current item's bid of ` +
+                    `Resale credit capped at the purchase: the current item's after-tax resale of ` +
                     `${formatKMB(result.costDetail.rawCredit)} looks out of line with the market.`,
             };
         }
@@ -1106,6 +1106,18 @@ export function upgradeNoiseFor(result, metricKey = 'dps') {
         noisePct: Number.isFinite(noisePct) ? noisePct : null,
         significant: result?.significantBy?.[metricKey] ?? true,
     };
+}
+
+/**
+ * How a stopped analysis describes itself: "stopped early — 3 of 12 candidates".
+ * @param {{completed: number, total: number|null}} stopped - `results.stopped`, stamped when Stop cut the run short
+ * @returns {string}
+ */
+export function stoppedRunText(stopped) {
+    const completed = Number(stopped?.completed) || 0;
+    const total = Number.isFinite(stopped?.total) ? stopped.total : null;
+    const counted = total != null ? `${completed} of ${total}` : `${completed}`;
+    return `stopped early — ${counted} candidate${(total ?? completed) === 1 ? '' : 's'}`;
 }
 
 /** Shared styling for the small qualifier chips that sit beside a row's name */
@@ -10525,13 +10537,18 @@ class CombatSimUI {
 
         // Get player DTOs (edited or live)
         let playerDTOs;
+        // Whose DTO is the live character's: the editor knows once it is set up; before that, the fallback build
+        // says (as the Lab analysis takes it), so an Iron Cow is not taxed as someone else
+        let selfHrid = null;
         try {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
                 playerDTOs = Object.values(editedDTOs);
+                selfHrid = this._editor.getSelfHrid() ?? null;
             } else {
                 const result = await buildAllPlayerDTOs();
                 playerDTOs = result.players;
+                selfHrid = result.selfHrid ?? null;
             }
         } catch (error) {
             this._upgradeRunning = false;
@@ -10575,6 +10592,8 @@ class CombatSimUI {
         let finishedResults = null;
         // The previous analysis' verdicts go with the table this run replaces
         if (this._upgradeResultsData) delete this._upgradeResultsData.verifyVerdicts;
+        // So does its basket confirmation, and a confirming run still in flight lands on nothing
+        this._budgetConfirm = null;
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
 
@@ -10623,7 +10642,7 @@ class CombatSimUI {
                 {
                     playerDTOs,
                     playerIndex,
-                    selfHrid: this._editor?.getSelfHrid() || null,
+                    selfHrid,
                     zoneHrid,
                     difficultyTier,
                     hours,
@@ -10685,6 +10704,15 @@ class CombatSimUI {
             this._restoredUpgradeMeta = null;
             if (this._upgradeAborted) {
                 if (completed) {
+                    // Stamped on the result, so the table, the budget and a remembered copy of it all say the
+                    // run covers only part of what it set out to measure. Only when candidates are missing: Stop
+                    // during the food search, which runs after every candidate, leaves the upgrades whole
+                    const total = Number.isFinite(results.candidateCount) ? results.candidateCount : null;
+                    if (total == null || completed < total) {
+                        results.stopped = { completed, total };
+                    } else if (upgradeModes.includes('food')) {
+                        results.foodStopped = true;
+                    }
                     this._renderUpgradeResults(results);
                     this._setStatus(
                         `Analysis cancelled — showing ${completed} completed candidate${completed === 1 ? '' : 's'}.`
@@ -11266,7 +11294,13 @@ class CombatSimUI {
         const errorBar = (key) => {
             const { noisePct, significant } = upgradeNoiseFor(r, key);
             if (noisePct == null) return '';
-            const bar = `<span style="color:#666;"> ±${noisePct.toFixed(2)}%</span>`;
+            // Profit's error is a share of the gold moving through the fight, not of the net profit the
+            // percentage beside it is taken of, so it is given in gold per day like the delta it qualifies
+            const profitGold = key === 'profit' ? profitNoiseGold(r, baseline) : null;
+            const bar =
+                profitGold != null
+                    ? `<span style="color:#666;"> ±${formatKMB(profitGold * 24)}/day</span>`
+                    : `<span style="color:#666;"> ±${noisePct.toFixed(2)}%</span>`;
             return significant
                 ? bar
                 : `${bar}<span style="color:#c9a227;" title="Smaller than this run's sampling error — sim for longer before trusting it."> within noise</span>`;
@@ -11474,7 +11508,7 @@ class CombatSimUI {
         } else if (detail && (detail.gross != null || detail.credit)) {
             const gross = detail.gross == null ? 'no price' : formatKMB(detail.gross);
             parts.push(
-                `<span style="color:#888;">Buys ${gross}, resale credit ${formatKMB(detail.credit || 0)}.</span>`
+                `<span style="color:#888;">Buys ${gross}, resale credit ${formatKMB(detail.credit || 0)} after tax.</span>`
             );
         }
 
@@ -11483,7 +11517,7 @@ class CombatSimUI {
         // purchase so the row reads as free rather than as a windfall
         if (detail?.creditCapped) {
             parts.push(
-                `<span style="color:#ff9800;">Resale credit capped at the purchase: the current item's bid of ` +
+                `<span style="color:#ff9800;">Resale credit capped at the purchase: the current item's after-tax resale of ` +
                     `${formatKMB(detail.rawCredit)} looks out of line with the market.</span>`
             );
         }
@@ -12542,7 +12576,7 @@ class CombatSimUI {
      * @returns {string} HTML
      * @private
      */
-    _renderUpgradeBudget(rows, baseline, orderRows = []) {
+    _renderUpgradeBudget(rows, baseline, orderRows = [], stopped = null) {
         const budget = this._upgradeBudget ?? 0;
         const metricKey = this._upgradePlanMetric || UPGRADE_PLAN_METRICS[0].key;
         const money = (value) => formatKMB(Math.round(value));
@@ -12602,7 +12636,13 @@ class CombatSimUI {
                         ${money(plan.totalCost)} of ${money(budget)} ·
                         <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
-                    </div>${provisional}${this._renderBudgetConfirm(plan, baseline)}`;
+                    </div>${provisional}${
+                        stopped
+                            ? `<div data-budget-partial style="margin-top:4px; color:#e8a87c; font-size:10px;">
+                                Planned from a run that ${stoppedRunText(stopped)}: an upgrade it never reached
+                                is not in this plan.</div>`
+                            : ''
+                    }${this._renderBudgetConfirm(plan, baseline)}`;
             }
         }
 
@@ -12803,6 +12843,9 @@ class CombatSimUI {
         }
         if (state.status === 'done') {
             const confirmedRow = { metrics: state.result.metrics, economics: state.result.economics };
+            // The baseline the run compared the basket with, on the basket's price snapshot: a context restored
+            // from storage lost the analysis' snapshot and was revalued, so the analysis' own baseline is not it
+            const basis = state.result.baseline || baseline;
             // Score is a placing or a share of the best within the candidate set
             // the plan was built from (see `applyScoreScale`) — there is no set
             // to place a single combined basket within, so it cannot be
@@ -12822,12 +12865,12 @@ class CombatSimUI {
                     ? `<span style="color:#888;">can't be confirmed as a score; the measured changes are</span>
                         ${UPGRADE_PLAN_METRICS.filter((m) => m.key !== 'score')
                             .map((m) => {
-                                const gain = m.gain(confirmedRow, baseline);
+                                const gain = m.gain(confirmedRow, basis);
                                 return gainSpan(gain, `${m.label} ${m.format(gain)}`);
                             })
                             .join(', ')}`
                     : (() => {
-                          const gain = plan.metric.gain(confirmedRow, baseline);
+                          const gain = plan.metric.gain(confirmedRow, basis);
                           return gainSpan(gain, plan.metric.format(gain));
                       })();
             return wrap(
@@ -12861,7 +12904,10 @@ class CombatSimUI {
         if (!btn || !this._budgetConfirm) return;
         const key = this._budgetConfirm.key;
         btn.addEventListener('click', async () => {
-            const context = this._upgradeResultsData?.context;
+            // Captured before the await: the confirmation belongs to this analysis, for this character
+            const ownerId = dataManager.getCurrentCharacterId();
+            const analysis = this._upgradeResultsData;
+            const context = analysis?.context;
             const plan = this._lastBudgetPlan;
             if (!context || !plan || this._budgetPlanKey(plan) !== key) {
                 this._budgetConfirm = {
@@ -12883,8 +12929,15 @@ class CombatSimUI {
             }
             // The plan on screen may have moved on (a replan, a new analysis)
             // while the run was in flight; a result for a question nobody is
-            // asking any more is not shown
-            if (this._budgetConfirm.key !== key) return;
+            // asking any more is not shown. A teardown or character switch clears all of it
+            if (
+                this._budgetConfirm?.key !== key ||
+                this._upgradeResultsData !== analysis ||
+                !this.panel ||
+                !this._stillSameCharacter(ownerId)
+            ) {
+                return;
+            }
             this._budgetConfirm = outcome.ok
                 ? { key, status: 'done', result: outcome, error: null }
                 : { key, status: 'error', result: null, error: outcome.reason };
@@ -12993,6 +13046,8 @@ class CombatSimUI {
     /**
      * A quiet banner saying the shown results are remembered from a previous run.
      * @param {number} savedAt - Epoch ms the results were saved
+     * @param {Object|null} [meta] - `{characterName, zoneName, difficultyTier, stopped}`; `stopped` is the remembered
+     *   run's `results.stopped`, when Stop cut it short
      * @returns {string} HTML
      * @private
      */
@@ -13003,11 +13058,12 @@ class CombatSimUI {
             ? `${meta.zoneName}${Number.isFinite(meta.difficultyTier) ? ` (T${meta.difficultyTier})` : ''}`
             : null;
         const who = [meta?.characterName, zone].filter(Boolean).map(escapeAttribute).join(', ');
+        const stopped = meta?.stopped ? ` (${stoppedRunText(meta.stopped)})` : '';
         return (
             `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; display:flex; ` +
             `align-items:center; justify-content:space-between; gap:8px; ` +
             `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
-            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.</span>` +
+            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}${stopped}. Run a new analysis to refresh them.</span>` +
             `<button data-clear-remembered-upgrade title="Forget these remembered results. Does not affect a running analysis." ` +
             `style="flex:0 0 auto; background:transparent; color:#9ab; border:1px solid rgba(120,150,190,0.4); ` +
             `border-radius:3px; padding:1px 6px; font-size:10px; cursor:pointer; font-family:inherit;">Clear</button>` +
@@ -13702,6 +13758,10 @@ class CombatSimUI {
             return;
         }
 
+        // A confirmation measured one analysis' basket: a new analysis, or a restored one, starts without it even
+        // when its picks and costs come out the same (another zone, baseline or seed is another experiment).
+        // A redraw of the same analysis (a sort, an opened row, a replan) passes the same object and keeps it
+        if (results !== this._upgradeResultsData) this._budgetConfirm = null;
         this._upgradeResultsData = results;
         // The analysis scores with the defaults; re-rank here so a saved score
         // selection applies to results that were computed before it was loaded
@@ -13730,10 +13790,28 @@ class CombatSimUI {
         const unpricedRows = purchasable.filter((r) => r.cost == null && !scrollRows.includes(r));
 
         let html = foodHtml;
-        if (this._restoredUpgradeAt) {
-            html = this._restoredUpgradeNote(this._restoredUpgradeAt, this._restoredUpgradeMeta) + html;
+        if (results.foodStopped) {
+            html =
+                `<div data-food-stopped style="margin:0 0 8px; font-size:11px; color:#e8a87c;">` +
+                `The food search was stopped before it finished; every upgrade below was measured.</div>` +
+                html;
         }
-        if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline, orderRows);
+        if (results.stopped) {
+            html =
+                `<div data-upgrade-stopped style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#e8a87c; ` +
+                `background:rgba(232,168,124,0.08); border:1px solid rgba(232,168,124,0.3); border-radius:5px;">` +
+                `Analysis ${stoppedRunText(results.stopped)}: these rows are only the candidates measured before ` +
+                `Stop, not every upgrade the run set out to compare.</div>` +
+                html;
+        }
+        if (this._restoredUpgradeAt) {
+            html =
+                this._restoredUpgradeNote(this._restoredUpgradeAt, {
+                    ...(this._restoredUpgradeMeta || {}),
+                    stopped: results.stopped || null,
+                }) + html;
+        }
+        if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline, orderRows, results.stopped);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         // The gold table carries the ⚙ Columns popover; with no gold table the
         // level Score would be stuck on its saved metrics and depth, so the

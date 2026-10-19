@@ -46,6 +46,8 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: vi.fn(), off: vi.fn() } }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildPlayerDTO: vi.fn(),
     buildGameDataPayload: vi.fn(),
     applyLoadoutSnapshotToDTO: vi.fn(),

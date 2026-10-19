@@ -133,6 +133,8 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: vi.fn(),
     calculateSimRevenue: vi.fn(),
     getGuildBuffDetailMap: () => ({}),
@@ -154,6 +156,11 @@ vi.mock('./direct-enhancement-cost.js', () => ({
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ describeEnhancementSource: () => null }));
 vi.mock('../../utils/profit-helpers.js', () => ({
+    // Untaxed, as for an Iron Cow character: this suite is about which route a row is priced by, and its
+    // figures are gross. The market sell tax on a resale is tested in upgrade-advisor.test.js
+    calculatePriceAfterTax: (price) => price,
+    outputTaxRate: () => 0,
+
     resolveItemPrice: vi.fn(() => ({ price: 2_000_000 })),
 }));
 vi.mock('../../utils/market-data.js', () => ({
@@ -252,6 +259,19 @@ describe('the remembered queue', () => {
     test('a chip reads as the item and its level', () => {
         expect(describeCheckedSwap({ hrid: CAPE, level: 7 }, gameData)).toBe('Sinister Cape +7');
         expect(checkedSwapKey({ hrid: CAPE, level: 7 })).toBe(`${CAPE}@7`);
+    });
+});
+
+describe('combat: a checked swap is taxed as the loadouts owner pays (#560 review)', () => {
+    const owner = (gameMode) => ({ ...wearing({ [BACK]: piece(CAPE, 5) }), ...(gameMode ? { gameMode } : {}) });
+
+    test('a party member is stamped with their own sell tax, the live character with none', () => {
+        const swap = { hrid: CAPE, level: 7 };
+        expect(buildCombatSwapCandidate(swap, [owner('legacy_ironcow')], gameData, false).saleTaxRate).toBe(0);
+        expect(buildCombatSwapCandidate(swap, [owner('standard')], gameData, false).saleTaxRate).toBeGreaterThan(0);
+        // A profile that does not say is charged the market tax rather than the live character's status
+        expect(buildCombatSwapCandidate(swap, [owner()], gameData, false).saleTaxRate).toBeGreaterThan(0);
+        expect(buildCombatSwapCandidate(swap, [owner('legacy_ironcow')], gameData, true).saleTaxRate).toBeUndefined();
     });
 });
 

@@ -91,6 +91,8 @@ vi.mock('../../utils/market-data.js', () => {
     };
 });
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: vi.fn(),
     calculateSimRevenue: vi.fn(),
     getGuildBuffDetailMap: () => ({}),

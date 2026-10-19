@@ -86,7 +86,7 @@ vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
     getProductionCost: () => 0,
 }));
 
-const { calculateSimRevenue } = await import('./combat-sim-adapter.js');
+const { calculateSimRevenue, seedSimPriceCache } = await import('./combat-sim-adapter.js');
 
 /**
  * A dungeon run whose completion always drops one chimerical chest, which costs
@@ -371,5 +371,69 @@ describe('calculateSimRevenue unpriced dungeon keys', () => {
         expect(calculateSimRevenue(dungeon.simResult, dungeon.gameData, 'player1', HOURS).unpricedKeys).toEqual([]);
         const zone = simDropping('/items/cheese', KILLS, 1000);
         expect(calculateSimRevenue(zone.simResult, zone.gameData, 'player1', HOURS).unpricedKeys).toEqual([]);
+    });
+});
+
+describe('an analysis price snapshot is taken before any run is valued', () => {
+    /** A zone of rats, as the action map describes it, so the seed can read what the zone drops */
+    function zoneOf(gameData) {
+        return {
+            ...gameData,
+            actionDetailMap: {
+                '/actions/combat/rats': {
+                    combatZoneInfo: {
+                        fightInfo: { randomSpawnInfo: { spawns: [{ combatMonsterHrid: '/monsters/rat' }] } },
+                    },
+                },
+            },
+        };
+    }
+
+    test('a coffee only a candidate drinks is valued at the price when the analysis started', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        mocks.prices['/items/wisdom_coffee'] = { ask: 100, bid: 100 };
+        const cache = seedSimPriceCache(new Map(), zoneOf(gameData), {
+            zoneHrid: '/actions/combat/rats',
+            consumableHrids: ['/items/wisdom_coffee'],
+        });
+
+        // The baseline drinks nothing; the market moves; then the candidate that drinks it is valued
+        calculateSimRevenue(simResult, gameData, 'player1', HOURS, { priceCache: cache });
+        mocks.prices['/items/wisdom_coffee'] = { ask: 500, bid: 500 };
+        const candidate = { ...simResult, consumablesUsed: { player1: { '/items/wisdom_coffee': HOURS } } };
+        const { costPerHour } = calculateSimRevenue(candidate, gameData, 'player1', HOURS, { priceCache: cache });
+
+        expect(costPerHour).toBe(100);
+    });
+
+    test('a drop the zone can yield is held at the start price, and an unpriced one stays unpriced', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        gameData.combatMonsterDetailMap['/monsters/rat'].rareDropTable = [
+            { itemHrid: '/items/rat_relic', dropRate: 1, minCount: 1, maxCount: 1, minDifficultyTier: 0 },
+        ];
+        const cache = seedSimPriceCache(new Map(), zoneOf(gameData), { zoneHrid: '/actions/combat/rats' });
+
+        mocks.prices['/items/cheese'] = { ask: 5000, bid: 5000 };
+        mocks.prices['/items/rat_relic'] = { ask: 9000, bid: 9000 };
+        const { revenuePerHour, unpricedDrops } = calculateSimRevenue(simResult, gameData, 'player1', HOURS, {
+            priceCache: cache,
+        });
+
+        expect(revenuePerHour).toBeCloseTo(1000 * (1 - MARKET_TAX));
+        // Nothing priced it when the analysis started: missing, never 0 and never today's price
+        expect(unpricedDrops).toContain('/items/rat_relic');
+    });
+
+    test("a dungeon's chest keys are held at the start price too", () => {
+        const { simResult, gameData } = simClearingDungeon(10, 1000, 200);
+        const cache = seedSimPriceCache(new Map(), gameData, { zoneHrid: '/actions/combat/chimerical_den' });
+        const before = calculateSimRevenue(simResult, gameData, 'player1', HOURS, { priceCache: new Map(cache) });
+
+        mocks.prices['/items/chimerical_entry_key'] = { ask: 9999, bid: 9999 };
+        mocks.prices['/items/chimerical_chest_key'] = { ask: 9999, bid: 9999 };
+        const after = calculateSimRevenue(simResult, gameData, 'player1', HOURS, { priceCache: cache });
+
+        expect(after.keyCostPerHour).toBe(before.keyCostPerHour);
+        expect(after.keyCostPerHour).toBeGreaterThan(0);
     });
 });

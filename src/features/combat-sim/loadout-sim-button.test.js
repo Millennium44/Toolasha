@@ -15,7 +15,10 @@ vi.mock('../../utils/profile-command.js', () => ({ getGameCore: () => state.core
 vi.mock('./combat-sim-ui.js', () => ({
     default: { openWithExternalDTO: (dto, name, options) => state.opened.push({ dto, name, options }) },
 }));
-vi.mock('./combat-sim-adapter.js', () => ({ buildPlayerDTOFromLoadout: async () => state.built }));
+vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+    buildPlayerDTOFromLoadout: async () => state.built,
+}));
 
 const { injectLoadoutSimButtons, openLoadoutInSim, LOADOUT_SIM_BUTTON_CLASS } = await import('./loadout-sim-button.js');
 const { handleLoadoutShared, _resetViewLoadout } = await import('../../utils/view-loadout.js');

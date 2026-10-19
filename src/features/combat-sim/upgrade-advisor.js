@@ -10,6 +10,7 @@ import dataManager from '../../core/data-manager.js';
 import {
     buildGameDataPayload,
     calculateSimRevenue,
+    seedSimPriceCache,
     getGuildBuffDetailMap,
     guildBuffMaxLevel,
     applyGuildBuffLevel,
@@ -20,11 +21,13 @@ import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from '
 import { generateLabArmorCandidates, getWeaponStyleFamily, labelItemWithLevel } from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
 import { ABILITY_ORDER_HRID, consistentAbilityOrders, zeroCooldownAbilities } from './ability-order.js';
+import { profitScale } from './trigger-tuning.js';
 import { bestGearForSkill, describeSkillingUpgrade } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
-import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { outputTaxRate, resolveItemPrice } from '../../utils/profit-helpers.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { priceAtLevel, priceBase, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
@@ -2088,10 +2091,12 @@ export function generateDrinkCandidates(playerDTO, gameData) {
 
     const equipped = new Map(); // family → { index, entry }
     let freeSlot = -1;
+    let freeSlots = 0;
     for (let index = 0; index < DRINK_SLOTS; index++) {
         const worn = drinks[index];
         if (!worn?.hrid) {
             if (freeSlot === -1) freeSlot = index;
+            freeSlots++;
             continue;
         }
         const family = familyOf(worn.hrid);
@@ -2138,6 +2143,10 @@ export function generateDrinkCandidates(playerDTO, gameData) {
             upgradeLevel: 0,
             triggers: best.triggers,
             buffFamily: family,
+            // An addition takes whichever slot is still free where it is applied (see `applyDrinkToDTO`), and
+            // no more additions fit together than the bar has free slots (see `planWithinBudget`)
+            fillsFreeDrinkSlot: true,
+            freeDrinkSlots: freeSlots,
             description: `Add ${best.name}`,
         });
     }
@@ -2146,14 +2155,76 @@ export function generateDrinkCandidates(playerDTO, gameData) {
 }
 
 /**
+ * How many of a loadout's drink slots are empty.
+ * @param {Object} dto - Player DTO
+ * @returns {number}
+ */
+function freeDrinkSlotCount(dto) {
+    const drinks = Array.isArray(dto?.drinks) ? dto.drinks : [];
+    let free = 0;
+    for (let index = 0; index < DRINK_SLOTS; index++) if (!drinks[index]?.hrid) free++;
+    return free;
+}
+
+/**
+ * Whether a drink candidate adds a coffee to a free slot rather than replacing a worn one with a better tier.
+ * Read off `currentHrid` too, so a candidate remembered from before the flag existed is still recognized.
+ * @param {Object} candidate - Upgrade candidate
+ * @returns {boolean}
+ */
+function isDrinkAddition(candidate) {
+    return candidate?.type === 'drink' && (candidate.fillsFreeDrinkSlot === true || !candidate.currentHrid);
+}
+
+/**
+ * Whether a drink candidate means anything on one loadout's drink bar.
+ *
+ * A tier up replaces one particular drink, so it applies only where that drink is worn. An addition needs a
+ * free slot, and a bar already running its buff family has no use for it: applied there, it used to land on
+ * the generated index and overwrite a coffee that loadout wears.
+ * @param {Object} candidate - Candidate of type 'drink'
+ * @param {Object} dto - The loadout's player DTO
+ * @param {Object|null} [gameData] - Game data, for reading which family a worn drink belongs to
+ * @returns {boolean}
+ */
+function drinkAppliesToDTO(candidate, dto, gameData = null) {
+    const worn = (Array.isArray(dto.drinks) ? dto.drinks : [])
+        .slice(0, DRINK_SLOTS)
+        .map((drink) => drink?.hrid || null);
+    if (!isDrinkAddition(candidate)) return worn.includes(candidate.currentHrid);
+    if (worn.length >= DRINK_SLOTS && worn.every(Boolean)) return false;
+    if (worn.includes(candidate.upgradeHrid)) return false;
+    if (gameData && candidate.buffFamily) {
+        const pool = buildBuffDrinkPools(gameData).get(candidate.buffFamily) || [];
+        if (worn.some((hrid) => hrid && pool.some((entry) => entry.hrid === hrid))) return false;
+    }
+    return true;
+}
+
+/**
  * Put a drink candidate into its slot, in place.
+ *
+ * A tier up goes where the drink it replaces sits. An addition goes into a slot that is free on *this* DTO:
+ * the index it was generated with is only the first free slot of the bar it came from, and a basket of two
+ * additions both aimed at it would have the second overwrite the first. With no free slot left, the
+ * generated index is used as before (a single-candidate run always has it free).
  * @param {Object} dto - Player DTO (mutated)
  * @param {Object} candidate - Candidate of type 'drink'
  */
 function applyDrinkToDTO(dto, candidate) {
     if (!Array.isArray(dto.drinks)) dto.drinks = [];
     while (dto.drinks.length < DRINK_SLOTS) dto.drinks.push(null);
-    dto.drinks[candidate.drinkIndex] = { hrid: candidate.upgradeHrid, triggers: candidate.triggers || null };
+    let index = candidate.drinkIndex;
+    if (isDrinkAddition(candidate)) {
+        if (dto.drinks[index]?.hrid) {
+            const free = dto.drinks.slice(0, DRINK_SLOTS).findIndex((drink) => !drink?.hrid);
+            if (free >= 0) index = free;
+        }
+    } else if (candidate.currentHrid) {
+        const worn = dto.drinks.findIndex((drink) => drink?.hrid === candidate.currentHrid);
+        if (worn >= 0) index = worn;
+    }
+    dto.drinks[index] = { hrid: candidate.upgradeHrid, triggers: candidate.triggers || null };
 }
 
 /** Community buffs the combat sim reads, with what one more level is worth */
@@ -2669,6 +2740,17 @@ export function addRefinedPathBootCandidates(candidates, gameData) {
  *   purchase, or null when some part of it has no known price
  */
 export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
+    return withSaleTaxOf(candidate, () => upgradeCostAtTax(candidate, gameData, isSelf));
+}
+
+/**
+ * `calculateUpgradeCost` at whatever sell tax is in force.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {number|null}
+ */
+function upgradeCostAtTax(candidate, gameData, isSelf) {
     const cost = calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf);
     const mirror = enhancementMirrorRoute(candidate, gameData, isSelf);
     const net = mirror && (cost == null || mirror.net < cost) ? mirror.net : cost;
@@ -2907,7 +2989,10 @@ function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         const currentMarket = getItemPrices(candidate.currentHrid, candidate.currentLevel);
 
         if (upgradedMarket?.ask > 0 && currentMarket?.bid > 0) {
-            return upgradedMarket.ask - capEnhancementCredit(upgradedMarket.ask, currentMarket.bid).credit;
+            // Selling the current level pays its bid after tax, and that is what the outlier cap weighs
+            return (
+                upgradedMarket.ask - capEnhancementCredit(upgradedMarket.ask, afterSaleTax(currentMarket.bid)).credit
+            );
         }
 
         // Fallback: enhancement cost estimate with protection
@@ -2995,7 +3080,7 @@ function capEnhancementCredit(ask, bid) {
  *
  * @param {Object} candidate - Upgrade candidate
  * @param {Array<{hrid: string, level: number}>} [consumed] - Worn pieces the purchase is made from (a refine)
- * @returns {number} Total resale credit, 0 when nothing is being sold
+ * @returns {number} Total after-tax resale credit, 0 when nothing is being sold
  */
 function resaleCredit(candidate, consumed = []) {
     const removed =
@@ -3008,9 +3093,8 @@ function resaleCredit(candidate, consumed = []) {
         // Refined into the target, or spent in a mirror, so that share is not left to sell
         const sold = 1 - consumedShare(consumed, item.hrid, item.enhancementLevel || 0);
         if (sold <= 0) continue;
-        credit +=
-            sold *
-            (resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price ?? 0);
+        // Floored per piece before the share: a sale is paid per unit
+        credit += sold * sellValue(item.hrid, item.enhancementLevel || 0);
     }
     return credit;
 }
@@ -3548,13 +3632,86 @@ export function withLoadoutClaims(candidate, claims) {
 }
 
 /**
- * What a piece sells for, for weighing a route that gives that sale up.
+ * What selling a piece at a quoted price puts in hand: the price net of the 4% market sell tax, floored to
+ * whole coins the way the game pays a per-unit sale. Every resale credit and every forfeited sale in the
+ * advisor goes through here, so a swap is never credited the gross bid it cannot collect, and a route that
+ * gives a sale up is charged what that sale would really have paid. An Iron Cow character pays no market
+ * tax (`outputTaxRate`), and its untaxed vendor/coinify values are kept as they are.
+ * @param {number|null|undefined} gross - Quoted sale price
+ * @returns {number} After-tax proceeds, 0 when there is no price
+ */
+function afterSaleTax(gross) {
+    if (!(gross > 0)) return 0;
+    const rate = pricingSaleTaxRate ?? outputTaxRate();
+    return rate > 0 ? Math.floor(gross * (1 - rate)) : gross;
+}
+
+/**
+ * The sell tax rate of the character a row is priced for, while that row is being priced; null prices for the
+ * live character (`outputTaxRate`). Set only around a synchronous cost read (`withSaleTaxOf`), so nothing else
+ * can observe it.
+ * @type {number|null}
+ */
+let pricingSaleTaxRate = null;
+
+/**
+ * The market sell tax the analysed character pays on a resale.
+ *
+ * The live character's own status (`outputTaxRate`, read when a row is priced) when the analysis is of them.
+ * Anyone else, a party member or an imported profile, by the game mode their DTO carries (`gameMode`, from
+ * their shared profile): an Iron Cow pays none, everyone else the market tax. A DTO that does not say is
+ * charged the market tax, the common case, rather than inheriting the live character's status, which says
+ * nothing about another player's.
+ * @param {Object} playerDTO - The analysed player's DTO
+ * @param {boolean} isSelf - Whether that player is the live character
+ * @returns {number|null} The rate, or null for the live character
+ */
+export function saleTaxRateOf(playerDTO, isSelf) {
+    if (isSelf) return null;
+    const gameMode = playerDTO?.gameMode;
+    return typeof gameMode === 'string' && gameMode.includes('ironcow') ? 0 : MARKET_TAX;
+}
+
+/**
+ * Run a synchronous cost read at the sell tax of the character the candidate is priced for
+ * (`candidate.saleTaxRate`, stamped by the analysis); the live character's when it carries none.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Function} read - The cost read
+ * @returns {*} What `read` returns
+ */
+function withSaleTaxOf(candidate, read) {
+    const outer = pricingSaleTaxRate;
+    if (Number.isFinite(candidate?.saleTaxRate)) pricingSaleTaxRate = candidate.saleTaxRate;
+    try {
+        return read();
+    } finally {
+        pricingSaleTaxRate = outer;
+    }
+}
+
+/**
+ * What a piece sells for after tax, for weighing a route that gives that sale up.
  * @param {string} hrid - Item HRID
  * @param {number} level - Enhancement level
- * @returns {number} Sale value, 0 when unpriced
+ * @returns {number} After-tax sale value, 0 when unpriced
  */
 function sellValue(hrid, level) {
-    return resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }).price || 0;
+    return saleProceeds(resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }));
+}
+
+/**
+ * What a resolved sell-side price pays when the piece is sold.
+ *
+ * A market quote is a sale and pays the tax. The production-cost fallback (`production: true`, an item with no
+ * order book) is what making the piece would cost, not a sale anybody would pay, so taxing it would invent a
+ * fee on a figure that is not a sale price; it is credited as it is. A custom price is taxed like a quote: a
+ * policy question (is a user's price gross or what they expect to net?) left open on purpose.
+ * @param {{price: number|null, production?: boolean}} resolved - From `resolveItemPrice`
+ * @returns {number} Proceeds, 0 when unpriced
+ */
+function saleProceeds(resolved) {
+    if (resolved?.production) return resolved.price > 0 ? resolved.price : 0;
+    return afterSaleTax(resolved?.price);
 }
 
 /**
@@ -3592,10 +3749,7 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
     if (refine) {
         // Judged after resale: refining a worn base gives up what that base would have sold for
         const forfeited = (refine.consumed || []).reduce(
-            (sum, piece) =>
-                sum +
-                (piece.share ?? 1) *
-                    (resolveItemPrice(piece.hrid, { side: 'sell', enhancementLevel: piece.level }).price || 0),
+            (sum, piece) => sum + (piece.share ?? 1) * sellValue(piece.hrid, piece.level),
             0
         );
         if (direct.price == null || refine.price + forfeited < direct.price) chosen = refine;
@@ -4018,6 +4172,17 @@ function explainAbilityCandidateCost(candidate, gameData, isSelf = true) {
  * @returns {Object} { buys, credits, gross, credit, net, unpriced, source, enhanceSource }
  */
 export function explainUpgradeCost(candidate, gameData, isSelf = true) {
+    return withSaleTaxOf(candidate, () => explainUpgradeCostAtTax(candidate, gameData, isSelf));
+}
+
+/**
+ * `explainUpgradeCost` at whatever sell tax is in force.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {Object}
+ */
+function explainUpgradeCostAtTax(candidate, gameData, isSelf) {
     const detail = explainUpgradeCostRoutes(candidate, gameData, isSelf);
     if (detail.net == null) return detail;
     const freed = freedPiecesCredit(candidate, detail.net);
@@ -4172,7 +4337,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
         if (upgraded?.ask > 0 && current?.bid > 0) {
             const name = nameOf(candidate.currentHrid);
-            const { credit, capped } = capEnhancementCredit(upgraded.ask, current.bid);
+            const proceeds = afterSaleTax(current.bid);
+            const { credit, capped } = capEnhancementCredit(upgraded.ask, proceeds);
             return {
                 buys: [
                     {
@@ -4189,7 +4355,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                         name,
                         enhancementLevel: candidate.currentLevel,
                         price: credit,
-                        rawPrice: current.bid,
+                        rawPrice: proceeds,
+                        grossPrice: current.bid,
                     },
                 ],
                 gross: upgraded.ask,
@@ -4197,10 +4364,11 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                 net: upgraded.ask - credit,
                 unpriced: [],
                 creditApplied: true,
-                // The current level's bid outbid the target's ask and was cut
-                // down to it; `rawCredit` is the bid as the order book had it
+                // The current level's after-tax proceeds outbid the target's ask and were cut down to it;
+                // `rawCredit` is those proceeds, `rawBid` the bid as the order book had it
                 creditCapped: capped,
-                rawCredit: current.bid,
+                rawCredit: proceeds,
+                rawBid: current.bid,
                 source: 'market',
                 enhanceSource: null,
             };
@@ -4276,7 +4444,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         enhancementLevel: item.enhancementLevel || 0,
         price:
             (1 - consumedShare(refineConsumed, item.hrid, item.enhancementLevel || 0)) *
-            (resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price || 0),
+            sellValue(item.hrid, item.enhancementLevel || 0),
     }));
 
     const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);
@@ -4380,6 +4548,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // random numbers, so a delta reflects the upgrade rather than the gap between
     // two independent samples. A fresh seed per analysis keeps re-runs resampling.
     const simSeed = analysisSeed();
+    // One price snapshot for the whole analysis: every drop, consumable and key price is read once and
+    // answered from here after, so a market refresh, a custom-price edit or a pricing-mode change while the
+    // candidates run cannot read as an upgrade's profit gain. Handed on in `context` so a basket's
+    // confirming run is valued on the same basis.
+    const priceCache = new Map();
     const skipSkillingRooms = config.getSetting('combatSim_upgradeSkipSkillingRooms') === true;
 
     const candidateModes = resolveCandidateModes(upgradeModes, upgradeMode);
@@ -4414,7 +4587,10 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         candidates.push(candidate);
     }
 
-    const candidatesWithCost = candidates.map((c) => {
+    // Resale is taxed as the analysed character pays it, not as the live character would
+    const saleTaxRate = saleTaxRateOf(playerDTO, isSelf);
+    const candidatesWithCost = candidates.map((generated) => {
+        const c = saleTaxRate == null ? generated : { ...generated, saleTaxRate };
         // The breakdown already knows which side of the market — or which
         // estimate — each figure came from. Reading it here is what lets a row
         // say so, rather than three different kinds of number sharing a column
@@ -4439,6 +4615,17 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     const total = candidatesWithCost.length + combatLevelCount * 2 + foodSimCount + 1;
     let current = 0;
 
+    // Every price the runs below can read, read now: an item first seen in a candidate (an added coffee, a drop
+    // the baseline never rolled) would otherwise be priced when that candidate finishes, after any change
+    seedSimPriceCache(priceCache, gameData, {
+        zoneHrid,
+        consumableHrids: [
+            ...(playerDTO.food || []).map((item) => item?.hrid),
+            ...(playerDTO.drinks || []).map((item) => item?.hrid),
+            ...candidatesWithCost.filter((c) => c.type === 'drink').map((c) => c.upgradeHrid),
+        ],
+    });
+
     // Run baseline sim
     onProgress?.({ current: 0, total, description: 'Running baseline...' });
     // One worker, like every candidate below. The shared seed only cancels
@@ -4452,24 +4639,33 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // ranking is a generic zone fight, and switching the task bonus on would
     // credit task gear with damage it only deals while that monster is your
     // task — see the caveat attached in generateCandidates().
-    const baselineResult = await runSimulation(
-        {
-            gameData,
-            playerDTOs,
-            zoneHrid,
-            difficultyTier,
-            hours,
-            communityBuffs,
-            seed: simSeed,
-            taskDamageMode: TASK_DAMAGE_OFF,
-            // The baseline's fight count is what every candidate is paired to,
-            // so precision/max-fights on the baseline set the whole run's sample
-            // size. Null falls back to the plain time budget (`hours`).
-            ...(precision ? { precision } : {}),
-        },
-        null,
-        { workers: 1 }
-    );
+    // Stop rejects the simulation in flight ("Cancelled"). That is this run being stopped, not a failure,
+    // only while this run's own abort flag is set: a cancel from anywhere else still fails the analysis
+    const stoppedHere = () => Boolean(abortSignal?.());
+    let baselineResult;
+    try {
+        baselineResult = await runSimulation(
+            {
+                gameData,
+                playerDTOs,
+                zoneHrid,
+                difficultyTier,
+                hours,
+                communityBuffs,
+                seed: simSeed,
+                taskDamageMode: TASK_DAMAGE_OFF,
+                // The baseline's fight count is what every candidate is paired to,
+                // so precision/max-fights on the baseline set the whole run's sample
+                // size. Null falls back to the plain time budget (`hours`).
+                ...(precision ? { precision } : {}),
+            },
+            null,
+            { workers: 1 }
+        );
+    } catch (error) {
+        if (stoppedHere()) return { baseline: null, results: [] };
+        throw error;
+    }
     current++;
 
     if (abortSignal?.()) return { baseline: null, results: [] };
@@ -4477,7 +4673,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     onProgress?.({ current, total, description: 'Baseline complete' });
 
     // Calculate baseline metrics
-    const baselineMetrics = computeMetrics(baselineResult, gameData, playerHrid, hours);
+    const baselineMetrics = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache });
 
     // Run sim for each candidate: one worker each, several candidates at a time.
     //
@@ -4558,32 +4754,39 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             };
         }
 
-        const simResult = await runSimulation(
-            {
-                gameData,
-                playerDTOs: modifiedDTOs,
-                zoneHrid,
-                difficultyTier,
-                hours,
-                communityBuffs: applyCommunityBuffCandidate(communityBuffs, candidate),
-                seed: simSeed,
-                taskDamageMode: TASK_DAMAGE_OFF,
-            },
-            null,
-            // One worker each: the queue is what keeps the cores busy here.
-            // Preempting would have each candidate cancel the one before it.
-            { preempt: false, workers: 1 }
-        );
+        // A candidate Stop interrupts is dropped, and the ones that finished are kept: they are measurements
+        let simResult;
+        try {
+            simResult = await runSimulation(
+                {
+                    gameData,
+                    playerDTOs: modifiedDTOs,
+                    zoneHrid,
+                    difficultyTier,
+                    hours,
+                    communityBuffs: applyCommunityBuffCandidate(communityBuffs, candidate),
+                    seed: simSeed,
+                    taskDamageMode: TASK_DAMAGE_OFF,
+                },
+                null,
+                // One worker each: the queue is what keeps the cores busy here.
+                // Preempting would have each candidate cancel the one before it.
+                { preempt: false, workers: 1 }
+            );
+        } catch (error) {
+            if (stoppedHere()) return null;
+            throw error;
+        }
 
         if (abortSignal?.()) return null;
 
-        const metrics = computeMetrics(simResult, gameData, playerHrid, hours);
+        const metrics = computeMetrics(simResult, gameData, playerHrid, hours, { priceCache });
         const deltas = computeDeltas(baselineMetrics, metrics);
         const goldPer = computeGoldPerImprovement(candidate.cost, deltas);
 
         const economics = computeEconomics(candidate.cost, baselineMetrics, metrics);
         const noise = rateDeltaNoisePct(baselineResult, simResult, playerHrid);
-        const significantBy = significantDeltas(deltas, noise);
+        const significantBy = significantDeltas(deltas, noise, { baseline: baselineMetrics, upgraded: metrics });
 
         const row = {
             candidate,
@@ -4615,11 +4818,18 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 charmEnhancement
             );
             xpDTOs[playerIndex].equipment[CHARM_SLOT] = matchingCharm;
-            const xpSimResult = await runSimulation(
-                { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
-                null,
-                { preempt: false, workers: 1 }
-            );
+            // A combat-level row without its leveling time is half a row; Stop here drops the whole row
+            let xpSimResult;
+            try {
+                xpSimResult = await runSimulation(
+                    { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
+                    null,
+                    { preempt: false, workers: 1 }
+                );
+            } catch (error) {
+                if (stoppedHere()) return null;
+                throw error;
+            }
             progress.current++;
             // How much faster the whole zone goes once the levels are in. The
             // candidate's own sim already ran at the boosted levels and the
@@ -4658,21 +4868,27 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                         });
                         const bothDTOs = JSON.parse(JSON.stringify(modifiedDTOs));
                         bothDTOs[playerIndex][along.skillKey] = along.upgradeLevel;
-                        const bothResult = await runSimulation(
-                            {
-                                gameData,
-                                playerDTOs: bothDTOs,
-                                zoneHrid,
-                                difficultyTier,
-                                hours,
-                                communityBuffs,
-                                seed: simSeed,
-                                taskDamageMode: TASK_DAMAGE_OFF,
-                            },
-                            null,
-                            { preempt: false, workers: 1 }
-                        );
-                        const bothMetrics = computeMetrics(bothResult, gameData, playerHrid, hours);
+                        let bothResult;
+                        try {
+                            bothResult = await runSimulation(
+                                {
+                                    gameData,
+                                    playerDTOs: bothDTOs,
+                                    zoneHrid,
+                                    difficultyTier,
+                                    hours,
+                                    communityBuffs,
+                                    seed: simSeed,
+                                    taskDamageMode: TASK_DAMAGE_OFF,
+                                },
+                                null,
+                                { preempt: false, workers: 1 }
+                            );
+                        } catch (error) {
+                            if (stoppedHere()) return null;
+                            throw error;
+                        }
+                        const bothMetrics = computeMetrics(bothResult, gameData, playerHrid, hours, { priceCache });
                         row.alongside.metrics = bothMetrics;
                         row.alongside.deltas = computeDeltas(baselineMetrics, bothMetrics);
                     }
@@ -4731,6 +4947,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     return {
         baseline: baselineMetrics,
         results,
+        // How many candidates the run set out to measure, so a stopped run can say how much of it it covers
+        candidateCount: candidatesWithCost.length,
         food,
         // Explains an empty house result rather than leaving it as "no upgrades"
         houseScan: candidateModes.includes('house')
@@ -4753,6 +4971,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             precision,
             baselineResult,
             baseline: baselineMetrics,
+            priceCache,
         },
     };
 }
@@ -5051,15 +5270,32 @@ export function rateDeltaNoisePct(baselineResult, upgradedResult, playerHrid) {
 
 /**
  * Which of a row's deltas cleared their own error bar.
+ *
+ * Profit is judged in gold, not in percent. Its percentage delta is a share of the net profit, which near
+ * break-even is ~0, while its error is a share of the gold moving through the fight; compared directly a
+ * 500/hr gain on a 10/hr baseline read as +5,000% against a ±4% error and was called significant. With the
+ * two runs' metrics in hand the gold change is held against the error on `profitScale` (the larger of
+ * revenue, cost and |profit| per hour), the scale Ability order and verify already use.
+ *
  * @param {Object} deltas - Percentage deltas from `computeDeltas`
  * @param {Object} noise - Percentage standard errors from `rateDeltaNoisePct`
+ * @param {Object} [metrics] - `{ baseline, upgraded }` metrics from `computeMetrics`, for the profit verdict
  * @returns {Object} Per-metric booleans
  */
-export function significantDeltas(deltas, noise) {
+export function significantDeltas(deltas, noise, { baseline, upgraded } = {}) {
     const verdict = {};
     for (const key of Object.keys(deltas || {})) {
         const error = noise?.[key];
         verdict[key] = Number.isFinite(error) ? Math.abs(deltas[key]) > SIGNIFICANCE_Z * error : true;
+    }
+    const goldChange = (upgraded?.profitPerHour ?? NaN) - (baseline?.profitPerHour ?? NaN);
+    if ('profit' in verdict && Number.isFinite(noise?.profit) && Number.isFinite(goldChange)) {
+        const scale = profitScale({
+            profit: baseline.profitPerHour,
+            revenue: baseline.revenuePerHour,
+            cost: baseline.costPerHour,
+        });
+        verdict.profit = Math.abs(goldChange) > SIGNIFICANCE_Z * (noise.profit / 100) * scale;
     }
     return verdict;
 }
@@ -5576,17 +5812,30 @@ export function buildModifiedCombatBuffs(baseBuffs, candidate) {
  * @returns {Object} Breakdown from explainUpgradeCost plus kept-gear detail
  */
 export function explainLabCandidateCost(candidate, gameData, isSelf = true) {
+    return withSaleTaxOf(candidate, () => explainLabCandidateCostAtTax(candidate, gameData, isSelf));
+}
+
+/**
+ * `explainLabCandidateCost` at whatever sell tax is in force.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {Object}
+ */
+function explainLabCandidateCostAtTax(candidate, gameData, isSelf) {
     const detail = explainUpgradeCost(candidate, gameData, isSelf);
     if (!candidate.keptItems?.length) return detail;
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
     detail.kept = candidate.keptItems.map((item) => {
-        const { price } = resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 });
+        const resolved = resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 });
+        const { price } = resolved;
         return {
             hrid: item.hrid,
             name: nameOf(item.hrid),
             enhancementLevel: item.enhancementLevel || 0,
-            price: price || 0,
+            // What keeping it gives up: the sale after tax, the figure a sold piece would have been credited
+            price: saleProceeds(resolved),
             // False where there is no price at all (untradable, nothing listed), which
             // a note must tell apart from a price that is truly 0
             priced: Number.isFinite(price),
@@ -5750,12 +5999,14 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // and reported at whatever the sampling noise came to. What it *can* move is
     // measured in its own pass below.
     const communityCandidates = candidates.filter((c) => c.type === 'community_buff' && !c.measuresLoss);
+    // Resale is taxed as the analysed character pays it (see `saleTaxRateOf`), as the combat analysis does
+    const labSaleTaxRate = saleTaxRateOf(playerDTO, isSelf);
     const candidatesWithCost = candidates
         .filter((c) => c.type !== 'community_buff')
-        .map((c) => ({
-            ...c,
-            cost: calculateUpgradeCost(c, gameData, isSelf),
-        }));
+        .map((generated) => {
+            const c = labSaleTaxRate == null ? generated : { ...generated, saleTaxRate: labSaleTaxRate };
+            return { ...c, cost: calculateUpgradeCost(c, gameData, isSelf) };
+        });
 
     // Generate buff candidates. Skilling buffs are handled in the skilling tab;
     // the Experience token is ranked in neither tab — it moves XP/room, not
@@ -6378,12 +6629,47 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
     const bestBySlot = new Map();
     let spent = 0;
 
-    const marginalOf = (entry) => {
+    /**
+     * Free drink slots each fight has, when the result carries them for every fight (an all-fights row); null
+     * otherwise, which keeps the single capacity the candidate was generated with.
+     */
+    const roomsOf = (result) => {
+        if (!isDrinkAddition(result.candidate)) return null;
+        const fights = result.fights;
+        if (!Array.isArray(fights) || !fights.length) return null;
+        return fights.every((fight) => Number.isFinite(fight?.freeDrinkSlots))
+            ? fights.map((fight) => fight.freeDrinkSlots)
+            : null;
+    };
+    /**
+     * Whether a drink addition is installed in fight `i`: every fight it was simulated in, whatever it saved there
+     * (a fight it was not simulated in takes no slot). Savings only score it; the combination check installs it
+     * in each room it applies to.
+     */
+    const addedIn = (result, i) => result.fights?.[i]?.applied !== false;
+    /** Additions already picked that take a slot in fight `i`, leaving out the picks `except` indexes */
+    const slotsUsedIn = (i, except = []) =>
+        picks.filter((pick, index) => !except.includes(index) && isDrinkAddition(pick.candidate) && addedIn(pick, i))
+            .length;
+    /**
+     * What a candidate saves in each fight once the fights that have no free drink slot left are zeroed: an
+     * addition pooled from a bar with three free slots is no use in a room whose bar the earlier picks have filled.
+     */
+    const effectiveSavings = (entry, displaced = []) => {
+        const rooms = roomsOf(entry.result);
+        if (!rooms) return entry.savings;
+        return entry.savings.map((saving, i) => (slotsUsedIn(i, displaced) < (rooms[i] ?? 0) ? saving : 0));
+    };
+    // The savings each pick was credited with when it went in, so its group can be rebuilt from them
+    const creditedOf = new Map();
+
+    const marginalOf = (entry, displaced = []) => {
+        const savings = effectiveSavings(entry, displaced);
         const standing = bestBySlot.get(entry.key);
-        if (!standing) return entry.savings.reduce((sum, saving) => sum + saving, 0);
+        if (!standing) return savings.reduce((sum, saving) => sum + saving, 0);
         let marginal = 0;
-        for (let i = 0; i < entry.savings.length; i++) {
-            marginal += Math.max(standing[i] || 0, entry.savings[i]) - (standing[i] || 0);
+        for (let i = 0; i < savings.length; i++) {
+            marginal += Math.max(standing[i] || 0, savings[i]) - (standing[i] || 0);
         }
         return marginal;
     };
@@ -6410,6 +6696,18 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
     const costWithReplacements = (entry, displaced) =>
         entry.result.cost - displaced.reduce((sum, i) => sum + picks[i].cost, 0);
 
+    // Coffees of different families do not conflict with each other, but they share the free drink slots: no
+    // more additions can be picked together than the bar had free (a single empty slot holds one)
+    const noDrinkSlotFor = (entry) => {
+        const candidate = entry.result.candidate;
+        if (!isDrinkAddition(candidate)) return false;
+        const rooms = roomsOf(entry.result);
+        // Per-fight capacities: blocked only when every fight it would be installed in is already full
+        if (rooms) return !entry.savings.some((saving, i) => saving > 0 && slotsUsedIn(i) < (rooms[i] ?? 0));
+        const room = Number.isFinite(candidate.freeDrinkSlots) ? candidate.freeDrinkSlots : 1;
+        return picks.filter((pick) => isDrinkAddition(pick.candidate)).length >= room;
+    };
+
     const remaining = [...eligible];
     while (remaining.length) {
         let best = null;
@@ -6418,9 +6716,11 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             // the other swaps into the slot it empties and the other offers of
             // the book it buys
             if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) continue;
-            const cost = costWithReplacements(entry, displacedBy(entry));
+            if (noDrinkSlotFor(entry)) continue;
+            const displacedNow = displacedBy(entry);
+            const cost = costWithReplacements(entry, displacedNow);
             if (spent + cost > budget) continue;
-            const marginal = marginalOf(entry);
+            const marginal = marginalOf(entry, displacedNow);
             if (marginal <= 0) continue;
             // Gain per coin is meaningless at or below zero cost — everything
             // free ties at infinity and a refund divided by a small gain is
@@ -6459,16 +6759,20 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             skipped.push({ result: older, reason: 'a later pick covers every room it did' });
         }
         spent += entry.result.cost;
-        picks.push({
+        // What it saves in the fights that still had room for it (all of them, but for a drink addition)
+        const credited = effectiveSavings(entry);
+        const pick = {
             ...entry.result,
             marginalAttemptsSaved: marginal,
-            rooms: entry.savings.filter((saving) => saving > 0).length,
-        });
+            rooms: credited.filter((saving) => saving > 0).length,
+        };
+        picks.push(pick);
+        creditedOf.set(pick, credited);
 
         const standing = bestBySlot.get(entry.key) || entry.savings.map(() => 0);
         bestBySlot.set(
             entry.key,
-            standing.map((saving, index) => Math.max(saving, entry.savings[index]))
+            standing.map((saving, index) => Math.max(saving, credited[index]))
         );
 
         // `marginal` was measured while the displaced picks still stood, so it
@@ -6479,7 +6783,7 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             let running = entry.savings.map(() => 0);
             for (const pick of picks) {
                 if (conflictKey(pick.candidate) !== entry.key) continue;
-                const savings = savingsOf(pick);
+                const savings = creditedOf.get(pick) ?? savingsOf(pick);
                 let share = 0;
                 running = running.map((standingSaving, index) => {
                     const next = Math.max(standingSaving, savings[index] || 0);
@@ -6498,6 +6802,8 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             // Otherwise this reads as "worthless", when it may well be the
             // second-best swap into a slot the plan has already filled
             reason = 'a pick already uses what this needs';
+        } else if (noDrinkSlotFor(entry)) {
+            reason = 'no drink slot is left free for it';
         } else if (spent + costWithReplacements(entry, displacedBy(entry)) > budget) {
             reason = 'over budget';
         } else {
@@ -6549,7 +6855,8 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
  * @param {Object} context - `{ gameData, playerDTOs, playerIndex, playerHrid, zoneHrid, difficultyTier, hours,
  *   communityBuffs, seed, precision, baselineResult, baseline }`, as returned by `runUpgradeAnalysis`
  * @returns {Promise<{ok: true, metrics: Object, deltas: Object, economics: Object, noise: Object,
- *   totalCost: number} | {ok: false, reason: string}>}
+ *   totalCost: number, baseline: Object} | {ok: false, reason: string}>} `deltas`, `economics` and `baseline`
+ *   are on the basket's own price snapshot
  */
 export async function confirmUpgradeBudgetPlan(picks, context) {
     if (!picks?.length) return { ok: false, reason: 'The plan is empty — nothing to confirm.' };
@@ -6609,6 +6916,21 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
         return { ok: false, reason: `Could not apply the basket together: ${error.message}` };
     }
 
+    // Every coffee the basket names has to be on the bar it simulates, once. More additions than free slots
+    // would have the last overwrite the others, and the run would report a basket it never wore
+    const worn = (dto.drinks || []).map((drink) => drink?.hrid).filter(Boolean);
+    const missing = candidates.filter(
+        (candidate) => candidate.type === 'drink' && worn.filter((hrid) => hrid === candidate.upgradeHrid).length !== 1
+    );
+    if (missing.length) {
+        return {
+            ok: false,
+            reason:
+                `${missing.map((candidate) => `"${candidate.description}"`).join(', ')} cannot fit on the drink bar ` +
+                'with the rest of the basket, so it cannot be simulated as one loadout.',
+        };
+    }
+
     const combinedDTOs = playerDTOs.map((player, i) => (i === playerIndex ? dto : player));
 
     let combinedResult;
@@ -6637,12 +6959,18 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
     }
 
     const totalCost = picks.reduce((sum, pick) => sum + (Number.isFinite(pick.cost) ? pick.cost : 0), 0);
-    const metrics = computeMetrics(combinedResult, gameData, playerHrid, hours);
-    const deltas = computeDeltas(baseline, metrics);
-    const economics = computeEconomics(totalCost, baseline, metrics);
+    // Both sides on one price basis. The analysis' own snapshot when it is still a live Map; a context that
+    // came back through storage or a sync has lost it, and the baseline is then revalued on the same fresh
+    // snapshot as the basket rather than compared, at its old prices, with a basket priced today
+    const priceCache = context.priceCache instanceof Map ? context.priceCache : new Map();
+    const pricedBaseline = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache });
+    const metrics = computeMetrics(combinedResult, gameData, playerHrid, hours, { priceCache });
+    const deltas = computeDeltas(pricedBaseline, metrics);
+    const economics = computeEconomics(totalCost, pricedBaseline, metrics);
     const noise = rateDeltaNoisePct(baselineResult, combinedResult, playerHrid);
 
-    return { ok: true, metrics, deltas, economics, noise, totalCost };
+    // `baseline`: the analysis baseline on the basket's own price basis, for a reader that shows the gain
+    return { ok: true, metrics, deltas, economics, noise, totalCost, baseline: pricedBaseline };
 }
 
 /**
@@ -7270,6 +7598,13 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             };
         });
         if (aborted) break;
+        // A pooled addition was generated from one loadout's bar; each room has its own number of free slots,
+        // which the plan needs to know how many additions a room can really take (see `planWithinBudget`)
+        if (isDrinkAddition(candidate)) {
+            fightResults.forEach((fightResult, i) => {
+                fightResult.freeDrinkSlots = freeDrinkSlotCount(fights[i].dto);
+            });
+        }
 
         const applied = fightResults.filter((f) => f.applied);
         const runClearChance = fightResults.reduce((product, f) => product * f.winRate, 1);
@@ -7977,11 +8312,13 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
         candidate.type === 'house' ||
         candidate.type === 'guild_shrine' ||
         candidate.type === 'community_buff' ||
-        candidate.type === 'scroll' ||
-        candidate.type === 'drink'
+        candidate.type === 'scroll'
     ) {
         return true;
     }
+
+    // Drinks are on the loadout: each one has its own bar
+    if (candidate.type === 'drink') return drinkAppliesToDTO(candidate, dto, gameData);
 
     if (candidate.checkedAbility) return checkedAbilityAppliesToDTO(candidate, dto, gameData);
 
