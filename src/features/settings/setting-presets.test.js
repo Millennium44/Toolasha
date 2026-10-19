@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     storageWrites: [],
     stored: new Map(),
     characterId: 'char-1',
+    snapshotWrite: true,
+    snapshotGate: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -38,7 +40,11 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         setJSON: async (key, value) => {
+            if (mocks.snapshotGate) await mocks.snapshotGate;
+            if (mocks.snapshotWrite === 'throw') throw new Error('disk full');
+            if (mocks.snapshotWrite === false) return false;
             mocks.storageWrites.push([key, value]);
+            return true;
         },
         getJSON: async (key) => mocks.stored.get(key) ?? null,
         set: async (key, value) => {
@@ -278,6 +284,8 @@ describe('applying a preset', () => {
         mocks.written = [];
         mocks.storageWrites = [];
         mocks.characterId = 'char-1';
+        mocks.snapshotWrite = true;
+        mocks.snapshotGate = null;
         mocks.settingsMap = {};
         for (const group of Object.values(settingsGroups)) {
             for (const [id, definition] of Object.entries(group.settings)) {
@@ -326,6 +334,52 @@ describe('applying a preset', () => {
         // Snapshot is the state from before the write, not after it
         expect(snapshot.combatSim).toBe(false);
         expect(mocks.settingsMap.combatSim.isTrue).toBe(true);
+    });
+
+    test('it writes nothing when the undo snapshot reports failure', async () => {
+        mocks.settingsMap.combatSim.isTrue = false;
+        mocks.snapshotWrite = false;
+        expect(await applyPreset('combat')).toBe(null);
+        expect(mocks.written).toEqual([]);
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(false);
+    });
+
+    test('it writes nothing when the undo snapshot throws', async () => {
+        mocks.settingsMap.combatSim.isTrue = false;
+        mocks.snapshotWrite = 'throw';
+        expect(await applyPreset('combat')).toBe(null);
+        expect(mocks.written).toEqual([]);
+    });
+
+    test('it writes nothing to a character that arrived while the snapshot saved', async () => {
+        let release;
+        mocks.snapshotGate = new Promise((resolve) => (release = resolve));
+        mocks.settingsMap.combatSim.isTrue = false;
+        const pending = applyPreset('combat');
+        // Character B loads: a fresh map and a new id
+        mocks.characterId = 'char-2';
+        mocks.settingsMap = { ...mocks.settingsMap, combatSim: { id: 'combatSim', type: 'checkbox', isTrue: false } };
+        release();
+        expect(await pending).toBe(null);
+        expect(mocks.written).toEqual([]);
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(false);
+        // A's undo copy went to A's key, not B's
+        expect(mocks.storageWrites.map(([key]) => key)).toEqual([bulkSnapshotKey('char-1')]);
+    });
+
+    test('a settings reload for the same character during the snapshot save still applies, to the reloaded map', async () => {
+        let release;
+        mocks.snapshotGate = new Promise((resolve) => (release = resolve));
+        mocks.settingsMap.combatSim.isTrue = false;
+        const pending = applyPreset('combat');
+        // loadSettings/resetToDefaults replace the map object; the character is unchanged
+        const reloaded = {};
+        for (const [id, entry] of Object.entries(mocks.settingsMap)) reloaded[id] = { ...entry };
+        mocks.settingsMap = reloaded;
+        release();
+        expect(await pending).not.toBe(null);
+        expect(mocks.settingsMap.combatSim.isTrue).toBe(true);
+        expect(mocks.written.length).toBeGreaterThan(0);
     });
 
     test('it never writes an excluded setting', async () => {

@@ -16,7 +16,13 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
-import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import {
+    clampPanelToViewport,
+    restoreGeometry,
+    saveGeometry,
+    saveOpenState,
+    reopenIfLeftOpen,
+} from '../../utils/panel-geometry.js';
 import {
     wilsonConfidenceInterval,
     minActionsForNonZeroRisk,
@@ -32,6 +38,7 @@ import {
 import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/alchemy-adapter.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { marketDepthCap } from '../../utils/bundle-bridge.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
 import { setCustomPriceOverride, getCustomPriceOverridesAsync } from '../settings/custom-price-overrides.js';
@@ -41,6 +48,8 @@ const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
 const TAB_ID = 'mwi-risk-of-ruin-tab';
 /** Geometry/open-state key, shared with the rest of the floating panels */
 const PANEL_KEY = 'riskOfRuin';
+/** Smallest size the panel may be fitted or restored to */
+const PANEL_MIN_SIZE = { width: 320, height: 200 };
 /** Whether the corner launcher is drawn at all; its ✕ writes this */
 const LAUNCHER_SETTING = 'riskOfRuin_showLauncher';
 const MAX_STEPS = 20000;
@@ -90,6 +99,20 @@ class RiskOfRuinUI {
         // live order-book widget to read — null whenever the last run had no revenue distribution
         // to key off (enhancement mode, or no successful run yet).
         this.lastDepthCapContext = null;
+        // Bumped by every run start and every teardown, so a calculation that was still simulating
+        // when the panel was disabled (or the character changed) can tell it no longer owns the panel
+        this.runGeneration = 0;
+    }
+
+    /**
+     * Withdraw the sell-depth context and have the marketplace widget take down a figure it has
+     * already drawn from it.
+     */
+    _clearDepthCapContext() {
+        // Redraw even when the context is already null: a run in flight drops it at its start
+        // while the previous figure stays drawn until the run ends.
+        this.lastDepthCapContext = null;
+        marketDepthCap()?.repaint?.();
     }
 
     /**
@@ -323,6 +346,13 @@ class RiskOfRuinUI {
         this.panel.style.display = this.panelOpen ? 'flex' : 'none';
         if (this.panelOpen) {
             bringPanelToFront(this.panel);
+            // The registration clamp ran while the panel was display:none (zero-sized, so a no-op);
+            // fit it now that it has a size, or a phone shows it wider than the screen
+            try {
+                clampPanelToViewport(this.panel, PANEL_MIN_SIZE);
+            } catch (error) {
+                console.error('[RiskOfRuin] Fitting the panel to the window failed:', error);
+            }
             this._refillBankroll();
         }
         if (remember) saveOpenState(PANEL_KEY, this.panelOpen);
@@ -417,7 +447,7 @@ class RiskOfRuinUI {
         this.detachDrag = makeDraggable(this.panel, header, (position) => {
             saveGeometry(PANEL_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
-        restoreGeometry(this.panel, PANEL_KEY, { width: 320, height: 200 });
+        restoreGeometry(this.panel, PANEL_KEY, PANEL_MIN_SIZE);
 
         this.panel.addEventListener('mousedown', () => bringPanelToFront(this.panel));
 
@@ -589,14 +619,32 @@ class RiskOfRuinUI {
      * The last computed cost-per-action + per-item output quantities, for market-depth-cap.js to
      * check the currently-viewed marketplace item against. Null when the enhanced item is
      * untradeable, or nothing has been calculated yet.
-     * @returns {{costPerAction: number, items: Array<{itemHrid: string, quantityPerAction: number, costShare?: number}>}|null}
+     * @returns {{costPerAction: number, items: Array<{itemHrid: string, enhancementLevel: number, quantityPerAction: number, costShare?: number}>}|null}
      *   costShare, when present (chest/alchemy modes), is this item's share of costPerAction by its
      *   share of total expected value - market-depth-cap.js prefers it over the shared costPerAction,
      *   since no single multi-output drop alone needs to recoup the whole action cost. Absent for
      *   single-output modes (enhancement), where the full cost is correct.
      */
     getDepthCapContext() {
-        return this.lastDepthCapContext;
+        const context = this.lastDepthCapContext;
+        // A disabled calculator, or one holding another character's run, has nothing to offer: the
+        // costs in that context were priced from that character's skills, gear and teas
+        if (!context || !this.isInitialized) return null;
+        if (context.characterId !== this._currentCharacterId()) return null;
+        return context;
+    }
+
+    /** @returns {string|null} The logged-in character's id, or null before one is known */
+    _currentCharacterId() {
+        return dataManager.getCurrentCharacterId?.() ?? null;
+    }
+
+    /**
+     * Publish a run's sell-depth context, stamped with the character it was priced for.
+     * @param {{costPerAction: number, items: Array}} context
+     */
+    _setDepthCapContext(context) {
+        this.lastDepthCapContext = { ...context, characterId: this._currentCharacterId() };
     }
 
     _run() {
@@ -613,7 +661,28 @@ class RiskOfRuinUI {
         }, 10);
     }
 
+    /**
+     * Run one calculation. The widget is redrawn once, when the run ends (published, refused or
+     * abandoned), rather than when it starts: the previous figure stays up while the simulation
+     * runs, so recalculating with the marketplace open does not flicker the figure away, and a
+     * run that ends without publishing still takes the withdrawn figure down.
+     */
     async _compute() {
+        // _computeRun takes the next generation synchronously as it starts
+        const generation = this.runGeneration + 1;
+        try {
+            await this._computeRun();
+        } catch (err) {
+            // A failed run leaves no figure in the marketplace while the panel reports the error.
+            // Only if this run still owns the context: a newer run's must survive an older failure.
+            if (this.runGeneration === generation) this.lastDepthCapContext = null;
+            throw err;
+        } finally {
+            marketDepthCap()?.repaint?.();
+        }
+    }
+
+    async _computeRun() {
         const status = this.panel.querySelector('#mwi-ror-status');
         const results = this.panel.querySelector('#mwi-ror-results');
         const mode = this.panel.querySelector('#mwi-ror-mode').value;
@@ -625,6 +694,10 @@ class RiskOfRuinUI {
         let maxSinglePossibleLoss;
         let detailInfo;
         let optimalCommit = null;
+        const generation = ++this.runGeneration;
+        const panelAtStart = this.panel;
+        const characterAtStart = this._currentCharacterId();
+        // Withdrawn silently: the widget is redrawn when the run ends (see _compute)
         this.lastDepthCapContext = null;
 
         if (mode === 'chest') {
@@ -648,10 +721,10 @@ class RiskOfRuinUI {
                 dropBreakdown,
                 minimumGuaranteedPayout: chestModel.minimumGuaranteedPayout,
             };
-            this.lastDepthCapContext = {
+            this._setDepthCapContext({
                 costPerAction: chestModel.cost,
                 items: this._chestDepthCapItems(dropBreakdown, chestModel.cost),
-            };
+            });
             optimalCommit = calculateOptimalCommit({
                 outcomeDistribution: chestModel.outcomeDistribution,
                 costPerAction: chestModel.cost,
@@ -694,10 +767,11 @@ class RiskOfRuinUI {
                 targetActionCount,
             };
             detailInfo = { mode: 'alchemy', breakdown: alchemyModel.breakdown };
-            this.lastDepthCapContext = {
-                costPerAction: alchemyModel.cost,
-                items: this._alchemyDepthCapItems(alchemyModel.breakdown, alchemyModel.cost),
-            };
+            this._setDepthCapContext({
+                // Sell depth recoups everything an attempt costs on average, catalyst included
+                costPerAction: alchemyModel.expectedCost,
+                items: this._alchemyDepthCapItems(alchemyModel.breakdown, alchemyModel.expectedCost),
+            });
             detailInfo.untrackedOutputs = this._findUntrackedAlchemyOutputs(hrid, alchemyModel.breakdown);
             optimalCommit = calculateOptimalCommit({
                 outcomeDistribution: alchemyModel.outcomeDistribution,
@@ -764,16 +838,29 @@ class RiskOfRuinUI {
                 targetLevel,
             };
             if (itemDetails.isTradable !== false) {
-                this.lastDepthCapContext = {
+                this._setDepthCapContext({
                     costPerAction: enhancementModel.expectedTotalCost,
-                    items: [{ itemHrid: hrid, quantityPerAction: 1 }],
-                };
+                    // The run produces the +targetLevel variant, so only that variant's bid book applies
+                    items: [{ itemHrid: hrid, enhancementLevel: targetLevel, quantityPerAction: 1 }],
+                });
             } else {
                 detailInfo.untradeableOutput = itemDetails.name || hrid.split('/').pop();
             }
         }
 
         const simResult = await simulateRuinAsync(simModel);
+        // Torn down, re-run, or logged into another character while the simulation ran: the panel
+        // this run was drawing into (and the context it published) is not this run's any more
+        if (
+            generation !== this.runGeneration ||
+            this.panel !== panelAtStart ||
+            this._currentCharacterId() !== characterAtStart
+        ) {
+            // Same panel, different character (no teardown ran): it would otherwise read
+            // "Calculating…" forever. A newer run or a torn-down panel needs nothing.
+            if (generation === this.runGeneration && this.panel === panelAtStart) status.textContent = '';
+            return;
+        }
         const minActions = minActionsForNonZeroRisk(startingBalance, maxSinglePossibleLoss);
         this._renderResults(results, simResult, minActions);
         if (optimalCommit) {
@@ -801,13 +888,14 @@ class RiskOfRuinUI {
      * (a zero-EV item would get a zero cost share and falsely look like unlimited depth).
      * @param {Array} dropBreakdown - expectedValueCalculator.getDropBreakdown() output.
      * @param {number} costPerAction
-     * @returns {Array<{itemHrid: string, quantityPerAction: number, costShare: number}>}
+     * @returns {Array<{itemHrid: string, enhancementLevel: number, quantityPerAction: number, costShare: number}>}
      */
     _chestDepthCapItems(dropBreakdown, costPerAction) {
         const tracked = dropBreakdown.filter((d) => d.dropRate > 0 && d.avgCount > 0 && d.hasPriceData);
         const totalEV = tracked.reduce((sum, d) => sum + d.expectedValue, 0);
         return tracked.map((d) => ({
             itemHrid: d.itemHrid,
+            enhancementLevel: 0,
             quantityPerAction: d.avgCount * d.dropRate,
             costShare: totalEV > 0 ? costPerAction * (d.expectedValue / totalEV) : costPerAction,
         }));
@@ -822,7 +910,7 @@ class RiskOfRuinUI {
      * probability to recover the item's per-action EV.
      * @param {Object} breakdown - alchemyModel.breakdown from buildAlchemyTransmuteModel().
      * @param {number} costPerAction
-     * @returns {Array<{itemHrid: string, quantityPerAction: number, costShare: number}>}
+     * @returns {Array<{itemHrid: string, enhancementLevel: number, quantityPerAction: number, costShare: number}>}
      */
     _alchemyDepthCapItems(breakdown, costPerAction) {
         const candidates = [];
@@ -855,6 +943,7 @@ class RiskOfRuinUI {
         const totalEV = tracked.reduce((sum, c) => sum + c.expectedValue, 0) + selfReturnEV;
         return tracked.map((c) => ({
             itemHrid: c.itemHrid,
+            enhancementLevel: 0,
             quantityPerAction: c.quantityPerAction,
             costShare: totalEV > 0 ? costPerAction * (c.expectedValue / totalEV) : costPerAction,
         }));
@@ -1240,6 +1329,8 @@ class RiskOfRuinUI {
     }
 
     disable() {
+        this.runGeneration++;
+        this._clearDepthCapContext();
         unregisterCommand('Risk of Ruin');
         this.timerRegistry.clearAll();
         this.tabUnregister?.();

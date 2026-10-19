@@ -41,6 +41,7 @@ vi.mock('../core/config.js', () => ({
 // settings-schema pulls these in for unrelated settings groups; neither matters here
 vi.mock('./bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     loadoutSnapshot: () => null,
 }));

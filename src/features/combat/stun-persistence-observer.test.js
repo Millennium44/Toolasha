@@ -57,6 +57,7 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     webSocketHook: () => null,
 }));

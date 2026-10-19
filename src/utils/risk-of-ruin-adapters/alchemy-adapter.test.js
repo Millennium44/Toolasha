@@ -132,6 +132,45 @@ describe('buildAlchemyTransmuteModel', () => {
         expect(successOutcome.net).toBe(-1000 - 300 + 500); // catalyst charged
     });
 
+    test('expectedCost adds the catalyst weighted by the success rate to the unconditional cost', () => {
+        mockProfit = baseProfit({
+            successRate: 0.5,
+            grossMaterialCost: 100,
+            catalystPrice: 1000,
+            catalystCost: { itemHrid: '/items/prime_catalyst' },
+            dropRevenues: [
+                { itemHrid: '/items/output_a', dropRate: 1, revenuePerAttempt: 250, isEssence: false, isRare: false },
+            ],
+        });
+
+        const model = buildAlchemyTransmuteModel('/items/widget');
+
+        expect(model.cost).toBe(100); // unconditional only: the outcome distribution charges the catalyst itself
+        expect(model.expectedCost).toBe(600);
+        // and the distribution's own mean spend agrees with it, so the catalyst is counted once
+        const meanSpend = model.outcomeDistribution.reduce((sum, o) => sum + o.prob * (o.net === -100 ? 100 : 1100), 0);
+        expect(meanSpend).toBe(600);
+    });
+
+    test('expectedCost equals cost with no catalyst, and counts coin and tea in the unconditional part', () => {
+        mockProfit = baseProfit({
+            successRate: 0.25,
+            grossMaterialCost: 1000,
+            requirementCosts: [{ itemHrid: '/items/coin', costPerAction: 50 }],
+            totalTeaCostPerHour: 500,
+            actionsPerHour: 100,
+            catalystPrice: 0,
+            dropRevenues: [
+                { itemHrid: '/items/output_a', dropRate: 1, revenuePerAttempt: 250, isEssence: false, isRare: false },
+            ],
+        });
+
+        const model = buildAlchemyTransmuteModel('/items/widget');
+
+        expect(model.cost).toBe(1055);
+        expect(model.expectedCost).toBe(1055);
+    });
+
     test('includes a direct coin line item in the per-attempt cost charged on every branch', () => {
         mockProfit = baseProfit({
             successRate: 0.5,

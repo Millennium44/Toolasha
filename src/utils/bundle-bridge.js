@@ -152,6 +152,15 @@ export function riskOfRuinUI() {
 }
 
 /**
+ * The marketplace "Sell depth" widget, so a producer of its context can have it redraw (or take
+ * its figure down) when that context is withdrawn.
+ * @returns {Object|null} The widget singleton, or null when the market bundle is absent
+ */
+export function marketDepthCap() {
+    return toolashaRoot()?.Market?.marketDepthCap || null;
+}
+
+/**
  * The order-book cache behind the queue-length estimator.
  * @returns {Object|null} The estimator, or null when the market bundle is absent
  */

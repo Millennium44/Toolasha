@@ -55,6 +55,7 @@ vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }))
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
+    marketDepthCap: () => null,
     guildMemberSkills: () => null,
     webSocketHook: () => null,
 }));

@@ -13,6 +13,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Reordering character tabs and My Listings now works with a finger (hold a tab, drag the listing handle), and a second touch no longer hijacks a floating panel's drag or resize.
 - A background worker pool that fails part-way through starting no longer leaves workers running, and retrying builds exactly the configured number.
 
+### Risk of Ruin, sell depth and setting presets: six reported bugs
+
+- Sell depth now reads the order book for the enhancement level a run actually ends at, counts the catalyst in a transmute's break-even cost, and no longer serves a closed panel's or another character's result.
+- Presets, All Off and Restore stop when their undo copy cannot be saved, and no longer apply one character's settings to another after a switch.
+- The Risk of Ruin panel fits the window when first opened on a phone.
+
 ### Combat Sim and Goal Planner: three reported bugs
 
 - Combat Sim no longer counts a monster killed by your parry during its own ability twice (deaths, loot and task kills were doubled); the same held for a player killed by a monster's parry mid-cast.

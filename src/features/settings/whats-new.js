@@ -25,7 +25,14 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { getAllSettingIds, getSettingDefinition } from '../../core/settings-schema.js';
-import { SETTING_PRESETS, DEFAULT_PRESET_ID, applyPreset, getPreset } from './setting-presets.js';
+import {
+    SETTING_PRESETS,
+    DEFAULT_PRESET_ID,
+    applyPreset,
+    getPreset,
+    captureBulkOwner,
+    isBulkOwnerCurrent,
+} from './setting-presets.js';
 import {
     buildIdentity,
     identityChanged,
@@ -546,15 +553,22 @@ class WhatsNew {
         // because the user asked for either "no change" or nothing at all.
         const chosenPreset = getPreset(answer);
         if (chosenPreset) {
-            await applyPreset(chosenPreset.id);
-            this._pending = {
-                headline: `Switched to ${current.fork} ${current.version} — ${chosenPreset.label} preset`,
-                forkChanged: true,
-                newIds: [],
-                turnedOff: new Set(),
-                isNewcomer: true,
-            };
-            return;
+            const owner = captureBulkOwner();
+            const applied = await applyPreset(chosenPreset.id);
+            // The character changed mid-write and nothing was written: announce nothing
+            if (!isBulkOwnerCurrent(owner)) return;
+            // A null result means nothing was written (the undo snapshot could not be saved); fall to the
+            // keep-current path below rather than announcing a switch that did not happen
+            if (applied) {
+                this._pending = {
+                    headline: `Switched to ${current.fork} ${current.version} — ${chosenPreset.label} preset`,
+                    forkChanged: true,
+                    newIds: [],
+                    turnedOff: new Set(),
+                    isNewcomer: true,
+                };
+                return;
+            }
         }
 
         // The safe path: keep every current value, and hold the conservative
@@ -637,15 +651,20 @@ class WhatsNew {
 
             const chosen = getPreset(answer);
             if (chosen) {
-                await applyPreset(chosen.id);
-                this._pending = {
-                    headline: `Installed ${current.fork} ${current.version} — ${chosen.label} preset`,
-                    forkChanged: false,
-                    newIds: [],
-                    turnedOff: new Set(),
-                    isNewcomer: true,
-                };
-                return;
+                const owner = captureBulkOwner();
+                const applied = await applyPreset(chosen.id);
+                if (!isBulkOwnerCurrent(owner)) return;
+                // Nothing was written when the undo snapshot failed: fall through to the "no change" announcement
+                if (applied) {
+                    this._pending = {
+                        headline: `Installed ${current.fork} ${current.version} — ${chosen.label} preset`,
+                        forkChanged: false,
+                        newIds: [],
+                        turnedOff: new Set(),
+                        isNewcomer: true,
+                    };
+                    return;
+                }
             }
 
             // "No change", or a dismissal: apply nothing. The overview still
