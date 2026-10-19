@@ -39,6 +39,7 @@ vi.mock('../../features/combat-sim/combat-sim-adapter.js', () => ({
         '/items/chimerical_chest': '/items/chimerical_chest_key',
         '/items/chimerical_refinement_chest': '/items/chimerical_chest_key',
     },
+    seedSimPriceCache: (cache) => cache,
 }));
 
 const { getChestOpenCost, getChestCostBreakdown, getMinimumGuaranteedPayout, drawChestPayout, buildDungeonChestModel } =
