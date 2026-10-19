@@ -2027,6 +2027,15 @@ function registerFeatures() {
             // live setting change can stop it the same way a character switch does.
             liveStop: true,
         },
+        {
+            key: 'achievementFinisher',
+            name: 'Achievement Tier Finisher',
+            category: 'Collection',
+            module: Market.achievementFinisher,
+            async: false,
+            // Its disable() removes the panel and its listeners
+            liveStop: true,
+        },
         { key: 'chatCommands', name: 'Chat Commands', category: 'Chat', module: UI.chatCommands, async: true },
         {
             key: 'chatProfileLink',
