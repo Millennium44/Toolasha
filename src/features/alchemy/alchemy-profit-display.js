@@ -341,7 +341,9 @@ class AlchemyProfitDisplay {
 
         // Check if state has changed
         const fingerprint = this._fingerprint();
-        if (fingerprint === this.lastFingerprint && this.displayElement?.parentNode) {
+        // isConnected, not parentNode: a rebuilt panel (e.g. back from the marketplace) leaves the old
+        // display attached to the detached old panel, which still has a parent but is not on the page
+        if (fingerprint === this.lastFingerprint && this.displayElement?.isConnected) {
             return; // No change, display still valid
         }
         this.lastFingerprint = fingerprint;

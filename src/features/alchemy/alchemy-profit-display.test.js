@@ -696,3 +696,51 @@ describe('createDisplay names where a non-market figure came from', () => {
         expect(text).not.toContain('No market price');
     });
 });
+
+describe('a rebuilt Alchemy panel gets its display back', () => {
+    const panelWithInfo = () => {
+        const component = document.createElement('div');
+        const info = document.createElement('div');
+        info.className = 'SkillActionDetail_info__x';
+        component.appendChild(info);
+        document.body.appendChild(component);
+        return component;
+    };
+
+    test('a display left on a detached old panel is redrawn even when nothing else changed', () => {
+        vi.spyOn(display, '_fingerprint').mockReturnValue('same');
+        const update = vi.spyOn(display, 'updateDisplay').mockImplementation(() => {});
+        vi.useFakeTimers();
+        try {
+            // The old panel was replaced by the game: its display still has a parent, but is off the page
+            const oldPanel = document.createElement('div');
+            display.displayElement = document.createElement('div');
+            oldPanel.appendChild(display.displayElement);
+            display.lastFingerprint = 'same';
+
+            display.handleAlchemyPanelUpdate(panelWithInfo());
+            vi.advanceTimersByTime(200);
+            expect(update).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a display still on the page with an unchanged fingerprint is left alone', () => {
+        vi.spyOn(display, '_fingerprint').mockReturnValue('same');
+        const update = vi.spyOn(display, 'updateDisplay').mockImplementation(() => {});
+        vi.useFakeTimers();
+        try {
+            const component = panelWithInfo();
+            display.displayElement = document.createElement('div');
+            component.appendChild(display.displayElement);
+            display.lastFingerprint = 'same';
+
+            display.handleAlchemyPanelUpdate(component);
+            vi.advanceTimersByTime(200);
+            expect(update).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
