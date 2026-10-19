@@ -42,8 +42,8 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
 import { newDeaths } from './notification-predicates.js';
-import { openRecap } from './death-recap.js';
-import { seatFromTick, guessContradicted } from './own-seat.js';
+import { openRecap, SETTING as RECAP_SETTING } from './death-recap.js';
+import { seatFromBattle, seatFromTick, guessContradicted } from './own-seat.js';
 
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_combatDeath';
@@ -168,8 +168,11 @@ class CombatDeathAlerts {
     announce(message) {
         notificationService.notify(EVENT_KEY, message, {
             title: 'You died',
-            // Opened on click, by which time the recap module has frozen or confirmed this death's recap
-            action: { label: 'View death recap', onClick: () => openRecap() },
+            // Only while the recap feature is on: with it off there is never a recap to open. Opened on
+            // click, by which time the recap module has frozen or confirmed this death's recap
+            ...(config.getSetting(RECAP_SETTING)
+                ? { action: { label: 'View death recap', onClick: () => openRecap() } }
+                : {}),
         });
     }
 
@@ -179,13 +182,7 @@ class CombatDeathAlerts {
      * @returns {number|null} The count, or null when this payload does not have one
      */
     ownDeathCount(data) {
-        const players = data?.players;
-        if (!Array.isArray(players) || !players.length) return null;
-
-        const characterId = dataManager.getCurrentCharacterId();
-        if (!characterId) return null;
-
-        const mine = players.find((player) => player?.character?.id === characterId);
+        const mine = seatFromBattle(data)?.player;
         if (!mine) return null;
 
         const count = Number(mine.deathCount ?? 0);
@@ -198,10 +195,7 @@ class CombatDeathAlerts {
      * @returns {{index: string, player: Object}|null} Null when no entry is ours
      */
     ownSeat(data) {
-        const characterId = dataManager.getCurrentCharacterId();
-        if (!characterId) return null;
-        const hit = Object.entries(data?.players || {}).find(([, player]) => player?.character?.id === characterId);
-        return hit ? { index: hit[0], player: hit[1] } : null;
+        return seatFromBattle(data);
     }
 
     /**
@@ -217,21 +211,23 @@ class CombatDeathAlerts {
         this.seatGuessed = false;
         this.battleSeen = true;
         this.deadAnnounced = seat ? Number(seat.player.currentHitpoints) <= 0 : false;
-        const announcedFromTicks = this.tickDeaths;
-        this.tickDeaths = 0;
 
         const count = this.ownDeathCount(data);
         if (count === null) return;
 
+        // A counter that went down is a new session: deaths announced before it are not owed a rise
+        if (this.lastCount !== null && count < this.lastCount) this.tickDeaths = 0;
         const died = newDeaths(this.lastCount, count);
         // Recorded whether or not anything is said, so that a session starting
         // over — which takes the count back down — is a new baseline and not a
         // resurrection, and so that switching the setting on mid-session does
         // not announce deaths that happened before anybody was listening
         this.lastCount = count;
-        // Deaths the ticks already announced are not announced again
-        const unannounced = died - announcedFromTicks;
-        if (unannounced <= 0) return;
+        // Deaths the ticks already announced are not announced again. They stay owed until a rise
+        // consumes them: the counter can lag the death by several battles
+        const consumed = Math.min(died, this.tickDeaths);
+        this.tickDeaths -= consumed;
+        if (died - consumed <= 0) return;
 
         this.announce(`You died in combat — ${this.totalText(count)} so far this session.`);
     }

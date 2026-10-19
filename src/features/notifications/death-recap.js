@@ -80,6 +80,9 @@ let battleId = null;
 let takenState = newTakenState();
 let monsterNames = {};
 let lastAbility = null;
+/** The ability being prepared going into the latest tick, and the action counter then */
+let lastPrepared = null;
+let lastAtk = null;
 let dead = false;
 let lastCount = null;
 /** Recaps frozen by a tick in the current fight that no death count has matched yet */
@@ -176,6 +179,7 @@ export function detectDeath(signal, info = {}) {
         if (!ring.length) return null;
         const recap = buildRecap(ring.slice(), casts.slice(), { source: 'hp', confirmed: false });
         pending.push(recap);
+        if (pending.length > MAX_RECAPS) pending.shift();
         keep(recap);
         // The next death's tail must not include this one's samples or the time spent dead
         ring = [];
@@ -186,8 +190,8 @@ export function detectDeath(signal, info = {}) {
     if (signal === 'count') {
         const rise = info.rise || 0;
         // The tick-frozen recaps belong to the fight that ended either way; none carries over
+        // Tick-frozen recaps stay owed until a rise consumes them; the counter can lag by several battles
         const matched = pending.splice(0, Math.max(0, rise));
-        pending = [];
         for (const recap of matched) {
             recap.confirmed = true;
             recap.source = 'both';
@@ -220,6 +224,8 @@ function onNewBattle(data) {
         if (own) {
             const count = Number(own.player.deathCount ?? 0);
             if (Number.isFinite(count)) {
+                // A counter that went down is a new session: nothing pending is owed a rise
+                if (lastCount !== null && count < lastCount) pending = [];
                 if (lastCount !== null && count > lastCount) rise = count - lastCount;
                 lastCount = count;
             }
@@ -227,12 +233,14 @@ function onNewBattle(data) {
         // Snapshot BEFORE the ring is cleared
         const samples = ring.slice();
         const castSnapshot = casts.slice();
-        if (own || pending.length) detectDeath('count', { rise, samples, casts: castSnapshot });
+        if (rise > 0) detectDeath('count', { rise, samples, casts: castSnapshot });
 
         ring = [];
         casts = [];
         dead = false;
         lastAbility = null;
+        lastPrepared = null;
+        lastAtk = null;
         takenState = newTakenState();
         seedTakenState(takenState, data);
         monsterNames = {};
@@ -304,8 +312,19 @@ function onBattleUpdated(data) {
         ring.push({ t: now, hp: Number.isFinite(hp) ? hp : null, mp: Number.isFinite(mp) ? mp : null, hits, regen });
 
         const ability = player.preparingAbilityHrid || player.abilityHrid || null;
-        if (ability && ability !== lastAbility) casts.push({ t: now, ability });
+        const atk = Number(player.atkCounter);
+        if (Number.isFinite(atk)) {
+            // The action counter advancing is a swing; the ability prepared going into the tick is what it
+            // was. This records repeated casts of one ability, which a change of label cannot.
+            if (lastAtk !== null && atk > lastAtk && lastPrepared) casts.push({ t: now, ability: lastPrepared });
+            lastAtk = atk;
+        } else if (ability && ability !== lastAbility) {
+            // No counter on this tick: fall back to a change of label
+            casts.push({ t: now, ability });
+        }
         lastAbility = ability || lastAbility;
+        if (ability) lastPrepared = ability;
+        else if (player.isPreparingAutoAttack || player.isAutoAtk) lastPrepared = null;
         trim(now);
 
         // Dead: HP at 0, or the game's own flag. Alive again once HP is back and the flag is not false
@@ -462,6 +481,8 @@ function disable() {
     battleId = null;
     lastCount = null;
     lastAbility = null;
+    lastPrepared = null;
+    lastAtk = null;
     dead = false;
     seeded = false;
     monsterNames = {};

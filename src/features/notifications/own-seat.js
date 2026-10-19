@@ -9,12 +9,13 @@
  * 1. `new_battle.players` — the fight's own roster, by character id then name;
  * 2. the data manager's cached copy of the last `new_battle` (covers a module that started
  *    mid-fight in a tab that did see the message);
- * 3. a solo fallback: the party is known to be just us (or empty) and the tick names exactly one
- *    seat. A party with no roster is never guessed at — a wrong seat would report a party
+ * 3. a solo fallback: the running combat action is affirmatively solo (`partyID` 0) and the tick
+ *    names exactly one seat. A party with no roster is never guessed at — a wrong seat would report a party
  *    member's death as ours — so it waits for the next `new_battle`.
  */
 
 import dataManager from '../../core/data-manager.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 /**
  * The local player's seat in a `new_battle`.
@@ -41,11 +42,27 @@ export function seatFromTick(tick) {
     if (cached) return { index: cached.index, guessed: false };
 
     const id = dataManager.getCurrentCharacterId?.() ?? null;
-    const members = dataManager.getPartyMembers?.()?.members;
-    if (!id || !Array.isArray(members)) return null;
-    const alone = members.length === 0 || (members.length === 1 && members[0].characterID === id);
+    if (!id || !affirmedSolo(id)) return null;
     const keys = Object.keys(tick?.pMap || {});
-    return alone && keys.length === 1 ? { index: keys[0], guessed: true } : null;
+    return keys.length === 1 ? { index: keys[0], guessed: true } : null;
+}
+
+/**
+ * Whether the data says, affirmatively, that this character fights alone.
+ *
+ * An empty party roster is not enough: after a reload it can mean the roster has not loaded, and
+ * a one-key tick (pMap is a delta) may then be a party member's. What does say so is the running
+ * combat action itself: the game gives a solo action `partyID` 0 and a party fight a non-zero one,
+ * and the queue arrives with the login payload. A missing `partyID` is not a zero.
+ * @param {string} id - Own character id
+ * @returns {boolean} True only when the running combat action is explicitly solo and no larger roster is known
+ */
+function affirmedSolo(id) {
+    const action = runningCombatAction(dataManager.getCurrentActions?.() || []);
+    if (!action || action.partyID !== 0) return false;
+    const members = dataManager.getPartyMembers?.()?.members;
+    if (Array.isArray(members) && members.some((member) => member.characterID !== id)) return false;
+    return true;
 }
 
 /**

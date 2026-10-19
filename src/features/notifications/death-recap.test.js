@@ -10,6 +10,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     battleData: null,
+    actions: [],
     party: [],
     settings: {},
     characterId: 'me',
@@ -27,6 +28,7 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.battleData;
         },
         getPartyMembers: () => ({ members: game.party }),
+        getCurrentActions: () => game.actions,
         getCurrentCharacterName: () => game.characterId,
         getInitClientData: () => ({}),
         on: (e, h) => {
@@ -91,6 +93,8 @@ function tick(hps, { battleId = 1, mp = 500, ability } = {}) {
     return { battleId, pMap, mMap: { 0: { atkCounter, cMP: 0, dmgCounter: 0 } } };
 }
 
+const SOLO = [{ actionHrid: '/actions/combat/golem_cave', partyID: 0, ordinal: 1, isDone: false }];
+
 const send = (event, payload) => game.ws[event](payload);
 
 describe('death recap', () => {
@@ -100,6 +104,7 @@ describe('death recap', () => {
         game.settings = { [recap.SETTING]: true };
         game.characterId = 'me';
         game.battleData = null;
+        game.actions = [];
         game.party = [];
         game.ws = {};
         game.dm = {};
@@ -369,8 +374,35 @@ describe('death recap', () => {
         expect(recap.openRecap()).toBe(false);
     });
 
+    test('a battle with an unchanged counter keeps the tick recap owed; the later rise confirms it, no duplicate', () => {
+        send('new_battle', battle([['me', 0]]));
+        run([100]);
+        run([0]);
+        send('new_battle', battle([['me', 0]], 2));
+        send('new_battle', battle([['me', 1]], 3));
+        expect(recap.recapHistory()).toHaveLength(1);
+        expect(recap.recapHistory()[0]).toMatchObject({ source: 'both', confirmed: true });
+    });
+
+    test('repeated casts of one ability are each recorded from the action counter', () => {
+        send('new_battle', battle([['me', 0]]));
+        const swing = (hp, atk) => {
+            vi.advanceTimersByTime(500);
+            const t = tick([hp]);
+            t.pMap[0].atkCounter = atk;
+            t.pMap[0].abilityHrid = '/abilities/fireball';
+            send('battle_updated', t);
+        };
+        swing(900, 1);
+        swing(800, 2);
+        swing(700, 3);
+        swing(0, 3);
+        expect(recap.recapHistory()[0].casts).toHaveLength(2);
+    });
+
     describe('after a reload with no new_battle', () => {
         test('a solo fight (no party, one pMap key) records the death', () => {
+            game.actions = SOLO;
             run([1591]);
             run([95]);
             run([0]);
@@ -379,10 +411,24 @@ describe('death recap', () => {
         });
 
         test('a party of only us counts as solo', () => {
+            game.actions = SOLO;
             game.party = [{ characterID: 'me', characterName: 'me' }];
             run([100]);
             run([0]);
             expect(recap.recapHistory()).toHaveLength(1);
+        });
+
+        test('an empty roster alone is not solo: with no affirmative solo action nothing is guessed', () => {
+            run([100]);
+            run([0]);
+            expect(recap.recapHistory()).toHaveLength(0);
+        });
+
+        test('a party action is not solo even with an empty roster', () => {
+            game.actions = [{ actionHrid: '/actions/combat/golem_cave', partyID: 7, ordinal: 1, isDone: false }];
+            run([100]);
+            run([0]);
+            expect(recap.recapHistory()).toHaveLength(0);
         });
 
         test('a party with no roster is never guessed at: nothing until a new_battle names the seat', () => {
@@ -410,6 +456,7 @@ describe('death recap', () => {
         });
 
         test('a solo guess is dropped once the tick names more than one seat', () => {
+            game.actions = SOLO;
             run([100]);
             run([100, 100]);
             run([100, 0]);

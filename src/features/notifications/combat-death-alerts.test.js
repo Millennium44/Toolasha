@@ -12,6 +12,7 @@ import { getSettingDefinition } from '../../core/settings-schema.js';
 
 const game = vi.hoisted(() => ({
     battleData: null,
+    actions: [],
     party: [],
     settings: {},
     characterId: 'me',
@@ -33,6 +34,8 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.battleData;
         },
         getPartyMembers: () => ({ members: game.party }),
+        getCurrentActions: () => game.actions,
+        getCurrentCharacterName: () => game.characterId,
         on: (event, handler) => {
             game.dmHandlers[event] = handler;
         },
@@ -61,6 +64,7 @@ vi.mock('./notification-service.js', () => ({
 }));
 
 vi.mock('./death-recap.js', () => ({
+    SETTING: 'combatDeathRecap',
     openRecap: (...args) => {
         game.opened.push(args);
         return true;
@@ -75,6 +79,8 @@ function battle(...counts) {
         players: counts.map(([id, deathCount]) => ({ character: { id, name: id }, deathCount })),
     };
 }
+
+const SOLO = [{ actionHrid: '/actions/combat/golem_cave', partyID: 0, ordinal: 1, isDone: false }];
 
 const send = (payload) => game.wsHandlers.new_battle(payload);
 
@@ -93,9 +99,10 @@ const tick = (...seats) => {
 
 describe('combat death alerts', () => {
     beforeEach(async () => {
-        game.settings = { [MASTER_SETTING]: true };
+        game.settings = { [MASTER_SETTING]: true, combatDeathRecap: true };
         game.characterId = 'me';
         game.battleData = null;
+        game.actions = [];
         game.party = [];
         game.wsHandlers = {};
         game.dmHandlers = {};
@@ -262,12 +269,26 @@ describe('combat death alerts', () => {
 
     describe('after a reload with no new_battle', () => {
         test('a solo fight alerts on the death tick, once', () => {
+            game.actions = SOLO;
             tick(1591);
             expect(game.notified).toHaveLength(0);
             tick(0);
             tick(0);
             tick(1600);
             expect(game.notified).toHaveLength(1);
+        });
+
+        test('an empty roster alone is not solo: with no affirmative solo action nothing is guessed', () => {
+            tick(100);
+            tick(0);
+            expect(game.notified).toHaveLength(0);
+        });
+
+        test('a party action is not solo even with an empty roster', () => {
+            game.actions = [{ actionHrid: '/actions/combat/golem_cave', partyID: 7, ordinal: 1, isDone: false }];
+            tick(100);
+            tick(0);
+            expect(game.notified).toHaveLength(0);
         });
 
         test('a party with no roster is never guessed at', () => {
@@ -290,6 +311,46 @@ describe('combat death alerts', () => {
             tick(800, 0);
             expect(game.notified).toHaveLength(1);
         });
+    });
+
+    test('a name-only roster row (no character object) still gives the seat, so the tick alert fires', () => {
+        send({
+            players: [
+                { name: 'me', deathCount: 0 },
+                { name: 'friend', deathCount: 0 },
+            ],
+        });
+        tick(0, 500);
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a battle with an unchanged counter does not forget a tick-announced death; the later rise is not re-announced', () => {
+        send(battle(['me', 0]));
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        tick(1600);
+        send(battle(['me', 0]));
+        send(battle(['me', 1]));
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a counter that falls back is a new session and owes nothing to earlier tick deaths', () => {
+        send(battle(['me', 3]));
+        tick(0);
+        send(battle(['me', 0]));
+        send(battle(['me', 1]));
+        expect(game.notified).toHaveLength(2);
+    });
+
+    test('the recap action is attached only while the recap feature is on', () => {
+        send(battle(['me', 0]));
+        tick(0);
+        expect(game.notified[0].options.action.label).toMatch(/recap/i);
+
+        game.settings.combatDeathRecap = false;
+        tick(1600);
+        tick(0);
+        expect(game.notified[1].options.action).toBeUndefined();
     });
 
     test('a party member dying is their business', () => {
