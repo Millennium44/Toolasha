@@ -239,6 +239,7 @@ const {
     conflictKey,
     conflictKeys,
     planWithinBudget,
+    candidateKey,
     confirmUpgradeBudgetPlan,
     valuePerMillion,
     goldPerPercent,
@@ -8478,5 +8479,185 @@ describe('a production-cost fallback is not a sale, so it is not taxed', () => {
 
         expect(calculateUpgradeCost(swap, gameData)).toBe(4_000_000);
         expect(explainUpgradeCost(swap, gameData).credit).toBe(1_000_000);
+    });
+});
+
+describe('pinned and excluded picks in a budget plan (#545)', () => {
+    const gear = (name, over = {}) => ({
+        candidate: {
+            type: 'tier',
+            slot: over.slot || `/equipment_types/${name}`,
+            upgradeHrid: `/items/${name}`,
+            description: name,
+        },
+        cost: over.cost ?? 100,
+        attemptsDelta: over.attemptsDelta ?? -1,
+        significant: true,
+    });
+    const drink = (name, over = {}) => ({
+        candidate: {
+            type: 'drink',
+            slot: `drink_${name}`,
+            upgradeHrid: `/items/${name}`,
+            description: name,
+            buffFamily: over.family || name,
+            fillsFreeDrinkSlot: true,
+            freeDrinkSlots: over.room ?? 2,
+        },
+        cost: over.cost ?? 100,
+        attemptsDelta: over.attemptsDelta ?? -1,
+        significant: true,
+    });
+    const names = (plan) => plan.picks.map((p) => p.candidate.description);
+
+    test('a pinned pick is always in the basket, even a weak one, and its cost counts against the budget', () => {
+        const weak = gear('weak', { cost: 400, attemptsDelta: -0.01 });
+        const strong = gear('strong', { cost: 400, attemptsDelta: -5 });
+        const plan = planWithinBudget([strong, weak], 500, { required: [candidateKey(weak)] });
+
+        expect(names(plan)).toEqual(['weak']);
+        expect(plan.picks[0].pinned).toBe(true);
+        expect(plan.totalCost).toBe(400);
+        expect(plan.skipped.find((s) => s.result === strong).reason).toBe('over budget');
+        expect(plan.blocked).toBeNull();
+    });
+
+    test('the rest of the budget is filled around the pins', () => {
+        const a = gear('a', { cost: 200 });
+        const b = gear('b', { cost: 200 });
+        const plan = planWithinBudget([a, b], 500, { required: [candidateKey(b)] });
+
+        expect(names(plan)).toEqual(['b', 'a']);
+        expect(plan.totalCost).toBe(400);
+    });
+
+    test('an excluded candidate is never chosen, and says why', () => {
+        const best = gear('best', { attemptsDelta: -9 });
+        const other = gear('other');
+        const plan = planWithinBudget([best, other], 1000, { excluded: new Set([candidateKey(best)]) });
+
+        expect(names(plan)).toEqual(['other']);
+        expect(plan.skipped.find((s) => s.result === best).reason).toBe('excluded by you');
+    });
+
+    test('the pins alone over the budget block the plan with a reason and keep no half-plan', () => {
+        const a = gear('a', { cost: 300 });
+        const b = gear('b', { cost: 300 });
+        const plan = planWithinBudget([a, b, gear('c')], 500, { required: [candidateKey(a), candidateKey(b)] });
+
+        expect(plan.picks).toEqual([]);
+        expect(plan.blocked.map((x) => x.kind)).toEqual(['over-budget']);
+        expect(plan.blocked[0].reason).toContain('budget');
+        expect(plan.required).toEqual([candidateKey(a), candidateKey(b)].sort());
+    });
+
+    test('two pins for one exclusive slot (the same ability) conflict', () => {
+        const ability = (to) => ({
+            candidate: {
+                type: 'ability_level',
+                slot: 'ability_1',
+                upgradeHrid: '/abilities/berserk',
+                upgradeLevel: to,
+                description: `Berserk to ${to}`,
+            },
+            cost: 10,
+            attemptsDelta: -1,
+            significant: true,
+        });
+        const a = ability(70);
+        const b = ability(75);
+        const plan = planWithinBudget([a, b], 1000, { required: [candidateKey(a), candidateKey(b)] });
+
+        expect(plan.picks).toEqual([]);
+        expect(plan.blocked[0].kind).toBe('conflict');
+        expect(plan.blocked[0].ids).toEqual([candidateKey(a), candidateKey(b)]);
+    });
+
+    test('two pinned pieces for one equipment slot conflict in a single loadout, and are allowed otherwise', () => {
+        const a = gear('a', { slot: '/equipment_types/body' });
+        const b = gear('b', { slot: '/equipment_types/body' });
+        const required = [candidateKey(a), candidateKey(b)];
+
+        expect(planWithinBudget([a, b], 1000, { required, singleLoadout: true }).blocked[0].kind).toBe('conflict');
+        expect(planWithinBudget([a, b], 1000, { required }).blocked).toBeNull();
+    });
+
+    test('a fill candidate for a pinned slot is left out rather than worn in its place', () => {
+        const pinned = gear('pinned', { slot: '/equipment_types/body', attemptsDelta: -1 });
+        const better = gear('better', { slot: '/equipment_types/body', attemptsDelta: -3 });
+        const plan = planWithinBudget([pinned, better], 1000, {
+            required: [candidateKey(pinned)],
+            singleLoadout: true,
+        });
+
+        expect(names(plan)).toEqual(['pinned']);
+        expect(plan.skipped.find((s) => s.result === better).reason).toBe('a pinned pick uses what this needs');
+    });
+
+    test('a pinned candidate missing from the results is reported by id', () => {
+        const plan = planWithinBudget([gear('a')], 1000, { required: ['tier|x|/items/gone||gone'] });
+
+        expect(plan.picks).toEqual([]);
+        expect(plan.blocked).toEqual([expect.objectContaining({ kind: 'missing', ids: ['tier|x|/items/gone||gone'] })]);
+    });
+
+    test('a pinned candidate with no price is blocked, not counted as free', () => {
+        const unpriced = { ...gear('a'), cost: null };
+        const plan = planWithinBudget([unpriced], 1000, { required: [candidateKey(unpriced)] });
+
+        expect(plan.blocked[0].kind).toBe('unpriced');
+        expect(plan.picks).toEqual([]);
+    });
+
+    test('pinning and excluding the same candidate is blocked', () => {
+        const a = gear('a');
+        const plan = planWithinBudget([a], 1000, { required: [candidateKey(a)], excluded: [candidateKey(a)] });
+
+        expect(plan.blocked[0].kind).toBe('pin-and-exclude');
+    });
+
+    test('more pinned drinks than free drink slots block the plan', () => {
+        const a = drink('a', { room: 1 });
+        const b = drink('b', { room: 1 });
+        const plan = planWithinBudget([a, b], 1000, { required: [candidateKey(a), candidateKey(b)] });
+
+        expect(plan.blocked.map((x) => x.kind)).toContain('drink-slots');
+        expect(plan.picks).toEqual([]);
+    });
+
+    test('a pinned drink uses up a slot the fill would otherwise take', () => {
+        const a = drink('a', { room: 1, attemptsDelta: -0.1 });
+        const b = drink('b', { room: 1, attemptsDelta: -5 });
+        const plan = planWithinBudget([a, b], 1000, { required: [candidateKey(a)] });
+
+        expect(names(plan)).toEqual(['a']);
+        expect(plan.skipped.find((s) => s.result === b).reason).toBe('no drink slot is left free for it');
+    });
+
+    test('a pinned swap with a resale credit gives budget back to the fill, at the cost the rows carry', () => {
+        const refund = gear('refund', { cost: -150, attemptsDelta: -0.5 });
+        const big = gear('big', { cost: 600, attemptsDelta: -2 });
+        const plan = planWithinBudget([refund, big], 500, { required: [candidateKey(refund)] });
+
+        expect(names(plan)).toEqual(['refund', 'big']);
+        expect(plan.totalCost).toBe(450);
+    });
+
+    test('an empty pin set changes nothing and reports an empty constraint list', () => {
+        const plan = planWithinBudget([gear('a')], 1000, { required: new Set(), excluded: new Set() });
+
+        expect(names(plan)).toEqual(['a']);
+        expect(plan.blocked).toBeNull();
+        expect(plan.required).toEqual([]);
+    });
+
+    test('candidate ids do not depend on array position', () => {
+        const a = gear('a');
+        const b = gear('b');
+        expect(candidateKey(a)).toBe(candidateKey({ ...a }));
+        expect(candidateKey(a)).not.toBe(candidateKey(b));
+        const forward = planWithinBudget([a, b], 1000, { excluded: [candidateKey(a)] });
+        const reversed = planWithinBudget([b, a], 1000, { excluded: [candidateKey(a)] });
+        expect(names(forward)).toEqual(names(reversed));
     });
 });
