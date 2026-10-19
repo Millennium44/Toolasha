@@ -234,10 +234,20 @@ function onNewBattle(data) {
         // Snapshot BEFORE the ring is cleared
         const samples = ring.slice();
         const castSnapshot = casts.slice();
-        if (rise > 0) detectDeath('count', { rise, samples, casts: castSnapshot });
+        const counted = rise > 0 ? detectDeath('count', { rise, samples, casts: castSnapshot }) : null;
 
-        ring = [];
-        casts = [];
+        // A new encounter or dungeon wave is not a new recording: the last seconds before it are still the
+        // last seconds before a death that follows. History is dropped only when it cannot belong to the
+        // next death: no seat of ours (or another character), or it was just frozen into a counter-made recap.
+        // (A tick-frozen death already emptied the ring when it froze.) Every sample is the local player's
+        // by construction, and monster names are stored as text, so a seat change does not misattribute them.
+        const sameCharacter = own && ownCharacterId !== null && ownCharacterId === currentId();
+        if (!sameCharacter || counted?.source === 'count') {
+            ring = [];
+            casts = [];
+        } else {
+            trim(Date.now());
+        }
         // Still dead if the roster says so (a new wave starting while we wait to respawn); unknown keeps the
         // state, and only a positive HP observed on a tick or here ends it
         const startHp = own ? rosterHp(own.player) : NaN;
@@ -439,6 +449,28 @@ export function openRecap(id) {
               ? 'seen live (HP reached 0) and confirmed by the server death count'
               : 'seen live (HP reached 0); the server death count has not reported it yet';
     line(`Death recap — ${new Date(recap.at).toLocaleTimeString()}`, true);
+    // Several kept: step between them. Recaps are newest first, so "older" is the next index. The buttons
+    // live inside the modal, so closing it (or re-rendering for another recap) disposes their listeners.
+    const position = recaps.indexOf(recap);
+    if (recaps.length > 1 && position >= 0) {
+        const nav = document.createElement('div');
+        nav.dataset.role = 'recap-nav';
+        Object.assign(nav.style, { display: 'flex', gap: '8px', alignItems: 'center', margin: '4px 0' });
+        const step = (label, target) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.disabled = !target;
+            if (target) button.addEventListener('click', () => openRecap(target.id));
+            nav.appendChild(button);
+        };
+        step('‹ Older', recaps[position + 1]);
+        const where = document.createElement('span');
+        where.textContent = `${position + 1} of ${recaps.length}`;
+        nav.appendChild(where);
+        step('Newer ›', recaps[position - 1]);
+        modal.appendChild(nav);
+    }
     line(status);
     if (recap.deaths > 1) line(`${recap.deaths} deaths arrived at once; only the last fight tail is shown.`);
     if (recap.insufficient) line('Insufficient recording: ticks before this point were not observed.');

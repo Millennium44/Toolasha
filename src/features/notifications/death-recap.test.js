@@ -302,7 +302,8 @@ describe('death recap', () => {
             )
         );
         const [r] = recap.recapHistory();
-        expect(r.samples.map((s) => s.hp)).toEqual([900]);
+        // Only the local seat (1 in both battles); the pre-wave ticks are still inside the window
+        expect(r.samples.map((s) => s.hp)).toEqual([700, 650, 900]);
     });
 
     test('no entry for the local character records nothing', () => {
@@ -368,6 +369,118 @@ describe('death recap', () => {
         expect(text).toContain('has not reported it yet');
         expect(text).toContain('Insufficient recording');
         expect(text).not.toContain('NaN');
+    });
+
+    describe('walking through several recaps', () => {
+        const die = (n) => {
+            send('new_battle', battle([['me', 0]], n));
+            run([500], { battleId: n });
+            run([0], { battleId: n });
+        };
+        const modalEl = () => document.getElementById('toolasha-death-recap-modal');
+        const navButtons = () => [...modalEl().querySelectorAll('[data-role="recap-nav"] button')];
+        const navText = () => modalEl().querySelector('[data-role="recap-nav"]').textContent;
+
+        test('one recap shows no navigation', () => {
+            die(1);
+            recap.openRecap();
+            expect(modalEl().querySelector('[data-role="recap-nav"]')).toBeNull();
+        });
+
+        test('Older and Newer step through, disabled at the bounds', () => {
+            die(1);
+            vi.advanceTimersByTime(60_000);
+            die(2);
+            vi.advanceTimersByTime(60_000);
+            die(3);
+            const [newest, middle, oldest] = recap.recapHistory();
+            recap.openRecap();
+            expect(navText()).toContain('1 of 3');
+            let [older, newer] = navButtons();
+            expect(newer.disabled).toBe(true);
+            expect(older.disabled).toBe(false);
+
+            older.click();
+            expect(navText()).toContain('2 of 3');
+            expect(modalEl().textContent).toContain(new Date(middle.at).toLocaleTimeString());
+            [older, newer] = navButtons();
+            older.click();
+            expect(navText()).toContain('3 of 3');
+            [older, newer] = navButtons();
+            expect(older.disabled).toBe(true);
+            expect(newer.disabled).toBe(false);
+            expect(document.querySelectorAll('#toolasha-death-recap-modal')).toHaveLength(1);
+
+            newer.click();
+            newer = navButtons()[1];
+            newer.click();
+            expect(navText()).toContain('1 of 3');
+            expect(newest.id).not.toBe(oldest.id);
+        });
+
+        test('closing removes the modal; the open-by-id path still works', () => {
+            die(1);
+            die(2);
+            const second = recap.recapHistory()[1];
+            expect(recap.openRecap(second.id)).toBe(true);
+            expect(navText()).toContain('2 of 2');
+            [...modalEl().querySelectorAll('button')].find((b) => b.textContent === 'Close').click();
+            expect(modalEl()).toBeNull();
+        });
+    });
+
+    describe('a new battle that is not a new death', () => {
+        test('a death inside the window of a new wave keeps the pre-wave ticks', () => {
+            send('new_battle', battle([['me', 0]]));
+            for (let i = 0; i < 20; i++) run([1000 - i * 10]);
+            send('new_battle', battle([['me', 0]], 2));
+            run([800], { battleId: 2 });
+            run([0], { battleId: 2 });
+            const [r] = recap.recapHistory();
+            expect(r.samples.length).toBe(22);
+            expect(r.samples[0].hp).toBe(1000);
+            expect(r.insufficient).toBe(false);
+            expect(r.deaths).toBe(1);
+        });
+
+        test('history older than the window is still dropped across a wave', () => {
+            send('new_battle', battle([['me', 0]]));
+            run([900]);
+            vi.advanceTimersByTime(20_000);
+            send('new_battle', battle([['me', 0]], 2));
+            run([800], { battleId: 2 });
+            run([0], { battleId: 2 });
+            expect(recap.recapHistory()[0].samples.map((s) => s.hp)).toEqual([800, 0]);
+        });
+
+        test('a wave while dead is still one death', () => {
+            send('new_battle', battle([['me', 0]]));
+            run([500]);
+            run([0]);
+            send('new_battle', battle([['me', 0, 0]], 2));
+            send('new_battle', battle([['me', 1]], 3));
+            expect(recap.recapHistory()).toHaveLength(1);
+            expect(recap.recapHistory()[0].confirmed).toBe(true);
+        });
+
+        test('a counter-made recap does not leak its tail into the next death', () => {
+            send('new_battle', battle([['me', 0]]));
+            run([900]);
+            send('new_battle', battle([['me', 1]], 2));
+            expect(recap.recapHistory()).toHaveLength(1);
+            run([700], { battleId: 2 });
+            run([0], { battleId: 2 });
+            expect(recap.recapHistory()[0].samples.map((s) => s.hp)).toEqual([700, 0]);
+        });
+
+        test('a battle with no seat of ours drops the history', () => {
+            send('new_battle', battle([['me', 0]]));
+            run([900]);
+            send('new_battle', battle([['friend', 0]], 2));
+            send('new_battle', battle([['me', 0]], 3));
+            run([0], { battleId: 3 });
+            expect(recap.recapHistory()[0].samples.map((s) => s.hp)).toEqual([0]);
+        });
     });
 
     test('opening with nothing kept shows nothing', () => {
