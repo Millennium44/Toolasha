@@ -129,6 +129,10 @@ export function buildBuffDrinkPools(gameData) {
         // A drink with a restore is food wearing a drink's category; the food
         // search owns those, and they carry no buff to rank anyway
         if (Number(detail.hitpointRestore) > 0 || Number(detail.manapointRestore) > 0) continue;
+        // A skilling tea cannot be drunk in combat (Wisdom Tea has a wisdom buff, but only Wisdom Coffee is a
+        // combat drink); it also has no default combat triggers, which the sim engine needs
+        const usableIn = detail.usableInActionTypeMap;
+        if (usableIn && !usableIn['/action_types/combat']) continue;
 
         const buffs = (detail.buffs || []).filter(Boolean);
         if (buffs.length === 0) continue;

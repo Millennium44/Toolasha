@@ -31,7 +31,8 @@ class Consumable {
             this.triggers = triggers;
         } else {
             this.triggers = [];
-            for (const defaultTrigger of gameConsumable.consumableDetail.defaultCombatTriggers) {
+            // A consumable with no default combat triggers (a skilling tea) is never drunk, not a failed sim
+            for (const defaultTrigger of gameConsumable.consumableDetail.defaultCombatTriggers || []) {
                 const trigger = new Trigger(
                     defaultTrigger.dependencyHrid,
                     defaultTrigger.conditionHrid,

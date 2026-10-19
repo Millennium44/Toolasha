@@ -877,6 +877,20 @@ describe('buff drink pools', () => {
                         },
                     },
                 ],
+                // A skilling tea with a combat-relevant buff: not drinkable in combat, so never a combat candidate
+                [
+                    '/items/wisdom_tea',
+                    {
+                        name: 'Wisdom Tea',
+                        itemLevel: 1,
+                        categoryHrid: '/item_categories/drink',
+                        consumableDetail: {
+                            usableInActionTypeMap: { '/action_types/milking': true },
+                            buffs: [{ uniqueHrid: '/buff_uniques/wisdom_tea', typeHrid: '/buff_types/wisdom' }],
+                            defaultCombatTriggers: null,
+                        },
+                    },
+                ],
                 // A buff drink with no buff at all is nothing to rank
                 [
                     '/items/plain_water',
@@ -910,6 +924,12 @@ describe('buff drink pools', () => {
         const pools = buildBuffDrinkPools(drinkGameData());
 
         expect(pools.get('/buff_uniques/wisdom_coffee')[0].price).toBe(null);
+    });
+
+    test('a skilling tea is left out, even one whose buff a combat sim reads', () => {
+        const pools = buildBuffDrinkPools(drinkGameData());
+
+        expect(pools.has('/buff_uniques/wisdom_tea')).toBe(false);
     });
 
     test('the drink carries its own default triggers, so the sim drinks it as the game would', () => {
