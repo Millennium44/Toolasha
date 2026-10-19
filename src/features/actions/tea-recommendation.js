@@ -435,6 +435,18 @@ class TeaRecommendation {
     }
 
     /**
+     * Whether the "almost as fast" choice applies: the setting is on and the popup is about one action.
+     * While it does, the constraint panel and every constrained rerun use the gold tea set (the
+     * superset the floor search enumerates), so a tea it recommends can be pinned and unpinned.
+     * @param {string|null} drilldownAction
+     * @param {Object|null} alchemyContext
+     * @returns {boolean}
+     */
+    _xpFloorActive(drilldownAction, alchemyContext) {
+        return Boolean((drilldownAction || alchemyContext) && config.getSetting('teaRecommendation_xpFloor', true));
+    }
+
+    /**
      * Append the "almost as fast" section when the setting is on and the popup is about one action.
      * @param {HTMLElement} popup
      * @param {string} skillName
@@ -444,7 +456,7 @@ class TeaRecommendation {
      * @returns {HTMLElement|null} The appended section, or null when nothing was drawn
      */
     _appendXpFloorSection(popup, skillName, locationTab, drilldownAction, alchemyContext) {
-        if (!(drilldownAction || alchemyContext) || !config.getSetting('teaRecommendation_xpFloor', true)) return null;
+        if (!this._xpFloorActive(drilldownAction, alchemyContext)) return null;
         try {
             const section = buildXpFloorSection(
                 findXpFloorChoice(skillName, {
@@ -913,7 +925,7 @@ class TeaRecommendation {
         }
 
         // "Almost as fast" choice: one action only (a drilled-down action or an Alchemy item)
-        const floorSection = this._appendXpFloorSection(popup, skillName, locationTab, drilldownAction, alchemyContext);
+        this._appendXpFloorSection(popup, skillName, locationTab, drilldownAction, alchemyContext);
 
         // Tea Constraints panel
         const constraintSection = document.createElement('div');
@@ -930,7 +942,10 @@ class TeaRecommendation {
 
         // The floor search enumerates the gold tea set (a superset of the XP set), so when its
         // section is shown the pin/ban controls must cover every tea it may recommend
-        const relevantTeas = getRelevantTeas(skillName.toLowerCase(), floorSection ? 'gold' : goal);
+        const relevantTeas = getRelevantTeas(
+            skillName.toLowerCase(),
+            this._xpFloorActive(drilldownAction, alchemyContext) ? 'gold' : goal
+        );
         const allConstraintTeas = [...relevantTeas.skillTeas, ...relevantTeas.generalTeas];
         const gameData = dataManager.getInitClientData();
 
@@ -1266,7 +1281,11 @@ class TeaRecommendation {
             locationTab,
             drilldownAction || null,
             constraints,
-            alchemyContext
+            alchemyContext,
+            null,
+            null,
+            null,
+            this._xpFloorActive(drilldownAction, alchemyContext) ? { teaSetGoal: 'gold' } : null
         );
         if (result.error) return;
         this.buildPopupContent(popup, result, goal, skillName, locationTab, drilldownAction, alchemyContext);

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     floor: { status: 'none' },
     floorCalls: [],
     throwFloor: false,
+    optCalls: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -30,9 +31,12 @@ vi.mock('../alchemy/alchemy-profit.js', () => ({ default: {} }));
 vi.mock('../../utils/tea-optimizer.js', () => ({
     pickXpFloorChoice: () => ({ status: 'none' }),
     normalizeXpFloorPercent: (value) => value,
-    findOptimalTeas: () => ({
-        optimal: { teas: [{ hrid: '/items/a', name: 'A' }], avgScore: 1000, hasMissingPrices: false },
-    }),
+    findOptimalTeas: (...args) => {
+        mocks.optCalls.push(args);
+        return {
+            optimal: { teas: [{ hrid: '/items/a', name: 'A' }], avgScore: 1000, hasMissingPrices: false },
+        };
+    },
     getTeaBuffDescription: () => '',
     getRelevantTeas: (_skill, goal) => ({
         skillTeas: [],
@@ -69,6 +73,7 @@ beforeEach(() => {
     mocks.floor = { status: 'none' };
     mocks.floorCalls = [];
     mocks.throwFloor = false;
+    mocks.optCalls = [];
 });
 
 describe('buildXpFloorSection', () => {
@@ -217,5 +222,26 @@ describe('popup wiring', () => {
         expect(both(null).querySelector('.mwi-tea-xp-floor')).toBeNull();
         mocks.settings.teaRecommendation_xpFloor = false;
         expect(both(alchemy).querySelector('.mwi-tea-xp-floor')).toBeNull();
+    });
+
+    test('pinning a gold-only tea reruns over the gold tea set, and the undo controls stay', () => {
+        mocks.floor = { status: 'none' };
+        const popup = render('Pincer Gloves');
+        teaRecommendation.pinnedTeas.add('/items/gathering_tea');
+        mocks.optCalls = [];
+        teaRecommendation._rerunWithConstraints(popup, 'xp', 'Foraging', null, 'Pincer Gloves');
+        expect(mocks.optCalls[0][9]).toEqual({ teaSetGoal: 'gold' });
+        // Even with no floor section drawn (no legal combination), the pinned tea keeps its controls
+        expect(popup.textContent).toContain('/items/gathering_tea');
+        teaRecommendation.pinnedTeas.clear();
+    });
+
+    test('reruns keep the goal tea set when the floor feature is off or the view is not one action', () => {
+        const popup = render('Pincer Gloves');
+        teaRecommendation._rerunWithConstraints(popup, 'xp', 'Foraging', null, null);
+        expect(mocks.optCalls.at(-1)[9] ?? null).toBeNull();
+        mocks.settings.teaRecommendation_xpFloor = false;
+        teaRecommendation._rerunWithConstraints(popup, 'xp', 'Foraging', null, 'Pincer Gloves');
+        expect(mocks.optCalls.at(-1)[9] ?? null).toBeNull();
     });
 });

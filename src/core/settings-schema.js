@@ -452,7 +452,7 @@ export const settingsGroups = {
                 min: 50,
                 max: 100,
                 requires: 'teaRecommendation_xpFloor',
-                help: '95 keeps at least 95% of the best XP/hr and picks the highest gold/hr among the setups that qualify. 100 only accepts setups as fast as the top one.',
+                help: '95 keeps at least 95% of the best XP/hr and picks the highest gold/hr among the setups that qualify (setups resting on an unpriced item or tea are passed over while a fully priced one qualifies). 100 only accepts setups as fast as the top one.',
             },
             actionPanel_enhanceMatLimitProtections: {
                 id: 'actionPanel_enhanceMatLimitProtections',
