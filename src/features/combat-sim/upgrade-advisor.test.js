@@ -8378,3 +8378,72 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
         expect(runSimulation).not.toHaveBeenCalled();
     });
 });
+
+describe('a coffee applies only to a lab loadout whose drink bar can take it', () => {
+    function drinkGameData() {
+        const coffee = (hrid, family, itemLevel) => [
+            hrid,
+            {
+                name: hrid,
+                itemLevel,
+                categoryHrid: '/item_categories/drink',
+                consumableDetail: {
+                    hitpointRestore: 0,
+                    manapointRestore: 0,
+                    cooldownDuration: 300,
+                    buffs: [{ uniqueHrid: `/buff_uniques/${family}`, typeHrid: '/buff_types/damage' }],
+                    defaultCombatTriggers: [],
+                },
+            },
+        ];
+        return {
+            itemDetailMap: Object.fromEntries([
+                coffee('/items/power_coffee', 'power', 20),
+                coffee('/items/super_power_coffee', 'power', 50),
+                coffee('/items/wisdom_coffee', 'wisdom', 30),
+                coffee('/items/speed_coffee', 'speed', 30),
+                coffee('/items/lucky_coffee', 'lucky', 30),
+            ]),
+        };
+    }
+    const gameData = drinkGameData();
+    let addWisdom;
+    let tierUp;
+    beforeEach(() => {
+        resolveItemPrice.mockImplementation(() => ({ price: 1000 }));
+        addWisdom = generateDrinkCandidates({ drinks: [null, null, null] }, gameData).find(
+            (c) => c.upgradeHrid === '/items/wisdom_coffee'
+        );
+        tierUp = generateDrinkCandidates({ drinks: [{ hrid: '/items/power_coffee' }, null, null] }, gameData).find(
+            (c) => c.currentHrid === '/items/power_coffee'
+        );
+    });
+    const bar = (...hrids) => ({ drinks: hrids.map((hrid) => (hrid ? { hrid } : null)) });
+
+    test('an addition skips a full bar, so it never overwrites a coffee that loadout wears', () => {
+        expect(
+            candidateAppliesToDTO(
+                addWisdom,
+                bar('/items/power_coffee', '/items/speed_coffee', '/items/lucky_coffee'),
+                gameData
+            )
+        ).toBe(false);
+    });
+
+    test('an addition skips a bar already running its family, and applies to one with a free slot', () => {
+        expect(candidateAppliesToDTO(addWisdom, bar('/items/wisdom_coffee', null, null), gameData)).toBe(false);
+        expect(candidateAppliesToDTO(addWisdom, bar('/items/power_coffee', null, null), gameData)).toBe(true);
+        expect(candidateAppliesToDTO(addWisdom, { drinks: [] }, gameData)).toBe(true);
+    });
+
+    test('a tier up applies only where the drink it replaces is worn', () => {
+        expect(candidateAppliesToDTO(tierUp, bar(null, '/items/power_coffee', null), gameData)).toBe(true);
+        expect(
+            candidateAppliesToDTO(
+                tierUp,
+                bar('/items/wisdom_coffee', '/items/speed_coffee', '/items/lucky_coffee'),
+                gameData
+            )
+        ).toBe(false);
+    });
+});

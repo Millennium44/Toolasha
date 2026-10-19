@@ -2163,6 +2163,31 @@ function isDrinkAddition(candidate) {
 }
 
 /**
+ * Whether a drink candidate means anything on one loadout's drink bar.
+ *
+ * A tier up replaces one particular drink, so it applies only where that drink is worn. An addition needs a
+ * free slot, and a bar already running its buff family has no use for it: applied there, it used to land on
+ * the generated index and overwrite a coffee that loadout wears.
+ * @param {Object} candidate - Candidate of type 'drink'
+ * @param {Object} dto - The loadout's player DTO
+ * @param {Object|null} [gameData] - Game data, for reading which family a worn drink belongs to
+ * @returns {boolean}
+ */
+function drinkAppliesToDTO(candidate, dto, gameData = null) {
+    const worn = (Array.isArray(dto.drinks) ? dto.drinks : [])
+        .slice(0, DRINK_SLOTS)
+        .map((drink) => drink?.hrid || null);
+    if (!isDrinkAddition(candidate)) return worn.includes(candidate.currentHrid);
+    if (worn.length >= DRINK_SLOTS && worn.every(Boolean)) return false;
+    if (worn.includes(candidate.upgradeHrid)) return false;
+    if (gameData && candidate.buffFamily) {
+        const pool = buildBuffDrinkPools(gameData).get(candidate.buffFamily) || [];
+        if (worn.some((hrid) => hrid && pool.some((entry) => entry.hrid === hrid))) return false;
+    }
+    return true;
+}
+
+/**
  * Put a drink candidate into its slot, in place.
  *
  * A tier up goes where the drink it replaces sits. An addition goes into a slot that is free on *this* DTO:
@@ -8114,11 +8139,13 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
         candidate.type === 'house' ||
         candidate.type === 'guild_shrine' ||
         candidate.type === 'community_buff' ||
-        candidate.type === 'scroll' ||
-        candidate.type === 'drink'
+        candidate.type === 'scroll'
     ) {
         return true;
     }
+
+    // Drinks are on the loadout: each one has its own bar
+    if (candidate.type === 'drink') return drinkAppliesToDTO(candidate, dto, gameData);
 
     if (candidate.checkedAbility) return checkedAbilityAppliesToDTO(candidate, dto, gameData);
 
