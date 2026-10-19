@@ -46,7 +46,7 @@
         "eslint": "^10.12.0",
         "eslint-config-prettier": "^10.1.8",
         "globals": "^17.13.0",
-        "happy-dom": "^20.14.6",
+        "happy-dom": "^21.0.3",
         "husky": "^9.1.7",
         "lint-staged": "^17.6.0",
         "markdown-link-check": "^3.14.2",
