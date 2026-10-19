@@ -11,11 +11,15 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 
 const game = vi.hoisted(() => ({
+    battleData: null,
+    actions: [],
+    party: [],
     settings: {},
     characterId: 'me',
     wsHandlers: {},
     dmHandlers: {},
     notified: [],
+    opened: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -26,6 +30,12 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
+        get battleData() {
+            return game.battleData;
+        },
+        getPartyMembers: () => ({ members: game.party }),
+        getCurrentActions: () => game.actions,
+        getCurrentCharacterName: () => game.characterId,
         on: (event, handler) => {
             game.dmHandlers[event] = handler;
         },
@@ -53,6 +63,14 @@ vi.mock('./notification-service.js', () => ({
     },
 }));
 
+vi.mock('./death-recap.js', () => ({
+    SETTING: 'combatDeathRecap',
+    openRecap: (...args) => {
+        game.opened.push(args);
+        return true;
+    },
+}));
+
 const { default: combatDeathAlerts, MASTER_SETTING } = await import('./combat-death-alerts.js');
 
 /** A `new_battle` payload with the given death counts */
@@ -62,15 +80,34 @@ function battle(...counts) {
     };
 }
 
+const SOLO = [{ actionHrid: '/actions/combat/golem_cave', partyID: 0, ordinal: 1, isDone: false }];
+
 const send = (payload) => game.wsHandlers.new_battle(payload);
+
+/** A battle_updated tick; `null` omits the seat (a partial tick). Seat 0 is us in `battle(['me', ...], ...)` */
+const tick = (...seats) => {
+    const pMap = {};
+    seats.forEach((hp, i) => {
+        if (hp === null) return;
+        pMap[i] =
+            hp <= 0
+                ? { cHP: 0, mHP: 1600, isActive: false, respawnTime: '2026-10-19T09:00:15.000Z' }
+                : { cHP: hp, mHP: 1600, isActive: true };
+    });
+    game.wsHandlers.battle_updated({ battleId: 1, pMap, mMap: {} });
+};
 
 describe('combat death alerts', () => {
     beforeEach(async () => {
-        game.settings = { [MASTER_SETTING]: true };
+        game.settings = { [MASTER_SETTING]: true, combatDeathRecap: true };
         game.characterId = 'me';
+        game.battleData = null;
+        game.actions = [];
+        game.party = [];
         game.wsHandlers = {};
         game.dmHandlers = {};
         game.notified = [];
+        game.opened = [];
         combatDeathAlerts.disable();
         await combatDeathAlerts.initialize();
     });
@@ -96,6 +133,17 @@ describe('combat death alerts', () => {
         expect(game.notified[0].message).toContain('You died in combat');
         expect(game.notified[0].message).toContain('1 death');
         expect(game.notified[0].options.title).toBe('You died');
+    });
+
+    test('the alert carries an action that opens the death recap', () => {
+        send(battle(['me', 0]));
+        send(battle(['me', 1]));
+
+        const { action } = game.notified[0].options;
+        expect(action.label).toMatch(/recap/i);
+        expect(game.opened).toHaveLength(0);
+        action.onClick();
+        expect(game.opened).toHaveLength(1);
     });
 
     test('several deaths at once are reported as the total, pluralised', () => {
@@ -133,6 +181,220 @@ describe('combat death alerts', () => {
 
         expect(game.notified).toHaveLength(1);
         expect(game.notified[0].message).toContain('1 death');
+    });
+
+    describe('on death, not on respawn', () => {
+        test('a solo death tick alerts at once; the dead ticks, the respawn and the later count rise do not alert again', () => {
+            send(battle(['me', 0]));
+            tick(1591);
+            tick(95);
+            expect(game.notified).toHaveLength(0);
+
+            tick(0);
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('You died in combat');
+
+            tick(0);
+            tick(null);
+            tick(0);
+            tick(1600);
+            expect(game.notified).toHaveLength(1);
+
+            // the server's counter catches up on a later battle: the same death
+            send(battle(['me', 1]));
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('a second death in the same fight alerts again once the respawn re-armed it', () => {
+            send(battle(['me', 0]));
+            tick(100);
+            tick(0);
+            tick(1600);
+            tick(50);
+            tick(0);
+            expect(game.notified).toHaveLength(2);
+            send(battle(['me', 2]));
+            expect(game.notified).toHaveLength(2);
+        });
+
+        test('a partial tick is never a death or a respawn', () => {
+            send(battle(['me', 0]));
+            tick(0);
+            tick(null);
+            tick(null);
+            expect(game.notified).toHaveLength(1);
+            tick(null);
+            tick(0);
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('a party member at 0 HP does not alert; our seat is read by position', () => {
+            send(battle(['friend', 0], ['me', 0]));
+            tick(0, 900);
+            tick(0, 800);
+            expect(game.notified).toHaveLength(0);
+            tick(500, 0);
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('a missed tick with a later count rise alerts once, from the counter', () => {
+            send(battle(['me', 0]));
+            tick(900);
+            send(battle(['me', 1]));
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('1 death');
+        });
+
+        test('one death seen on a tick plus one the tick missed announces only the missed one', () => {
+            send(battle(['me', 0]));
+            tick(0);
+            expect(game.notified).toHaveLength(1);
+            send(battle(['me', 2]));
+            expect(game.notified).toHaveLength(2);
+        });
+
+        test('nothing is wired to ticks while the master switch is off', async () => {
+            combatDeathAlerts.disable();
+            game.settings[MASTER_SETTING] = false;
+            await combatDeathAlerts.initialize();
+            expect(game.wsHandlers.battle_updated).toBeUndefined();
+        });
+
+        test('disable() drops the tick handler and the seat', () => {
+            send(battle(['me', 0]));
+            combatDeathAlerts.disable();
+            expect(game.wsHandlers.battle_updated).toBeUndefined();
+        });
+    });
+
+    describe('after a reload with no new_battle', () => {
+        test('a solo fight alerts on the death tick, once', () => {
+            game.actions = SOLO;
+            tick(1591);
+            expect(game.notified).toHaveLength(0);
+            tick(0);
+            tick(0);
+            tick(1600);
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('an empty roster alone is not solo: with no affirmative solo action nothing is guessed', () => {
+            tick(100);
+            tick(0);
+            expect(game.notified).toHaveLength(0);
+        });
+
+        test('a party action is not solo even with an empty roster', () => {
+            game.actions = [{ actionHrid: '/actions/combat/golem_cave', partyID: 7, ordinal: 1, isDone: false }];
+            tick(100);
+            tick(0);
+            expect(game.notified).toHaveLength(0);
+        });
+
+        test('a party with no roster is never guessed at', () => {
+            game.party = [{ characterID: 'me' }, { characterID: 'friend' }];
+            tick(100);
+            tick(0);
+            expect(game.notified).toHaveLength(0);
+
+            send(battle(['friend', 0], ['me', 0]));
+            tick(500, 100);
+            tick(500, 0);
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('the cached new_battle names our seat in a party', () => {
+            game.party = [{ characterID: 'me' }, { characterID: 'friend' }];
+            game.battleData = battle(['friend', 0], ['me', 0]);
+            tick(0, 800);
+            expect(game.notified).toHaveLength(0);
+            tick(800, 0);
+            expect(game.notified).toHaveLength(1);
+        });
+    });
+
+    test('a name-only roster row (no character object) still gives the seat, so the tick alert fires', () => {
+        send({
+            players: [
+                { name: 'me', deathCount: 0 },
+                { name: 'friend', deathCount: 0 },
+            ],
+        });
+        tick(0, 500);
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a battle with an unchanged counter does not forget a tick-announced death; the later rise is not re-announced', () => {
+        send(battle(['me', 0]));
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        tick(1600);
+        send(battle(['me', 0]));
+        send(battle(['me', 1]));
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a first counter reading is only a baseline: the tick death stays owed; a rise consumes it first, an excess alerts', () => {
+        game.actions = SOLO;
+        tick(1500);
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        tick(1600);
+        send(battle(['me', 1]));
+        expect(game.notified).toHaveLength(1);
+        // rise of 2 over the baseline: one is the tick death, one is new
+        send(battle(['me', 3]));
+        expect(game.notified).toHaveLength(2);
+    });
+
+    test('a new wave while still dead is the same death; a respawn and a genuine death is a second', () => {
+        send(battle(['me', 0]));
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        send({ players: [{ character: { id: 'me', name: 'me' }, deathCount: 0, currentHitpoints: 0 }] });
+        tick(0);
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        tick(1600);
+        tick(0);
+        expect(game.notified).toHaveLength(2);
+    });
+
+    test('a roster that states the HP under combatDetails also keeps the dead state', () => {
+        send(battle(['me', 0]));
+        tick(0);
+        send({ players: [{ character: { id: 'me' }, deathCount: 0, combatDetails: { currentHitpoints: 0 } }] });
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a baseline of 0 does not consume a tick death: a later rise of 1 is that same death, no second alert', () => {
+        game.actions = SOLO;
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        tick(1600);
+        send(battle(['me', 0]));
+        send(battle(['me', 1]));
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a counter that falls back is a new session and owes nothing to earlier tick deaths', () => {
+        send(battle(['me', 3]));
+        tick(0);
+        send(battle(['me', 0]));
+        send(battle(['me', 1]));
+        expect(game.notified).toHaveLength(2);
+    });
+
+    test('the recap action is attached only while the recap feature is on', () => {
+        send(battle(['me', 0]));
+        tick(0);
+        expect(game.notified[0].options.action.label).toMatch(/recap/i);
+
+        game.settings.combatDeathRecap = false;
+        tick(1600);
+        tick(0);
+        expect(game.notified[1].options.action).toBeUndefined();
     });
 
     test('a party member dying is their business', () => {

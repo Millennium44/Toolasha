@@ -215,6 +215,7 @@ class NotificationService {
      *   skill. Shown as its own column in the notice log and named in the digest
      *   summary, which is the difference between "3 undercuts" and "3 undercuts
      *   (Cheese, Milk, Flax)". Optional: falls back to the title
+     * @param {{label: string, onClick: Function}} [options.action] - Follow-up carried by the in-page toast only
      * @param {string} [options.category] - Override the category derived from the
      *   event key. Almost never wanted; the derivation is the point
      * @returns {{fired: boolean, channels: string[], reason?: string, category: string, urgency: string}}
@@ -225,7 +226,7 @@ class NotificationService {
     notify(
         eventKey,
         message,
-        { title = DEFAULT_TITLE, cooldownMs = this.cooldownMs, subject = '', category = '' } = {}
+        { title = DEFAULT_TITLE, cooldownMs = this.cooldownMs, subject = '', category = '', action = null } = {}
     ) {
         if (!eventKey || !message) {
             return { fired: false, channels: [], reason: 'nothing to say', category: 'other', urgency: 'normal' };
@@ -262,7 +263,7 @@ class NotificationService {
             return { fired: true, channels: ['digest'], reason: 'digested', category: resolved, urgency };
         }
 
-        const channels = this.deliver(message, title, critical);
+        const channels = this.deliver(message, title, critical, action);
         this.recordNotice({ eventKey, resolved, named, message, urgency, channels });
 
         // Only a delivered message starts the clock. Burning the cooldown on a
@@ -287,9 +288,10 @@ class NotificationService {
      * @param {string} message - Body text
      * @param {string} title - Desktop notification title
      * @param {boolean} critical - Whether it may ignore quiet hours
+     * @param {{label: string, onClick: Function}|null} [action] - Follow-up the in-page toast carries
      * @returns {string[]} Channels it actually reached
      */
-    deliver(message, title, critical = false) {
+    deliver(message, title, critical = false, action = null) {
         const channels = [];
         const quiet = !critical && this.inQuietHours();
 
@@ -304,7 +306,7 @@ class NotificationService {
                 channels.push('browser');
             }
             if (this._tryChannel(() => this.flashTitle())) channels.push('title');
-        } else if (this._tryChannel(() => this.showInPage(message))) {
+        } else if (this._tryChannel(() => this.showInPage(message, action))) {
             channels.push('toast');
         }
 
@@ -472,10 +474,11 @@ class NotificationService {
     /**
      * The in-page channel.
      * @param {string} message - What to say
+     * @param {{label: string, onClick: Function}|null} [action] - Optional follow-up on the toast
      * @returns {boolean} Whether a toast went up
      */
-    showInPage(message) {
-        return !!showToast(message, { kind: 'warn', duration: 10000 });
+    showInPage(message, action = null) {
+        return !!showToast(message, { kind: 'warn', duration: 10000, ...(action ? { action } : {}) });
     }
 
     /**
