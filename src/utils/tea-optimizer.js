@@ -21,6 +21,7 @@ import {
 } from './profit-helpers.js';
 import { getItemPrice, getItemPriceInfo } from './market-data.js';
 import { calculateBonusRevenue } from './bonus-revenue-calculator.js';
+import expectedValueCalculator from '../features/market/expected-value-calculator.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import { runningAction } from './combat-actions.js';
 import { expectedProcessedItems } from './gathering-processing.js';
@@ -137,9 +138,10 @@ export function getRelevantTeas(skillName, goal) {
  * @param {Object} teaGroups - { skillTeas: [], generalTeas: [] }
  * @param {Object|null} constraints - Optional pinned and banned teas
  * @param {number} maxDrinkSlots - Available slots for this equipment setup
+ * @param {boolean} [includeEmpty=false] - Also offer the no-tea setup (only when nothing is pinned)
  * @returns {Array<Array<string>>} Array of valid tea combinations
  */
-function generateCombinations(teaGroups, constraints = null, maxDrinkSlots = 3) {
+function generateCombinations(teaGroups, constraints = null, maxDrinkSlots = 3, includeEmpty = false) {
     const { skillTeas, generalTeas } = teaGroups;
     const combinations = [];
 
@@ -153,6 +155,9 @@ function generateCombinations(teaGroups, constraints = null, maxDrinkSlots = 3) 
             combinations.push(combo);
         }
     };
+
+    // No tea at all is a legal setup; any pin rules it out, a ban cannot
+    if (includeEmpty && !(constraints && constraints.pinned.size > 0)) combinations.push([]);
 
     // Option 1: No skill tea, only general teas (1-3 general teas)
     for (let i = 0; i < generalTeas.length; i++) {
@@ -216,6 +221,7 @@ function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration) {
         gourmet: 0,
         actionLevel: 0,
         alchemySuccess: 0,
+        actionSpeed: 0, // decimal (0.06 for +6%), as parseTeaSpeedDetails reads it for the gold side
         skillLevels: {}, // skill name → level bonus
     };
 
@@ -248,6 +254,9 @@ function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration) {
                     break;
                 case '/buff_types/action_level':
                     buffs.actionLevel += scaledValue;
+                    break;
+                case '/buff_types/action_speed':
+                    buffs.actionSpeed += scaledValue;
                     break;
                 case '/buff_types/alchemy_success':
                     // alchemy_success uses ratioBoost, not flatBoost
@@ -621,11 +630,23 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
     }
 
     if (!profitData) return { profitPerHour: 0, hasMissingPrice: true };
+    // unpricedOutputs/estimatedOutputs describe outputs only. The input item and the winning
+    // catalyst can also be priced by the official-value fallback (or not at all), and the
+    // calculator exposes no flag for that, so ask the price source the way it priced them
+    const uncertainInput = (hrid, level = 0) => {
+        if (!hrid) return false;
+        const info = getItemPriceInfo(hrid, { context: 'profit', side: 'buy', enhancementLevel: level });
+        return info.price === null || info.estimated;
+    };
     return {
         profitPerHour: profitData.profitPerHour || 0,
+        // The success bonus of the catalyst this gold figure was priced with
+        catalystBonus: profitData.successRateBreakdown?.catalyst || 0,
         hasMissingPrice:
             (Array.isArray(profitData.unpricedOutputs) && profitData.unpricedOutputs.length > 0) ||
-            (Array.isArray(profitData.estimatedOutputs) && profitData.estimatedOutputs.length > 0),
+            (Array.isArray(profitData.estimatedOutputs) && profitData.estimatedOutputs.length > 0) ||
+            uncertainInput(itemHrid, enhancementLevel) ||
+            uncertainInput(profitData.winningCatalystHrid),
     };
 }
 
@@ -653,7 +674,14 @@ function skillsWithPlannedLevel(skillHrid, level) {
  * @param {Object} calcContext - { equipment, itemDetailMap }
  * @returns {number} XP per hour
  */
-function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEfficiency, calcContext) {
+function calculateAlchemyXpPerHour(
+    alchemyContext,
+    buffs,
+    playerLevel,
+    otherEfficiency,
+    calcContext,
+    catalystBonus = 0
+) {
     const { actionType, itemHrid } = alchemyContext;
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return 0;
@@ -711,7 +739,10 @@ function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEffi
             ? (0.9 / itemLevel) * (boostedPlayerLevel - itemLevel)
             : 0;
 
-    const successRate = Math.max(0, Math.min(1.0, baseSuccessRate * (1 + levelPenalty + teaBonusOverride)));
+    const successRate = Math.max(
+        0,
+        Math.min(1.0, baseSuccessRate * (1 + levelPenalty + teaBonusOverride + catalystBonus))
+    );
 
     // XP per action: success gives full XP, failure gives 10%
     // Wisdom multiplier — replace current tea wisdom with our hypothetical tea wisdom
@@ -759,7 +790,9 @@ function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEffi
             equipmentSpeedBonus +
             (otherEfficiency.houseSpeed || 0) +
             (otherEfficiency.personalSpeed || 0) +
-            (otherEfficiency.guildSpeed || 0));
+            (otherEfficiency.guildSpeed || 0) +
+            // A speed tea in the candidate, added like the other sources, as the gold side does
+            (buffs.actionSpeed || 0));
     const baseActionsPerHour = calculateActionsPerHour(actionTime);
     const actionsPerHour = calculateEffectiveActionsPerHour(baseActionsPerHour, efficiencyMultiplier);
 
@@ -862,13 +895,31 @@ export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData)
         return info.price !== null && !info.estimated;
     };
 
+    // Both gold scorers also add calculateBonusRevenue (essence / rare drop tables), so an
+    // unpriced bonus drop makes the figure a guess exactly like an unpriced material. Whether a
+    // price exists does not depend on rate or gear, so score one action per hour on empty gear;
+    // a drop with no chance (per-action count of 0) can never contribute and is not flagged.
+    const bonusDropUnpriced = () => {
+        if (!actionDetails.essenceDropTable?.length && !actionDetails.rareDropTable?.length) return false;
+        const bonus = calculateBonusRevenue(actionDetails, 1, new Map(), gameData?.itemDetailMap || {});
+        // A container (taxExempt) valued from only some of its contents keeps a positive EV and no
+        // missingPrice; the expected-value calculator records how many contents it left out
+        const containerPartlyUnpriced = (hrid) => (expectedValueCalculator.containerMissingCounts?.get(hrid) || 0) > 0;
+        return (bonus?.bonusDrops || []).some(
+            (drop) =>
+                drop.dropsPerHour > 0 &&
+                (drop.missingPrice ||
+                    (drop.taxExempt ? containerPartlyUnpriced(drop.itemHrid) : !isPriced(drop.itemHrid, 'sell')))
+        );
+    };
+
     if (isGathering) {
         for (const drop of actionDetails.dropTable || []) {
             if (!isPriced(drop.itemHrid, 'sell')) return true;
             const processedData = findProcessingConversion(drop.itemHrid, gameData);
             if (processedData && !isPriced(processedData.outputItemHrid, 'sell')) return true;
         }
-        return false;
+        return bonusDropUnpriced();
     }
 
     if (actionDetails.upgradeItemHrid && !isPriced(actionDetails.upgradeItemHrid, 'buy')) return true;
@@ -878,7 +929,7 @@ export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData)
     for (const output of actionDetails.outputItems || []) {
         if (!isPriced(output.itemHrid, 'sell')) return true;
     }
-    return false;
+    return bonusDropUnpriced();
 }
 
 /**
@@ -1118,6 +1169,9 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
  * @param {string|null} locationName - Optional location name to filter actions (e.g., "Silly Cow Valley")
  * @param {string|null} actionNameFilter - Optional action name to restrict optimization to a single action
  * @param {number|null} playerLevelOverride - Planned level; null uses the live character level
+ * @param {{collectAll?: boolean, teaSetGoal?: string, includeEmpty?: boolean, matchGoldCatalyst?: boolean}|null} options - `collectAll` adds `evaluatedAll`
+ *   (every scored combination, not just the top five); `teaSetGoal` picks which goal's tea list is
+ *   enumerated, so an XP pass and a gold pass can score the identical set of combinations
  * @returns {Object} Optimization result
  */
 export function findOptimalTeas(
@@ -1129,7 +1183,8 @@ export function findOptimalTeas(
     alchemyContext = null,
     equipmentOverride = null,
     selectedActionHrids = null,
-    playerLevelOverride = null
+    playerLevelOverride = null,
+    options = null
 ) {
     const normalizedSkill = skillName.toLowerCase();
     const isGathering = GATHERING_SKILLS.includes(normalizedSkill);
@@ -1169,9 +1224,14 @@ export function findOptimalTeas(
     const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
 
     // Get relevant teas and generate combinations
-    const relevantTeas = getRelevantTeas(normalizedSkill, goal);
+    const relevantTeas = getRelevantTeas(normalizedSkill, options?.teaSetGoal || goal);
     const drinkSlotCount = getDrinkSlotCount(equipment, gameData.itemDetailMap);
-    const combinations = generateCombinations(relevantTeas, constraints, drinkSlotCount);
+    const combinations = generateCombinations(
+        relevantTeas,
+        constraints,
+        drinkSlotCount,
+        Boolean(options?.includeEmpty)
+    );
 
     // Get actions for this skill (available and excluded)
     const actionData = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);
@@ -1273,7 +1333,19 @@ export function findOptimalTeas(
                 skills: skillsWithPlannedLevel('/skills/alchemy', playerLevel),
             };
             if (goal === 'xp') {
-                score = calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEfficiency, calcContext);
+                // The floor search compares one real setup per candidate: score XP with the catalyst
+                // its gold figure used (a catalyst raises success, and failures give 10% XP)
+                const catalystBonus = options?.matchGoldCatalyst
+                    ? calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext).catalystBonus
+                    : 0;
+                score = calculateAlchemyXpPerHour(
+                    alchemyContext,
+                    buffs,
+                    playerLevel,
+                    otherEfficiency,
+                    calcContext,
+                    catalystBonus
+                );
                 totalScore += score;
             } else {
                 const goldResult = calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext);
@@ -1406,6 +1478,7 @@ export function findOptimalTeas(
             actionsEvaluated: 0,
             profitableActionsCount: 0,
             combinationsEvaluated: combinations.length,
+            ...(options?.collectAll ? { evaluatedAll: [] } : {}),
             allResults: [],
             excludedActions: excludedForDisplay,
             teaCostPerHour: { total: 0, breakdown: [] },
@@ -1445,6 +1518,22 @@ export function findOptimalTeas(
         actionsEvaluated: alchemyContext ? 1 : actions.length,
         profitableActionsCount: topResult.profitableCount, // For display in stats
         combinationsEvaluated: combinations.length,
+        ...(options?.collectAll
+            ? {
+                  // Every scored combination, signed: the single-action score keeps a loss as a loss
+                  // (totalScore/avgScore floor a gold loss at 0), and `unpriced` is the combo's own
+                  // flag: an unpriced action input or a tea with no real book price
+                  evaluatedAll: results.map((r) => ({
+                      teas: r.teas,
+                      names: r.teas.map(getTeaName),
+                      score: r.actionScores[0]?.score ?? 0,
+                      unpriced: Boolean(
+                          (alchemyContext ? r.hasMissingPrices : r.actionScores[0]?.hasMissingPrices) ||
+                          r.teaCostPerHour?.hasMissingPrices
+                      ),
+                  })),
+              }
+            : {}),
         allResults: results.slice(0, 5).map((r) => ({
             teas: r.teas.map(getTeaName),
             avgScore: r.avgScore,
@@ -1454,6 +1543,117 @@ export function findOptimalTeas(
         // Include top result's tea cost for debug
         teaCostPerHour: topResult.teaCostPerHour,
     };
+}
+
+const XP_FLOOR_MIN_PERCENT = 50;
+const XP_FLOOR_MAX_PERCENT = 100;
+const XP_FLOOR_DEFAULT_PERCENT = 95;
+
+/**
+ * Clamp an XP-floor percentage to the supported range; anything unusable falls back to the default.
+ * @param {*} value
+ * @returns {number}
+ */
+export function normalizeXpFloorPercent(value) {
+    const n = Number(value);
+    if (value === null || value === undefined || value === '' || !Number.isFinite(n)) return XP_FLOOR_DEFAULT_PERCENT;
+    return Math.min(XP_FLOOR_MAX_PERCENT, Math.max(XP_FLOOR_MIN_PERCENT, n));
+}
+
+const teaComboKey = (teas) => [...teas].sort().join('|');
+
+/**
+ * Pick the best-gold tea combination that keeps at least `floorPercent` of the best XP/hr.
+ * Pure: takes already-scored candidates, so a percentage change only re-filters them.
+ *
+ * Outcomes (`status`): 'none' (no candidates), 'no-xp' (best XP/hr is not above 0), 'no-gold' (no
+ * qualifying candidate has a finite gold figure), 'same' (the top-XP setup is also the best
+ * qualifying one), 'ok' (a different setup qualifies and trades some XP for gold).
+ * Unpriced candidates are only chosen when every qualifying candidate is unpriced.
+ * @param {Array<{teas: string[], names?: string[], xp: number, gold: number, unpriced?: boolean}>} candidates
+ * @param {number} floorPercent
+ * @returns {Object}
+ */
+export function pickXpFloorChoice(candidates, floorPercent) {
+    const floor = normalizeXpFloorPercent(floorPercent);
+    const list = (candidates || []).filter((c) => c && Number.isFinite(c.xp));
+    if (list.length === 0) return { status: 'none', floorPercent: floor };
+
+    // Highest XP/hr, ties to the better gold, then fewer teas, then a stable key order
+    const goldOf = (c) => (Number.isFinite(c.gold) ? c.gold : -Infinity);
+    const order = (a, b) =>
+        b.xp - a.xp ||
+        goldOf(b) - goldOf(a) ||
+        a.teas.length - b.teas.length ||
+        teaComboKey(a.teas).localeCompare(teaComboKey(b.teas));
+    const baseline = [...list].sort(order)[0];
+    if (!(baseline.xp > 0)) return { status: 'no-xp', floorPercent: floor, baseline };
+
+    const threshold = baseline.xp * (floor / 100) * (1 - 1e-9);
+    const eligible = list.filter((c) => c.xp >= threshold && Number.isFinite(c.gold));
+    if (eligible.length === 0) return { status: 'no-gold', floorPercent: floor, baseline };
+
+    const priced = eligible.filter((c) => !c.unpriced);
+    const pool = priced.length > 0 ? priced : eligible;
+    const pick = [...pool].sort((a, b) => b.gold - a.gold || order(a, b))[0];
+
+    const base = { floorPercent: floor, baseline, pick };
+    if (teaComboKey(pick.teas) === teaComboKey(baseline.teas)) return { status: 'same', ...base };
+    return {
+        status: 'ok',
+        ...base,
+        xpRetainedPercent: (pick.xp / baseline.xp) * 100,
+        goldDelta: Number.isFinite(baseline.gold) ? pick.gold - baseline.gold : null,
+    };
+}
+
+/**
+ * For one action, score every legal tea combination on XP/hr and on net gold/hr (the same scoring
+ * findOptimalTeas uses, over one shared combination set) and apply the XP floor.
+ * Needs a single action (an action name or an Alchemy context); otherwise 'not-single-action'.
+ * @param {string} skillName
+ * @param {Object} params
+ * @param {string|null} [params.locationName]
+ * @param {string|null} [params.actionName]
+ * @param {Object|null} [params.constraints] - { pinned, banned } sets, applied to both passes
+ * @param {Object|null} [params.alchemyContext]
+ * @param {number|string} [params.floorPercent]
+ * @param {number|null} [params.playerLevel]
+ * @returns {Object} pickXpFloorChoice result, or status 'error' / 'not-single-action'
+ */
+export function findXpFloorChoice(skillName, params = {}) {
+    const { locationName = null, actionName = null, constraints = null, alchemyContext = null } = params;
+    if (!actionName && !alchemyContext) return { status: 'not-single-action' };
+    const run = (goal) =>
+        findOptimalTeas(
+            skillName,
+            goal,
+            locationName,
+            actionName,
+            constraints,
+            alchemyContext,
+            null,
+            null,
+            params.playerLevel ?? null,
+            { collectAll: true, teaSetGoal: 'gold', includeEmpty: true, matchGoldCatalyst: true }
+        );
+    const xpPass = run('xp');
+    const goldPass = run('gold');
+    const failed = xpPass.error ? xpPass : goldPass.error ? goldPass : null;
+    if (failed) return { status: 'error', error: failed.error };
+    if (!xpPass.optimal) return { status: 'none', floorPercent: normalizeXpFloorPercent(params.floorPercent) };
+    if (!alchemyContext && (xpPass.actionsEvaluated !== 1 || goldPass.actionsEvaluated !== 1)) {
+        return { status: 'not-single-action' };
+    }
+
+    const goldByKey = new Map((goldPass.evaluatedAll || []).map((r) => [teaComboKey(r.teas), r]));
+    const candidates = [];
+    for (const r of xpPass.evaluatedAll || []) {
+        const g = goldByKey.get(teaComboKey(r.teas));
+        if (!g) continue;
+        candidates.push({ teas: r.teas, names: r.names, xp: r.score, gold: g.score, unpriced: g.unpriced });
+    }
+    return pickXpFloorChoice(candidates, params.floorPercent);
 }
 
 /**

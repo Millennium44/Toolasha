@@ -90,6 +90,7 @@ const {
     scoreEquipmentSetup,
     calculateSkillPerformance,
     findOptimalTeas,
+    findXpFloorChoice,
     getSkillActionsForDisplay,
     resolveActiveAlchemyItemContext,
 } = await import('./tea-optimizer.js');
@@ -631,6 +632,84 @@ describe('actionHasUnpricedMaterials', () => {
         };
         expect(actionHasUnpricedMaterials(action, false, gameData)).toBe(true);
     });
+
+    describe('bonus drops (the essence / rare tables the gold scorers also add)', () => {
+        const bonusGameData = {
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/milk': { name: 'Milk' },
+                '/items/cheese': { name: 'Cheese' },
+                '/items/rare_gem': { name: 'Rare Gem' },
+                '/items/essence': { name: 'Essence' },
+            },
+        };
+        const withBonus = (extra) => ({
+            type: '/action_types/cheesesmithing',
+            inputItems: [{ itemHrid: '/items/milk', count: 1 }],
+            outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+            ...extra,
+        });
+        const gem = (dropRate) => ({ itemHrid: '/items/rare_gem', minCount: 1, maxCount: 1, dropRate });
+
+        test('an unpriced rare drop flags an otherwise fully priced action', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100 };
+            const action = withBonus({ rareDropTable: [gem(0.01)] });
+            expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(true);
+        });
+
+        test('an unpriced essence drop flags a gathering action', () => {
+            prices.byHrid = { '/items/log': 10 };
+            const action = {
+                type: '/action_types/woodcutting',
+                dropTable: [{ itemHrid: '/items/log' }],
+                essenceDropTable: [{ itemHrid: '/items/essence', minCount: 1, maxCount: 1, dropRate: 0.1 }],
+            };
+            bonusGameData.itemDetailMap['/items/log'] = { name: 'Log' };
+            expect(actionHasUnpricedMaterials(action, true, bonusGameData)).toBe(true);
+        });
+
+        test('a fully priced action with a priced rare drop is not flagged', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100, '/items/rare_gem': 5000 };
+            const action = withBonus({ rareDropTable: [gem(0.01)] });
+            expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(false);
+        });
+
+        test('a rare drop priced only from the value map is flagged', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100, '/items/rare_gem': 5000 };
+            prices.estimated = new Set(['/items/rare_gem']);
+            const action = withBonus({ rareDropTable: [gem(0.01)] });
+            expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(true);
+        });
+
+        test('a rare container valued from only some of its contents is flagged; a fully valued one is not', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100 };
+            bonusGameData.itemDetailMap['/items/small_crate'] = { name: 'Small Crate', isOpenable: true };
+            const crate = { itemHrid: '/items/small_crate', minCount: 1, maxCount: 1, dropRate: 0.01 };
+            const action = withBonus({ rareDropTable: [crate] });
+            const cached = vi.spyOn(expectedValueCalculator, 'getCachedValue').mockReturnValue(500);
+            try {
+                expectedValueCalculator.containerMissingCounts.set('/items/small_crate', 2);
+                expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(true);
+                expectedValueCalculator.containerMissingCounts.delete('/items/small_crate');
+                expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(false);
+            } finally {
+                cached.mockRestore();
+                expectedValueCalculator.containerMissingCounts.delete('/items/small_crate');
+            }
+        });
+
+        test('empty bonus tables and a zero-chance unpriced drop are not flagged', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100 };
+            expect(actionHasUnpricedMaterials(withBonus({}), false, bonusGameData)).toBe(false);
+            expect(
+                actionHasUnpricedMaterials(
+                    withBonus({ rareDropTable: [gem(0)], essenceDropTable: [] }),
+                    false,
+                    bonusGameData
+                )
+            ).toBe(false);
+        });
+    });
 });
 
 describe('calculateSkillPerformance — candidate gear XP', () => {
@@ -798,6 +877,97 @@ describe('planned Alchemy context in tea optimization', () => {
         expect(result.error).toBeUndefined();
         expect(levels.length).toBeGreaterThan(0);
         expect(new Set(levels)).toEqual(new Set([100]));
+    });
+
+    describe('XP floor flags an uncertain Alchemy input or catalyst', () => {
+        const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
+        const floor = () => findXpFloorChoice('alchemy', { alchemyContext: context, floorPercent: 95 });
+
+        beforeEach(() => {
+            // Output-only flags, as the calculator really reports them: clean
+            alchemyCalc.coinify = () => ({ profitPerHour: 777, unpricedOutputs: [], estimatedOutputs: [] });
+            prices.byHrid['/items/moon_ore'] = 100;
+            prices.byHrid['/items/prime_catalyst'] = 50;
+            for (const hrid of knownItems) prices.byHrid[hrid] = 10;
+        });
+
+        test('fully quoted input and catalyst are not flagged', () => {
+            alchemyCalc.coinify = () => ({ profitPerHour: 777, winningCatalystHrid: '/items/prime_catalyst' });
+            expect(floor().pick.unpriced).toBe(false);
+        });
+
+        test('an input priced by the official-value fallback is flagged', () => {
+            prices.estimated.add('/items/moon_ore');
+            expect(floor().pick.unpriced).toBe(true);
+        });
+
+        test('a catalyst priced by the official-value fallback is flagged', () => {
+            alchemyCalc.coinify = () => ({ profitPerHour: 777, winningCatalystHrid: '/items/prime_catalyst' });
+            prices.estimated.add('/items/prime_catalyst');
+            expect(floor().pick.unpriced).toBe(true);
+        });
+    });
+
+    describe('XP floor scores XP with the catalyst its gold figure used', () => {
+        const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
+        const xpOf = (extra) => {
+            for (const hrid of knownItems) prices.byHrid[hrid] = 10;
+            return findOptimalTeas('alchemy', 'xp', null, null, null, context, new Map(), null, null, {
+                collectAll: true,
+                teaSetGoal: 'gold',
+                ...extra,
+            }).evaluatedAll;
+        };
+
+        test('a success-raising catalyst raises the candidate XP; without matching, XP ignores it', () => {
+            alchemyCalc.coinify = () => ({
+                profitPerHour: 777,
+                winningCatalystHrid: '/items/prime_catalyst',
+                successRateBreakdown: { catalyst: 0.3 },
+            });
+            const plain = xpOf({});
+            const matched = xpOf({ matchGoldCatalyst: true });
+            expect(matched.length).toBe(plain.length);
+            for (let i = 0; i < plain.length; i++) expect(matched[i].score).toBeGreaterThan(plain[i].score);
+        });
+
+        test('a catalyst-free gold setup leaves XP unchanged', () => {
+            alchemyCalc.coinify = () => ({ profitPerHour: 777, successRateBreakdown: { catalyst: 0 } });
+            const plain = xpOf({});
+            const matched = xpOf({ matchGoldCatalyst: true });
+            expect(matched.map((r) => r.score)).toEqual(plain.map((r) => r.score));
+        });
+    });
+
+    test('a speed tea in an Alchemy candidate speeds up its XP, as it speeds up its gold', () => {
+        const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
+        alchemyCalc.coinify = () => ({ profitPerHour: 777 });
+        for (const hrid of knownItems) prices.byHrid[hrid] = 10;
+        const tea = '/items/efficiency_tea';
+        const scoreWith = () => {
+            const all = findOptimalTeas('alchemy', 'xp', null, null, null, context, new Map(), null, null, {
+                collectAll: true,
+            }).evaluatedAll;
+            return all.find((r) => r.teas.length === 1 && r.teas[0] === tea)?.score;
+        };
+        const original = state.gameData.itemDetailMap[tea];
+        try {
+            state.gameData.itemDetailMap[tea] = {
+                consumableDetail: { usableInActionTypeMap: { '/action_types/alchemy': true }, buffs: [] },
+            };
+            const plain = scoreWith();
+            state.gameData.itemDetailMap[tea] = {
+                consumableDetail: {
+                    usableInActionTypeMap: { '/action_types/alchemy': true },
+                    buffs: [{ typeHrid: '/buff_types/action_speed', flatBoost: 0.25 }],
+                },
+            };
+            const fast = scoreWith();
+            expect(plain).toBeGreaterThan(0);
+            expect(fast).toBeCloseTo(plain * 1.25, 6);
+        } finally {
+            state.gameData.itemDetailMap[tea] = original;
+        }
     });
 
     test('rejects an impossible item/action pair before either scoring path', () => {

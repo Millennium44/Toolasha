@@ -45,6 +45,9 @@ vi.mock('./skilling-optimizer-engine.js', () => ({
     SKILL_TOOL_LOCATION: {},
 }));
 vi.mock('../../utils/tea-optimizer.js', () => ({
+    findXpFloorChoice: () => ({ status: 'none' }),
+    pickXpFloorChoice: () => ({ status: 'none' }),
+    normalizeXpFloorPercent: (value) => value,
     scoreEquipmentSetup: () => 0,
 }));
 vi.mock('../../utils/house-roi.js', () => ({

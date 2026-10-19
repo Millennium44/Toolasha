@@ -8,7 +8,12 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import actionFilter from './action-filter.js';
 import alchemyProfit from '../alchemy/alchemy-profit.js';
-import { findOptimalTeas, getTeaBuffDescription, getRelevantTeas } from '../../utils/tea-optimizer.js';
+import {
+    findOptimalTeas,
+    findXpFloorChoice,
+    getTeaBuffDescription,
+    getRelevantTeas,
+} from '../../utils/tea-optimizer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
@@ -30,6 +35,78 @@ export const UNPRICED_WARNING_TITLE = 'Leans on an unpriced material — gold fi
  */
 export function shouldWarnUnpriced(goal, hasMissingPrices) {
     return goal === 'gold' && !!hasMissingPrices;
+}
+
+const UNPRICED_FLOOR_TITLE = 'Leans on an unpriced item or tea — the gold figure treats it as free';
+
+/**
+ * Signed gold/hr text: "+412K", "-1.2M", "0".
+ * @param {number} value
+ * @returns {string}
+ */
+function signedGold(value) {
+    return `${value > 0 ? '+' : ''}${formatKMB(value)}`;
+}
+
+/**
+ * Build the "almost as fast" section for an XP-floor result, or null when there is nothing to say
+ * ('none', 'not-single-action', 'error', or a missing result: no legal combination, not one action).
+ * Outcomes: 'ok' states the tradeoff; 'same' says the top-XP setup is already the pick; 'no-xp' and
+ * 'no-gold' say why there is no pick rather than going silent.
+ * @param {Object|null} choice - findXpFloorChoice result
+ * @returns {HTMLElement|null}
+ */
+export function buildXpFloorSection(choice) {
+    if (!choice || !['ok', 'same', 'no-xp', 'no-gold'].includes(choice.status)) return null;
+
+    const section = document.createElement('div');
+    section.className = 'mwi-tea-xp-floor';
+    section.style.cssText = `
+        margin-top: 12px;
+        padding-top: 8px;
+        border-top: 1px solid ${config.COLOR_BORDER};
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.6);
+    `;
+    const headline = document.createElement('div');
+    headline.style.cssText = 'color: rgba(255, 255, 255, 0.8); margin-bottom: 4px;';
+    section.appendChild(headline);
+    const floor = choice.floorPercent;
+
+    const warn = (el, unpriced) => {
+        if (!unpriced) return;
+        const mark = document.createElement('sup');
+        mark.textContent = ' ⚠';
+        mark.title = UNPRICED_FLOOR_TITLE;
+        mark.style.cursor = 'help';
+        el.appendChild(mark);
+    };
+
+    if (choice.status === 'no-xp') {
+        headline.textContent = `Within ${floor}% of top XP: none, the top setup gives no XP/hr here`;
+        return section;
+    }
+    if (choice.status === 'no-gold') {
+        headline.textContent = `Within ${floor}% of top XP: no setup has a gold/hr figure to compare`;
+        return section;
+    }
+    if (choice.status === 'same') {
+        headline.textContent = `Within ${floor}% of top XP: the top-XP setup is already the best gold/hr, nothing to trade`;
+        warn(headline, choice.pick.unpriced);
+        return section;
+    }
+
+    const { baseline, pick } = choice;
+    const lost = 100 - choice.xpRetainedPercent;
+    const goldText = choice.goldDelta === null ? 'gold/hr n/a' : `${signedGold(choice.goldDelta)} gold/hr`;
+    headline.textContent = `Within ${floor}% of top XP: ${(pick.names || pick.teas).join(', ') || 'No tea'} — XP −${lost.toFixed(1)}%, ${goldText}`;
+    warn(headline, pick.unpriced || baseline.unpriced);
+
+    const detail = document.createElement('div');
+    const line = (label, c) => `${label}: ${formatKMB(c.xp)} XP/hr, ${formatKMB(c.gold)} gold/hr`;
+    detail.textContent = `${line('This setup', pick)} · ${line('Top XP', baseline)}`;
+    section.appendChild(detail);
+    return section;
 }
 
 /**
@@ -355,6 +432,48 @@ class TeaRecommendation {
             document.addEventListener('click', closeHandler);
             this.closeHandlerCleanup = () => document.removeEventListener('click', closeHandler);
         }, 100);
+    }
+
+    /**
+     * Whether the "almost as fast" choice applies: the setting is on and the popup is about one action.
+     * While it does, the constraint panel and every constrained rerun use the gold tea set (the
+     * superset the floor search enumerates), so a tea it recommends can be pinned and unpinned.
+     * @param {string|null} drilldownAction
+     * @param {Object|null} alchemyContext
+     * @returns {boolean}
+     */
+    _xpFloorActive(drilldownAction, alchemyContext) {
+        return Boolean((drilldownAction || alchemyContext) && config.getSetting('teaRecommendation_xpFloor', true));
+    }
+
+    /**
+     * Append the "almost as fast" section when the setting is on and the popup is about one action.
+     * @param {HTMLElement} popup
+     * @param {string} skillName
+     * @param {string|null} locationTab
+     * @param {string|null} drilldownAction
+     * @param {Object|null} alchemyContext
+     * @returns {HTMLElement|null} The appended section, or null when nothing was drawn
+     */
+    _appendXpFloorSection(popup, skillName, locationTab, drilldownAction, alchemyContext) {
+        if (!this._xpFloorActive(drilldownAction, alchemyContext)) return null;
+        try {
+            const section = buildXpFloorSection(
+                findXpFloorChoice(skillName, {
+                    locationName: locationTab,
+                    actionName: drilldownAction || null,
+                    alchemyContext,
+                    constraints: { pinned: this.pinnedTeas, banned: this.bannedTeas },
+                    floorPercent: config.getSetting('teaRecommendation_xpFloorPercent', 95),
+                    playerLevel: null,
+                })
+            );
+            if (section) popup.appendChild(section);
+            return section;
+        } catch (error) {
+            console.error('[Tea Recommendation] XP floor choice failed:', error);
+            return null;
+        }
     }
 
     /**
@@ -805,6 +924,9 @@ class TeaRecommendation {
             popup.appendChild(altSection);
         }
 
+        // "Almost as fast" choice: one action only (a drilled-down action or an Alchemy item)
+        this._appendXpFloorSection(popup, skillName, locationTab, drilldownAction, alchemyContext);
+
         // Tea Constraints panel
         const constraintSection = document.createElement('div');
         constraintSection.style.cssText = `
@@ -818,7 +940,12 @@ class TeaRecommendation {
         constraintHeader.textContent = 'Tea Constraints:';
         constraintSection.appendChild(constraintHeader);
 
-        const relevantTeas = getRelevantTeas(skillName.toLowerCase(), goal);
+        // The floor search enumerates the gold tea set (a superset of the XP set), so when its
+        // section is shown the pin/ban controls must cover every tea it may recommend
+        const relevantTeas = getRelevantTeas(
+            skillName.toLowerCase(),
+            this._xpFloorActive(drilldownAction, alchemyContext) ? 'gold' : goal
+        );
         const allConstraintTeas = [...relevantTeas.skillTeas, ...relevantTeas.generalTeas];
         const gameData = dataManager.getInitClientData();
 
@@ -1044,6 +1171,9 @@ class TeaRecommendation {
 
         popup.appendChild(columns);
 
+        // An Alchemy item is one action, so the "almost as fast" choice applies here too
+        this._appendXpFloorSection(popup, skillName, locationTab, null, alchemyContext);
+
         // Close button
         const closeBtn = document.createElement('button');
         closeBtn.style.cssText = `
@@ -1151,7 +1281,11 @@ class TeaRecommendation {
             locationTab,
             drilldownAction || null,
             constraints,
-            alchemyContext
+            alchemyContext,
+            null,
+            null,
+            null,
+            this._xpFloorActive(drilldownAction, alchemyContext) ? { teaSetGoal: 'gold' } : null
         );
         if (result.error) return;
         this.buildPopupContent(popup, result, goal, skillName, locationTab, drilldownAction, alchemyContext);

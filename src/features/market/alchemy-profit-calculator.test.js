@@ -9,6 +9,9 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+    /** Cached container EVs and how many contained drops each could not price */
+    evCache: {},
+    evMissing: {},
     alchemyTeaBonus: 0,
     /** Game data returned by dataManager.getInitClientData() */
     initClientData: null,
@@ -90,7 +93,13 @@ vi.mock('../../utils/action-context.js', () => ({
 }));
 vi.mock('../../utils/house-efficiency.js', () => ({ calculateHouseRareFind: () => 0 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null, on: () => () => {} } }));
-vi.mock('./expected-value-calculator.js', () => ({ default: { getCachedValue: () => null, isInitialized: false } }));
+vi.mock('./expected-value-calculator.js', () => ({
+    default: {
+        getCachedValue: (hrid) => mocks.evCache[hrid] ?? null,
+        containerMissingCounts: { get: (hrid) => mocks.evMissing[hrid] },
+        isInitialized: false,
+    },
+}));
 
 const { default: alchemyProfitCalculator, parseTeaSpeedDetails } = await import('./alchemy-profit-calculator.js');
 
@@ -1494,5 +1503,41 @@ describe('essence and crate bonus drops follow the pricing mode', () => {
         mocks.itemPrices['/items/alchemy_essence'] = 150; // stand-in for "hybrid" (mid ask/bid)
         const hybrid = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
         expect(hybrid.dropRevenues.find((d) => d.itemHrid === '/items/alchemy_essence').price).toBe(150);
+    });
+});
+
+describe('a partially priced bonus crate is not reported as a firm figure', () => {
+    const detail = (isOpenable) => ({
+        '/items/cheese': {
+            name: 'Cheese',
+            itemLevel: 10,
+            sellPrice: 100,
+            alchemyDetail: { isCoinifiable: true, bulkMultiplier: 1 },
+        },
+        '/items/alchemy_essence': { name: 'Alchemy Essence', isOpenable: false },
+        '/items/small_artisans_crate': { name: "Small Artisan's Crate", isOpenable },
+    });
+
+    beforeEach(() => {
+        mocks.initClientData = {
+            itemDetailMap: detail(true),
+            actionDetailMap: { '/actions/alchemy/coinify': { type: '/action_types/alchemy', baseTimeCost: 20e9 } },
+        };
+        mocks.actionStats = { actionTime: 20, totalEfficiency: 0, efficiencyBreakdown: {} };
+        mocks.itemPrices = { '/items/alchemy_essence': 10 };
+        mocks.evCache = { '/items/small_artisans_crate': 5000 };
+        mocks.evMissing = {};
+    });
+
+    test('a positive EV with an unpriced contained drop lists the crate as unpriced', () => {
+        mocks.evMissing = { '/items/small_artisans_crate': 1 };
+        const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
+        expect(result.unpricedOutputs).toContain('/items/small_artisans_crate');
+    });
+
+    test('a fully priced crate EV is not flagged', () => {
+        mocks.evMissing = { '/items/small_artisans_crate': 0 };
+        const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
+        expect(result.unpricedOutputs).not.toContain('/items/small_artisans_crate');
     });
 });

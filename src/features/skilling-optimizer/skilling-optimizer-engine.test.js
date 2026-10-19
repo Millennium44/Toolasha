@@ -35,6 +35,9 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('../../utils/tea-optimizer.js', () => ({
+    findXpFloorChoice: () => ({ status: 'none' }),
+    pickXpFloorChoice: () => ({ status: 'none' }),
+    normalizeXpFloorPercent: (value) => value,
     scoreEquipmentSetup: (skillName, goal, equipment, playerLevel, selectedActionHrids, teaHrids, alchemyContext) => {
         scoring.calls.push({ skillName, goal, equipment, playerLevel, selectedActionHrids, teaHrids, alchemyContext });
         if (!equipment || equipment.size === 0) return scoring.baseline[goal];

@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tea recommendation: an almost-as-fast choice
+
+- The tea recommendation for an action now also shows the best gold/hr setup that stays within 95% of the top XP/hr (the percentage is a setting), with the trade spelled out, e.g. "XP −4.0%, +30.0K gold/hr"; unpriced setups are flagged, never valued at zero.
+- Tea gold figures are flagged as a guess when an essence or rare drop has no market price, instead of being shown as exact.
+- Alchemy tea XP/hr counts a speed tea's faster actions, as the gold figure already did.
+
 ### Combat Sim upgrade budget: pin and exclude picks
 
 - In the upgrade budget plan you can pin picks you will buy anyway and exclude ones you won't; the rest of the budget is filled around them, a plan that can't honor your pins says why, and "Confirm together" simulates exactly the upgrades picked (a suggested ability order is not part of it).
