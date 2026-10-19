@@ -228,12 +228,12 @@ function onNewBattle(data) {
                 if (lastCount !== null && count < lastCount) pending = [];
                 // The first reading is a baseline that already includes any death the ticks froze before
                 // it: those recaps are confirmed by it, not left owed to a later rise
-                if (lastCount === null) {
-                    for (const recap of pending) {
+                if (lastCount === null && count > 0 && pending.length) {
+                    // At most as many as the count says, the newest first; the rest stay owed to a later rise
+                    for (const recap of pending.splice(-Math.min(count, pending.length))) {
                         recap.confirmed = true;
                         recap.source = 'both';
                     }
-                    pending = [];
                 }
                 if (lastCount !== null && count > lastCount) rise = count - lastCount;
                 lastCount = count;

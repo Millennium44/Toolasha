@@ -346,6 +346,16 @@ describe('combat death alerts', () => {
         expect(game.notified).toHaveLength(2);
     });
 
+    test('a baseline of 0 does not consume a tick death: a later rise of 1 is that same death, no second alert', () => {
+        game.actions = SOLO;
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        tick(1600);
+        send(battle(['me', 0]));
+        send(battle(['me', 1]));
+        expect(game.notified).toHaveLength(1);
+    });
+
     test('a counter that falls back is a new session and owes nothing to earlier tick deaths', () => {
         send(battle(['me', 3]));
         tick(0);

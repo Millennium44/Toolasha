@@ -400,6 +400,20 @@ describe('death recap', () => {
         expect(recap.recapHistory()[0]).toMatchObject({ source: 'count', deaths: 1 });
     });
 
+    test('a baseline of 0 leaves a tick recap pending; a later rise of 1 confirms it, no new recap', () => {
+        game.actions = SOLO;
+        run([1500]);
+        run([0]);
+        run([1600]);
+        send('new_battle', battle([['me', 0]], 2));
+        expect(recap.recapHistory()).toHaveLength(1);
+        expect(recap.recapHistory()[0]).toMatchObject({ source: 'hp', confirmed: false });
+
+        send('new_battle', battle([['me', 1]], 3));
+        expect(recap.recapHistory()).toHaveLength(1);
+        expect(recap.recapHistory()[0]).toMatchObject({ source: 'both', confirmed: true });
+    });
+
     test('repeated casts of one ability are each recorded from the action counter', () => {
         send('new_battle', battle([['me', 0]]));
         const swing = (hp, atk) => {
