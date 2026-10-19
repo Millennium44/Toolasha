@@ -815,16 +815,21 @@ class CombatSimulator {
                     // buff this branch deliberately keeps. Zeroing it here would
                     // desynchronize the two until the next recompute quietly put
                     // it back.
-                    const wasDown = this.players[i].combatDetails.currentHitpoints <= 0;
-                    this.players[i].combatDetails.currentHitpoints = this.players[i].combatDetails.maxHitpoints;
-                    // A downed player stood back up by the clear is a new life
-                    this._beginLife(this.players[i]);
-                    this.players[i].combatDetails.currentManapoints = this.players[i].combatDetails.maxManapoints;
+                    const player = this.players[i];
+                    const wasDown = player.combatDetails.currentHitpoints <= 0;
+                    // Buffs first, pools second — the order a normal respawn uses. Pruning recomputes
+                    // the maxima, so filling before it left a revived player holding the pools of a
+                    // stamina or intelligence buff that had already expired (or short of a full heal
+                    // after an expired max-pool debuff).
                     if (wasDown) {
-                        this.players[i].clearCCStatuses();
-                        this.players[i].removeExpiredBuffs(this.simulationTime);
-                        this._rescheduleBuffExpirations(this.players[i]);
+                        player.clearCCStatuses();
+                        player.removeExpiredBuffs(this.simulationTime);
+                        this._rescheduleBuffExpirations(player);
                     }
+                    player.combatDetails.currentHitpoints = player.combatDetails.maxHitpoints;
+                    // A downed player stood back up by the clear is a new life
+                    this._beginLife(player);
+                    player.combatDetails.currentManapoints = player.combatDetails.maxManapoints;
                 }
             }
         }
