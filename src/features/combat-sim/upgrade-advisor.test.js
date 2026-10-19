@@ -8246,3 +8246,133 @@ describe('a resale credits what the sale pays after the market tax (#539)', () =
         expect(calculateUpgradeCost(enhance, gameData())).toBe(160_000);
     });
 });
+
+describe('a budget fits new coffees into distinct free drink slots (#542)', () => {
+    const families = ['speed', 'lucky', 'wisdom', 'power'];
+
+    function drinkGameData() {
+        const coffee = (family, itemLevel, prefix = '') => [
+            `/items/${prefix}${family}_coffee`,
+            {
+                name: `${prefix ? 'Super ' : ''}${family} coffee`,
+                itemLevel,
+                categoryHrid: '/item_categories/drink',
+                consumableDetail: {
+                    hitpointRestore: 0,
+                    manapointRestore: 0,
+                    cooldownDuration: 300,
+                    buffs: [{ uniqueHrid: `/buff_uniques/${family}_coffee`, typeHrid: '/buff_types/damage' }],
+                    defaultCombatTriggers: [{ dependencyHrid: '/combat_trigger_dependencies/self' }],
+                },
+            },
+        ];
+        return {
+            itemDetailMap: Object.fromEntries([
+                ...families.map((family) => coffee(family, 20)),
+                coffee('power', 50, 'super_'),
+            ]),
+        };
+    }
+
+    const fight = () => ({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 10 });
+
+    /** Rows shaped like analysis results: every coffee helps, a little more each, and costs nothing */
+    const rowsFor = (candidates) =>
+        candidates.map((candidate, index) => ({
+            candidate,
+            cost: 0,
+            attemptsDelta: -(10 + index),
+            significant: true,
+        }));
+
+    function context(gameData, drinks) {
+        return {
+            gameData,
+            playerDTOs: [{ hrid: '/players/me', equipment: {}, drinks }],
+            playerIndex: 0,
+            playerHrid: '/players/me',
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: {},
+            seed: 1,
+            baselineResult: fight(),
+            baseline: { dps: 100, xpPerHour: 0, profitPerHour: 0, deathsPerHour: 0, encountersPerHour: 10 },
+        };
+    }
+
+    beforeEach(() => {
+        runSimulation.mockReset();
+        runSimulation.mockResolvedValue(fight());
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0, revenuePerHour: 0, costPerHour: 0 });
+    });
+
+    const simulatedDrinks = () => runSimulation.mock.calls.at(-1)[0].playerDTOs[0].drinks.map((d) => d?.hrid ?? null);
+
+    test('an empty bar takes three of four new coffees, each in its own slot, and the run wears all three', async () => {
+        const gameData = drinkGameData();
+        const drinks = [null, null, null];
+        const candidates = generateDrinkCandidates({ drinks }, gameData).filter((c) => !c.currentHrid);
+        expect(candidates).toHaveLength(4);
+
+        const plan = planWithinBudget(rowsFor(candidates), 100);
+        expect(plan.picks).toHaveLength(3);
+        expect(plan.skipped.map((s) => s.reason)).toContain('no drink slot is left free for it');
+
+        const outcome = await confirmUpgradeBudgetPlan(plan.picks, context(gameData, drinks));
+        expect(outcome.ok).toBe(true);
+        const worn = simulatedDrinks();
+        for (const pick of plan.picks)
+            expect(worn.filter((hrid) => hrid === pick.candidate.upgradeHrid)).toHaveLength(1);
+    });
+
+    test('two occupied slots leave room for exactly one, and the worn drinks stay', async () => {
+        const gameData = drinkGameData();
+        const drinks = [{ hrid: '/items/existing_0' }, { hrid: '/items/existing_1' }, null];
+        const candidates = generateDrinkCandidates({ drinks }, gameData);
+
+        const plan = planWithinBudget(rowsFor(candidates), 100);
+        expect(plan.picks).toHaveLength(1);
+
+        const outcome = await confirmUpgradeBudgetPlan(plan.picks, context(gameData, drinks));
+        expect(outcome.ok).toBe(true);
+        expect(simulatedDrinks()).toEqual([
+            '/items/existing_0',
+            '/items/existing_1',
+            plan.picks[0].candidate.upgradeHrid,
+        ]);
+    });
+
+    test('a tier up of a worn family combines with additions without replacing anything else', async () => {
+        const gameData = drinkGameData();
+        const drinks = [null, { hrid: '/items/power_coffee' }, null];
+        const candidates = generateDrinkCandidates({ drinks }, gameData);
+        const tierUp = candidates.find((c) => c.currentHrid === '/items/power_coffee');
+        expect(tierUp.upgradeHrid).toBe('/items/super_power_coffee');
+
+        const plan = planWithinBudget(rowsFor(candidates), 100);
+        // The tier up plus two additions; a power addition is not offered beside the worn power family
+        expect(plan.picks).toHaveLength(3);
+        expect(plan.picks.map((p) => p.candidate)).toContain(tierUp);
+
+        const outcome = await confirmUpgradeBudgetPlan(plan.picks, context(gameData, drinks));
+        expect(outcome.ok).toBe(true);
+        const worn = simulatedDrinks();
+        expect(worn[1]).toBe('/items/super_power_coffee');
+        for (const pick of plan.picks) expect(worn).toContain(pick.candidate.upgradeHrid);
+    });
+
+    test('a basket naming more new coffees than the bar holds is refused, not simulated short', async () => {
+        const gameData = drinkGameData();
+        const drinks = [{ hrid: '/items/existing_0' }, { hrid: '/items/existing_1' }, null];
+        const picks = generateDrinkCandidates({ drinks }, gameData).map((candidate) => ({ candidate, cost: 0 }));
+        expect(picks.length).toBeGreaterThan(1);
+
+        const outcome = await confirmUpgradeBudgetPlan(picks, context(gameData, drinks));
+
+        expect(outcome.ok).toBe(false);
+        expect(outcome.reason).toMatch(/cannot fit on the drink bar/);
+        expect(runSimulation).not.toHaveBeenCalled();
+    });
+});

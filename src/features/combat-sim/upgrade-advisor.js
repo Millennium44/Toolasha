@@ -2089,10 +2089,12 @@ export function generateDrinkCandidates(playerDTO, gameData) {
 
     const equipped = new Map(); // family → { index, entry }
     let freeSlot = -1;
+    let freeSlots = 0;
     for (let index = 0; index < DRINK_SLOTS; index++) {
         const worn = drinks[index];
         if (!worn?.hrid) {
             if (freeSlot === -1) freeSlot = index;
+            freeSlots++;
             continue;
         }
         const family = familyOf(worn.hrid);
@@ -2139,6 +2141,10 @@ export function generateDrinkCandidates(playerDTO, gameData) {
             upgradeLevel: 0,
             triggers: best.triggers,
             buffFamily: family,
+            // An addition takes whichever slot is still free where it is applied (see `applyDrinkToDTO`), and
+            // no more additions fit together than the bar has free slots (see `planWithinBudget`)
+            fillsFreeDrinkSlot: true,
+            freeDrinkSlots: freeSlots,
             description: `Add ${best.name}`,
         });
     }
@@ -2147,14 +2153,39 @@ export function generateDrinkCandidates(playerDTO, gameData) {
 }
 
 /**
+ * Whether a drink candidate adds a coffee to a free slot rather than replacing a worn one with a better tier.
+ * Read off `currentHrid` too, so a candidate remembered from before the flag existed is still recognized.
+ * @param {Object} candidate - Upgrade candidate
+ * @returns {boolean}
+ */
+function isDrinkAddition(candidate) {
+    return candidate?.type === 'drink' && (candidate.fillsFreeDrinkSlot === true || !candidate.currentHrid);
+}
+
+/**
  * Put a drink candidate into its slot, in place.
+ *
+ * A tier up goes where the drink it replaces sits. An addition goes into a slot that is free on *this* DTO:
+ * the index it was generated with is only the first free slot of the bar it came from, and a basket of two
+ * additions both aimed at it would have the second overwrite the first. With no free slot left, the
+ * generated index is used as before (a single-candidate run always has it free).
  * @param {Object} dto - Player DTO (mutated)
  * @param {Object} candidate - Candidate of type 'drink'
  */
 function applyDrinkToDTO(dto, candidate) {
     if (!Array.isArray(dto.drinks)) dto.drinks = [];
     while (dto.drinks.length < DRINK_SLOTS) dto.drinks.push(null);
-    dto.drinks[candidate.drinkIndex] = { hrid: candidate.upgradeHrid, triggers: candidate.triggers || null };
+    let index = candidate.drinkIndex;
+    if (isDrinkAddition(candidate)) {
+        if (dto.drinks[index]?.hrid) {
+            const free = dto.drinks.slice(0, DRINK_SLOTS).findIndex((drink) => !drink?.hrid);
+            if (free >= 0) index = free;
+        }
+    } else if (candidate.currentHrid) {
+        const worn = dto.drinks.findIndex((drink) => drink?.hrid === candidate.currentHrid);
+        if (worn >= 0) index = worn;
+    }
+    dto.drinks[index] = { hrid: candidate.upgradeHrid, triggers: candidate.triggers || null };
 }
 
 /** Community buffs the combat sim reads, with what one more level is worth */
@@ -6480,6 +6511,15 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
     const costWithReplacements = (entry, displaced) =>
         entry.result.cost - displaced.reduce((sum, i) => sum + picks[i].cost, 0);
 
+    // Coffees of different families do not conflict with each other, but they share the free drink slots: no
+    // more additions can be picked together than the bar had free (a single empty slot holds one)
+    const noDrinkSlotFor = (entry) => {
+        const candidate = entry.result.candidate;
+        if (!isDrinkAddition(candidate)) return false;
+        const room = Number.isFinite(candidate.freeDrinkSlots) ? candidate.freeDrinkSlots : 1;
+        return picks.filter((pick) => isDrinkAddition(pick.candidate)).length >= room;
+    };
+
     const remaining = [...eligible];
     while (remaining.length) {
         let best = null;
@@ -6488,6 +6528,7 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             // the other swaps into the slot it empties and the other offers of
             // the book it buys
             if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) continue;
+            if (noDrinkSlotFor(entry)) continue;
             const cost = costWithReplacements(entry, displacedBy(entry));
             if (spent + cost > budget) continue;
             const marginal = marginalOf(entry);
@@ -6568,6 +6609,8 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             // Otherwise this reads as "worthless", when it may well be the
             // second-best swap into a slot the plan has already filled
             reason = 'a pick already uses what this needs';
+        } else if (noDrinkSlotFor(entry)) {
+            reason = 'no drink slot is left free for it';
         } else if (spent + costWithReplacements(entry, displacedBy(entry)) > budget) {
             reason = 'over budget';
         } else {
@@ -6678,6 +6721,21 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
         for (const candidate of candidates) combinedBuffs = applyCommunityBuffCandidate(combinedBuffs, candidate);
     } catch (error) {
         return { ok: false, reason: `Could not apply the basket together: ${error.message}` };
+    }
+
+    // Every coffee the basket names has to be on the bar it simulates, once. More additions than free slots
+    // would have the last overwrite the others, and the run would report a basket it never wore
+    const worn = (dto.drinks || []).map((drink) => drink?.hrid).filter(Boolean);
+    const missing = candidates.filter(
+        (candidate) => candidate.type === 'drink' && worn.filter((hrid) => hrid === candidate.upgradeHrid).length !== 1
+    );
+    if (missing.length) {
+        return {
+            ok: false,
+            reason:
+                `${missing.map((candidate) => `"${candidate.description}"`).join(', ')} cannot fit on the drink bar ` +
+                'with the rest of the basket, so it cannot be simulated as one loadout.',
+        };
     }
 
     const combinedDTOs = playerDTOs.map((player, i) => (i === playerIndex ? dto : player));
