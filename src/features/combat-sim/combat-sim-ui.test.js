@@ -382,6 +382,8 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: () => mocks.gameData,
     buildAllPlayerDTOs: async () =>
         mocks.buildPlayerDTOs

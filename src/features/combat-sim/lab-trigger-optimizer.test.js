@@ -18,7 +18,10 @@ vi.mock('./combat-sim-runner.js', () => ({
     }),
     getMaxWorkers: () => 4,
 }));
-vi.mock('./combat-sim-adapter.js', () => ({ calculateSimRevenue: () => ({ netPerHour: 0 }) }));
+vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+    calculateSimRevenue: () => ({ netPerHour: 0 }),
+}));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
 // A fixed run seed, so a stub whose luck comes from the seed answers the same way every run
 vi.mock('./engine/rng.js', async (importOriginal) => ({ ...(await importOriginal()), randomSeed: () => 12345 }));

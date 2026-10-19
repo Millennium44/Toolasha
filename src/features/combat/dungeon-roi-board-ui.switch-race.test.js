@@ -84,6 +84,8 @@ vi.mock('../market/expected-value-calculator.js', () => ({
 }));
 
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     calculateExpectedDrops: () =>
         new Map([
             ['/items/chimerical_chest', 1],

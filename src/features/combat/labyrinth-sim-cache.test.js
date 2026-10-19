@@ -51,6 +51,8 @@ const adapter = vi.hoisted(() => ({ gameData: {}, playerDTO: { hrid: 'player1' }
 const simRuns = vi.hoisted(() => ({ list: [], result: {}, implementation: null }));
 
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: () => adapter.gameData,
     buildPlayerDTO: () => adapter.playerDTO,
     getLabyrinthMonsters: () => [],

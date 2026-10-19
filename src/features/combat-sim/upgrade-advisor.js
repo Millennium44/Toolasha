@@ -10,6 +10,7 @@ import dataManager from '../../core/data-manager.js';
 import {
     buildGameDataPayload,
     calculateSimRevenue,
+    seedSimPriceCache,
     getGuildBuffDetailMap,
     guildBuffMaxLevel,
     applyGuildBuffLevel,
@@ -4531,6 +4532,17 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // primary skill's levels along the way), + the food search
     const total = candidatesWithCost.length + combatLevelCount * 2 + foodSimCount + 1;
     let current = 0;
+
+    // Every price the runs below can read, read now: an item first seen in a candidate (an added coffee, a drop
+    // the baseline never rolled) would otherwise be priced when that candidate finishes, after any change
+    seedSimPriceCache(priceCache, gameData, {
+        zoneHrid,
+        consumableHrids: [
+            ...(playerDTO.food || []).map((item) => item?.hrid),
+            ...(playerDTO.drinks || []).map((item) => item?.hrid),
+            ...candidatesWithCost.filter((c) => c.type === 'drink').map((c) => c.upgradeHrid),
+        ],
+    });
 
     // Run baseline sim
     onProgress?.({ current: 0, total, description: 'Running baseline...' });

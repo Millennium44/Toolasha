@@ -106,6 +106,8 @@ vi.mock('../market/expected-value-calculator.js', () => ({
 }));
 
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     // The sim's own expected-drop routine, as the real one reads a one-completion result
     calculateExpectedDrops: (simResult, gameData, playerHrid) => {
         if (state.missingRewardTable === simResult.zoneName) return null;

@@ -10,6 +10,8 @@ vi.mock('./combat-sim-worker.js?worker', () => ({ default: '// sim' }));
 // Revenue keyed off the requested player, read from a test-only `__profit` map on
 // the sim result, so a test can prove the early-exit decision reads the right one.
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     calculateSimRevenue: (simResult, _gameData, playerHrid) => ({ netPerHour: simResult?.__profit?.[playerHrid] ?? 0 }),
 }));
 

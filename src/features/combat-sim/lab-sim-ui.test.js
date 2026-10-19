@@ -197,6 +197,8 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: () => ({
         itemDetailMap: game.itemDetailMap,
         actionDetailMap: { '/actions/combat/fly': {} },

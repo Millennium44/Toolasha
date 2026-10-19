@@ -21,6 +21,8 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildAllPlayerDTOs: h.buildAllPlayerDTOs,
     buildGameDataPayload: () => h.gameData,
     getCommunityBuffs: () => ({}),

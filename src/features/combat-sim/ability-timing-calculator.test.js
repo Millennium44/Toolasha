@@ -29,6 +29,8 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: () => {
         if (mocks.gameDataError) throw mocks.gameDataError;
         return mocks.gameData;
