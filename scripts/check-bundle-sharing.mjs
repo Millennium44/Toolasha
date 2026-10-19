@@ -118,6 +118,12 @@ const ALLOWLIST = new Map([
         'stateless token arithmetic; no module state to share',
     ],
     [
+        'src/utils/achievement-combat-buffs.js',
+        // Constants and pure functions, no module state. The combat sim (sim bundle) derives achievement
+        // combat buffs with it and the achievement tier finisher (market bundle) labels tier rewards.
+        'stateless achievement tier buff catalog; no module state to share',
+    ],
+    [
         'src/utils/xp-series-sync.js',
         // One pure fold over two XP series maps, no imports and no module state.
         // The combat bundle (guild XP tracker) and the ui bundle (skill XP

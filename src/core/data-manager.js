@@ -3006,6 +3006,18 @@ class DataManager {
         return this.characterCollections || null;
     }
 
+    /**
+     * The character's own achievement list: one row per achievement the server
+     * has a record for, `{achievementHrid, isCompleted}`, kept current by
+     * `achievements_updated`. Not every row is known to carry progress; callers
+     * must not read a missing field as zero.
+     * @returns {Array<{achievementHrid: string, isCompleted: boolean}>|null} Null when no character list is loaded
+     */
+    getCharacterAchievements() {
+        const list = this.characterData?.characterAchievements;
+        return Array.isArray(list) ? list : null;
+    }
+
     getInventory() {
         return this.characterItems ? [...this.characterItems] : null;
     }

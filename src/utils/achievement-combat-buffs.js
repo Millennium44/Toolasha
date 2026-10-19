@@ -89,6 +89,20 @@ export const ACHIEVEMENT_TIER_BUFFS = [
 const COMBAT_ACHIEVEMENT_BUFF_TYPES = ['/buff_types/damage', '/buff_types/wisdom', '/buff_types/rare_find'];
 
 /**
+ * The reward a tier grants, for display. The three combat tiers' buffs are
+ * observed values; every other tier's buff comes from the same flat-percentage
+ * pattern and is NOT verified (see the note on `ACHIEVEMENT_TIER_BUFFS`), so it
+ * is returned with `inferred: true` and must be shown as such, never as fact.
+ * @param {string} tierHrid
+ * @returns {{label: string, inferred: boolean}|null} Null for a tier with no catalog entry
+ */
+export function achievementTierReward(tierHrid) {
+    const def = ACHIEVEMENT_TIER_BUFFS.find((entry) => entry.tierHrid === tierHrid);
+    if (!def) return null;
+    return { label: def.label, inferred: !COMBAT_ACHIEVEMENT_BUFF_TYPES.includes(def.typeHrid) };
+}
+
+/**
  * The fixed catalog of achievement-granted combat buffs offered as manual
  * toggles for a player whose achievements were not read live or could not be
  * derived. The combat subset of `ACHIEVEMENT_TIER_BUFFS`, in the same
