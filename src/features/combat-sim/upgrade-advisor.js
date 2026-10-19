@@ -3627,7 +3627,22 @@ function afterSaleTax(gross) {
  * @returns {number} After-tax sale value, 0 when unpriced
  */
 function sellValue(hrid, level) {
-    return afterSaleTax(resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }).price);
+    return saleProceeds(resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }));
+}
+
+/**
+ * What a resolved sell-side price pays when the piece is sold.
+ *
+ * A market quote is a sale and pays the tax. The production-cost fallback (`production: true`, an item with no
+ * order book) is what making the piece would cost, not a sale anybody would pay, so taxing it would invent a
+ * fee on a figure that is not a sale price; it is credited as it is. A custom price is taxed like a quote: a
+ * policy question (is a user's price gross or what they expect to net?) left open on purpose.
+ * @param {{price: number|null, production?: boolean}} resolved - From `resolveItemPrice`
+ * @returns {number} Proceeds, 0 when unpriced
+ */
+function saleProceeds(resolved) {
+    if (resolved?.production) return resolved.price > 0 ? resolved.price : 0;
+    return afterSaleTax(resolved?.price);
 }
 
 /**
@@ -5708,13 +5723,14 @@ export function explainLabCandidateCost(candidate, gameData, isSelf = true) {
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
     detail.kept = candidate.keptItems.map((item) => {
-        const { price } = resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 });
+        const resolved = resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 });
+        const { price } = resolved;
         return {
             hrid: item.hrid,
             name: nameOf(item.hrid),
             enhancementLevel: item.enhancementLevel || 0,
             // What keeping it gives up: the sale after tax, the figure a sold piece would have been credited
-            price: afterSaleTax(price),
+            price: saleProceeds(resolved),
             // False where there is no price at all (untradable, nothing listed), which
             // a note must tell apart from a price that is truly 0
             priced: Number.isFinite(price),

@@ -8447,3 +8447,36 @@ describe('a coffee applies only to a lab loadout whose drink bar can take it', (
         ).toBe(false);
     });
 });
+
+describe('a production-cost fallback is not a sale, so it is not taxed', () => {
+    test('a swap crediting an unlisted piece at its craft cost credits that cost whole', () => {
+        saleTax.ironCow = false;
+        resolveItemPrice.mockImplementation((hrid, { side }) =>
+            side === 'sell'
+                ? { price: 1_000_000, estimated: true, production: true }
+                : { price: hrid === '/items/verdant_sword' ? 5_000_000 : null }
+        );
+        getItemPrices.mockReturnValue(null);
+        const swap = {
+            type: 'tier',
+            slot: MAIN_HAND,
+            currentHrid: '/items/cheese_sword',
+            currentLevel: 0,
+            upgradeHrid: '/items/verdant_sword',
+            upgradeLevel: 0,
+        };
+        const gameData = {
+            itemDetailMap: {
+                '/items/cheese_sword': { name: 'Cheese Sword', isTradable: true, equipmentDetail: { type: MAIN_HAND } },
+                '/items/verdant_sword': {
+                    name: 'Verdant Sword',
+                    isTradable: true,
+                    equipmentDetail: { type: MAIN_HAND },
+                },
+            },
+        };
+
+        expect(calculateUpgradeCost(swap, gameData)).toBe(4_000_000);
+        expect(explainUpgradeCost(swap, gameData).credit).toBe(1_000_000);
+    });
+});
