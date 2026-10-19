@@ -1204,6 +1204,10 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         // Unknown for anyone but the current character: no Moo Pass wisdom
         mooPass: false,
     };
+    // The game mode the player's shared profile reports ('standard', 'ironcow', 'legacy_ironcow'), when it
+    // carries one: an Iron Cow player sells nothing on the market, so what their resale is worth depends on it
+    const gameMode = profile.profile?.sharableCharacter?.gameMode;
+    if (typeof gameMode === 'string' && gameMode) dto.gameMode = gameMode;
 
     // Extract skill levels
     for (const skill of profile.profile?.characterSkills || []) {

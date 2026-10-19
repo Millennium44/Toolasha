@@ -8562,3 +8562,78 @@ describe('the analysis price snapshot covers what only a candidate uses (#560 re
         expect(seedSimPriceCache.mock.calls[0][2].zoneHrid).toBe('/actions/combat/fly');
     });
 });
+
+describe('resale is taxed as the analysed character pays it, not the live one (#561 review)', () => {
+    const swap = {
+        type: 'tier',
+        slot: MAIN_HAND,
+        currentHrid: '/items/fine_sword',
+        currentLevel: 10,
+        upgradeHrid: '/items/regal_sword_refined',
+        upgradeLevel: 10,
+        description: 'Taxed swap',
+    };
+
+    /** The analysed player, with the game mode their DTO carries (none when undefined) */
+    async function costFor({ gameMode, self = false } = {}) {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        getItemPrices.mockReturnValue({ ask: 200_000_000, bid: 150_000_000 });
+        resolveItemPrice.mockImplementation((_hrid, { side }) => ({ price: side === 'sell' ? 1_000_000 : 5_000_000 }));
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0, revenuePerHour: 0, costPerHour: 0 });
+        runSimulation.mockReset();
+        runSimulation.mockResolvedValue({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 10 });
+        plannedWorkerCount.mockReturnValue(1);
+        const player = {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 10 } },
+            abilities: [],
+            hrid: '/players/target',
+            ...(gameMode ? { gameMode } : {}),
+        };
+        const { results } = await runUpgradeAnalysis(
+            {
+                playerDTOs: [player],
+                playerIndex: 0,
+                selfHrid: self ? '/players/target' : null,
+                zoneHrid: '/actions/combat/fly',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeMode: 'equipment',
+                extraCandidates: [swap],
+            },
+            null,
+            {}
+        );
+        // The mode may generate the same swap; either way it is this trade
+        return results.find(
+            (r) =>
+                r.candidate.slot === MAIN_HAND &&
+                r.candidate.upgradeHrid === '/items/regal_sword_refined' &&
+                r.candidate.upgradeLevel === 10
+        ).cost;
+    }
+
+    afterEach(() => {
+        saleTax.ironCow = false;
+    });
+
+    test('a live Iron Cow analysing a market player charges that player the tax', async () => {
+        saleTax.ironCow = true;
+        expect(await costFor({ gameMode: 'standard' })).toBe(200_000_000 - 960_000);
+        // A profile that does not say which mode it is gets the common case: taxed
+        expect(await costFor({})).toBe(200_000_000 - 960_000);
+    });
+
+    test('a live market player analysing an Iron Cow credits the resale whole', async () => {
+        saleTax.ironCow = false;
+        expect(await costFor({ gameMode: 'legacy_ironcow' })).toBe(200_000_000 - 1_000_000);
+    });
+
+    test("the live character's own analysis follows their own status", async () => {
+        saleTax.ironCow = true;
+        expect(await costFor({ self: true })).toBe(200_000_000 - 1_000_000);
+        saleTax.ironCow = false;
+        expect(await costFor({ self: true })).toBe(200_000_000 - 960_000);
+    });
+});

@@ -26,7 +26,8 @@ import { bestGearForSkill, describeSkillingUpgrade } from './skilling-gear-candi
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
-import { calculatePriceAfterTax, outputTaxRate, resolveItemPrice } from '../../utils/profit-helpers.js';
+import { outputTaxRate, resolveItemPrice } from '../../utils/profit-helpers.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { priceAtLevel, priceBase, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
@@ -2727,6 +2728,17 @@ export function addRefinedPathBootCandidates(candidates, gameData) {
  *   purchase, or null when some part of it has no known price
  */
 export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
+    return withSaleTaxOf(candidate, () => upgradeCostAtTax(candidate, gameData, isSelf));
+}
+
+/**
+ * `calculateUpgradeCost` at whatever sell tax is in force.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {number|null}
+ */
+function upgradeCostAtTax(candidate, gameData, isSelf) {
     const cost = calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf);
     const mirror = enhancementMirrorRoute(candidate, gameData, isSelf);
     const net = mirror && (cost == null || mirror.net < cost) ? mirror.net : cost;
@@ -3618,7 +3630,51 @@ export function withLoadoutClaims(candidate, claims) {
  */
 function afterSaleTax(gross) {
     if (!(gross > 0)) return 0;
-    return outputTaxRate() > 0 ? Math.floor(calculatePriceAfterTax(gross)) : gross;
+    const rate = pricingSaleTaxRate ?? outputTaxRate();
+    return rate > 0 ? Math.floor(gross * (1 - rate)) : gross;
+}
+
+/**
+ * The sell tax rate of the character a row is priced for, while that row is being priced; null prices for the
+ * live character (`outputTaxRate`). Set only around a synchronous cost read (`withSaleTaxOf`), so nothing else
+ * can observe it.
+ * @type {number|null}
+ */
+let pricingSaleTaxRate = null;
+
+/**
+ * The market sell tax the analysed character pays on a resale.
+ *
+ * The live character's own status (`outputTaxRate`, read when a row is priced) when the analysis is of them.
+ * Anyone else, a party member or an imported profile, by the game mode their DTO carries (`gameMode`, from
+ * their shared profile): an Iron Cow pays none, everyone else the market tax. A DTO that does not say is
+ * charged the market tax, the common case, rather than inheriting the live character's status, which says
+ * nothing about another player's.
+ * @param {Object} playerDTO - The analysed player's DTO
+ * @param {boolean} isSelf - Whether that player is the live character
+ * @returns {number|null} The rate, or null for the live character
+ */
+export function saleTaxRateOf(playerDTO, isSelf) {
+    if (isSelf) return null;
+    const gameMode = playerDTO?.gameMode;
+    return typeof gameMode === 'string' && gameMode.includes('ironcow') ? 0 : MARKET_TAX;
+}
+
+/**
+ * Run a synchronous cost read at the sell tax of the character the candidate is priced for
+ * (`candidate.saleTaxRate`, stamped by the analysis); the live character's when it carries none.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Function} read - The cost read
+ * @returns {*} What `read` returns
+ */
+function withSaleTaxOf(candidate, read) {
+    const outer = pricingSaleTaxRate;
+    if (Number.isFinite(candidate?.saleTaxRate)) pricingSaleTaxRate = candidate.saleTaxRate;
+    try {
+        return read();
+    } finally {
+        pricingSaleTaxRate = outer;
+    }
 }
 
 /**
@@ -4104,6 +4160,17 @@ function explainAbilityCandidateCost(candidate, gameData, isSelf = true) {
  * @returns {Object} { buys, credits, gross, credit, net, unpriced, source, enhanceSource }
  */
 export function explainUpgradeCost(candidate, gameData, isSelf = true) {
+    return withSaleTaxOf(candidate, () => explainUpgradeCostAtTax(candidate, gameData, isSelf));
+}
+
+/**
+ * `explainUpgradeCost` at whatever sell tax is in force.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {Object}
+ */
+function explainUpgradeCostAtTax(candidate, gameData, isSelf) {
     const detail = explainUpgradeCostRoutes(candidate, gameData, isSelf);
     if (detail.net == null) return detail;
     const freed = freedPiecesCredit(candidate, detail.net);
@@ -4508,7 +4575,10 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         candidates.push(candidate);
     }
 
-    const candidatesWithCost = candidates.map((c) => {
+    // Resale is taxed as the analysed character pays it, not as the live character would
+    const saleTaxRate = saleTaxRateOf(playerDTO, isSelf);
+    const candidatesWithCost = candidates.map((generated) => {
+        const c = saleTaxRate == null ? generated : { ...generated, saleTaxRate };
         // The breakdown already knows which side of the market — or which
         // estimate — each figure came from. Reading it here is what lets a row
         // say so, rather than three different kinds of number sharing a column
@@ -5730,6 +5800,17 @@ export function buildModifiedCombatBuffs(baseBuffs, candidate) {
  * @returns {Object} Breakdown from explainUpgradeCost plus kept-gear detail
  */
 export function explainLabCandidateCost(candidate, gameData, isSelf = true) {
+    return withSaleTaxOf(candidate, () => explainLabCandidateCostAtTax(candidate, gameData, isSelf));
+}
+
+/**
+ * `explainLabCandidateCost` at whatever sell tax is in force.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {Object}
+ */
+function explainLabCandidateCostAtTax(candidate, gameData, isSelf) {
     const detail = explainUpgradeCost(candidate, gameData, isSelf);
     if (!candidate.keptItems?.length) return detail;
 
