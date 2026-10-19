@@ -812,6 +812,71 @@ describe('encounter teardown', () => {
         expect(sim.simResult.deaths[player.hrid]).toBe(2);
     });
 
+    describe('a dungeon clear revives a downed player against the pools of the buffs still on them', () => {
+        /** Down the player carrying a timed buff, then clear the dungeon at `clearAt`. */
+        function reviveAfterClear(type, ratioBoost, duration, clearAt) {
+            const sim = dungeonSim();
+            const player = sim.players[0];
+            const poolKey = type === 'intelligence_level' ? 'Manapoints' : 'Hitpoints';
+            const unbuffedMax = player.combatDetails[`max${poolKey}`];
+            player.addBuff(
+                {
+                    uniqueHrid: '/buff_uniques/test_pool',
+                    typeHrid: `/buff_types/${type}`,
+                    ratioBoost,
+                    flatBoost: 0,
+                    duration,
+                },
+                sim.simulationTime
+            );
+            player.combatDetails.currentHitpoints = 0;
+            sim.eventQueue.clearEventsForUnit(player);
+            sim._finalizeDeath(player);
+            sim.simulationTime = clearAt;
+            sim.zone.dungeonsCompleted += 1;
+            sim.startNewEncounter();
+            return { player, poolKey, unbuffedMax };
+        }
+
+        test.each([
+            ['stamina_level', 0.5],
+            ['intelligence_level', 0.5],
+            ['stamina_level', -0.3],
+        ])('an expired %s buff of %s leaves exactly the unbuffed pool', (type, ratio) => {
+            const { player, poolKey, unbuffedMax } = reviveAfterClear(type, ratio, 10 * ONE_SECOND, 30 * ONE_SECOND);
+            expect(player.combatBuffs['/buff_uniques/test_pool']).toBeUndefined();
+            expect(player.combatDetails[`max${poolKey}`]).toBe(unbuffedMax);
+            expect(player.combatDetails[`current${poolKey}`]).toBe(unbuffedMax);
+            expect(player.combatDetails.currentHitpoints).toBe(player.combatDetails.maxHitpoints);
+            expect(player.combatDetails.currentManapoints).toBe(player.combatDetails.maxManapoints);
+        });
+
+        test('an unexpired buff is kept and the pool fills to its raised maximum', () => {
+            const { player, poolKey, unbuffedMax } = reviveAfterClear(
+                'stamina_level',
+                0.5,
+                100 * ONE_SECOND,
+                30 * ONE_SECOND
+            );
+            expect(player.combatBuffs['/buff_uniques/test_pool']).toBeDefined();
+            expect(player.combatDetails[`max${poolKey}`]).toBeGreaterThan(unbuffedMax);
+            expect(player.combatDetails[`current${poolKey}`]).toBe(player.combatDetails[`max${poolKey}`]);
+        });
+
+        test('with no buff at all the pools fill to the build', () => {
+            const sim = dungeonSim();
+            const player = sim.players[0];
+            const { maxHitpoints, maxManapoints } = player.combatDetails;
+            player.combatDetails.currentHitpoints = 0;
+            sim.eventQueue.clearEventsForUnit(player);
+            sim._finalizeDeath(player);
+            sim.zone.dungeonsCompleted += 1;
+            sim.startNewEncounter();
+            expect(player.combatDetails.currentHitpoints).toBe(maxHitpoints);
+            expect(player.combatDetails.currentManapoints).toBe(maxManapoints);
+        });
+    });
+
     test('a wipe moments after a wave was cleared leaves nothing queued to respawn', () => {
         const sim = dungeonSim();
 
