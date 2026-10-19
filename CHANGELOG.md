@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Achievements: tier finisher
+
+- New panel on your own Achievements page (on by default): each tier shows what's done, what's left and the tier's reward, with point totals for the Collection and Bestiary achievements; rewards not confirmed from game data are marked "inferred".
+
 ### Queue times, net worth trends, touch dragging and worker pools: six reported bugs
 
 - Queue summaries (the live queue tile and the idle notice) measure alchemy efficiency from the item's level, like the action bar, instead of overstating it.
