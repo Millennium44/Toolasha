@@ -16,6 +16,7 @@ const game = vi.hoisted(() => ({
     characterId: 'me',
     ws: {},
     dm: {},
+    clientData: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -30,7 +31,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getPartyMembers: () => ({ members: game.party }),
         getCurrentActions: () => game.actions,
         getCurrentCharacterName: () => game.characterId,
-        getInitClientData: () => ({}),
+        getInitClientData: () => game.clientData,
         on: (e, h) => {
             game.dm[e] = h;
         },
@@ -671,6 +672,42 @@ describe('death recap', () => {
             run([700, 0]);
             expect(recap.recapHistory()).toHaveLength(1);
             expect(recap.recapHistory()[0].samples.map((s) => s.hp)).toEqual([100, 0]);
+        });
+
+        test("the cached new_battle names the monsters, so hits are not 'Unknown Enemy'", () => {
+            game.actions = SOLO;
+            game.battleData = battle([['me', 0]]);
+            run([1000]);
+            run([400]);
+            run([0]);
+            const [r] = recap.recapHistory();
+            expect(r.sources[0].name).toBe('Golem');
+        });
+
+        test("a live hrid-only monster is named with the game's own name", () => {
+            game.actions = SOLO;
+            game.clientData = {
+                combatMonsterDetailMap: { '/monsters/granite_golem': { name: 'Granite Golem' } },
+            };
+            try {
+                game.battleData = { ...battle([['me', 0]]), monsters: [{ hrid: '/monsters/granite_golem' }] };
+                run([1000]);
+                run([400]);
+                run([0]);
+                expect(recap.recapHistory()[0].sources[0].name).toBe('Granite Golem');
+            } finally {
+                game.clientData = {};
+            }
+        });
+
+        test('a solo fight with no cached battle still records, with the source unnamed', () => {
+            game.actions = SOLO;
+            run([1000]);
+            run([400]);
+            run([0]);
+            const [r] = recap.recapHistory();
+            expect(recap.recapHistory()).toHaveLength(1);
+            expect(r.sources[0].name).not.toBe('Golem');
         });
 
         test('a new_battle that does not name us is not a gap to guess across', () => {

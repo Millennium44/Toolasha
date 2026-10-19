@@ -196,6 +196,12 @@ describe('the panel', () => {
         expect(panelText()).toContain('1 of 4 tiers complete');
     });
 
+    test('the panel is left-aligned, not centered like the page header it sits in', () => {
+        achievementsPage();
+        finisher.initialize();
+        expect(document.querySelector(`.${PANEL_CLASS}`).style.textAlign).toBe('left');
+    });
+
     test('expanding shows the checklist, done/total, reward, and what is left', () => {
         achievementsPage();
         finisher.initialize();

@@ -157,7 +157,8 @@ class AchievementFinisher {
             this.removePanel();
             root = el(
                 'div',
-                'margin:6px 0;padding:6px 8px;border:1px solid #444;border-radius:6px;background:rgba(0,0,0,0.25);font-size:12px;color:#ddd;'
+                // The Achievements header centers its text; the checklist reads as a list
+                'margin:6px 0;padding:6px 8px;border:1px solid #444;border-radius:6px;background:rgba(0,0,0,0.25);font-size:12px;color:#ddd;text-align:left;'
             );
             root.className = PANEL_CLASS;
             host.insertBefore(root, host.firstChild);

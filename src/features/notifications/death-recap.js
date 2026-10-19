@@ -114,7 +114,20 @@ function abilityName(hrid) {
 function monsterName(monster) {
     if (monster?.name) return monster.name;
     const hrid = monster?.combatMonsterHrid || monster?.monsterHrid || monster?.hrid;
-    return hrid ? String(hrid).split('/').pop().replace(/_/g, ' ') : null;
+    if (!hrid) return null;
+    // The live payload carries only the hrid; the game's own name for it, else one made from the hrid
+    const known = dataManager.getInitClientData?.()?.combatMonsterDetailMap?.[hrid]?.name;
+    return known || String(hrid).split('/').pop().replace(/_/g, ' ');
+}
+
+/** Monster names by roster index from a `new_battle` payload */
+function namesFrom(battle) {
+    const names = {};
+    for (const [index, monster] of Object.entries(battle?.monsters || {})) {
+        const name = monsterName(monster);
+        if (name) names[index] = name;
+    }
+    return names;
 }
 
 /** Drop what is past the window or the cap */
@@ -266,11 +279,7 @@ function onNewBattle(data) {
         lastAbility = lastPrepared;
         takenState = newTakenState();
         seedTakenState(takenState, data);
-        monsterNames = {};
-        for (const [index, monster] of Object.entries(data?.monsters || {})) {
-            const name = monsterName(monster);
-            if (name) monsterNames[index] = name;
-        }
+        monsterNames = namesFrom(data);
         ownIndex = own ? own.index : null;
         seatGuessed = false;
         battleSeen = true;
@@ -309,6 +318,9 @@ function onBattleUpdated(data) {
         const now = Date.now();
         const events = attributeIncoming(data, takenState).filter((e) => e.playerIndex === ownIndex);
 
+        // A reload in an ongoing fight: its new_battle came before this module listened, and a solo respawn sends
+        // none, so the names come from the data manager's cached copy, as the seat does (seatFromTick)
+        if (!battleSeen && !Object.keys(monsterNames).length) monsterNames = namesFrom(dataManager.battleData);
         const nameOf = (i) => monsterNames[i] || null;
         const hits = [];
         let regen = 0;
