@@ -4476,7 +4476,7 @@ export const settingsGroups = {
                 label: 'Notify when you die in combat',
                 type: 'checkbox',
                 default: false,
-                help: 'Keys on the server’s own death count for your character going up between battles — your deaths only, not the party’s. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once and the total in the message tells you how bad it got. Deaths that happened before you switched this on are not announced.',
+                help: 'Fires the moment your own character dies, read off your combat tick (HP reaching 0) — not when you respawn. Your deaths only, not the party’s. If a tick was missed (a throttled background tab), the server’s own death count rising on a later battle announces it instead; a death is never announced twice. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once. Deaths that happened before you switched this on are not announced.',
             },
             notifications_skillLevelUp: {
                 id: 'notifications_skillLevelUp',

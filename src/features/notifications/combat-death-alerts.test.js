@@ -72,6 +72,19 @@ function battle(...counts) {
 
 const send = (payload) => game.wsHandlers.new_battle(payload);
 
+/** A battle_updated tick; `null` omits the seat (a partial tick). Seat 0 is us in `battle(['me', ...], ...)` */
+const tick = (...seats) => {
+    const pMap = {};
+    seats.forEach((hp, i) => {
+        if (hp === null) return;
+        pMap[i] =
+            hp <= 0
+                ? { cHP: 0, mHP: 1600, isActive: false, respawnTime: '2026-10-19T09:00:15.000Z' }
+                : { cHP: hp, mHP: 1600, isActive: true };
+    });
+    game.wsHandlers.battle_updated({ battleId: 1, pMap, mMap: {} });
+};
+
 describe('combat death alerts', () => {
     beforeEach(async () => {
         game.settings = { [MASTER_SETTING]: true };
@@ -153,6 +166,90 @@ describe('combat death alerts', () => {
 
         expect(game.notified).toHaveLength(1);
         expect(game.notified[0].message).toContain('1 death');
+    });
+
+    describe('on death, not on respawn', () => {
+        test('a solo death tick alerts at once; the dead ticks, the respawn and the later count rise do not alert again', () => {
+            send(battle(['me', 0]));
+            tick(1591);
+            tick(95);
+            expect(game.notified).toHaveLength(0);
+
+            tick(0);
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('You died in combat');
+
+            tick(0);
+            tick(null);
+            tick(0);
+            tick(1600);
+            expect(game.notified).toHaveLength(1);
+
+            // the server's counter catches up on a later battle: the same death
+            send(battle(['me', 1]));
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('a second death in the same fight alerts again once the respawn re-armed it', () => {
+            send(battle(['me', 0]));
+            tick(100);
+            tick(0);
+            tick(1600);
+            tick(50);
+            tick(0);
+            expect(game.notified).toHaveLength(2);
+            send(battle(['me', 2]));
+            expect(game.notified).toHaveLength(2);
+        });
+
+        test('a partial tick is never a death or a respawn', () => {
+            send(battle(['me', 0]));
+            tick(0);
+            tick(null);
+            tick(null);
+            expect(game.notified).toHaveLength(1);
+            tick(null);
+            tick(0);
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('a party member at 0 HP does not alert; our seat is read by position', () => {
+            send(battle(['friend', 0], ['me', 0]));
+            tick(0, 900);
+            tick(0, 800);
+            expect(game.notified).toHaveLength(0);
+            tick(500, 0);
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('a missed tick with a later count rise alerts once, from the counter', () => {
+            send(battle(['me', 0]));
+            tick(900);
+            send(battle(['me', 1]));
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('1 death');
+        });
+
+        test('one death seen on a tick plus one the tick missed announces only the missed one', () => {
+            send(battle(['me', 0]));
+            tick(0);
+            expect(game.notified).toHaveLength(1);
+            send(battle(['me', 2]));
+            expect(game.notified).toHaveLength(2);
+        });
+
+        test('nothing is wired to ticks while the master switch is off', async () => {
+            combatDeathAlerts.disable();
+            game.settings[MASTER_SETTING] = false;
+            await combatDeathAlerts.initialize();
+            expect(game.wsHandlers.battle_updated).toBeUndefined();
+        });
+
+        test('disable() drops the tick handler and the seat', () => {
+            send(battle(['me', 0]));
+            combatDeathAlerts.disable();
+            expect(game.wsHandlers.battle_updated).toBeUndefined();
+        });
     });
 
     test('a party member dying is their business', () => {
