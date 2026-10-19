@@ -47,6 +47,7 @@ class TabReorder {
         this.unregisterHandlers = [];
         this._dragLabel = null;
         this.touchTeardowns = [];
+        this.touchOwner = null;
     }
 
     async initialize() {
@@ -275,6 +276,7 @@ class TabReorder {
             }
             pointerId = null;
             active = false;
+            if (this.touchOwner === tab) this.touchOwner = null;
             tab.style.opacity = '';
             this._dragLabel = null;
             clearIndicators();
@@ -297,7 +299,9 @@ class TabReorder {
         };
 
         on('pointerdown', (event) => {
-            if (event.pointerType === 'mouse' || pointerId !== null) return;
+            // One touch gesture for the whole tab list: the dragged label is shared
+            if (event.pointerType === 'mouse' || pointerId !== null || this.touchOwner) return;
+            this.touchOwner = tab;
             pointerId = event.pointerId;
             startX = event.clientX;
             startY = event.clientY;
@@ -369,6 +373,7 @@ class TabReorder {
         this.unregisterHandlers = [];
         for (const teardown of this.touchTeardowns) teardown.run();
         this.touchTeardowns = [];
+        this.touchOwner = null;
 
         // Remove all CSS order and draggable attributes
         const tabList = findCharacterTabList();

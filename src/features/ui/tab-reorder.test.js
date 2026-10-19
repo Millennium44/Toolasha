@@ -185,6 +185,28 @@ describe('finger-driven reordering (no native drag events)', () => {
         expect(storage.setJSON).not.toHaveBeenCalled();
     });
 
+    test('two fingers on two tabs: only the first gesture can pick up and drop', () => {
+        ptr(tabInventory, 'pointerdown', 3, 10, 10);
+        ptr(tabToolasha, 'pointerdown', 4, 150, 10);
+        vi.advanceTimersByTime(400);
+        expect(tabInventory.style.opacity).toBe('0.4');
+        expect(tabToolasha.style.opacity).toBe('');
+
+        document.elementFromPoint.mockReturnValue(tabToolasha);
+        ptr(tabToolasha, 'pointerup', 4, 190, 10);
+        expect(storage.setJSON).not.toHaveBeenCalled();
+        expect(tabInventory.style.opacity).toBe('0.4');
+
+        ptr(tabInventory, 'pointerup', 3, 190, 10);
+        expect(storage.setJSON).toHaveBeenCalledTimes(1);
+        expect(storage.setJSON.mock.calls[0][1]).toEqual(['Toolasha', 'Inventory']);
+
+        // The owner is released: a later gesture works
+        ptr(tabToolasha, 'pointerdown', 5, 150, 10);
+        vi.advanceTimersByTime(400);
+        expect(tabToolasha.style.opacity).toBe('0.4');
+    });
+
     test('a mouse leaves the native path alone and disable removes the listeners', () => {
         ptr(tabInventory, 'pointerdown', 1, 10, 10, 'mouse');
         vi.advanceTimersByTime(400);
