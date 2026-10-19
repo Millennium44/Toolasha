@@ -2155,6 +2155,18 @@ export function generateDrinkCandidates(playerDTO, gameData) {
 }
 
 /**
+ * How many of a loadout's drink slots are empty.
+ * @param {Object} dto - Player DTO
+ * @returns {number}
+ */
+function freeDrinkSlotCount(dto) {
+    const drinks = Array.isArray(dto?.drinks) ? dto.drinks : [];
+    let free = 0;
+    for (let index = 0; index < DRINK_SLOTS; index++) if (!drinks[index]?.hrid) free++;
+    return free;
+}
+
+/**
  * Whether a drink candidate adds a coffee to a free slot rather than replacing a worn one with a better tier.
  * Read off `currentHrid` too, so a candidate remembered from before the flag existed is still recognized.
  * @param {Object} candidate - Upgrade candidate
@@ -5987,12 +5999,14 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // and reported at whatever the sampling noise came to. What it *can* move is
     // measured in its own pass below.
     const communityCandidates = candidates.filter((c) => c.type === 'community_buff' && !c.measuresLoss);
+    // Resale is taxed as the analysed character pays it (see `saleTaxRateOf`), as the combat analysis does
+    const labSaleTaxRate = saleTaxRateOf(playerDTO, isSelf);
     const candidatesWithCost = candidates
         .filter((c) => c.type !== 'community_buff')
-        .map((c) => ({
-            ...c,
-            cost: calculateUpgradeCost(c, gameData, isSelf),
-        }));
+        .map((generated) => {
+            const c = labSaleTaxRate == null ? generated : { ...generated, saleTaxRate: labSaleTaxRate };
+            return { ...c, cost: calculateUpgradeCost(c, gameData, isSelf) };
+        });
 
     // Generate buff candidates. Skilling buffs are handled in the skilling tab;
     // the Experience token is ranked in neither tab — it moves XP/room, not
@@ -6615,12 +6629,43 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
     const bestBySlot = new Map();
     let spent = 0;
 
-    const marginalOf = (entry) => {
+    /**
+     * Free drink slots each fight has, when the result carries them for every fight (an all-fights row); null
+     * otherwise, which keeps the single capacity the candidate was generated with.
+     */
+    const roomsOf = (result) => {
+        if (!isDrinkAddition(result.candidate)) return null;
+        const fights = result.fights;
+        if (!Array.isArray(fights) || !fights.length) return null;
+        return fights.every((fight) => Number.isFinite(fight?.freeDrinkSlots))
+            ? fights.map((fight) => fight.freeDrinkSlots)
+            : null;
+    };
+    /** Whether a drink addition is installed in fight `i` (a fight it was not simulated in takes no slot) */
+    const addedIn = (result, i) => result.fights?.[i]?.applied !== false && (savingsOf(result)[i] || 0) > 0;
+    /** Additions already picked that take a slot in fight `i`, leaving out the picks `except` indexes */
+    const slotsUsedIn = (i, except = []) =>
+        picks.filter((pick, index) => !except.includes(index) && isDrinkAddition(pick.candidate) && addedIn(pick, i))
+            .length;
+    /**
+     * What a candidate saves in each fight once the fights that have no free drink slot left are zeroed: an
+     * addition pooled from a bar with three free slots is no use in a room whose bar the earlier picks have filled.
+     */
+    const effectiveSavings = (entry, displaced = []) => {
+        const rooms = roomsOf(entry.result);
+        if (!rooms) return entry.savings;
+        return entry.savings.map((saving, i) => (slotsUsedIn(i, displaced) < (rooms[i] ?? 0) ? saving : 0));
+    };
+    // The savings each pick was credited with when it went in, so its group can be rebuilt from them
+    const creditedOf = new Map();
+
+    const marginalOf = (entry, displaced = []) => {
+        const savings = effectiveSavings(entry, displaced);
         const standing = bestBySlot.get(entry.key);
-        if (!standing) return entry.savings.reduce((sum, saving) => sum + saving, 0);
+        if (!standing) return savings.reduce((sum, saving) => sum + saving, 0);
         let marginal = 0;
-        for (let i = 0; i < entry.savings.length; i++) {
-            marginal += Math.max(standing[i] || 0, entry.savings[i]) - (standing[i] || 0);
+        for (let i = 0; i < savings.length; i++) {
+            marginal += Math.max(standing[i] || 0, savings[i]) - (standing[i] || 0);
         }
         return marginal;
     };
@@ -6652,6 +6697,9 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
     const noDrinkSlotFor = (entry) => {
         const candidate = entry.result.candidate;
         if (!isDrinkAddition(candidate)) return false;
+        const rooms = roomsOf(entry.result);
+        // Per-fight capacities: blocked only when every fight it would be installed in is already full
+        if (rooms) return !entry.savings.some((saving, i) => saving > 0 && slotsUsedIn(i) < (rooms[i] ?? 0));
         const room = Number.isFinite(candidate.freeDrinkSlots) ? candidate.freeDrinkSlots : 1;
         return picks.filter((pick) => isDrinkAddition(pick.candidate)).length >= room;
     };
@@ -6665,9 +6713,10 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             // the book it buys
             if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) continue;
             if (noDrinkSlotFor(entry)) continue;
-            const cost = costWithReplacements(entry, displacedBy(entry));
+            const displacedNow = displacedBy(entry);
+            const cost = costWithReplacements(entry, displacedNow);
             if (spent + cost > budget) continue;
-            const marginal = marginalOf(entry);
+            const marginal = marginalOf(entry, displacedNow);
             if (marginal <= 0) continue;
             // Gain per coin is meaningless at or below zero cost — everything
             // free ties at infinity and a refund divided by a small gain is
@@ -6706,16 +6755,20 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             skipped.push({ result: older, reason: 'a later pick covers every room it did' });
         }
         spent += entry.result.cost;
-        picks.push({
+        // What it saves in the fights that still had room for it (all of them, but for a drink addition)
+        const credited = effectiveSavings(entry);
+        const pick = {
             ...entry.result,
             marginalAttemptsSaved: marginal,
-            rooms: entry.savings.filter((saving) => saving > 0).length,
-        });
+            rooms: credited.filter((saving) => saving > 0).length,
+        };
+        picks.push(pick);
+        creditedOf.set(pick, credited);
 
         const standing = bestBySlot.get(entry.key) || entry.savings.map(() => 0);
         bestBySlot.set(
             entry.key,
-            standing.map((saving, index) => Math.max(saving, entry.savings[index]))
+            standing.map((saving, index) => Math.max(saving, credited[index]))
         );
 
         // `marginal` was measured while the displaced picks still stood, so it
@@ -6726,7 +6779,7 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             let running = entry.savings.map(() => 0);
             for (const pick of picks) {
                 if (conflictKey(pick.candidate) !== entry.key) continue;
-                const savings = savingsOf(pick);
+                const savings = creditedOf.get(pick) ?? savingsOf(pick);
                 let share = 0;
                 running = running.map((standingSaving, index) => {
                     const next = Math.max(standingSaving, savings[index] || 0);
@@ -7541,6 +7594,13 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             };
         });
         if (aborted) break;
+        // A pooled addition was generated from one loadout's bar; each room has its own number of free slots,
+        // which the plan needs to know how many additions a room can really take (see `planWithinBudget`)
+        if (isDrinkAddition(candidate)) {
+            fightResults.forEach((fightResult, i) => {
+                fightResult.freeDrinkSlots = freeDrinkSlotCount(fights[i].dto);
+            });
+        }
 
         const applied = fightResults.filter((f) => f.applied);
         const runClearChance = fightResults.reduce((product, f) => product * f.winRate, 1);
