@@ -2672,6 +2672,20 @@ function registerFeatures() {
             customCheck: () => true,
         },
         {
+            key: 'takeoverAutoReload',
+            name: 'Takeover Auto-Reload',
+            category: 'General',
+            module: UI.takeoverAutoReload,
+            async: false,
+            // A select, not a checkbox: 'off' is a truthy string, so the plain
+            // config switch would always read as on
+            customCheck: () => {
+                const minutes = Number(config.getSettingValue('takeoverAutoReload', 'off'));
+                return Number.isFinite(minutes) && minutes > 0;
+            },
+            liveStop: true,
+        },
+        {
             key: 'characterActivityStatus',
             name: 'Character Activity Status',
             category: 'General',
