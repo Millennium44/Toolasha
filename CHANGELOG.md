@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim upgrade budget: pin and exclude picks
+
+- In the upgrade budget plan you can pin picks you will buy anyway and exclude ones you won't; the rest of the budget is filled around them, a plan that can't honor your pins says why, and "Confirm together" simulates exactly the basket shown.
+
 ### Combat Sim upgrade analysis and budget: six reported bugs
 
 - Upgrade gains no longer include market price moves: the baseline, every candidate and a confirmed basket are valued on one price snapshot.
