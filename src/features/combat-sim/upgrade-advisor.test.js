@@ -7811,3 +7811,125 @@ describe('the verify engine applies a candidate exactly as the analysis simulate
         }
     });
 });
+
+describe('one price snapshot per analysis (#544)', () => {
+    /** The unit price the market answers with right now; tests move it between reads */
+    const market = { price: 100 };
+
+    /** Ten identical drops an hour, valued through the snapshot when one is handed in */
+    function priceDrops() {
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockImplementation((_result, _gameData, _hrid, _hours, { priceCache } = {}) => {
+            let unit = market.price;
+            if (priceCache instanceof Map) {
+                if (!priceCache.has('drop')) priceCache.set('drop', market.price);
+                unit = priceCache.get('drop');
+            }
+            return { netPerHour: unit * 10, revenuePerHour: unit * 10, costPerHour: 0 };
+        });
+    }
+
+    const sameFight = () => ({
+        simulatedTime: 3.6e12,
+        experienceGained: {},
+        deaths: {},
+        encounters: 1000,
+        totalDamageDealt: {},
+    });
+
+    function setup() {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+        plannedWorkerCount.mockReturnValue(1);
+        return {
+            playerDTOs: [
+                {
+                    equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                    abilities: [],
+                    hrid: '/players/me',
+                },
+            ],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: {},
+            upgradeMode: 'equipment',
+        };
+    }
+
+    beforeEach(() => {
+        market.price = 100;
+        priceDrops();
+        runSimulation.mockReset();
+    });
+
+    test('a price that moves while the candidates run is not counted as their profit gain', async () => {
+        // Every simulation lands after the market has moved again; the fights themselves are identical
+        runSimulation.mockImplementation(async () => {
+            market.price += 20;
+            return sameFight();
+        });
+
+        const analysis = await runUpgradeAnalysis(setup(), null, {});
+
+        expect(analysis.results.length).toBeGreaterThan(0);
+        for (const row of analysis.results) {
+            expect(row.metrics.profitPerHour).toBe(analysis.baseline.profitPerHour);
+            expect(row.deltas.profit).toBe(0);
+        }
+        expect(analysis.context.priceCache).toBeInstanceOf(Map);
+    });
+
+    test("confirming a basket after a price change values it on the analysis' snapshot", async () => {
+        runSimulation.mockImplementation(async () => sameFight());
+        const analysis = await runUpgradeAnalysis(setup(), null, {});
+        const pick = analysis.results[0];
+
+        market.price = 120;
+        const outcome = await confirmUpgradeBudgetPlan([pick], analysis.context);
+
+        expect(outcome.ok).toBe(true);
+        expect(outcome.deltas.profit).toBe(0);
+        expect(outcome.economics.profitGainPerHour).toBe(0);
+    });
+
+    test('a context whose snapshot was lost to storage revalues both sides on one fresh basis', async () => {
+        runSimulation.mockImplementation(async () => sameFight());
+        const analysis = await runUpgradeAnalysis(setup(), null, {});
+        const pick = analysis.results[0];
+        // A JSON round trip (a sync) turns the Map into a plain object
+        const restored = { ...analysis.context, priceCache: {} };
+
+        market.price = 120;
+        const outcome = await confirmUpgradeBudgetPlan([pick], restored);
+
+        expect(outcome.ok).toBe(true);
+        expect(outcome.deltas.profit).toBe(0);
+        expect(outcome.economics.profitGainPerHour).toBe(0);
+    });
+
+    test('a real change in what the fight earns still shows, on the one basis', async () => {
+        let call = 0;
+        runSimulation.mockImplementation(async () => {
+            call++;
+            market.price += 20;
+            return call === 1 ? sameFight() : { ...sameFight(), richer: true };
+        });
+        calculateSimRevenue.mockImplementation((result, _g, _h, _hrs, { priceCache } = {}) => {
+            let unit = market.price;
+            if (priceCache instanceof Map) {
+                if (!priceCache.has('drop')) priceCache.set('drop', market.price);
+                unit = priceCache.get('drop');
+            }
+            const drops = result.richer ? 12 : 10;
+            return { netPerHour: unit * drops, revenuePerHour: unit * drops, costPerHour: 0 };
+        });
+
+        const analysis = await runUpgradeAnalysis(setup(), null, {});
+
+        expect(analysis.results[0].deltas.profit).toBeCloseTo(20);
+    });
+});

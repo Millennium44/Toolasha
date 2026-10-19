@@ -4380,6 +4380,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // random numbers, so a delta reflects the upgrade rather than the gap between
     // two independent samples. A fresh seed per analysis keeps re-runs resampling.
     const simSeed = analysisSeed();
+    // One price snapshot for the whole analysis: every drop, consumable and key price is read once and
+    // answered from here after, so a market refresh, a custom-price edit or a pricing-mode change while the
+    // candidates run cannot read as an upgrade's profit gain. Handed on in `context` so a basket's
+    // confirming run is valued on the same basis.
+    const priceCache = new Map();
     const skipSkillingRooms = config.getSetting('combatSim_upgradeSkipSkillingRooms') === true;
 
     const candidateModes = resolveCandidateModes(upgradeModes, upgradeMode);
@@ -4477,7 +4482,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     onProgress?.({ current, total, description: 'Baseline complete' });
 
     // Calculate baseline metrics
-    const baselineMetrics = computeMetrics(baselineResult, gameData, playerHrid, hours);
+    const baselineMetrics = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache });
 
     // Run sim for each candidate: one worker each, several candidates at a time.
     //
@@ -4577,7 +4582,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
         if (abortSignal?.()) return null;
 
-        const metrics = computeMetrics(simResult, gameData, playerHrid, hours);
+        const metrics = computeMetrics(simResult, gameData, playerHrid, hours, { priceCache });
         const deltas = computeDeltas(baselineMetrics, metrics);
         const goldPer = computeGoldPerImprovement(candidate.cost, deltas);
 
@@ -4672,7 +4677,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                             null,
                             { preempt: false, workers: 1 }
                         );
-                        const bothMetrics = computeMetrics(bothResult, gameData, playerHrid, hours);
+                        const bothMetrics = computeMetrics(bothResult, gameData, playerHrid, hours, { priceCache });
                         row.alongside.metrics = bothMetrics;
                         row.alongside.deltas = computeDeltas(baselineMetrics, bothMetrics);
                     }
@@ -4753,6 +4758,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             precision,
             baselineResult,
             baseline: baselineMetrics,
+            priceCache,
         },
     };
 }
@@ -6549,7 +6555,8 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
  * @param {Object} context - `{ gameData, playerDTOs, playerIndex, playerHrid, zoneHrid, difficultyTier, hours,
  *   communityBuffs, seed, precision, baselineResult, baseline }`, as returned by `runUpgradeAnalysis`
  * @returns {Promise<{ok: true, metrics: Object, deltas: Object, economics: Object, noise: Object,
- *   totalCost: number} | {ok: false, reason: string}>}
+ *   totalCost: number} | {ok: false, reason: string}>} `deltas` and `economics` are against the baseline valued
+ *   on the basket's own price snapshot
  */
 export async function confirmUpgradeBudgetPlan(picks, context) {
     if (!picks?.length) return { ok: false, reason: 'The plan is empty — nothing to confirm.' };
@@ -6637,9 +6644,14 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
     }
 
     const totalCost = picks.reduce((sum, pick) => sum + (Number.isFinite(pick.cost) ? pick.cost : 0), 0);
-    const metrics = computeMetrics(combinedResult, gameData, playerHrid, hours);
-    const deltas = computeDeltas(baseline, metrics);
-    const economics = computeEconomics(totalCost, baseline, metrics);
+    // Both sides on one price basis. The analysis' own snapshot when it is still a live Map; a context that
+    // came back through storage or a sync has lost it, and the baseline is then revalued on the same fresh
+    // snapshot as the basket rather than compared, at its old prices, with a basket priced today
+    const priceCache = context.priceCache instanceof Map ? context.priceCache : new Map();
+    const pricedBaseline = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache });
+    const metrics = computeMetrics(combinedResult, gameData, playerHrid, hours, { priceCache });
+    const deltas = computeDeltas(pricedBaseline, metrics);
+    const economics = computeEconomics(totalCost, pricedBaseline, metrics);
     const noise = rateDeltaNoisePct(baselineResult, combinedResult, playerHrid);
 
     return { ok: true, metrics, deltas, economics, noise, totalCost };
