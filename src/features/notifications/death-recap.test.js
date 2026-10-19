@@ -8,7 +8,14 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ settings: {}, characterId: 'me', ws: {}, dm: {} }));
+const game = vi.hoisted(() => ({
+    battleData: null,
+    party: [],
+    settings: {},
+    characterId: 'me',
+    ws: {},
+    dm: {},
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: (key) => !!game.settings[key] },
@@ -16,6 +23,10 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
+        get battleData() {
+            return game.battleData;
+        },
+        getPartyMembers: () => ({ members: game.party }),
         getCurrentCharacterName: () => game.characterId,
         getInitClientData: () => ({}),
         on: (e, h) => {
@@ -88,6 +99,8 @@ describe('death recap', () => {
         vi.setSystemTime(1_000_000);
         game.settings = { [recap.SETTING]: true };
         game.characterId = 'me';
+        game.battleData = null;
+        game.party = [];
         game.ws = {};
         game.dm = {};
         for (const k of Object.keys(dmg)) delete dmg[k];
@@ -354,5 +367,74 @@ describe('death recap', () => {
 
     test('opening with nothing kept shows nothing', () => {
         expect(recap.openRecap()).toBe(false);
+    });
+
+    describe('after a reload with no new_battle', () => {
+        test('a solo fight (no party, one pMap key) records the death', () => {
+            run([1591]);
+            run([95]);
+            run([0]);
+            expect(recap.recapHistory()).toHaveLength(1);
+            expect(recap.recapHistory()[0].samples.map((s) => s.hp)).toEqual([1591, 95, 0]);
+        });
+
+        test('a party of only us counts as solo', () => {
+            game.party = [{ characterID: 'me', characterName: 'me' }];
+            run([100]);
+            run([0]);
+            expect(recap.recapHistory()).toHaveLength(1);
+        });
+
+        test('a party with no roster is never guessed at: nothing until a new_battle names the seat', () => {
+            game.party = [
+                { characterID: 'me', characterName: 'me' },
+                { characterID: 'friend', characterName: 'friend' },
+            ];
+            run([100]);
+            run([0]);
+            expect(recap.recapHistory()).toHaveLength(0);
+
+            send(
+                'new_battle',
+                battle(
+                    [
+                        ['friend', 0],
+                        ['me', 0],
+                    ],
+                    2
+                )
+            );
+            run([100, 700], { battleId: 2 });
+            run([100, 0], { battleId: 2 });
+            expect(recap.recapHistory()).toHaveLength(1);
+        });
+
+        test('a solo guess is dropped once the tick names more than one seat', () => {
+            run([100]);
+            run([100, 100]);
+            run([100, 0]);
+            expect(recap.recapHistory()).toHaveLength(0);
+        });
+
+        test('the data manager cached new_battle names the seat in a party', () => {
+            game.party = [
+                { characterID: 'me', characterName: 'me' },
+                { characterID: 'friend', characterName: 'friend' },
+            ];
+            game.battleData = battle([
+                ['friend', 0],
+                ['me', 0],
+            ]);
+            run([700, 100]);
+            run([700, 0]);
+            expect(recap.recapHistory()).toHaveLength(1);
+            expect(recap.recapHistory()[0].samples.map((s) => s.hp)).toEqual([100, 0]);
+        });
+
+        test('a new_battle that does not name us is not a gap to guess across', () => {
+            send('new_battle', battle([['stranger', 0]]));
+            run([0]);
+            expect(recap.recapHistory()).toHaveLength(0);
+        });
     });
 });

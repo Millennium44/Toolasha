@@ -11,6 +11,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 
 const game = vi.hoisted(() => ({
+    battleData: null,
+    party: [],
     settings: {},
     characterId: 'me',
     wsHandlers: {},
@@ -27,6 +29,10 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
+        get battleData() {
+            return game.battleData;
+        },
+        getPartyMembers: () => ({ members: game.party }),
         on: (event, handler) => {
             game.dmHandlers[event] = handler;
         },
@@ -89,6 +95,8 @@ describe('combat death alerts', () => {
     beforeEach(async () => {
         game.settings = { [MASTER_SETTING]: true };
         game.characterId = 'me';
+        game.battleData = null;
+        game.party = [];
         game.wsHandlers = {};
         game.dmHandlers = {};
         game.notified = [];
@@ -249,6 +257,38 @@ describe('combat death alerts', () => {
             send(battle(['me', 0]));
             combatDeathAlerts.disable();
             expect(game.wsHandlers.battle_updated).toBeUndefined();
+        });
+    });
+
+    describe('after a reload with no new_battle', () => {
+        test('a solo fight alerts on the death tick, once', () => {
+            tick(1591);
+            expect(game.notified).toHaveLength(0);
+            tick(0);
+            tick(0);
+            tick(1600);
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('a party with no roster is never guessed at', () => {
+            game.party = [{ characterID: 'me' }, { characterID: 'friend' }];
+            tick(100);
+            tick(0);
+            expect(game.notified).toHaveLength(0);
+
+            send(battle(['friend', 0], ['me', 0]));
+            tick(500, 100);
+            tick(500, 0);
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('the cached new_battle names our seat in a party', () => {
+            game.party = [{ characterID: 'me' }, { characterID: 'friend' }];
+            game.battleData = battle(['friend', 0], ['me', 0]);
+            tick(0, 800);
+            expect(game.notified).toHaveLength(0);
+            tick(800, 0);
+            expect(game.notified).toHaveLength(1);
         });
     });
 

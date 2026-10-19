@@ -43,6 +43,7 @@ import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
 import { newDeaths } from './notification-predicates.js';
 import { openRecap } from './death-recap.js';
+import { seatFromTick, guessContradicted } from './own-seat.js';
 
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_combatDeath';
@@ -56,6 +57,10 @@ class CombatDeathAlerts {
         this.lastCount = null;
         /** The local player's position in the battle (the `pMap` key), from the latest `new_battle` */
         this.ownIndex = null;
+        /** Whether the seat came from the solo fallback rather than a roster */
+        this.seatGuessed = false;
+        /** Whether a new_battle has arrived since start */
+        this.battleSeen = false;
         /** Whether this life has already been announced from a tick; re-armed by a tick showing us alive */
         this.deadAnnounced = false;
         /** Deaths announced from ticks that no counter reading has reconciled yet */
@@ -112,7 +117,19 @@ class CombatDeathAlerts {
      */
     checkTick(data) {
         if (!config.getSetting(MASTER_SETTING)) return;
-        if (this.ownIndex === null) return;
+        if (this.ownIndex === null) {
+            // A new_battle that named no seat of ours is an answer (not our fight); only a missing one is a gap
+            if (this.battleSeen) return;
+            // No new_battle named the seat (a reload in an ongoing fight): the cached battle or a safe solo guess
+            const found = seatFromTick(data);
+            if (!found) return;
+            this.ownIndex = found.index;
+            this.seatGuessed = found.guessed;
+        } else if (this.seatGuessed && guessContradicted(data)) {
+            this.ownIndex = null;
+            this.seatGuessed = false;
+            return;
+        }
 
         // An omitted entry is "unchanged" — never a death, never a respawn
         const player = data?.pMap?.[this.ownIndex];
@@ -197,6 +214,8 @@ class CombatDeathAlerts {
         // The seat and the fresh life belong to this battle whatever the count says
         const seat = this.ownSeat(data);
         this.ownIndex = seat ? seat.index : null;
+        this.seatGuessed = false;
+        this.battleSeen = true;
         this.deadAnnounced = seat ? Number(seat.player.currentHitpoints) <= 0 : false;
         const announcedFromTicks = this.tickDeaths;
         this.tickDeaths = 0;
@@ -230,6 +249,8 @@ class CombatDeathAlerts {
         this.unregisterHandlers = [];
         this.lastCount = null;
         this.ownIndex = null;
+        this.seatGuessed = false;
+        this.battleSeen = false;
         this.deadAnnounced = false;
         this.tickDeaths = 0;
     }

@@ -44,6 +44,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
+import { seatFromBattle, seatFromTick, guessContradicted } from './own-seat.js';
 import { attributeIncoming, newTakenState, seedTakenState, resolveName } from '../../utils/damage-taken.js';
 
 /** Setting that gates the whole module */
@@ -70,6 +71,10 @@ let ring = [];
 /** Casts, oldest first: {t, ability} */
 let casts = [];
 let ownIndex = null;
+/** Whether the seat came from the solo fallback rather than a roster */
+let seatGuessed = false;
+/** Whether a new_battle has arrived since start; after one, a missing seat is not a gap to guess across */
+let battleSeen = false;
 let ownCharacterId = null;
 let battleId = null;
 let takenState = newTakenState();
@@ -91,22 +96,6 @@ const uiNodes = { button: null, modal: null };
 /** @returns {string|null} The logged-in character id */
 function currentId() {
     return dataManager.getCurrentCharacterId?.() ?? null;
-}
-
-/**
- * The local player's seat and entry in a `new_battle`.
- * @param {Object} data - `new_battle` payload
- * @returns {{index: string, player: Object}|null} Null when no entry is ours
- */
-function findOwn(data) {
-    const raw = data?.players;
-    const entries = Object.entries(raw || {});
-    const id = currentId();
-    const name = dataManager.getCurrentCharacterName?.() ?? null;
-    const hit =
-        entries.find(([, p]) => id !== null && p?.character?.id === id) ||
-        entries.find(([, p]) => name && (p?.character?.name === name || p?.name === name));
-    return hit ? { index: hit[0], player: hit[1] } : null;
 }
 
 /** @param {string} hrid Ability hrid @returns {string} Display name */
@@ -224,7 +213,7 @@ export function detectDeath(signal, info = {}) {
 /** Handle a `new_battle` */
 function onNewBattle(data) {
     try {
-        const own = findOwn(data);
+        const own = seatFromBattle(data);
 
         // Death-count signal, read against the fight that just ended
         let rise = 0;
@@ -252,6 +241,8 @@ function onNewBattle(data) {
             if (name) monsterNames[index] = name;
         }
         ownIndex = own ? own.index : null;
+        seatGuessed = false;
+        battleSeen = true;
         ownCharacterId = own ? currentId() : null;
         seeded = true;
     } catch (error) {
@@ -267,7 +258,20 @@ function onBattleUpdated(data) {
             if (!seeded) takenState = newTakenState();
             seeded = false;
         }
-        if (ownIndex === null) return;
+        if (ownIndex === null) {
+            // A new_battle that named no seat of ours is an answer (not our fight); only a missing one is a gap
+            if (battleSeen) return;
+            // No new_battle named the seat (a reload in an ongoing fight): the cached battle or a safe solo guess
+            const found = seatFromTick(data);
+            if (!found) return;
+            ownIndex = found.index;
+            seatGuessed = found.guessed;
+            ownCharacterId = currentId();
+        } else if (seatGuessed && guessContradicted(data)) {
+            ownIndex = null;
+            seatGuessed = false;
+            return;
+        }
         const player = data?.pMap?.[ownIndex];
         if (!player) return;
 
@@ -452,6 +456,8 @@ function disable() {
     recaps = [];
     pending = [];
     ownIndex = null;
+    seatGuessed = false;
+    battleSeen = false;
     ownCharacterId = null;
     battleId = null;
     lastCount = null;
