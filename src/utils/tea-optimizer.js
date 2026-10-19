@@ -888,13 +888,26 @@ export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData)
         return info.price !== null && !info.estimated;
     };
 
+    // Both gold scorers also add calculateBonusRevenue (essence / rare drop tables), so an
+    // unpriced bonus drop makes the figure a guess exactly like an unpriced material. Whether a
+    // price exists does not depend on rate or gear, so score one action per hour on empty gear;
+    // a drop with no chance (per-action count of 0) can never contribute and is not flagged.
+    const bonusDropUnpriced = () => {
+        if (!actionDetails.essenceDropTable?.length && !actionDetails.rareDropTable?.length) return false;
+        const bonus = calculateBonusRevenue(actionDetails, 1, new Map(), gameData?.itemDetailMap || {});
+        return (bonus?.bonusDrops || []).some(
+            (drop) =>
+                drop.dropsPerHour > 0 && (drop.missingPrice || (!drop.taxExempt && !isPriced(drop.itemHrid, 'sell')))
+        );
+    };
+
     if (isGathering) {
         for (const drop of actionDetails.dropTable || []) {
             if (!isPriced(drop.itemHrid, 'sell')) return true;
             const processedData = findProcessingConversion(drop.itemHrid, gameData);
             if (processedData && !isPriced(processedData.outputItemHrid, 'sell')) return true;
         }
-        return false;
+        return bonusDropUnpriced();
     }
 
     if (actionDetails.upgradeItemHrid && !isPriced(actionDetails.upgradeItemHrid, 'buy')) return true;
@@ -904,7 +917,7 @@ export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData)
     for (const output of actionDetails.outputItems || []) {
         if (!isPriced(output.itemHrid, 'sell')) return true;
     }
-    return false;
+    return bonusDropUnpriced();
 }
 
 /**

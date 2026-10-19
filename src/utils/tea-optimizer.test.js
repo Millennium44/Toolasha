@@ -632,6 +632,67 @@ describe('actionHasUnpricedMaterials', () => {
         };
         expect(actionHasUnpricedMaterials(action, false, gameData)).toBe(true);
     });
+
+    describe('bonus drops (the essence / rare tables the gold scorers also add)', () => {
+        const bonusGameData = {
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/milk': { name: 'Milk' },
+                '/items/cheese': { name: 'Cheese' },
+                '/items/rare_gem': { name: 'Rare Gem' },
+                '/items/essence': { name: 'Essence' },
+            },
+        };
+        const withBonus = (extra) => ({
+            type: '/action_types/cheesesmithing',
+            inputItems: [{ itemHrid: '/items/milk', count: 1 }],
+            outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+            ...extra,
+        });
+        const gem = (dropRate) => ({ itemHrid: '/items/rare_gem', minCount: 1, maxCount: 1, dropRate });
+
+        test('an unpriced rare drop flags an otherwise fully priced action', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100 };
+            const action = withBonus({ rareDropTable: [gem(0.01)] });
+            expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(true);
+        });
+
+        test('an unpriced essence drop flags a gathering action', () => {
+            prices.byHrid = { '/items/log': 10 };
+            const action = {
+                type: '/action_types/woodcutting',
+                dropTable: [{ itemHrid: '/items/log' }],
+                essenceDropTable: [{ itemHrid: '/items/essence', minCount: 1, maxCount: 1, dropRate: 0.1 }],
+            };
+            bonusGameData.itemDetailMap['/items/log'] = { name: 'Log' };
+            expect(actionHasUnpricedMaterials(action, true, bonusGameData)).toBe(true);
+        });
+
+        test('a fully priced action with a priced rare drop is not flagged', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100, '/items/rare_gem': 5000 };
+            const action = withBonus({ rareDropTable: [gem(0.01)] });
+            expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(false);
+        });
+
+        test('a rare drop priced only from the value map is flagged', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100, '/items/rare_gem': 5000 };
+            prices.estimated = new Set(['/items/rare_gem']);
+            const action = withBonus({ rareDropTable: [gem(0.01)] });
+            expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(true);
+        });
+
+        test('empty bonus tables and a zero-chance unpriced drop are not flagged', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100 };
+            expect(actionHasUnpricedMaterials(withBonus({}), false, bonusGameData)).toBe(false);
+            expect(
+                actionHasUnpricedMaterials(
+                    withBonus({ rareDropTable: [gem(0)], essenceDropTable: [] }),
+                    false,
+                    bonusGameData
+                )
+            ).toBe(false);
+        });
+    });
 });
 
 describe('calculateSkillPerformance — candidate gear XP', () => {
