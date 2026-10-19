@@ -216,7 +216,8 @@ class CombatDeathAlerts {
         if (count === null) return;
 
         // A counter that went down is a new session: deaths announced before it are not owed a rise
-        if (this.lastCount !== null && count < this.lastCount) this.tickDeaths = 0;
+        // The first reading is a baseline that already includes any death the ticks announced before it
+        if (this.lastCount === null || count < this.lastCount) this.tickDeaths = 0;
         const died = newDeaths(this.lastCount, count);
         // Recorded whether or not anything is said, so that a session starting
         // over — which takes the count back down — is a new baseline and not a

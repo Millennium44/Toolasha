@@ -226,6 +226,15 @@ function onNewBattle(data) {
             if (Number.isFinite(count)) {
                 // A counter that went down is a new session: nothing pending is owed a rise
                 if (lastCount !== null && count < lastCount) pending = [];
+                // The first reading is a baseline that already includes any death the ticks froze before
+                // it: those recaps are confirmed by it, not left owed to a later rise
+                if (lastCount === null) {
+                    for (const recap of pending) {
+                        recap.confirmed = true;
+                        recap.source = 'both';
+                    }
+                    pending = [];
+                }
                 if (lastCount !== null && count > lastCount) rise = count - lastCount;
                 lastCount = count;
             }

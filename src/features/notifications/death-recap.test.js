@@ -384,6 +384,22 @@ describe('death recap', () => {
         expect(recap.recapHistory()[0]).toMatchObject({ source: 'both', confirmed: true });
     });
 
+    test('reload, tick death, then a first counter reading that includes it: a later counter-only death is a new recap', () => {
+        game.actions = SOLO;
+        run([1500]);
+        run([0]);
+        expect(recap.recapHistory()).toHaveLength(1);
+        run([1600]);
+        send('new_battle', battle([['me', 1]], 2));
+        expect(recap.recapHistory()).toHaveLength(1);
+        expect(recap.recapHistory()[0]).toMatchObject({ source: 'both', confirmed: true });
+
+        run([900], { battleId: 2 });
+        send('new_battle', battle([['me', 2]], 3));
+        expect(recap.recapHistory()).toHaveLength(2);
+        expect(recap.recapHistory()[0]).toMatchObject({ source: 'count', deaths: 1 });
+    });
+
     test('repeated casts of one ability are each recorded from the action counter', () => {
         send('new_battle', battle([['me', 0]]));
         const swing = (hp, atk) => {

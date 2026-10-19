@@ -334,6 +334,18 @@ describe('combat death alerts', () => {
         expect(game.notified).toHaveLength(1);
     });
 
+    test('reload, tick death, then a first counter reading that includes it: a later counter-only death still alerts once', () => {
+        game.actions = SOLO;
+        tick(1500);
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        tick(1600);
+        send(battle(['me', 1]));
+        expect(game.notified).toHaveLength(1);
+        send(battle(['me', 2]));
+        expect(game.notified).toHaveLength(2);
+    });
+
     test('a counter that falls back is a new session and owes nothing to earlier tick deaths', () => {
         send(battle(['me', 3]));
         tick(0);
