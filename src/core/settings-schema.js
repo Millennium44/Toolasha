@@ -437,6 +437,23 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays total materials needed and shortfall when entering quantity',
             },
+            teaRecommendation_xpFloor: {
+                id: 'teaRecommendation_xpFloor',
+                label: 'Tea recommendation: Show an "almost as fast" choice',
+                type: 'checkbox',
+                default: true,
+                help: 'In the tea recommendation for a single action (open an action from the list, or Alchemy), adds the tea setup with the best gold/hr that still keeps a set share of the top XP/hr, and states the XP you give up and the gold/hr you gain. Your pinned and banned teas apply. A figure that rests on an unpriced item or tea is marked.',
+            },
+            teaRecommendation_xpFloorPercent: {
+                id: 'teaRecommendation_xpFloorPercent',
+                label: 'Tea recommendation: Share of top XP/hr to keep (%)',
+                type: 'number',
+                default: 95,
+                min: 50,
+                max: 100,
+                requires: 'teaRecommendation_xpFloor',
+                help: '95 keeps at least 95% of the best XP/hr and picks the highest gold/hr among the setups that qualify. 100 only accepts setups as fast as the top one.',
+            },
             actionPanel_enhanceMatLimitProtections: {
                 id: 'actionPanel_enhanceMatLimitProtections',
                 label: 'Enhancement material limit: Include protection items',

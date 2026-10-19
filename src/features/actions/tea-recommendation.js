@@ -8,7 +8,12 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import actionFilter from './action-filter.js';
 import alchemyProfit from '../alchemy/alchemy-profit.js';
-import { findOptimalTeas, getTeaBuffDescription, getRelevantTeas } from '../../utils/tea-optimizer.js';
+import {
+    findOptimalTeas,
+    findXpFloorChoice,
+    getTeaBuffDescription,
+    getRelevantTeas,
+} from '../../utils/tea-optimizer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
@@ -30,6 +35,78 @@ export const UNPRICED_WARNING_TITLE = 'Leans on an unpriced material — gold fi
  */
 export function shouldWarnUnpriced(goal, hasMissingPrices) {
     return goal === 'gold' && !!hasMissingPrices;
+}
+
+const UNPRICED_FLOOR_TITLE = 'Leans on an unpriced item or tea — the gold figure treats it as free';
+
+/**
+ * Signed gold/hr text: "+412K", "-1.2M", "0".
+ * @param {number} value
+ * @returns {string}
+ */
+function signedGold(value) {
+    return `${value > 0 ? '+' : ''}${formatKMB(value)}`;
+}
+
+/**
+ * Build the "almost as fast" section for an XP-floor result, or null when there is nothing to say
+ * ('none', 'not-single-action', 'error', or a missing result: no legal combination, not one action).
+ * Outcomes: 'ok' states the tradeoff; 'same' says the top-XP setup is already the pick; 'no-xp' and
+ * 'no-gold' say why there is no pick rather than going silent.
+ * @param {Object|null} choice - findXpFloorChoice result
+ * @returns {HTMLElement|null}
+ */
+export function buildXpFloorSection(choice) {
+    if (!choice || !['ok', 'same', 'no-xp', 'no-gold'].includes(choice.status)) return null;
+
+    const section = document.createElement('div');
+    section.className = 'mwi-tea-xp-floor';
+    section.style.cssText = `
+        margin-top: 12px;
+        padding-top: 8px;
+        border-top: 1px solid ${config.COLOR_BORDER};
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.6);
+    `;
+    const headline = document.createElement('div');
+    headline.style.cssText = 'color: rgba(255, 255, 255, 0.8); margin-bottom: 4px;';
+    section.appendChild(headline);
+    const floor = choice.floorPercent;
+
+    const warn = (el, unpriced) => {
+        if (!unpriced) return;
+        const mark = document.createElement('sup');
+        mark.textContent = ' ⚠';
+        mark.title = UNPRICED_FLOOR_TITLE;
+        mark.style.cursor = 'help';
+        el.appendChild(mark);
+    };
+
+    if (choice.status === 'no-xp') {
+        headline.textContent = `Within ${floor}% of top XP: none, the top setup gives no XP/hr here`;
+        return section;
+    }
+    if (choice.status === 'no-gold') {
+        headline.textContent = `Within ${floor}% of top XP: no setup has a gold/hr figure to compare`;
+        return section;
+    }
+    if (choice.status === 'same') {
+        headline.textContent = `Within ${floor}% of top XP: the top-XP setup is already the best gold/hr, nothing to trade`;
+        warn(headline, choice.pick.unpriced);
+        return section;
+    }
+
+    const { baseline, pick } = choice;
+    const lost = 100 - choice.xpRetainedPercent;
+    const goldText = choice.goldDelta === null ? 'gold/hr n/a' : `${signedGold(choice.goldDelta)} gold/hr`;
+    headline.textContent = `Within ${floor}% of top XP: ${(pick.names || pick.teas).join(', ')} — XP −${lost.toFixed(1)}%, ${goldText}`;
+    warn(headline, pick.unpriced || baseline.unpriced);
+
+    const detail = document.createElement('div');
+    const line = (label, c) => `${label}: ${formatKMB(c.xp)} XP/hr, ${formatKMB(c.gold)} gold/hr`;
+    detail.textContent = `${line('This setup', pick)} · ${line('Top XP', baseline)}`;
+    section.appendChild(detail);
+    return section;
 }
 
 /**
@@ -803,6 +880,25 @@ class TeaRecommendation {
             }
 
             popup.appendChild(altSection);
+        }
+
+        // "Almost as fast" choice: one action only (a drilled-down action or an Alchemy item)
+        if ((drilldownAction || alchemyContext) && config.getSetting('teaRecommendation_xpFloor', true)) {
+            try {
+                const floorSection = buildXpFloorSection(
+                    findXpFloorChoice(skillName, {
+                        locationName: locationTab,
+                        actionName: drilldownAction || null,
+                        alchemyContext,
+                        constraints: { pinned: this.pinnedTeas, banned: this.bannedTeas },
+                        floorPercent: config.getSetting('teaRecommendation_xpFloorPercent', 95),
+                        playerLevel: null,
+                    })
+                );
+                if (floorSection) popup.appendChild(floorSection);
+            } catch (error) {
+                console.error('[Tea Recommendation] XP floor choice failed:', error);
+            }
         }
 
         // Tea Constraints panel

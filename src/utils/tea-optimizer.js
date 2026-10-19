@@ -1118,6 +1118,9 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
  * @param {string|null} locationName - Optional location name to filter actions (e.g., "Silly Cow Valley")
  * @param {string|null} actionNameFilter - Optional action name to restrict optimization to a single action
  * @param {number|null} playerLevelOverride - Planned level; null uses the live character level
+ * @param {{collectAll?: boolean, teaSetGoal?: string}|null} options - `collectAll` adds `evaluatedAll`
+ *   (every scored combination, not just the top five); `teaSetGoal` picks which goal's tea list is
+ *   enumerated, so an XP pass and a gold pass can score the identical set of combinations
  * @returns {Object} Optimization result
  */
 export function findOptimalTeas(
@@ -1129,7 +1132,8 @@ export function findOptimalTeas(
     alchemyContext = null,
     equipmentOverride = null,
     selectedActionHrids = null,
-    playerLevelOverride = null
+    playerLevelOverride = null,
+    options = null
 ) {
     const normalizedSkill = skillName.toLowerCase();
     const isGathering = GATHERING_SKILLS.includes(normalizedSkill);
@@ -1169,7 +1173,7 @@ export function findOptimalTeas(
     const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
 
     // Get relevant teas and generate combinations
-    const relevantTeas = getRelevantTeas(normalizedSkill, goal);
+    const relevantTeas = getRelevantTeas(normalizedSkill, options?.teaSetGoal || goal);
     const drinkSlotCount = getDrinkSlotCount(equipment, gameData.itemDetailMap);
     const combinations = generateCombinations(relevantTeas, constraints, drinkSlotCount);
 
@@ -1406,6 +1410,7 @@ export function findOptimalTeas(
             actionsEvaluated: 0,
             profitableActionsCount: 0,
             combinationsEvaluated: combinations.length,
+            ...(options?.collectAll ? { evaluatedAll: [] } : {}),
             allResults: [],
             excludedActions: excludedForDisplay,
             teaCostPerHour: { total: 0, breakdown: [] },
@@ -1445,6 +1450,22 @@ export function findOptimalTeas(
         actionsEvaluated: alchemyContext ? 1 : actions.length,
         profitableActionsCount: topResult.profitableCount, // For display in stats
         combinationsEvaluated: combinations.length,
+        ...(options?.collectAll
+            ? {
+                  // Every scored combination, signed: the single-action score keeps a loss as a loss
+                  // (totalScore/avgScore floor a gold loss at 0), and `unpriced` is the combo's own
+                  // flag: an unpriced action input or a tea with no real book price
+                  evaluatedAll: results.map((r) => ({
+                      teas: r.teas,
+                      names: r.teas.map(getTeaName),
+                      score: r.actionScores[0]?.score ?? 0,
+                      unpriced: Boolean(
+                          (alchemyContext ? r.hasMissingPrices : r.actionScores[0]?.hasMissingPrices) ||
+                          r.teaCostPerHour?.hasMissingPrices
+                      ),
+                  })),
+              }
+            : {}),
         allResults: results.slice(0, 5).map((r) => ({
             teas: r.teas.map(getTeaName),
             avgScore: r.avgScore,
@@ -1454,6 +1475,117 @@ export function findOptimalTeas(
         // Include top result's tea cost for debug
         teaCostPerHour: topResult.teaCostPerHour,
     };
+}
+
+const XP_FLOOR_MIN_PERCENT = 50;
+const XP_FLOOR_MAX_PERCENT = 100;
+const XP_FLOOR_DEFAULT_PERCENT = 95;
+
+/**
+ * Clamp an XP-floor percentage to the supported range; anything unusable falls back to the default.
+ * @param {*} value
+ * @returns {number}
+ */
+export function normalizeXpFloorPercent(value) {
+    const n = Number(value);
+    if (value === null || value === undefined || value === '' || !Number.isFinite(n)) return XP_FLOOR_DEFAULT_PERCENT;
+    return Math.min(XP_FLOOR_MAX_PERCENT, Math.max(XP_FLOOR_MIN_PERCENT, n));
+}
+
+const teaComboKey = (teas) => [...teas].sort().join('|');
+
+/**
+ * Pick the best-gold tea combination that keeps at least `floorPercent` of the best XP/hr.
+ * Pure: takes already-scored candidates, so a percentage change only re-filters them.
+ *
+ * Outcomes (`status`): 'none' (no candidates), 'no-xp' (best XP/hr is not above 0), 'no-gold' (no
+ * qualifying candidate has a finite gold figure), 'same' (the top-XP setup is also the best
+ * qualifying one), 'ok' (a different setup qualifies and trades some XP for gold).
+ * Unpriced candidates are only chosen when every qualifying candidate is unpriced.
+ * @param {Array<{teas: string[], names?: string[], xp: number, gold: number, unpriced?: boolean}>} candidates
+ * @param {number} floorPercent
+ * @returns {Object}
+ */
+export function pickXpFloorChoice(candidates, floorPercent) {
+    const floor = normalizeXpFloorPercent(floorPercent);
+    const list = (candidates || []).filter((c) => c && Number.isFinite(c.xp));
+    if (list.length === 0) return { status: 'none', floorPercent: floor };
+
+    // Highest XP/hr, ties to the better gold, then fewer teas, then a stable key order
+    const goldOf = (c) => (Number.isFinite(c.gold) ? c.gold : -Infinity);
+    const order = (a, b) =>
+        b.xp - a.xp ||
+        goldOf(b) - goldOf(a) ||
+        a.teas.length - b.teas.length ||
+        teaComboKey(a.teas).localeCompare(teaComboKey(b.teas));
+    const baseline = [...list].sort(order)[0];
+    if (!(baseline.xp > 0)) return { status: 'no-xp', floorPercent: floor, baseline };
+
+    const threshold = baseline.xp * (floor / 100) * (1 - 1e-9);
+    const eligible = list.filter((c) => c.xp >= threshold && Number.isFinite(c.gold));
+    if (eligible.length === 0) return { status: 'no-gold', floorPercent: floor, baseline };
+
+    const priced = eligible.filter((c) => !c.unpriced);
+    const pool = priced.length > 0 ? priced : eligible;
+    const pick = [...pool].sort((a, b) => b.gold - a.gold || order(a, b))[0];
+
+    const base = { floorPercent: floor, baseline, pick };
+    if (teaComboKey(pick.teas) === teaComboKey(baseline.teas)) return { status: 'same', ...base };
+    return {
+        status: 'ok',
+        ...base,
+        xpRetainedPercent: (pick.xp / baseline.xp) * 100,
+        goldDelta: Number.isFinite(baseline.gold) ? pick.gold - baseline.gold : null,
+    };
+}
+
+/**
+ * For one action, score every legal tea combination on XP/hr and on net gold/hr (the same scoring
+ * findOptimalTeas uses, over one shared combination set) and apply the XP floor.
+ * Needs a single action (an action name or an Alchemy context); otherwise 'not-single-action'.
+ * @param {string} skillName
+ * @param {Object} params
+ * @param {string|null} [params.locationName]
+ * @param {string|null} [params.actionName]
+ * @param {Object|null} [params.constraints] - { pinned, banned } sets, applied to both passes
+ * @param {Object|null} [params.alchemyContext]
+ * @param {number|string} [params.floorPercent]
+ * @param {number|null} [params.playerLevel]
+ * @returns {Object} pickXpFloorChoice result, or status 'error' / 'not-single-action'
+ */
+export function findXpFloorChoice(skillName, params = {}) {
+    const { locationName = null, actionName = null, constraints = null, alchemyContext = null } = params;
+    if (!actionName && !alchemyContext) return { status: 'not-single-action' };
+    const run = (goal) =>
+        findOptimalTeas(
+            skillName,
+            goal,
+            locationName,
+            actionName,
+            constraints,
+            alchemyContext,
+            null,
+            null,
+            params.playerLevel ?? null,
+            { collectAll: true, teaSetGoal: 'gold' }
+        );
+    const xpPass = run('xp');
+    const goldPass = run('gold');
+    const failed = xpPass.error ? xpPass : goldPass.error ? goldPass : null;
+    if (failed) return { status: 'error', error: failed.error };
+    if (!xpPass.optimal) return { status: 'none', floorPercent: normalizeXpFloorPercent(params.floorPercent) };
+    if (!alchemyContext && (xpPass.actionsEvaluated !== 1 || goldPass.actionsEvaluated !== 1)) {
+        return { status: 'not-single-action' };
+    }
+
+    const goldByKey = new Map((goldPass.evaluatedAll || []).map((r) => [teaComboKey(r.teas), r]));
+    const candidates = [];
+    for (const r of xpPass.evaluatedAll || []) {
+        const g = goldByKey.get(teaComboKey(r.teas));
+        if (!g) continue;
+        candidates.push({ teas: r.teas, names: r.names, xp: r.score, gold: g.score, unpriced: g.unpriced });
+    }
+    return pickXpFloorChoice(candidates, params.floorPercent);
 }
 
 /**
