@@ -137,9 +137,10 @@ export function getRelevantTeas(skillName, goal) {
  * @param {Object} teaGroups - { skillTeas: [], generalTeas: [] }
  * @param {Object|null} constraints - Optional pinned and banned teas
  * @param {number} maxDrinkSlots - Available slots for this equipment setup
+ * @param {boolean} [includeEmpty=false] - Also offer the no-tea setup (only when nothing is pinned)
  * @returns {Array<Array<string>>} Array of valid tea combinations
  */
-function generateCombinations(teaGroups, constraints = null, maxDrinkSlots = 3) {
+function generateCombinations(teaGroups, constraints = null, maxDrinkSlots = 3, includeEmpty = false) {
     const { skillTeas, generalTeas } = teaGroups;
     const combinations = [];
 
@@ -153,6 +154,9 @@ function generateCombinations(teaGroups, constraints = null, maxDrinkSlots = 3) 
             combinations.push(combo);
         }
     };
+
+    // No tea at all is a legal setup; any pin rules it out, a ban cannot
+    if (includeEmpty && !(constraints && constraints.pinned.size > 0)) combinations.push([]);
 
     // Option 1: No skill tea, only general teas (1-3 general teas)
     for (let i = 0; i < generalTeas.length; i++) {
@@ -631,6 +635,8 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
     };
     return {
         profitPerHour: profitData.profitPerHour || 0,
+        // The success bonus of the catalyst this gold figure was priced with
+        catalystBonus: profitData.successRateBreakdown?.catalyst || 0,
         hasMissingPrice:
             (Array.isArray(profitData.unpricedOutputs) && profitData.unpricedOutputs.length > 0) ||
             (Array.isArray(profitData.estimatedOutputs) && profitData.estimatedOutputs.length > 0) ||
@@ -663,7 +669,14 @@ function skillsWithPlannedLevel(skillHrid, level) {
  * @param {Object} calcContext - { equipment, itemDetailMap }
  * @returns {number} XP per hour
  */
-function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEfficiency, calcContext) {
+function calculateAlchemyXpPerHour(
+    alchemyContext,
+    buffs,
+    playerLevel,
+    otherEfficiency,
+    calcContext,
+    catalystBonus = 0
+) {
     const { actionType, itemHrid } = alchemyContext;
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return 0;
@@ -721,7 +734,10 @@ function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEffi
             ? (0.9 / itemLevel) * (boostedPlayerLevel - itemLevel)
             : 0;
 
-    const successRate = Math.max(0, Math.min(1.0, baseSuccessRate * (1 + levelPenalty + teaBonusOverride)));
+    const successRate = Math.max(
+        0,
+        Math.min(1.0, baseSuccessRate * (1 + levelPenalty + teaBonusOverride + catalystBonus))
+    );
 
     // XP per action: success gives full XP, failure gives 10%
     // Wisdom multiplier — replace current tea wisdom with our hypothetical tea wisdom
@@ -1128,7 +1144,7 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
  * @param {string|null} locationName - Optional location name to filter actions (e.g., "Silly Cow Valley")
  * @param {string|null} actionNameFilter - Optional action name to restrict optimization to a single action
  * @param {number|null} playerLevelOverride - Planned level; null uses the live character level
- * @param {{collectAll?: boolean, teaSetGoal?: string}|null} options - `collectAll` adds `evaluatedAll`
+ * @param {{collectAll?: boolean, teaSetGoal?: string, includeEmpty?: boolean, matchGoldCatalyst?: boolean}|null} options - `collectAll` adds `evaluatedAll`
  *   (every scored combination, not just the top five); `teaSetGoal` picks which goal's tea list is
  *   enumerated, so an XP pass and a gold pass can score the identical set of combinations
  * @returns {Object} Optimization result
@@ -1185,7 +1201,12 @@ export function findOptimalTeas(
     // Get relevant teas and generate combinations
     const relevantTeas = getRelevantTeas(normalizedSkill, options?.teaSetGoal || goal);
     const drinkSlotCount = getDrinkSlotCount(equipment, gameData.itemDetailMap);
-    const combinations = generateCombinations(relevantTeas, constraints, drinkSlotCount);
+    const combinations = generateCombinations(
+        relevantTeas,
+        constraints,
+        drinkSlotCount,
+        Boolean(options?.includeEmpty)
+    );
 
     // Get actions for this skill (available and excluded)
     const actionData = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);
@@ -1577,7 +1598,7 @@ export function findXpFloorChoice(skillName, params = {}) {
             null,
             null,
             params.playerLevel ?? null,
-            { collectAll: true, teaSetGoal: 'gold' }
+            { collectAll: true, teaSetGoal: 'gold', includeEmpty: true, matchGoldCatalyst: true }
         );
     const xpPass = run('xp');
     const goldPass = run('gold');

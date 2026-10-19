@@ -34,7 +34,7 @@ vi.mock('./market-data.js', () => ({
     },
 }));
 
-const { findOptimalTeas, findXpFloorChoice, pickXpFloorChoice, normalizeXpFloorPercent } =
+const { scoreEquipmentSetup, findOptimalTeas, findXpFloorChoice, pickXpFloorChoice, normalizeXpFloorPercent } =
     await import('./tea-optimizer.js');
 
 const ACTION = 'Pincer Gloves';
@@ -187,6 +187,8 @@ describe('findXpFloorChoice', () => {
             findOptimalTeas('cheesesmithing', goal, null, ACTION, null, null, null, null, null, {
                 collectAll: true,
                 teaSetGoal: 'gold',
+                includeEmpty: true,
+                matchGoldCatalyst: true,
             }).evaluatedAll;
         const gold = new Map(pass('gold').map((r) => [key(r.teas), r]));
         return pass('xp').map((r) => ({ ...r, xp: r.score, gold: gold.get(key(r.teas)).score }));
@@ -264,5 +266,45 @@ describe('findXpFloorChoice', () => {
     test('needs one action: no action name is not a single action, an unknown skill is an error', () => {
         expect(findXpFloorChoice('cheesesmithing', { floorPercent: 95 }).status).toBe('not-single-action');
         expect(findXpFloorChoice('nonsense', { actionName: ACTION }).status).toBe('error');
+    });
+
+    describe('the no-tea setup', () => {
+        const allTeas = ['/items/efficiency_tea', '/items/wisdom_tea', '/items/artisan_tea'];
+
+        test('is offered, scored on XP independently, and beats expensive eligible teas', () => {
+            setWorld({ teaPrices: Object.fromEntries(allTeas.map((t) => [t, 1_000_000])) });
+            const r = run({ floorPercent: 50 });
+            expect(r.status).toBe('ok');
+            expect(r.pick.teas).toEqual([]);
+            expect(r.pick.names).toEqual([]);
+            // Independent XP figure for the no-tea setup, from the ordinary scorer
+            const noTeaXp = scoreEquipmentSetup('cheesesmithing', 'xp', state.equipment, 100, null, [], null);
+            expect(r.pick.xp).toBeCloseTo(noTeaXp, 6);
+            expect(r.pick.xp / r.baseline.xp).toBeGreaterThan(0.5);
+            expect(r.pick.gold).toBeGreaterThan(r.baseline.gold);
+        });
+
+        test('banning every tea with no pins still leaves no tea', () => {
+            const r = run({ constraints: { pinned: new Set(), banned: new Set(allTeas) } });
+            expect(r.status).toBe('same');
+            expect(r.pick.teas).toEqual([]);
+        });
+
+        test('any pinned tea rules the empty setup out', () => {
+            setWorld({ teaPrices: Object.fromEntries(allTeas.map((t) => [t, 1_000_000])) });
+            const r = run({
+                floorPercent: 50,
+                constraints: { pinned: new Set(['/items/wisdom_tea']), banned: new Set() },
+            });
+            expect(r.pick.teas).toContain('/items/wisdom_tea');
+            expect(r.baseline.teas).toContain('/items/wisdom_tea');
+        });
+
+        test('the ordinary recommendation enumeration is unchanged', () => {
+            const ordinary = findOptimalTeas('cheesesmithing', 'xp', null, ACTION, null, null, null, null, null, {
+                collectAll: true,
+            });
+            expect(ordinary.evaluatedAll.every((c) => c.teas.length > 0)).toBe(true);
+        });
     });
 });

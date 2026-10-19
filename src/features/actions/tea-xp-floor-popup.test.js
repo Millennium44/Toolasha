@@ -141,6 +141,19 @@ describe('buildXpFloorSection', () => {
         expect(el.textContent).not.toContain('+0');
     });
 
+    test('ok with the no-tea setup is drawn as "No tea"', () => {
+        const noTea = { teas: [], names: [], xp: 850, gold: 40_000 };
+        const el = buildXpFloorSection({
+            status: 'ok',
+            floorPercent: 50,
+            pick: noTea,
+            baseline,
+            xpRetainedPercent: 85,
+            goldDelta: 5,
+        });
+        expect(el.textContent).toContain('Within 50% of top XP: No tea');
+    });
+
     test('same: says the top-XP setup is already the pick instead of repeating it', () => {
         const el = buildXpFloorSection({ status: 'same', floorPercent: 99, pick: baseline, baseline });
         expect(el.textContent).toContain('already the best gold/hr');

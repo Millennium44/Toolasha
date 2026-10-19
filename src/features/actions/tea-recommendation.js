@@ -99,7 +99,7 @@ export function buildXpFloorSection(choice) {
     const { baseline, pick } = choice;
     const lost = 100 - choice.xpRetainedPercent;
     const goldText = choice.goldDelta === null ? 'gold/hr n/a' : `${signedGold(choice.goldDelta)} gold/hr`;
-    headline.textContent = `Within ${floor}% of top XP: ${(pick.names || pick.teas).join(', ')} — XP −${lost.toFixed(1)}%, ${goldText}`;
+    headline.textContent = `Within ${floor}% of top XP: ${(pick.names || pick.teas).join(', ') || 'No tea'} — XP −${lost.toFixed(1)}%, ${goldText}`;
     warn(headline, pick.unpriced || baseline.unpriced);
 
     const detail = document.createElement('div');
