@@ -10,6 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The tea recommendation for an action now also shows the best gold/hr setup that stays within 95% of the top XP/hr (the percentage is a setting), with the trade spelled out, e.g. "XP −4.0%, +30.0K gold/hr"; unpriced setups are flagged, never valued at zero.
 - Tea gold figures are flagged as a guess when an essence or rare drop has no market price, instead of being shown as exact.
+- Alchemy tea XP/hr counts a speed tea's faster actions, as the gold figure already did.
 
 ### Combat: death recap, and the death alert fires when you die
 

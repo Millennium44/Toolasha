@@ -221,6 +221,7 @@ function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration) {
         gourmet: 0,
         actionLevel: 0,
         alchemySuccess: 0,
+        actionSpeed: 0, // decimal (0.06 for +6%), as parseTeaSpeedDetails reads it for the gold side
         skillLevels: {}, // skill name → level bonus
     };
 
@@ -253,6 +254,9 @@ function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration) {
                     break;
                 case '/buff_types/action_level':
                     buffs.actionLevel += scaledValue;
+                    break;
+                case '/buff_types/action_speed':
+                    buffs.actionSpeed += scaledValue;
                     break;
                 case '/buff_types/alchemy_success':
                     // alchemy_success uses ratioBoost, not flatBoost
@@ -786,7 +790,9 @@ function calculateAlchemyXpPerHour(
             equipmentSpeedBonus +
             (otherEfficiency.houseSpeed || 0) +
             (otherEfficiency.personalSpeed || 0) +
-            (otherEfficiency.guildSpeed || 0));
+            (otherEfficiency.guildSpeed || 0) +
+            // A speed tea in the candidate, added like the other sources, as the gold side does
+            (buffs.actionSpeed || 0));
     const baseActionsPerHour = calculateActionsPerHour(actionTime);
     const actionsPerHour = calculateEffectiveActionsPerHour(baseActionsPerHour, efficiencyMultiplier);
 

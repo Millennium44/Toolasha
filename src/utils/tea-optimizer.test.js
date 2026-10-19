@@ -939,6 +939,37 @@ describe('planned Alchemy context in tea optimization', () => {
         });
     });
 
+    test('a speed tea in an Alchemy candidate speeds up its XP, as it speeds up its gold', () => {
+        const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
+        alchemyCalc.coinify = () => ({ profitPerHour: 777 });
+        for (const hrid of knownItems) prices.byHrid[hrid] = 10;
+        const tea = '/items/efficiency_tea';
+        const scoreWith = () => {
+            const all = findOptimalTeas('alchemy', 'xp', null, null, null, context, new Map(), null, null, {
+                collectAll: true,
+            }).evaluatedAll;
+            return all.find((r) => r.teas.length === 1 && r.teas[0] === tea)?.score;
+        };
+        const original = state.gameData.itemDetailMap[tea];
+        try {
+            state.gameData.itemDetailMap[tea] = {
+                consumableDetail: { usableInActionTypeMap: { '/action_types/alchemy': true }, buffs: [] },
+            };
+            const plain = scoreWith();
+            state.gameData.itemDetailMap[tea] = {
+                consumableDetail: {
+                    usableInActionTypeMap: { '/action_types/alchemy': true },
+                    buffs: [{ typeHrid: '/buff_types/action_speed', flatBoost: 0.25 }],
+                },
+            };
+            const fast = scoreWith();
+            expect(plain).toBeGreaterThan(0);
+            expect(fast).toBeCloseTo(plain * 1.25, 6);
+        } finally {
+            state.gameData.itemDetailMap[tea] = original;
+        }
+    });
+
     test('rejects an impossible item/action pair before either scoring path', () => {
         const context = { actionType: 'coinify', itemHrid: '/items/decompose_only' };
         expect(findOptimalTeas('alchemy', 'xp', null, null, null, context).error).toMatch(/cannot|invalid/i);
