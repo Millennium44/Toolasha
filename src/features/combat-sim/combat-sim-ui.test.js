@@ -1119,6 +1119,28 @@ describe('the panel', () => {
         expect(hours).toBe(42);
     });
 
+    test('an analysis started before the editor is set up still knows which DTO is the live character', async () => {
+        selectZone();
+        let selfHrid = 'unset';
+        mocks.onRun = (params) => {
+            selfHrid = params.selfHrid;
+        };
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        await ui._onUpgradeAnalyze();
+        expect(selfHrid).toBe('player1');
+
+        mocks.editedDTOs = { player2: { hrid: 'player2', equipment: {} } };
+        mocks.editorSelfHrid = 'player2';
+        try {
+            await ui._onUpgradeAnalyze();
+            expect(selfHrid).toBe('player2');
+        } finally {
+            mocks.editedDTOs = null;
+            mocks.editorSelfHrid = null;
+        }
+    });
+
     test('a tab switch mid-run does not overwrite the running status', () => {
         ui.isRunning = true;
         ui._setStatus('Simulating (Solo)... 3.0s');

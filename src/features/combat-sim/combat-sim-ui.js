@@ -10537,13 +10537,18 @@ class CombatSimUI {
 
         // Get player DTOs (edited or live)
         let playerDTOs;
+        // Whose DTO is the live character's: the editor knows once it is set up; before that, the fallback build
+        // says (as the Lab analysis takes it), so an Iron Cow is not taxed as someone else
+        let selfHrid = null;
         try {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
                 playerDTOs = Object.values(editedDTOs);
+                selfHrid = this._editor.getSelfHrid() ?? null;
             } else {
                 const result = await buildAllPlayerDTOs();
                 playerDTOs = result.players;
+                selfHrid = result.selfHrid ?? null;
             }
         } catch (error) {
             this._upgradeRunning = false;
@@ -10637,7 +10642,7 @@ class CombatSimUI {
                 {
                     playerDTOs,
                     playerIndex,
-                    selfHrid: this._editor?.getSelfHrid() || null,
+                    selfHrid,
                     zoneHrid,
                     difficultyTier,
                     hours,
