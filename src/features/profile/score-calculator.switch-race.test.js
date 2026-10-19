@@ -54,9 +54,24 @@ vi.mock('../../utils/enhancement-worker-manager.js', () => ({
         return tasks.map(() => null);
     },
 }));
-vi.mock('../enhancement/tooltip-enhancement.js', () => ({
-    getCheapestProtectionPrice: () => ({ price: 0 }),
-    getRealisticBaseItemPrice: (hrid) => (hrid === '/items/philosophers_mirror' ? 1e12 : 0),
+// The shared enhancement input rule: the base item costs one coin and the mirror is priced out of reach
+// so the mirror optimization never wins; the material tests below are about the per-attempt bill, which
+// reads the book the test sets (the ask, else the bid, else unpriced - never the vendor price)
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({
+    priceBase: () => ({ price: 1, unpriced: false, estimated: false }),
+    priceMirror: () => ({ price: 1e12, unpriced: false, estimated: false }),
+    priceProtection: () => ({ price: null, itemHrid: null, unpriced: true, estimated: false }),
+    perAttemptMaterialCost: (details) => {
+        let cost = 0;
+        let hasMissingPrices = false;
+        for (const material of details.enhancementCosts || []) {
+            const book = mocks.books[material.itemHrid];
+            const price = book?.ask > 0 ? book.ask : book?.bid > 0 ? book.bid : 0;
+            if (price > 0) cost += price * material.count;
+            else hasMissingPrices = true;
+        }
+        return { cost, hasCost: cost > 0, hasMissingPrices };
+    },
 }));
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
 vi.mock('../../utils/guild-credit-pricing.js', () => ({

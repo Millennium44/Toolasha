@@ -80,17 +80,47 @@ vi.mock('./loot-log-history.js', () => ({
 }));
 // The enhancing summary only needs two pricing functions from here; mock them so
 // the test does not pull the whole enhancement bundle's transitive imports.
+const enhancing = vi.hoisted(() => ({
+    material: vi.fn(() => 0),
+    protection: vi.fn(() => ({ price: 0 })),
+    calculateEnhancement: null,
+}));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
-    getEnhancementMaterialPrice: () => 0,
-    getCheapestProtectionPrice: () => ({ price: 0 }),
+    getEnhancementMaterialPrice: (...args) => enhancing.material(...args),
+    getCheapestProtectionPrice: (...args) => enhancing.protection(...args),
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
     marketDepthCap: () => null,
     guildMemberSkills: () => null,
-    enhancementCalculator: () => null,
-    enhancementConfig: () => null,
+    enhancementCalculator: () =>
+        enhancing.calculateEnhancement ? { calculateEnhancement: enhancing.calculateEnhancement } : null,
+    enhancementConfig: () => (enhancing.calculateEnhancement ? { getEnhancingParams: () => ({}) } : null),
 }));
+
+describe('the loot log records enhancing costs at the ask', () => {
+    test('materials and protection are priced with the side forced, not the profit mode', () => {
+        enhancing.calculateEnhancement = () => ({ attempts: 6, protectionCount: 1 });
+        enhancing.material.mockClear();
+        enhancing.protection.mockClear();
+        dataManager.getInitClientData.mockReturnValue({
+            itemDetailMap: {
+                '/items/sword': { itemLevel: 10, enhancementCosts: [{ itemHrid: '/items/shard', count: 1 }] },
+            },
+        });
+        try {
+            const div = document.createElement('div');
+            new LootLogStats().injectEnhancingSummary(div, {
+                drops: { '/items/sword::0': 5, '/items/sword::1': 1 },
+                actionCount: 6,
+            });
+            expect(enhancing.material).toHaveBeenCalledWith('/items/shard', 'ask');
+            expect(enhancing.protection).toHaveBeenCalledWith('/items/sword', { mode: 'ask' });
+        } finally {
+            enhancing.calculateEnhancement = null;
+        }
+    });
+});
 
 describe('LootLogStats.calculateExpectedRunValue', () => {
     let stats;

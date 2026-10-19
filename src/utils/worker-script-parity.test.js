@@ -305,6 +305,14 @@ describe('generated worker sources', () => {
         // through the price map, both mirrors, and a plain item priced only
         // through a transitive production input.
         vi.resetModules();
+        // The main thread's shared input rule ships its own figures with the batch; this proof is about
+        // the worker's production closure, which the unenhanced-value fallback still reads, so the
+        // rule is stood in for with "nothing is priced" and the closure carries the whole answer
+        vi.doMock('./enhancement-input-pricing.js', () => ({
+            priceMaterial: () => ({ price: null, unpriced: true, estimated: false }),
+            priceGuarded: () => ({ price: null, unpriced: true, estimated: false }),
+            priceBase: () => ({ price: null, unpriced: true, estimated: false }),
+        }));
 
         let workerSource = null;
         vi.stubGlobal(
@@ -493,6 +501,9 @@ describe('generated worker sources', () => {
                 itemDetails: itemDetails ? { ...itemDetails, allItemDetails } : {},
                 priceMap: fullPriceMap,
                 recipes: fullRecipes,
+                // The figures the main thread shipped: the control differs from the real run only in
+                // the price map and recipe index it was handed
+                inputPrices: sentParams[0].inputPrices,
                 useHighEnhancementCost: configOptions.useHighEnhancementCost,
                 minLevel: configOptions.minLevel,
                 enhancementParams: configOptions.enhancementParams,

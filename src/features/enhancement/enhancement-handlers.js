@@ -8,11 +8,10 @@ import dataManager from '../../core/data-manager.js';
 import enhancementTracker from './enhancement-tracker.js';
 import enhancementUI from './enhancement-ui.js';
 import config from '../../core/config.js';
-import marketAPI from '../../api/marketplace.js';
 import { calculateSuccessXP, calculateFailureXP, calculateAdjustedAttemptCount } from './enhancement-xp.js';
 import { parseItemHash } from '../../utils/item-hash.js';
 import { runningAction } from '../../utils/combat-actions.js';
-import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { priceAtLevel, priceGuarded, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { SessionState, getCurrentLegCounters } from './enhancement-session.js';
 
 // Id of the queue action the tracker last saw running as the enhance row. Read against
@@ -424,18 +423,18 @@ async function trackMaterialCosts(itemHrid) {
 }
 
 /**
- * Price of one unit of an item at an enhancement level: the Iron Cow book, then the market's
- * ask, then its bid. No quote is 0 (unpriced), never the vendor price: the tracker flags the
- * session rather than booking a figure far below what the item costs to buy.
+ * Price of one unit of an item at an enhancement level, through the shared enhancement input rule
+ * (the same figures the panel, the tooltip and the advisor quote): the Philosopher's Mirror and the
+ * +0 base item at their guarded profit-mode price, an enhanced copy at what that level sells for.
+ * No quote is 0 (unpriced), never the vendor price: the tracker flags the session rather than
+ * booking a figure far below what the item costs to buy.
  * @param {string} itemHrid - Item HRID
  * @param {number} level - Enhancement level
  * @returns {number} Unit price (0 when nothing prices it)
  */
 function unitPrice(itemHrid, level = 0) {
-    const marketPrice = ironCowBook(itemHrid, level) ?? marketAPI.getPrice(itemHrid, level);
-    // The book answers "no quote" with -1 on a side, which is truthy but not a price
-    if (marketPrice?.ask > 0) return marketPrice.ask;
-    return marketPrice?.bid > 0 ? marketPrice.bid : 0;
+    if (itemHrid === PHILOSOPHERS_MIRROR_HRID) return priceMirror().price || 0;
+    return priceAtLevel(itemHrid, level).price || 0;
 }
 
 /**
@@ -450,16 +449,12 @@ function unitPrice(itemHrid, level = 0) {
 function protectionUnitPrice(action, protectionItemHrid) {
     const loaded = parseItemHash(action?.secondaryItemHash);
     if (loaded.itemHrid === protectionItemHrid && loaded.level > 0) {
-        const quote =
-            ironCowBook(protectionItemHrid, loaded.level) ?? marketAPI.getPrice(protectionItemHrid, loaded.level);
-        // The book answers "no quote" with -1 on a side, which is truthy but not a price
-        const price = quote?.ask > 0 ? quote.ask : quote?.bid > 0 ? quote.bid : 0;
+        const price = priceAtLevel(protectionItemHrid, loaded.level).price || 0;
         if (price > 0) return price;
     }
-    // No market quote is no price: the tracker flags the session as having an unpriced input
-    // rather than booking the vendor price, which is far below what a protection costs to buy
-    const marketPrice = ironCowBook(protectionItemHrid, 0) ?? marketAPI.getPrice(protectionItemHrid, 0);
-    return marketPrice?.ask > 0 ? marketPrice.ask : marketPrice?.bid > 0 ? marketPrice.bid : 0;
+    // The +0 price is the shared guarded protection price: the figure the panel's table and the
+    // tooltip quote for the same item
+    return priceGuarded(protectionItemHrid).price || 0;
 }
 
 /**

@@ -81,6 +81,10 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: () => ({}),
 }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
+vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: () => 0,
+}));
 
 const { calculateSimRevenue } = await import('./combat-sim-adapter.js');
 

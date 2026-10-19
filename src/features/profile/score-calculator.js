@@ -10,14 +10,22 @@ import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { calculateBattleHousesCost } from '../../utils/house-cost-calculator.js';
 import dataManager from '../../core/data-manager.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
-import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
+import { getItemPrice } from '../../utils/market-data.js';
 import config from '../../core/config.js';
 import { calculateEnhancementBatch } from '../../utils/enhancement-worker-manager.js';
 import { applyMirrorOptimization, blessedMirrorChance } from '../../utils/enhancement-calculator.js';
-import { getCheapestProtectionPrice, getRealisticBaseItemPrice } from '../enhancement/tooltip-enhancement.js';
+import {
+    perAttemptMaterialCost,
+    priceBase,
+    priceMirror,
+    priceProtection,
+} from '../../utils/enhancement-input-pricing.js';
+
+// A profile score prices every piece at the ask, so another player's score never moves with the
+// viewer's profit mode
+const ASK = { mode: 'ask' };
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
-import { TRAINEE_SHOP_PRICE } from '../../utils/enhancement-pricing.js';
 
 /**
  * Token-based item data for untradeable back slot items (capes/cloaks/quivers)
@@ -698,27 +706,37 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
         if (tokenValue > 0) {
             itemCost = tokenValue;
         } else if (item.needsEnhancementCalc && item.subLevelTasks.length > 0) {
-            // Build targetCosts[0..N], matching tooltip's calculateEnhancementPath
-            const targetCosts = [getRealisticBaseItemPrice(item.itemHrid)]; // level 0 = base item
-            for (let subLevel = 1; subLevel <= item.enhancementLevel; subLevel++) {
+            // Build targetCosts[0..N], matching tooltip's calculateEnhancementPath. Inputs are priced by the
+            // shared enhancement rule; one nothing can price makes the piece unpriced (itemCost stays 0
+            // and the row says "no price"), never a cheaper piece with a free input
+            const basePrice = priceBase(item.itemHrid, ASK).price;
+            const targetCosts = [basePrice ?? 0]; // level 0 = base item
+            const enhancementUnpriced =
+                !(basePrice > 0) || perAttemptMaterialCost(item.itemDetails, ASK).hasMissingPrices;
+            for (let subLevel = 1; subLevel <= item.enhancementLevel && !enhancementUnpriced; subLevel++) {
                 const { workerStartIndex, strategies } = item.subLevelTasks[subLevel - 1];
                 let minCost = null;
                 for (let s = 0; s < strategies.length; s++) {
                     const wr = workerResults[workerStartIndex + s];
                     if (!wr || !wr.attempts) continue;
                     const cost = calculateEnhancementCostFromWorkerResult(item.itemHrid, strategies[s], wr);
+                    if (cost === null) continue;
                     if (minCost === null || cost < minCost) minCost = cost;
                 }
-                targetCosts.push(minCost ?? getRealisticBaseItemPrice(item.itemHrid));
+                // No strategy could be costed: either the worker had nothing, or every one needed an
+                // input nobody prices. The base item is the floor the tooltip falls back to
+                targetCosts.push(minCost ?? basePrice);
             }
-            // Apply Philosopher's Mirror optimization — literally the tooltip's pass, so the two
-            // cannot drift (it starts at +3: the game will not mirror an item below +2)
-            applyMirrorOptimization(
-                targetCosts,
-                getRealisticBaseItemPrice('/items/philosophers_mirror'),
-                blessedMirrorChance(enhancementParams)
-            );
-            itemCost = targetCosts[item.enhancementLevel];
+            if (!enhancementUnpriced) {
+                // Apply Philosopher's Mirror optimization — literally the tooltip's pass, so the two
+                // cannot drift (it starts at +3: the game will not mirror an item below +2)
+                applyMirrorOptimization(
+                    targetCosts,
+                    priceMirror(ASK).price || 0,
+                    blessedMirrorChance(enhancementParams)
+                );
+            }
+            itemCost = enhancementUnpriced ? 0 : targetCosts[item.enhancementLevel];
         } else {
             // Use market price (already checked or not needed)
             const marketPrice = getMarketPriceWithFallback(item.itemHrid, item.enhancementLevel);
@@ -777,60 +795,38 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
 
 /**
  * Calculate total enhancement cost from worker result
- * Matches tooltip-enhancement.js calculateTotalCost() exactly.
+ * Matches tooltip-enhancement.js calculateTotalCost() exactly: every input is priced by the shared
+ * enhancement input rule (see utils/enhancement-input-pricing.js).
  * @param {string} itemHrid - Item HRID
  * @param {number} protectFrom - Protection threshold used in this calculation
  * @param {Object} workerResult - Worker calculation result
- * @returns {number} Total cost (base item + materials + protection)
+ * @returns {number|null} Total cost (base item + materials + protection), or null when an input
+ *   the strategy needs could not be priced - unpriced, not cheap
  */
 function calculateEnhancementCostFromWorkerResult(itemHrid, protectFrom, workerResult) {
     const gameData = dataManager.getInitClientData();
-    if (!gameData) return 0;
+    if (!gameData) return null;
 
     const itemDetails = gameData.itemDetailMap[itemHrid];
-    if (!itemDetails || !itemDetails.enhancementCosts) return 0;
+    if (!itemDetails || !itemDetails.enhancementCosts) return null;
 
-    // Base item cost — matches tooltip's getRealisticBaseItemPrice (with inflation guard)
-    const baseItemCost = getRealisticBaseItemPrice(itemHrid);
+    const baseItemCost = priceBase(itemHrid, ASK).price;
+    if (!(baseItemCost > 0)) return null;
 
-    // Material cost per attempt — matches tooltip's calculateTotalCost material loop exactly
-    let perActionCost = 0;
-    for (const material of itemDetails.enhancementCosts) {
-        if (!material || !material.itemHrid) continue;
-
-        let price;
-        if (material.itemHrid.startsWith('/items/trainee_')) {
-            price = TRAINEE_SHOP_PRICE; // untradeable trainee charms: shop-fixed
-        } else if (material.itemHrid === '/items/coin') {
-            price = 1; // coins at face value
-        } else {
-            // A missing side of the book arrives as `null`, never as a negative:
-            // `getItemPrices` reconciles both sides and returns null only when
-            // neither exists. The old `< 0` normalisation therefore never fired,
-            // so an ask-less book left `price` at null and `null * count` costed
-            // the material at nothing — a +14 piece whose charm has bids but no
-            // sellers scored as if that charm were free.
-            const marketPrice = getItemPrices(material.itemHrid, 0);
-            const sideOf = (value) => (Number.isFinite(value) && value >= 0 ? value : null);
-            const ask = sideOf(marketPrice?.ask);
-            const bid = sideOf(marketPrice?.bid);
-            // Ask first — this is what replacing the material costs — and the
-            // other side rather than nothing when the book is one-sided
-            price = ask ?? bid ?? gameData.itemDetailMap[material.itemHrid]?.sellPrice ?? 0;
-        }
-        perActionCost += price * (material.count || 1);
-    }
+    // Material cost per attempt: a material nobody prices is a partial bill, not a cheaper run
+    const materials = perAttemptMaterialCost(itemDetails, ASK);
+    if (materials.hasMissingPrices) return null;
 
     // Total material cost = per-action cost × total expected attempts
-    const materialCost = perActionCost * workerResult.attempts;
+    const materialCost = materials.cost * workerResult.attempts;
 
-    // Protection cost using actual cheapest protection price
+    // Protection cost using actual cheapest protection price; a protected strategy with nothing to
+    // protect with is not offered at all, rather than offered free
     let protectionCost = 0;
     if (protectFrom > 0 && workerResult.protectionCount > 0) {
-        const protectionInfo = getCheapestProtectionPrice(itemHrid);
-        if (protectionInfo.price > 0) {
-            protectionCost = protectionInfo.price * workerResult.protectionCount;
-        }
+        const protectionInfo = priceProtection(itemHrid, ASK);
+        if (protectionInfo.unpriced) return null;
+        protectionCost = protectionInfo.price * workerResult.protectionCount;
     }
 
     return baseItemCost + materialCost + protectionCost;

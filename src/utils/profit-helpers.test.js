@@ -21,10 +21,18 @@ vi.mock('./market-data.js', () => ({
     getPricingMode: (context) => (context ? chain.pricingMode : 'ask'),
 }));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => 0,
     getCustomPrice: () => chain.custom,
 }));
 vi.mock('./game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => chain.shop }));
 vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({
+    getProductionCost: (itemHrid, mode) => {
+        chain.productionCostModes.push(mode);
+        return chain.production;
+    },
+}));
+vi.mock('./enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
     getProductionCost: (itemHrid, mode) => {
         chain.productionCostModes.push(mode);
         return chain.production;
@@ -604,6 +612,7 @@ describe('resolveItemPrice', () => {
             custom: false,
             missing: false,
             estimated: true,
+            production: true,
         });
     });
 
@@ -695,6 +704,6 @@ describe('resolveItemPrice', () => {
         const result = resolveItemPrice('/items/cheese', { context: 'profit', side: 'buy' });
 
         expect(chain.productionCostModes).toEqual(['bid']);
-        expect(result).toEqual({ price: 700, custom: false, missing: false, estimated: true });
+        expect(result).toEqual({ price: 700, custom: false, missing: false, estimated: true, production: true });
     });
 });

@@ -16,6 +16,8 @@ const guild = vi.hoisted(() => ({
 
 /** The books this character has read, which is what an ability swap is costed from */
 const character = vi.hoisted(() => ({ characterAbilities: [] }));
+// Items whose shared-rule base price is a partial crafting bill (a recipe input went unpriced)
+const partialBase = vi.hoisted(() => new Set());
 
 /**
  * What a guild token is worth, in gold. Null is the state a player is in when
@@ -147,11 +149,32 @@ vi.mock('../../utils/enhancement-config.js', () => ({
 }));
 // The enhancement pricing rules moved to utils so every bundle could share one
 // copy; this file drives the advisor's use of them, not the rules themselves,
-// which have their own suite in src/utils/enhancement-pricing.test.js
-vi.mock('../../utils/enhancement-pricing.js', () => ({
-    getCheapestProtectionPrice: vi.fn(),
-    perAttemptMaterialCost: vi.fn(),
-}));
+// which have their own suite in src/utils/enhancement-pricing.test.js and enhancement-input-pricing.test.js
+vi.mock('../../utils/enhancement-input-pricing.js', async () => {
+    // The advisor's mirror and base prices go through the shared rule; here they read the same
+    // mocked resolver every other price in this file does, so each test keeps saying what they cost
+    const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
+    const { getItemPrices } = await import('../../utils/market-data.js');
+    const via = (hrid) => {
+        const price = resolveItemPrice(hrid, { side: 'buy', enhancementLevel: 0 })?.price;
+        return price > 0
+            ? { price, unpriced: false, estimated: false, partial: partialBase.has(hrid) }
+            : { price: null, unpriced: true, estimated: false };
+    };
+    return {
+        priceMirror: () => via('/items/philosophers_mirror'),
+        priceBase: (hrid) => via(hrid),
+        priceAtLevel: (hrid, level) => {
+            if (!(level > 0)) return via(hrid);
+            const ask = getItemPrices(hrid, level)?.ask;
+            return ask > 0
+                ? { price: ask, unpriced: false, estimated: false }
+                : { price: null, unpriced: true, estimated: false };
+        },
+        getCheapestProtectionPrice: vi.fn(),
+        perAttemptMaterialCost: vi.fn(),
+    };
+});
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     explainAbilityLevelUpCost: vi.fn(() => ({
         bookHrid: '/items/fireball',
@@ -224,7 +247,7 @@ const {
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
 const { calculateEnhancement } = await import('../../utils/enhancement-calculator.js');
-const { getCheapestProtectionPrice, perAttemptMaterialCost } = await import('../../utils/enhancement-pricing.js');
+const { getCheapestProtectionPrice, perAttemptMaterialCost } = await import('../../utils/enhancement-input-pricing.js');
 const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
 const { explainAbilityLevelUpCost } = await import('../../utils/ability-cost-calculator.js');
 const { runSimulation, plannedWorkerCount } = await import('./combat-sim-runner.js');
@@ -4396,6 +4419,39 @@ describe('explainUpgradeCost', () => {
 
         expect(detail.source).toBe('sim');
         expect(detail.enhanceSource).toMatchObject({ kind: 'yours', label: 'Yours' });
+    });
+
+    test('a base priced from a partial crafting bill leaves the enhanced buy unpriced, not cheaper', () => {
+        // The +7 has no listing, so its price is base + enhance path; a base whose craft bill counted an
+        // unpriced ingredient as 0 would make the whole candidate look cheaper by that ingredient
+        getItemPrices.mockImplementation((hrid) =>
+            hrid === '/items/enhance_mat' ? { ask: 100_000, bid: 90_000 } : null
+        );
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        calculateEnhancement.mockReturnValue({ attempts: 3, protectionCount: 0 });
+        getCheapestProtectionPrice.mockReturnValue({ price: 0 });
+        perAttemptMaterialCost.mockReturnValue({ cost: 100_000, hasCost: true, hasMissingPrices: false });
+        getEnhancingParams.mockReturnValue({ enhancingLevel: 100, teas: {}, paramsSource: 'auto' });
+        const gameData = costGameData();
+        gameData.itemDetailMap['/items/fire_top'].itemLevel = 50;
+        gameData.itemDetailMap['/items/fire_top'].enhancementCosts = [{ itemHrid: '/items/enhance_mat', count: 1 }];
+        const candidate = {
+            type: 'tier',
+            slot: BODY,
+            upgradeHrid: '/items/fire_top',
+            upgradeLevel: 7,
+            removedItems: [],
+        };
+
+        expect(explainUpgradeCost(candidate, gameData).gross).toBeGreaterThan(0);
+        partialBase.add('/items/fire_top');
+        try {
+            const detail = explainUpgradeCost(candidate, gameData);
+            expect(detail.gross).toBe(null);
+            expect(detail.unpriced).toContain('Fire Top');
+        } finally {
+            partialBase.delete('/items/fire_top');
+        }
     });
 
     test('a figure the market quoted outright ran no sweep, and says nothing about benches', () => {

@@ -11,6 +11,7 @@ import dataManager from '../../core/data-manager.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import networthCache from '../networth/networth-cache.js';
+import { validateNetworthCache } from '../networth/networth-cache-validation.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { parseItemCount } from '../../utils/number-parser.js';
@@ -646,6 +647,9 @@ class InventoryBadgeManager {
                 bidPrice = officialValue;
             } else if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
                 // Use enhancement cost calculation for high-level equipment
+                // Validated like the net-worth calculation does, so a mode, a custom price or the crafting
+                // setting never leaves a cost priced under the old one
+                validateNetworthCache({ force: false });
                 const cachedCost = networthCache.get(itemHrid, enhancementLevel);
 
                 if (cachedCost !== null) {
@@ -655,13 +659,20 @@ class InventoryBadgeManager {
                 } else {
                     // Calculate enhancement cost
                     const enhancementParams = getEnhancingParams();
-                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
+                        priceContext: 'networth',
+                    });
 
                     if (enhancementPath && enhancementPath.optimalStrategy) {
                         const enhancementCost = enhancementPath.optimalStrategy.totalCost;
 
                         // Cache the result
-                        networthCache.set(itemHrid, enhancementLevel, enhancementCost);
+                        networthCache.set(
+                            itemHrid,
+                            enhancementLevel,
+                            enhancementCost,
+                            enhancementPath.inputsPartial === true || enhancementPath.pricesPartial === true
+                        );
 
                         // Use enhancement cost for both ask and bid
                         askPrice = enhancementCost;
@@ -698,17 +709,30 @@ class InventoryBadgeManager {
                     (askPrice === 0 || bidPrice === 0)
                 ) {
                     // Check cache first
+                    // Validated like the net-worth calculation does, so a mode, a custom price or the crafting
+                    // setting never leaves a cost priced under the old one
+                    validateNetworthCache({ force: false });
                     const cachedCost = networthCache.get(itemHrid, enhancementLevel);
                     let enhancementCost = cachedCost;
 
                     if (cachedCost === null) {
                         // Calculate enhancement cost
                         const enhancementParams = getEnhancingParams();
-                        const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams);
+                        const enhancementPath = calculateEnhancementPath(
+                            itemHrid,
+                            enhancementLevel,
+                            enhancementParams,
+                            { priceContext: 'networth' }
+                        );
 
                         if (enhancementPath && enhancementPath.optimalStrategy) {
                             enhancementCost = enhancementPath.optimalStrategy.totalCost;
-                            networthCache.set(itemHrid, enhancementLevel, enhancementCost);
+                            networthCache.set(
+                                itemHrid,
+                                enhancementLevel,
+                                enhancementCost,
+                                enhancementPath.inputsPartial === true || enhancementPath.pricesPartial === true
+                            );
                         } else {
                             enhancementCost = null;
                         }

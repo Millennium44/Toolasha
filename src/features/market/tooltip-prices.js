@@ -893,7 +893,9 @@ class TooltipPrices {
             const enhancementConfig = enhancementParamsFor('tooltip', itemHrid);
             if (enhancementConfig) {
                 // Calculate optimal enhancement path
-                const enhancementData = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementConfig);
+                const enhancementData = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementConfig, {
+                    priceContext: 'ask',
+                });
 
                 if (enhancementData) {
                     // Inject enhancement analysis into tooltip

@@ -34,7 +34,7 @@ import {
     sessionsLoaded,
 } from './enhancement-storage.js';
 import { calculateEnhancementPredictions } from './enhancement-xp.js';
-import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
+import { priceMaterial } from '../../utils/enhancement-input-pricing.js';
 
 /**
  * EnhancementTracker class manages enhancement tracking sessions
@@ -411,7 +411,7 @@ class EnhancementTracker {
 
         // Same pricing rules the tooltip and XPH calculator use, so a tracked run and its
         // prediction cost the same materials the same way
-        const price = Number.isFinite(unitCost) ? unitCost : getEnhancementMaterialPrice(itemHrid, 'ask');
+        const price = Number.isFinite(unitCost) ? unitCost : priceMaterial(itemHrid).price || 0;
 
         addMaterialCost(session, itemHrid, count, price);
         await saveSessions(this.sessions);

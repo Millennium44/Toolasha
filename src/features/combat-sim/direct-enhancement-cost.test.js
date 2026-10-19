@@ -13,7 +13,7 @@ vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false, t
 vi.mock('../enhancement/enhancement-params-source.js', () => ({
     enhancementParamsFor: () => ({ enhancingLevel: 100, toolBonus: 0, speedBonus: 0, teas: {}, guzzlingBonus: 1 }),
 }));
-vi.mock('../../utils/enhancement-pricing.js', () => ({
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({
     perAttemptMaterialCost: () => state.materials,
     getCheapestProtectionPrice: () => ({ price: 0, itemHrid: null }),
 }));

@@ -16,6 +16,18 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// The advisor's mirror and base prices go through the shared enhancement input rule; this file is not
+// about prices, so nothing is priced
+vi.mock('../../utils/enhancement-input-pricing.js', () => {
+    const unpriced = { price: null, unpriced: true, estimated: false };
+    return {
+        priceMirror: () => unpriced,
+        priceBase: () => unpriced,
+        getCheapestProtectionPrice: () => ({ price: null, itemHrid: null }),
+        perAttemptMaterialCost: () => ({ cost: 0, hasCost: false, hasMissingPrices: true }),
+    };
+});
 // The real module — never mocked in this file, unlike combat-sim-ui.test.js,
 // so a `guild shrine guild-allowed cap` test spies on individual exports
 // rather than replacing the whole module.

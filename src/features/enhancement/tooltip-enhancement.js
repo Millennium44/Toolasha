@@ -13,7 +13,7 @@ import {
     applyMirrorOptimization,
     blessedMirrorChance,
     calculateEnhancement,
-    mirrorLandingOdds,
+    expandMirrorPlan,
 } from '../../utils/enhancement-calculator.js';
 import config from '../../core/config.js';
 const toolashaConfig = config;
@@ -43,15 +43,24 @@ import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 // The pricing rules moved to utils so the sim's advisor and the inventory savings card — each
 // in a bundle that cannot reach this module — could stop carrying their own drifted copies.
 // Re-exported below because this module's own callers import them from here.
+// The profit-mode input rule (custom prices, shop floor, the player's pricing mode) shared with the
+// panel, the advisor, the score and the net-worth map; the raw-book helpers stay in enhancement-pricing
 import {
-    getEnhancementMaterialPrice,
-    perAttemptMaterialCost,
-    getProductionCost,
-    getRealisticBaseItemPrice,
     getCheapestProtectionPrice,
-} from '../../utils/enhancement-pricing.js';
+    perAttemptMaterialCost,
+    priceAtLevel,
+    priceBase,
+    priceGuarded,
+    priceMaterial,
+    priceMirror,
+    priceProtection,
+} from '../../utils/enhancement-input-pricing.js';
 
-export { getEnhancementMaterialPrice, getProductionCost, getRealisticBaseItemPrice, getCheapestProtectionPrice };
+export { getCheapestProtectionPrice };
+// Pass-through only: nothing in this module calls these two
+export { getEnhancementMaterialPrice, getRealisticBaseItemPrice } from '../../utils/enhancement-input-pricing.js';
+// Pass-through only, like the chain time below: the raw-book cost walk lives in utils
+export { getProductionCost } from '../../utils/enhancement-pricing.js';
 
 // Pass-through only: nothing in this module reads the chain time, but the market profit
 // calculator and the goal planner import it from here. Written as a re-export rather than an
@@ -96,9 +105,22 @@ function expectedXPFromRun(run, itemHrid, wisdom) {
  * @param {string} itemHrid - Item HRID (e.g., '/items/cheese_sword')
  * @param {number} currentEnhancementLevel - Current enhancement level (1-20)
  * @param {Object} config - Enhancement configuration from enhancement-config.js
+ * @param {Object} [options] - Options
+ * @param {'profit'|'networth'|'ask'} [options.priceContext='profit'] - How the inputs are priced:
+ *   'profit' is the player's profit mode (no side named), 'networth' the net-worth mode, 'ask' the rule
+ *   forced to the ask - what a surface that labels its columns Ask and Bid passes
  * @returns {Object|null} Enhancement analysis or null if not enhanceable
  */
-export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, config) {
+/**
+ * The pricing options of a `priceContext`: 'ask' forces the ask, anything else names a context.
+ * @param {'profit'|'networth'|'ask'} priceContext - See {@link calculateEnhancementPath}
+ * @returns {{mode: string}|{context: string}}
+ */
+function pricingOf(priceContext) {
+    return priceContext === 'ask' ? { mode: 'ask' } : { context: priceContext };
+}
+
+export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, config, { priceContext = 'profit' } = {}) {
     // Validate inputs
     if (!itemHrid || currentEnhancementLevel < 1 || currentEnhancementLevel > 20) {
         return null;
@@ -125,7 +147,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
 
     // The prices are the same at every level — enhancementCosts is not level-indexed and the base
     // item is bought once — so they are read once and the sweep below only walks the chain.
-    const prices = priceEnhancementInputs(itemHrid, itemDetails);
+    const prices = priceEnhancementInputs(itemHrid, itemDetails, priceContext);
 
     const allResults = [];
 
@@ -141,10 +163,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
     // levels it actually builds, and there is nowhere else that number survives
     const targetProtections = new Array(currentEnhancementLevel + 1);
-    targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
-        ? Math.min(getProductionCost(itemHrid) || Infinity, getItemPrices(itemHrid, 0)?.ask || Infinity) ||
-          getRealisticBaseItemPrice(itemHrid)
-        : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
+    targetCosts[0] = priceBase(itemHrid, pricingOf(priceContext)).price || 0; // Level 0: base item
     targetTimes[0] = 0; // Level 0: no time needed
     targetAttempts[0] = 0; // Level 0: no attempts needed
     targetProtections[0] = 0; // Level 0: nothing to protect
@@ -174,7 +193,7 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
     // Like Enhancelator lines 456-465. The pass itself lives in the calculator so the networth
     // worker and the profile score run the identical sweep instead of three copies of it.
-    const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID);
+    const mirrorPrice = priceMirror(pricingOf(priceContext)).price || 0;
     const mirrorBlessedChance = blessedMirrorChance(config);
     const usedMirror = applyMirrorOptimization(targetCosts, mirrorPrice, mirrorBlessedChance);
 
@@ -195,6 +214,25 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // that mirrors but is never reached from the target contributes nothing.
     const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror, mirrorBlessedChance);
 
+    // Which of the inputs the finished plan selected is a partial crafting bill. A level built the
+    // traditional way is partial when its chosen strategy spends a protection that is; a level built
+    // with the mirror is partial when the mirror is, or either level it stands on is. The base and the
+    // materials are bought on every route.
+    const mirrorPartial = Boolean(priceMirror(pricingOf(priceContext)).partial);
+    const levelPartial = [];
+    for (let level = 0; level <= currentEnhancementLevel; level++) {
+        levelPartial[level] =
+            level >= 3 && usedMirror[level]
+                ? mirrorPartial || levelPartial[level - 1] || levelPartial[level - 2]
+                : traditionalProtections[level] > 0 && prices.protectionPartial;
+    }
+    const copyHrid = unrefinedBaseOf(itemHrid);
+    const copyPartial =
+        mirrorPlan.mirrorCount > 0 && copyHrid ? Boolean(priceBase(copyHrid, pricingOf(priceContext)).partial) : false;
+    const inputsPartial = Boolean(
+        prices.basePartial || prices.materialsPartial || levelPartial[currentEnhancementLevel] || copyPartial
+    );
+
     let optimalStrategy;
 
     if (mirrorPlan.mirrorCount > 0) {
@@ -209,7 +247,8 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
             traditionalProtections,
             targetCosts,
             optimalTraditional,
-            mirrorPrice
+            mirrorPrice,
+            priceContext
         );
     } else {
         // No mirror used - return traditional result
@@ -313,6 +352,8 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         // Whether anything the quote is built on could not be priced; the tooltip says so
         // rather than presenting a partial bill as a full one
         pricesPartial: prices.pricesPartial,
+        // Whether the inputs the plan SELECTED include a partial crafting bill; net worth flags its value
+        inputsPartial,
         optimalStrategy,
         allStrategies: [optimalStrategy], // Only return optimal
         xpPerHour,
@@ -397,10 +438,11 @@ function sweepStrategiesForLevel(targetLevel, itemLevel, config, prices) {
  *
  * @param {string} itemHrid - The item being enhanced
  * @param {Object} itemDetails - Its game data
+ * @param {'profit'|'networth'|'ask'} [priceContext='profit'] - See {@link calculateEnhancementPath}
  * @returns {Object} Per-attempt material cost and breakdown, the base item's prices, and the
  *   protection options the sweep should price the protected rows with
  */
-function priceEnhancementInputs(itemHrid, itemDetails) {
+function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') {
     const gameData = dataManager.getInitClientData();
 
     // Per-attempt materials, through the one shared pricing rule
@@ -411,45 +453,42 @@ function priceEnhancementInputs(itemHrid, itemDetails) {
     // XP/hr table and the enhancing panel. The tooltip colors its Total green against the
     // enhanced item's ask, so an unnoticed under-quote reads as "this is profitable".
     let pricesPartial = false;
+    // Whether a priced input is itself a partial crafting bill (a recipe input nothing prices)
+    let materialsPartial = false;
     for (const material of itemDetails.enhancementCosts || []) {
         const materialDetail = gameData.itemDetailMap[material.itemHrid];
-        const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
+        const priced = priceMaterial(material.itemHrid, pricingOf(priceContext));
+        const price = priced.price || 0;
         if (!(price > 0) && material.count > 0) pricesPartial = true;
+        if (price > 0 && priced.partial && material.count > 0) materialsPartial = true;
         materialCostPerAttempt += price * material.count;
         materials.push({
             itemHrid: material.itemHrid,
             name: materialDetail?.name || material.itemHrid,
             countPerAction: material.count,
             unitPrice: price,
-            bidPrice: getEnhancementMaterialPrice(material.itemHrid, 'bid'),
+            bidPrice: priceMaterial(material.itemHrid, { mode: 'bid' }).price || 0,
         });
     }
 
     // Protection: the cheapest thing that will absorb a failure. A null price means nothing that
     // could protect this item has one, and then there are no protected rows to price at all —
     // rather than a set of them priced at zero, which is what used to happen
-    const protectionInfo = getCheapestProtectionPrice(itemHrid);
+    const protectionInfo = priceProtection(itemHrid, pricingOf(priceContext));
     const protectionOptions =
         protectionInfo.price > 0 ? [{ itemHrid: protectionInfo.itemHrid, price: protectionInfo.price }] : [];
     let protectionBidPrice = 0;
     if (protectionInfo.price > 0) {
-        const protPrices = getItemPrices(protectionInfo.itemHrid, 0);
-        protectionBidPrice = protPrices?.bid > 0 ? protPrices.bid : protectionInfo.price;
+        protectionBidPrice = priceGuarded(protectionInfo.itemHrid, { mode: 'bid' }).price || protectionInfo.price;
     }
 
-    // Base item cost (initial investment) — market price or min(crafting, market) per setting
-    const craftingCostAsk = getProductionCost(itemHrid, 'ask');
-    const craftingCostBid = getProductionCost(itemHrid, 'bid');
-    const baseItemPrices = getItemPrices(itemHrid, 0);
-    const marketAsk = baseItemPrices?.ask > 0 ? baseItemPrices.ask : 0;
-    const marketBid = baseItemPrices?.bid > 0 ? baseItemPrices.bid : 0;
-    const useCraftingCost = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
-    // Ask drives the decision: use crafted if ask is missing OR crafted ask is cheaper
-    const askIsCrafted = useCraftingCost && craftingCostAsk > 0 && (marketAsk === 0 || craftingCostAsk < marketAsk);
-    const baseAskPrice = askIsCrafted ? craftingCostAsk : marketAsk || getRealisticBaseItemPrice(itemHrid);
-    const baseBidPrice = askIsCrafted
-        ? craftingCostBid || craftingCostAsk
-        : marketBid || getProductionCost(itemHrid, 'bid') || getRealisticBaseItemPrice(itemHrid);
+    // Base item cost (initial investment): the guarded profit-mode price, or the cheaper of that and
+    // the craft cost per the setting; the bid column reads the same chain with the bid forced
+    const askBase = priceBase(itemHrid, pricingOf(priceContext));
+    const bidBase = priceBase(itemHrid, { mode: 'bid' });
+    const askIsCrafted = askBase.crafted;
+    const baseAskPrice = askBase.price || 0;
+    const baseBidPrice = bidBase.price || baseAskPrice;
 
     // The base item is paid once whatever happens, so an unpriced one understates every level
     if (!(baseAskPrice > 0)) pricesPartial = true;
@@ -460,88 +499,20 @@ function priceEnhancementInputs(itemHrid, itemDetails) {
         protectionOptions,
         protectionBidPrice,
         pricesPartial,
+        // Which of the chosen inputs is a partial crafting bill: the base (the crafting choice
+        // included), the materials, and the protection item the protected rows use
+        basePartial: Boolean(askBase.partial),
+        materialsPartial,
+        protectionPartial: Boolean(protectionInfo.partial),
         baseCost: baseAskPrice,
         base: {
             baseCost: baseAskPrice,
             baseAskPrice,
             baseBidPrice,
             baseAskIsCrafted: askIsCrafted,
-            baseBidIsCrafted: askIsCrafted,
+            baseBidIsCrafted: bidBase.crafted,
         },
     };
-}
-
-/**
- * Walk the mirror DP back from the target level to the items the plan actually builds.
- *
- * The DP decides mirror-or-not level by level, and those decisions are not necessarily a clean
- * run: +6 can mirror while +5 does not. Assuming a contiguous block from the first mirrored
- * level and expanding it with Fibonacci quantities invents items the plan never buys. Walking
- * the decisions backwards from the target instead yields exactly the leaves it does buy.
- *
- * @param {number} targetLevel - Level the plan is building
- * @param {boolean[]} usedMirror - Per-level mirror decisions from the DP
- * @param {number} [blessedChance=0] - Chance a mirror success is +2 under Blessed Tea. A step
- *   into level n is only run when the chain stands on n-1, which happens with probability
- *   `landing[n-1]` (see applyMirrorOptimization), so mirror operations and the copies they
- *   consume are expected counts and may be fractional
- * @returns {{leaves: Array<{level: number, quantity: number, primary: boolean}>,
- *   mirrorOperations: Array<{level: number, quantity: number, primary: boolean}>,
- *   mirrorCount: number, mirrorStartLevel: number|null}} Leaves are levels bought traditionally,
- *   highest first; mirror operations record the guaranteed enhancements in the selected route
- * @private
- */
-function expandMirrorPlan(targetLevel, usedMirror, blessedChance = 0) {
-    const landing = mirrorLandingOdds(usedMirror, blessedChance);
-    // Two demands, because a mirror step is not symmetric: the primary item —
-    // the one being upgraded, which for a refined piece is the refined one —
-    // carries on at level-1, and what is consumed beside it is a *copy of the
-    // base item* at level-2, which need not be refined. The primary lineage
-    // is one chain; everything it consumes, and everything those copies
-    // consume in turn, is a plain copy
-    const needPrimary = new Array(targetLevel + 1).fill(0);
-    const needCopy = new Array(targetLevel + 1).fill(0);
-    needPrimary[targetLevel] = 1;
-
-    let mirrorCount = 0;
-    let mirrorStartLevel = null;
-    const mirrorOperations = [];
-
-    // High to low: a level is only expanded once every demand for it is known
-    for (let level = targetLevel; level >= 2; level--) {
-        if (!usedMirror[level]) continue;
-        const primary = needPrimary[level];
-        const copies = needCopy[level];
-        if (!primary && !copies) continue;
-
-        // The step into this level only runs when the chain stands on level-1
-        const stepOdds = landing[level - 1];
-        const primarySteps = primary * stepOdds;
-        const copySteps = copies * stepOdds;
-
-        mirrorCount += primarySteps + copySteps;
-        mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
-        if (primarySteps > 0) mirrorOperations.push({ level, quantity: primarySteps, primary: true });
-        if (copySteps > 0) mirrorOperations.push({ level, quantity: copySteps, primary: false });
-        if (primary) {
-            needPrimary[level - 1] += primary;
-            needCopy[level - 2] += primarySteps;
-            needPrimary[level] = 0;
-        }
-        if (copies) {
-            needCopy[level - 1] += copies;
-            needCopy[level - 2] += copySteps;
-            needCopy[level] = 0;
-        }
-    }
-
-    const leaves = [];
-    for (let level = targetLevel; level >= 0; level--) {
-        if (needPrimary[level] > 0) leaves.push({ level, quantity: needPrimary[level], primary: true });
-        if (needCopy[level] > 0) leaves.push({ level, quantity: needCopy[level], primary: false });
-    }
-
-    return { leaves, mirrorCount, mirrorStartLevel, mirrorOperations };
 }
 
 /**
@@ -692,7 +663,8 @@ function buildMirrorOptimizedResult(
     traditionalProtections,
     targetCosts,
     optimalTraditional,
-    mirrorPrice
+    mirrorPrice,
+    priceContext = 'profit'
 ) {
     const { leaves, mirrorCount, mirrorStartLevel } = plan;
 
@@ -700,7 +672,7 @@ function buildMirrorOptimizedResult(
     // the refined item, every consumed copy is the unrefined base at its
     // level — the same enhancement bill on a far cheaper +0
     const copyHrid = unrefinedBaseOf(itemHrid);
-    const copyBasePrice = copyHrid ? getRealisticBaseItemPrice(copyHrid) : null;
+    const copyBasePrice = copyHrid ? priceBase(copyHrid, pricingOf(priceContext)).price || 0 : null;
     const costOf = (level, primary) => {
         if (primary || !copyHrid || !(copyBasePrice > 0)) return traditionalCosts[level];
         return Math.max(0, traditionalCosts[level] - traditionalCosts[0]) + copyBasePrice;
@@ -782,10 +754,14 @@ function buildMirrorOptimizedResult(
         materialBill: buildMaterialBill({
             materials: optimalTraditional.materialBreakdown,
             materialMultiplier,
-            protectionItemHrid: optimalTraditional.protectionItemHrid || getCheapestProtectionPrice(itemHrid)?.itemHrid,
+            protectionItemHrid:
+                optimalTraditional.protectionItemHrid ||
+                getCheapestProtectionPrice(itemHrid, pricingOf(priceContext))?.itemHrid,
             protectionCount: totalProtections,
             protectionUnitPrice:
-                optimalTraditional.protectionAskPrice || getCheapestProtectionPrice(itemHrid)?.price || 0,
+                optimalTraditional.protectionAskPrice ||
+                getCheapestProtectionPrice(itemHrid, pricingOf(priceContext))?.price ||
+                0,
             mirrorCount,
             mirrorPrice,
             baseItemHrid: itemHrid,
@@ -931,9 +907,9 @@ export function buildEnhancementTooltipHTML(enhancementData) {
             // copy a refined piece is mirrored with
             const hrid = item.itemHrid || consumedHrid;
             const name = gameData?.itemDetailMap?.[hrid]?.name || hrid;
-            const prices = getItemPrices(hrid, item.level);
-            const askPrice = prices?.ask > 0 ? prices.ask : item.costEach;
-            const bidPrice = prices?.bid > 0 ? prices.bid : item.costEach;
+            // The same rule as every other row of this table, with the side its column names
+            const askPrice = priceAtLevel(hrid, item.level, { mode: 'ask' }).price || item.costEach;
+            const bidPrice = priceAtLevel(hrid, item.level, { mode: 'bid' }).price || item.costEach;
             totalAsk += askPrice * item.quantity;
             totalBid += bidPrice * item.quantity;
             return { name: name + ' +' + item.level, count: item.quantity, askPrice, bidPrice };
@@ -941,9 +917,9 @@ export function buildEnhancementTooltipHTML(enhancementData) {
 
         // Philosopher's Mirror row
         if (optimalStrategy.philosopherMirrorCost > 0 && optimalStrategy.mirrorCount > 0) {
-            const mirrorPrices = getItemPrices('/items/philosophers_mirror', 0);
-            const mirrorAsk = mirrorPrices?.ask > 0 ? mirrorPrices.ask : 0;
-            const mirrorBid = mirrorPrices?.bid > 0 ? mirrorPrices.bid : 0;
+            // The same rule as the plan above, with the side each column names
+            const mirrorAsk = priceMirror({ mode: 'ask' }).price || 0;
+            const mirrorBid = priceMirror({ mode: 'bid' }).price || 0;
             totalAsk += mirrorAsk * optimalStrategy.mirrorCount;
             totalBid += mirrorBid * optimalStrategy.mirrorCount;
             consumedRows.push({
@@ -1170,7 +1146,8 @@ export function rerenderOpenEnhancementSections() {
                 html = buildEnhancementMilestonesHTML(itemHrid, params);
             } else {
                 const level = parseInt(section.getAttribute('data-toolasha-enh-level'), 10);
-                const data = level > 0 ? calculateEnhancementPath(itemHrid, level, params) : null;
+                const data =
+                    level > 0 ? calculateEnhancementPath(itemHrid, level, params, { priceContext: 'ask' }) : null;
                 html = data ? buildEnhancementTooltipHTML(data) : '';
             }
 
@@ -1267,7 +1244,7 @@ export function buildEnhancementMilestonesHTML(itemHrid, enhancementConfig) {
 
     const rows = [];
     for (const level of MILESTONE_LEVELS) {
-        const data = calculateEnhancementPath(itemHrid, level, enhancementConfig);
+        const data = calculateEnhancementPath(itemHrid, level, enhancementConfig, { priceContext: 'ask' });
         if (!data) continue;
 
         const cost = fmtCost(data.optimalStrategy.totalCost);

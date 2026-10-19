@@ -132,3 +132,34 @@ describe('live price patches', () => {
         expect(networthCache.get('/items/sword', 5)).toBeNull();
     });
 });
+
+describe('what the market hash cannot see', () => {
+    const book = { marketData: { '/items/sword': [{ a: 10, b: 9 }] } };
+
+    test('a change in the net-worth mode or the custom prices empties the cache, an unchanged salt does not', () => {
+        networthCache.checkAndInvalidate(book, 'ask|1');
+        networthCache.set('/items/sword', 10, 5000);
+
+        networthCache.checkAndInvalidate(book, 'ask|1');
+        expect(networthCache.get('/items/sword', 10)).toBe(5000);
+
+        // A custom price was typed: the costs held were priced without it
+        networthCache.checkAndInvalidate(book, 'ask|2');
+        expect(networthCache.get('/items/sword', 10)).toBeNull();
+
+        networthCache.set('/items/sword', 10, 5000);
+        networthCache.checkAndInvalidate(book, 'bid|2');
+        expect(networthCache.get('/items/sword', 10)).toBeNull();
+    });
+});
+
+describe('the partial flag rides with the cost', () => {
+    test('a cached cost remembers whether it was a partial bill, and defaults to complete', () => {
+        networthCache.set('/items/sword', 10, 5000, true);
+        networthCache.set('/items/axe', 10, 6000);
+        expect(networthCache.get('/items/sword', 10)).toBe(5000);
+        expect(networthCache.isPartial('/items/sword', 10)).toBe(true);
+        expect(networthCache.isPartial('/items/axe', 10)).toBe(false);
+        expect(networthCache.isPartial('/items/never', 10)).toBe(false);
+    });
+});

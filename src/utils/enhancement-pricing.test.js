@@ -26,6 +26,7 @@ const game = vi.hoisted(() => ({
     // default) mirrors `drinks`, which is all every other test here needs.
     resolvedDrinks: undefined,
     buffVersion: 0,
+    customVersion: 0,
 }));
 
 vi.mock('../core/data-manager.js', () => ({
@@ -46,6 +47,10 @@ vi.mock('./action-context.js', () => ({
     }),
 }));
 vi.mock('../api/marketplace.js', () => ({ default: { on: () => {} } }));
+// The override store's own counter: a custom price changes what a recipe's inputs cost
+vi.mock('../features/settings/custom-price-overrides.js', () => ({
+    getCustomPriceVersion: () => game.customVersion,
+}));
 vi.mock('./market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
     getItemPrice: (hrid, { mode = 'ask' } = {}) => game.prices[`${hrid}:0`]?.[mode] || 0,
@@ -56,6 +61,7 @@ const {
     perAttemptMaterialCost,
     getCheapestProtectionPrice,
     getProductionCost,
+    getProductionCostDetailed,
     TRAINEE_SHOP_PRICE,
 } = await import('./enhancement-pricing.js');
 
@@ -224,6 +230,39 @@ describe('production-cost memo invalidation', () => {
         // the buff state moved, so the stale figure is exactly what a memo serves
         game.prices['/items/memo_ore:0'] = { ask: 1_000, bid: 990 };
         expect(getProductionCost('/items/memo_mat')).toBe(500);
+    });
+
+    test('a custom price edit recomputes the fallback even when the feed did not move', () => {
+        makeRecipe('/items/custom_mat', '/items/custom_ore');
+        expect(getProductionCost('/items/custom_mat')).toBe(500);
+
+        // The recipe's input is repriced behind the memo's back (a custom price reads through the
+        // same price lookup); only the override store's version says so
+        game.prices['/items/custom_ore:0'] = { ask: 1_000, bid: 990 };
+        expect(getProductionCost('/items/custom_mat')).toBe(500);
+        game.customVersion++;
+        expect(getProductionCost('/items/custom_mat')).toBe(2_000);
+    });
+
+    test('a bill that counted an unpriced input as nothing is partial, and says so up the chain', () => {
+        makeRecipe('/items/part_mat', '/items/part_ore');
+        game.actions['/actions/make_part_mat'].inputItems.push({ itemHrid: '/items/no_such_dust', count: 1 });
+        // An item crafted from that partial bill is itself partial
+        game.items['/items/part_top'] = { name: 'Top' };
+        game.actions['/actions/make_part_top'] = {
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/part_mat', count: 1 }],
+            outputItems: [{ itemHrid: '/items/part_top', count: 1 }],
+        };
+        expect(getProductionCostDetailed('/items/part_mat')).toEqual({ cost: 500, partial: true });
+        // The number is the same either way
+        expect(getProductionCost('/items/part_mat')).toBe(500);
+        expect(getProductionCostDetailed('/items/part_top')).toEqual({ cost: 500, partial: true });
+    });
+
+    test('a fully priced bill is not partial', () => {
+        makeRecipe('/items/whole_mat', '/items/whole_ore');
+        expect(getProductionCostDetailed('/items/whole_mat').partial).toBe(false);
     });
 
     test('a drink change recomputes the fallback', () => {

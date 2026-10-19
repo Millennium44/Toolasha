@@ -25,13 +25,14 @@ import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { priceAtLevel, priceBase, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { shopPurchasePrice } from '../../utils/token-valuation.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
-import { MIRROR_FIRST_LEVEL, MIRROR_ITEM_HRID, cheapestWithMirror } from '../../utils/mirror-route.js';
+import { MIRROR_FIRST_LEVEL, cheapestWithMirror } from '../../utils/mirror-route.js';
 import { blessedMirrorChance } from '../../utils/enhancement-calculator.js';
 import { computeRefinementCraftCost, findRefinementAction } from '../../utils/refined-item-cost.js';
 import { findProducingAction } from '../../utils/production-index.js';
@@ -2775,7 +2776,7 @@ function refinedEnhancementMirrorRoute(candidate, gameData, isSelf) {
         gameData?.itemDetailMap?.[refinedHrid]?.baseItemHrids?.[0] ||
         findRefinementAction(refinedHrid)?.upgradeItemHrid;
     if (!baseHrid) return null;
-    const mirrorPrice = resolveItemPrice(MIRROR_ITEM_HRID, { side: 'buy' }).price;
+    const mirrorPrice = completePrice(priceMirror());
     if (!(mirrorPrice > 0)) return null;
 
     const primary = level - 1 > from ? calculateDirectEnhancementCost(refinedHrid, from, level - 1, gameData) : 0;
@@ -3227,6 +3228,16 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
 }
 
 /**
+ * A shared-rule input price the advisor can quote: null for a partial crafting bill (a recipe input
+ * nothing could price was counted as 0), so a candidate never looks cheaper by the missing ingredients.
+ * @param {{price: number|null, partial?: boolean}} priced - From the shared input-pricing rule
+ * @returns {number|null}
+ */
+function completePrice(priced) {
+    return priced && !priced.partial && priced.price > 0 ? priced.price : null;
+}
+
+/**
  * What the base item costs to hold at a level when a Philosopher's Mirror may build it: a +L made from
  * a +(L-1) and a +(L-2) copy of the base item (game client `getPhilosophersMirrorCost`; a refined
  * item's copy is its unrefined `baseItemHrids[0]`), each copy the cheapest way to hold its level.
@@ -3246,7 +3257,7 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
  */
 function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_LEVEL, held = [] } = {}) {
     if (level < Math.max(MIRROR_FIRST_LEVEL, minLevel) || testerShopEnabled()) return null;
-    const mirrorPrice = resolveItemPrice(MIRROR_ITEM_HRID, { side: 'buy' }).price;
+    const mirrorPrice = completePrice(priceMirror());
     if (!(mirrorPrice > 0)) return null;
 
     // Each input is priced as a fresh acquisition unless a held copy of exactly that level is offered
@@ -3714,13 +3725,15 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
         // target level has an actual listing. resolveItemPrice cannot be used
         // here — its production-cost fallback ignores the enhancement level and
         // would price a +10 item as a +0 craft.
-        const market = getItemPrices(itemHrid, enhancementLevel);
-        if (market?.ask > 0) {
-            return { price: market.ask, source: 'market' };
+        // The same side as the base-plus-enhance alternative below: the profit mode's buy price at this
+        // level, not the raw ask, so the two rungs of the ladder cannot disagree about the rule
+        const listed = priceAtLevel(itemHrid, enhancementLevel);
+        if (listed.price > 0) {
+            return { price: listed.price, source: 'market' };
         }
 
         // No listing at the target level: base item price + enhancement cost
-        const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        const basePrice = completePrice(priceBase(itemHrid));
         // Enhancement materials do not buy the base item. If that piece has no
         // price, its completed version cannot be priced from the sweep alone.
         if (!(basePrice > 0)) return { price: null, source: null };
@@ -3742,12 +3755,14 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
             : { price: null, source: null };
     }
 
-    const direct = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+    // The +0 rung follows the same base rule as the +N rung above (guard, custom price, crafting setting)
+    const base = priceBase(itemHrid);
+    const direct = completePrice(base);
     if (!(direct > 0)) return { price: null, source: null };
     // A listing beats the production-cost fallback inside resolveItemPrice, so
     // an ask at +0 is the market speaking and anything else is a craft estimate
     const listed = getItemPrices(itemHrid, 0);
-    return { price: direct, source: listed?.ask > 0 ? 'market' : 'craft' };
+    return { price: direct, source: listed?.ask > 0 && !base.crafted ? 'market' : 'craft' };
 }
 
 /**
@@ -3829,7 +3844,7 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
         const data = dataManager.getInitClientData?.() || {};
         const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
         base = shopPurchasePrice(itemHrid, shops, (hrid) => getItemPrices(hrid, 0)?.ask || 0) || 0;
-        if (!(base > 0)) base = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        if (!(base > 0)) base = completePrice(priceBase(itemHrid));
         if (!(base > 0)) return { price: null, source: null, ladder };
         ladder.baseCost = base;
     }

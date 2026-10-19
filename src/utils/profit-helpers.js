@@ -20,7 +20,7 @@ import {
 import { getItemPriceInfo, getPricingMode } from './market-data.js';
 import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
 import { getShopCoinCost } from './game-lookups.js';
-import { getProductionCost } from '../features/enhancement/tooltip-enhancement.js';
+import { getProductionCost } from './enhancement-pricing.js';
 import { isIronCowCharacter } from './ironcow-valuation.js';
 
 /**
@@ -494,7 +494,9 @@ export function resolveItemPrice(itemHrid, options = {}) {
     if (enhancementLevel === 0) {
         const prodCost = getProductionCost(itemHrid, mode || getPricingMode(context, side));
         if (prodCost > 0) {
-            return { price: prodCost, custom: false, missing: false, estimated: true };
+            // `production` says the figure is a craft cost, so a caller that cares can ask whether that bill is
+            // partial (an input nothing prices)
+            return { price: prodCost, custom: false, missing: false, estimated: true, production: true };
         }
     }
 

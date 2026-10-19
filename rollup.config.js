@@ -150,6 +150,7 @@ const utilsExternalGlobals = new Map([
     // advisor (combat) and the inventory savings card (market); each used to carry its
     // own drifted copy, which is what this shares away.
     [normalize(join(__dirname, 'src/utils/enhancement-pricing.js')), 'Toolasha.Utils.enhancementPricing'],
+    [normalize(join(__dirname, 'src/utils/enhancement-input-pricing.js')), 'Toolasha.Utils.enhancementInputPricing'],
     // The one protect-from sweep: the enhancing panel's column (actions) and the
     // savings card's single-run cost (market) are the same walk over the same chain.
     [normalize(join(__dirname, 'src/utils/enhancement-protect-sweep.js')), 'Toolasha.Utils.enhancementProtectSweep'],

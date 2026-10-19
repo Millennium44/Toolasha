@@ -496,6 +496,10 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getCheapestProtectionPrice: () => 0,
     getProductionCost: () => 0,
 }));
+vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getProductionCost: () => 0,
+}));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     // 1,000 XP a level, 500 XP a book — enough arithmetic for a book count
     explainAbilityLevelUpCost: (abilityHrid, level, xp, targetLevel) => ({
