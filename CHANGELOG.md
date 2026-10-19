@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim upgrade analysis and budget: six reported bugs
+
+- Upgrade gains no longer include market price moves: the baseline, every candidate and a confirmed basket are valued on one price snapshot.
+- Resale credits for traded-in gear net the 4% market tax, so a near-even swap is no longer shown as free.
+- Profit gains are judged against the profit error in gold (the same scale the Ability order section uses), so small net-profit baselines no longer make noise look significant.
+- Stopping an analysis keeps the candidates that finished, marked "stopped early — N of M"; the budget no longer picks colliding coffees or confirms a basket missing a drink, and a confirmation is tied to the analysis it measured.
+
 ### Queue times, net worth trends, touch dragging and worker pools: six reported bugs
 
 - Queue summaries (the live queue tile and the idle notice) measure alchemy efficiency from the item's level, like the action bar, instead of overstating it.
