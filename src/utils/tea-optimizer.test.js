@@ -90,6 +90,7 @@ const {
     scoreEquipmentSetup,
     calculateSkillPerformance,
     findOptimalTeas,
+    findXpFloorChoice,
     getSkillActionsForDisplay,
     resolveActiveAlchemyItemContext,
 } = await import('./tea-optimizer.js');
@@ -798,6 +799,35 @@ describe('planned Alchemy context in tea optimization', () => {
         expect(result.error).toBeUndefined();
         expect(levels.length).toBeGreaterThan(0);
         expect(new Set(levels)).toEqual(new Set([100]));
+    });
+
+    describe('XP floor flags an uncertain Alchemy input or catalyst', () => {
+        const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
+        const floor = () => findXpFloorChoice('alchemy', { alchemyContext: context, floorPercent: 95 });
+
+        beforeEach(() => {
+            // Output-only flags, as the calculator really reports them: clean
+            alchemyCalc.coinify = () => ({ profitPerHour: 777, unpricedOutputs: [], estimatedOutputs: [] });
+            prices.byHrid['/items/moon_ore'] = 100;
+            prices.byHrid['/items/prime_catalyst'] = 50;
+            for (const hrid of knownItems) prices.byHrid[hrid] = 10;
+        });
+
+        test('fully quoted input and catalyst are not flagged', () => {
+            alchemyCalc.coinify = () => ({ profitPerHour: 777, winningCatalystHrid: '/items/prime_catalyst' });
+            expect(floor().pick.unpriced).toBe(false);
+        });
+
+        test('an input priced by the official-value fallback is flagged', () => {
+            prices.estimated.add('/items/moon_ore');
+            expect(floor().pick.unpriced).toBe(true);
+        });
+
+        test('a catalyst priced by the official-value fallback is flagged', () => {
+            alchemyCalc.coinify = () => ({ profitPerHour: 777, winningCatalystHrid: '/items/prime_catalyst' });
+            prices.estimated.add('/items/prime_catalyst');
+            expect(floor().pick.unpriced).toBe(true);
+        });
     });
 
     test('rejects an impossible item/action pair before either scoring path', () => {

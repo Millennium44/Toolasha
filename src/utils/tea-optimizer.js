@@ -621,11 +621,21 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
     }
 
     if (!profitData) return { profitPerHour: 0, hasMissingPrice: true };
+    // unpricedOutputs/estimatedOutputs describe outputs only. The input item and the winning
+    // catalyst can also be priced by the official-value fallback (or not at all), and the
+    // calculator exposes no flag for that, so ask the price source the way it priced them
+    const uncertainInput = (hrid, level = 0) => {
+        if (!hrid) return false;
+        const info = getItemPriceInfo(hrid, { context: 'profit', side: 'buy', enhancementLevel: level });
+        return info.price === null || info.estimated;
+    };
     return {
         profitPerHour: profitData.profitPerHour || 0,
         hasMissingPrice:
             (Array.isArray(profitData.unpricedOutputs) && profitData.unpricedOutputs.length > 0) ||
-            (Array.isArray(profitData.estimatedOutputs) && profitData.estimatedOutputs.length > 0),
+            (Array.isArray(profitData.estimatedOutputs) && profitData.estimatedOutputs.length > 0) ||
+            uncertainInput(itemHrid, enhancementLevel) ||
+            uncertainInput(profitData.winningCatalystHrid),
     };
 }
 
