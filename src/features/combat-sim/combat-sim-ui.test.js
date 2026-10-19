@@ -12545,3 +12545,41 @@ describe('verifying close calls on fresh seeds', () => {
         });
     });
 });
+
+describe("a row's profit error is given on the gold scale it is judged on (#541)", () => {
+    const base = {
+        dps: 100,
+        xpPerHour: 1000,
+        profitPerHour: 10,
+        revenuePerHour: 50_000,
+        costPerHour: 49_990,
+        deathsPerHour: 0,
+        encountersPerHour: 1000,
+    };
+    const noisy = {
+        candidate: { description: 'Ring', slot: '/equipment_types/ring' },
+        cost: 100,
+        metrics: { ...base, profitPerHour: 510 },
+        deltas: { dps: 0, xp: 0, profit: 5000, deaths: 0, encounters: 0 },
+        noise: { dps: 4.47, xp: 4.47, profit: 4.47, encounters: 4.47, deaths: 141 },
+        significantBy: { dps: false, xp: false, profit: false, deaths: false, encounters: false },
+        economics: { profitGainPerHour: 500 },
+    };
+
+    test('the profit cell states its error in gold per day, not as a percent of net', () => {
+        const html = ui._renderUpgradeDetailCells(noisy, base);
+        const profitCell = html.split('Profit/day')[1].split('EPH')[0];
+
+        // 4.47% of the 50,000/hr gross, per day
+        expect(profitCell).toContain('±53.6K/day');
+        expect(profitCell).not.toContain('±4.47%');
+        expect(profitCell).toContain('within noise');
+    });
+
+    test('and the budget planner marks such a pick as an estimate', () => {
+        const plan = planUpgradeBudget([noisy], 1000, { baseline: base, metricKey: 'profit' });
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.provisional).toBe(true);
+    });
+});

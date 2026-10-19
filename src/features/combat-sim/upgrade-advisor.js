@@ -20,6 +20,7 @@ import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from '
 import { generateLabArmorCandidates, getWeaponStyleFamily, labelItemWithLevel } from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
 import { ABILITY_ORDER_HRID, consistentAbilityOrders, zeroCooldownAbilities } from './ability-order.js';
+import { profitScale } from './trigger-tuning.js';
 import { bestGearForSkill, describeSkillingUpgrade } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
@@ -4604,7 +4605,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
         const economics = computeEconomics(candidate.cost, baselineMetrics, metrics);
         const noise = rateDeltaNoisePct(baselineResult, simResult, playerHrid);
-        const significantBy = significantDeltas(deltas, noise);
+        const significantBy = significantDeltas(deltas, noise, { baseline: baselineMetrics, upgraded: metrics });
 
         const row = {
             candidate,
@@ -5086,15 +5087,32 @@ export function rateDeltaNoisePct(baselineResult, upgradedResult, playerHrid) {
 
 /**
  * Which of a row's deltas cleared their own error bar.
+ *
+ * Profit is judged in gold, not in percent. Its percentage delta is a share of the net profit, which near
+ * break-even is ~0, while its error is a share of the gold moving through the fight; compared directly a
+ * 500/hr gain on a 10/hr baseline read as +5,000% against a ±4% error and was called significant. With the
+ * two runs' metrics in hand the gold change is held against the error on `profitScale` (the larger of
+ * revenue, cost and |profit| per hour), the scale Ability order and verify already use.
+ *
  * @param {Object} deltas - Percentage deltas from `computeDeltas`
  * @param {Object} noise - Percentage standard errors from `rateDeltaNoisePct`
+ * @param {Object} [metrics] - `{ baseline, upgraded }` metrics from `computeMetrics`, for the profit verdict
  * @returns {Object} Per-metric booleans
  */
-export function significantDeltas(deltas, noise) {
+export function significantDeltas(deltas, noise, { baseline, upgraded } = {}) {
     const verdict = {};
     for (const key of Object.keys(deltas || {})) {
         const error = noise?.[key];
         verdict[key] = Number.isFinite(error) ? Math.abs(deltas[key]) > SIGNIFICANCE_Z * error : true;
+    }
+    const goldChange = (upgraded?.profitPerHour ?? NaN) - (baseline?.profitPerHour ?? NaN);
+    if ('profit' in verdict && Number.isFinite(noise?.profit) && Number.isFinite(goldChange)) {
+        const scale = profitScale({
+            profit: baseline.profitPerHour,
+            revenue: baseline.revenuePerHour,
+            cost: baseline.costPerHour,
+        });
+        verdict.profit = Math.abs(goldChange) > SIGNIFICANCE_Z * (noise.profit / 100) * scale;
     }
     return verdict;
 }

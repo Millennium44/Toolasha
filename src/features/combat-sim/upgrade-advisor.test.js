@@ -8022,3 +8022,79 @@ describe('Stop keeps the candidates that finished (#540)', () => {
         await expect(runUpgradeAnalysis(setup(), null, { abortSignal: () => false })).rejects.toThrow('worker died');
     });
 });
+
+describe('profit significance is judged in gold against the gross scale (#541)', () => {
+    function setup() {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+        plannedWorkerCount.mockReturnValue(1);
+        return {
+            playerDTOs: [
+                {
+                    equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                    abilities: [],
+                    hrid: '/players/me',
+                },
+            ],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: {},
+            upgradeMode: 'equipment',
+        };
+    }
+
+    /** Baseline earns `base`, every candidate `upgraded`; both {revenue, cost} per hour over 1,000 encounters */
+    function runWith(base, upgraded) {
+        let call = 0;
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(async () => {
+            call++;
+            return { simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 1000, first: call === 1 };
+        });
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockImplementation((result) => {
+            const side = result.first ? base : upgraded;
+            return { revenuePerHour: side.revenue, costPerHour: side.cost, netPerHour: side.revenue - side.cost };
+        });
+    }
+
+    test('a 500/hr gain on a near break-even fight is within the noise, however large its percent of net', async () => {
+        runWith({ revenue: 50_000, cost: 49_990 }, { revenue: 50_500, cost: 49_990 });
+
+        const { results } = await runUpgradeAnalysis(setup(), null, {});
+
+        expect(results[0].deltas.profit).toBeCloseTo(5000);
+        expect(results[0].significantBy.profit).toBe(false);
+    });
+
+    test('the same near break-even fight still recognizes a gain well outside the gross error', async () => {
+        runWith({ revenue: 50_000, cost: 49_990 }, { revenue: 60_000, cost: 49_990 });
+
+        const { results } = await runUpgradeAnalysis(setup(), null, {});
+
+        expect(results[0].significantBy.profit).toBe(true);
+    });
+
+    test('a negative or exactly zero net baseline is judged on the same gross scale', async () => {
+        runWith({ revenue: 50_000, cost: 50_000 }, { revenue: 50_500, cost: 50_000 });
+        expect((await runUpgradeAnalysis(setup(), null, {})).results[0].significantBy.profit).toBe(false);
+
+        runWith({ revenue: 49_990, cost: 50_000 }, { revenue: 50_490, cost: 50_000 });
+        expect((await runUpgradeAnalysis(setup(), null, {})).results[0].significantBy.profit).toBe(false);
+    });
+
+    test('the other axes keep their percentage rule', () => {
+        const noise = { dps: 1, profit: 4.47 };
+        const verdict = significantDeltas({ dps: 5, profit: 5000 }, noise, {
+            baseline: { profitPerHour: 10, revenuePerHour: 50_000, costPerHour: 49_990 },
+            upgraded: { profitPerHour: 510 },
+        });
+
+        expect(verdict.dps).toBe(true);
+        expect(verdict.profit).toBe(false);
+    });
+});

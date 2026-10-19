@@ -11266,7 +11266,13 @@ class CombatSimUI {
         const errorBar = (key) => {
             const { noisePct, significant } = upgradeNoiseFor(r, key);
             if (noisePct == null) return '';
-            const bar = `<span style="color:#666;"> ±${noisePct.toFixed(2)}%</span>`;
+            // Profit's error is a share of the gold moving through the fight, not of the net profit the
+            // percentage beside it is taken of, so it is given in gold per day like the delta it qualifies
+            const profitGold = key === 'profit' ? profitNoiseGold(r, baseline) : null;
+            const bar =
+                profitGold != null
+                    ? `<span style="color:#666;"> ±${formatKMB(profitGold * 24)}/day</span>`
+                    : `<span style="color:#666;"> ±${noisePct.toFixed(2)}%</span>`;
             return significant
                 ? bar
                 : `${bar}<span style="color:#c9a227;" title="Smaller than this run's sampling error — sim for longer before trusting it."> within noise</span>`;
