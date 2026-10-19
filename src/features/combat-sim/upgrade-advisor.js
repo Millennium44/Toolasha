@@ -6698,8 +6698,12 @@ export function planWithinBudget(
             ? fights.map((fight) => fight.freeDrinkSlots)
             : null;
     };
-    /** Whether a drink addition is installed in fight `i` (a fight it was not simulated in takes no slot) */
-    const addedIn = (result, i) => result.fights?.[i]?.applied !== false && (savingsOf(result)[i] || 0) > 0;
+    /**
+     * Whether a drink addition is installed in fight `i`: every fight it was simulated in, whatever it saved there
+     * (a fight it was not simulated in takes no slot). Savings only score it; the combination check installs it
+     * in each room it applies to.
+     */
+    const addedIn = (result, i) => result.fights?.[i]?.applied !== false;
     /** Additions already picked that take a slot in fight `i`, leaving out the picks `except` indexes */
     const slotsUsedIn = (i, except = []) =>
         picks.filter((pick, index) => !except.includes(index) && isDrinkAddition(pick.candidate) && addedIn(pick, i))

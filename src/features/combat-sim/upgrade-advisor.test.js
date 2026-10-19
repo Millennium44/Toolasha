@@ -9021,6 +9021,20 @@ describe('the all-fights plan counts free drink slots per fight (#560 review)', 
         expect(plan.picks).toEqual([]);
     });
 
+    test('an addition takes a slot in every room it is installed in, even one where it saves nothing', () => {
+        // Both coffees apply to rooms 0 and 1 (one free slot each); a saves only in room 0, b only in room 1
+        const saveIn = (row, room) => ({
+            ...row,
+            fights: row.fights.map((fight, i) => (i === room ? fight : { ...fight, winRate: 0.5 })),
+        });
+        const a = saveIn(addition('a', [1, 1, 0], { rooms: [0, 1] }), 0);
+        const b = saveIn(addition('b', [1, 1, 0], { rooms: [0, 1] }), 1);
+        const plan = planFor([a, b]);
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.skipped.map((s) => s.reason)).toContain('no drink slot is left free for it');
+    });
+
     test('rows without per-fight slots keep the single capacity the candidate carried', () => {
         const rows = ['a', 'b', 'c', 'd'].map((name) => {
             const row = addition(name, [3, 3, 3]);
