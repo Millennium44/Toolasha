@@ -6478,7 +6478,35 @@ export function goldPerPercent(cost, deltaPct) {
     return cost;
 }
 
-export function planWithinBudget(results, budget, { baselineFights = [], includeUnmeasured = false } = {}) {
+/**
+ * A name for a candidate that survives redraws, re-sorts and a verify pass: the same parts the result table keys its
+ * rows by, unescaped. Never an array index. Pins and exclusions are filed under it.
+ * @param {Object} result - A result row (`{candidate}`) or a bare candidate
+ * @returns {string}
+ */
+export function candidateKey(result) {
+    const c = result?.candidate || result || {};
+    return [c.type || 'equipment', c.slot ?? '', c.upgradeHrid ?? '', c.upgradeLevel ?? '', c.description ?? ''].join(
+        '|'
+    );
+}
+
+/**
+ * @param {Array<Object>} results - Ranked analysis results
+ * @param {number} budget - Coins available
+ * @param {Object} [options] - `{ baselineFights, includeUnmeasured, required, excluded, singleLoadout }`.
+ *   `required` / `excluded` are Sets (or arrays) of `candidateKey`s: a required candidate is always in the basket,
+ *   first, and its cost counts against the budget; an excluded one is never chosen. When the required set cannot
+ *   be honored the result is `{ picks: [], blocked: [{ kind, reason, ids }] }` with nothing silently dropped.
+ *   `singleLoadout` makes two required pieces for one equipment slot a conflict (one DTO wears one piece).
+ */
+export function planWithinBudget(
+    results,
+    budget,
+    { baselineFights = [], includeUnmeasured = false, required = null, excluded = null, singleLoadout = false } = {}
+) {
+    const requiredIds = new Set(required || []);
+    const excludedIds = new Set(excluded || []);
     const baseTries = baselineFights.map((fight) => expectedFightAttempts(fight.winRate || 0));
 
     /** What one candidate saves in each fight, in expected attempts */
@@ -6497,7 +6525,36 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
 
     const eligible = [];
     const skipped = [];
+    const pinnedEntries = [];
+    const seenIds = new Set();
+    const blocked = [];
     for (const result of results || []) {
+        const id = candidateKey(result);
+        if (requiredIds.has(id)) {
+            // A pin is the player's call: it needs a price to count against the budget, but not a measured gain
+            seenIds.add(id);
+            if (excludedIds.has(id)) {
+                blocked.push({
+                    kind: 'pin-and-exclude',
+                    ids: [id],
+                    reason: `"${result.candidate?.description}" is both pinned and excluded — clear one of them.`,
+                });
+            } else if (!Number.isFinite(result.cost)) {
+                blocked.push({
+                    kind: 'unpriced',
+                    ids: [id],
+                    reason: `"${result.candidate?.description}" is pinned but has no price to count against the budget.`,
+                });
+            } else {
+                const keys = conflictKeys(result.candidate);
+                pinnedEntries.push({ result, savings: savingsOf(result), key: keys[0], keys, id });
+            }
+            continue;
+        }
+        if (excludedIds.has(id)) {
+            skipped.push({ result, reason: 'excluded by you' });
+            continue;
+        }
         // A budget is in coins, so a row without a price cannot be planned
         // around. A *negative* one can: a swap whose resale beats its purchase
         // hands money back into the budget, and used to be discarded here
@@ -6543,6 +6600,8 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
         for (let i = picks.length - 1; i >= 0; i--) {
             const older = picks[i];
             if (conflictKey(older.candidate) !== entry.key) continue;
+            // A pin is never given back, however well a later piece covers it
+            if (older.pinned) continue;
             const olderSavings = savingsOf(older);
             if (olderSavings.every((saving, index) => saving <= (entry.savings[index] ?? 0) + 1e-9)) {
                 displaced.push(i);
@@ -6563,6 +6622,104 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
         return picks.filter((pick) => isDrinkAddition(pick.candidate)).length >= room;
     };
 
+    // One DTO wears one piece per slot: a fill candidate sharing a slot with a pin would have to be worn instead of
+    // it or as well as it, and neither is a basket the confirm run can simulate
+    const pinnedKeys = new Set();
+    const blockedByPin = (entry) => singleLoadout && entry.keys.some((key) => pinnedKeys.has(key));
+
+    /** Take `entry` into the basket: its keys, its cost, its share of the standing best per slot */
+    const acceptPin = (entry) => {
+        const marginal = marginalOf(entry);
+        for (const key of entry.keys) {
+            taken.add(key);
+            pinnedKeys.add(key);
+        }
+        spent += entry.result.cost;
+        picks.push({
+            ...entry.result,
+            pinned: true,
+            marginalAttemptsSaved: marginal,
+            rooms: entry.savings.filter((saving) => saving > 0).length,
+        });
+        const standing = bestBySlot.get(entry.key) || entry.savings.map(() => 0);
+        bestBySlot.set(
+            entry.key,
+            standing.map((saving, index) => Math.max(saving, entry.savings[index]))
+        );
+    };
+
+    // Pins first. They are checked together, every reason at once, so the player can fix them in one go; any
+    // reason blocks the whole plan rather than quietly dropping the pin that caused it.
+    if (requiredIds.size) {
+        const missing = [...requiredIds].filter((id) => !seenIds.has(id));
+        if (missing.length) {
+            blocked.push({
+                kind: 'missing',
+                ids: missing,
+                reason: 'A pinned pick is not in the current results — run the analysis again or clear the pin.',
+            });
+        }
+        const claimedBy = new Map();
+        const conflicting = [];
+        for (const entry of pinnedEntries) {
+            for (const key of entry.keys) {
+                const holder = claimedBy.get(key);
+                const sharedSlot =
+                    holder &&
+                    (singleLoadout || isExclusive(entry.result.candidate) || isExclusive(holder.result.candidate));
+                if (holder && holder !== entry && sharedSlot) {
+                    conflicting.push([holder, entry]);
+                    break;
+                }
+                if (!holder) claimedBy.set(key, entry);
+            }
+        }
+        for (const [a, b] of conflicting) {
+            blocked.push({
+                kind: 'conflict',
+                ids: [a.id, b.id],
+                reason: `Pinned "${a.result.candidate.description}" and "${b.result.candidate.description}" cannot be taken together — they use the same slot.`,
+            });
+        }
+        const pinnedDrinks = pinnedEntries.filter((entry) => isDrinkAddition(entry.result.candidate));
+        const drinkRoom = pinnedDrinks.reduce(
+            (room, entry) =>
+                Math.min(
+                    room,
+                    Number.isFinite(entry.result.candidate.freeDrinkSlots) ? entry.result.candidate.freeDrinkSlots : 1
+                ),
+            Infinity
+        );
+        if (pinnedDrinks.length > drinkRoom) {
+            blocked.push({
+                kind: 'drink-slots',
+                ids: pinnedDrinks.map((entry) => entry.id),
+                reason: `${pinnedDrinks.length} pinned drinks but only ${drinkRoom} free drink slot${drinkRoom === 1 ? '' : 's'}.`,
+            });
+        }
+        const pinCost = pinnedEntries.reduce((sum, entry) => sum + entry.result.cost, 0);
+        if (!blocked.length && pinCost > budget) {
+            blocked.push({
+                kind: 'over-budget',
+                ids: pinnedEntries.map((entry) => entry.id),
+                reason: `The pinned picks cost ${Math.round(pinCost).toLocaleString('en-US')}, more than the budget of ${Math.round(budget).toLocaleString('en-US')}.`,
+            });
+        }
+        if (blocked.length) {
+            return {
+                picks: [],
+                totalCost: 0,
+                attemptsSaved: 0,
+                skipped,
+                budget,
+                blocked,
+                required: [...requiredIds].sort(),
+                excluded: [...excludedIds].sort(),
+            };
+        }
+        for (const entry of pinnedEntries) acceptPin(entry);
+    }
+
     const remaining = [...eligible];
     while (remaining.length) {
         let best = null;
@@ -6571,6 +6728,7 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             // the other swaps into the slot it empties and the other offers of
             // the book it buys
             if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) continue;
+            if (blockedByPin(entry)) continue;
             if (noDrinkSlotFor(entry)) continue;
             const cost = costWithReplacements(entry, displacedBy(entry));
             if (spent + cost > budget) continue;
@@ -6652,6 +6810,8 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             // Otherwise this reads as "worthless", when it may well be the
             // second-best swap into a slot the plan has already filled
             reason = 'a pick already uses what this needs';
+        } else if (blockedByPin(entry)) {
+            reason = 'a pinned pick uses what this needs';
         } else if (noDrinkSlotFor(entry)) {
             reason = 'no drink slot is left free for it';
         } else if (spent + costWithReplacements(entry, displacedBy(entry)) > budget) {
@@ -6674,7 +6834,16 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
         console.error('[UpgradeAdvisor] planWithinBudget spent', spent, 'against a budget of', budget);
     }
 
-    return { picks, totalCost: spent, attemptsSaved, skipped, budget };
+    return {
+        picks,
+        totalCost: spent,
+        attemptsSaved,
+        skipped,
+        budget,
+        blocked: null,
+        required: [...requiredIds].sort(),
+        excluded: [...excludedIds].sort(),
+    };
 }
 
 /**

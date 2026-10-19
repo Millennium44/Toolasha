@@ -118,6 +118,7 @@ import {
     assignScores,
     percentOfBest,
     planWithinBudget,
+    candidateKey,
     confirmUpgradeBudgetPlan,
     explainUpgradeCost,
     COST_SOURCES,
@@ -870,12 +871,18 @@ export const UPGRADE_PLAN_METRICS = [
  *
  * @param {Array<Object>} rows - Upgrade results (`{candidate, cost, metrics, economics}`)
  * @param {number} budget - Coins available
- * @param {Object} [options] - `{ baseline, metricKey }`
+ * @param {Object} [options] - `{ baseline, metricKey, required, excluded }`; the last two are Sets or arrays of
+ *   `candidateKey`s the player pinned or excluded (see `planWithinBudget`). One DTO is worn, so pins are checked
+ *   as a single loadout. A plan that cannot honor its pins comes back with `blocked` set and no picks.
  * @returns {{picks: Array<Object>, totalCost: number, gainTotal: number,
  *   skipped: Array<Object>, budget: number, metric: Object, provisional: boolean}} `provisional` is true only
  *   when every pick is estimated; a pick carries its own `provisional: true` when it was ranked on an estimate
  */
-export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'profit' } = {}) {
+export function planUpgradeBudget(
+    rows,
+    budget,
+    { baseline = {}, metricKey = 'profit', required = null, excluded = null } = {}
+) {
     const metric = UPGRADE_PLAN_METRICS.find((m) => m.key === metricKey) || UPGRADE_PLAN_METRICS[0];
     const planRows = (rows || [])
         .filter((row) => row?.candidate && row.candidate.type !== 'combat_level')
@@ -899,7 +906,12 @@ export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'pr
     // out of 1.6B), and a two-pass fill around it could not give the measured
     // rows first claim on an estimated swap's refund. A pick whose gain is
     // within the run's noise carries `provisional: true` and shows as an estimate.
-    const plan = planWithinBudget(planRows, coins, { includeUnmeasured: true });
+    const plan = planWithinBudget(planRows, coins, {
+        includeUnmeasured: true,
+        required,
+        excluded,
+        singleLoadout: true,
+    });
     const picks = plan.picks.map((pick) => (pick.significant === false ? { ...pick, provisional: true } : pick));
     return {
         ...plan,
@@ -9674,6 +9686,7 @@ class CombatSimUI {
         // `_budgetPlanKey`); a departing character's basket has nothing to say
         // about the arriving one's
         this._budgetConfirm = null;
+        this._clearBudgetConstraints();
         this._simHistory = [];
         this._comparisonIndex = null;
         this._comparisonBaseline = null;
@@ -10589,6 +10602,8 @@ class CombatSimUI {
         if (this._upgradeResultsData) delete this._upgradeResultsData.verifyVerdicts;
         // So does its basket confirmation, and a confirming run still in flight lands on nothing
         this._budgetConfirm = null;
+        // Pins and exclusions are choices about this analysis' rows; a fresh one starts without them
+        this._clearBudgetConstraints();
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
 
@@ -11725,6 +11740,7 @@ class CombatSimUI {
             html += `</tr>
             <tr data-upgrade-detail="${i}" data-row-key="${rowKey}" style="display:none;">
                 <td colspan="${columns.length + 1}" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
+                    ${this._budgetToggleButtons(r)}
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
             </tr>`;
@@ -12584,10 +12600,27 @@ class CombatSimUI {
 
         let body = '';
         if (budget > 0) {
-            const plan = planUpgradeBudget(rows, budget, { baseline, metricKey });
-            if (!plan.picks.length) {
+            const { pins, excludes } = this._budgetConstraints();
+            const plan = planUpgradeBudget(rows, budget, {
+                baseline,
+                metricKey,
+                required: [...pins.keys()],
+                excluded: [...excludes.keys()],
+            });
+            const constraintsHtml = this._renderBudgetConstraints(plan, pins, excludes);
+            // A plan from a stopped run is missing whatever the run never reached, pinned or not
+            const partialNote = stopped
+                ? `<div data-budget-partial style="margin-top:4px; color:#e8a87c; font-size:10px;">
+                                Planned from a run that ${stoppedRunText(stopped)}: an upgrade it never reached
+                                is not in this plan.</div>`
+                : '';
+            if (plan.blocked) {
+                // The pins are kept, shown and fixable; no half-plan is offered in their place
+                this._lastBudgetPlan = null;
+                body = this._renderBudgetBlocked(plan, pins) + partialNote + constraintsHtml;
+            } else if (!plan.picks.length) {
                 body = `<div style="color:#888; font-size:11px;">Nothing in the list both fits ${money(budget)}
-                    and improves ${plan.metric.label}.</div>${this._planAbilityOrder(plan, orderRows, baseline).html}`;
+                    and improves ${plan.metric.label}.</div>${this._planAbilityOrder(plan, orderRows, baseline).html}${constraintsHtml}`;
             } else {
                 const orderPlan = this._planAbilityOrder(plan, orderRows, baseline);
                 // What `_wireBudgetConfirm` reads to run the confirming
@@ -12606,6 +12639,7 @@ class CombatSimUI {
                             }</span>
                             <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
                                 <span style="color:#4caf50;">${plan.metric.format(pick.marginalAttemptsSaved)}</span>
+                                ${this._budgetToggleButtons(pick)}
                             </span>
                         </div>`
                     )
@@ -12628,13 +12662,7 @@ class CombatSimUI {
                         ${money(plan.totalCost)} of ${money(budget)} ·
                         <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
-                    </div>${provisional}${
-                        stopped
-                            ? `<div data-budget-partial style="margin-top:4px; color:#e8a87c; font-size:10px;">
-                                Planned from a run that ${stoppedRunText(stopped)}: an upgrade it never reached
-                                is not in this plan.</div>`
-                            : ''
-                    }${this._renderBudgetConfirm(plan, baseline)}`;
+                    </div>${provisional}${partialNote}${constraintsHtml}${this._renderBudgetConfirm(plan, baseline)}`;
             }
         }
 
@@ -12772,6 +12800,100 @@ class CombatSimUI {
     }
 
     /**
+     * The player's pins and exclusions for the analysis on screen, id (`candidateKey`) to the name shown for it.
+     * Session state only: nothing is stored, and a fresh analysis or a character switch empties both.
+     * @returns {{pins: Map<string, string>, excludes: Map<string, string>}}
+     * @private
+     */
+    _budgetConstraints() {
+        if (!this._upgradePins) this._upgradePins = new Map();
+        if (!this._upgradeExcludes) this._upgradeExcludes = new Map();
+        return { pins: this._upgradePins, excludes: this._upgradeExcludes };
+    }
+
+    /** @private */
+    _clearBudgetConstraints() {
+        this._upgradePins = new Map();
+        this._upgradeExcludes = new Map();
+    }
+
+    /**
+     * Pin and exclude buttons for one candidate. A pin and an exclusion are opposites, so the button for the one
+     * that is set reads as its undo and the other is offered beside it.
+     * @param {Object} result - A result row or plan pick
+     * @returns {string} HTML
+     * @private
+     */
+    _budgetToggleButtons(result) {
+        const id = candidateKey(result);
+        const { pins, excludes } = this._budgetConstraints();
+        const style =
+            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:0 5px; ' +
+            'font-size:10px; cursor:pointer; font-family:inherit; margin-left:4px;';
+        const attrs = (act) =>
+            `data-budget-act="${act}" data-budget-id="${escapeAttribute(id)}" ` +
+            `data-budget-label="${escapeAttribute(result.candidate?.description || '')}"`;
+        const pinned = pins.has(id);
+        const excluded = excludes.has(id);
+        return (
+            `<button ${attrs(pinned ? 'unpin' : 'pin')} style="${style}" title="${
+                pinned
+                    ? 'Stop requiring this purchase'
+                    : 'Always include this purchase in the plan; its cost counts against the budget'
+            }">${pinned ? 'Unpin' : 'Pin'}</button>` +
+            `<button ${attrs(excluded ? 'include' : 'exclude')} style="${style}" title="${
+                excluded ? 'Let the plan consider this purchase again' : 'Never put this exact purchase in the plan'
+            }">${excluded ? 'Include' : 'Exclude'}</button>`
+        );
+    }
+
+    /**
+     * The pins and exclusions in force, each with a way to clear it. Excluded rows are not in the plan to carry a
+     * button of their own, so this is where they are undone.
+     * @param {Object} plan - From `planUpgradeBudget`
+     * @param {Map<string, string>} pins
+     * @param {Map<string, string>} excludes
+     * @returns {string} HTML ('' when there is none)
+     * @private
+     */
+    _renderBudgetConstraints(plan, pins, excludes) {
+        if (!pins.size && !excludes.size) return '';
+        const style =
+            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:0 5px; ' +
+            'font-size:10px; cursor:pointer; font-family:inherit; margin-left:4px;';
+        const line = (kind, id, label, act, undo) =>
+            `<div style="color:#aaa; font-size:10px; padding:1px 0;" data-budget-constraint="${kind}">${kind}: ` +
+            `<span style="color:#e0e0e0;">${escapeAttribute(label)}</span>` +
+            `<button data-budget-act="${act}" data-budget-id="${escapeAttribute(id)}" ` +
+            `data-budget-label="${escapeAttribute(label)}" style="${style}">${undo}</button></div>`;
+        const lines = [
+            ...[...pins].map(([id, label]) => line('Pinned', id, label, 'unpin', 'Unpin')),
+            ...[...excludes].map(([id, label]) => line('Excluded', id, label, 'include', 'Include')),
+        ].join('');
+        return `<div style="margin-top:6px; padding-top:4px; border-top:1px dashed #222;">${lines}
+            <button data-budget-clear-all style="${style} margin-left:0;">Clear all pins and exclusions</button></div>`;
+    }
+
+    /**
+     * Why a pinned plan cannot be made, in the player's words. The pins stay where they are.
+     * @param {Object} plan - A plan with `blocked` set
+     * @param {Map<string, string>} pins - Pinned id to name
+     * @returns {string} HTML
+     * @private
+     */
+    _renderBudgetBlocked(plan, pins) {
+        const nameOf = (id) => pins.get(id) || id.split('|').pop();
+        const reasons = plan.blocked
+            .map((entry) => {
+                const detail = entry.kind === 'missing' ? ` (${entry.ids.map(nameOf).join(', ')})` : '';
+                return `<div data-budget-blocked="${entry.kind}">${escapeAttribute(entry.reason)}${escapeAttribute(detail)}</div>`;
+            })
+            .join('');
+        return `<div style="color:#e8a87c; font-size:11px; line-height:1.4;">No plan: your pins cannot be honored.
+            ${reasons}</div>`;
+    }
+
+    /**
      * A name for a plan that changes whenever the plan itself does.
      *
      * The confirming run is expensive, so its result is kept across renders
@@ -12784,9 +12906,14 @@ class CombatSimUI {
      * @private
      */
     _budgetPlanKey(plan) {
-        return [plan.budget, plan.metric.key, ...plan.picks.map((pick) => `${upgradeRowKey(pick)}:${pick.cost}`)].join(
-            '|'
-        );
+        // Pins and exclusions change what the basket is allowed to be, so they are part of what a confirmation answered
+        return [
+            plan.budget,
+            plan.metric.key,
+            ...plan.picks.map((pick) => `${upgradeRowKey(pick)}:${pick.cost}`),
+            `pin:${(plan.required || []).join(',')}`,
+            `exclude:${(plan.excluded || []).join(',')}`,
+        ].join('|');
     }
 
     /**
@@ -12954,6 +13081,34 @@ class CombatSimUI {
             this._renderUpgradeResults(this._upgradeResultsData);
         };
 
+        // Pin / exclude: a toggle on the candidate's id, then the plan redraws. The confirmation key covers them,
+        // so a confirmation measured under the old constraints is dropped by the redraw
+        container.querySelectorAll('[data-budget-act]').forEach((button) => {
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                event.preventDefault();
+                const act = button.getAttribute('data-budget-act');
+                const id = button.getAttribute('data-budget-id');
+                const label = button.getAttribute('data-budget-label') || id;
+                const { pins, excludes } = this._budgetConstraints();
+                if (act === 'pin') {
+                    excludes.delete(id);
+                    pins.set(id, label);
+                } else if (act === 'exclude') {
+                    pins.delete(id);
+                    excludes.set(id, label);
+                } else if (act === 'unpin') {
+                    pins.delete(id);
+                } else if (act === 'include') {
+                    excludes.delete(id);
+                }
+                this._renderUpgradeResults(this._upgradeResultsData);
+            });
+        });
+        container.querySelector('[data-budget-clear-all]')?.addEventListener('click', () => {
+            this._clearBudgetConstraints();
+            this._renderUpgradeResults(this._upgradeResultsData);
+        });
         container.querySelector('#mwi-csim-budget-plan')?.addEventListener('click', replan);
         select?.addEventListener('change', replan);
         input?.addEventListener('keydown', (event) => {
@@ -13753,7 +13908,10 @@ class CombatSimUI {
         // A confirmation measured one analysis' basket: a new analysis, or a restored one, starts without it even
         // when its picks and costs come out the same (another zone, baseline or seed is another experiment).
         // A redraw of the same analysis (a sort, an opened row, a replan) passes the same object and keeps it
-        if (results !== this._upgradeResultsData) this._budgetConfirm = null;
+        if (results !== this._upgradeResultsData) {
+            this._budgetConfirm = null;
+            this._clearBudgetConstraints();
+        }
         this._upgradeResultsData = results;
         // The analysis scores with the defaults; re-rank here so a saved score
         // selection applies to results that were computed before it was loaded
