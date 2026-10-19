@@ -12692,3 +12692,44 @@ describe('a basket confirmation belongs to the analysis it measured (#543)', () 
         ui.buildPanel();
     });
 });
+
+describe('a confirmed basket is shown against the baseline it was compared with', () => {
+    beforeEach(() => {
+        mocks.onConfirm = null;
+        ui.buildPanel();
+        ui._upgradeBudget = 500_000_000;
+        ui._upgradePlanMetric = 'dps';
+    });
+
+    afterEach(() => {
+        ui._upgradeBudget = 0;
+        ui.destroy();
+    });
+
+    test('a restored context revalued on a fresh snapshot shows the gain against that baseline', async () => {
+        // The analysis stored DPS 100; the confirming run compared the basket with its revalued baseline
+        mocks.confirmResult = {
+            ok: true,
+            metrics: { ...BASELINE, dps: 1010 },
+            deltas: {},
+            economics: { profitGainPerHour: 0 },
+            noise: {},
+            totalCost: 300,
+            baseline: { ...BASELINE, dps: 1000 },
+        };
+        ui._renderUpgradeResults({
+            baseline: BASELINE,
+            results: [row('Ring', { slot: '/equipment_types/ring', cost: 100, dps: 110 })],
+            food: null,
+            context: { baselineResult: {}, baseline: BASELINE, playerDTOs: [{}], playerIndex: 0, gameData: {} },
+        });
+        const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+
+        container.querySelector('#mwi-csim-budget-confirm').click();
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+
+        expect(container.textContent).toContain('summed');
+        expect(container.textContent).toContain('+10.00 DPS');
+        expect(container.textContent).not.toContain('+910.00 DPS');
+    });
+});

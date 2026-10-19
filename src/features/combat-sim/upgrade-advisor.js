@@ -6662,8 +6662,8 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
  * @param {Object} context - `{ gameData, playerDTOs, playerIndex, playerHrid, zoneHrid, difficultyTier, hours,
  *   communityBuffs, seed, precision, baselineResult, baseline }`, as returned by `runUpgradeAnalysis`
  * @returns {Promise<{ok: true, metrics: Object, deltas: Object, economics: Object, noise: Object,
- *   totalCost: number} | {ok: false, reason: string}>} `deltas` and `economics` are against the baseline valued
- *   on the basket's own price snapshot
+ *   totalCost: number, baseline: Object} | {ok: false, reason: string}>} `deltas`, `economics` and `baseline`
+ *   are on the basket's own price snapshot
  */
 export async function confirmUpgradeBudgetPlan(picks, context) {
     if (!picks?.length) return { ok: false, reason: 'The plan is empty — nothing to confirm.' };
@@ -6776,7 +6776,8 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
     const economics = computeEconomics(totalCost, pricedBaseline, metrics);
     const noise = rateDeltaNoisePct(baselineResult, combinedResult, playerHrid);
 
-    return { ok: true, metrics, deltas, economics, noise, totalCost };
+    // `baseline`: the analysis baseline on the basket's own price basis, for a reader that shows the gain
+    return { ok: true, metrics, deltas, economics, noise, totalCost, baseline: pricedBaseline };
 }
 
 /**

@@ -7927,6 +7927,8 @@ describe('one price snapshot per analysis (#544)', () => {
         expect(outcome.ok).toBe(true);
         expect(outcome.deltas.profit).toBe(0);
         expect(outcome.economics.profitGainPerHour).toBe(0);
+        // The revalued baseline comes back, so a reader shows the gain on the same basis
+        expect(outcome.baseline.profitPerHour).toBe(1200);
     });
 
     test('a real change in what the fight earns still shows, on the one basis', async () => {

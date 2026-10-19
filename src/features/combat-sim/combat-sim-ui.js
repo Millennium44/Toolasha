@@ -12811,6 +12811,9 @@ class CombatSimUI {
         }
         if (state.status === 'done') {
             const confirmedRow = { metrics: state.result.metrics, economics: state.result.economics };
+            // The baseline the run compared the basket with, on the basket's price snapshot: a context restored
+            // from storage lost the analysis' snapshot and was revalued, so the analysis' own baseline is not it
+            const basis = state.result.baseline || baseline;
             // Score is a placing or a share of the best within the candidate set
             // the plan was built from (see `applyScoreScale`) — there is no set
             // to place a single combined basket within, so it cannot be
@@ -12830,12 +12833,12 @@ class CombatSimUI {
                     ? `<span style="color:#888;">can't be confirmed as a score; the measured changes are</span>
                         ${UPGRADE_PLAN_METRICS.filter((m) => m.key !== 'score')
                             .map((m) => {
-                                const gain = m.gain(confirmedRow, baseline);
+                                const gain = m.gain(confirmedRow, basis);
                                 return gainSpan(gain, `${m.label} ${m.format(gain)}`);
                             })
                             .join(', ')}`
                     : (() => {
-                          const gain = plan.metric.gain(confirmedRow, baseline);
+                          const gain = plan.metric.gain(confirmedRow, basis);
                           return gainSpan(gain, plan.metric.format(gain));
                       })();
             return wrap(
