@@ -246,7 +246,6 @@ class AchievementFinisher {
 
         if (tier.complete) {
             block.appendChild(el('div', 'margin-left:14px;color:#6c6;', 'Every achievement in this tier is done.'));
-            return block;
         }
         for (const item of tier.remaining) {
             const row = el('div', 'margin-left:14px;');
@@ -259,6 +258,11 @@ class AchievementFinisher {
             if (item.planner) {
                 row.appendChild(el('span', 'margin-left:6px;color:#8ab;', `[${PLANNER_HINT[item.planner]}]`));
             }
+            block.appendChild(row);
+        }
+        for (const item of tier.done) {
+            const row = el('div', 'margin-left:14px;color:#888;', `✓ ${item.name}`);
+            row.className = `${PANEL_CLASS}-done`;
             block.appendChild(row);
         }
         return block;

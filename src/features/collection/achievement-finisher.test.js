@@ -209,6 +209,30 @@ describe('the panel', () => {
         expect(panelText()).toContain('does not give progress inside one');
     });
 
+    test('an expanded tier lists done and remaining entries with distinct markers', () => {
+        game.achievements = [done('/achievements/n1'), done('/achievements/a1'), done('/achievements/a2')];
+        achievementsPage();
+        finisher.initialize();
+        click(`.${PANEL_CLASS}-header`);
+        const tiers = document.querySelectorAll(`.${PANEL_CLASS}-tier`);
+        const open = (i) => tiers[i].firstChild.dispatchEvent(new Event('click'));
+        // Partial (novice): one done, one left
+        open(1);
+        let block = document.querySelectorAll(`.${PANEL_CLASS}-tier`)[1];
+        expect(block.querySelector(`.${PANEL_CLASS}-item`).textContent).toContain('○ N2');
+        expect(block.querySelector(`.${PANEL_CLASS}-done`).textContent).toBe('✓ N1');
+        // Fully done (beginner): done entries listed, nothing remaining
+        open(0);
+        block = document.querySelectorAll(`.${PANEL_CLASS}-tier`)[0];
+        expect(block.querySelectorAll(`.${PANEL_CLASS}-done`)).toHaveLength(2);
+        expect(block.querySelectorAll(`.${PANEL_CLASS}-item`)).toHaveLength(0);
+        // None done (elite): only remaining
+        document.querySelectorAll(`.${PANEL_CLASS}-tier`)[3].firstChild.dispatchEvent(new Event('click'));
+        block = document.querySelectorAll(`.${PANEL_CLASS}-tier`)[3];
+        expect(block.querySelectorAll(`.${PANEL_CLASS}-item`)).toHaveLength(1);
+        expect(block.querySelectorAll(`.${PANEL_CLASS}-done`)).toHaveLength(0);
+    });
+
     test('missing achievement data shows an explicit unknown state', () => {
         game.achievements = null;
         achievementsPage();
