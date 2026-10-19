@@ -134,6 +134,9 @@ export function makeDraggable(panel, handle, onDrop) {
     let offsetY = 0;
     let dragging = false;
     let moved = false;
+    // The one pointer that owns this drag. A second finger's events also bubble
+    // to the document and must neither steer nor end the first finger's drag.
+    let activePointerId = null;
 
     // Pointer events rather than mouse events, so a finger works the same as a
     // cursor — mousedown never fires on a touchscreen and every panel was
@@ -143,7 +146,7 @@ export function makeDraggable(panel, handle, onDrop) {
     handle.style.touchAction = 'none';
 
     const onPointerMove = (event) => {
-        if (!dragging) return;
+        if (!dragging || event.pointerId !== activePointerId) return;
         moved = true;
         // Anchored left/top from here on: a panel positioned from the right edge
         // would jump the moment the window is resized
@@ -155,11 +158,15 @@ export function makeDraggable(panel, handle, onDrop) {
 
     const onPointerUp = (event) => {
         if (!dragging) return;
+        // Teardown calls this with no event and ends whatever is active
+        if (event && event.pointerId !== activePointerId) return;
+        const ownerId = activePointerId;
         dragging = false;
+        activePointerId = null;
         document.removeEventListener('pointermove', onPointerMove);
         document.removeEventListener('pointerup', onPointerUp);
         document.removeEventListener('pointercancel', onPointerUp);
-        releaseCapture(handle, event);
+        releaseCapture(handle, { pointerId: ownerId });
 
         // A press that never moved is a click, not a drag. Saving one is
         // harmless for a panel that only remembers where it is, and wrong for
@@ -174,12 +181,15 @@ export function makeDraggable(panel, handle, onDrop) {
         // Only the primary button, and never a click that was meant for a
         // control sitting in the handle
         if (event.button !== 0 || isHandleControl(event.target, handle)) return;
+        // A second finger while one already holds the handle is not a new drag
+        if (dragging) return;
 
         bringPanelToFront(panel);
         // Before the panel has moved, so a `restoreGeometry` still waiting on
         // storage knows its answer is stale and does not snap the panel back
         markPanelInteracted(panel);
         dragging = true;
+        activePointerId = event.pointerId;
         moved = false;
         const rect = panel.getBoundingClientRect();
         offsetX = event.clientX - rect.left;
@@ -246,6 +256,7 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
     let startWidth = 0;
     let startHeight = 0;
     let resizing = false;
+    let activePointerId = null;
 
     // Same pointer-events story as the drag handle; and a 14px grip is a
     // mouse-sized target, so a coarse pointer gets a bigger one
@@ -256,26 +267,36 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
     }
 
     const onPointerMove = (event) => {
-        if (!resizing) return;
+        if (!resizing || event.pointerId !== activePointerId) return;
         panel.style.width = `${Math.max(minWidth, startWidth + event.clientX - startX)}px`;
         panel.style.height = `${Math.max(minHeight, startHeight + event.clientY - startY)}px`;
     };
 
     const onPointerUp = (event) => {
         if (!resizing) return;
+        if (event && event.pointerId !== activePointerId) return;
+        const ownerId = activePointerId;
         resizing = false;
+        activePointerId = null;
         document.removeEventListener('pointermove', onPointerMove);
         document.removeEventListener('pointerup', onPointerUp);
         document.removeEventListener('pointercancel', onPointerUp);
-        releaseCapture(grip, event);
+        releaseCapture(grip, { pointerId: ownerId });
         const rect = panel.getBoundingClientRect();
         onResize?.({ width: Math.round(rect.width), height: Math.round(rect.height) });
     };
 
     const onPointerDown = (event) => {
         if (event.button !== 0) return;
+        if (resizing) {
+            // Another finger on the grip is not ours to act on, but still not a click-through
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
         markPanelInteracted(panel);
         resizing = true;
+        activePointerId = event.pointerId;
         const rect = panel.getBoundingClientRect();
         startX = event.clientX;
         startY = event.clientY;

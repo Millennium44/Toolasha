@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Queue times, net worth trends, touch dragging and worker pools: six reported bugs
+
+- Queue summaries (the live queue tile and the idle notice) measure alchemy efficiency from the item's level, like the action bar, instead of overstating it.
+- Account net worth changes no longer count a newly recorded character's balance as growth, and the 24h and 7d changes are worked out from the full history rather than the thinned chart line (a shorter span is labeled "over Xh").
+- Reordering character tabs and My Listings now works with a finger (hold a tab, drag the listing handle), and a second touch no longer hijacks a floating panel's drag or resize.
+- A background worker pool that fails part-way through starting no longer leaves workers running, and retrying builds exactly the configured number.
+
 ### Reload by itself after the game was opened elsewhere
 
 - New setting (off by default): when this tab is disconnected because the game was opened from another device or window, it waits 5–60 minutes, then reloads to take the character back. A notice shows when it will happen with Reload now and Cancel; it never reloads while you are using the page, and two tabs fighting over one character back off and stop after 3 reloads.

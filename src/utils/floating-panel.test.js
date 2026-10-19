@@ -276,6 +276,56 @@ describe('a press aimed at a control in the handle is not a drag', () => {
     });
 });
 
+describe('a second finger does not take over a drag or resize', () => {
+    const fire = (type, id, x, y, target = document) => {
+        const e = new MouseEvent(type, { button: 0, clientX: x, clientY: y, bubbles: true });
+        Object.defineProperty(e, 'pointerId', { value: id });
+        target.dispatchEvent(e);
+    };
+
+    test('only the owning finger moves and ends a drag', () => {
+        fire('pointerdown', 1, 120, 120, handle);
+        fire('pointermove', 1, 140, 140);
+        expect(panel.style.left).toBe('20px');
+
+        fire('pointermove', 2, 500, 600);
+        expect(panel.style.left).toBe('20px');
+        fire('pointerup', 2, 500, 600);
+        fire('pointercancel', 2, 500, 600);
+        expect(dropped).not.toHaveBeenCalled();
+
+        fire('pointermove', 1, 150, 150);
+        expect(panel.style.left).toBe('30px');
+        fire('pointerup', 1, 150, 150);
+        expect(dropped).toHaveBeenCalledTimes(1);
+    });
+
+    test('a second finger pressing the handle does not restart the drag', () => {
+        fire('pointerdown', 1, 120, 120, handle);
+        fire('pointerdown', 2, 300, 300, handle);
+        fire('pointermove', 1, 140, 140);
+        expect(panel.style.left).toBe('20px');
+    });
+
+    test('only the owning finger resizes and ends a resize', () => {
+        panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: 200, right: 400, bottom: 300 });
+        const onResize = vi.fn();
+        makeResizable(panel, { minWidth: 100, minHeight: 50, onResize });
+        const grip = panel.lastElementChild;
+
+        fire('pointerdown', 1, 400, 300, grip);
+        fire('pointermove', 2, 10, 10);
+        expect(panel.style.width).toBe('');
+        fire('pointerup', 2, 10, 10);
+        expect(onResize).not.toHaveBeenCalled();
+
+        fire('pointermove', 1, 460, 330);
+        expect(panel.style.width).toBe('360px');
+        fire('pointerup', 1, 460, 330);
+        expect(onResize).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('panelHeightCap', () => {
     test('caps against the visible viewport, never a vh unit', () => {
         // `80vh` is what eight panels each said instead, and it is the bug:

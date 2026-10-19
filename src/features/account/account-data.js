@@ -64,6 +64,8 @@ const CACHE_TTL_MS = 60 * 1000;
 /** Enough points for a trend, few enough to keep the merge cheap */
 const MAX_COMBINED_POINTS = 400;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * The character ids a set of keys names.
  *
@@ -184,7 +186,35 @@ export function downsample(points, maxPoints) {
 }
 
 /**
+ * The trailing run of a combined series that counted the same characters as its
+ * last point.
+ *
+ * `combineSeries` holds a character out until its first reading, so an earlier
+ * point with fewer `contributors` is a smaller account, not a poorer one:
+ * subtracting it from today's total reads a newly recorded character's whole
+ * balance as growth. Contributors only ever grow, so the run is contiguous.
+ * Points with no `contributors` field (a single character's plain series) are
+ * all comparable.
+ *
+ * @param {Array<{t: number, total: number, contributors?: number}>} points - Combined series, oldest first
+ * @returns {Array<Object>} The suffix covering the same characters as the last point
+ */
+export function comparableSegment(points) {
+    if (!Array.isArray(points) || points.length === 0) return [];
+    const count = points[points.length - 1].contributors;
+    if (count === undefined) return points;
+
+    let start = points.length - 1;
+    while (start > 0 && points[start - 1].contributors === count) start -= 1;
+    return start === 0 ? points : points.slice(start);
+}
+
+/**
  * What a series did over the last `windowMs`.
+ *
+ * Only the part of the series that counted the same characters as its latest
+ * point is compared (see `comparableSegment`); `spanMs` is how far back that
+ * comparison actually reaches.
  *
  * The baseline is the last point at or before the window opens rather than the
  * first point inside it — a character recorded hourly and then not touched for
@@ -199,16 +229,17 @@ export function downsample(points, maxPoints) {
  *   Null when there is nothing to compare against
  */
 export function windowChange(points, windowMs, now = Date.now()) {
-    if (!Array.isArray(points) || points.length < 2) return null;
+    const comparable = comparableSegment(points);
+    if (comparable.length < 2) return null;
 
-    const last = points[points.length - 1];
+    const last = comparable[comparable.length - 1];
     const cutoff = now - windowMs;
 
     let base = null;
-    for (const point of points) {
+    for (const point of comparable) {
         if (point.t <= cutoff) base = point;
     }
-    if (!base) base = points[0];
+    if (!base) base = comparable[0];
     if (base === last || base.t >= last.t) return null;
 
     const delta = last.total - base.total;
@@ -385,7 +416,7 @@ export async function rememberCurrentCharacter() {
  * Read every character's residue out of storage.
  *
  * @param {number} [now] - Clock, injectable for tests
- * @returns {Promise<Object>} `{at, currentId, characters, combined, briefings}`
+ * @returns {Promise<Object>} `{at, currentId, characters, combined, trend, changes, briefings}`
  */
 export async function readAccount(now = Date.now()) {
     const currentId = dataManager.getCurrentCharacterId();
@@ -431,11 +462,18 @@ export async function readAccount(now = Date.now()) {
         now,
     });
 
+    // The day/week figures are read off the full series: thinning it for the
+    // chart drops the point just before the window opens, and the change then
+    // quietly covers a longer span than its label says
+    const full = combineSeries(seriesById, { maxPoints: Infinity });
+
     return {
         at: now,
         currentId,
         characters,
-        combined: combineSeries(seriesById),
+        combined: downsample(full, MAX_COMBINED_POINTS),
+        trend: downsample(comparableSegment(full), MAX_COMBINED_POINTS),
+        changes: { day: windowChange(full, DAY_MS, now), week: windowChange(full, 7 * DAY_MS, now) },
         // Read off the key list already in hand rather than with a scan of its
         // own — a snapshot lives in the settings store beside everything else
         // keyed per character

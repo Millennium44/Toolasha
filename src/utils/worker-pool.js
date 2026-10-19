@@ -36,6 +36,10 @@ class WorkerPool {
             return;
         }
 
+        // Built locally and published only when every worker exists: a constructor that
+        // throws part-way must not leave live workers behind for the retry to stack
+        // a whole new pool on top of.
+        const built = [];
         try {
             // Create workers
             for (let i = 0; i < this.poolSize; i++) {
@@ -50,7 +54,7 @@ class WorkerPool {
                 } finally {
                     URL.revokeObjectURL(objectUrl);
                 }
-                this.workers.push({
+                built.push({
                     id: i,
                     worker,
                     busy: false,
@@ -58,8 +62,16 @@ class WorkerPool {
                 });
             }
 
+            this.workers = built;
             this.initialized = true;
         } catch (error) {
+            for (const wrapper of built) {
+                try {
+                    wrapper.worker.terminate();
+                } catch (terminateError) {
+                    console.error('[WorkerPool] Failed to terminate partially created worker:', terminateError);
+                }
+            }
             console.error('[WorkerPool] Failed to initialize:', error);
             throw error;
         }

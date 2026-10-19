@@ -336,3 +336,134 @@ describe('initialization', () => {
         expect(listingDragOrder.isInitialized).toBe(true);
     });
 });
+
+describe('finger-driven reordering (no native drag events)', () => {
+    const ptr = (target, type, id, x = 0, y = 0, pointerType = 'touch') => {
+        const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+        Object.defineProperty(e, 'pointerId', { value: id });
+        Object.defineProperty(e, 'pointerType', { value: pointerType });
+        target.dispatchEvent(e);
+        return e;
+    };
+    let table;
+    let rows;
+
+    beforeEach(async () => {
+        table = buildTable([1, 2, 3]);
+        await listingDragOrder.initialize();
+        rows = Array.from(table.querySelectorAll('tbody tr'));
+        document.elementFromPoint = vi.fn();
+    });
+
+    const handleOf = (row) => row.querySelector('.mwi-listing-drag-handle');
+
+    test('a touch stream on the handle moves the row and saves the new order', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7);
+        expect(handleOf(rows[0]).draggable).toBe(false);
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(handleOf(rows[0]), 'pointermove', 7, 5, 119);
+        ptr(handleOf(rows[0]), 'pointerup', 7, 5, 119);
+
+        expect(rowIds(table)).toEqual(['2', '3', '1']);
+        expect(game.set).toHaveBeenCalledTimes(1);
+        expect(game.set.mock.calls[0][1]).toEqual(['2', '3', '1']);
+        expect(handleOf(rows[0]).draggable).toBe(true);
+    });
+
+    test('another finger neither moves nor ends the drag', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7);
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(handleOf(rows[0]), 'pointermove', 8, 5, 119);
+        ptr(handleOf(rows[0]), 'pointerup', 8);
+        expect(rowIds(table)).toEqual(['1', '2', '3']);
+        expect(game.set).not.toHaveBeenCalled();
+        expect(listingDragOrder.touchDrag.pointerId).toBe(7);
+    });
+
+    test('a cancelled touch puts the rows back and saves nothing', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7);
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(handleOf(rows[0]), 'pointermove', 7, 5, 119);
+        expect(rowIds(table)).toEqual(['2', '3', '1']);
+        ptr(handleOf(rows[0]), 'pointercancel', 7);
+
+        expect(rowIds(table)).toEqual(['1', '2', '3']);
+        expect(game.set).not.toHaveBeenCalled();
+        expect(listingDragOrder.touchDrag).toBeNull();
+    });
+
+    test('a tap on the handle claims and saves nothing', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
+        ptr(handleOf(rows[0]), 'pointerup', 7, 0, 0);
+        expect(game.set).not.toHaveBeenCalled();
+        expect(table.dataset.mwiManualListingOrder).toBeUndefined();
+        expect(listingDragOrder.touchDrag).toBeNull();
+        expect(handleOf(rows[0]).draggable).toBe(true);
+    });
+
+    test('jitter under the slop saves nothing, a real move saves', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
+        ptr(handleOf(rows[0]), 'pointermove', 7, 3, 4);
+        ptr(handleOf(rows[0]), 'pointerup', 7, 3, 4);
+        expect(game.set).not.toHaveBeenCalled();
+        expect(table.dataset.mwiManualListingOrder).toBeUndefined();
+
+        ptr(handleOf(rows[0]), 'pointerdown', 8, 0, 0);
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(handleOf(rows[0]), 'pointermove', 8, 0, 119);
+        ptr(handleOf(rows[0]), 'pointerup', 8, 0, 119);
+        expect(game.set).toHaveBeenCalledTimes(1);
+    });
+
+    test('releasing a moved row outside the table restores the order and saves nothing', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(handleOf(rows[0]), 'pointermove', 7, 0, 119);
+        expect(rowIds(table)).toEqual(['2', '3', '1']);
+
+        document.elementFromPoint.mockReturnValue(document.body);
+        ptr(document.body, 'pointerup', 7, 900, 900);
+
+        expect(rowIds(table)).toEqual(['1', '2', '3']);
+        expect(game.set).not.toHaveBeenCalled();
+        expect(table.dataset.mwiManualListingOrder).toBeUndefined();
+        expect(listingDragOrder.touchDrag).toBeNull();
+    });
+
+    test('a release on the document alone ends the gesture', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(handleOf(rows[0]), 'pointermove', 7, 0, 119);
+        ptr(document.body, 'pointerup', 7, 0, 119);
+        expect(listingDragOrder.touchDrag).toBeNull();
+        expect(game.set).toHaveBeenCalledTimes(1);
+    });
+
+    test('disabling mid-gesture gives the handle back to native drag', () => {
+        const handle = handleOf(rows[0]);
+        ptr(handle, 'pointerdown', 7, 0, 0);
+        expect(handle.draggable).toBe(false);
+        listingDragOrder.cleanup();
+        expect(handle.draggable).toBe(true);
+        expect(listingDragOrder.touchDrag).toBeNull();
+    });
+
+    test('mouse pointer events leave the native drag path alone', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 1, 0, 0, 'mouse');
+        expect(listingDragOrder.touchDrag).toBeNull();
+        expect(handleOf(rows[0]).draggable).toBe(true);
+    });
+
+    test('an active column sort refuses a touch drag', () => {
+        table.querySelector('th').textContent = 'Status ▲';
+        ptr(handleOf(rows[0]), 'pointerdown', 7);
+        expect(listingDragOrder.touchDrag).toBeNull();
+        expect(listingDragOrder.draggedRow).toBeNull();
+    });
+});

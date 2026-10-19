@@ -128,6 +128,31 @@ describe('drawing the account', () => {
         expect(text()).toContain('1.25M');
     });
 
+    test('a newly recorded character’s balance is not drawn as growth', () => {
+        // a flat at 100 for days; b (500) first recorded 12 h ago, so the account steps 100 -> 600
+        state.account.combined = [
+            { t: NOW - 48 * HOUR, total: 100, contributors: 1 },
+            { t: NOW - 12 * HOUR, total: 600, contributors: 2 },
+            { t: NOW, total: 600, contributors: 2 },
+        ];
+        accountPanel.show({ remember: false });
+
+        expect(text()).not.toContain('+500');
+        expect(text()).toContain('Last 24h (over');
+        expect(text()).toContain('Not enough history for a trend yet.');
+    });
+
+    test('the change rows show the precomputed full-history figures, not ones recomputed from the chart series', () => {
+        state.account.changes = {
+            day: { delta: 24_000, percent: 2.4, from: 1_000_000, to: 1_024_000, spanMs: 24 * HOUR },
+            week: { delta: 168_000, percent: 16.8, from: 1_000_000, to: 1_168_000, spanMs: 7 * 24 * HOUR },
+        };
+        accountPanel.show({ remember: false });
+
+        expect(text()).toContain('+24.00K');
+        expect(text()).toContain('+168.00K');
+    });
+
     test('a busy queue with an untimed fight reads as a lower bound', () => {
         state.account.characters[0].queue = {
             state: 'busy',

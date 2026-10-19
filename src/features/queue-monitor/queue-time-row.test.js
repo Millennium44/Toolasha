@@ -22,6 +22,7 @@ const game = vi.hoisted(() => ({
     stats: { actionTime: 10, totalEfficiency: 0 },
     elapsedSecondsInCurrentUnit: () => 0,
     unknownHrids: [],
+    calls: [],
 }));
 
 vi.mock('../../utils/overlay-rows.js', () => ({
@@ -38,14 +39,24 @@ vi.mock('../../core/data-manager.js', () => ({
         getEquipment: () => new Map(),
         getActionDetails: (hrid) =>
             hrid && !game.unknownHrids.includes(hrid)
-                ? { name: hrid, type: hrid.includes('/combat/') ? '/action_types/combat' : '/action_types/milking' }
+                ? {
+                      name: hrid,
+                      type: hrid.includes('/combat/')
+                          ? '/action_types/combat'
+                          : hrid.includes('/alchemy/')
+                            ? '/action_types/alchemy'
+                            : '/action_types/milking',
+                  }
                 : null,
         getElapsedSecondsInCurrentUnit: (...args) => game.elapsedSecondsInCurrentUnit(...args),
     },
 }));
 
 vi.mock('../../utils/action-calculator.js', () => ({
-    calculateActionStats: () => game.stats,
+    calculateActionStats: (details, options) => {
+        game.calls.push({ details, options });
+        return game.stats;
+    },
 }));
 
 vi.mock('../../utils/efficiency.js', () => ({
@@ -95,6 +106,7 @@ describe('the queue time tile', () => {
         game.stats = { actionTime: 10, totalEfficiency: 0 };
         game.elapsedSecondsInCurrentUnit = () => 0;
         game.unknownHrids = [];
+        game.calls = [];
     });
 
     test('registers, off by default', () => {
@@ -286,5 +298,30 @@ describe('the queue time tile', () => {
         const left = queueTimeLeft();
         expect(left).toEqual({ seconds: 0, finite: 0, queued: 2, infinite: true, unknown: true });
         expect(draw().textContent).toContain('?');
+    });
+
+    test('each alchemy action is measured from its own item level, enhanced or not', () => {
+        game.clientData = {
+            itemDetailMap: { '/items/low': { itemLevel: 10 }, '/items/high': { itemLevel: 100 } },
+        };
+        const alchemy = (ordinal, hash) => ({
+            id: `alch-${ordinal}`,
+            actionHrid: '/actions/alchemy/coinify',
+            primaryItemHash: hash,
+            hasMaxCount: true,
+            maxCount: 100,
+            currentCount: 0,
+            isDone: false,
+            ordinal,
+        });
+        game.actions = [
+            alchemy(0, '/item_locations/inventory::/items/low::0'),
+            alchemy(1, '161296::/item_locations/inventory::/items/high::5'),
+            counted(10, 0, 2),
+        ];
+
+        queueTimeLeft();
+
+        expect(game.calls.map((c) => c.options.levelRequirementOverride)).toEqual([10, 100, undefined]);
     });
 });

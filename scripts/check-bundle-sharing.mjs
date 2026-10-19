@@ -106,6 +106,12 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/alchemy-level.js',
+        // One pure function, no imports and no module state: the alchemy item-level requirement. The
+        // action bar (ui bundle) and the queue summaries (actions bundle) both read it.
+        'stateless alchemy item-level lookup; no module state to share',
+    ],
+    [
         'src/utils/token-worth.js',
         // Two constants and two pure arithmetic functions, no imports and no module state. The token
         // tooltip (market bundle) totals a held stack with it and the combat sim (sim bundle) prices scrolls.
