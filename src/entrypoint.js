@@ -2570,6 +2570,15 @@ function registerFeatures() {
             liveStop: true,
         },
         {
+            key: 'combatDeathRecap',
+            name: 'Death Recap',
+            category: 'Combat',
+            module: UI.combatDeathRecap,
+            async: true,
+            customCheck: () => config.getSetting('combatDeathRecap'),
+            liveStop: true,
+        },
+        {
             key: 'skillLevelUpAlerts',
             name: 'Skill Milestone Alerts',
             category: 'Notifications',

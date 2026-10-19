@@ -1931,7 +1931,7 @@ export const settingsGroups = {
                 label: 'Market: Price history panel',
                 type: 'checkbox',
                 default: false,
-                help: 'Adds a History tab to the marketplace: a floating chart of an item\u2019s ask, bid, average traded price and volume over the last day to six months, plus a row of pinned items. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge. The data comes from the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org. This talks to a third party in both directions and is off until you turn it on: it tells that server which items you look up, and it sends back the order books you open, which is where the history you read comes from \u2014 reading a pooled dataset without feeding it is what empties it.',
+                help: 'Adds a History tab to the marketplace: a floating chart of an item\’s ask, bid, average traded price and volume over the last day to six months, plus a row of pinned items. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge. The data comes from the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org. This talks to a third party in both directions and is off until you turn it on: it tells that server which items you look up, and it sends back the order books you open, which is where the history you read comes from \u2014 reading a pooled dataset without feeding it is what empties it.',
             },
             market_volumeStats: {
                 id: 'market_volumeStats',
@@ -1950,7 +1950,7 @@ export const settingsGroups = {
                     { value: 'mooket2', label: 'mooket II \u2014 Q7 (q7.nainai.eu.org)' },
                     { value: 'mooket1', label: 'mooket I \u2014 IOMisaka (mooket.qi-e.top)' },
                 ],
-                help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from \u2014 and, since you feed the pool you read, the one your opened order books are contributed back to. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\u2019s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above.',
+                help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from \u2014 and, since you feed the pool you read, the one your opened order books are contributed back to. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\’s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above.',
             },
             market_listingAgeFormat: {
                 id: 'market_listingAgeFormat',
@@ -2975,6 +2975,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds encounters/hour, revenue and experience rates to the Battle Info panel for the unit being viewed',
+            },
+            combatDeathRecap: {
+                id: 'combatDeathRecap',
+                label: 'Death Recap: Show what happened in your last seconds before a death',
+                type: 'checkbox',
+                default: true,
+                help: 'Keeps your own last ~15 seconds of HP, MP, incoming hits and casts in memory (about 30 small samples, nothing saved) and freezes a compact recap when you die. Open it from the death alert or the small Death recap button; the last five are kept until you reload. A zero-HP reading is shown as unconfirmed until the server’s death count agrees, attribution of hits to monsters is approximate, and a recap says so when recording began too late to cover the whole window.',
             },
             combatDropLuck: {
                 id: 'combatDropLuck',
@@ -4486,7 +4493,7 @@ export const settingsGroups = {
                 label: 'Notify when you die in combat',
                 type: 'checkbox',
                 default: false,
-                help: 'Keys on the server’s own death count for your character going up between battles — your deaths only, not the party’s. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once and the total in the message tells you how bad it got. Deaths that happened before you switched this on are not announced.',
+                help: 'Fires the moment your own character dies, read off your combat tick (HP reaching 0) — not when you respawn. Your deaths only, not the party’s. If a tick was missed (a throttled background tab), the server’s own death count rising on a later battle announces it instead; a death is never announced twice. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once. Deaths that happened before you switched this on are not announced.',
             },
             notifications_skillLevelUp: {
                 id: 'notifications_skillLevelUp',

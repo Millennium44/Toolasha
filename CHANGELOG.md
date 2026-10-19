@@ -11,6 +11,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The tea recommendation for an action now also shows the best gold/hr setup that stays within 95% of the top XP/hr (the percentage is a setting), with the trade spelled out, e.g. "XP −4.0%, +30.0K gold/hr"; unpriced setups are flagged, never valued at zero.
 - Tea gold figures are flagged as a guess when an essence or rare drop has no market price, instead of being shown as exact.
 
+### Combat: death recap, and the death alert fires when you die
+
+- The death alert now fires the moment you die (your HP reaching 0), not when you respawn; a solo death never sent the old signal until later.
+- New death recap (on by default): the last ~15 seconds before each death — HP, incoming hits and your last casts — opened from the death alert or a "Death recap" button; kept in memory only, last five deaths.
+
 ### Achievements: tier finisher
 
 - New panel on your own Achievements page (on by default): each tier shows what's done, what's left and the tier's reward, with point totals for the Collection and Bestiary achievements; rewards not confirmed from game data are marked "inferred".
