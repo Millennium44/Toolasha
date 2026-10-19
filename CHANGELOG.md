@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat: death recap, and the death alert fires when you die
+
+- The death alert now fires the moment you die (your HP reaching 0), not when you respawn; a solo death never sent the old signal until later.
+- New death recap (on by default): the last ~15 seconds before each death — HP, incoming hits and your last casts — opened from the death alert or a "Death recap" button; kept in memory only, last five deaths.
+
 ### Queue times, net worth trends, touch dragging and worker pools: six reported bugs
 
 - Queue summaries (the live queue tile and the idle notice) measure alchemy efficiency from the item's level, like the action bar, instead of overstating it.
