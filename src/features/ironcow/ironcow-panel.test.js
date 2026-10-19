@@ -765,6 +765,29 @@ describe('character switches around a pending read', () => {
         expect(store.snapshot).toBeNull();
     });
 
+    test("a stage tick and a plan fold made while a load is pending are not undone by the load's older reads", async () => {
+        store.collapsed = false;
+        store.snapshot = costedLoop();
+        const slow = gate();
+        store.snapshotGate = slow.promise;
+        const loading = ironCowFarmPanel.load();
+        await settle();
+
+        // The load has read overrides and the fold; the player now changes both
+        store.overrides = { a: true };
+        await ironCowFarmPanel.toggleStage('x', true);
+        await ironCowFarmPanel.togglePlan();
+        expect(ironCowFarmPanel.planCollapsed).toBe(true);
+
+        slow.open();
+        await loading;
+        expect(ironCowFarmPanel.overrides).toEqual({ a: true, x: true });
+        expect(ironCowRuntime.overrides).toEqual({ a: true, x: true });
+        expect(ironCowFarmPanel.planCollapsed).toBe(true);
+        // What the load had no edit against still lands
+        expect(ironCowFarmPanel.loop).not.toBeNull();
+    });
+
     test('an ordinary load, tick and refresh for one character still land', async () => {
         await ironCowFarmPanel.load();
         await ironCowFarmPanel.toggleStage('x', true);

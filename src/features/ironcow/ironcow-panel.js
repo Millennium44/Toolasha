@@ -306,6 +306,9 @@ class IronCowFarmPanel {
         this._lifeGen = 0;
         // Bumped by each load() start, so overlapping loads are latest-wins
         this._loadGen = 0;
+        // Per-field counts of the player's own edits; a load that read a field before an edit must not
+        // publish its older value over it
+        this._edits = { overrides: 0, planCollapsed: 0, batch: 0 };
         // The overlay tile opens the same panel this toggles, and reads the
         // loop and the overrides through the same runtime object this keeps
         // current below.
@@ -407,6 +410,8 @@ class IronCowFarmPanel {
         // Every read lands in a local and is checked before anything is published, so a load that was
         // superseded (a newer load, a disable, a character switch) never touches this.* or the runtime
         const current = () => gen === this._loadGen && this._owns(owner);
+        const stamps = { ...this._edits };
+        const unedited = (field) => stamps[field] === this._edits[field];
         const overrides = await loadOverrides();
         if (!current()) return;
         // Unconditional: disable()/_remove() only tears down the DOM, not
@@ -429,10 +434,12 @@ class IronCowFarmPanel {
         // The same goes for any snapshot from before bag prices were read off the book (no `quoted`):
         // an Iron Cow valuation setting could have stood in for the bag's price
         if (snapshot?.bellPricing && !('quoted' in snapshot.bellPricing)) snapshot = null;
-        this.overrides = overrides;
-        this.planCollapsed = planCollapsed;
-        if (window?.hours > 0) this.batchHours = window.hours;
-        this.batchUnit = 'h';
+        if (unedited('overrides')) this.overrides = overrides;
+        if (unedited('planCollapsed')) this.planCollapsed = planCollapsed;
+        if (unedited('batch')) {
+            if (window?.hours > 0) this.batchHours = window.hours;
+            this.batchUnit = 'h';
+        }
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
         this._render();
@@ -495,6 +502,7 @@ class IronCowFarmPanel {
      * @returns {Promise<void>}
      */
     async toggleStage(stageId, ticked) {
+        this._edits.overrides++;
         const owner = this._owner();
         const overrides = await setOverride(stageId, ticked);
         // The store already refuses the write for a switched character; the in-memory map and the
@@ -509,6 +517,7 @@ class IronCowFarmPanel {
      * @returns {Promise<void>}
      */
     async togglePlan() {
+        this._edits.planCollapsed++;
         this.planCollapsed = !this.planCollapsed;
         // Drawn before the write: the fold is the player's own click and must
         // land at once, whatever storage does next.
@@ -1153,6 +1162,7 @@ class IronCowFarmPanel {
         });
         unit.value = this.batchUnit || 'h';
         unit.addEventListener('change', () => {
+            this._edits.batch++;
             this.batchUnit = unit.value;
             hoursBox.value = String(round1(this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours));
         });
@@ -1305,6 +1315,7 @@ class IronCowFarmPanel {
      */
     _setBatchHours(hours, source) {
         if (!Number.isFinite(hours) || hours <= 0) return;
+        this._edits.batch++;
         const inDays = source === 'hours' && this.batchUnit === 'd';
         this.batchHours = Math.min(MAX_QUEUE_HOURS, inDays ? hours * HOURS_PER_DAY : hours);
 
