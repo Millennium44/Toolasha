@@ -21,6 +21,7 @@ import {
 } from './profit-helpers.js';
 import { getItemPrice, getItemPriceInfo } from './market-data.js';
 import { calculateBonusRevenue } from './bonus-revenue-calculator.js';
+import expectedValueCalculator from '../features/market/expected-value-calculator.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import { runningAction } from './combat-actions.js';
 import { expectedProcessedItems } from './gathering-processing.js';
@@ -895,9 +896,14 @@ export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData)
     const bonusDropUnpriced = () => {
         if (!actionDetails.essenceDropTable?.length && !actionDetails.rareDropTable?.length) return false;
         const bonus = calculateBonusRevenue(actionDetails, 1, new Map(), gameData?.itemDetailMap || {});
+        // A container (taxExempt) valued from only some of its contents keeps a positive EV and no
+        // missingPrice; the expected-value calculator records how many contents it left out
+        const containerPartlyUnpriced = (hrid) => (expectedValueCalculator.containerMissingCounts?.get(hrid) || 0) > 0;
         return (bonus?.bonusDrops || []).some(
             (drop) =>
-                drop.dropsPerHour > 0 && (drop.missingPrice || (!drop.taxExempt && !isPriced(drop.itemHrid, 'sell')))
+                drop.dropsPerHour > 0 &&
+                (drop.missingPrice ||
+                    (drop.taxExempt ? containerPartlyUnpriced(drop.itemHrid) : !isPriced(drop.itemHrid, 'sell')))
         );
     };
 

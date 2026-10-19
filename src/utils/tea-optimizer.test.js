@@ -681,6 +681,23 @@ describe('actionHasUnpricedMaterials', () => {
             expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(true);
         });
 
+        test('a rare container valued from only some of its contents is flagged; a fully valued one is not', () => {
+            prices.byHrid = { '/items/milk': 2, '/items/cheese': 100 };
+            bonusGameData.itemDetailMap['/items/small_crate'] = { name: 'Small Crate', isOpenable: true };
+            const crate = { itemHrid: '/items/small_crate', minCount: 1, maxCount: 1, dropRate: 0.01 };
+            const action = withBonus({ rareDropTable: [crate] });
+            const cached = vi.spyOn(expectedValueCalculator, 'getCachedValue').mockReturnValue(500);
+            try {
+                expectedValueCalculator.containerMissingCounts.set('/items/small_crate', 2);
+                expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(true);
+                expectedValueCalculator.containerMissingCounts.delete('/items/small_crate');
+                expect(actionHasUnpricedMaterials(action, false, bonusGameData)).toBe(false);
+            } finally {
+                cached.mockRestore();
+                expectedValueCalculator.containerMissingCounts.delete('/items/small_crate');
+            }
+        });
+
         test('empty bonus tables and a zero-chance unpriced drop are not flagged', () => {
             prices.byHrid = { '/items/milk': 2, '/items/cheese': 100 };
             expect(actionHasUnpricedMaterials(withBonus({}), false, bonusGameData)).toBe(false);
