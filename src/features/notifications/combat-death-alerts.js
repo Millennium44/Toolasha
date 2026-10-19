@@ -43,7 +43,7 @@ import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
 import { newDeaths } from './notification-predicates.js';
 import { openRecap, SETTING as RECAP_SETTING } from './death-recap.js';
-import { seatFromBattle, seatFromTick, guessContradicted } from './own-seat.js';
+import { seatFromBattle, seatFromTick, guessContradicted, rosterHp } from './own-seat.js';
 
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_combatDeath';
@@ -210,16 +210,16 @@ class CombatDeathAlerts {
         this.ownIndex = seat ? seat.index : null;
         this.seatGuessed = false;
         this.battleSeen = true;
-        this.deadAnnounced = seat ? Number(seat.player.currentHitpoints) <= 0 : false;
+        // Still dead if the roster says so (a new wave starting while we wait to respawn); unknown keeps the state
+        const startHp = seat ? rosterHp(seat.player) : NaN;
+        this.deadAnnounced = seat ? (Number.isFinite(startHp) ? startHp <= 0 : this.deadAnnounced) : false;
 
         const count = this.ownDeathCount(data);
         if (count === null) return;
 
         // A counter that went down is a new session: deaths announced before it are not owed a rise
-        // The first reading is a baseline that already includes any death the ticks announced before it
-        // — but no more of them than the count says: the rest are still owed to a later rise
-        if (this.lastCount === null) this.tickDeaths -= Math.min(count, this.tickDeaths);
-        else if (count < this.lastCount) this.tickDeaths = 0;
+        // A first reading is only a baseline: it consumes nothing
+        if (this.lastCount !== null && count < this.lastCount) this.tickDeaths = 0;
         const died = newDeaths(this.lastCount, count);
         // Recorded whether or not anything is said, so that a session starting
         // over — which takes the count back down — is a new baseline and not a

@@ -384,20 +384,60 @@ describe('death recap', () => {
         expect(recap.recapHistory()[0]).toMatchObject({ source: 'both', confirmed: true });
     });
 
-    test('reload, tick death, then a first counter reading that includes it: a later counter-only death is a new recap', () => {
+    test('a first counter reading is only a baseline: the tick recap stays pending; a rise consumes it first, an excess is a new recap', () => {
         game.actions = SOLO;
         run([1500]);
         run([0]);
-        expect(recap.recapHistory()).toHaveLength(1);
         run([1600]);
         send('new_battle', battle([['me', 1]], 2));
         expect(recap.recapHistory()).toHaveLength(1);
-        expect(recap.recapHistory()[0]).toMatchObject({ source: 'both', confirmed: true });
+        expect(recap.recapHistory()[0]).toMatchObject({ source: 'hp', confirmed: false });
 
         run([900], { battleId: 2 });
-        send('new_battle', battle([['me', 2]], 3));
+        send('new_battle', battle([['me', 3]], 3));
         expect(recap.recapHistory()).toHaveLength(2);
+        expect(recap.recapHistory()[1]).toMatchObject({ source: 'both', confirmed: true });
         expect(recap.recapHistory()[0]).toMatchObject({ source: 'count', deaths: 1 });
+    });
+
+    test('a new wave while still dead is the same death: one recap; a respawn and genuine death is a second', () => {
+        send('new_battle', battle([['me', 0]]));
+        run([100]);
+        run([0]);
+        send('new_battle', battle([['me', 0, 0]], 2));
+        run([0], { battleId: 2 });
+        run([0], { battleId: 2 });
+        expect(recap.recapHistory()).toHaveLength(1);
+        run([1600], { battleId: 2 });
+        run([300], { battleId: 2 });
+        run([0], { battleId: 2 });
+        expect(recap.recapHistory()).toHaveLength(2);
+        expect(recap.recapHistory()[0].samples.length).toBeGreaterThan(0);
+    });
+
+    test('the opening cast is recorded when new_battle states the action counter and prepared ability', () => {
+        const b = battle([['me', 0]]);
+        b.players[0].atkCounter = 5;
+        b.players[0].preparingAbilityHrid = '/abilities/fireball';
+        send('new_battle', b);
+        vi.advanceTimersByTime(500);
+        const t = tick([800]);
+        t.pMap[0].atkCounter = 6;
+        send('battle_updated', t);
+        run([0]);
+        expect(recap.recapHistory()[0].casts.map((c) => c.ability)).toEqual(['/abilities/fireball']);
+    });
+
+    test('the recap covers the full 15 s window, not just 10 s', () => {
+        send('new_battle', battle([['me', 0]]));
+        for (let i = 0; i < 14; i++) {
+            vi.advanceTimersByTime(1000);
+            send('battle_updated', tick([1500 - i]));
+        }
+        run([0]);
+        const [r] = recap.recapHistory();
+        expect(Math.min(...r.samples.map((s) => s.rel))).toBeLessThan(-12000);
+        expect(r.insufficient).toBe(false);
     });
 
     test('a baseline of 0 leaves a tick recap pending; a later rise of 1 confirms it, no new recap', () => {

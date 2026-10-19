@@ -334,7 +334,7 @@ describe('combat death alerts', () => {
         expect(game.notified).toHaveLength(1);
     });
 
-    test('reload, tick death, then a first counter reading that includes it: a later counter-only death still alerts once', () => {
+    test('a first counter reading is only a baseline: the tick death stays owed; a rise consumes it first, an excess alerts', () => {
         game.actions = SOLO;
         tick(1500);
         tick(0);
@@ -342,8 +342,30 @@ describe('combat death alerts', () => {
         tick(1600);
         send(battle(['me', 1]));
         expect(game.notified).toHaveLength(1);
-        send(battle(['me', 2]));
+        // rise of 2 over the baseline: one is the tick death, one is new
+        send(battle(['me', 3]));
         expect(game.notified).toHaveLength(2);
+    });
+
+    test('a new wave while still dead is the same death; a respawn and a genuine death is a second', () => {
+        send(battle(['me', 0]));
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        send({ players: [{ character: { id: 'me', name: 'me' }, deathCount: 0, currentHitpoints: 0 }] });
+        tick(0);
+        tick(0);
+        expect(game.notified).toHaveLength(1);
+        tick(1600);
+        tick(0);
+        expect(game.notified).toHaveLength(2);
+    });
+
+    test('a roster that states the HP under combatDetails also keeps the dead state', () => {
+        send(battle(['me', 0]));
+        tick(0);
+        send({ players: [{ character: { id: 'me' }, deathCount: 0, combatDetails: { currentHitpoints: 0 } }] });
+        tick(0);
+        expect(game.notified).toHaveLength(1);
     });
 
     test('a baseline of 0 does not consume a tick death: a later rise of 1 is that same death, no second alert', () => {

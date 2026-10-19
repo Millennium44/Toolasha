@@ -74,3 +74,13 @@ function affirmedSolo(id) {
 export function guessContradicted(tick) {
     return Object.keys(tick?.pMap || {}).length > 1;
 }
+
+/**
+ * The HP a `new_battle` roster row states for a player, wherever the payload keeps it.
+ * @param {Object} player - A `new_battle` player entry
+ * @returns {number} The HP, or NaN when the row does not state one
+ */
+export function rosterHp(player) {
+    const hp = player?.currentHitpoints ?? player?.combatDetails?.currentHitpoints;
+    return hp === undefined || hp === null ? NaN : Number(hp);
+}

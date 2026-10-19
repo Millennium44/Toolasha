@@ -44,7 +44,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
-import { seatFromBattle, seatFromTick, guessContradicted } from './own-seat.js';
+import { seatFromBattle, seatFromTick, guessContradicted, rosterHp } from './own-seat.js';
 import { attributeIncoming, newTakenState, seedTakenState, resolveName } from '../../utils/damage-taken.js';
 
 /** Setting that gates the whole module */
@@ -61,7 +61,7 @@ const MAX_CASTS = 20;
 /** Frozen recaps kept */
 export const MAX_RECAPS = 5;
 /** How much of the tail the recap displays */
-export const SHOWN_MS = 10000;
+export const SHOWN_MS = WINDOW_MS;
 
 const BUTTON_ID = 'toolasha-death-recap-button';
 const MODAL_ID = 'toolasha-death-recap-modal';
@@ -129,7 +129,7 @@ function trim(now) {
  */
 function buildRecap(samples, castList, meta) {
     const end = samples.length ? samples[samples.length - 1].t : Date.now();
-    const shown = samples.filter((s) => end - s.t <= SHOWN_MS);
+    const shown = samples.filter((s) => end - s.t <= WINDOW_MS);
     const totals = {};
     for (const sample of shown) {
         for (const hit of sample.hits) {
@@ -151,11 +151,11 @@ function buildRecap(samples, castList, meta) {
         samples: shown.map((s) => ({ ...s, hits: s.hits.map((h) => ({ ...h })), rel: s.t - end })),
         sources,
         casts: castList
-            .filter((c) => end - c.t <= SHOWN_MS)
+            .filter((c) => end - c.t <= WINDOW_MS)
             .slice(-5)
             .map((c) => ({ ability: c.ability, rel: c.t - end })),
         // Less than the window means recording began late or ticks were missed
-        insufficient: !shown.length || end - shown[0].t < SHOWN_MS - 3000,
+        insufficient: !shown.length || end - shown[0].t < WINDOW_MS - 3000,
     };
 }
 
@@ -226,15 +226,7 @@ function onNewBattle(data) {
             if (Number.isFinite(count)) {
                 // A counter that went down is a new session: nothing pending is owed a rise
                 if (lastCount !== null && count < lastCount) pending = [];
-                // The first reading is a baseline that already includes any death the ticks froze before
-                // it: those recaps are confirmed by it, not left owed to a later rise
-                if (lastCount === null && count > 0 && pending.length) {
-                    // At most as many as the count says, the newest first; the rest stay owed to a later rise
-                    for (const recap of pending.splice(-Math.min(count, pending.length))) {
-                        recap.confirmed = true;
-                        recap.source = 'both';
-                    }
-                }
+                // A first reading is only a baseline: it confirms and consumes nothing
                 if (lastCount !== null && count > lastCount) rise = count - lastCount;
                 lastCount = count;
             }
@@ -246,10 +238,19 @@ function onNewBattle(data) {
 
         ring = [];
         casts = [];
-        dead = false;
-        lastAbility = null;
-        lastPrepared = null;
-        lastAtk = null;
+        // Still dead if the roster says so (a new wave starting while we wait to respawn); unknown keeps the
+        // state, and only a positive HP observed on a tick or here ends it
+        const startHp = own ? rosterHp(own.player) : NaN;
+        dead = own ? (Number.isFinite(startHp) ? startHp <= 0 : dead) : false;
+        // Seed the cast baseline from our row so the opening cast is recorded
+        const startAtk = Number(
+            own?.player?.attackAttemptCounter ??
+                own?.player?.atkCounter ??
+                own?.player?.combatDetails?.attackAttemptCounter
+        );
+        lastAtk = Number.isFinite(startAtk) ? startAtk : null;
+        lastPrepared = own?.player?.preparingAbilityHrid || own?.player?.abilityHrid || null;
+        lastAbility = lastPrepared;
         takenState = newTakenState();
         seedTakenState(takenState, data);
         monsterNames = {};
