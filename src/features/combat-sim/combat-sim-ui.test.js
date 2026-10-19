@@ -12587,3 +12587,108 @@ describe("a row's profit error is given on the gold scale it is judged on (#541)
         expect(plan.provisional).toBe(true);
     });
 });
+
+describe('a basket confirmation belongs to the analysis it measured (#543)', () => {
+    const contextFor = (baseline) => ({
+        gameData: {},
+        playerDTOs: [{ hrid: 'player1', equipment: {} }],
+        playerIndex: 0,
+        playerHrid: 'player1',
+        zoneHrid: '/actions/combat/fly',
+        difficultyTier: 0,
+        hours: 1,
+        communityBuffs: {},
+        seed: 7,
+        precision: null,
+        baselineResult: {},
+        baseline,
+    });
+    /** An analysis; a second call with the same rows and costs is a different run (another zone or seed) */
+    const analysis = (baseline = BASELINE) => ({
+        baseline,
+        results: [
+            row('Ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+            row('Amulet', { slot: '/equipment_types/amulet', cost: 200, profitGain: 30 }),
+        ],
+        food: null,
+        context: contextFor(baseline),
+    });
+    const container = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const settle = async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+    const done = {
+        ok: true,
+        metrics: { dps: 100, xpPerHour: 1000, profitPerHour: 1080, deathsPerHour: 0, encountersPerHour: 10 },
+        deltas: {},
+        economics: { profitGainPerHour: 80 },
+        noise: {},
+        totalCost: 300,
+    };
+
+    beforeEach(() => {
+        mocks.onConfirm = null;
+        mocks.confirmResult = done;
+        ui.buildPanel();
+        ui._upgradeBudget = 500_000_000;
+        ui._upgradePlanMetric = 'profit';
+    });
+
+    afterEach(() => {
+        ui._upgradeBudget = 0;
+        ui.destroy();
+    });
+
+    test('a fresh analysis with the same picks and costs asks to be confirmed again', async () => {
+        ui._renderUpgradeResults(analysis());
+        container().querySelector('#mwi-csim-budget-confirm').click();
+        await settle();
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeNull();
+
+        ui._renderUpgradeResults(analysis({ ...BASELINE, dps: 1000 }));
+
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeTruthy();
+        expect(container().textContent).not.toContain('summed');
+    });
+
+    test('a redraw of the same analysis keeps its confirmation', async () => {
+        const same = analysis();
+        ui._renderUpgradeResults(same);
+        container().querySelector('#mwi-csim-budget-confirm').click();
+        await settle();
+
+        ui._renderUpgradeResults(same);
+
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeNull();
+        expect(container().textContent).toContain('summed');
+    });
+
+    test("an old analysis' confirmation landing after a new analysis is drawn is ignored", async () => {
+        let land;
+        mocks.confirmResult = new Promise((resolve) => (land = resolve));
+        ui._renderUpgradeResults(analysis());
+        container().querySelector('#mwi-csim-budget-confirm').click();
+
+        ui._renderUpgradeResults(analysis({ ...BASELINE, dps: 1000 }));
+        land(done);
+        await settle();
+
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeTruthy();
+        expect(container().textContent).not.toContain('summed');
+    });
+
+    test('a confirmation landing after the panel is torn down does nothing and does not throw', async () => {
+        let land;
+        mocks.confirmResult = new Promise((resolve) => (land = resolve));
+        ui._renderUpgradeResults(analysis());
+        container().querySelector('#mwi-csim-budget-confirm').click();
+
+        ui.destroy();
+        land(done);
+        await settle();
+
+        expect(ui._budgetConfirm ?? null).toBeNull();
+        // afterEach destroys again; the panel it builds next is a fresh one
+        ui.buildPanel();
+    });
+});

@@ -10575,6 +10575,8 @@ class CombatSimUI {
         let finishedResults = null;
         // The previous analysis' verdicts go with the table this run replaces
         if (this._upgradeResultsData) delete this._upgradeResultsData.verifyVerdicts;
+        // So does its basket confirmation, and a confirming run still in flight lands on nothing
+        this._budgetConfirm = null;
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
 
@@ -12867,7 +12869,10 @@ class CombatSimUI {
         if (!btn || !this._budgetConfirm) return;
         const key = this._budgetConfirm.key;
         btn.addEventListener('click', async () => {
-            const context = this._upgradeResultsData?.context;
+            // Captured before the await: the confirmation belongs to this analysis, for this character
+            const ownerId = dataManager.getCurrentCharacterId();
+            const analysis = this._upgradeResultsData;
+            const context = analysis?.context;
             const plan = this._lastBudgetPlan;
             if (!context || !plan || this._budgetPlanKey(plan) !== key) {
                 this._budgetConfirm = {
@@ -12889,8 +12894,15 @@ class CombatSimUI {
             }
             // The plan on screen may have moved on (a replan, a new analysis)
             // while the run was in flight; a result for a question nobody is
-            // asking any more is not shown
-            if (this._budgetConfirm.key !== key) return;
+            // asking any more is not shown. A teardown or character switch clears all of it
+            if (
+                this._budgetConfirm?.key !== key ||
+                this._upgradeResultsData !== analysis ||
+                !this.panel ||
+                !this._stillSameCharacter(ownerId)
+            ) {
+                return;
+            }
             this._budgetConfirm = outcome.ok
                 ? { key, status: 'done', result: outcome, error: null }
                 : { key, status: 'error', result: null, error: outcome.reason };
@@ -13708,6 +13720,10 @@ class CombatSimUI {
             return;
         }
 
+        // A confirmation measured one analysis' basket: a new analysis, or a restored one, starts without it even
+        // when its picks and costs come out the same (another zone, baseline or seed is another experiment).
+        // A redraw of the same analysis (a sort, an opened row, a replan) passes the same object and keeps it
+        if (results !== this._upgradeResultsData) this._budgetConfirm = null;
         this._upgradeResultsData = results;
         // The analysis scores with the defaults; re-rank here so a saved score
         // selection applies to results that were computed before it was loaded
