@@ -28,9 +28,14 @@ vi.mock('../../core/dom-observer.js', () => ({ default: {} }));
 vi.mock('./action-filter.js', () => ({ default: {} }));
 vi.mock('../alchemy/alchemy-profit.js', () => ({ default: {} }));
 vi.mock('../../utils/tea-optimizer.js', () => ({
-    findOptimalTeas: () => ({}),
+    findOptimalTeas: () => ({
+        optimal: { teas: [{ hrid: '/items/a', name: 'A' }], avgScore: 1000, hasMissingPrices: false },
+    }),
     getTeaBuffDescription: () => '',
-    getRelevantTeas: () => ({ skillTeas: [], generalTeas: [] }),
+    getRelevantTeas: (_skill, goal) => ({
+        skillTeas: [],
+        generalTeas: goal === 'gold' ? ['/items/wisdom_tea', '/items/gathering_tea'] : ['/items/wisdom_tea'],
+    }),
     findXpFloorChoice: (...args) => {
         mocks.floorCalls.push(args);
         if (mocks.throwFloor) throw new Error('boom');
@@ -187,5 +192,28 @@ describe('popup wiring', () => {
         expect(popup.querySelector('.mwi-tea-xp-floor')).toBeNull();
         expect(popup.textContent).toContain('Tea Constraints');
         spy.mockRestore();
+    });
+
+    test('with the section shown, pin/ban controls cover the gold-only teas the search may recommend', () => {
+        mocks.floor = { status: 'ok', floorPercent: 95, pick, baseline, xpRetainedPercent: 96, goldDelta: 1 };
+        const withFloor = render('Pincer Gloves').textContent;
+        expect(withFloor).toContain('/items/gathering_tea');
+        mocks.settings.teaRecommendation_xpFloor = false;
+        expect(render('Pincer Gloves').textContent).not.toContain('/items/gathering_tea');
+    });
+
+    test('the Both popup for an Alchemy item shows the section; setting off or no Alchemy item does not', () => {
+        mocks.floor = { status: 'ok', floorPercent: 95, pick, baseline, xpRetainedPercent: 96, goldDelta: 30_000 };
+        const alchemy = { actionType: 'coinify', itemName: 'Thing', itemHrid: '/items/thing' };
+        const both = (ctx) => {
+            document.body.innerHTML = '';
+            teaRecommendation.showBothRecommendation(document.createElement('button'), 'Alchemy', null, ctx);
+            return document.querySelector('.mwi-tea-recommendation-popup');
+        };
+        expect(both(alchemy).querySelector('.mwi-tea-xp-floor')).not.toBeNull();
+        expect(mocks.floorCalls[0][1].alchemyContext).toBe(alchemy);
+        expect(both(null).querySelector('.mwi-tea-xp-floor')).toBeNull();
+        mocks.settings.teaRecommendation_xpFloor = false;
+        expect(both(alchemy).querySelector('.mwi-tea-xp-floor')).toBeNull();
     });
 });

@@ -435,6 +435,36 @@ class TeaRecommendation {
     }
 
     /**
+     * Append the "almost as fast" section when the setting is on and the popup is about one action.
+     * @param {HTMLElement} popup
+     * @param {string} skillName
+     * @param {string|null} locationTab
+     * @param {string|null} drilldownAction
+     * @param {Object|null} alchemyContext
+     * @returns {HTMLElement|null} The appended section, or null when nothing was drawn
+     */
+    _appendXpFloorSection(popup, skillName, locationTab, drilldownAction, alchemyContext) {
+        if (!(drilldownAction || alchemyContext) || !config.getSetting('teaRecommendation_xpFloor', true)) return null;
+        try {
+            const section = buildXpFloorSection(
+                findXpFloorChoice(skillName, {
+                    locationName: locationTab,
+                    actionName: drilldownAction || null,
+                    alchemyContext,
+                    constraints: { pinned: this.pinnedTeas, banned: this.bannedTeas },
+                    floorPercent: config.getSetting('teaRecommendation_xpFloorPercent', 95),
+                    playerLevel: null,
+                })
+            );
+            if (section) popup.appendChild(section);
+            return section;
+        } catch (error) {
+            console.error('[Tea Recommendation] XP floor choice failed:', error);
+            return null;
+        }
+    }
+
+    /**
      * Build (or rebuild) popup inner content in place
      * Called on initial open and again when drilling into a specific action or returning to all-actions view.
      * @param {HTMLElement} popup - Popup container (preserved across re-renders)
@@ -883,23 +913,7 @@ class TeaRecommendation {
         }
 
         // "Almost as fast" choice: one action only (a drilled-down action or an Alchemy item)
-        if ((drilldownAction || alchemyContext) && config.getSetting('teaRecommendation_xpFloor', true)) {
-            try {
-                const floorSection = buildXpFloorSection(
-                    findXpFloorChoice(skillName, {
-                        locationName: locationTab,
-                        actionName: drilldownAction || null,
-                        alchemyContext,
-                        constraints: { pinned: this.pinnedTeas, banned: this.bannedTeas },
-                        floorPercent: config.getSetting('teaRecommendation_xpFloorPercent', 95),
-                        playerLevel: null,
-                    })
-                );
-                if (floorSection) popup.appendChild(floorSection);
-            } catch (error) {
-                console.error('[Tea Recommendation] XP floor choice failed:', error);
-            }
-        }
+        const floorSection = this._appendXpFloorSection(popup, skillName, locationTab, drilldownAction, alchemyContext);
 
         // Tea Constraints panel
         const constraintSection = document.createElement('div');
@@ -914,7 +928,9 @@ class TeaRecommendation {
         constraintHeader.textContent = 'Tea Constraints:';
         constraintSection.appendChild(constraintHeader);
 
-        const relevantTeas = getRelevantTeas(skillName.toLowerCase(), goal);
+        // The floor search enumerates the gold tea set (a superset of the XP set), so when its
+        // section is shown the pin/ban controls must cover every tea it may recommend
+        const relevantTeas = getRelevantTeas(skillName.toLowerCase(), floorSection ? 'gold' : goal);
         const allConstraintTeas = [...relevantTeas.skillTeas, ...relevantTeas.generalTeas];
         const gameData = dataManager.getInitClientData();
 
@@ -1139,6 +1155,9 @@ class TeaRecommendation {
         }
 
         popup.appendChild(columns);
+
+        // An Alchemy item is one action, so the "almost as fast" choice applies here too
+        this._appendXpFloorSection(popup, skillName, locationTab, null, alchemyContext);
 
         // Close button
         const closeBtn = document.createElement('button');
