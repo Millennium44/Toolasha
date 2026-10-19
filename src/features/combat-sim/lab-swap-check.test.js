@@ -262,6 +262,19 @@ describe('the remembered queue', () => {
     });
 });
 
+describe('combat: a checked swap is taxed as the loadouts owner pays (#560 review)', () => {
+    const owner = (gameMode) => ({ ...wearing({ [BACK]: piece(CAPE, 5) }), ...(gameMode ? { gameMode } : {}) });
+
+    test('a party member is stamped with their own sell tax, the live character with none', () => {
+        const swap = { hrid: CAPE, level: 7 };
+        expect(buildCombatSwapCandidate(swap, [owner('legacy_ironcow')], gameData, false).saleTaxRate).toBe(0);
+        expect(buildCombatSwapCandidate(swap, [owner('standard')], gameData, false).saleTaxRate).toBeGreaterThan(0);
+        // A profile that does not say is charged the market tax rather than the live character's status
+        expect(buildCombatSwapCandidate(swap, [owner()], gameData, false).saleTaxRate).toBeGreaterThan(0);
+        expect(buildCombatSwapCandidate(swap, [owner('legacy_ironcow')], gameData, true).saleTaxRate).toBeUndefined();
+    });
+});
+
 describe('combat: who a checked swap reaches', () => {
     test('a cape goes in every loadout that has the slot to use, and not where it is already that high', () => {
         const wornLow = wearing({ [BACK]: piece(CAPE, 5) });

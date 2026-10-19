@@ -1103,6 +1103,54 @@ describe('the charm slot is in the equipment candidates', () => {
 });
 
 describe('runLabyrinthAllFightsAnalysis', () => {
+    test('a drink addition records each fight its own free slots (#560 review)', async () => {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        runLabyrinthSimulation.mockImplementation(async () => ({ labyAttemptCount: 100, encounters: 50 }));
+        const levels = { staminaLevel: 50, intelligenceLevel: 50, attackLevel: 50, meleeLevel: 50 };
+        const worn = (hrid) => ({ hrid, triggers: null });
+        const dtos = [
+            { equipment: {}, drinks: [null, null, null], ...levels },
+            { equipment: {}, drinks: [worn('/items/a'), worn('/items/b'), null], ...levels },
+            { equipment: {}, drinks: [worn('/items/a'), worn('/items/b'), worn('/items/c')], ...levels },
+        ];
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: dtos.map((dto, i) => ({
+                    monsterHrid: `/monsters/m${i}`,
+                    monsterName: `M${i}`,
+                    roomLevel: 100,
+                    dto,
+                })),
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: [],
+                extraCandidates: [
+                    {
+                        type: 'drink',
+                        slot: 'drink_0',
+                        drinkIndex: 0,
+                        currentHrid: null,
+                        upgradeHrid: '/items/wisdom_coffee',
+                        upgradeLevel: 0,
+                        triggers: null,
+                        buffFamily: '/buff_uniques/wisdom_coffee',
+                        fillsFreeDrinkSlot: true,
+                        freeDrinkSlots: 3,
+                        description: 'Add Wisdom Coffee',
+                    },
+                ],
+            },
+            null,
+            {}
+        );
+
+        const row = result.results.find((r) => r.candidate.upgradeHrid === '/items/wisdom_coffee');
+        expect(row.fights.map((fight) => fight.freeDrinkSlots)).toEqual([3, 1, 0]);
+        expect(row.fights.map((fight) => fight.applied)).toEqual([true, true, false]);
+    });
+
     test('unions candidates across loadout styles and ranks by run-clear delta', async () => {
         const gameData = buildGameData();
         gameData.itemDetailMap['/items/fine_bow'] = {
@@ -8816,5 +8864,147 @@ describe('resale is taxed as the analysed character pays it, not the live one (#
         expect(await costFor({ self: true })).toBe(200_000_000 - 1_000_000);
         saleTax.ironCow = false;
         expect(await costFor({ self: true })).toBe(200_000_000 - 960_000);
+    });
+});
+
+describe('the Lab single-fight analysis taxes resale as the analysed character pays it (#560 review)', () => {
+    const swap = {
+        type: 'tier',
+        slot: MAIN_HAND,
+        currentHrid: '/items/fine_sword',
+        currentLevel: 10,
+        upgradeHrid: '/items/regal_sword_refined',
+        upgradeLevel: 10,
+        description: 'Taxed lab swap',
+    };
+
+    async function labCostFor({ gameMode, self = false } = {}) {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        getItemPrices.mockReturnValue({ ask: 200_000_000, bid: 150_000_000 });
+        resolveItemPrice.mockImplementation((_hrid, { side }) => ({ price: side === 'sell' ? 1_000_000 : 5_000_000 }));
+        runLabyrinthSimulation.mockReset();
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        const player = {
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 10 } },
+            abilities: [],
+            staminaLevel: 50,
+            hrid: '/players/target',
+            ...(gameMode ? { gameMode } : {}),
+        };
+        const { results } = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [player],
+                playerIndex: 0,
+                selfHrid: self ? '/players/target' : null,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'ability_swap',
+                extraCandidates: [swap],
+            },
+            null,
+            {}
+        );
+        const row = results.find((r) => r.candidate.upgradeHrid === '/items/regal_sword_refined');
+        return { cost: row.cost, detailCost: row.costDetail?.cost ?? null };
+    }
+
+    afterEach(() => {
+        saleTax.ironCow = false;
+    });
+
+    test('a live Iron Cow analysing a market player charges that player the tax', async () => {
+        saleTax.ironCow = true;
+        expect((await labCostFor({ gameMode: 'standard' })).cost).toBe(200_000_000 - 960_000);
+    });
+
+    test('a live market player analysing an Iron Cow credits the resale whole', async () => {
+        saleTax.ironCow = false;
+        expect((await labCostFor({ gameMode: 'legacy_ironcow' })).cost).toBe(200_000_000 - 1_000_000);
+    });
+
+    test("the live character's own analysis follows their own status", async () => {
+        saleTax.ironCow = true;
+        expect((await labCostFor({ self: true })).cost).toBe(200_000_000 - 1_000_000);
+    });
+});
+
+describe('the all-fights plan counts free drink slots per fight (#560 review)', () => {
+    // Three rooms at a 50% win rate: two expected attempts each
+    const BASELINE = [0, 1, 2].map((i) => ({ monsterHrid: `/monsters/m${i}`, roomLevel: 100, winRate: 0.5 }));
+    /**
+     * An addition pooled from a three-slot bar. `free` is each room's own free drink slots; a room with none
+     * is not simulated (applied false), as `drinkAppliesToDTO` leaves it.
+     */
+    const addition = (name, free, { family = name, rooms = [0, 1, 2] } = {}) => ({
+        candidate: {
+            type: 'drink',
+            slot: 'drink_0',
+            drinkIndex: 0,
+            currentHrid: null,
+            upgradeHrid: `/items/${name}`,
+            upgradeLevel: 0,
+            buffFamily: `/buff_uniques/${family}`,
+            fillsFreeDrinkSlot: true,
+            freeDrinkSlots: 3,
+            description: `Add ${name}`,
+        },
+        cost: 0,
+        attemptsDelta: -rooms.length,
+        significant: true,
+        fights: BASELINE.map((fight, i) => ({
+            ...fight,
+            freeDrinkSlots: free[i],
+            ...(rooms.includes(i) && free[i] > 0 ? { winRate: 1, applied: true } : { applied: false }),
+        })),
+    });
+    const planFor = (results) => planWithinBudget(results, 1000, { baselineFights: BASELINE });
+
+    test('a pooled three-slot addition does not count gains in a room that only has one slot', () => {
+        const free = [3, 1, 0];
+        const plan = planFor([addition('a', free), addition('b', free), addition('c', free)]);
+
+        expect(plan.picks).toHaveLength(3);
+        // Room 0 takes all three coffees, room 1 only the first; room 2 has no slot at all.
+        // The old plan summed all three coffees in room 1 as well (6, not 4).
+        expect(plan.attemptsSaved).toBeCloseTo(4);
+        expect(plan.picks.map((pick) => pick.rooms).sort()).toEqual([1, 1, 2]);
+        expect(plan.picks.reduce((sum, pick) => sum + pick.marginalAttemptsSaved, 0)).toBeCloseTo(4);
+    });
+
+    test('an addition whose every room is already full is skipped for want of a slot', () => {
+        const free = [0, 1, 0];
+        const plan = planFor([addition('a', free, { rooms: [1] }), addition('b', free, { rooms: [1] })]);
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.skipped.map((s) => s.reason)).toContain('no drink slot is left free for it');
+    });
+
+    test('a second coffee of one family takes no slot', () => {
+        const free = [1, 1, 1];
+        const plan = planFor([addition('a', free, { family: 'f' }), addition('a2', free, { family: 'f' })]);
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.attemptsSaved).toBeCloseTo(3);
+    });
+
+    test('two coffees on a bar with one free slot in the middle room share that room once', () => {
+        const free = [3, 1, 3];
+        const plan = planFor([addition('a', free), addition('b', free)]);
+        // Rooms 0 and 2 take both coffees (2 + 2); room 1 only the first (1)
+        expect(plan.picks).toHaveLength(2);
+        expect(plan.attemptsSaved).toBeCloseTo(5);
+    });
+
+    test('rows without per-fight slots keep the single capacity the candidate carried', () => {
+        const rows = ['a', 'b', 'c', 'd'].map((name) => {
+            const row = addition(name, [3, 3, 3]);
+            return { ...row, fights: row.fights.map(({ freeDrinkSlots: _free, ...fight }) => fight) };
+        });
+        const plan = planFor(rows);
+        expect(plan.picks).toHaveLength(3);
     });
 });
