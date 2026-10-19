@@ -106,6 +106,13 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/damage-taken.js',
+        // Pure functions over a state object the caller owns (newTakenState); no module-level state
+        // and no import of mutable modules. The combat bundle's Damage Taken tracker and the ui
+        // bundle's Death Recap each keep their own state, so a second copy is only weight.
+        'Pure incoming-damage attribution; every caller passes its own state object.',
+    ],
+    [
         'src/utils/alchemy-level.js',
         // One pure function, no imports and no module state: the alchemy item-level requirement. The
         // action bar (ui bundle) and the queue summaries (actions bundle) both read it.
