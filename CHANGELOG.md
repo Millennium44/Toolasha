@@ -12,6 +12,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Tea gold figures are flagged as a guess when an essence or rare drop has no market price, instead of being shown as exact.
 - Alchemy tea XP/hr counts a speed tea's faster actions, as the gold figure already did.
 
+### Combat Sim upgrade budget: pin and exclude picks
+
+- In the upgrade budget plan you can pin picks you will buy anyway and exclude ones you won't; the rest of the budget is filled around them, a plan that can't honor your pins says why, and "Confirm together" simulates exactly the upgrades picked (a suggested ability order is not part of it).
+
 ### Combat Sim upgrade analysis and budget: six reported bugs
 
 - Upgrade gains no longer include market price moves: the baseline, every candidate and a confirmed basket are valued on one price snapshot.

@@ -708,6 +708,7 @@ const {
     levelHoursPerStep,
     formatCompactHours,
 } = await import('./combat-sim-ui.js');
+const { candidateKey } = await import('./upgrade-advisor.js');
 
 /** A result row shaped like the upgrade advisor's output. */
 function row(description, { slot = '/equipment_types/body', cost = 100, profitGain = 0, dps = 100, type } = {}) {
@@ -12823,5 +12824,227 @@ describe('a confirmed basket is shown against the baseline it was compared with'
         expect(container.textContent).toContain('summed');
         expect(container.textContent).toContain('+10.00 DPS');
         expect(container.textContent).not.toContain('+910.00 DPS');
+    });
+});
+
+describe('pinning and excluding picks in the budget plan (#545)', () => {
+    const contextFor = (baseline) => ({
+        gameData: {},
+        playerDTOs: [{ hrid: 'player1', equipment: {} }],
+        playerIndex: 0,
+        playerHrid: 'player1',
+        zoneHrid: '/actions/combat/fly',
+        difficultyTier: 0,
+        hours: 1,
+        communityBuffs: {},
+        seed: 7,
+        precision: null,
+        baselineResult: {},
+        baseline,
+    });
+    const analysis = (baseline = BASELINE) => ({
+        baseline,
+        results: [
+            row('Ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+            row('Amulet', { slot: '/equipment_types/amulet', cost: 200, profitGain: 30 }),
+            row('Cape', { slot: '/equipment_types/back', cost: 400, profitGain: 5 }),
+        ],
+        food: null,
+        context: contextFor(baseline),
+    });
+    const container = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const planText = () => container().querySelector('#mwi-csim-upgrade-budget').textContent;
+    const idOf = (description) => candidateKey(analysis().results.find((r) => r.candidate.description === description));
+    const click = (act, description) => {
+        const button = [...container().querySelectorAll(`[data-budget-act="${act}"]`)].find(
+            (b) => b.getAttribute('data-budget-label') === description
+        );
+        button.click();
+    };
+    const settle = async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+    const done = {
+        ok: true,
+        metrics: { dps: 100, xpPerHour: 1000, profitPerHour: 1080, deathsPerHour: 0, encountersPerHour: 10 },
+        deltas: {},
+        economics: { profitGainPerHour: 80 },
+        noise: {},
+        totalCost: 300,
+    };
+
+    beforeEach(() => {
+        mocks.onConfirm = null;
+        mocks.confirmResult = done;
+        ui.buildPanel();
+        ui._upgradePlanMetric = 'profit';
+    });
+
+    afterEach(() => {
+        ui._upgradeBudget = 0;
+        ui.destroy();
+    });
+
+    test('pinning a pick the budget would not buy puts it in the basket first', () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        expect(ui._lastBudgetPlan.picks.map((p) => p.candidate.description)).not.toContain('Cape');
+
+        // The Cape lives in the table's detail row, not in the plan
+        click('pin', 'Cape');
+
+        const picks = ui._lastBudgetPlan.picks;
+        expect(picks[0].candidate.description).toBe('Cape');
+        expect(picks[0].pinned).toBe(true);
+        expect(ui._lastBudgetPlan.totalCost).toBeLessThanOrEqual(500);
+        expect(planText()).toContain('Pinned');
+    });
+
+    test('an excluded pick leaves the plan and can be put back from the constraints list', () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        click('exclude', 'Ring');
+
+        expect(ui._lastBudgetPlan.picks.map((p) => p.candidate.description)).not.toContain('Ring');
+        expect(planText()).toContain('Excluded');
+
+        click('include', 'Ring');
+
+        expect(ui._lastBudgetPlan.picks.map((p) => p.candidate.description)).toContain('Ring');
+    });
+
+    test('pins over the budget show the reason, keep the pins and offer no confirm button', () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        click('pin', 'Cape');
+        click('pin', 'Amulet');
+        click('pin', 'Ring');
+
+        expect(planText()).toContain('No plan');
+        expect(planText()).toContain('more than the budget');
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeNull();
+        expect([...ui._budgetConstraints().pins.keys()]).toHaveLength(3);
+
+        click('unpin', 'Cape');
+        expect(planText()).not.toContain('No plan');
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeTruthy();
+    });
+
+    test('a pin that is no longer in the results is named in the reason', () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        ui._budgetConstraints().pins.set('tier|x|/items/gone||Vanished boots', 'Vanished boots');
+        ui._renderUpgradeResults(ui._upgradeResultsData);
+
+        expect(planText()).toContain('not in the current results');
+        expect(planText()).toContain('Vanished boots');
+    });
+
+    test('pinning something excludes nothing else, and pinning an excluded pick moves it', () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        click('exclude', 'Ring');
+        click('pin', 'Ring');
+
+        const { pins, excludes } = ui._budgetConstraints();
+        expect([...pins.keys()]).toEqual([idOf('Ring')]);
+        expect(excludes.size).toBe(0);
+    });
+
+    test('Confirm together simulates exactly the shown basket, pins included', async () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        click('pin', 'Cape');
+        let received = null;
+        mocks.onConfirm = (picks) => {
+            received = picks.map((p) => p.candidate.description);
+        };
+
+        container().querySelector('#mwi-csim-budget-confirm').click();
+        await settle();
+
+        expect(received).toEqual(ui._lastBudgetPlan.picks.map((p) => p.candidate.description));
+        expect(received).toContain('Cape');
+    });
+
+    test('a confirmation is dropped when a pin or exclusion changes', async () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        container().querySelector('#mwi-csim-budget-confirm').click();
+        await settle();
+        expect(container().textContent).toContain('summed');
+
+        // Pinning a pick that is already in the plan leaves the picks identical, so only the key can notice
+        click('pin', 'Ring');
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeTruthy();
+        expect(container().textContent).not.toContain('summed');
+    });
+
+    test('a confirmation landing after a pin changed is ignored', async () => {
+        let land;
+        mocks.confirmResult = new Promise((resolve) => (land = resolve));
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        container().querySelector('#mwi-csim-budget-confirm').click();
+
+        click('exclude', 'Amulet');
+        land(done);
+        await settle();
+
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeTruthy();
+        expect(container().textContent).not.toContain('summed');
+    });
+
+    test('a fresh analysis clears pins and exclusions, a redraw of the same one keeps them', () => {
+        ui._upgradeBudget = 500;
+        const same = analysis();
+        ui._renderUpgradeResults(same);
+        click('pin', 'Cape');
+        click('exclude', 'Ring');
+
+        ui._renderUpgradeResults(same);
+        expect(ui._budgetConstraints().pins.size).toBe(1);
+        expect(ui._budgetConstraints().excludes.size).toBe(1);
+
+        ui._renderUpgradeResults(analysis());
+        expect(ui._budgetConstraints().pins.size).toBe(0);
+        expect(ui._budgetConstraints().excludes.size).toBe(0);
+        expect(planText()).not.toContain('Pinned');
+    });
+
+    test('the stopped-run note still shows on a pinned plan and on a blocked one', () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults({ ...analysis(), stopped: { completed: 3, total: 9 } });
+        click('pin', 'Ring');
+        expect(container().querySelector('[data-budget-partial]')).toBeTruthy();
+
+        click('pin', 'Cape');
+        click('pin', 'Amulet');
+        expect(planText()).toContain('No plan');
+        expect(container().querySelector('[data-budget-partial]')).toBeTruthy();
+    });
+
+    test('Clear all empties both lists and the plan goes back to the automatic one', () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        const automatic = ui._lastBudgetPlan.picks.map((p) => p.candidate.description);
+        click('exclude', 'Ring');
+        click('pin', 'Cape');
+
+        container().querySelector('[data-budget-clear-all]').click();
+
+        expect(ui._lastBudgetPlan.picks.map((p) => p.candidate.description)).toEqual(automatic);
+        expect(container().querySelector('[data-budget-clear-all]')).toBeNull();
+    });
+
+    test('excluding everything leaves an empty plan that says so and still lists the exclusions', () => {
+        ui._upgradeBudget = 500;
+        ui._renderUpgradeResults(analysis());
+        click('exclude', 'Ring');
+        click('exclude', 'Amulet');
+        click('exclude', 'Cape');
+
+        expect(planText()).toContain('Nothing in the list both fits');
+        expect(container().querySelectorAll('[data-budget-constraint="Excluded"]')).toHaveLength(3);
     });
 });
