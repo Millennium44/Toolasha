@@ -14,6 +14,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Profit gains are judged against the profit error in gold (the same scale the Ability order section uses), so small net-profit baselines no longer make noise look significant.
 - Stopping an analysis keeps the candidates that finished, marked "stopped early — N of M"; the budget no longer picks colliding coffees or confirms a basket missing a drink, and a confirmation is tied to the analysis it measured.
 
+### Combat: death recap, and the death alert fires when you die
+
+- The death alert now fires the moment you die (your HP reaching 0), not when you respawn; a solo death never sent the old signal until later.
+- New death recap (on by default): the last ~15 seconds before each death — HP, incoming hits and your last casts — opened from the death alert or a "Death recap" button; kept in memory only, last five deaths.
+
 ### Achievements: tier finisher
 
 - New panel on your own Achievements page (on by default): each tier shows what's done, what's left and the tier's reward, with point totals for the Collection and Bestiary achievements; rewards not confirmed from game data are marked "inferred".

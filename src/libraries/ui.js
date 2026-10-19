@@ -132,6 +132,7 @@ import labyrinthRunAlerts from '../features/notifications/labyrinth-run-alerts.j
 import combatConsumableAlerts from '../features/notifications/combat-consumable-alerts.js';
 import labyrinthEntryAlerts from '../features/notifications/labyrinth-entry-alerts.js';
 import combatDeathAlerts from '../features/notifications/combat-death-alerts.js';
+import combatDeathRecap from '../features/notifications/death-recap.js';
 import skillLevelUpAlerts from '../features/notifications/skill-level-up-alerts.js';
 import ttlTargetAlerts from '../features/notifications/ttl-target-alerts.js';
 import bestiaryPointsAlerts from '../features/notifications/bestiary-points-alerts.js';
@@ -278,6 +279,7 @@ toolashaRoot.UI = {
     combatConsumableAlerts,
     labyrinthEntryAlerts,
     combatDeathAlerts,
+    combatDeathRecap,
     skillLevelUpAlerts,
     ttlTargetAlerts,
     bestiaryPointsAlerts,
