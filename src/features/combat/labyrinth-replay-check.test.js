@@ -857,8 +857,9 @@ describe('the two sides divide by the same thing', () => {
         });
         // 2000 from swings over 10 of them — not 2900 (with DoT and thorns) over 24
         expect(predicted.dmgPerHit).toBeCloseTo(200, 5);
-        // The mixed figure stays available for a pool that can only be read mixed
-        expect(predicted.dmgPerHitAllSources).toBeCloseTo(2900 / 24, 5);
+        // The mixed figure stays available for a pool that can only be read mixed: all damage
+        // over the same counted swings the recorder's `playerHits` counts, not over ticks too
+        expect(predicted.dmgPerHitAllSources).toBeCloseTo(2900 / 10, 5);
     });
 
     test('the sim crit rate divides by swings too', () => {
@@ -947,6 +948,84 @@ describe('the two sides divide by the same thing', () => {
         expect(dph.predicted).toBe(200);
         expect(dph.label).toMatch(/incl\. DoT/);
         expect(dph.verdict).toBe('consistent');
+    });
+});
+
+describe('a legacy pool against the real prediction', () => {
+    const MONSTER = '/monsters/pyre_hunter';
+    // Six fights of ten 200-damage swings, five misses and ten 90-damage ticks, 2900 damage each;
+    // recorded before the DoT-damage subtotal existed
+    const legacyFights = (dotDamage = null) =>
+        Array.from({ length: 6 }, () =>
+            attempt({
+                monsterHrid: MONSTER,
+                monsterMaxHp: 10000,
+                monsterHpStart: 10000,
+                monsterHpEnd: 7100,
+                seconds: 50,
+                playerHits: 10,
+                playerMisses: 5,
+                playerDotTicks: 10,
+                playerDotDamage: dotDamage,
+            })
+        );
+    const sim = (extra = {}) => ({
+        simulatedTime: 300e9,
+        labyAttemptCount: 6,
+        encounters: 0,
+        totalDamageDealt: { player1: 17400, [MONSTER]: 3000 },
+        attacks: {
+            player1: { [MONSTER]: { autoAttack: { miss: 30, 200: 60 }, damageOverTime: { 90: 60 }, ...extra } },
+        },
+    });
+    const dph = (observed, predicted) => compareLab(observed, predicted).metrics.find((m) => m.key === 'dmgPerHit');
+
+    test('identical aggregates with DoT ticks give a consistent damage-per-hit', () => {
+        const observed = deriveObserved(legacyFights())[0];
+        const predicted = predictedFromSim(sim(), { playerHrid: 'player1', monsterHrid: MONSTER });
+        const row = dph(observed, predicted);
+        expect(row.observed).toBe(290);
+        expect(row.predicted).toBe(290);
+        expect(row.verdict).toBe('consistent');
+    });
+
+    test('thorns in the sim do not enter the legacy denominator either', () => {
+        const observed = deriveObserved(legacyFights())[0];
+        const predicted = predictedFromSim(sim({ physicalThorns: { 25: 7 } }), {
+            playerHrid: 'player1',
+            monsterHrid: MONSTER,
+        });
+        expect(predicted.dmgPerHitAllSources).toBe(290);
+        expect(dph(observed, predicted).verdict).toBe('consistent');
+    });
+
+    test('with no DoT at all the legacy figure is plain damage over swings', () => {
+        const noDot = predictedFromSim(
+            {
+                ...sim(),
+                totalDamageDealt: { player1: 12000, [MONSTER]: 3000 },
+                attacks: { player1: { [MONSTER]: { autoAttack: { miss: 30, 200: 60 } } } },
+            },
+            { playerHrid: 'player1', monsterHrid: MONSTER }
+        );
+        expect(noDot.dmgPerHitAllSources).toBe(200);
+    });
+
+    test('a sim in which no swing landed has no legacy figure', () => {
+        const predicted = predictedFromSim(
+            { ...sim(), attacks: { player1: { [MONSTER]: { damageOverTime: { 90: 60 } } } } },
+            { playerHrid: 'player1', monsterHrid: MONSTER }
+        );
+        expect(predicted.dmgPerHitAllSources).toBeNull();
+    });
+
+    test('a pool that measured its DoT damage still compares swing damage over swing hits', () => {
+        const observed = deriveObserved(legacyFights(900))[0];
+        const predicted = predictedFromSim(sim(), { playerHrid: 'player1', monsterHrid: MONSTER });
+        const row = dph(observed, predicted);
+        expect(row.observed).toBe(200);
+        expect(row.predicted).toBe(200);
+        expect(row.verdict).toBe('consistent');
     });
 });
 

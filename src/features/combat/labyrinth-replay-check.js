@@ -916,9 +916,6 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
     // split by source is computed once and carried through, so the export and
     // the panel read the same numbers the rates were derived from.
     const tally = simDamageTally(simResult, { playerHrid, monsterHrid });
-    // Every entry the engine filed. Only the mixed damage-per-hit still divides
-    // by this, and only for a recorded pool that cannot be read any other way.
-    const simHits = tally?.landedHits ?? 0;
     // The counted subset — what the observed hit and miss counts are. A
     // damage-over-time tick and a thorns reflect are damage with no counted
     // attempt behind them, so they are neither a hit nor an attempt here.
@@ -948,9 +945,11 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
         dmgPerHit: simSwings > 0 ? tally.swingDamage / simSwings : null,
         // The old mixed figure, kept for a recorded pool that predates the
         // observed DoT-damage split and can therefore only be compared mixed.
-        // Both sides of THAT comparison count every source, so it is still
-        // like-for-like — just against a coarser quantity.
-        dmgPerHitAllSources: simHits > 0 ? dealt / simHits : null,
+        // The observed side is all damage over the recorded swings (`playerHits`
+        // excludes DoT ticks), so this is all damage over counted swings too —
+        // dividing by every entry the engine filed would put ticks and thorns in
+        // the denominator only here.
+        dmgPerHitAllSources: simSwings > 0 ? dealt / simSwings : null,
         // Crits divide by swings for the same reason: the engine passes
         // `isCrit` only from the counted attack paths, and the recorder counts a
         // crit only when the monster's crit counter moved on a counted hit
