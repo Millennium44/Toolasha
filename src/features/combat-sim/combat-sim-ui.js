@@ -10700,11 +10700,14 @@ class CombatSimUI {
             if (this._upgradeAborted) {
                 if (completed) {
                     // Stamped on the result, so the table, the budget and a remembered copy of it all say the
-                    // run covers only part of what it set out to measure
-                    results.stopped = {
-                        completed,
-                        total: Number.isFinite(results.candidateCount) ? results.candidateCount : null,
-                    };
+                    // run covers only part of what it set out to measure. Only when candidates are missing: Stop
+                    // during the food search, which runs after every candidate, leaves the upgrades whole
+                    const total = Number.isFinite(results.candidateCount) ? results.candidateCount : null;
+                    if (total == null || completed < total) {
+                        results.stopped = { completed, total };
+                    } else if (upgradeModes.includes('food')) {
+                        results.foodStopped = true;
+                    }
                     this._renderUpgradeResults(results);
                     this._setStatus(
                         `Analysis cancelled — showing ${completed} completed candidate${completed === 1 ? '' : 's'}.`
@@ -13782,6 +13785,12 @@ class CombatSimUI {
         const unpricedRows = purchasable.filter((r) => r.cost == null && !scrollRows.includes(r));
 
         let html = foodHtml;
+        if (results.foodStopped) {
+            html =
+                `<div data-food-stopped style="margin:0 0 8px; font-size:11px; color:#e8a87c;">` +
+                `The food search was stopped before it finished; every upgrade below was measured.</div>` +
+                html;
+        }
         if (results.stopped) {
             html =
                 `<div data-upgrade-stopped style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#e8a87c; ` +
