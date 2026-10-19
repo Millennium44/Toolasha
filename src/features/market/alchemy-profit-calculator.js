@@ -143,6 +143,9 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
         personalRareFindBonus +
         guildRareFindBonus;
 
+    // The container EV calculator records how many contained drops it could not price
+    const containerPartlyUnpriced = (hrid) => (expectedValueCalculator.containerMissingCounts?.get(hrid) || 0) > 0;
+
     const bonusDrops = [];
     // Bonus drops nobody can price still ride in at 0 revenue; the caller lists them beside
     // its own unpriced outputs so the understatement is shown rather than silent
@@ -158,7 +161,9 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
     const essenceItemDetails = itemDetailMap['/items/alchemy_essence'];
     if (essenceItemDetails?.isOpenable) {
         essencePrice = expectedValueCalculator.getCachedValue('/items/alchemy_essence') || 0;
-        if (!(essencePrice > 0)) unpricedDrops.push('/items/alchemy_essence');
+        if (!(essencePrice > 0) || containerPartlyUnpriced('/items/alchemy_essence')) {
+            unpricedDrops.push('/items/alchemy_essence');
+        }
     } else {
         const marketPrice = getItemPrice('/items/alchemy_essence', { context: 'profit', side: 'sell' });
         if (marketPrice === null || marketPrice === undefined) unpricedDrops.push('/items/alchemy_essence');
@@ -205,7 +210,8 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
             expectedValueCalculator.getCachedValue(crateHrid) ||
             expectedValueCalculator.calculateSingleContainer(crateHrid) ||
             0;
-        if (!(cratePrice > 0)) unpricedDrops.push(crateHrid);
+        // A positive but partial value is a floor, not an estimate: some contained drop had no price
+        if (!(cratePrice > 0) || containerPartlyUnpriced(crateHrid)) unpricedDrops.push(crateHrid);
     } else {
         const marketPrice = getItemPrice(crateHrid, { context: 'profit', side: 'sell' });
         if (marketPrice === null || marketPrice === undefined) unpricedDrops.push(crateHrid);
