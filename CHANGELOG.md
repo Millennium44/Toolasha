@@ -13,6 +13,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Reordering character tabs and My Listings now works with a finger (hold a tab, drag the listing handle), and a second touch no longer hijacks a floating panel's drag or resize.
 - A background worker pool that fails part-way through starting no longer leaves workers running, and retrying builds exactly the configured number.
 
+### Reload by itself after the game was opened elsewhere
+
+- New setting (off by default): when this tab is disconnected because the game was opened from another device or window, it waits 5–60 minutes, then reloads to take the character back. A notice shows when it will happen with Reload now and Cancel; it never reloads while you are using the page, and two tabs fighting over one character back off and stop after 3 reloads.
+
 ### Risk of Ruin, sell depth and setting presets: six reported bugs
 
 - Sell depth now reads the order book for the enhancement level a run actually ends at, counts the catalyst in a transmute's break-even cost, and no longer serves a closed panel's or another character's result.

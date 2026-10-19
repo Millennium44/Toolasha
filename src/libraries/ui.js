@@ -145,6 +145,9 @@ import notificationService from '../features/notifications/notification-service.
 // log, and because the overlay row it registers is what puts it in the palette.
 import noticeLogPanel from '../features/notifications/notice-log-panel.js';
 
+// Takeover auto-reload
+import takeoverAutoReload from '../features/connection/takeover-auto-reload.js';
+
 // Queue Monitor
 import queueMonitor from '../features/queue-monitor/queue-monitor.js';
 // Side-effect import: registers the Queue Time Left overlay row
@@ -285,6 +288,7 @@ toolashaRoot.UI = {
     notificationService,
     noticeLogPanel,
     queueMonitor,
+    takeoverAutoReload,
     sessionBriefing,
     accountView,
     pformancePanel,

@@ -69,6 +69,19 @@ describe('ConnectionState', () => {
         expect(onDisconnected).toHaveBeenCalledTimes(1);
     });
 
+    test('the disconnected payload carries the socket the close came from', async () => {
+        const { default: connectionState } = await import('./connection-state.js');
+        const onDisconnected = vi.fn();
+        connectionState.on('disconnected', onDisconnected);
+        const socket = {};
+        const event = { code: 1005, wasClean: true };
+
+        socketHandlers.get('open')({}, socket);
+        socketHandlers.get('close')(event, socket);
+
+        expect(onDisconnected).toHaveBeenCalledWith(expect.objectContaining({ reason: 'socket_close', event, socket }));
+    });
+
     test('a stale close from the character-switch-departing socket does not flip a live connection to disconnected', async () => {
         // During a character switch the departing socket is still open (and still
         // delivering) while the arriving socket has already opened and sent its

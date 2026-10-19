@@ -1330,6 +1330,37 @@ describe('closeActiveGameSocket', () => {
         expect(webSocketHook.closeActiveGameSocket()).toBe(false);
     });
 
+    test('a socket closed here is marked as closed by Toolasha, others are not', () => {
+        const socket = liveSocket();
+        const other = liveSocket();
+        webSocketHook.attachSocketListeners(other);
+        webSocketHook.attachSocketListeners(socket);
+
+        let markedAtCloseEvent = null;
+        webSocketHook.onSocketEvent('close', (_event, closed) => {
+            markedAtCloseEvent = webSocketHook.wasClosedByToolasha(closed);
+        });
+        webSocketHook.closeActiveGameSocket();
+
+        // Already marked when the close event is emitted, not only afterwards
+        expect(markedAtCloseEvent).toBe(true);
+        expect(webSocketHook.wasClosedByToolasha(socket)).toBe(true);
+        expect(webSocketHook.wasClosedByToolasha(other)).toBe(false);
+        expect(webSocketHook.wasClosedByToolasha(undefined)).toBe(false);
+    });
+
+    test('a close that throws does not leave the socket marked', () => {
+        const socket = liveSocket();
+        socket.close = () => {
+            throw new Error('nope');
+        };
+        webSocketHook.attachSocketListeners(socket);
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        expect(webSocketHook.closeActiveGameSocket()).toBe(false);
+        expect(webSocketHook.wasClosedByToolasha(socket)).toBe(false);
+    });
+
     test('a socket still connecting is left alone', () => {
         const socket = liveSocket(0);
         webSocketHook.attachSocketListeners(socket);
