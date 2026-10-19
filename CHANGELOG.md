@@ -10,6 +10,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - New setting (off by default): when this tab is disconnected because the game was opened from another device or window, it waits 5–60 minutes, then reloads to take the character back. A notice shows when it will happen with Reload now and Cancel; it never reloads while you are using the page, and two tabs fighting over one character back off and stop after 3 reloads.
 
+### Risk of Ruin, sell depth and setting presets: six reported bugs
+
+- Sell depth now reads the order book for the enhancement level a run actually ends at, counts the catalyst in a transmute's break-even cost, and no longer serves a closed panel's or another character's result.
+- Presets, All Off and Restore stop when their undo copy cannot be saved, and no longer apply one character's settings to another after a switch.
+- The Risk of Ruin panel fits the window when first opened on a phone.
+
 ### Combat Sim and Goal Planner: three reported bugs
 
 - Combat Sim no longer counts a monster killed by your parry during its own ability twice (deaths, loot and task kills were doubled); the same held for a player killed by a monster's parry mid-cast.

@@ -130,6 +130,13 @@ class MarketDepthCap {
      * the page with the books now in hand.
      */
     repaint() {
+        // Other modules call this (e.g. when the Risk of Ruin context changes), including on a
+        // character whose setting is off: a disabled widget must not be recreated from books
+        // retained from before
+        if (!config.getSetting('market_depthCapEnabled')) {
+            this.clearDisplays();
+            return;
+        }
         document.querySelectorAll('.mwi-depth-cap-set').forEach((el) => el.classList.remove('mwi-depth-cap-set'));
         document
             .querySelectorAll('[class*="MarketplacePanel_orderBooksContainer"]')
@@ -152,6 +159,7 @@ class MarketDepthCap {
      *   as queue-length-estimator.js).
      */
     processOrderBook(_container) {
+        if (!config.getSetting('market_depthCapEnabled')) return;
         const buttonContainer = document.querySelector(GAME.MARKETPLACE_NEW_LISTING_BUTTONS);
         if (!buttonContainer) return;
         if (buttonContainer.classList.contains('mwi-depth-cap-set')) return;
@@ -171,15 +179,19 @@ class MarketDepthCap {
             return;
         }
 
+        // The run's output is one specific enhancement variant (a +10 enhancing result is not the
+        // +0 or +20 item), so the entry must match the displayed level as well as the item
+        const enhancementLevel = this.getCurrentEnhancementLevel();
         const depthContext = riskOfRuinUI()?.getDepthCapContext?.() ?? null;
-        const item = depthContext?.items.find((i) => i.itemHrid === itemHrid);
+        const item = depthContext?.items.find(
+            (i) => i.itemHrid === itemHrid && (i.enhancementLevel ?? 0) === enhancementLevel
+        );
         const cached = this.orderBooksCache[itemHrid];
         if (!depthContext || !item || !cached) {
             forget();
             return;
         }
 
-        const enhancementLevel = this.getCurrentEnhancementLevel();
         const orderBookAtLevel = cached.data.orderBooks?.[enhancementLevel];
         const bids = orderBookAtLevel?.bids;
         if (!bids?.length) {
@@ -266,6 +278,9 @@ class MarketDepthCap {
     disable() {
         this.clearDisplays();
         this.cleanupRegistry.cleanupAll();
+        // Only this widget reads its own cache (the other order-book caches are separate objects),
+        // and the next character must not be drawn from the last one's books
+        this.orderBooksCache = {};
         this.isInitialized = false;
     }
 

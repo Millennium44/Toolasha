@@ -37,6 +37,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: vi.fn(() => ({ itemDetailMap: {} })),
         getItemDetails: vi.fn(() => null),
         getInventory: vi.fn(() => []),
+        getCurrentCharacterId: vi.fn(() => 'char-A'),
     },
 }));
 
@@ -80,6 +81,23 @@ vi.mock('../../utils/risk-of-ruin-adapters/enhancement-adapter.js', () => ({
     buildEnhancementModel: vi.fn(() => null),
 }));
 
+// The worker pool is not what these tests are about. `sim.gate`, when set, holds a run open so a
+// teardown can land while the simulation is still pending.
+const sim = vi.hoisted(() => ({ gate: null }));
+vi.mock('../../utils/risk-of-ruin-worker-manager.js', () => ({
+    simulateRuinAsync: vi.fn(async () => {
+        if (sim.gate) await sim.gate;
+        return {
+            ruinProbability: 0,
+            ruinCount: 0,
+            trials: 10,
+            ruinStepCounts: [],
+            meanStepsToRuin: null,
+            undecidedCount: 0,
+        };
+    }),
+}));
+
 vi.mock('../../utils/enhancement-config.js', () => ({
     getEnhancingParams: vi.fn(() => ({
         enhancingLevel: 100,
@@ -111,8 +129,9 @@ const { PANEL_ID, LAUNCHER_ID, TAB_ID, PANEL_KEY } = vi.hoisted(() => ({
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/alchemy-adapter.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
-import { reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { reopenIfLeftOpen, clampPanelToViewport } from '../../utils/panel-geometry.js';
 import riskOfRuinUI from './risk-of-ruin-ui.js';
 import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
 import { setCustomPriceOverride } from '../settings/custom-price-overrides.js';
@@ -215,6 +234,22 @@ describe('RiskOfRuinUI close and reopen', () => {
         panel().querySelector('#mwi-ror-close').click();
         expect(isOpen()).toBe(false);
         expect(mocks.openState[PANEL_KEY]).toBe(false);
+    });
+
+    test('opening fits the panel to the window, since the registration clamp ran while it was hidden', () => {
+        riskOfRuinUI.initialize();
+        vi.mocked(clampPanelToViewport).mockClear();
+        expect(isOpen()).toBe(false);
+
+        document.getElementById(`${LAUNCHER_ID}-open`).click();
+        expect(clampPanelToViewport).toHaveBeenCalledTimes(1);
+        expect(clampPanelToViewport.mock.calls[0][0]).toBe(panel());
+        // Fitted after it is visible, not before
+        expect(panel().style.display).toBe('flex');
+
+        // Closing does not fit a hidden panel
+        panel().querySelector('#mwi-ror-close').click();
+        expect(clampPanelToViewport).toHaveBeenCalledTimes(1);
     });
 
     test('a panel left open reopens on the next load, and a closed one stays closed', () => {
@@ -522,8 +557,8 @@ describe('depth-cap cost attribution', () => {
         );
 
         expect(items).toEqual([
-            { itemHrid: '/items/a', quantityPerAction: 1, costShare: 750 },
-            { itemHrid: '/items/b', quantityPerAction: 0.1, costShare: 250 },
+            { itemHrid: '/items/a', enhancementLevel: 0, quantityPerAction: 1, costShare: 750 },
+            { itemHrid: '/items/b', enhancementLevel: 0, quantityPerAction: 0.1, costShare: 250 },
         ]);
     });
 
@@ -554,6 +589,7 @@ describe('depth-cap cost attribution', () => {
         expect(items.map((i) => i.itemHrid)).toEqual(['/items/x', '/items/ess']);
         expect(items[0].quantityPerAction).toBe(0.5);
         expect(items[1].quantityPerAction).toBe(0.2);
+        expect(items.map((i) => i.enhancementLevel)).toEqual([0, 0]);
         expect(items[0].costShare).toBeCloseTo((800 * 300) / 700, 6);
         expect(items[1].costShare).toBeCloseTo((800 * 100) / 700, 6);
     });
@@ -638,5 +674,344 @@ describe('protection-substitute proxy price', () => {
         expect(setCustomPriceOverride).not.toHaveBeenCalled();
         expect(runSpy).not.toHaveBeenCalled();
         runSpy.mockRestore();
+    });
+});
+
+describe('sell-depth context from a real enhancing run', () => {
+    afterEach(() => {
+        riskOfRuinUI.disable();
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap: {} }));
+        dataManager.getItemDetails.mockImplementation(() => null);
+    });
+
+    /** Run a +0 to +target enhancement of a tradable cheese sword through the real producer */
+    async function runEnhancement(targetLevel) {
+        const itemDetailMap = {
+            '/items/cheese_sword': {
+                name: 'Cheese Sword',
+                itemLevel: 1,
+                isTradable: true,
+                enhancementCosts: [{ itemHrid: '/items/coin', count: 12 }],
+            },
+        };
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap }));
+        dataManager.getItemDetails.mockImplementation((hrid) => itemDetailMap[hrid] ?? null);
+        buildEnhancementModel.mockReturnValueOnce({
+            expectedTotalCost: 1000,
+            maxSinglePossibleLoss: 100,
+            perLevelOutcomeDistributions: [],
+            costPerAttempt: 10,
+            protectionCostOnFailure: 0,
+        });
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'enhancement';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/cheese_sword';
+        root.querySelector('#mwi-ror-target').value = String(targetLevel);
+        await riskOfRuinUI._compute();
+    }
+
+    test('the output is the target-level variant, not the base item', async () => {
+        await runEnhancement(10);
+
+        expect(riskOfRuinUI.getDepthCapContext()).toEqual({
+            characterId: 'char-A',
+            costPerAction: 1000,
+            items: [{ itemHrid: '/items/cheese_sword', enhancementLevel: 10, quantityPerAction: 1 }],
+        });
+    });
+});
+
+describe('sell-depth context ownership', () => {
+    const repaint = vi.fn();
+
+    beforeEach(() => {
+        mocks.settings = { riskOfRuin: true, riskOfRuin_showLauncher: true };
+        mocks.openState = {};
+        document.body.innerHTML = '';
+        riskOfRuinUI.disable();
+        repaint.mockClear();
+        globalThis.window.Toolasha = { Market: { marketDepthCap: { repaint } } };
+        dataManager.getCurrentCharacterId.mockImplementation(() => 'char-A');
+    });
+
+    afterEach(() => {
+        riskOfRuinUI.disable();
+        sim.gate = null;
+        delete globalThis.window.Toolasha;
+        dataManager.getCurrentCharacterId.mockImplementation(() => 'char-A');
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap: {} }));
+        dataManager.getItemDetails.mockImplementation(() => null);
+    });
+
+    /** Start a +0 to +10 cheese sword run under whoever is logged in; resolves when the run ends */
+    function startRun() {
+        const itemDetailMap = {
+            '/items/cheese_sword': {
+                name: 'Cheese Sword',
+                itemLevel: 1,
+                isTradable: true,
+                enhancementCosts: [{ itemHrid: '/items/coin', count: 12 }],
+            },
+        };
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap }));
+        dataManager.getItemDetails.mockImplementation((hrid) => itemDetailMap[hrid] ?? null);
+        buildEnhancementModel.mockReturnValueOnce({
+            expectedTotalCost: 1000,
+            maxSinglePossibleLoss: 100,
+            perLevelOutcomeDistributions: [],
+            costPerAttempt: 10,
+            protectionCostOnFailure: 0,
+        });
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'enhancement';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/cheese_sword';
+        root.querySelector('#mwi-ror-target').value = '10';
+        return riskOfRuinUI._compute();
+    }
+
+    test('teardown withdraws the context and has the widget redraw', async () => {
+        await startRun();
+        expect(riskOfRuinUI.getDepthCapContext()).not.toBeNull();
+
+        repaint.mockClear();
+        riskOfRuinUI.disable();
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        expect(riskOfRuinUI.lastDepthCapContext).toBeNull();
+        expect(repaint).toHaveBeenCalledTimes(1);
+    });
+
+    test('teardown redraws even when a run in flight already dropped the context', async () => {
+        await startRun();
+        // A new run nulls the context at its start but leaves the old figure drawn until it ends
+        riskOfRuinUI.lastDepthCapContext = null;
+
+        repaint.mockClear();
+        riskOfRuinUI.disable();
+
+        expect(repaint).toHaveBeenCalledTimes(1);
+    });
+
+    test('turning Risk of Ruin off in settings stops it supplying a context', async () => {
+        await startRun();
+
+        mocks.settingChangeHandlers.riskOfRuin(false);
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+    });
+
+    test('a run priced for character A is not offered to character B who never ran one', async () => {
+        await startRun();
+        expect(riskOfRuinUI.getDepthCapContext()).not.toBeNull();
+
+        dataManager.getCurrentCharacterId.mockImplementation(() => 'char-B');
+        // Even before teardown has run on the switch, B is never served A's costs
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+
+        riskOfRuinUI.disable();
+        riskOfRuinUI.initialize();
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+    });
+
+    test('a calculation still simulating when the panel is torn down publishes nothing afterward', async () => {
+        let release;
+        sim.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const pending = startRun();
+        expect(riskOfRuinUI.getDepthCapContext()).not.toBeNull();
+
+        riskOfRuinUI.disable();
+        riskOfRuinUI.initialize();
+        release();
+        await pending;
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        expect(riskOfRuinUI.lastDepthCapContext).toBeNull();
+    });
+
+    test('recalculating with the marketplace open leaves the widget drawn from the new context', async () => {
+        const seen = [];
+        repaint.mockImplementation(() => seen.push(riskOfRuinUI.getDepthCapContext() !== null));
+        await startRun();
+        seen.length = 0;
+
+        buildEnhancementModel.mockReturnValueOnce({
+            expectedTotalCost: 2000,
+            maxSinglePossibleLoss: 100,
+            perLevelOutcomeDistributions: [],
+            costPerAction: 10,
+            protectionCostOnFailure: 0,
+        });
+        await riskOfRuinUI._compute();
+
+        // The last redraw happens with the new context in place, so the figure is not left down
+        expect(seen.length).toBeGreaterThan(0);
+        expect(seen.at(-1)).toBe(true);
+        expect(riskOfRuinUI.getDepthCapContext().costPerAction).toBe(2000);
+        repaint.mockReset();
+    });
+
+    test('a run refused after an earlier one still redraws, taking the withdrawn figure down', async () => {
+        await startRun();
+        repaint.mockClear();
+        panel().querySelector('#mwi-ror-item').value = 'Not An Item';
+
+        await riskOfRuinUI._compute();
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        expect(repaint).toHaveBeenCalled();
+    });
+
+    test('a character change mid-run on a live panel does not leave "Calculating…" showing', async () => {
+        let release;
+        sim.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const pending = startRun();
+        panel().querySelector('#mwi-ror-status').textContent = 'Calculating…';
+        dataManager.getCurrentCharacterId.mockImplementation(() => 'char-B');
+        release();
+        await pending;
+
+        expect(panel().querySelector('#mwi-ror-status').textContent).toBe('');
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+    });
+
+    test('a simulation that rejects after the context was set leaves no figure', async () => {
+        const seen = [];
+        repaint.mockImplementation(() => seen.push(riskOfRuinUI.getDepthCapContext() !== null));
+        sim.gate = Promise.reject(new Error('worker died'));
+        sim.gate.catch(() => {});
+
+        await expect(startRun()).rejects.toThrow('worker died');
+
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        expect(seen.at(-1)).toBe(false);
+        repaint.mockReset();
+    });
+
+    test('a rendering throw after publishing leaves no figure', async () => {
+        const render = vi.spyOn(riskOfRuinUI, '_renderResults').mockImplementation(() => {
+            throw new Error('render failed');
+        });
+        try {
+            await expect(startRun()).rejects.toThrow('render failed');
+            expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+        } finally {
+            render.mockRestore();
+        }
+    });
+
+    test('an older run failing after a newer run published leaves the newer context', async () => {
+        let fail;
+        sim.gate = new Promise((_, reject) => {
+            fail = reject;
+        });
+        sim.gate.catch(() => {});
+        const older = startRun();
+        older.catch(() => {});
+
+        // A newer run starts and publishes while the older one is still simulating
+        sim.gate = null;
+        buildEnhancementModel.mockReturnValueOnce({
+            expectedTotalCost: 3000,
+            maxSinglePossibleLoss: 100,
+            perLevelOutcomeDistributions: [],
+            costPerAttempt: 10,
+            protectionCostOnFailure: 0,
+        });
+        await riskOfRuinUI._compute();
+        expect(riskOfRuinUI.getDepthCapContext().costPerAction).toBe(3000);
+
+        fail(new Error('older failed'));
+        await expect(older).rejects.toThrow('older failed');
+
+        expect(riskOfRuinUI.getDepthCapContext().costPerAction).toBe(3000);
+    });
+
+    test('a new run for the same character is still served', async () => {
+        await startRun();
+        riskOfRuinUI.disable();
+        await startRun();
+
+        expect(riskOfRuinUI.getDepthCapContext().items[0].itemHrid).toBe('/items/cheese_sword');
+    });
+});
+
+describe('transmute sell-depth cost includes the catalyst', () => {
+    afterEach(() => {
+        riskOfRuinUI.disable();
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap: {} }));
+        dataManager.getItemDetails.mockImplementation(() => null);
+    });
+
+    async function runTransmute(model) {
+        const itemDetailMap = {
+            '/items/cheese': {
+                name: 'Cheese',
+                alchemyDetail: { transmuteDropTable: [{ itemHrid: '/items/moonstone', dropRate: 1 }] },
+            },
+        };
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap }));
+        dataManager.getItemDetails.mockImplementation((hrid) => itemDetailMap[hrid] ?? null);
+        buildAlchemyTransmuteModel.mockReturnValueOnce(model);
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'alchemy';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/cheese';
+        await riskOfRuinUI._compute();
+        return riskOfRuinUI.getDepthCapContext();
+    }
+
+    const breakdown = (extra = {}) => ({
+        successRate: 0.5,
+        mainBranches: [{ itemHrid: '/items/moonstone', dropRate: 1, count: 1, payout: 1000, isSelfReturn: false }],
+        bonusDrops: [],
+        ...extra,
+    });
+
+    test('a catalyst-assisted transmute is charged its expected spend, not just the unconditional cost', async () => {
+        const context = await runTransmute({
+            cost: 100,
+            expectedCost: 600,
+            maxSinglePossibleLoss: 1100,
+            outcomeDistribution: [
+                { prob: 0.5, net: -100 },
+                { prob: 0.5, net: -100 - 1000 + 1000 },
+            ],
+            breakdown: breakdown(),
+        });
+
+        expect(context.costPerAction).toBe(600);
+        expect(context.items).toEqual([
+            { itemHrid: '/items/moonstone', enhancementLevel: 0, quantityPerAction: 0.5, costShare: 600 },
+        ]);
+    });
+
+    test('multi-output cost shares sum to the expected spend and a self-return keeps its slice', async () => {
+        const context = await runTransmute({
+            cost: 100,
+            expectedCost: 600,
+            maxSinglePossibleLoss: 1100,
+            outcomeDistribution: [{ prob: 1, net: -100 }],
+            breakdown: breakdown({
+                mainBranches: [
+                    { itemHrid: '/items/moonstone', dropRate: 0.5, count: 1, payout: 1000, isSelfReturn: false },
+                    { itemHrid: '/items/cheese', dropRate: 0.5, count: 1, payout: 1000, isSelfReturn: true },
+                ],
+                bonusDrops: [{ itemHrid: '/items/ess', dropRate: 0.25, count: 1, payout: 500 }],
+            }),
+        });
+
+        // EV: moonstone 250, self-return 250 (not tracked), essence 125 -> 625 total
+        expect(context.items.map((i) => i.itemHrid)).toEqual(['/items/moonstone', '/items/ess']);
+        expect(context.items[0].costShare).toBeCloseTo((600 * 250) / 625, 6);
+        expect(context.items[1].costShare).toBeCloseTo((600 * 125) / 625, 6);
     });
 });
