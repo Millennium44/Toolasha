@@ -830,6 +830,37 @@ describe('planned Alchemy context in tea optimization', () => {
         });
     });
 
+    describe('XP floor scores XP with the catalyst its gold figure used', () => {
+        const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
+        const xpOf = (extra) => {
+            for (const hrid of knownItems) prices.byHrid[hrid] = 10;
+            return findOptimalTeas('alchemy', 'xp', null, null, null, context, new Map(), null, null, {
+                collectAll: true,
+                teaSetGoal: 'gold',
+                ...extra,
+            }).evaluatedAll;
+        };
+
+        test('a success-raising catalyst raises the candidate XP; without matching, XP ignores it', () => {
+            alchemyCalc.coinify = () => ({
+                profitPerHour: 777,
+                winningCatalystHrid: '/items/prime_catalyst',
+                successRateBreakdown: { catalyst: 0.3 },
+            });
+            const plain = xpOf({});
+            const matched = xpOf({ matchGoldCatalyst: true });
+            expect(matched.length).toBe(plain.length);
+            for (let i = 0; i < plain.length; i++) expect(matched[i].score).toBeGreaterThan(plain[i].score);
+        });
+
+        test('a catalyst-free gold setup leaves XP unchanged', () => {
+            alchemyCalc.coinify = () => ({ profitPerHour: 777, successRateBreakdown: { catalyst: 0 } });
+            const plain = xpOf({});
+            const matched = xpOf({ matchGoldCatalyst: true });
+            expect(matched.map((r) => r.score)).toEqual(plain.map((r) => r.score));
+        });
+    });
+
     test('rejects an impossible item/action pair before either scoring path', () => {
         const context = { actionType: 'coinify', itemHrid: '/items/decompose_only' };
         expect(findOptimalTeas('alchemy', 'xp', null, null, null, context).error).toMatch(/cannot|invalid/i);

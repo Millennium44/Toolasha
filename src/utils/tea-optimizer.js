@@ -1308,7 +1308,19 @@ export function findOptimalTeas(
                 skills: skillsWithPlannedLevel('/skills/alchemy', playerLevel),
             };
             if (goal === 'xp') {
-                score = calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEfficiency, calcContext);
+                // The floor search compares one real setup per candidate: score XP with the catalyst
+                // its gold figure used (a catalyst raises success, and failures give 10% XP)
+                const catalystBonus = options?.matchGoldCatalyst
+                    ? calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext).catalystBonus
+                    : 0;
+                score = calculateAlchemyXpPerHour(
+                    alchemyContext,
+                    buffs,
+                    playerLevel,
+                    otherEfficiency,
+                    calcContext,
+                    catalystBonus
+                );
                 totalScore += score;
             } else {
                 const goldResult = calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext);
