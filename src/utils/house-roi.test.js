@@ -50,6 +50,9 @@ vi.mock('./action-context.js', () => ({
 }));
 
 vi.mock('./tea-optimizer.js', () => ({
+    findXpFloorChoice: () => ({ status: 'none' }),
+    pickXpFloorChoice: () => ({ status: 'none' }),
+    normalizeXpFloorPercent: (value) => value,
     SKILL_TO_ACTION_TYPE: {
         milking: '/action_types/milking',
         cooking: '/action_types/cooking',

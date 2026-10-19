@@ -28,6 +28,8 @@ vi.mock('../../core/dom-observer.js', () => ({ default: {} }));
 vi.mock('./action-filter.js', () => ({ default: {} }));
 vi.mock('../alchemy/alchemy-profit.js', () => ({ default: {} }));
 vi.mock('../../utils/tea-optimizer.js', () => ({
+    pickXpFloorChoice: () => ({ status: 'none' }),
+    normalizeXpFloorPercent: (value) => value,
     findOptimalTeas: () => ({
         optimal: { teas: [{ hrid: '/items/a', name: 'A' }], avgScore: 1000, hasMissingPrices: false },
     }),
