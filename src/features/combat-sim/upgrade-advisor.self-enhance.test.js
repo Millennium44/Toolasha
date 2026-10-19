@@ -71,6 +71,8 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: vi.fn(),
     calculateSimRevenue: vi.fn(),
     getGuildBuffDetailMap: () => ({}),
@@ -96,6 +98,11 @@ vi.mock('./direct-enhancement-cost.js', () => ({
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ describeEnhancementSource: () => null }));
 vi.mock('../../utils/profit-helpers.js', () => ({
+    // Untaxed, as for an Iron Cow character: this suite is about which route a row is priced by, and its
+    // figures are gross. The market sell tax on a resale is tested in upgrade-advisor.test.js
+    calculatePriceAfterTax: (price) => price,
+    outputTaxRate: () => 0,
+
     // A cape base with no listing: the craft estimate the ordinary +0 path returns
     resolveItemPrice: vi.fn((hrid) => ({ price: hrid === CAPE ? 5_000_000 : 2_000_000 })),
 }));

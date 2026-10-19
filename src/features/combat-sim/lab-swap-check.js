@@ -32,6 +32,7 @@ import {
     expectedFightAttempts,
     explainLabCandidateCost,
     ownedAbilityLevel,
+    saleTaxRateOf,
     valuePerMillion,
 } from './upgrade-advisor.js';
 import { affectsSkill, isCombatOnlyItem } from './skilling-gear-candidates.js';
@@ -481,6 +482,18 @@ function wornExactly(piece, swap) {
 }
 
 /**
+ * The sell tax a checked candidate is priced at: the analysed character's own when they are not the live
+ * character (an Iron Cow pays none), nothing to stamp for the live character, whose status is read when priced.
+ * @param {Object|undefined} dto - A player DTO of the loadouts being checked
+ * @param {boolean} isSelf - Whether the loadouts are the live character's
+ * @returns {{saleTaxRate?: number}}
+ */
+function saleTaxStamp(dto, isSelf) {
+    const rate = saleTaxRateOf(dto, isSelf);
+    return rate == null ? {} : { saleTaxRate: rate };
+}
+
+/**
  * A checked swap as a whole-run combat candidate.
  *
  * Its reach is every loadout `checkedSwapAppliesToDTO` accepts, and the cost is
@@ -524,6 +537,8 @@ export function buildCombatSwapCandidate(swap, dtos, gameData, isSelf = true, op
         isSelf,
         pricingNote: routeCaveat(route.route),
         reach: reached.length,
+        // Resale is taxed as the loadouts' owner pays it, not as the live character would
+        ...saleTaxStamp(dtos?.[0], isSelf),
     };
     // One physical piece serves every loadout (they are alternatives, not worn
     // together), so a copy already worn at this level in any loadout is owned
@@ -631,6 +646,7 @@ export function buildSkillingSwapCandidate(swap, context, gameData, isSelf = tru
         upgradeLevel: swap.level,
         description: route.description,
         type: route.type,
+        ...saleTaxStamp(dto, isSelf),
     };
     const unreachedPieces = everySkill
         .filter((skill) => !reached.some((entry) => entry.skill === skill))
@@ -794,6 +810,7 @@ export function buildCombatAbilityCandidates(swap, dtos, gameData, isSelf = true
         zeroCooldownHrids: zeroCooldownAbilities(gameData),
         allLoadouts,
         isSelf,
+        ...saleTaxStamp(loadouts[0], isSelf),
         description: level === typedLevel ? `${name} ${level}` : `${name} ${level}, you have it at ${ownedLevel}`,
     };
     base.cost = calculateUpgradeCost({ ...base }, gameData, isSelf);

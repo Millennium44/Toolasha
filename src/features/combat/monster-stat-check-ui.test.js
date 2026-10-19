@@ -104,7 +104,10 @@ vi.mock('../../utils/panel-z-index.js', () => ({
 }));
 vi.mock('../../utils/panel-minimize.js', () => ({ attachMinimize: () => {} }));
 vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
-vi.mock('../combat-sim/combat-sim-adapter.js', () => ({ buildGameDataPayload: () => ({}) }));
+vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+    buildGameDataPayload: () => ({}),
+}));
 vi.mock('../combat-sim/engine/game-data.js', () => ({ setGameData: () => {} }));
 vi.mock('../combat-sim/engine/monster.js', () => ({
     default: class {

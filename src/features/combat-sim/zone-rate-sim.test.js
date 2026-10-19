@@ -15,6 +15,8 @@ vi.mock('../../utils/character-key.js', () => ({
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { snapshots: {}, whenReady: async () => true } }));
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     applyLoadoutSnapshotToDTO: vi.fn(),
     buildGameDataPayload: vi.fn(),
     buildPlayerDTO: vi.fn(),

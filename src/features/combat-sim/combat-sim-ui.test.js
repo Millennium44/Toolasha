@@ -382,6 +382,8 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: () => mocks.gameData,
     buildAllPlayerDTOs: async () =>
         mocks.buildPlayerDTOs
@@ -446,6 +448,10 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
 // The real one returns `{ price, source }`; the food substitution reads `.price`
 // off it, so the stub has to be that shape rather than a bare number
 vi.mock('../../utils/profit-helpers.js', () => ({
+    // The 4% market sell tax a resale pays
+    calculatePriceAfterTax: (price, rate = 0.04) => price * (1 - rate),
+    outputTaxRate: (rate = 0.04) => rate,
+
     resolveItemPrice: (hrid) => ({ price: mocks.itemPrices[hrid] ?? 0 }),
 }));
 // A minimal stand-in for the real pricing-mode/patient-tick resolution: reads
@@ -1113,6 +1119,28 @@ describe('the panel', () => {
         expect(hours).toBe(42);
     });
 
+    test('an analysis started before the editor is set up still knows which DTO is the live character', async () => {
+        selectZone();
+        let selfHrid = 'unset';
+        mocks.onRun = (params) => {
+            selfHrid = params.selfHrid;
+        };
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        await ui._onUpgradeAnalyze();
+        expect(selfHrid).toBe('player1');
+
+        mocks.editedDTOs = { player2: { hrid: 'player2', equipment: {} } };
+        mocks.editorSelfHrid = 'player2';
+        try {
+            await ui._onUpgradeAnalyze();
+            expect(selfHrid).toBe('player2');
+        } finally {
+            mocks.editedDTOs = null;
+            mocks.editorSelfHrid = null;
+        }
+    });
+
     test('a tab switch mid-run does not overwrite the running status', () => {
         ui.isRunning = true;
         ui._setStatus('Simulating (Solo)... 3.0s');
@@ -1187,6 +1215,74 @@ describe('the panel', () => {
         expect(text()).toContain('Analysis cancelled — showing 1 completed candidate.');
         expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).toContain('Cheap ring');
         expect(ui._upgradeRunning).toBe(false);
+    });
+
+    test('a stopped run says it covers only part of the run, in the table, the budget and when remembered', async () => {
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 })],
+            candidateCount: 4,
+            food: null,
+        };
+        selectZone();
+        ui._upgradeBudget = 500_000_000;
+        mocks.onRun = () => ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+
+        await ui._onUpgradeAnalyze();
+        ui._upgradeBudget = 0;
+
+        expect(ui._upgradeResultsData.stopped).toEqual({ completed: 1, total: 4 });
+        const results = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        expect(results.querySelector('[data-upgrade-stopped]').textContent).toContain('stopped early — 1 of 4');
+        expect(results.querySelector('[data-budget-partial]')).toBeTruthy();
+        expect(ui._restoredUpgradeNote(Date.now(), { stopped: ui._upgradeResultsData.stopped })).toContain(
+            'stopped early — 1 of 4 candidates'
+        );
+    });
+
+    test('Stop during the food search, after every candidate, says only that the food search stopped', async () => {
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 })],
+            candidateCount: 1,
+            food: null,
+        };
+        selectZone();
+        ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+            box.checked = box.dataset.upgradeMode === 'equipment' || box.dataset.upgradeMode === 'food';
+        });
+        ui._upgradeBudget = 500_000_000;
+        let params = null;
+        mocks.onRun = (runParams) => {
+            params = runParams;
+            ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+        };
+
+        await ui._onUpgradeAnalyze();
+        ui._upgradeBudget = 0;
+
+        expect(params.optimizeFood).toBe(true);
+        expect(ui._upgradeResultsData.stopped).toBeUndefined();
+        expect(ui._upgradeResultsData.foodStopped).toBe(true);
+        const results = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        expect(results.querySelector('[data-food-stopped]')).toBeTruthy();
+        expect(results.querySelector('[data-upgrade-stopped]')).toBeNull();
+        expect(results.querySelector('[data-budget-partial]')).toBeNull();
+    });
+
+    test('a run that finished carries no stopped stamp', async () => {
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 })],
+            candidateCount: 1,
+            food: null,
+        };
+        selectZone();
+
+        await ui._onUpgradeAnalyze();
+
+        expect(ui._upgradeResultsData.stopped).toBeUndefined();
+        expect(ui.panel.querySelector('[data-upgrade-stopped]')).toBeNull();
     });
 
     test('a cancelled analysis with nothing finished says only that', async () => {
@@ -12543,5 +12639,189 @@ describe('verifying close calls on fresh seeds', () => {
             await settle();
             expect(shown.verifyOutcome).toBeUndefined();
         });
+    });
+});
+
+describe("a row's profit error is given on the gold scale it is judged on (#541)", () => {
+    const base = {
+        dps: 100,
+        xpPerHour: 1000,
+        profitPerHour: 10,
+        revenuePerHour: 50_000,
+        costPerHour: 49_990,
+        deathsPerHour: 0,
+        encountersPerHour: 1000,
+    };
+    const noisy = {
+        candidate: { description: 'Ring', slot: '/equipment_types/ring' },
+        cost: 100,
+        metrics: { ...base, profitPerHour: 510 },
+        deltas: { dps: 0, xp: 0, profit: 5000, deaths: 0, encounters: 0 },
+        noise: { dps: 4.47, xp: 4.47, profit: 4.47, encounters: 4.47, deaths: 141 },
+        significantBy: { dps: false, xp: false, profit: false, deaths: false, encounters: false },
+        economics: { profitGainPerHour: 500 },
+    };
+
+    test('the profit cell states its error in gold per day, not as a percent of net', () => {
+        const html = ui._renderUpgradeDetailCells(noisy, base);
+        const profitCell = html.split('Profit/day')[1].split('EPH')[0];
+
+        // 4.47% of the 50,000/hr gross, per day
+        expect(profitCell).toContain('±53.6K/day');
+        expect(profitCell).not.toContain('±4.47%');
+        expect(profitCell).toContain('within noise');
+    });
+
+    test('and the budget planner marks such a pick as an estimate', () => {
+        const plan = planUpgradeBudget([noisy], 1000, { baseline: base, metricKey: 'profit' });
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.provisional).toBe(true);
+    });
+});
+
+describe('a basket confirmation belongs to the analysis it measured (#543)', () => {
+    const contextFor = (baseline) => ({
+        gameData: {},
+        playerDTOs: [{ hrid: 'player1', equipment: {} }],
+        playerIndex: 0,
+        playerHrid: 'player1',
+        zoneHrid: '/actions/combat/fly',
+        difficultyTier: 0,
+        hours: 1,
+        communityBuffs: {},
+        seed: 7,
+        precision: null,
+        baselineResult: {},
+        baseline,
+    });
+    /** An analysis; a second call with the same rows and costs is a different run (another zone or seed) */
+    const analysis = (baseline = BASELINE) => ({
+        baseline,
+        results: [
+            row('Ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+            row('Amulet', { slot: '/equipment_types/amulet', cost: 200, profitGain: 30 }),
+        ],
+        food: null,
+        context: contextFor(baseline),
+    });
+    const container = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const settle = async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+    const done = {
+        ok: true,
+        metrics: { dps: 100, xpPerHour: 1000, profitPerHour: 1080, deathsPerHour: 0, encountersPerHour: 10 },
+        deltas: {},
+        economics: { profitGainPerHour: 80 },
+        noise: {},
+        totalCost: 300,
+    };
+
+    beforeEach(() => {
+        mocks.onConfirm = null;
+        mocks.confirmResult = done;
+        ui.buildPanel();
+        ui._upgradeBudget = 500_000_000;
+        ui._upgradePlanMetric = 'profit';
+    });
+
+    afterEach(() => {
+        ui._upgradeBudget = 0;
+        ui.destroy();
+    });
+
+    test('a fresh analysis with the same picks and costs asks to be confirmed again', async () => {
+        ui._renderUpgradeResults(analysis());
+        container().querySelector('#mwi-csim-budget-confirm').click();
+        await settle();
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeNull();
+
+        ui._renderUpgradeResults(analysis({ ...BASELINE, dps: 1000 }));
+
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeTruthy();
+        expect(container().textContent).not.toContain('summed');
+    });
+
+    test('a redraw of the same analysis keeps its confirmation', async () => {
+        const same = analysis();
+        ui._renderUpgradeResults(same);
+        container().querySelector('#mwi-csim-budget-confirm').click();
+        await settle();
+
+        ui._renderUpgradeResults(same);
+
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeNull();
+        expect(container().textContent).toContain('summed');
+    });
+
+    test("an old analysis' confirmation landing after a new analysis is drawn is ignored", async () => {
+        let land;
+        mocks.confirmResult = new Promise((resolve) => (land = resolve));
+        ui._renderUpgradeResults(analysis());
+        container().querySelector('#mwi-csim-budget-confirm').click();
+
+        ui._renderUpgradeResults(analysis({ ...BASELINE, dps: 1000 }));
+        land(done);
+        await settle();
+
+        expect(container().querySelector('#mwi-csim-budget-confirm')).toBeTruthy();
+        expect(container().textContent).not.toContain('summed');
+    });
+
+    test('a confirmation landing after the panel is torn down does nothing and does not throw', async () => {
+        let land;
+        mocks.confirmResult = new Promise((resolve) => (land = resolve));
+        ui._renderUpgradeResults(analysis());
+        container().querySelector('#mwi-csim-budget-confirm').click();
+
+        ui.destroy();
+        land(done);
+        await settle();
+
+        expect(ui._budgetConfirm ?? null).toBeNull();
+        // afterEach destroys again; the panel it builds next is a fresh one
+        ui.buildPanel();
+    });
+});
+
+describe('a confirmed basket is shown against the baseline it was compared with', () => {
+    beforeEach(() => {
+        mocks.onConfirm = null;
+        ui.buildPanel();
+        ui._upgradeBudget = 500_000_000;
+        ui._upgradePlanMetric = 'dps';
+    });
+
+    afterEach(() => {
+        ui._upgradeBudget = 0;
+        ui.destroy();
+    });
+
+    test('a restored context revalued on a fresh snapshot shows the gain against that baseline', async () => {
+        // The analysis stored DPS 100; the confirming run compared the basket with its revalued baseline
+        mocks.confirmResult = {
+            ok: true,
+            metrics: { ...BASELINE, dps: 1010 },
+            deltas: {},
+            economics: { profitGainPerHour: 0 },
+            noise: {},
+            totalCost: 300,
+            baseline: { ...BASELINE, dps: 1000 },
+        };
+        ui._renderUpgradeResults({
+            baseline: BASELINE,
+            results: [row('Ring', { slot: '/equipment_types/ring', cost: 100, dps: 110 })],
+            food: null,
+            context: { baselineResult: {}, baseline: BASELINE, playerDTOs: [{}], playerIndex: 0, gameData: {} },
+        });
+        const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+
+        container.querySelector('#mwi-csim-budget-confirm').click();
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+
+        expect(container.textContent).toContain('summed');
+        expect(container.textContent).toContain('+10.00 DPS');
+        expect(container.textContent).not.toContain('+910.00 DPS');
     });
 });

@@ -69,6 +69,8 @@ const guild = vi.hoisted(() => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+
     buildGameDataPayload: () => ({ itemDetailMap: {}, abilityDetailMap: {}, houseRoomDetailMap: {} }),
     buildAllPlayerDTOs: async () => {
         // A build left open, so a test can land a character switch inside one

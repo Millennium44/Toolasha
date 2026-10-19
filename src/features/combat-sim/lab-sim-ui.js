@@ -8791,7 +8791,7 @@ class LabSimUI {
             if (detail.creditCapped) {
                 parts.push(
                     line(
-                        `Resale credit capped at the purchase: the current item's bid of ${money(detail.rawCredit)} ` +
+                        `Resale credit capped at the purchase: the current item's after-tax resale of ${money(detail.rawCredit)} ` +
                             'looks out of line with the market.',
                         '#ff9800'
                     )

@@ -58,7 +58,10 @@ vi.mock('../../utils/timer-registry.js', () => ({
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: { getAllSnapshots: () => [] } }));
 vi.mock('../combat-sim/combat-sim-ui.js', () => ({ default: {} }));
-vi.mock('../combat-sim/combat-sim-adapter.js', () => ({ buildPlayerDTOFromProfile: () => ({}) }));
+vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache) => cache,
+    buildPlayerDTOFromProfile: () => ({}),
+}));
 vi.mock('../../utils/enhancement-worker-manager.js', () => ({ terminateWorkerPool: () => {} }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/panel-geometry.js', () => ({

@@ -1204,6 +1204,10 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         // Unknown for anyone but the current character: no Moo Pass wisdom
         mooPass: false,
     };
+    // The game mode the player's shared profile reports ('standard', 'ironcow', 'legacy_ironcow'), when it
+    // carries one: an Iron Cow player sells nothing on the market, so what their resale is worth depends on it
+    const gameMode = profile.profile?.sharableCharacter?.gameMode;
+    if (typeof gameMode === 'string' && gameMode) dto.gameMode = gameMode;
 
     // Extract skill levels
     for (const skill of profile.profile?.characterSkills || []) {
@@ -2017,6 +2021,73 @@ function dropUnitValue(itemHrid) {
 }
 
 /**
+ * A consumable's unit cost as `calculateSimRevenue` holds it.
+ * @param {string} itemHrid - Food or drink
+ * @returns {{unitCost: number, priced: boolean}}
+ */
+function consumableUnitCost(itemHrid) {
+    return {
+        unitCost: getBuyPrice(itemHrid),
+        // A custom price of 0 is a price, not a missing one
+        priced: getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) != null,
+    };
+}
+
+/**
+ * Every item a fight in this zone can drop: each spawn's and boss's regular and rare drop tables, or a
+ * dungeon's reward table. What a sim result's drops are drawn from, whichever monsters it happened to kill.
+ * @param {Object} gameData - Game data payload
+ * @param {string} zoneHrid - Combat zone
+ * @returns {Set<string>} Item HRIDs
+ */
+function zoneDropItems(gameData, zoneHrid) {
+    const items = new Set();
+    const zone = gameData?.actionDetailMap?.[zoneHrid]?.combatZoneInfo;
+    if (!zone) return items;
+    for (const drop of zone.dungeonInfo?.rewardDropTable || []) if (drop?.itemHrid) items.add(drop.itemHrid);
+    const fight = zone.fightInfo || {};
+    const spawns = [...(fight.randomSpawnInfo?.spawns || []), ...(fight.bossSpawns || [])];
+    for (const spawn of spawns) {
+        const monster = gameData.combatMonsterDetailMap?.[spawn?.combatMonsterHrid];
+        for (const drop of [...(monster?.dropTable || []), ...(monster?.rareDropTable || [])]) {
+            if (drop?.itemHrid) items.add(drop.itemHrid);
+        }
+    }
+    return items;
+}
+
+/**
+ * Fill a `calculateSimRevenue` price cache, now, with every price an analysis of this zone can read: each
+ * drop the zone can yield, the keys its chests take, and the consumables named. The cache is otherwise
+ * filled lazily, as each result is valued, so an item first seen in a candidate (an added coffee, a drop the
+ * baseline never rolled) was priced when that candidate finished, and a price change after the baseline read
+ * as that candidate's profit change. Entries already held are kept; an item nothing prices is held as
+ * unpriced, exactly as the lazy read would have held it.
+ * @param {Map} priceCache - The cache to fill
+ * @param {Object} gameData - Game data payload
+ * @param {Object} options
+ * @param {string} options.zoneHrid - Combat zone the analysis fights in
+ * @param {Iterable<string>} [options.consumableHrids] - Food and drinks any run of the analysis may use
+ * @returns {Map} The same cache
+ */
+export function seedSimPriceCache(priceCache, gameData, { zoneHrid, consumableHrids = [] } = {}) {
+    if (!(priceCache instanceof Map)) return priceCache;
+    const hold = (key, read) => {
+        if (!priceCache.has(key)) priceCache.set(key, read());
+    };
+    for (const itemHrid of zoneDropItems(gameData, zoneHrid)) {
+        hold(`drop|${itemHrid}`, () => dropUnitValue(itemHrid));
+        for (const keyHrid of [DUNGEON_CHEST_ENTRY_KEYS[itemHrid], DUNGEON_CHEST_CHEST_KEYS[itemHrid]]) {
+            if (keyHrid) hold(`key|${keyHrid}`, () => getKeyUnitCost(keyHrid));
+        }
+    }
+    for (const itemHrid of consumableHrids) {
+        if (itemHrid) hold(`buy|${itemHrid}`, () => consumableUnitCost(itemHrid));
+    }
+    return priceCache;
+}
+
+/**
  * Calculate revenue and costs from a sim result.
  * Respects the user's profitCalc_pricingMode setting. `costPerHour` covers consumables and, in a
  * dungeon, the entry and chest keys the runs consume.
@@ -2071,11 +2142,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
     const unpricedConsumables = [];
     const consumablesUsed = simResult.consumablesUsed?.[playerHrid] || {};
     for (const [itemHrid, count] of Object.entries(consumablesUsed)) {
-        const { unitCost, priced } = held(`buy|${itemHrid}`, () => ({
-            unitCost: getBuyPrice(itemHrid),
-            // A custom price of 0 is a price, not a missing one
-            priced: getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) != null,
-        }));
+        const { unitCost, priced } = held(`buy|${itemHrid}`, () => consumableUnitCost(itemHrid));
         const perHour = (count / hours) * unitCost;
         costPerHour += perHour;
         if (unitCost > 0 || priced) {
