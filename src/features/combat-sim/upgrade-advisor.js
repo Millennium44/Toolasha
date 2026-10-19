@@ -25,7 +25,7 @@ import { bestGearForSkill, describeSkillingUpgrade } from './skilling-gear-candi
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
-import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { calculatePriceAfterTax, outputTaxRate, resolveItemPrice } from '../../utils/profit-helpers.js';
 import { priceAtLevel, priceBase, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
@@ -2908,7 +2908,10 @@ function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         const currentMarket = getItemPrices(candidate.currentHrid, candidate.currentLevel);
 
         if (upgradedMarket?.ask > 0 && currentMarket?.bid > 0) {
-            return upgradedMarket.ask - capEnhancementCredit(upgradedMarket.ask, currentMarket.bid).credit;
+            // Selling the current level pays its bid after tax, and that is what the outlier cap weighs
+            return (
+                upgradedMarket.ask - capEnhancementCredit(upgradedMarket.ask, afterSaleTax(currentMarket.bid)).credit
+            );
         }
 
         // Fallback: enhancement cost estimate with protection
@@ -2996,7 +2999,7 @@ function capEnhancementCredit(ask, bid) {
  *
  * @param {Object} candidate - Upgrade candidate
  * @param {Array<{hrid: string, level: number}>} [consumed] - Worn pieces the purchase is made from (a refine)
- * @returns {number} Total resale credit, 0 when nothing is being sold
+ * @returns {number} Total after-tax resale credit, 0 when nothing is being sold
  */
 function resaleCredit(candidate, consumed = []) {
     const removed =
@@ -3009,9 +3012,8 @@ function resaleCredit(candidate, consumed = []) {
         // Refined into the target, or spent in a mirror, so that share is not left to sell
         const sold = 1 - consumedShare(consumed, item.hrid, item.enhancementLevel || 0);
         if (sold <= 0) continue;
-        credit +=
-            sold *
-            (resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price ?? 0);
+        // Floored per piece before the share: a sale is paid per unit
+        credit += sold * sellValue(item.hrid, item.enhancementLevel || 0);
     }
     return credit;
 }
@@ -3549,13 +3551,27 @@ export function withLoadoutClaims(candidate, claims) {
 }
 
 /**
- * What a piece sells for, for weighing a route that gives that sale up.
+ * What selling a piece at a quoted price puts in hand: the price net of the 4% market sell tax, floored to
+ * whole coins the way the game pays a per-unit sale. Every resale credit and every forfeited sale in the
+ * advisor goes through here, so a swap is never credited the gross bid it cannot collect, and a route that
+ * gives a sale up is charged what that sale would really have paid. An Iron Cow character pays no market
+ * tax (`outputTaxRate`), and its untaxed vendor/coinify values are kept as they are.
+ * @param {number|null|undefined} gross - Quoted sale price
+ * @returns {number} After-tax proceeds, 0 when there is no price
+ */
+function afterSaleTax(gross) {
+    if (!(gross > 0)) return 0;
+    return outputTaxRate() > 0 ? Math.floor(calculatePriceAfterTax(gross)) : gross;
+}
+
+/**
+ * What a piece sells for after tax, for weighing a route that gives that sale up.
  * @param {string} hrid - Item HRID
  * @param {number} level - Enhancement level
- * @returns {number} Sale value, 0 when unpriced
+ * @returns {number} After-tax sale value, 0 when unpriced
  */
 function sellValue(hrid, level) {
-    return resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }).price || 0;
+    return afterSaleTax(resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }).price);
 }
 
 /**
@@ -3593,10 +3609,7 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData, options = 
     if (refine) {
         // Judged after resale: refining a worn base gives up what that base would have sold for
         const forfeited = (refine.consumed || []).reduce(
-            (sum, piece) =>
-                sum +
-                (piece.share ?? 1) *
-                    (resolveItemPrice(piece.hrid, { side: 'sell', enhancementLevel: piece.level }).price || 0),
+            (sum, piece) => sum + (piece.share ?? 1) * sellValue(piece.hrid, piece.level),
             0
         );
         if (direct.price == null || refine.price + forfeited < direct.price) chosen = refine;
@@ -4173,7 +4186,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
         if (upgraded?.ask > 0 && current?.bid > 0) {
             const name = nameOf(candidate.currentHrid);
-            const { credit, capped } = capEnhancementCredit(upgraded.ask, current.bid);
+            const proceeds = afterSaleTax(current.bid);
+            const { credit, capped } = capEnhancementCredit(upgraded.ask, proceeds);
             return {
                 buys: [
                     {
@@ -4190,7 +4204,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                         name,
                         enhancementLevel: candidate.currentLevel,
                         price: credit,
-                        rawPrice: current.bid,
+                        rawPrice: proceeds,
+                        grossPrice: current.bid,
                     },
                 ],
                 gross: upgraded.ask,
@@ -4198,10 +4213,11 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                 net: upgraded.ask - credit,
                 unpriced: [],
                 creditApplied: true,
-                // The current level's bid outbid the target's ask and was cut
-                // down to it; `rawCredit` is the bid as the order book had it
+                // The current level's after-tax proceeds outbid the target's ask and were cut down to it;
+                // `rawCredit` is those proceeds, `rawBid` the bid as the order book had it
                 creditCapped: capped,
-                rawCredit: current.bid,
+                rawCredit: proceeds,
+                rawBid: current.bid,
                 source: 'market',
                 enhanceSource: null,
             };
@@ -4277,7 +4293,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         enhancementLevel: item.enhancementLevel || 0,
         price:
             (1 - consumedShare(refineConsumed, item.hrid, item.enhancementLevel || 0)) *
-            (resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price || 0),
+            sellValue(item.hrid, item.enhancementLevel || 0),
     }));
 
     const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);
@@ -5639,7 +5655,8 @@ export function explainLabCandidateCost(candidate, gameData, isSelf = true) {
             hrid: item.hrid,
             name: nameOf(item.hrid),
             enhancementLevel: item.enhancementLevel || 0,
-            price: price || 0,
+            // What keeping it gives up: the sale after tax, the figure a sold piece would have been credited
+            price: afterSaleTax(price),
             // False where there is no price at all (untradable, nothing listed), which
             // a note must tell apart from a price that is truly 0
             priced: Number.isFinite(price),

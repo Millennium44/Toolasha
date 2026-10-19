@@ -980,7 +980,7 @@ export function upgradeCostCell(result) {
                 text: 'free',
                 color: '#ff9800',
                 title:
-                    `Resale credit capped at the purchase: the current item's bid of ` +
+                    `Resale credit capped at the purchase: the current item's after-tax resale of ` +
                     `${formatKMB(result.costDetail.rawCredit)} looks out of line with the market.`,
             };
         }
@@ -11480,7 +11480,7 @@ class CombatSimUI {
         } else if (detail && (detail.gross != null || detail.credit)) {
             const gross = detail.gross == null ? 'no price' : formatKMB(detail.gross);
             parts.push(
-                `<span style="color:#888;">Buys ${gross}, resale credit ${formatKMB(detail.credit || 0)}.</span>`
+                `<span style="color:#888;">Buys ${gross}, resale credit ${formatKMB(detail.credit || 0)} after tax.</span>`
             );
         }
 
@@ -11489,7 +11489,7 @@ class CombatSimUI {
         // purchase so the row reads as free rather than as a windfall
         if (detail?.creditCapped) {
             parts.push(
-                `<span style="color:#ff9800;">Resale credit capped at the purchase: the current item's bid of ` +
+                `<span style="color:#ff9800;">Resale credit capped at the purchase: the current item's after-tax resale of ` +
                     `${formatKMB(detail.rawCredit)} looks out of line with the market.</span>`
             );
         }

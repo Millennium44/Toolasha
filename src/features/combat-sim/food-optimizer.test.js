@@ -7,7 +7,12 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('./combat-sim-runner.js', () => ({ runSimulation: vi.fn() }));
-vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn() }));
+vi.mock('../../utils/profit-helpers.js', () => ({
+    // The 4% market sell tax a resale pays
+    calculatePriceAfterTax: (price, rate = 0.04) => price * (1 - rate),
+    outputTaxRate: (rate = 0.04) => rate,
+    resolveItemPrice: vi.fn(),
+}));
 
 const {
     restoreSignature,

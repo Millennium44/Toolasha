@@ -446,6 +446,10 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
 // The real one returns `{ price, source }`; the food substitution reads `.price`
 // off it, so the stub has to be that shape rather than a bare number
 vi.mock('../../utils/profit-helpers.js', () => ({
+    // The 4% market sell tax a resale pays
+    calculatePriceAfterTax: (price, rate = 0.04) => price * (1 - rate),
+    outputTaxRate: (rate = 0.04) => rate,
+
     resolveItemPrice: (hrid) => ({ price: mocks.itemPrices[hrid] ?? 0 }),
 }));
 // A minimal stand-in for the real pricing-mode/patient-tick resolution: reads

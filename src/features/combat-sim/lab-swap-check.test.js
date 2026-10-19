@@ -154,6 +154,11 @@ vi.mock('./direct-enhancement-cost.js', () => ({
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({ describeEnhancementSource: () => null }));
 vi.mock('../../utils/profit-helpers.js', () => ({
+    // Untaxed, as for an Iron Cow character: this suite is about which route a row is priced by, and its
+    // figures are gross. The market sell tax on a resale is tested in upgrade-advisor.test.js
+    calculatePriceAfterTax: (price) => price,
+    outputTaxRate: () => 0,
+
     resolveItemPrice: vi.fn(() => ({ price: 2_000_000 })),
 }));
 vi.mock('../../utils/market-data.js', () => ({

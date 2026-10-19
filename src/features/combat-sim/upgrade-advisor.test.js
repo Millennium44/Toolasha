@@ -26,6 +26,9 @@ const partialBase = vi.hoisted(() => new Set());
  */
 const token = vi.hoisted(() => ({ goldPerToken: null }));
 
+/** Whether the character is Iron Cow, which pays no market sell tax on a resale */
+const saleTax = vi.hoisted(() => ({ ironCow: false }));
+
 /** What the character holds, worn and loose; empty unless a test says otherwise */
 const held = vi.hoisted(() => ({ items: [] }));
 
@@ -131,7 +134,12 @@ vi.mock('./labyrinth-level-finder.js', () => ({
     findMaxLabyrinthLevel: vi.fn(),
     defaultThreshold: () => 0.7,
 }));
-vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn() }));
+vi.mock('../../utils/profit-helpers.js', () => ({
+    // The 4% market sell tax a resale pays; `saleTax.ironCow` is the character the market never taxes
+    calculatePriceAfterTax: (price, rate = 0.04) => price * (1 - (saleTax.ironCow ? 0 : rate)),
+    outputTaxRate: (rate = 0.04) => (saleTax.ironCow ? 0 : rate),
+    resolveItemPrice: vi.fn(),
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: vi.fn() }));
 // Partial: the chain solve is stubbed so a test can say how many attempts a run
 // takes, but the cost statistics the shared sweep reads off that solve are the
@@ -3499,7 +3507,8 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
             buildGameData()
         );
 
-        expect(cost).toBe(199_000_000);
+        // The old sword's 1M sells for 960K after the 4% market tax
+        expect(cost).toBe(199_040_000);
     });
 
     test('falls back to base price plus enhancement cost when the level has no listing', () => {
@@ -4308,7 +4317,8 @@ describe('explainUpgradeCost', () => {
         };
 
         const detail = explainUpgradeCost(candidate, costGameData());
-        expect(detail).toMatchObject({ gross: 5_000_000, credit: 2_000_000, net: 3_000_000, source: 'market' });
+        // The +4 sells into its 2M bid and pays 1.92M after tax
+        expect(detail).toMatchObject({ gross: 5_000_000, credit: 1_920_000, net: 3_080_000, source: 'market' });
         expect(detail.net).toBe(calculateUpgradeCost(candidate, costGameData()));
         expect(detail.creditCapped).toBe(false);
     });
@@ -4339,12 +4349,19 @@ describe('explainUpgradeCost', () => {
             source: 'market',
             creditApplied: true,
             creditCapped: true,
-            rawCredit: 312_000_000_000,
+            // The proceeds the cap cut, after tax, and the bid they came from
+            rawCredit: 299_520_000_000,
+            rawBid: 312_000_000_000,
         });
         expect(detail.buys).toEqual([expect.objectContaining({ enhancementLevel: 12, price: 108_000_000 })]);
         // The line says what was credited, and keeps the bid it was capped from
         expect(detail.credits).toEqual([
-            expect.objectContaining({ enhancementLevel: 10, price: 108_000_000, rawPrice: 312_000_000_000 }),
+            expect.objectContaining({
+                enhancementLevel: 10,
+                price: 108_000_000,
+                rawPrice: 299_520_000_000,
+                grossPrice: 312_000_000_000,
+            }),
         ]);
     });
 
@@ -4366,7 +4383,7 @@ describe('explainUpgradeCost', () => {
 
         expect(detail.buys.map((b) => b.name)).toEqual(['Fire Top', 'Fire Bottoms']);
         expect(detail.credits.map((c) => c.name)).toEqual(['Nature Top']);
-        expect(detail.credit).toBe(1_000_000);
+        expect(detail.credit).toBe(960_000);
     });
 
     test('names the unpriced item that makes a cost unknown', () => {
@@ -5840,7 +5857,8 @@ describe('an upgrade that pays for itself', () => {
             buildGameData()
         );
 
-        expect(cost).toBe(-40_000_000);
+        // 50M resale pays 48M after tax
+        expect(cost).toBe(-38_000_000);
     });
 
     // Not an enhancement, though: the same item at a lower level outbidding the
@@ -6904,7 +6922,7 @@ describe('crediting the resale of what a swap replaces', () => {
     });
 
     test('an ordinary trade still nets the old piece off the new one', () => {
-        expect(calculateUpgradeCost(candidate(), gameData)).toBe(10_000_000 - 400_000_000);
+        expect(calculateUpgradeCost(candidate(), gameData)).toBe(10_000_000 - 384_000_000);
     });
 
     test('a swap that keeps what it replaces is priced at the new piece alone', () => {
@@ -8096,5 +8114,135 @@ describe('profit significance is judged in gold against the gross scale (#541)',
 
         expect(verdict.dps).toBe(true);
         expect(verdict.profit).toBe(false);
+    });
+});
+
+describe('a resale credits what the sale pays after the market tax (#539)', () => {
+    const BODY = '/equipment_types/body';
+    const LEGS = '/equipment_types/legs';
+    const gameData = () => ({
+        itemDetailMap: {
+            '/items/cheese_sword': { name: 'Cheese Sword', isTradable: true, equipmentDetail: { type: MAIN_HAND } },
+            '/items/verdant_sword': { name: 'Verdant Sword', isTradable: true, equipmentDetail: { type: MAIN_HAND } },
+            '/items/fire_top': { name: 'Fire Top', isTradable: true, equipmentDetail: { type: BODY } },
+            '/items/fire_bottoms': { name: 'Fire Bottoms', isTradable: true, equipmentDetail: { type: LEGS } },
+            '/items/nature_top': { name: 'Nature Top', isTradable: true, equipmentDetail: { type: BODY } },
+            '/items/nature_bottoms': { name: 'Nature Bottoms', isTradable: true, equipmentDetail: { type: LEGS } },
+        },
+    });
+    const enhance = {
+        type: 'enhancement',
+        slot: MAIN_HAND,
+        currentHrid: '/items/cheese_sword',
+        currentLevel: 7,
+        upgradeHrid: '/items/cheese_sword',
+        upgradeLevel: 10,
+    };
+
+    beforeEach(() => {
+        saleTax.ironCow = false;
+        // No mirror quote, so the ordinary market route is the one priced
+        resolveItemPrice.mockImplementation(() => ({ price: null }));
+    });
+
+    afterEach(() => {
+        saleTax.ironCow = false;
+    });
+
+    test('an enhancement whose bid equals the ask costs the 4M tax, not nothing', () => {
+        getItemPrices.mockReturnValue({ ask: 100_000_000, bid: 100_000_000 });
+
+        const cost = calculateUpgradeCost(enhance, gameData());
+        const detail = explainUpgradeCost(enhance, gameData());
+
+        expect(cost).toBe(4_000_000);
+        expect(detail).toMatchObject({ gross: 100_000_000, credit: 96_000_000, net: 4_000_000, creditCapped: false });
+    });
+
+    test('and a budget below the tax cannot buy it', () => {
+        getItemPrices.mockReturnValue({ ask: 100_000_000, bid: 100_000_000 });
+        const cost = calculateUpgradeCost(enhance, gameData());
+
+        const plan = planWithinBudget([{ candidate: enhance, cost, attemptsDelta: -1 }], 3_999_999);
+
+        expect(plan.picks).toHaveLength(0);
+    });
+
+    test('a tier swap nets the replaced piece after tax', () => {
+        resolveItemPrice.mockImplementation((hrid, { side }) =>
+            side === 'sell' ? { price: 100_000_000 } : { price: hrid === '/items/verdant_sword' ? 120_000_000 : null }
+        );
+        getItemPrices.mockReturnValue({ ask: 120_000_000, bid: 100_000_000 });
+        const swap = {
+            type: 'tier',
+            slot: MAIN_HAND,
+            currentHrid: '/items/cheese_sword',
+            currentLevel: 7,
+            upgradeHrid: '/items/verdant_sword',
+            upgradeLevel: 7,
+        };
+
+        expect(calculateUpgradeCost(swap, gameData())).toBe(24_000_000);
+        expect(explainUpgradeCost(swap, gameData())).toMatchObject({ credit: 96_000_000, net: 24_000_000 });
+    });
+
+    test('a two-piece cross-slot swap nets each piece after tax', () => {
+        resolveItemPrice.mockImplementation((_hrid, { side }) => ({
+            price: side === 'sell' ? 10_000_000 : 30_000_000,
+        }));
+        getItemPrices.mockReturnValue({ ask: 30_000_000, bid: 10_000_000 });
+        const swap = {
+            type: 'cross_slot',
+            addedSlots: {
+                [BODY]: { hrid: '/items/fire_top', enhancementLevel: 0 },
+                [LEGS]: { hrid: '/items/fire_bottoms', enhancementLevel: 0 },
+            },
+            removedItems: [
+                { hrid: '/items/nature_top', enhancementLevel: 0 },
+                { hrid: '/items/nature_bottoms', enhancementLevel: 0 },
+            ],
+        };
+
+        const cost = calculateUpgradeCost(swap, gameData());
+        expect(cost).toBe(60_000_000 - 2 * 9_600_000);
+        expect(explainUpgradeCost(swap, gameData()).net).toBe(cost);
+    });
+
+    test('a fractional payout is floored to whole coins, as the game pays a sale', () => {
+        resolveItemPrice.mockImplementation((hrid, { side }) =>
+            side === 'sell' ? { price: 1_001 } : { price: hrid === '/items/verdant_sword' ? 5_000 : null }
+        );
+        getItemPrices.mockReturnValue(null);
+        const swap = {
+            type: 'tier',
+            slot: MAIN_HAND,
+            currentHrid: '/items/cheese_sword',
+            currentLevel: 0,
+            upgradeHrid: '/items/verdant_sword',
+            upgradeLevel: 0,
+        };
+
+        // 1,001 × 0.96 = 960.96 → 960
+        expect(calculateUpgradeCost(swap, gameData())).toBe(5_000 - 960);
+    });
+
+    test('an Iron Cow character pays no market tax, so its resale is credited whole', () => {
+        saleTax.ironCow = true;
+        getItemPrices.mockReturnValue({ ask: 100_000_000, bid: 90_000_000 });
+
+        expect(calculateUpgradeCost(enhance, gameData())).toBe(10_000_000);
+    });
+
+    test('the outlier cap is weighed against the after-tax proceeds', () => {
+        // 104M bid pays 99.84M: under the 100M ask, so an ordinary trade, not a capped outlier
+        getItemPrices.mockImplementation((_hrid, level) =>
+            level === 10 ? { ask: 100_000_000, bid: 1 } : { ask: 200_000_000, bid: 104_000_000 }
+        );
+
+        const detail = explainUpgradeCost(enhance, gameData());
+
+        expect(detail.creditCapped).toBe(false);
+        expect(detail.net).toBe(160_000);
+        expect(calculateUpgradeCost(enhance, gameData())).toBe(160_000);
     });
 });
