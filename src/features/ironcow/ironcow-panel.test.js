@@ -16,7 +16,15 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const plan = vi.hoisted(() => ({ state: null, stages: [] }));
 const loop = vi.hoisted(() => ({ result: null, warnings: [], pricing: null, offline: null, pending: null }));
-const store = vi.hoisted(() => ({ overrides: {}, snapshot: null, written: [], collapsed: false, collapses: [] }));
+const store = vi.hoisted(() => ({
+    overrides: {},
+    snapshot: null,
+    written: [],
+    collapsed: false,
+    collapses: [],
+    snapshotGate: null,
+    overrideGate: null,
+}));
 const walk = vi.hoisted(() => ({ started: [], succeeds: true }));
 // What the queue walk reports; null is "the actions bundle is not there"
 const coinWalk = vi.hoisted(() => ({ walked: null }));
@@ -79,7 +87,13 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 
 vi.mock('./ironcow-store.js', () => ({
     loadOverrides: async () => store.overrides,
-    loadSnapshot: async () => store.snapshot,
+    loadSnapshot: async () => {
+        // The value is read first and delivered after the gate, like a slow read that started for
+        // whoever was current when it began
+        const value = store.snapshot;
+        if (store.snapshotGate) await store.snapshotGate;
+        return value;
+    },
     saveSnapshot: async (value) => {
         store.snapshot = value;
     },
@@ -89,6 +103,11 @@ vi.mock('./ironcow-store.js', () => ({
         store.collapsed = value;
     },
     setOverride: async (id, ticked) => {
+        if (store.overrideGate) {
+            const map = { ...store.overrides, [id]: true };
+            await store.overrideGate;
+            return map;
+        }
         store.written.push([id, ticked]);
         if (ticked) store.overrides[id] = true;
         else delete store.overrides[id];
@@ -144,6 +163,7 @@ vi.mock('./coin-reserve.js', async (importOriginal) => {
 });
 
 const { ironCowFarmPanel } = await import('./ironcow-panel.js');
+const { default: ironCowRuntime } = await import('./ironcow-runtime.js');
 
 const text = () => ironCowFarmPanel.panel?.textContent ?? '';
 const FAILED = 'could not be drawn';
@@ -207,6 +227,8 @@ beforeEach(() => {
     characterId.current = 'charA';
     store.overrides = {};
     store.snapshot = null;
+    store.snapshotGate = null;
+    store.overrideGate = null;
     store.written = [];
     store.collapsed = false;
     store.collapses = [];
@@ -639,6 +661,116 @@ describe('lifecycle', () => {
         expect(ironCowFarmPanel.loop).toBeNull();
         expect(ironCowFarmPanel.pricedAt).toBeNull();
         expect(store.snapshot).toBeNull();
+    });
+});
+
+describe('character switches around a pending read', () => {
+    /** A gate a test opens by hand */
+    function gate() {
+        let open;
+        const promise = new Promise((resolve) => {
+            open = resolve;
+        });
+        return { promise, open };
+    }
+
+    /** Let a started load reach its pending read */
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    test("a late snapshot read for the departing character does not overwrite the arriving character's panel", async () => {
+        store.snapshot = costedLoop({ bells: { perHour: 1, perDay: 24, perWeek: 41_000 } });
+        const gateA = gate();
+        store.snapshotGate = gateA.promise;
+        const loadingA = ironCowFarmPanel.load();
+        await settle();
+
+        ironCowFarmPanel.disable();
+        characterId.current = 'charB';
+        store.snapshot = costedLoop({ bells: { perHour: 1, perDay: 24, perWeek: 7_000 } });
+        store.snapshotGate = null;
+        await ironCowFarmPanel.load();
+        expect(ironCowFarmPanel.loop.bells.perWeek).toBe(7_000);
+
+        gateA.open();
+        await loadingA;
+        expect(ironCowFarmPanel.loop.bells.perWeek).toBe(7_000);
+        expect(ironCowRuntime.loop.bells.perWeek).toBe(7_000);
+    });
+
+    test('a superseded load never publishes, even for the same character (A, B, A)', async () => {
+        store.snapshot = costedLoop({ bells: { perHour: 1, perDay: 24, perWeek: 100 } });
+        const gateOld = gate();
+        store.snapshotGate = gateOld.promise;
+        const old = ironCowFarmPanel.load();
+        await settle();
+        ironCowFarmPanel.disable();
+        characterId.current = 'charB';
+        ironCowFarmPanel.disable();
+        characterId.current = 'charA';
+        store.snapshot = costedLoop({ bells: { perHour: 1, perDay: 24, perWeek: 200 } });
+        store.snapshotGate = null;
+        await ironCowFarmPanel.load();
+
+        gateOld.open();
+        await old;
+        expect(ironCowFarmPanel.loop.bells.perWeek).toBe(200);
+    });
+
+    test('of two overlapping loads for one character the later one wins', async () => {
+        const gateFirst = gate();
+        store.snapshot = costedLoop({ bells: { perHour: 1, perDay: 24, perWeek: 100 } });
+        store.snapshotGate = gateFirst.promise;
+        const first = ironCowFarmPanel.load();
+        await settle();
+        store.snapshot = costedLoop({ bells: { perHour: 1, perDay: 24, perWeek: 200 } });
+        store.snapshotGate = null;
+        await ironCowFarmPanel.load();
+        gateFirst.open();
+        await first;
+        expect(ironCowFarmPanel.loop.bells.perWeek).toBe(200);
+    });
+
+    test("a late stage tick for the departing character does not replace the arriving character's ticks", async () => {
+        const gateA = gate();
+        store.overrideGate = gateA.promise;
+        const ticking = ironCowFarmPanel.toggleStage('new-stage', true);
+
+        ironCowFarmPanel.disable();
+        characterId.current = 'charB';
+        store.overrideGate = null;
+        store.overrides = { b: true };
+        await ironCowFarmPanel.load();
+        expect(ironCowFarmPanel.overrides).toEqual({ b: true });
+
+        gateA.open();
+        await ticking;
+        expect(ironCowFarmPanel.overrides).toEqual({ b: true });
+        expect(ironCowRuntime.overrides).toEqual({ b: true });
+    });
+
+    test('a refresh waiting on a load does not cost for the next character', async () => {
+        const gateA = gate();
+        store.snapshotGate = gateA.promise;
+        ironCowFarmPanel.show();
+        const refreshing = ironCowFarmPanel.refresh();
+
+        ironCowFarmPanel.disable();
+        characterId.current = 'charB';
+        store.snapshotGate = null;
+        await ironCowFarmPanel.load();
+        gateA.open();
+        await refreshing;
+
+        expect(ironCowFarmPanel.loop).toBeNull();
+        expect(store.snapshot).toBeNull();
+    });
+
+    test('an ordinary load, tick and refresh for one character still land', async () => {
+        await ironCowFarmPanel.load();
+        await ironCowFarmPanel.toggleStage('x', true);
+        expect(ironCowFarmPanel.overrides).toEqual({ x: true });
+        await ironCowFarmPanel.refresh();
+        expect(ironCowFarmPanel.loop).not.toBeNull();
     });
 });
 

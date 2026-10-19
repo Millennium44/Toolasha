@@ -300,6 +300,12 @@ class IronCowFarmPanel {
         this.queueRefs = null;
         this.busy = false;
         this.loaded = null;
+        // Bumped by disable() (a character switch or the feature going off): every pending load, costing
+        // or stage tick belongs to the lifetime it started in and drops its result once that has ended,
+        // even if the same character is current again (A -> B -> A)
+        this._lifeGen = 0;
+        // Bumped by each load() start, so overlapping loads are latest-wins
+        this._loadGen = 0;
         // The overlay tile opens the same panel this toggles, and reads the
         // loop and the overrides through the same runtime object this keeps
         // current below.
@@ -370,7 +376,25 @@ class IronCowFarmPanel {
     /** Feature-registry teardown */
     disable() {
         unregisterCommand('Iron Bell Farming');
+        // End this lifetime: whatever read or costing is still in flight must not publish into the
+        // next character's state, and the next open must read afresh rather than reuse a stale promise
+        this._lifeGen++;
+        this._loadGen++;
+        this.loaded = null;
         this._remove();
+    }
+
+    /** @returns {{charId: *, life: number}} Who and which lifetime an async operation starts for */
+    _owner() {
+        return { charId: dataManager.getCurrentCharacterId(), life: this._lifeGen };
+    }
+
+    /**
+     * @param {{charId: *, life: number}} owner - From `_owner()`
+     * @returns {boolean} Whether that operation is still for the current character and lifetime
+     */
+    _owns(owner) {
+        return owner.life === this._lifeGen && owner.charId === dataManager.getCurrentCharacterId();
     }
 
     /**
@@ -378,7 +402,13 @@ class IronCowFarmPanel {
      * @returns {Promise<void>}
      */
     async load() {
-        this.overrides = await loadOverrides();
+        const owner = this._owner();
+        const gen = ++this._loadGen;
+        // Every read lands in a local and is checked before anything is published, so a load that was
+        // superseded (a newer load, a disable, a character switch) never touches this.* or the runtime
+        const current = () => gen === this._loadGen && this._owns(owner);
+        const overrides = await loadOverrides();
+        if (!current()) return;
         // Unconditional: disable()/_remove() only tears down the DOM, not
         // this.loop/this.pricedAt, so on a character switch a character with
         // no snapshot of their own must still overwrite whatever the previous
@@ -386,19 +416,23 @@ class IronCowFarmPanel {
         // the overlay tile, which reads ironCowRuntime.loop) would keep
         // showing the departing character's costed gold/hour, bells/week,
         // and "costed <time>" as if they were this character's.
-        this.planCollapsed = await loadPlanCollapsed();
+        const planCollapsed = await loadPlanCollapsed();
+        if (!current()) return;
         // Per character, like everything else here: the window a batch is sized
         // against is this character's, and a duration typed for the last one is
         // not an answer for this one.
         const window = offlineWindow();
-        if (window?.hours > 0) this.batchHours = window.hours;
-        this.batchUnit = 'h';
         let snapshot = await loadSnapshot();
+        if (!current()) return;
         // A snapshot costed when a loose cowbell price was still taken: its bell price and every
         // bell figure rest on a price nobody can buy at, so it waits for a fresh costing instead
         // The same goes for any snapshot from before bag prices were read off the book (no `quoted`):
         // an Iron Cow valuation setting could have stood in for the bag's price
         if (snapshot?.bellPricing && !('quoted' in snapshot.bellPricing)) snapshot = null;
+        this.overrides = overrides;
+        this.planCollapsed = planCollapsed;
+        if (window?.hours > 0) this.batchHours = window.hours;
+        this.batchUnit = 'h';
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
         this._render();
@@ -414,7 +448,10 @@ class IronCowFarmPanel {
         // instantly, then fills in). Wait for that read to land first so it
         // can never resolve after this and clobber the freshly-costed loop
         // back to whatever (or nothing) was last on disk.
+        const owner = this._owner();
         if (this.loaded) await this.loaded;
+        // The wait can span a character switch; the work below is for whoever asked
+        if (!this._owns(owner)) return;
         // Captured before the slow costing below: `calculateStarfruitLoop()`
         // runs the gathering and alchemy calculators against whatever game
         // data is loaded, which can take long enough for the player to switch
@@ -425,12 +462,11 @@ class IronCowFarmPanel {
         // mid-costing applies the departing character's freshly-priced loop
         // to the arriving character, in memory and in storage, clobbering
         // whatever `load()` had just correctly set up for them.
-        const charId = dataManager.getCurrentCharacterId();
         this.busy = true;
         this._status('Costing…');
         try {
             const loop = await calculateStarfruitLoop();
-            if (dataManager.getCurrentCharacterId() !== charId) {
+            if (!this._owns(owner)) {
                 // The character this costing was for is gone; their panel
                 // already loaded its own state, and this stale result must
                 // not overwrite it.
@@ -459,7 +495,12 @@ class IronCowFarmPanel {
      * @returns {Promise<void>}
      */
     async toggleStage(stageId, ticked) {
-        this.overrides = await setOverride(stageId, ticked);
+        const owner = this._owner();
+        const overrides = await setOverride(stageId, ticked);
+        // The store already refuses the write for a switched character; the in-memory map and the
+        // overlay's runtime copy must refuse it too
+        if (!this._owns(owner)) return;
+        this.overrides = overrides;
         this._render();
     }
 
