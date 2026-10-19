@@ -1238,6 +1238,7 @@ describe('the registry entries the entrypoint hands over', () => {
         'combatConsumableAlerts',
         'labyrinthEntryAlerts',
         'combatDeathAlerts',
+        'combatDeathRecap',
         'ttlTargetAlerts',
         'enhancementTargetAlerts',
         'philoStoneAlerts',

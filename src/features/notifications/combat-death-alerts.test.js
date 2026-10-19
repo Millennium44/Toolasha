@@ -16,6 +16,7 @@ const game = vi.hoisted(() => ({
     wsHandlers: {},
     dmHandlers: {},
     notified: [],
+    opened: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -53,6 +54,13 @@ vi.mock('./notification-service.js', () => ({
     },
 }));
 
+vi.mock('./death-recap.js', () => ({
+    openRecap: (...args) => {
+        game.opened.push(args);
+        return true;
+    },
+}));
+
 const { default: combatDeathAlerts, MASTER_SETTING } = await import('./combat-death-alerts.js');
 
 /** A `new_battle` payload with the given death counts */
@@ -71,6 +79,7 @@ describe('combat death alerts', () => {
         game.wsHandlers = {};
         game.dmHandlers = {};
         game.notified = [];
+        game.opened = [];
         combatDeathAlerts.disable();
         await combatDeathAlerts.initialize();
     });
@@ -96,6 +105,17 @@ describe('combat death alerts', () => {
         expect(game.notified[0].message).toContain('You died in combat');
         expect(game.notified[0].message).toContain('1 death');
         expect(game.notified[0].options.title).toBe('You died');
+    });
+
+    test('the alert carries an action that opens the death recap', () => {
+        send(battle(['me', 0]));
+        send(battle(['me', 1]));
+
+        const { action } = game.notified[0].options;
+        expect(action.label).toMatch(/recap/i);
+        expect(game.opened).toHaveLength(0);
+        action.onClick();
+        expect(game.opened).toHaveLength(1);
     });
 
     test('several deaths at once are reported as the total, pluralised', () => {

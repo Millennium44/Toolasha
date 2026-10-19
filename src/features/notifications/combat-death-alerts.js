@@ -38,6 +38,7 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
 import { newDeaths } from './notification-predicates.js';
+import { openRecap } from './death-recap.js';
 
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_combatDeath';
@@ -124,6 +125,8 @@ class CombatDeathAlerts {
         const total = count === 1 ? '1 death' : `${count} deaths`;
         notificationService.notify(EVENT_KEY, `You died in combat — ${total} so far this session.`, {
             title: 'You died',
+            // Opened on click, by which time the recap module has frozen or confirmed this death's recap
+            action: { label: 'View death recap', onClick: () => openRecap() },
         });
     }
 
