@@ -4918,6 +4918,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays your collection count on skilling actions (open Collections once to populate counts)',
             },
+            achievementFinisher: {
+                id: 'achievementFinisher',
+                label: 'Achievement tier finisher: per-tier checklist and reward on the Achievements page',
+                type: 'checkbox',
+                default: true,
+                help: 'A collapsible panel on your own Achievements page listing, for each tier, which achievements are done and which are left before the tier reward. Rewards other than the three combat tiers are marked as inferred. The game data gives done or not done only, so no progress inside an achievement is shown (except the Collection and Bestiary point totals).',
+            },
             collectionOptimizer: {
                 id: 'collectionOptimizer',
                 label: 'Collection Points Optimizer: cheapest next collection points on the Collections tab',
