@@ -6776,16 +6776,20 @@ export function planWithinBudget(
             pinnedKeys.add(key);
         }
         spent += entry.result.cost;
-        picks.push({
+        // Credited like a free pick: a drink saves nothing in a room whose free slots earlier pins already took
+        const credited = effectiveSavings(entry);
+        const pick = {
             ...entry.result,
             pinned: true,
             marginalAttemptsSaved: marginal,
-            rooms: entry.savings.filter((saving) => saving > 0).length,
-        });
+            rooms: credited.filter((saving) => saving > 0).length,
+        };
+        picks.push(pick);
+        creditedOf.set(pick, credited);
         const standing = bestBySlot.get(entry.key) || entry.savings.map(() => 0);
         bestBySlot.set(
             entry.key,
-            standing.map((saving, index) => Math.max(saving, entry.savings[index]))
+            standing.map((saving, index) => Math.max(saving, credited[index]))
         );
     };
 
@@ -6831,11 +6835,27 @@ export function planWithinBudget(
                 ),
             Infinity
         );
-        if (pinnedDrinks.length > drinkRoom) {
+        // With per-fight capacities, the same rule the fill uses: a pinned drink with no fight left that has room
+        // for it (after the pins before it) cannot be installed anywhere
+        const perFight = pinnedDrinks.length > 0 && pinnedDrinks.every((entry) => roomsOf(entry.result));
+        const usedIn = [];
+        const unplaceable = perFight
+            ? pinnedDrinks.filter((entry) => {
+                  const rooms = roomsOf(entry.result);
+                  const fits = entry.savings.some((saving, i) => saving > 0 && (usedIn[i] || 0) < (rooms[i] ?? 0));
+                  entry.savings.forEach((_, i) => {
+                      if (addedIn(entry.result, i)) usedIn[i] = (usedIn[i] || 0) + 1;
+                  });
+                  return !fits;
+              }).length
+            : 0;
+        if (perFight ? unplaceable > 0 : pinnedDrinks.length > drinkRoom) {
             blocked.push({
                 kind: 'drink-slots',
                 ids: pinnedDrinks.map((entry) => entry.id),
-                reason: `${pinnedDrinks.length} pinned drinks but only ${drinkRoom} free drink slot${drinkRoom === 1 ? '' : 's'}.`,
+                reason: perFight
+                    ? `${pinnedDrinks.length} pinned drinks, but no fight has a free drink slot left for ${unplaceable === 1 ? 'one of them' : `${unplaceable} of them`}.`
+                    : `${pinnedDrinks.length} pinned drinks but only ${drinkRoom} free drink slot${drinkRoom === 1 ? '' : 's'}.`,
             });
         }
         const pinCost = pinnedEntries.reduce((sum, entry) => sum + entry.result.cost, 0);

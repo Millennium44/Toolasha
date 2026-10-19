@@ -8999,6 +8999,28 @@ describe('the all-fights plan counts free drink slots per fight (#560 review)', 
         expect(plan.attemptsSaved).toBeCloseTo(5);
     });
 
+    test('pinned additions are credited only in the rooms that still had a free slot', () => {
+        const free = [3, 1, 0];
+        const rows = [addition('a', free), addition('b', free), addition('c', free)];
+        const plan = planWithinBudget(rows, 1000, { baselineFights: BASELINE, required: rows.map(candidateKey) });
+
+        expect(plan.blocked).toBeNull();
+        expect(plan.picks).toHaveLength(3);
+        expect(plan.attemptsSaved).toBeCloseTo(4);
+        expect(plan.picks.map((pick) => pick.rooms).sort()).toEqual([1, 1, 2]);
+        expect(plan.picks.reduce((sum, pick) => sum + pick.marginalAttemptsSaved, 0)).toBeCloseTo(4);
+    });
+
+    test('pinning more additions than any room has free slots blocks the plan', () => {
+        const free = [1, 1, 0];
+        const rows = [addition('a', free), addition('b', free)];
+        const plan = planWithinBudget(rows, 1000, { baselineFights: BASELINE, required: rows.map(candidateKey) });
+
+        expect(plan.blocked.map((x) => x.kind)).toEqual(['drink-slots']);
+        expect(plan.blocked[0].reason).toContain('no fight has a free drink slot left');
+        expect(plan.picks).toEqual([]);
+    });
+
     test('rows without per-fight slots keep the single capacity the candidate carried', () => {
         const rows = ['a', 'b', 'c', 'd'].map((name) => {
             const row = addition(name, [3, 3, 3]);
