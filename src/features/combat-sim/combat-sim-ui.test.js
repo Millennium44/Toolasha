@@ -1193,6 +1193,44 @@ describe('the panel', () => {
         expect(ui._upgradeRunning).toBe(false);
     });
 
+    test('a stopped run says it covers only part of the run, in the table, the budget and when remembered', async () => {
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 })],
+            candidateCount: 4,
+            food: null,
+        };
+        selectZone();
+        ui._upgradeBudget = 500_000_000;
+        mocks.onRun = () => ui.panel.querySelector('#mwi-csim-upgrade-stop').click();
+
+        await ui._onUpgradeAnalyze();
+        ui._upgradeBudget = 0;
+
+        expect(ui._upgradeResultsData.stopped).toEqual({ completed: 1, total: 4 });
+        const results = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        expect(results.querySelector('[data-upgrade-stopped]').textContent).toContain('stopped early — 1 of 4');
+        expect(results.querySelector('[data-budget-partial]')).toBeTruthy();
+        expect(ui._restoredUpgradeNote(Date.now(), { stopped: ui._upgradeResultsData.stopped })).toContain(
+            'stopped early — 1 of 4 candidates'
+        );
+    });
+
+    test('a run that finished carries no stopped stamp', async () => {
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 })],
+            candidateCount: 1,
+            food: null,
+        };
+        selectZone();
+
+        await ui._onUpgradeAnalyze();
+
+        expect(ui._upgradeResultsData.stopped).toBeUndefined();
+        expect(ui.panel.querySelector('[data-upgrade-stopped]')).toBeNull();
+    });
+
     test('a cancelled analysis with nothing finished says only that', async () => {
         mocks.upgradeResult = { baseline: null, results: [], food: null };
         selectZone();

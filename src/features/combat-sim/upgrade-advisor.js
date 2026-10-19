@@ -4813,6 +4813,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     return {
         baseline: baselineMetrics,
         results,
+        // How many candidates the run set out to measure, so a stopped run can say how much of it it covers
+        candidateCount: candidatesWithCost.length,
         food,
         // Explains an empty house result rather than leaving it as "no upgrades"
         houseScan: candidateModes.includes('house')

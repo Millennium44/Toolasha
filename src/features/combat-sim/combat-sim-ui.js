@@ -1108,6 +1108,18 @@ export function upgradeNoiseFor(result, metricKey = 'dps') {
     };
 }
 
+/**
+ * How a stopped analysis describes itself: "stopped early — 3 of 12 candidates".
+ * @param {{completed: number, total: number|null}} stopped - `results.stopped`, stamped when Stop cut the run short
+ * @returns {string}
+ */
+export function stoppedRunText(stopped) {
+    const completed = Number(stopped?.completed) || 0;
+    const total = Number.isFinite(stopped?.total) ? stopped.total : null;
+    const counted = total != null ? `${completed} of ${total}` : `${completed}`;
+    return `stopped early — ${counted} candidate${(total ?? completed) === 1 ? '' : 's'}`;
+}
+
 /** Shared styling for the small qualifier chips that sit beside a row's name */
 const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-radius:2px; vertical-align:middle;';
 
@@ -10687,6 +10699,12 @@ class CombatSimUI {
             this._restoredUpgradeMeta = null;
             if (this._upgradeAborted) {
                 if (completed) {
+                    // Stamped on the result, so the table, the budget and a remembered copy of it all say the
+                    // run covers only part of what it set out to measure
+                    results.stopped = {
+                        completed,
+                        total: Number.isFinite(results.candidateCount) ? results.candidateCount : null,
+                    };
                     this._renderUpgradeResults(results);
                     this._setStatus(
                         `Analysis cancelled — showing ${completed} completed candidate${completed === 1 ? '' : 's'}.`
@@ -12550,7 +12568,7 @@ class CombatSimUI {
      * @returns {string} HTML
      * @private
      */
-    _renderUpgradeBudget(rows, baseline, orderRows = []) {
+    _renderUpgradeBudget(rows, baseline, orderRows = [], stopped = null) {
         const budget = this._upgradeBudget ?? 0;
         const metricKey = this._upgradePlanMetric || UPGRADE_PLAN_METRICS[0].key;
         const money = (value) => formatKMB(Math.round(value));
@@ -12610,7 +12628,13 @@ class CombatSimUI {
                         ${money(plan.totalCost)} of ${money(budget)} ·
                         <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
-                    </div>${provisional}${this._renderBudgetConfirm(plan, baseline)}`;
+                    </div>${provisional}${
+                        stopped
+                            ? `<div data-budget-partial style="margin-top:4px; color:#e8a87c; font-size:10px;">
+                                Planned from a run that ${stoppedRunText(stopped)}: an upgrade it never reached
+                                is not in this plan.</div>`
+                            : ''
+                    }${this._renderBudgetConfirm(plan, baseline)}`;
             }
         }
 
@@ -13014,6 +13038,8 @@ class CombatSimUI {
     /**
      * A quiet banner saying the shown results are remembered from a previous run.
      * @param {number} savedAt - Epoch ms the results were saved
+     * @param {Object|null} [meta] - `{characterName, zoneName, difficultyTier, stopped}`; `stopped` is the remembered
+     *   run's `results.stopped`, when Stop cut it short
      * @returns {string} HTML
      * @private
      */
@@ -13024,11 +13050,12 @@ class CombatSimUI {
             ? `${meta.zoneName}${Number.isFinite(meta.difficultyTier) ? ` (T${meta.difficultyTier})` : ''}`
             : null;
         const who = [meta?.characterName, zone].filter(Boolean).map(escapeAttribute).join(', ');
+        const stopped = meta?.stopped ? ` (${stoppedRunText(meta.stopped)})` : '';
         return (
             `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; display:flex; ` +
             `align-items:center; justify-content:space-between; gap:8px; ` +
             `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
-            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.</span>` +
+            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}${stopped}. Run a new analysis to refresh them.</span>` +
             `<button data-clear-remembered-upgrade title="Forget these remembered results. Does not affect a running analysis." ` +
             `style="flex:0 0 auto; background:transparent; color:#9ab; border:1px solid rgba(120,150,190,0.4); ` +
             `border-radius:3px; padding:1px 6px; font-size:10px; cursor:pointer; font-family:inherit;">Clear</button>` +
@@ -13755,10 +13782,22 @@ class CombatSimUI {
         const unpricedRows = purchasable.filter((r) => r.cost == null && !scrollRows.includes(r));
 
         let html = foodHtml;
-        if (this._restoredUpgradeAt) {
-            html = this._restoredUpgradeNote(this._restoredUpgradeAt, this._restoredUpgradeMeta) + html;
+        if (results.stopped) {
+            html =
+                `<div data-upgrade-stopped style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#e8a87c; ` +
+                `background:rgba(232,168,124,0.08); border:1px solid rgba(232,168,124,0.3); border-radius:5px;">` +
+                `Analysis ${stoppedRunText(results.stopped)}: these rows are only the candidates measured before ` +
+                `Stop, not every upgrade the run set out to compare.</div>` +
+                html;
         }
-        if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline, orderRows);
+        if (this._restoredUpgradeAt) {
+            html =
+                this._restoredUpgradeNote(this._restoredUpgradeAt, {
+                    ...(this._restoredUpgradeMeta || {}),
+                    stopped: results.stopped || null,
+                }) + html;
+        }
+        if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline, orderRows, results.stopped);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         // The gold table carries the ⚙ Columns popover; with no gold table the
         // level Score would be stuck on its saved metrics and depth, so the
