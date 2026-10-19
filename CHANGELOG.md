@@ -12,9 +12,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Iron Bell, dungeon revive and Lab Replay: three reported bugs
 
-- The Iron Bell panel no longer shows a character you just switched away from: a slow load, costing or stage toggle for the old character is dropped.
-- Combat Sim's dungeon-clear revive removes expired buffs before refilling HP and MP, so a revived player no longer starts the next wave with a pool sized by a buff that already ran out.
-- Lab Replay's damage-per-hit check on older pools compares like with like (damage per swing on both sides) instead of flagging a false gap when damage-over-time is involved.
+- The Iron Bell panel drops a slow load, costing or stage toggle from a character you just switched away from.
+- Combat Sim's dungeon-clear revive removes expired buffs before refilling HP and MP.
+- Lab Replay's damage-per-hit check on older pools no longer flags a false gap when damage over time is involved.
 
 ### Queue times, net worth trends, touch dragging and worker pools: six reported bugs
 
