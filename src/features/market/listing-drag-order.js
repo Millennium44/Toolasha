@@ -321,7 +321,11 @@ class ListingDragOrder {
                 if (!own(e)) return;
                 const started = this.touchDrag.started;
                 this._clearTouchDrag();
-                if (started) this._finishDrag(table);
+                if (!started) return;
+                // Released off the table: the same as a native drag released
+                // elsewhere, so the rows go back and nothing is saved
+                const inTable = !!this._rowAtPoint(e.clientX, e.clientY, tbody);
+                this._finishDrag(table, inTable ? undefined : { dataTransfer: { dropEffect: 'none' } });
             };
             const onCancel = (e) => {
                 if (!own(e)) return;

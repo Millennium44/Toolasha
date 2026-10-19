@@ -419,6 +419,22 @@ describe('finger-driven reordering (no native drag events)', () => {
         expect(game.set).toHaveBeenCalledTimes(1);
     });
 
+    test('releasing a moved row outside the table restores the order and saves nothing', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(handleOf(rows[0]), 'pointermove', 7, 0, 119);
+        expect(rowIds(table)).toEqual(['2', '3', '1']);
+
+        document.elementFromPoint.mockReturnValue(document.body);
+        ptr(document.body, 'pointerup', 7, 900, 900);
+
+        expect(rowIds(table)).toEqual(['1', '2', '3']);
+        expect(game.set).not.toHaveBeenCalled();
+        expect(table.dataset.mwiManualListingOrder).toBeUndefined();
+        expect(listingDragOrder.touchDrag).toBeNull();
+    });
+
     test('a release on the document alone ends the gesture', () => {
         ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
         rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
