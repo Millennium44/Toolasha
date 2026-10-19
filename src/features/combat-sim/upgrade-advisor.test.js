@@ -7933,3 +7933,92 @@ describe('one price snapshot per analysis (#544)', () => {
         expect(analysis.results[0].deltas.profit).toBeCloseTo(20);
     });
 });
+
+describe('Stop keeps the candidates that finished (#540)', () => {
+    const fight = () => ({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 100 });
+
+    function setup() {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0, revenuePerHour: 0, costPerHour: 0 });
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+        plannedWorkerCount.mockReturnValue(1);
+        return {
+            playerDTOs: [
+                {
+                    equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                    abilities: [],
+                    hrid: '/players/me',
+                },
+            ],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: {},
+            upgradeMode: 'equipment',
+        };
+    }
+
+    /** Baseline and the first candidate finish; Stop then rejects every simulation still running */
+    function stopAfterOneCandidate(stop) {
+        let call = 0;
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(() => {
+            call++;
+            if (call <= 2) return Promise.resolve(fight());
+            return new Promise((_resolve, reject) =>
+                setTimeout(() => {
+                    stop();
+                    reject(new Error('Cancelled'));
+                }, 0)
+            );
+        });
+    }
+
+    test('a run stopped mid-way returns the candidate already measured instead of failing', async () => {
+        const state = { aborted: false };
+        stopAfterOneCandidate(() => (state.aborted = true));
+
+        const analysis = await runUpgradeAnalysis(setup(), null, { abortSignal: () => state.aborted });
+
+        expect(analysis.baseline).toBeTruthy();
+        expect(analysis.results).toHaveLength(1);
+        expect(analysis.context).toBeTruthy();
+    });
+
+    test("a cancel that is not this run's Stop is still a failure", async () => {
+        // Another simulator cancelled the workers; this analysis was never stopped
+        stopAfterOneCandidate(() => {});
+
+        await expect(runUpgradeAnalysis(setup(), null, { abortSignal: () => false })).rejects.toThrow('Cancelled');
+    });
+
+    test('Stop during the baseline is a stopped run with nothing measured, not a failure', async () => {
+        const state = { aborted: false };
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(() => {
+            state.aborted = true;
+            return Promise.reject(new Error('Cancelled'));
+        });
+
+        const analysis = await runUpgradeAnalysis(setup(), null, { abortSignal: () => state.aborted });
+
+        expect(analysis).toEqual({ baseline: null, results: [] });
+        expect(runSimulation).toHaveBeenCalledTimes(1);
+    });
+
+    test('a worker that genuinely fails still fails the run', async () => {
+        let call = 0;
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(async () => {
+            call++;
+            if (call === 2) throw new Error('worker died');
+            return fight();
+        });
+
+        await expect(runUpgradeAnalysis(setup(), null, { abortSignal: () => false })).rejects.toThrow('worker died');
+    });
+});

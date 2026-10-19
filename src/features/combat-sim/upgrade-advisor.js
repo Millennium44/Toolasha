@@ -4457,24 +4457,33 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // ranking is a generic zone fight, and switching the task bonus on would
     // credit task gear with damage it only deals while that monster is your
     // task — see the caveat attached in generateCandidates().
-    const baselineResult = await runSimulation(
-        {
-            gameData,
-            playerDTOs,
-            zoneHrid,
-            difficultyTier,
-            hours,
-            communityBuffs,
-            seed: simSeed,
-            taskDamageMode: TASK_DAMAGE_OFF,
-            // The baseline's fight count is what every candidate is paired to,
-            // so precision/max-fights on the baseline set the whole run's sample
-            // size. Null falls back to the plain time budget (`hours`).
-            ...(precision ? { precision } : {}),
-        },
-        null,
-        { workers: 1 }
-    );
+    // Stop rejects the simulation in flight ("Cancelled"). That is this run being stopped, not a failure,
+    // only while this run's own abort flag is set: a cancel from anywhere else still fails the analysis
+    const stoppedHere = () => Boolean(abortSignal?.());
+    let baselineResult;
+    try {
+        baselineResult = await runSimulation(
+            {
+                gameData,
+                playerDTOs,
+                zoneHrid,
+                difficultyTier,
+                hours,
+                communityBuffs,
+                seed: simSeed,
+                taskDamageMode: TASK_DAMAGE_OFF,
+                // The baseline's fight count is what every candidate is paired to,
+                // so precision/max-fights on the baseline set the whole run's sample
+                // size. Null falls back to the plain time budget (`hours`).
+                ...(precision ? { precision } : {}),
+            },
+            null,
+            { workers: 1 }
+        );
+    } catch (error) {
+        if (stoppedHere()) return { baseline: null, results: [] };
+        throw error;
+    }
     current++;
 
     if (abortSignal?.()) return { baseline: null, results: [] };
@@ -4563,22 +4572,29 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             };
         }
 
-        const simResult = await runSimulation(
-            {
-                gameData,
-                playerDTOs: modifiedDTOs,
-                zoneHrid,
-                difficultyTier,
-                hours,
-                communityBuffs: applyCommunityBuffCandidate(communityBuffs, candidate),
-                seed: simSeed,
-                taskDamageMode: TASK_DAMAGE_OFF,
-            },
-            null,
-            // One worker each: the queue is what keeps the cores busy here.
-            // Preempting would have each candidate cancel the one before it.
-            { preempt: false, workers: 1 }
-        );
+        // A candidate Stop interrupts is dropped, and the ones that finished are kept: they are measurements
+        let simResult;
+        try {
+            simResult = await runSimulation(
+                {
+                    gameData,
+                    playerDTOs: modifiedDTOs,
+                    zoneHrid,
+                    difficultyTier,
+                    hours,
+                    communityBuffs: applyCommunityBuffCandidate(communityBuffs, candidate),
+                    seed: simSeed,
+                    taskDamageMode: TASK_DAMAGE_OFF,
+                },
+                null,
+                // One worker each: the queue is what keeps the cores busy here.
+                // Preempting would have each candidate cancel the one before it.
+                { preempt: false, workers: 1 }
+            );
+        } catch (error) {
+            if (stoppedHere()) return null;
+            throw error;
+        }
 
         if (abortSignal?.()) return null;
 
@@ -4620,11 +4636,18 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 charmEnhancement
             );
             xpDTOs[playerIndex].equipment[CHARM_SLOT] = matchingCharm;
-            const xpSimResult = await runSimulation(
-                { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
-                null,
-                { preempt: false, workers: 1 }
-            );
+            // A combat-level row without its leveling time is half a row; Stop here drops the whole row
+            let xpSimResult;
+            try {
+                xpSimResult = await runSimulation(
+                    { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
+                    null,
+                    { preempt: false, workers: 1 }
+                );
+            } catch (error) {
+                if (stoppedHere()) return null;
+                throw error;
+            }
             progress.current++;
             // How much faster the whole zone goes once the levels are in. The
             // candidate's own sim already ran at the boosted levels and the
@@ -4663,20 +4686,26 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                         });
                         const bothDTOs = JSON.parse(JSON.stringify(modifiedDTOs));
                         bothDTOs[playerIndex][along.skillKey] = along.upgradeLevel;
-                        const bothResult = await runSimulation(
-                            {
-                                gameData,
-                                playerDTOs: bothDTOs,
-                                zoneHrid,
-                                difficultyTier,
-                                hours,
-                                communityBuffs,
-                                seed: simSeed,
-                                taskDamageMode: TASK_DAMAGE_OFF,
-                            },
-                            null,
-                            { preempt: false, workers: 1 }
-                        );
+                        let bothResult;
+                        try {
+                            bothResult = await runSimulation(
+                                {
+                                    gameData,
+                                    playerDTOs: bothDTOs,
+                                    zoneHrid,
+                                    difficultyTier,
+                                    hours,
+                                    communityBuffs,
+                                    seed: simSeed,
+                                    taskDamageMode: TASK_DAMAGE_OFF,
+                                },
+                                null,
+                                { preempt: false, workers: 1 }
+                            );
+                        } catch (error) {
+                            if (stoppedHere()) return null;
+                            throw error;
+                        }
                         const bothMetrics = computeMetrics(bothResult, gameData, playerHrid, hours, { priceCache });
                         row.alongside.metrics = bothMetrics;
                         row.alongside.deltas = computeDeltas(baselineMetrics, bothMetrics);
