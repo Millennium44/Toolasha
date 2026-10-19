@@ -323,6 +323,18 @@ describe('death recap', () => {
         expect(r.samples.length).toBeLessThanOrEqual(recap.MAX_SAMPLES);
     });
 
+    test('a busy fight keeps the whole window: 52 ticks in 15 s are not cut short by the count cap', () => {
+        send('new_battle', battle([['me', 0]]));
+        for (let i = 0; i < 70; i++) {
+            vi.advanceTimersByTime(290);
+            send('battle_updated', tick([1000]));
+        }
+        run([0]);
+        const [r] = recap.recapHistory();
+        expect(r.insufficient).toBe(false);
+        expect(r.samples[r.samples.length - 1].t - r.samples[0].t).toBeGreaterThan(14000);
+    });
+
     test('only the last few recaps are kept', () => {
         for (let n = 0; n < recap.MAX_RECAPS + 3; n++) {
             send('new_battle', battle([['me', n]], n + 1));

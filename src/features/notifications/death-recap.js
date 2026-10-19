@@ -11,8 +11,8 @@
  * One `battle_updated` listener. Per tick it reads the local player's `pMap`
  * entry (HP, MP, ability) and runs the same incoming-damage diff the Damage
  * Taken tracker uses, then pushes one small sample. The ring holds at most
- * `MAX_SAMPLES` samples and `WINDOW_MS` of them — about 30 objects of roughly
- * 100 bytes, under 10 KB. Nothing is stored and no sync key is used; a reload
+ * `MAX_SAMPLES` samples and `WINDOW_MS` of them — a busy fight sends ~50 ticks in
+ * the window, objects of roughly 100 bytes, so tens of KB at most. Nothing is stored and no sync key is used; a reload
  * forgets everything, and the recap says "insufficient recording" when it has
  * less than the window.
  *
@@ -52,8 +52,11 @@ export const SETTING = 'combatDeathRecap';
 
 /** How much history a recap carries */
 export const WINDOW_MS = 15000;
-/** Hard cap on buffered ticks, whatever their spacing */
-export const MAX_SAMPLES = 30;
+/**
+ * Hard cap on buffered ticks, whatever their spacing. Sized so the window, not the count, bounds the history: a
+ * captured party fight sent 52 ticks in 15 s, and a cap of 30 cut that to under 9 s
+ */
+export const MAX_SAMPLES = 150;
 /** Hits kept per tick */
 const MAX_HITS_PER_SAMPLE = 6;
 /** Casts kept in the ring */
