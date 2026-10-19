@@ -442,7 +442,7 @@ export const settingsGroups = {
                 label: 'Tea recommendation: Show an "almost as fast" choice',
                 type: 'checkbox',
                 default: true,
-                help: 'In the tea recommendation for a single action (open an action from the list, or the Alchemy popup, including Both), adds the tea setup with the best gold/hr that still keeps a set share of the top XP/hr, and states the XP you give up and the gold/hr you gain. Your pinned and banned teas apply. A figure that rests on an unpriced item or tea is marked.',
+                help: 'In the tea recommendation for a single action (open an action from the list, or the Alchemy popup, including Both), adds the tea setup with the best gold/hr that still keeps a set share of the top XP/hr, and states the XP you give up and the gold/hr you gain. Your pinned and banned teas apply in the single-goal popups; the Alchemy Both popup shows the unconstrained choice. A figure that rests on an unpriced item or tea is marked.',
             },
             teaRecommendation_xpFloorPercent: {
                 id: 'teaRecommendation_xpFloorPercent',
