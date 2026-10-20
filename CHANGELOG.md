@@ -82,6 +82,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Upstream sweep (2026-10-17): shop shortcuts, alchemy shopping and fixes
 
 - Token item menus (dungeon, labyrinth, task, guild tokens and guild credits) get a View Shop button that opens the matching shop, and the dungeon tracker shows how long your entry keys will last at your recent clear pace.
+- Long times read "28 years 11 months" rather than "28 years 12 months" near the end of a year (the key runway, queue limits and other year-long figures).
 - The Alchemy panel gets a Missing Mats button with a Return tab, and Alchemy Profitability gains a catalyst what-if picker that shows the profit with another catalyst without changing what is slotted.
 - Alchemy Profitability no longer disappears after coming back to the same item from the marketplace (for example through the Return tab).
 - The Budget calculator now counts a recipe's coin fee against the budget instead of over-buying (or giving 0 actions when short on coin).

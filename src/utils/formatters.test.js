@@ -133,8 +133,14 @@ describe('timeReadable', () => {
     // A duration of a day or more is capped at two units: the third is noise at that scale, and
     // the queue panel printed things like "73 years 9 months 29 days" before it was.
     describe('two-unit cap (>= 1 day)', () => {
+        test('the last days of a year are 11 months, never 12', () => {
+            // 28 years and 362 days: a 30-day month made this "28 years 12 months"
+            expect(timeReadable(28 * 31536000 + 362 * 86400)).toBe('28 years 11 months');
+            expect(timeReadable(28 * 31536000 + 362 * 86400, { maxUnits: 3 })).toBe('28 years 11 months 27 days');
+        });
+
         test('a years figure stops after the months', () => {
-            // 73 years 9 months 29 days
+            // 73 years 9 months 25 days
             expect(timeReadable(2_327_961_600)).toBe('73 years 9 months');
         });
 
@@ -154,7 +160,7 @@ describe('timeReadable', () => {
         });
 
         test('a surface that needs the third unit can ask for it', () => {
-            expect(timeReadable(2_327_961_600, { maxUnits: 3 })).toBe('73 years 9 months 29 days');
+            expect(timeReadable(2_327_961_600, { maxUnits: 3 })).toBe('73 years 9 months 25 days');
             expect(timeReadable(358_860, { maxUnits: 3 })).toBe('4 days 3h 41m');
         });
     });

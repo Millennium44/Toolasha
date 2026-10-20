@@ -94,7 +94,7 @@ const TIME_READABLE_MAX_UNITS = 2;
  * timeReadable(90000) // "1 day 1h"
  * timeReadable(31536000) // "1 year"
  * timeReadable(100000000) // "3 years 2 months"
- * timeReadable(100000000, { maxUnits: 3 }) // "3 years 2 months 3 days"
+ * timeReadable(100000000, { maxUnits: 3 }) // "3 years 2 months 1 day"
  */
 export function timeReadable(sec, { maxUnits = TIME_READABLE_MAX_UNITS } = {}) {
     // For times >= 1 year, show in years/months/days
@@ -102,8 +102,10 @@ export function timeReadable(sec, { maxUnits = TIME_READABLE_MAX_UNITS } = {}) {
         // 365 days
         const years = Math.floor(sec / 31536000);
         const remainingAfterYears = sec - years * 31536000;
-        const months = Math.floor(remainingAfterYears / 2592000); // 30 days
-        const remainingAfterMonths = remainingAfterYears - months * 2592000;
+        // A twelfth of the 365-day year, so the remainder never reads as "12 months" (a 30-day month
+        // left 360-364 days as twelve of them)
+        const months = Math.floor(remainingAfterYears / 2628000);
+        const remainingAfterMonths = remainingAfterYears - months * 2628000;
         const days = Math.floor(remainingAfterMonths / 86400);
 
         const parts = [];

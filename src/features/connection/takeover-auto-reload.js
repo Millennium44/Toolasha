@@ -106,6 +106,8 @@ class TakeoverAutoReload {
         this.reloadTimer = null;
         this.stableTimer = null;
         this.toast = null;
+        /** Re-words the countdown's "in about N min" while it waits */
+        this.countdownTicker = null;
         this.episode = null;
         this.interactionHandler = null;
         this.unsubscribers = [];
@@ -421,12 +423,22 @@ class TakeoverAutoReload {
      * @private
      */
     _showCountdown(fireAt) {
-        const minutesLeft = Math.max(1, Math.round((fireAt - Date.now()) / 60000));
-        this._showToast(
-            `This character was opened from another device or window. Toolasha will reload this tab at ` +
-                `${formatClock(fireAt)} (in about ${minutesLeft} min) to take it back, unless you use the page first.`,
-            { withCancel: true }
-        );
+        const wording = () => {
+            const minutesLeft = Math.max(1, Math.round((fireAt - Date.now()) / 60000));
+            return (
+                `This character was opened from another device or window. Toolasha will reload this tab at ` +
+                `${formatClock(fireAt)} (in about ${minutesLeft} min) to take it back, unless you use the page first.`
+            );
+        };
+        this._showToast(wording(), { withCancel: true });
+        const handle = this.toast;
+        if (!handle) return;
+        // The notice stays up for the whole wait, so its "in about" has to keep counting down
+        this.countdownTicker = setInterval(() => {
+            const text = handle.element?.firstElementChild?.firstElementChild;
+            if (this.toast !== handle || !text) return;
+            text.textContent = wording();
+        }, 30_000);
     }
 
     /**
@@ -526,6 +538,10 @@ class TakeoverAutoReload {
 
     /** @private */
     _dismissToast() {
+        if (this.countdownTicker) {
+            clearInterval(this.countdownTicker);
+            this.countdownTicker = null;
+        }
         const toast = this.toast;
         this.toast = null;
         try {

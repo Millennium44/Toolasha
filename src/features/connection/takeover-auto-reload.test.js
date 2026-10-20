@@ -130,6 +130,21 @@ describe('takeover auto-reload', () => {
         expect(reloadSpy).not.toHaveBeenCalled();
     });
 
+    test('the notice counts down, keeps its Cancel button, and stops ticking once gone', () => {
+        takeover.initialize();
+        showOverlay();
+        disconnect();
+        expect(toastText()).toContain('in about 15 min');
+
+        vi.advanceTimersByTime(10 * MIN);
+        expect(toastText()).toContain('in about 5 min');
+        expect(toastText()).toContain('Cancel');
+
+        document.querySelector('.toolasha-takeover-cancel').click();
+        expect(activeToastCount()).toBe(0);
+        expect(takeover.countdownTicker).toBeNull();
+    });
+
     test('1005 clean close: notice with the target time, reload at the chosen delay', () => {
         takeover.initialize();
         showOverlay();
