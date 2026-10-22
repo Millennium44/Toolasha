@@ -6616,17 +6616,20 @@ export function planWithinBudget(
     const excludedIds = new Set(excluded || []);
     const baseTries = baselineFights.map((fight) => expectedFightAttempts(fight.winRate || 0));
 
-    /** What one candidate saves in each fight, in expected attempts */
-    const savingsOf = (result) => {
+    /**
+     * What one candidate saves in each fight, in expected attempts. A free pick never counts for less than zero
+     * (a loser is simply not taken); a pin is the player's call and keeps its sign (`signed`), so a pinned loss
+     * is a loss in the row and in the total instead of being rounded up to nothing.
+     */
+    const savingsOf = (result, signed = false) => {
+        const floor = signed ? (value) => value : (value) => Math.max(0, value);
         if (!baseTries.length || !result.fights?.length) {
             // No per-fight detail to work from — value it at the run total, which
             // is what a plan without a baseline can honestly say
-            return [Math.max(0, -result.attemptsDelta)];
+            return [floor(-result.attemptsDelta)];
         }
         return result.fights.map((fight, index) =>
-            fight.applied === false
-                ? 0
-                : Math.max(0, (baseTries[index] ?? 0) - expectedFightAttempts(fight.winRate || 0))
+            fight.applied === false ? 0 : floor((baseTries[index] ?? 0) - expectedFightAttempts(fight.winRate || 0))
         );
     };
 
@@ -6654,7 +6657,7 @@ export function planWithinBudget(
                 });
             } else {
                 const keys = conflictKeys(result.candidate);
-                pinnedEntries.push({ result, savings: savingsOf(result), key: keys[0], keys, id });
+                pinnedEntries.push({ result, savings: savingsOf(result, true), key: keys[0], keys, id, pinned: true });
             }
             continue;
         }
@@ -6720,16 +6723,34 @@ export function planWithinBudget(
     // The savings each pick was credited with when it went in, so its group can be rebuilt from them
     const creditedOf = new Map();
 
-    const marginalOf = (entry, displaced = []) => {
-        const savings = effectiveSavings(entry, displaced);
-        const standing = bestBySlot.get(entry.key);
-        if (!standing) return savings.reduce((sum, saving) => sum + saving, 0);
-        let marginal = 0;
+    /**
+     * Fold one pick's savings into a group's standing best per fight: the new standing, and what the pick adds to it.
+     * A fill never lowers anything and is credited only what it adds above zero. A pin keeps its sign: the first
+     * pin in a fight sets the standing, even below zero, and a later fill is credited on top of a standing that
+     * is a pinned loss rather than being allowed to cancel it.
+     */
+    const foldStanding = (standing, savings, pinned) => {
+        const next = [];
+        let share = 0;
         for (let i = 0; i < savings.length; i++) {
-            marginal += Math.max(standing[i] || 0, savings[i]) - (standing[i] || 0);
+            const prev = standing?.[i];
+            const saving = savings[i] || 0;
+            let value;
+            if (pinned) {
+                value = prev === undefined ? saving : Math.max(prev, saving);
+            } else if (prev !== undefined && prev < 0) {
+                value = prev + Math.max(0, saving);
+            } else {
+                value = Math.max(prev ?? 0, saving);
+            }
+            share += value - (prev ?? 0);
+            next.push(value);
         }
-        return marginal;
+        return { next, share };
     };
+
+    const marginalOf = (entry, displaced = []) =>
+        foldStanding(bestBySlot.get(entry.key), effectiveSavings(entry, displaced), entry.pinned === true).share;
 
     /**
      * The earlier picks a candidate would replace: same group, and beaten by it
@@ -6774,7 +6795,7 @@ export function planWithinBudget(
 
     /** Take `entry` into the basket: its keys, its cost, its share of the standing best per slot */
     const acceptPin = (entry) => {
-        const marginal = marginalOf(entry);
+        const { next, share: marginal } = foldStanding(bestBySlot.get(entry.key), effectiveSavings(entry), true);
         for (const key of entry.keys) {
             taken.add(key);
             pinnedKeys.add(key);
@@ -6786,15 +6807,12 @@ export function planWithinBudget(
             ...entry.result,
             pinned: true,
             marginalAttemptsSaved: marginal,
-            rooms: credited.filter((saving) => saving > 0).length,
+            // A pinned loss still lands in its room
+            rooms: credited.filter((saving) => saving !== 0).length,
         };
         picks.push(pick);
         creditedOf.set(pick, credited);
-        const standing = bestBySlot.get(entry.key) || entry.savings.map(() => 0);
-        bestBySlot.set(
-            entry.key,
-            standing.map((saving, index) => Math.max(saving, credited[index]))
-        );
+        bestBySlot.set(entry.key, next);
     };
 
     // Pins first. They are checked together, every reason at once, so the player can fix them in one go; any
@@ -6947,28 +6965,20 @@ export function planWithinBudget(
         picks.push(pick);
         creditedOf.set(pick, credited);
 
-        const standing = bestBySlot.get(entry.key) || entry.savings.map(() => 0);
-        bestBySlot.set(
-            entry.key,
-            standing.map((saving, index) => Math.max(saving, credited[index]))
-        );
+        bestBySlot.set(entry.key, foldStanding(bestBySlot.get(entry.key), credited, false).next);
 
         // `marginal` was measured while the displaced picks still stood, so it
         // is only the increment over pieces no longer in the plan. Rebuild the
         // group's standing best and each retained pick's share from what is
         // left, so the per-pick figures add up to the plan's gain
         if (displaced.length) {
-            let running = entry.savings.map(() => 0);
+            let running;
             for (const pick of picks) {
                 if (conflictKey(pick.candidate) !== entry.key) continue;
                 const savings = creditedOf.get(pick) ?? savingsOf(pick);
-                let share = 0;
-                running = running.map((standingSaving, index) => {
-                    const next = Math.max(standingSaving, savings[index] || 0);
-                    share += next - standingSaving;
-                    return next;
-                });
-                pick.marginalAttemptsSaved = share;
+                const folded = foldStanding(running, savings, pick.pinned === true);
+                running = folded.next;
+                pick.marginalAttemptsSaved = folded.share;
             }
             bestBySlot.set(entry.key, running);
         }
@@ -6995,7 +7005,7 @@ export function planWithinBudget(
     // What the set saves across the run, if gains in different slots add up
     let attemptsSaved = 0;
     for (const savings of bestBySlot.values()) {
-        for (const saving of savings) attemptsSaved += saving;
+        for (const saving of savings) attemptsSaved += saving || 0;
     }
 
     // Every acceptance above was checked against the spend it leaves behind, so

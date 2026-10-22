@@ -777,6 +777,14 @@ export function gradientLadders(rows, scoredKeys) {
 const withSign = (value, formatted) => (value < 0 ? formatted : `+${formatted}`);
 
 /**
+ * The color of a budget-plan gain by its own sign: a pinned pick can lose on the chosen axis, and a loss
+ * is red rather than a green figure.
+ * @param {number} gain - Signed gain on the plan's metric
+ * @returns {string}
+ */
+export const budgetGainColor = (gain) => (gain < 0 ? '#e57373' : gain === 0 ? '#888' : '#4caf50');
+
+/**
  * What the Upgrade-tab budget planner can shop for.
  *
  * A labyrinth plan has one axis — attempts saved — because every fight is the
@@ -818,7 +826,8 @@ export const UPGRADE_PLAN_METRICS = [
         // A death avoided is the gain, so the row's rate is subtracted from the
         // baseline's — the same flip the Gold/0.01% DPH column already applies.
         gain: (row, baseline) => (baseline?.deathsPerHour ?? 0) - (row?.metrics?.deathsPerHour ?? 0),
-        format: (value) => `${value.toFixed(2)}/hr fewer deaths`,
+        format: (value) =>
+            value < 0 ? `${(-value).toFixed(2)}/hr more deaths` : `${value.toFixed(2)}/hr fewer deaths`,
     },
     {
         key: 'score',
@@ -12646,7 +12655,7 @@ class CombatSimUI {
                                     : ''
                             }</span>
                             <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
-                                <span style="color:#4caf50;">${plan.metric.format(pick.marginalAttemptsSaved)}</span>
+                                <span style="color:${budgetGainColor(pick.marginalAttemptsSaved)};">${plan.metric.format(pick.marginalAttemptsSaved)}</span>
                                 ${this._budgetToggleButtons(pick)}
                             </span>
                         </div>`
@@ -12668,7 +12677,7 @@ class CombatSimUI {
                     `<div style="margin-top:4px; padding-top:4px; border-top:1px solid #222; color:#aaa; font-size:11px;">
                         ${plan.picks.length} upgrade${plan.picks.length === 1 ? '' : 's'}${orderPlan.appended ? ' + order' : ''} ·
                         ${money(plan.totalCost)} of ${money(budget)} ·
-                        <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
+                        <span style="color:${budgetGainColor(plan.gainTotal + orderPlan.gain)}; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
                     </div>${provisional}${partialNote}${constraintsHtml}${this._renderBudgetConfirm(plan, baseline)}`;
             }
@@ -13002,7 +13011,7 @@ class CombatSimUI {
                       })();
             return wrap(
                 `<div style="font-size:11px; color:#aaa;">summed
-                    <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
+                    <span style="color:${budgetGainColor(plan.gainTotal)}; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
                     · together
                     ${togetherHtml}
                     <span style="color:#666;" title="Every pick worn at once, simulated in one run against the same
