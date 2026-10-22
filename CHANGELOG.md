@@ -28,7 +28,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Combat: death recap, and the death alert fires when you die
 
 - The death alert now fires the moment you die (your HP reaching 0), not when you respawn; a solo death never sent the old signal until later.
-- New death recap (on by default): the last ~15 seconds before each death — HP, incoming hits and your last casts — opened from the death alert or a "Death recap" button; attackers are named even after a reload mid-fight; kept in memory only, last five deaths, with Older/Newer to step between them.
+- New death recap (on by default): the last ~15 seconds before each death — HP, incoming hits and your last casts — opened from the death alert or a "Death recap" button; attackers are named even after a reload mid-fight; kept in memory only, last five deaths, with Older/Newer to step between them; more than five deaths before the server count catches up no longer adds an empty extra recap.
 
 ### Achievements: tier finisher
 
