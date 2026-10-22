@@ -1,6 +1,7 @@
 /** Keep Tasks tabs and injected board controls inside a narrow game pane. */
 import domObserver from '../../core/dom-observer.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
+import { capToViewport } from '../../utils/responsive-dock.js';
 
 const STYLE_ID = 'toolasha-tasks-panel-layout';
 const PANEL = '[class*="TasksPanel_tasksPanel"]';
@@ -46,6 +47,7 @@ function release() {
     if (!current) return;
     current.observer?.disconnect();
     current.panel.removeAttribute('data-toolasha-tasks-layout-narrow');
+    capToViewport(current.scroller, false);
     current.layers.forEach((node) => node.removeAttribute(LAYER));
     current = null;
 }
@@ -63,6 +65,8 @@ function update() {
     if (panel.hasAttribute('data-toolasha-tasks-layout-narrow') !== narrow) {
         panel.toggleAttribute('data-toolasha-tasks-layout-narrow', narrow);
     }
+    // The game's middle panel can overhang a phone screen; keep the strip's last tab reachable
+    capToViewport(current.scroller, narrow);
 }
 
 function attach(panel) {
@@ -95,7 +99,7 @@ function attach(panel) {
         layers.push(owner);
     }
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
-    current = { panel, list, measure, layers, observer };
+    current = { panel, list, scroller, measure, layers, observer };
     observer?.observe(measure);
     update();
 }

@@ -84,3 +84,24 @@ export function dockWhenNarrow(
         home.remove();
     };
 }
+
+/**
+ * Keep a horizontal scroller's right edge on screen. On a phone the game's middle panel keeps a
+ * 315px minimum width beside the icon sidebar, so on a ~412px screen it overhangs the viewport and
+ * the page itself cannot pan; a tab strip as wide as the panel then scrolls short of its last tab.
+ * Capping the scroller at the visible edge moves the overhang into its own scroll range.
+ * @param {HTMLElement} scroller - The element with overflow-x: auto
+ * @param {boolean} on - Cap it (narrow) or clear the cap (wide, released)
+ */
+export function capToViewport(scroller, on) {
+    if (!scroller?.style) return;
+    // Measure uncapped, so a screen that grew (rotation) releases an old cap
+    scroller.style.removeProperty('max-width');
+    if (!on) return;
+    const viewportWidth = window.visualViewport?.width || window.innerWidth || 0;
+    const rect = scroller.getBoundingClientRect();
+    const visible = Math.floor(viewportWidth - rect.left);
+    if (visible > 0 && rect.right > viewportWidth) {
+        scroller.style.setProperty('max-width', `${visible}px`, 'important');
+    }
+}

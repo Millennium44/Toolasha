@@ -153,3 +153,36 @@ test('navigation and cleanup disconnect observers, remove markers, and leave no 
     window.dispatchEvent(new Event('resize'));
     expect(second.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(false);
 });
+
+test('on a phone whose game panel overhangs the screen, the strip is capped at the edge so its last tab scrolls in', () => {
+    // Pixel-sized screen: the game's middle panel starts at 132px and keeps 315px, overhanging to 447px
+    vi.stubGlobal('innerWidth', 412);
+    vi.stubGlobal('visualViewport', { width: 412 });
+    const { host, rect, scroller } = fixture(315);
+    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue({ left: 132, width: 315, right: 447 });
+    feature.initialize();
+    expect(scroller.style.getPropertyValue('max-width')).toBe('280px');
+    expect(scroller.style.getPropertyPriority('max-width')).toBe('important');
+
+    // Wide again (rotation, a desktop pane): the cap goes
+    rect.mockReturnValue({ width: 900 });
+    window.dispatchEvent(new Event('resize'));
+    expect(scroller.style.getPropertyValue('max-width')).toBe('');
+
+    // Narrow, then released when the panel leaves
+    rect.mockReturnValue({ width: 315 });
+    window.dispatchEvent(new Event('resize'));
+    expect(scroller.style.getPropertyValue('max-width')).toBe('280px');
+    feature.disable();
+    expect(scroller.style.getPropertyValue('max-width')).toBe('');
+    expect(host.isConnected).toBe(true);
+});
+
+test('a strip that already fits the screen is not capped', () => {
+    vi.stubGlobal('innerWidth', 412);
+    vi.stubGlobal('visualViewport', { width: 412 });
+    const { scroller } = fixture(315);
+    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue({ left: 60, width: 315, right: 375 });
+    feature.initialize();
+    expect(scroller.style.getPropertyValue('max-width')).toBe('');
+});

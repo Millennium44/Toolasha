@@ -1056,3 +1056,15 @@ describe('cleanup unregisters the setting-change listener it registered', () => 
         expect(settingListeners.combatStats).toHaveLength(1);
     });
 });
+
+describe('the header on a phone', () => {
+    test('title and buttons wrap, so the close button stays inside the window', async () => {
+        await combatStatsUI.showPopup();
+        const close = [...popup().querySelectorAll('button')].find((b) => b.textContent.trim() === '×');
+        const buttons = close.parentElement;
+        const header = buttons.parentElement;
+        expect(header.style.flexWrap).toBe('wrap');
+        expect(buttons.style.flexWrap).toBe('wrap');
+        expect(buttons.style.minWidth).toBe('0');
+    });
+});

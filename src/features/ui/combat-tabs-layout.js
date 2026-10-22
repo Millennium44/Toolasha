@@ -1,6 +1,7 @@
 /** Keep the Combat page's horizontal tabs reachable in a narrow game pane. */
 import domObserver from '../../core/dom-observer.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
+import { capToViewport } from '../../utils/responsive-dock.js';
 
 const STYLE_ID = 'toolasha-combat-tabs-layout';
 const PANEL = '[class*="CombatPanel_combatPanel"]';
@@ -32,6 +33,7 @@ function release() {
     if (!current) return;
     current.observer?.disconnect();
     current.panel.removeAttribute('data-toolasha-combat-tabs-narrow');
+    capToViewport(current.scroller, false);
     current.layers.forEach((node) => node.removeAttribute(LAYER));
     current = null;
 }
@@ -49,6 +51,8 @@ function update() {
     if (panel.hasAttribute('data-toolasha-combat-tabs-narrow') !== narrow) {
         panel.toggleAttribute('data-toolasha-combat-tabs-narrow', narrow);
     }
+    // The game's middle panel can overhang a phone screen; keep the strip's last tab reachable
+    capToViewport(current.scroller, narrow);
 }
 
 function attach(panel) {
@@ -81,7 +85,7 @@ function attach(panel) {
         layers.push(owner);
     }
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
-    current = { panel, list, measure, layers, observer };
+    current = { panel, list, scroller, measure, layers, observer };
     observer?.observe(measure);
     update();
 }
