@@ -716,4 +716,95 @@ describe('death recap', () => {
             expect(recap.recapHistory()).toHaveLength(0);
         });
     });
+    describe('observed deaths beyond the display cap stay owed a counter rise (#563)', () => {
+        const die = (n) => {
+            for (let i = 0; i < n; i++) {
+                run([1500]);
+                run([0]);
+                vi.advanceTimersByTime(21_000);
+            }
+        };
+        const start = () => {
+            game.actions = SOLO;
+            send('new_battle', battle([['me', 0]]));
+        };
+        const confirmedIds = () =>
+            recap
+                .recapHistory()
+                .filter((r) => r.confirmed)
+                .map((r) => r.id);
+
+        test.each([4, 5, 6])('%i observed deaths then a matching rise create no fallback', (n) => {
+            start();
+            die(n);
+            const before = recap.recapHistory().map((r) => r.id);
+            expect(before).toHaveLength(Math.min(n, recap.MAX_RECAPS));
+            send('new_battle', battle([['me', n]], 2));
+            const after = recap.recapHistory();
+            expect(after.map((r) => r.id)).toEqual(before);
+            expect(after.every((r) => r.source === 'both' && r.confirmed)).toBe(true);
+        });
+
+        test('catch-up in several increments consumes the oldest first', () => {
+            start();
+            die(8);
+            const ids = recap.recapHistory().map((r) => r.id);
+            expect(ids).toHaveLength(5);
+            // 3 evicted (1-3), pending holds 4-8
+            send('new_battle', battle([['me', 2]], 2));
+            send('new_battle', battle([['me', 3]], 3));
+            expect(confirmedIds()).toEqual([]);
+            expect(recap.recapHistory().map((r) => r.id)).toEqual(ids);
+            send('new_battle', battle([['me', 4]], 4));
+            expect(confirmedIds()).toEqual([ids[4]]);
+            send('new_battle', battle([['me', 8]], 5));
+            expect(recap.recapHistory().map((r) => r.id)).toEqual(ids);
+            expect(recap.recapHistory().every((r) => r.confirmed)).toBe(true);
+        });
+
+        test('6 observed then a rise of 7 makes exactly one fallback', () => {
+            start();
+            die(6);
+            send('new_battle', battle([['me', 7]], 2));
+            const h = recap.recapHistory();
+            expect(h).toHaveLength(5);
+            expect(h[0]).toMatchObject({ source: 'count', deaths: 1 });
+            expect(h.slice(1).every((r) => r.confirmed)).toBe(true);
+        });
+
+        test('an unchanged or repeated counter creates nothing', () => {
+            start();
+            die(6);
+            send('new_battle', battle([['me', 6]], 2));
+            send('new_battle', battle([['me', 6]], 3));
+            expect(recap.recapHistory().map((r) => r.source)).toEqual(Array(5).fill('both'));
+            const ids = recap.recapHistory().map((r) => r.id);
+            expect(ids).toEqual([ids[0], ids[0] - 1, ids[0] - 2, ids[0] - 3, ids[0] - 4]);
+        });
+
+        test('a counter decrease clears the evicted accounting', () => {
+            start();
+            send('new_battle', battle([['me', 3]], 2));
+            die(6);
+            send('new_battle', battle([['me', 0]], 3));
+            send('new_battle', battle([['me', 1]], 4));
+            // pending was cleared with the evicted count: the rise of 1 is unseen, not owed to a stale death
+            expect(recap.recapHistory()[0]).toMatchObject({ source: 'count', deaths: 1 });
+        });
+
+        test('a character switch and disable clear the evicted accounting', async () => {
+            for (const reset of [() => game.dm.character_switching(), () => feature.disable()]) {
+                feature.disable();
+                await feature.initialize();
+                start();
+                die(6);
+                reset();
+                await feature.initialize();
+                send('new_battle', battle([['me', 0]], 2));
+                send('new_battle', battle([['me', 1]], 3));
+                expect(recap.recapHistory()).toHaveLength(1);
+                expect(recap.recapHistory()[0]).toMatchObject({ source: 'count' });
+            }
+        });
+    });
 });

@@ -90,6 +90,8 @@ let dead = false;
 let lastCount = null;
 /** Recaps frozen by a tick in the current fight that no death count has matched yet */
 let pending = [];
+/** Observed deaths older than the retained `pending` recaps: owed a counter rise, nothing left to confirm */
+let evictedPending = 0;
 /** Frozen recaps, newest first */
 let recaps = [];
 let nextId = 1;
@@ -195,7 +197,11 @@ export function detectDeath(signal, info = {}) {
         if (!ring.length) return null;
         const recap = buildRecap(ring.slice(), casts.slice(), { source: 'hp', confirmed: false });
         pending.push(recap);
-        if (pending.length > MAX_RECAPS) pending.shift();
+        // The display cap is not the accounting: an evicted reference is still an observed, unconfirmed death
+        if (pending.length > MAX_RECAPS) {
+            pending.shift();
+            evictedPending += 1;
+        }
         keep(recap);
         // The next death's tail must not include this one's samples or the time spent dead
         ring = [];
@@ -207,12 +213,16 @@ export function detectDeath(signal, info = {}) {
         const rise = info.rise || 0;
         // The tick-frozen recaps belong to the fight that ended either way; none carries over
         // Tick-frozen recaps stay owed until a rise consumes them; the counter can lag by several battles
-        const matched = pending.splice(0, Math.max(0, rise));
+        // Oldest first: evicted observed deaths, then the retained recaps in order
+        const owed = Math.max(0, rise);
+        const fromEvicted = Math.min(evictedPending, owed);
+        evictedPending -= fromEvicted;
+        const matched = pending.splice(0, owed - fromEvicted);
         for (const recap of matched) {
             recap.confirmed = true;
             recap.source = 'both';
         }
-        const unseen = rise - matched.length;
+        const unseen = rise - fromEvicted - matched.length;
         let created = null;
         if (unseen > 0) {
             // No tick-observed death for these: the previous fight's tail is the only evidence, and
@@ -241,7 +251,10 @@ function onNewBattle(data) {
             const count = Number(own.player.deathCount ?? 0);
             if (Number.isFinite(count)) {
                 // A counter that went down is a new session: nothing pending is owed a rise
-                if (lastCount !== null && count < lastCount) pending = [];
+                if (lastCount !== null && count < lastCount) {
+                    pending = [];
+                    evictedPending = 0;
+                }
                 // A first reading is only a baseline: it confirms and consumes nothing
                 if (lastCount !== null && count > lastCount) rise = count - lastCount;
                 lastCount = count;
@@ -531,6 +544,7 @@ function disable() {
     casts = [];
     recaps = [];
     pending = [];
+    evictedPending = 0;
     ownIndex = null;
     seatGuessed = false;
     battleSeen = false;
