@@ -8932,6 +8932,90 @@ describe('the Lab single-fight analysis taxes resale as the analysed character p
     });
 });
 
+describe('a pinned loss stays a loss in the plan (#562)', () => {
+    const BASE = [0, 1].map((i) => ({ monsterHrid: `/monsters/m${i}`, roomLevel: 100, winRate: 0.5 }));
+    const piece = (name, delta, extra = {}) => ({
+        candidate: {
+            type: 'tier',
+            slot: extra.slot || `/equipment_types/${name}`,
+            upgradeHrid: `/items/${name}`,
+            description: name,
+        },
+        cost: 100,
+        attemptsDelta: delta,
+        significant: true,
+        ...(extra.fights ? { fights: extra.fights } : {}),
+    });
+    const sum = (plan) => plan.picks.reduce((total, pick) => total + pick.marginalAttemptsSaved, 0);
+
+    test('a losing pin beside a winner totals the signed sum, and the row is negative', () => {
+        const loser = piece('loser', 1000);
+        const plan = planWithinBudget([loser, piece('winner', -200)], 500, { required: [candidateKey(loser)] });
+
+        expect(plan.picks.map((p) => p.marginalAttemptsSaved)).toEqual([-1000, 200]);
+        expect(plan.attemptsSaved).toBeCloseTo(-800);
+    });
+
+    test('a losing pin alone totals negative, and an unpinned loser is not taken', () => {
+        const loser = piece('loser', 3);
+        expect(planWithinBudget([loser], 500, { required: [candidateKey(loser)] }).attemptsSaved).toBeCloseTo(-3);
+        expect(planWithinBudget([loser], 500).picks).toEqual([]);
+    });
+
+    test('per-fight savings keep the sign: a pin that wins one room and loses another nets out', () => {
+        const mixed = piece('mixed', 0, {
+            fights: [
+                { ...BASE[0], winRate: 1, applied: true },
+                { ...BASE[1], winRate: 0.25, applied: true },
+            ],
+        });
+        // Room 0: 2 -> 1 attempts (+1); room 1: 2 -> 4 attempts (-2)
+        const plan = planWithinBudget([mixed], 500, { baselineFights: BASE, required: [candidateKey(mixed)] });
+        expect(plan.attemptsSaved).toBeCloseTo(-1);
+        expect(sum(plan)).toBeCloseTo(-1);
+    });
+
+    test('a fill sharing a pinned loss is credited only what it adds, so the pin loss is not cancelled', () => {
+        const body = '/equipment_types/body';
+        const loser = piece('loser', 10, { slot: body });
+        const fill = piece('fill', -3, { slot: body });
+        const plan = planWithinBudget([loser, fill], 500, { required: [candidateKey(loser)] });
+
+        expect(sum(plan)).toBeCloseTo(plan.attemptsSaved);
+        expect(plan.attemptsSaved).toBeLessThan(0);
+    });
+
+    test('a pinned per-room drink still works beside a negative pin', () => {
+        const drinkRow = {
+            candidate: {
+                type: 'drink',
+                slot: 'drink_0',
+                upgradeHrid: '/items/tea',
+                description: 'Add tea',
+                buffFamily: 'tea',
+                fillsFreeDrinkSlot: true,
+                freeDrinkSlots: 3,
+            },
+            cost: 0,
+            attemptsDelta: -1,
+            significant: true,
+            fights: [
+                { ...BASE[0], freeDrinkSlots: 1, winRate: 1, applied: true },
+                { ...BASE[1], freeDrinkSlots: 0, applied: false },
+            ],
+        };
+        const loser = piece('loser', 5);
+        const plan = planWithinBudget([drinkRow, loser], 500, {
+            baselineFights: BASE,
+            required: [candidateKey(drinkRow), candidateKey(loser)],
+        });
+
+        expect(plan.blocked).toBeNull();
+        expect(plan.attemptsSaved).toBeCloseTo(1 - 5);
+        expect(sum(plan)).toBeCloseTo(-4);
+    });
+});
+
 describe('the all-fights plan counts free drink slots per fight (#560 review)', () => {
     // Three rooms at a 50% win rate: two expected attempts each
     const BASELINE = [0, 1, 2].map((i) => ({ monsterHrid: `/monsters/m${i}`, roomLevel: 100, winRate: 0.5 }));
