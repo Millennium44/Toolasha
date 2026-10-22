@@ -89,6 +89,7 @@ import {
     destroyRoomDistribution,
 } from './labyrinth-room-distribution.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 
 /**
  * Re-exported from the modules they now live in, so importers that have always
@@ -638,6 +639,8 @@ class LabyrinthClearRate {
             }
             document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
             document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
+            this._detachTileControlsLayout?.();
+            this._detachTileControlsLayout = null;
             document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
             if (this.autoTileTimer) {
                 clearTimeout(this.autoTileTimer);
@@ -3067,7 +3070,10 @@ class LabyrinthClearRate {
         // up on screen at once. Keep at most one correctly-placed bar and drop
         // the rest, so any number of re-injections settles on a single strip.
         const placedCorrectly = (el) =>
-            el.isConnected && (host ? el.parentElement === host : el.nextElementSibling === gridParent);
+            el.isConnected &&
+            (host
+                ? el.parentElement === host || el.nextElementSibling === gridParent
+                : el.nextElementSibling === gridParent);
         const copies = Array.from(document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`));
         const keep = copies.find(placedCorrectly) || null;
         for (const copy of copies) {
@@ -3080,6 +3086,8 @@ class LabyrinthClearRate {
             return;
         }
 
+        this._detachTileControlsLayout?.();
+        this._detachTileControlsLayout = null;
         const container = document.createElement('div');
         container.className = TILE_CONTROLS_CLASS;
         container.style.cssText =
@@ -3094,7 +3102,8 @@ class LabyrinthClearRate {
         // orphaning labels from their inputs.
         const group = (...els) => {
             const g = document.createElement('span');
-            g.style.cssText = 'display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;';
+            g.style.cssText =
+                'display:inline-flex; align-items:center; gap:4px; flex-wrap:wrap; min-width:0; max-width:100%;';
             els.forEach((el) => g.appendChild(el));
             container.appendChild(g);
             return g;
@@ -3287,7 +3296,7 @@ class LabyrinthClearRate {
 
         const status = document.createElement('span');
         status.className = `${TILE_CONTROLS_CLASS}-status`;
-        status.style.cssText = 'font-size:10px; color:#9ab0d8;';
+        status.style.cssText = 'font-size:10px; color:#9ab0d8; min-width:0; overflow-wrap:anywhere;';
         container.appendChild(status);
 
         const track = document.createElement('div');
@@ -3394,6 +3403,13 @@ class LabyrinthClearRate {
         } else {
             gridParent.parentElement.insertBefore(container, gridParent);
         }
+        // In a narrow panel this is a separate flow row above the map, not a
+        // flex child squeezing the native Entries / Max Path / Upgrade row.
+        this._detachTileControlsLayout = dockWhenNarrow(container, {
+            host: gridParent.parentElement,
+            before: gridParent,
+            measure: gridParent.closest('[class*="LabyrinthPanel_labyrinthPanel"]') || gridParent.parentElement,
+        });
         // After the bar is in the page: both look their buttons up in the
         // document, and a bar rebuilt mid-calculation must show a queued or
         // running path rather than an idle button whose press cancels the wait

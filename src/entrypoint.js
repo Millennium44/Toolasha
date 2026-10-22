@@ -1886,6 +1886,24 @@ function registerFeatures() {
             customCheck: () => true,
         },
         {
+            // Keep native and injected Combat tabs reachable in narrow panes.
+            key: 'combatTabsLayout',
+            name: 'Combat Tabs Layout',
+            category: 'UI',
+            module: UI.combatTabsLayout,
+            async: false,
+            customCheck: () => true,
+        },
+        {
+            // Bound the Tasks strip and wrap injected board controls in narrow panes.
+            key: 'tasksPanelLayout',
+            name: 'Tasks Panel Layout',
+            category: 'UI',
+            module: UI.tasksPanelLayout,
+            async: false,
+            customCheck: () => true,
+        },
+        {
             // Puts back the exact dragged inventory/chat width the game
             // truncates on reload (see drag-size-restore.js) — a fix, not a
             // togglable feature, so always on.

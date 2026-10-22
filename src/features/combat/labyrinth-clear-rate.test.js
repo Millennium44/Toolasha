@@ -6834,3 +6834,42 @@ describe('each half comes down when its own setting is switched off', () => {
         expect(settingWatchers).toHaveLength(0);
     });
 });
+
+describe('narrow labyrinth toolbar', () => {
+    test('leaves the native entries row and wraps complete controls above the unchanged map', () => {
+        const panel = document.createElement('div');
+        panel.className = 'LabyrinthPanel_labyrinthPanel__fixture';
+        const entries = document.createElement('div');
+        const grid = document.createElement('div');
+        panel.append(entries, grid);
+        document.body.appendChild(panel);
+        const rect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 350 });
+        const findGrid = vi.spyOn(labyrinthClearRate, 'findRoomGridParent').mockReturnValue(grid);
+        const findHost = vi.spyOn(labyrinthClearRate, 'findEntriesRowHost').mockReturnValue(entries);
+        labyrinthClearRate.roomData = [
+            [null, null],
+            [null, null],
+        ];
+        labyrinthClearRate._tileControlsCollapsed = false;
+        labyrinthClearRate.injectTileControls();
+        labyrinthClearRate.injectTileControls();
+        const controls = panel.querySelector('.mwi-labyrinth-tile-controls');
+        expect(controls.parentElement).toBe(panel);
+        expect(controls.nextElementSibling).toBe(grid);
+        expect(panel.querySelectorAll('.mwi-labyrinth-tile-controls')).toHaveLength(1);
+        const pathGroup = controls.querySelector('.mwi-labyrinth-tile-controls-path-button').parentElement;
+        expect(pathGroup.style.flexWrap).toBe('wrap');
+        expect(Number.parseFloat(pathGroup.style.minWidth)).toBe(0);
+        expect(grid.getAttribute('style')).toBeNull();
+        rect.mockReturnValue({ width: 1000 });
+        window.dispatchEvent(new Event('resize'));
+        expect(controls.parentElement).toBe(entries);
+        labyrinthClearRate._detachTileControlsLayout?.();
+        labyrinthClearRate._detachTileControlsLayout = null;
+        panel.remove();
+        rect.mockRestore();
+        findGrid.mockRestore();
+        findHost.mockRestore();
+        labyrinthClearRate.roomData = null;
+    });
+});

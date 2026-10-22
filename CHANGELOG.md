@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Mobile layout improvements
+
+- The Pinned sidebar entry hides its label when the native sidebar is collapsed, matching the other navigation icons.
+- Marketplace quantity autofill no longer forces input focus on mobile, so walking through consumable purchases does not summon the keyboard; manual quantity editing remains available.
+- Narrow Tasks headers wrap their added controls within the panel, and the Tasks tab strip stays bounded to the available width. Wider layouts retain native positioning.
+- The narrow Combat tab strip scrolls horizontally so Combat Zones, Combat Sim, Statistics, and later tabs remain reachable without squeezing their labels. Wider panels retain the native layout.
+- The Per-player button gets its own row above the battle on narrow screens instead of covering combat text, and returns to its original position on wider screens.
+- Narrow layouts keep Labyrinth controls, task reroll tools, and the overlay switch in the page flow instead of covering game controls. Task estimate controls wrap below the title, while wider layouts restore their original placement.
+- Marketplace pricing options collapse into an expandable strip, history statistics stay within the content area, and extra order statistics become compact price details on narrow screens. My Listings retains an option to show the full sortable columns, and header order totals wrap within the native header width on mobile.
+
 ### Tea recommendation: an almost-as-fast choice
 
 - The tea recommendation for an action now also shows the best gold/hr setup that stays within 95% of the top XP/hr (the percentage is a setting), with the trade spelled out, e.g. "XP −4.0%, +30.0K gold/hr"; unpriced setups are flagged, never valued at zero.

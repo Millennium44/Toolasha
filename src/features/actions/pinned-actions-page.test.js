@@ -615,3 +615,62 @@ describe('_computeAlchemyStats', () => {
         expect(page._computeAlchemyStats('unrefine', ITEM_HRID)).toBeNull();
     });
 });
+
+describe('Pinned follows the native sidebar collapse state', () => {
+    function nav(collapsed = false) {
+        const root = document.createElement('div');
+        root.className = `NavigationBar_navigationBarContainer__fixture ${collapsed ? 'NavigationBar_collapsed__fixture' : ''}`;
+        root.innerHTML = '<div class="NavigationBar_navigationLinks__fixture"></div>';
+        document.body.append(root);
+        page.injectNavButton();
+        return root;
+    }
+
+    afterEach(() => {
+        page.disable();
+        document.body.replaceChildren();
+        vi.restoreAllMocks();
+    });
+
+    test('keeps the expanded label and scopes hiding to the native collapse class, not viewport width', () => {
+        nav();
+        const button = page.navButton;
+        const label = button.lastElementChild;
+        expect(getComputedStyle(label).display).not.toBe('none');
+        // happy-dom caches descendant selector matches across ancestor class
+        // changes. Inspect the actual state selector here; the next test checks
+        // computed display for an initially collapsed nav, without a fake resize.
+        const rule = Array.from(document.querySelector('#toolasha-pinned-nav-layout').sheet.cssRules).find((rule) =>
+            rule.selectorText?.includes('mwi-pinned-nav-label')
+        );
+        expect(rule.selectorText).toBe('[class*="NavigationBar_collapsed"] .mwi-pinned-nav > .mwi-pinned-nav-label');
+        expect(rule.style.display).toBe('none');
+        expect(button.getAttribute('aria-label')).toBe('Pinned actions');
+        expect(button.title).toBe('Pinned actions');
+    });
+
+    test('starts collapsed, does not duplicate, and reinjects after the sidebar is replaced', () => {
+        const first = nav(true);
+        page.injectNavButton();
+        expect(first.querySelectorAll('.mwi-pinned-nav')).toHaveLength(1);
+        first.remove();
+        const second = nav(true);
+        expect(second.querySelectorAll('.mwi-pinned-nav')).toHaveLength(1);
+        expect(getComputedStyle(page.navButton.lastElementChild).display).toBe('none');
+        expect(getComputedStyle(page.navButton.firstElementChild).display).not.toBe('none');
+        expect(document.querySelectorAll('#toolasha-pinned-nav-layout')).toHaveLength(1);
+    });
+
+    test('keeps the click action and removes only its own nodes and styles on disable', () => {
+        const root = nav(true);
+        const show = vi.spyOn(page, 'showPage').mockImplementation(() => {});
+        page.navButton.click();
+        expect(show).toHaveBeenCalledOnce();
+        page.disable();
+        expect(root.isConnected).toBe(true);
+        expect(root.querySelector('.mwi-pinned-nav')).toBeNull();
+        expect(document.querySelector('#toolasha-pinned-nav-layout')).toBeNull();
+        page.injectNavButton();
+        expect(getComputedStyle(page.navButton.lastElementChild).display).toBe('none');
+    });
+});

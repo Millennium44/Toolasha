@@ -25,6 +25,7 @@ import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calcXpPerAction } from '../alchemy/alchemy-rankings.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { addStyles, removeStyles } from '../../utils/dom.js';
 import { ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE } from '../../utils/all-zones-snapshot.js';
 import { characterKey } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
@@ -166,6 +167,15 @@ export function combatZoneRows(snapshot, currentFingerprint) {
         });
 }
 
+const NAV_STYLE_ID = 'toolasha-pinned-nav-layout';
+// The game hides its own contentContainer inside NavigationBar_collapsed.
+// Our independent row has neither, so follow the same state without copying
+// build-hashed classes or guessing from the viewport width.
+const NAV_CSS = `
+[class*="NavigationBar_collapsed"] .mwi-pinned-nav > .mwi-pinned-nav-label { display: none; }
+[class*="NavigationBar_collapsed"] .mwi-pinned-nav { justify-content: center; gap: 0 !important; }
+`;
+
 class PinnedActionsPage {
     constructor() {
         this.navButton = null;
@@ -175,7 +185,6 @@ class PinnedActionsPage {
         this.unregisterObserver = null;
         this.unregisterReady = null;
         this.timerRegistry = createTimerRegistry();
-        this.navInjected = false;
         this.hiddenElements = [];
 
         // Sort state
@@ -217,9 +226,7 @@ class PinnedActionsPage {
         if (!config.getSetting('actions_pinnedPage')) return;
 
         this.unregisterObserver = domObserver.onClass('PinnedActionsPage', 'NavigationBar_nav', () => {
-            if (!this.navInjected) {
-                this.injectNavButton();
-            }
+            this.injectNavButton();
         });
 
         // @run-at document-start: a nav bar rendered before the shared observer attaches to
@@ -227,7 +234,7 @@ class PinnedActionsPage {
         // observer's actual-ready signal (immediate if it is already attached).
         this.unregisterReady = domObserver.onReady('PinnedActionsPageCatchUp', () => {
             const existingNav = document.querySelector('[class*="NavigationBar_nav"]');
-            if (existingNav && !this.navInjected) {
+            if (existingNav) {
                 this.injectNavButton();
             }
         });
@@ -237,10 +244,11 @@ class PinnedActionsPage {
      * Inject the "Pinned" nav button above the first skill in the nav bar
      */
     injectNavButton() {
+        if (this.navButton?.isConnected) return;
         const navLinks = document.querySelector('[class*="NavigationBar_navigationLinks"]');
         if (!navLinks) return;
 
-        this.navInjected = true;
+        addStyles(NAV_CSS, NAV_STYLE_ID);
 
         const btn = document.createElement('div');
         btn.className = 'mwi-pinned-nav';
@@ -258,7 +266,9 @@ class PinnedActionsPage {
             margin-bottom: 2px;
         `;
 
-        btn.innerHTML = `<span style="font-size: 1.1em;">📌</span><span>Pinned</span>`;
+        btn.title = 'Pinned actions';
+        btn.setAttribute('aria-label', 'Pinned actions');
+        btn.innerHTML = `<span aria-hidden="true" style="font-size: 1.1em;">📌</span><span class="mwi-pinned-nav-label">Pinned</span>`;
 
         btn.addEventListener('mouseenter', () => {
             if (!this.isActive) {
@@ -1433,7 +1443,7 @@ class PinnedActionsPage {
             this.closeFilterPopup();
             this.stopNavClickInterceptor();
             this.timerRegistry.clearAll();
-            this.navInjected = false;
+            removeStyles(NAV_STYLE_ID);
         } catch (error) {
             console.error('[Pinned Actions Page] Disable failed part-way:', error);
         } finally {

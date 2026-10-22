@@ -769,3 +769,32 @@ describe('column menu outside-click listener', () => {
         expect(getCleanupRegistryCensus().listeners).toBe(before);
     });
 });
+
+describe('phone stats placement', () => {
+    test('uses a bounded normal-flow host, then restores the desktop card and cleans up', () => {
+        const media = vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true });
+        const area = document.createElement('div');
+        area.className = 'MarketplacePanel_infoContainer__phone';
+        const card = document.createElement('div');
+        card.className = 'MarketplacePanel_currentItem__phone';
+        area.append(card);
+        document.body.append(area);
+        area.getBoundingClientRect = () => ({ left: 36 });
+        const panel = marketVolumeStats.attachPanel(card);
+        const host = document.querySelector('.mwi-volume-stats-mobile-host');
+        expect(host.nextElementSibling).toBe(area);
+        expect(host.contains(panel)).toBe(true);
+        expect(card.contains(panel)).toBe(false);
+        expect(host.style.maxWidth).toBe(`${window.innerWidth - 44}px`);
+        expect(document.getElementById('mwi-market-mobile-layout').textContent).toContain('overflow-x: auto');
+        media.mockReturnValue({ matches: false });
+        window.dispatchEvent(new Event('resize'));
+        expect(panel.parentElement).toBe(card);
+        expect(document.querySelector('.mwi-volume-stats-mobile-host')).toBeNull();
+        marketVolumeStats.disable();
+        expect(panel.isConnected).toBe(false);
+        expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
+        expect(marketVolumeStats.fitResizeCleanup).toBe(false);
+        media.mockRestore();
+    });
+});

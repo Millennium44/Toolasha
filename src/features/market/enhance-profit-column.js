@@ -19,6 +19,7 @@
  * order book's asks by position.
  */
 
+import { syncMobileListingNotes, removeMobileListingNotes } from './market-mobile-layout.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
@@ -280,6 +281,7 @@ class EnhanceProfitColumn {
     removeFrom(table) {
         table.querySelectorAll(`.${HEADER_CLASS}, .${CELL_CLASS}`).forEach((el) => el.remove());
         table.removeAttribute(STAMP_ATTR);
+        removeMobileListingNotes(table, CELL_CLASS);
     }
 
     /**
@@ -349,7 +351,10 @@ class EnhanceProfitColumn {
             table.getAttribute(STAMP_ATTR) === stamp &&
             theadRow.querySelectorAll(`.${HEADER_CLASS}`).length === 1 &&
             rows.every((row) => row.querySelectorAll(`.${CELL_CLASS}`).length === 1);
-        if (complete) return;
+        if (complete) {
+            syncMobileListingNotes(table, CELL_CLASS, 'Profit/h');
+            return;
+        }
 
         this.removeFrom(table);
         table.setAttribute(STAMP_ATTR, stamp);
@@ -383,6 +388,7 @@ class EnhanceProfitColumn {
             if (ask) this.fillCell(cell, quote, ask.price);
             insertAt(row, cell, priceIndex >= 0 ? priceIndex + 1 : -1);
         }
+        syncMobileListingNotes(table, CELL_CLASS, 'Profit/h');
     }
 
     /**

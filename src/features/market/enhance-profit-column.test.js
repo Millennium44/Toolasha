@@ -323,3 +323,22 @@ describe('the order-book column', () => {
         expect(headers.at(-1)).toBe('~Age');
     });
 });
+
+test('the order-book observer settles after notes render, and unchanged repaints emit no mutations', async () => {
+    const { container } = buildMarket({ askRows: 1 });
+    feedBook('/items/iron_sword', 5, [14_000_000]);
+    const repaint = vi.spyOn(column, 'repaint');
+    column.repaint();
+    await vi.advanceTimersByTimeAsync(500);
+    const settledCount = repaint.mock.calls.length;
+    expect(column._containerObserver).not.toBeNull();
+    expect(container.querySelector('.mwi-market-mobile-note')).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(repaint).toHaveBeenCalledTimes(settledCount);
+    const observed = new MutationObserver(() => {});
+    observed.observe(container, { childList: true, subtree: true, attributes: true });
+    column.repaint();
+    expect(observed.takeRecords()).toHaveLength(0);
+    observed.disconnect();
+    repaint.mockRestore();
+});

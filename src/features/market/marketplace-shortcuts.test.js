@@ -8,7 +8,7 @@
  * truncating a value to a tiny fraction of what was typed or displayed.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
@@ -26,7 +26,7 @@ const settingsMock = vi.hoisted(() => ({ market_quickInputButtons: true, market_
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => settingsMock[key] ?? false,
-        getSettingValue: (_key, fallback) => fallback,
+        getSettingValue: (key, fallback) => settingsMock[key] ?? fallback,
         onSettingChange: () => {},
     },
 }));
@@ -435,5 +435,126 @@ describe('findQuantityInput refuses rather than guessing positionally', () => {
             <div><div><input value="7" /></div></div>
         `;
         expect(marketplaceShortcuts.findQuantityInput(modal).value).toBe('7');
+    });
+});
+
+describe('buy autofocus respects mobile and deliberate editing', () => {
+    function modal(title = 'Buy Now') {
+        const element = document.createElement('div');
+        element.innerHTML = `
+            <div class="MarketplacePanel_header__fixture">${title}</div>
+            <div class="MarketplacePanel_priceInputs__fixture"><input value="3276"></div>
+            <div class="MarketplacePanel_quantityInputs__fixture"><input value="1"></div>`;
+        document.body.append(element);
+        return {
+            element,
+            price: element.querySelector('input'),
+            quantity: element.querySelectorAll('input')[1],
+        };
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        settingsMock.mobileMode = 'auto';
+        vi.stubGlobal(
+            'matchMedia',
+            vi.fn(() => ({ matches: true }))
+        );
+    });
+    afterEach(() => {
+        marketplaceShortcuts.disable();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        delete settingsMock.mobileMode;
+    });
+
+    test.each(['Buy Now', 'Buy Listing'])('keeps %s autofill without focusing or selecting on touch', (title) => {
+        const { element, quantity } = modal(title);
+        const focus = vi.spyOn(quantity, 'focus');
+        const select = vi.spyOn(quantity, 'select');
+        const input = vi.fn();
+        quantity.addEventListener('input', input);
+        marketplaceShortcuts.pendingQuantity = 1472;
+        marketplaceShortcuts.autofillQuantity(element);
+        marketplaceShortcuts.focusQuantityInput(element);
+        vi.advanceTimersByTime(150);
+        expect(quantity.value).toBe('1472');
+        expect(input).toHaveBeenCalledOnce();
+        expect(focus).not.toHaveBeenCalled();
+        expect(select).not.toHaveBeenCalled();
+        expect(document.activeElement).toBe(document.body);
+    });
+
+    test('desktop still focuses/selects an untouched buy quantity', () => {
+        matchMedia.mockReturnValue({ matches: false });
+        const { element, quantity } = modal();
+        marketplaceShortcuts.focusQuantityInput(element);
+        vi.advanceTimersByTime(150);
+        expect(document.activeElement).toBe(quantity);
+        expect(quantity.selectionStart).toBe(0);
+        expect(quantity.selectionEnd).toBe(quantity.value.length);
+    });
+
+    test.each(['quantity', 'price'])('does not blur or reselect an intentional mobile %s edit', (field) => {
+        const fields = modal();
+        marketplaceShortcuts.focusQuantityInput(fields.element);
+        fields[field].focus();
+        fields[field].value = '12345';
+        fields[field].setSelectionRange(2, 2);
+        vi.advanceTimersByTime(150);
+        expect(document.activeElement).toBe(fields[field]);
+        expect(fields[field].value).toBe('12345');
+        expect(fields[field].selectionStart).toBe(2);
+        expect(fields[field].selectionEnd).toBe(2);
+    });
+
+    test('desktop also respects an editor chosen during the delay', () => {
+        matchMedia.mockReturnValue({ matches: false });
+        const { element, price } = modal();
+        marketplaceShortcuts.focusQuantityInput(element);
+        price.focus();
+        vi.advanceTimersByTime(150);
+        expect(document.activeElement).toBe(price);
+    });
+
+    test('checks mobile mode at execution time and honors the explicit override', () => {
+        matchMedia.mockReturnValue({ matches: false });
+        const { element, quantity } = modal();
+        marketplaceShortcuts.focusQuantityInput(element);
+        settingsMock.mobileMode = 'on';
+        vi.advanceTimersByTime(150);
+        expect(document.activeElement).not.toBe(quantity);
+        settingsMock.mobileMode = 'off';
+        matchMedia.mockReturnValue({ matches: true });
+        marketplaceShortcuts.focusQuantityInput(element);
+        vi.advanceTimersByTime(150);
+        expect(document.activeElement).toBe(quantity);
+    });
+
+    test.each(['detach', 'disable'])('cancels pending focus after %s', (action) => {
+        matchMedia.mockReturnValue({ matches: false });
+        const { element, quantity } = modal();
+        const focus = vi.spyOn(quantity, 'focus');
+        marketplaceShortcuts.focusQuantityInput(element);
+        if (action === 'detach') element.remove();
+        else marketplaceShortcuts.disable();
+        vi.advanceTimersByTime(150);
+        expect(focus).not.toHaveBeenCalled();
+    });
+
+    test('does not add autofocus to sell modals or unidentifiable buy fields', () => {
+        matchMedia.mockReturnValue({ matches: false });
+        const { element, quantity } = modal('Sell Now');
+        const focus = vi.spyOn(quantity, 'focus');
+        marketplaceShortcuts.focusQuantityInput(element);
+        vi.advanceTimersByTime(150);
+        expect(focus).not.toHaveBeenCalled();
+        element.firstElementChild.textContent = 'Buy Now';
+        element.querySelector('[class*="quantityInputs"]').className = '';
+        element.querySelector('[class*="priceInputs"]').className = '';
+        marketplaceShortcuts.focusQuantityInput(element);
+        vi.advanceTimersByTime(150);
+        expect(focus).not.toHaveBeenCalled();
     });
 });

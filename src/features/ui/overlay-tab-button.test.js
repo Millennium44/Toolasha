@@ -734,3 +734,32 @@ describe('a launcher left hidden', () => {
         expect(theDropZone()).toBeNull();
     });
 });
+
+describe('narrow game-panel dock', () => {
+    test('reserves flow space instead of covering game controls, and restores floating geometry on widening', async () => {
+        device.mobile = true;
+        const host = document.createElement('div');
+        host.className = 'GamePage_gamePanel__fixture';
+        const info = document.createElement('button');
+        info.textContent = 'Info';
+        host.appendChild(info);
+        document.body.appendChild(host);
+        const rect = vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ width: 360 });
+        geometry.saved.overlayLauncher = { left: 100, top: 250 };
+        overlayTabButton.initialize();
+        await flush();
+        const launcher = document.getElementById('toolasha-overlay-launcher');
+        expect(launcher.parentElement).toBe(host);
+        expect(launcher.nextElementSibling).toBe(info);
+        expect(launcher.style.position).toBe('relative');
+        expect(launcher.textContent).toBe('⧉ Overlay');
+        launcher.click();
+        expect(panel.toggles).toBe(1);
+        rect.mockReturnValue({ width: 900 });
+        window.dispatchEvent(new Event('resize'));
+        expect(launcher.parentElement).toBe(document.body);
+        expect(launcher.style.left).toBe('100px');
+        expect(launcher.style.top).toBe('250px');
+        rect.mockRestore();
+    });
+});

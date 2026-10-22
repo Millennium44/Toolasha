@@ -64,6 +64,7 @@ import overlayPanel, { VISIBILITY_EVENT } from './overlay-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { isMobileMode } from '../../utils/mobile.js';
 import { showToast } from '../../utils/toast.js';
+import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 
 const BUTTON_ID = 'toolasha-overlay-tab';
 const LAUNCHER_ID = 'toolasha-overlay-launcher';
@@ -112,6 +113,8 @@ class OverlayTabButton {
         this._launcherHiddenLoadToken = 0;
         this.unregister = null;
         this.unregisterReady = null;
+        this.unregisterGamePanel = null;
+        this.detachLauncherDock = null;
         this.initialized = false;
         // The panel can also be closed by its own ✕, and the switch has to
         // follow that rather than only what was last clicked here
@@ -149,6 +152,9 @@ class OverlayTabButton {
             // ever replaces the body it is attached to
             this.ensureLauncher();
         });
+        this.unregisterGamePanel = domObserver.onClass('OverlayLauncherDock', 'GamePage_gamePanel', () => {
+            this.ensureLauncher();
+        });
         document.addEventListener(VISIBILITY_EVENT, this.onVisibility);
         // @run-at document-start: a tab strip rendered before the shared observer attaches to
         // document.body is invisible to the class watcher, so the catch-up waits for the
@@ -164,6 +170,10 @@ class OverlayTabButton {
         this.unregister = null;
         this.unregisterReady?.();
         this.unregisterReady = null;
+        this.unregisterGamePanel?.();
+        this.unregisterGamePanel = null;
+        this.detachLauncherDock?.();
+        this.detachLauncherDock = null;
         document.removeEventListener(VISIBILITY_EVENT, this.onVisibility);
         this.button?.remove();
         this.button = null;
@@ -262,6 +272,8 @@ class OverlayTabButton {
      */
     ensureLauncher() {
         if (!isMobileMode() || this.launcherHidden) {
+            this.detachLauncherDock?.();
+            this.detachLauncherDock = null;
             this.detachLauncher?.();
             this.detachLauncher = null;
             this.launcher?.remove();
@@ -270,11 +282,14 @@ class OverlayTabButton {
             return;
         }
         if (this.launcher && document.body?.contains(this.launcher)) {
+            this.dockLauncher(this.launcher);
             this.sync();
             return;
         }
         if (!document.body) return;
 
+        this.detachLauncherDock?.();
+        this.detachLauncherDock = null;
         this.detachLauncher?.();
         this.launcher?.remove();
 
@@ -315,9 +330,45 @@ class OverlayTabButton {
         // Where it was left, if it was ever moved. Asynchronous, so it opens at
         // the default corner and settles a frame later rather than waiting on a
         // database before there is any way to open the overlay at all
-        restoreGeometry(button, LAUNCHER_KEY, { width: LAUNCHER_SIZE, height: LAUNCHER_SIZE }).catch((error) => {
+        button.dataset.geometryPending = 'true';
+        this.restoreLauncherPlacement(button).catch((error) => {
             console.error('[OverlayTabButton] Restoring the launcher position failed:', error);
         });
+    }
+
+    /** Restore the user's floating position before applying the narrow flow dock. */
+    async restoreLauncherPlacement(button) {
+        try {
+            await restoreGeometry(button, LAUNCHER_KEY, { width: LAUNCHER_SIZE, height: LAUNCHER_SIZE });
+        } finally {
+            delete button.dataset.geometryPending;
+            if (this.launcher === button && button.isConnected) this.dockLauncher(button);
+        }
+    }
+
+    /** Keep the mobile switch out of native page controls when its content pane is narrow. */
+    dockLauncher(button) {
+        const host = document.querySelector('[class*="GamePage_gamePanel"]');
+        if (!host || button.dataset.geometryPending || this._launcherDockHost === host) return;
+        this.detachLauncherDock?.();
+        this._launcherDockHost = host;
+        const detach = dockWhenNarrow(button, {
+            host,
+            before: host.firstChild,
+            onChange: (narrow) => {
+                button.textContent = narrow ? '⧉ Overlay' : '⧉';
+                button.style.borderRadius = narrow ? '6px' : '50%';
+                button.style.fontSize = narrow ? '14px' : '18px';
+                button.style.touchAction = narrow ? 'auto' : 'none';
+                button.title = narrow
+                    ? 'Show or hide the Toolasha overlay'
+                    : 'Show or hide the Toolasha overlay. Drag to move this button.';
+            },
+        });
+        this.detachLauncherDock = () => {
+            detach();
+            this._launcherDockHost = null;
+        };
     }
 
     /**
@@ -343,7 +394,7 @@ class OverlayTabButton {
         let moved = false;
 
         const onMove = (event) => {
-            if (pointer === null || event.pointerId !== pointer) return;
+            if (pointer === null || event.pointerId !== pointer || button.dataset.toolashaDocked === 'true') return;
 
             const dx = event.clientX - startX;
             const dy = event.clientY - startY;
@@ -375,6 +426,10 @@ class OverlayTabButton {
             document.removeEventListener('pointermove', onMove);
             document.removeEventListener('pointerup', onUp);
             document.removeEventListener('pointercancel', onUp);
+            if (button.dataset.toolashaDocked === 'true') {
+                this.hideDropZone();
+                return;
+            }
             if (!moved) return;
 
             const droppedOnZone = this.isOverDropZone(
@@ -395,7 +450,7 @@ class OverlayTabButton {
         };
 
         const onDown = (event) => {
-            if (event.button !== 0) return;
+            if (event.button !== 0 || button.dataset.toolashaDocked === 'true') return;
             pointer = event.pointerId;
             moved = false;
             startX = event.clientX;
