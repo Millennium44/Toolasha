@@ -1622,8 +1622,12 @@ class TaskProfitDisplay {
             dockWhenNarrow(container, {
                 host: actionNode.parentElement,
                 before: actionNode.nextSibling,
-                measure: taskNode,
-                breakpoint: 520,
+                // The Tasks panel, not the card: desktop boards lay cards out as ~430px tiles, which a
+                // card-width breakpoint read as a phone and docked every combat estimate
+                measure:
+                    taskNode.closest('[class*="TasksPanel_tasksPanel"]') ||
+                    taskNode.closest(GAME.TASK_LIST) ||
+                    taskNode,
             })
         );
     }
