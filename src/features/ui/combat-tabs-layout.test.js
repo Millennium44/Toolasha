@@ -186,3 +186,60 @@ test('a strip that already fits the screen is not capped', () => {
     feature.initialize();
     expect(scroller.style.getPropertyValue('max-width')).toBe('');
 });
+
+function labyrinthFixture(width = 315) {
+    const host = document.createElement('div');
+    host.className = 'GamePage_gamePanel__fixture';
+    host.innerHTML = `<div class="LabyrinthPanel_labyrinthPanel__fixture">
+        <div class="LabyrinthPanel_tabsComponentContainer__fixture"><div class="TabsComponent_tabsComponent__fixture">
+            <div class="TabsComponent_tabsContainer__fixture">
+                <div class="MuiTabs-root"><div class="MuiTabs-scroller MuiTabs-fixed" style="overflow:hidden">
+                    <div class="MuiTabs-flexContainer" role="tablist">
+                        <button class="MuiTab-root" role="tab">Labyrinth</button>
+                        <button class="MuiTab-root" role="tab">Room</button>
+                        <div class="MuiTab-root">Lab Sim</div>
+                    </div>
+                </div></div>
+            </div>
+        </div></div>
+    </div>`;
+    document.body.append(host);
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ width });
+    return {
+        host,
+        panel: host.firstElementChild,
+        scroller: host.querySelector('.MuiTabs-scroller'),
+        list: host.querySelector('[role="tablist"]'),
+    };
+}
+
+test('the Labyrinth strip scrolls and is capped at the screen edge, alongside a Combat strip', () => {
+    vi.stubGlobal('innerWidth', 412);
+    vi.stubGlobal('visualViewport', { width: 412 });
+    const lab = labyrinthFixture();
+    vi.spyOn(lab.scroller, 'getBoundingClientRect').mockReturnValue({ left: 132, width: 315, right: 447 });
+    const combat = fixture(315);
+    vi.spyOn(combat.scroller, 'getBoundingClientRect').mockReturnValue({ left: 132, width: 315, right: 447 });
+    feature.initialize();
+    expect(lab.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(true);
+    expect(getComputedStyle(lab.scroller).overflowX).toBe('auto');
+    expect(lab.scroller.style.getPropertyValue('max-width')).toBe('280px');
+    expect(combat.scroller.style.getPropertyValue('max-width')).toBe('280px');
+    expect(lab.list.getAttribute('data-toolasha-combat-tabs-layer')).toBe('list');
+
+    lab.host.remove();
+    handlers.added.forEach((callback) => callback());
+    expect(lab.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(false);
+    expect(combat.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(true);
+
+    feature.disable();
+    expect(combat.scroller.style.getPropertyValue('max-width')).toBe('');
+    expect(combat.panel.querySelector('[data-toolasha-combat-tabs-layer]')).toBeNull();
+});
+
+test('a wide Labyrinth pane keeps its native strip', () => {
+    const lab = labyrinthFixture(1000);
+    feature.initialize();
+    expect(lab.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(false);
+    expect(lab.scroller.style.overflow).toBe('hidden');
+});
