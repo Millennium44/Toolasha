@@ -9,7 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Mobile layout improvements
 
 - The Pinned sidebar entry hides its label when the native sidebar is collapsed, matching the other navigation icons.
-- On phones the Overlay switch is a sidebar entry next to Pinned instead of a floating button (Settings can hide or show it per phone), the overlay opens even if it was docked on desktop, and the Combat Statistics window, Lab Sim run controls and market sort buttons stay on screen.
+- On phones the Overlay switch is a sidebar entry next to Pinned instead of a floating button (Settings can hide or show it per phone), the overlay opens even if it was docked on desktop, and the Combat Statistics window, Lab Sim run controls, market History window and market sort buttons stay on screen.
 - Marketplace quantity autofill no longer forces input focus on mobile, so walking through consumable purchases does not summon the keyboard; manual quantity editing remains available.
 - Narrow Tasks headers wrap their added controls within the panel, and the Tasks tab strip stays bounded to the available width. Wider layouts retain native positioning.
 - The narrow Combat and Labyrinth tab strips scroll horizontally so every tab, including Statistics and Lab Sim, stays reachable on a phone. Wider panels retain the native layout.
