@@ -474,7 +474,7 @@ class MarketHistoryPanel {
             flex-direction: column; background: #282844; border: 1px solid #90a6eb;
             border-radius: 4px; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
             font-size: 12px; color: #e7e7e7; user-select: none; resize: both; overflow: hidden;
-            min-width: 260px; min-height: 60px;
+            min-width: 260px; min-height: 60px; max-width: calc(100vw - 16px);
         `;
 
         // The toolbar is the one region a finger can drag from: the chip row
@@ -698,6 +698,16 @@ class MarketHistoryPanel {
         const open = this.prefs.open;
         this.panel.style.display = open ? 'flex' : 'none';
         this.panel.style.height = `${this.prefs.h}px`;
+        // A width saved on a desktop is wider than a phone: the max-width caps it, and the left edge
+        // is pulled in so the capped panel still ends on screen
+        if (open) {
+            const right = this.panel.getBoundingClientRect().right;
+            const viewport = window.innerWidth || 0;
+            if (viewport > 0 && right > viewport) {
+                const left = Math.max(8, viewport - this.panel.offsetWidth - 8);
+                this.panel.style.left = `${left}px`;
+            }
+        }
         this.syncTabButton();
         if (open && this.current) this.showItem(this.current.itemHrid, this.current.enhancementLevel);
     }
