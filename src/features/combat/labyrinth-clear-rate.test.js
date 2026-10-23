@@ -6840,8 +6840,14 @@ describe('narrow labyrinth toolbar', () => {
         const panel = document.createElement('div');
         panel.className = 'LabyrinthPanel_labyrinthPanel__fixture';
         const entries = document.createElement('div');
+        const column = document.createElement('div');
+        column.className = 'LabyrinthPanel_activeRun__fixture';
+        const gridContainer = document.createElement('div');
+        gridContainer.className = 'LabyrinthPanel_gridContainer__fixture';
         const grid = document.createElement('div');
-        panel.append(entries, grid);
+        gridContainer.append(grid);
+        column.append(gridContainer);
+        panel.append(entries, column);
         document.body.appendChild(panel);
         const rect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 350 });
         const findGrid = vi.spyOn(labyrinthClearRate, 'findRoomGridParent').mockReturnValue(grid);
@@ -6854,8 +6860,11 @@ describe('narrow labyrinth toolbar', () => {
         labyrinthClearRate.injectTileControls();
         labyrinthClearRate.injectTileControls();
         const controls = panel.querySelector('.mwi-labyrinth-tile-controls');
-        expect(controls.parentElement).toBe(panel);
-        expect(controls.nextElementSibling).toBe(grid);
+        // A full-width row in the column above the map row, never a flex sibling squeezing the map
+        expect(controls.parentElement).toBe(column);
+        expect(controls.nextElementSibling).toBe(gridContainer);
+        expect(gridContainer.children).toHaveLength(1);
+        expect(gridContainer.firstElementChild).toBe(grid);
         expect(panel.querySelectorAll('.mwi-labyrinth-tile-controls')).toHaveLength(1);
         const pathGroup = controls.querySelector('.mwi-labyrinth-tile-controls-path-button').parentElement;
         expect(pathGroup.style.flexWrap).toBe('wrap');
@@ -6864,6 +6873,46 @@ describe('narrow labyrinth toolbar', () => {
         rect.mockReturnValue({ width: 1000 });
         window.dispatchEvent(new Event('resize'));
         expect(controls.parentElement).toBe(entries);
+        labyrinthClearRate._detachTileControlsLayout?.();
+        labyrinthClearRate._detachTileControlsLayout = null;
+        panel.remove();
+        rect.mockRestore();
+        findGrid.mockRestore();
+        findHost.mockRestore();
+        labyrinthClearRate.roomData = null;
+    });
+});
+
+describe('docked labyrinth toolbar placement', () => {
+    test('a wide bar left beside the map is not mistaken for a correctly placed one', () => {
+        const panel = document.createElement('div');
+        panel.className = 'LabyrinthPanel_labyrinthPanel__fixture';
+        const entries = document.createElement('div');
+        const column = document.createElement('div');
+        const gridContainer = document.createElement('div');
+        const grid = document.createElement('div');
+        gridContainer.append(grid);
+        column.append(gridContainer);
+        panel.append(entries, column);
+        document.body.appendChild(panel);
+        const rect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 1000 });
+        const findGrid = vi.spyOn(labyrinthClearRate, 'findRoomGridParent').mockReturnValue(grid);
+        const findHost = vi.spyOn(labyrinthClearRate, 'findEntriesRowHost').mockReturnValue(entries);
+        labyrinthClearRate.roomData = [[null, null]];
+        labyrinthClearRate.injectTileControls();
+        const controls = panel.querySelector('.mwi-labyrinth-tile-controls');
+        expect(controls.parentElement).toBe(entries);
+
+        // A stranded undocked bar sitting where the docked one would be
+        controls.remove();
+        const stray = document.createElement('div');
+        stray.className = 'mwi-labyrinth-tile-controls';
+        column.insertBefore(stray, gridContainer);
+        labyrinthClearRate.injectTileControls();
+        const bars = panel.querySelectorAll('.mwi-labyrinth-tile-controls');
+        expect(bars).toHaveLength(1);
+        expect(bars[0].parentElement).toBe(entries);
+
         labyrinthClearRate._detachTileControlsLayout?.();
         labyrinthClearRate._detachTileControlsLayout = null;
         panel.remove();

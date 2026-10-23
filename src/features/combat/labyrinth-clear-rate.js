@@ -3069,11 +3069,17 @@ class LabyrinthClearRate {
         // button built while auto-calc was off, which is how two of them ended
         // up on screen at once. Keep at most one correctly-placed bar and drop
         // the rest, so any number of re-injections settles on a single strip.
+        const gridContainer = gridParent.parentElement;
+        // On a phone the bar is docked in the column holding the grid's own container, as a row above it
+        const dockHost = gridContainer.parentElement || gridContainer;
+        const dockBefore = gridContainer.parentElement ? gridContainer : gridParent;
         const placedCorrectly = (el) =>
             el.isConnected &&
-            (host
-                ? el.parentElement === host || el.nextElementSibling === gridParent
-                : el.nextElementSibling === gridParent);
+            ((el.dataset.toolashaDocked === 'true' &&
+                el.parentElement === dockHost &&
+                el.nextElementSibling === dockBefore) ||
+                (el.dataset.toolashaDocked !== 'true' &&
+                    (host ? el.parentElement === host : el.nextElementSibling === gridParent)));
         const copies = Array.from(document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`));
         const keep = copies.find(placedCorrectly) || null;
         for (const copy of copies) {
@@ -3406,8 +3412,8 @@ class LabyrinthClearRate {
         // In a narrow panel this is a separate flow row above the map, not a
         // flex child squeezing the native Entries / Max Path / Upgrade row.
         this._detachTileControlsLayout = dockWhenNarrow(container, {
-            host: gridParent.parentElement,
-            before: gridParent,
+            host: dockHost,
+            before: dockBefore,
             measure: gridParent.closest('[class*="LabyrinthPanel_labyrinthPanel"]') || gridParent.parentElement,
         });
         // After the bar is in the page: both look their buttons up in the
