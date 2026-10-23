@@ -2278,10 +2278,9 @@ class SettingsUI {
     }
 
     /**
-     * "Show the overlay button" — brings back the phone launcher if it was
-     * dragged onto the drop zone and dismissed.
+     * "Show the overlay button" — brings back the phone's sidebar Overlay entry if it was hidden.
      *
-     * Mobile-only: the launcher (`overlay-tab-button.js`) only exists in mobile
+     * Mobile-only: the sidebar entry (`overlay-tab-button.js`) only exists in mobile
      * mode, so the control has nothing to recover on desktop.
      *
      * Deliberately not a `settings-schema.js` entry: whether the launcher is
@@ -2321,7 +2320,7 @@ class SettingsUI {
         };
 
         launcherBtn.title =
-            'Brings back the round ⧉ overlay launcher if it was dragged onto its drop zone and dismissed. ' +
+            'Brings back the ⧉ Overlay entry in the left navigation if it was hidden. ' +
             'Device-local — each phone remembers this on its own, separately from any synced setting.';
         launcherBtn.addEventListener('click', async () => {
             try {

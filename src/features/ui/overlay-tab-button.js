@@ -22,67 +22,48 @@
  * ## Why there is a second one on a phone
  *
  * That strip is the character column's, and on a desktop the character column is
- * always on screen — whatever else you are doing, the tabs are there and so is
- * this switch. On a phone the game shows one panel at a time, so the column and
- * its tab strip are simply not in the document while you are looking at the
- * marketplace, the map, or a fight. The switch is injected into a strip that does
- * not exist, which is why the overlay could only be opened from the inventory
- * screen: not a bug in the button, but the button having nowhere to be.
+ * always on screen. On a phone the game shows one panel at a time, so the column
+ * and its tab strip are simply not in the document while you are looking at the
+ * marketplace, the map, or a fight: the switch had nowhere to be.
  *
- * So in mobile mode there is also a launcher — a small round button fixed to the
- * window rather than to any of the game's own furniture, which is the only thing
- * that survives the game swapping its whole screen out. It can be dragged, and
- * where it is dragged to is remembered, because a fixed spot that happens to sit
- * on top of a control on one phone is a launcher that has to be worked around
- * forever. Desktop is untouched: no mobile mode, no launcher.
+ * So in mobile mode the switch is an entry in the game's left navigation
+ * sidebar instead - the one piece of furniture present on every screen. It is
+ * built the way the "Pinned" entry is (an independent row, label hidden when the
+ * game collapses the sidebar) and sits under it. It has no geometry of its own to
+ * save or move. Desktop is untouched: no mobile mode, no sidebar entry.
  *
- * ## Dragging it away
+ * ## Hiding it
  *
- * A launcher that can be moved out of the way can also be moved out of the way
- * *permanently* — some players simply do not want a floating button on screen.
- * Rather than add a separate settings toggle nobody finds until they go looking,
- * dragging it far enough is itself the toggle: a "drop here to hide" zone shows
- * up near the bottom of the screen for the length of the drag, and releasing the
- * launcher over it hides the launcher instead of just moving it. This does not
- * touch how a drag *starts* — it still begins the moment a finger goes down
- * (`touchAction: 'none'`), because gating that behind a long press would make
- * every ordinary reposition slower, which is the opposite of the point.
- *
- * The hidden flag is stored device-local (`toolasha_local_` prefix, see
- * `DEVICE_LOCAL_KEY_PREFIXES` in `core/settings-storage.js`) rather than as a
- * synced setting: hiding the launcher is a statement about *this* screen, and a
- * phone and a desktop fighting over one synced flag would mean dismissing it on
- * the phone also takes it off a desktop that never had the problem this solves.
- * A settings-panel control (elsewhere) flips the flag back — see
- * `isLauncherHidden`/`setLauncherHidden` below for what it calls.
+ * Some players do not want an extra sidebar entry. The settings panel offers a
+ * "Show the overlay button" control backed by `isLauncherHidden` /
+ * `setLauncherHidden` below. The flag is stored device-local
+ * (`toolasha_local_` prefix, see `DEVICE_LOCAL_KEY_PREFIXES` in
+ * `core/settings-storage.js`) rather than as a synced setting: hiding the entry
+ * is a statement about *this* screen, and a phone and a desktop fighting over
+ * one synced flag would take it off a desktop that never had the problem.
  */
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import overlayPanel, { VISIBILITY_EVENT } from './overlay-panel.js';
-import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { addStyles, removeStyles } from '../../utils/dom.js';
 import { isMobileMode } from '../../utils/mobile.js';
-import { showToast } from '../../utils/toast.js';
 
 const BUTTON_ID = 'toolasha-overlay-tab';
-const LAUNCHER_ID = 'toolasha-overlay-launcher';
-const DROP_ZONE_ID = 'toolasha-overlay-launcher-dropzone';
-/** Where the launcher was dragged to, shared by every character */
-const LAUNCHER_KEY = 'overlayLauncher';
-const LAUNCHER_SIZE = 40;
-/** Past this a press was a drag rather than a tap, and must not also toggle */
-const DRAG_SLOP = 6;
+const NAV_ITEM_ID = 'toolasha-overlay-nav';
+const NAV_STYLE_ID = 'toolasha-overlay-nav-layout';
+// Same collapsed-sidebar rule as the Pinned entry: the game hides its own labels
+// inside NavigationBar_collapsed, ours is an independent row and follows suit.
+const NAV_CSS = `
+[class*="NavigationBar_collapsed"] #${NAV_ITEM_ID} > .toolasha-overlay-nav-label { display: none; }
+[class*="NavigationBar_collapsed"] #${NAV_ITEM_ID} { justify-content: center; gap: 0 !important; }
+`;
 /**
- * Whether the launcher has been dragged away and hidden. Device-local — see the
- * "Dragging it away" note above for why this must not be a synced setting.
+ * Whether the sidebar entry has been hidden. Device-local - see the "Hiding it"
+ * note above for why this must not be a synced setting.
  */
 const LAUNCHER_HIDDEN_KEY = 'toolasha_local_overlayLauncherHidden';
-/** Size of the "drop here to hide" target, shown only while the launcher is dragged */
-const DROP_ZONE_WIDTH = 180;
-const DROP_ZONE_HEIGHT = 56;
-/** Gap between the drop zone and the bottom edge of the screen */
-const DROP_ZONE_MARGIN = 12;
 
 /** The tab this one wants to sit in front of */
 const SITS_BEFORE = 'Optimizer';
@@ -90,14 +71,11 @@ const SITS_BEFORE = 'Optimizer';
 class OverlayTabButton {
     constructor() {
         this.button = null;
-        /** The round button on a phone, which no game screen can take away */
-        this.launcher = null;
-        this.detachLauncher = null;
-        /** The "drop here to hide" band, present only while the launcher is being dragged */
-        this.dropZone = null;
+        /** The sidebar entry on a phone, which no game screen can take away */
+        this.navItem = null;
         /**
          * Best-known answer to "is the launcher hidden", kept in memory so
-         * `ensureLauncher` can check it synchronously. Starts `false` (shown)
+         * `ensureNavItem` can check it synchronously. Starts `false` (shown)
          * and is corrected once `loadLauncherHidden` reads the stored flag —
          * see `initialize` for why that read cannot gate the first paint.
          */
@@ -128,34 +106,35 @@ class OverlayTabButton {
         if (!config.getSetting('overlayPanel')) return;
         this.initialized = true;
 
-        // Fire-and-forget: whether the launcher was left hidden is read from a
-        // device-local key, and the read is unavoidably async while the launcher
-        // itself is created synchronously below (same trade-off `restoreGeometry`
-        // makes for position — see its own comment). `launcherHidden` starts
-        // `false`, so on a hidden launcher this creates it and then, the moment
-        // the read comes back, immediately takes it back down via `ensureLauncher`.
+        // Fire-and-forget: whether the entry was left hidden is read from a
+        // device-local key, and the read is unavoidably async. `launcherHidden`
+        // starts `false`, so on a hidden entry this creates it and then, the moment
+        // the read comes back, takes it back down via `ensureNavItem`.
         const loadToken = ++this._launcherHiddenLoadToken;
         this.loadLauncherHidden().then((hidden) => {
             if (!this.initialized || this._launcherHiddenLoadToken !== loadToken) return;
             this.launcherHidden = hidden;
-            this.ensureLauncher();
+            this.ensureNavItem();
         });
 
         // The strip is rebuilt whenever the column changes what it shows, so
         // this watches rather than injecting once
-        this.unregister = domObserver.onClass('OverlayTabButton', 'MuiTabs-flexContainer', () => {
-            this.ensureButton();
-            // Cheap, and the one thing that puts the launcher back if the game
-            // ever replaces the body it is attached to
-            this.ensureLauncher();
-        });
+        this.unregister = domObserver.onClass(
+            'OverlayTabButton',
+            ['MuiTabs-flexContainer', 'NavigationBar_nav'],
+            () => {
+                this.ensureButton();
+                // Cheap, and puts the sidebar entry back when the game re-renders its nav
+                this.ensureNavItem();
+            }
+        );
         document.addEventListener(VISIBILITY_EVENT, this.onVisibility);
         // @run-at document-start: a tab strip rendered before the shared observer attaches to
         // document.body is invisible to the class watcher, so the catch-up waits for the
         // observer's actual-ready signal (immediate if it is already attached).
         this.unregisterReady = domObserver.onReady('OverlayTabButtonCatchUp', () => {
             this.ensureButton();
-            this.ensureLauncher();
+            this.ensureNavItem();
         });
     }
 
@@ -167,11 +146,7 @@ class OverlayTabButton {
         document.removeEventListener(VISIBILITY_EVENT, this.onVisibility);
         this.button?.remove();
         this.button = null;
-        this.detachLauncher?.();
-        this.detachLauncher = null;
-        this.launcher?.remove();
-        this.launcher = null;
-        this.hideDropZone();
+        this.removeNavItem();
         // Reset to the default rather than left stale: the next `initialize()`
         // re-reads the real answer from storage (device-local, so it survives a
         // character switch just fine) — there is no reason for the gap before
@@ -253,280 +228,68 @@ class OverlayTabButton {
         this.sync();
     }
 
-    /**
-     * The launcher, on a phone, and nothing at all otherwise.
-     *
-     * Attached to the body rather than to anything of the game's, because the
-     * whole point of it is to outlive the screen you are on. Idempotent, so the
-     * observer that puts the tab switch back can call it too.
-     */
-    ensureLauncher() {
-        if (!isMobileMode() || this.launcherHidden) {
-            this.detachLauncher?.();
-            this.detachLauncher = null;
-            this.launcher?.remove();
-            this.launcher = null;
-            this.hideDropZone();
-            return;
-        }
-        if (this.launcher && document.body?.contains(this.launcher)) {
-            this.sync();
-            return;
-        }
-        if (!document.body) return;
-
-        this.detachLauncher?.();
-        this.launcher?.remove();
-
-        const button = document.createElement('button');
-        button.id = LAUNCHER_ID;
-        button.type = 'button';
-        button.textContent = '⧉';
-        button.title = 'Show or hide the Toolasha overlay. Drag to move this button.';
-        button.setAttribute('aria-label', 'Toolasha overlay');
-        Object.assign(button.style, {
-            position: 'fixed',
-            // Above the game's own interface rather than under it, unlike the
-            // overlay itself: a readout the game may cover is a fair trade, a
-            // switch the game may cover is a switch that cannot be pressed
-            zIndex: String(config.Z_FLOATING_PANEL),
-            right: '8px',
-            bottom: '96px',
-            width: `${LAUNCHER_SIZE}px`,
-            height: `${LAUNCHER_SIZE}px`,
-            borderRadius: '50%',
-            border: '1px solid rgba(120, 160, 255, 0.45)',
-            background: 'rgba(8, 10, 20, 0.85)',
-            color: '#e8ecf5',
-            fontSize: '18px',
-            lineHeight: '1',
-            padding: '0',
-            cursor: 'pointer',
-            boxShadow: '0 2px 10px rgba(0, 0, 0, 0.5)',
-            // A finger dragging this must not scroll the game behind it
-            touchAction: 'none',
-        });
-
-        document.body.appendChild(button);
-        this.launcher = button;
-        this.detachLauncher = this.makeLauncherDraggable(button);
-        this.sync();
-
-        // Where it was left, if it was ever moved. Asynchronous, so it opens at
-        // the default corner and settles a frame later rather than waiting on a
-        // database before there is any way to open the overlay at all
-        restoreGeometry(button, LAUNCHER_KEY, { width: LAUNCHER_SIZE, height: LAUNCHER_SIZE }).catch((error) => {
-            console.error('[OverlayTabButton] Restoring the launcher position failed:', error);
-        });
+    /** Take the sidebar entry and its styles away */
+    removeNavItem() {
+        this.navItem?.remove();
+        this.navItem = null;
+        removeStyles(NAV_STYLE_ID);
     }
 
     /**
-     * Let the launcher be moved, and remember where to.
+     * The sidebar entry, on a phone, and nothing at all otherwise.
      *
-     * A fixed corner is a guess about a screen this code has never seen, and on
-     * the phone where the guess is wrong the launcher covers a control for good.
-     * Dragging is the cheap way out of having to be right.
-     *
-     * The slop is what keeps it a button: a tap on a touchscreen always moves a
-     * pixel or two, so a press that never travels past {@link DRAG_SLOP} is
-     * still a tap and still toggles the overlay.
-     *
-     * @param {HTMLElement} button - The launcher
-     * @returns {Function} Detach
+     * Lives in the game's left navigation, which is on every screen. Idempotent,
+     * so the observer that puts the tab switch back can call it too.
      */
-    makeLauncherDraggable(button) {
-        let pointer = null;
-        let startX = 0;
-        let startY = 0;
-        let originX = 0;
-        let originY = 0;
-        let moved = false;
+    ensureNavItem() {
+        if (!isMobileMode() || this.launcherHidden) {
+            this.removeNavItem();
+            return;
+        }
+        if (this.navItem?.isConnected) {
+            this.sync();
+            return;
+        }
+        const navLinks = document.querySelector('[class*="NavigationBar_navigationLinks"]');
+        if (!navLinks) return;
+        this.navItem?.remove();
 
-        const onMove = (event) => {
-            if (pointer === null || event.pointerId !== pointer) return;
+        addStyles(NAV_CSS, NAV_STYLE_ID);
 
-            const dx = event.clientX - startX;
-            const dy = event.clientY - startY;
-            if (!moved && Math.abs(dx) < DRAG_SLOP && Math.abs(dy) < DRAG_SLOP) return;
-            const justStarted = !moved;
-            moved = true;
-
-            const most = {
-                x: Math.max(0, window.innerWidth - LAUNCHER_SIZE),
-                y: Math.max(0, window.innerHeight - LAUNCHER_SIZE),
-            };
-            const top = Math.min(Math.max(0, originY + dy), most.y);
-            button.style.left = `${Math.min(Math.max(0, originX + dx), most.x)}px`;
-            button.style.top = `${top}px`;
-            button.style.right = 'auto';
-            button.style.bottom = 'auto';
-
-            // Shown only once a press has actually become a drag — a tap must
-            // never flash it — and kept live afterward so the zone can say
-            // whether *this* release would land on it
-            const left = Number.parseFloat(button.style.left);
-            if (justStarted) this.showDropZone();
-            this.markDropZoneArmed(this.isOverDropZone(left, top));
-        };
-
-        const onUp = () => {
-            if (pointer === null) return;
-            pointer = null;
-            document.removeEventListener('pointermove', onMove);
-            document.removeEventListener('pointerup', onUp);
-            document.removeEventListener('pointercancel', onUp);
-            if (!moved) return;
-
-            const droppedOnZone = this.isOverDropZone(
-                Number.parseFloat(button.style.left),
-                Number.parseFloat(button.style.top)
-            );
-            this.hideDropZone();
-
-            if (droppedOnZone) {
-                this.dismissLauncherByDrag();
-                return;
-            }
-
-            saveGeometry(LAUNCHER_KEY, {
-                left: Number.parseFloat(button.style.left),
-                top: Number.parseFloat(button.style.top),
-            });
-        };
-
-        const onDown = (event) => {
-            if (event.button !== 0) return;
-            pointer = event.pointerId;
-            moved = false;
-            startX = event.clientX;
-            startY = event.clientY;
-            const box = button.getBoundingClientRect();
-            originX = box.left;
-            originY = box.top;
-            document.addEventListener('pointermove', onMove);
-            document.addEventListener('pointerup', onUp);
-            document.addEventListener('pointercancel', onUp);
-        };
-
-        const onClick = (event) => {
+        const item = document.createElement('div');
+        item.id = NAV_ITEM_ID;
+        item.setAttribute('role', 'button');
+        item.title = 'Show or hide the Toolasha overlay.';
+        item.setAttribute('aria-label', 'Toolasha overlay');
+        item.style.cssText = `
+            padding: 4px 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85em;
+            color: ${config.COLOR_ACCENT};
+            border-left: 3px solid transparent;
+            transition: background 0.15s, border-color 0.15s;
+            user-select: none;
+            margin-bottom: 2px;
+        `;
+        item.innerHTML =
+            '<span aria-hidden="true" style="font-size: 1.1em;">⧉</span>' +
+            '<span class="toolasha-overlay-nav-label">Overlay</span>';
+        item.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
-            // The click that ends a drag is not a press of the button
-            if (moved) {
-                moved = false;
-                return;
-            }
             overlayPanel.toggle();
             this.sync();
-        };
-
-        button.addEventListener('pointerdown', onDown);
-        button.addEventListener('click', onClick);
-
-        return () => {
-            button.removeEventListener('pointerdown', onDown);
-            button.removeEventListener('click', onClick);
-            document.removeEventListener('pointermove', onMove);
-            document.removeEventListener('pointerup', onUp);
-            document.removeEventListener('pointercancel', onUp);
-            this.hideDropZone();
-        };
-    }
-
-    /**
-     * Show the "drop here to hide" band along the bottom of the screen.
-     *
-     * Created lazily on the first drag rather than kept around from
-     * `ensureLauncher`, since it must exist for no longer than a drag does —
-     * anything left in the document past that is a stray hit target sitting
-     * over whatever the player looks at next. Idempotent, matching every other
-     * `ensure*` in this file: `onMove` calls it on every drag frame's first
-     * crossing of the slop, not only the first ever drag.
-     */
-    showDropZone() {
-        if (this.dropZone) return;
-        if (!document.body) return;
-
-        const zone = document.createElement('div');
-        zone.id = DROP_ZONE_ID;
-        zone.textContent = 'Drop here to hide';
-        // Purely a visual target — the launcher is what is being dragged, and a
-        // pointer-events-auto band would only get in the way of dropping onto it
-        zone.setAttribute('aria-hidden', 'true');
-        Object.assign(zone.style, {
-            position: 'fixed',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            bottom: `${DROP_ZONE_MARGIN}px`,
-            width: `${DROP_ZONE_WIDTH}px`,
-            height: `${DROP_ZONE_HEIGHT}px`,
-            zIndex: String(config.Z_FLOATING_PANEL),
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: '12px',
-            border: '2px dashed rgba(255, 120, 120, 0.85)',
-            background: 'rgba(40, 8, 8, 0.85)',
-            color: '#ffd7d7',
-            fontFamily: "'Segoe UI', sans-serif",
-            fontSize: '13px',
-            fontWeight: '600',
-            pointerEvents: 'none',
         });
-        document.body.appendChild(zone);
-        this.dropZone = zone;
-    }
 
-    /** Take the drop zone away — the drag ended, one way or another */
-    hideDropZone() {
-        this.dropZone?.remove();
-        this.dropZone = null;
-    }
-
-    /**
-     * Highlight the drop zone while the launcher is held over it, so letting go
-     * reads as a deliberate choice rather than a surprise.
-     * @param {boolean} armed - Whether the launcher is currently over the zone
-     */
-    markDropZoneArmed(armed) {
-        if (!this.dropZone) return;
-        this.dropZone.style.background = armed ? 'rgba(120, 20, 20, 0.95)' : 'rgba(40, 8, 8, 0.85)';
-        this.dropZone.style.borderColor = armed ? 'rgba(255, 90, 90, 1)' : 'rgba(255, 120, 120, 0.85)';
-    }
-
-    /**
-     * Whether the launcher, at the given `left`/`top`, overlaps the drop zone.
-     *
-     * Computed from the same numbers `onMove` positions the launcher with
-     * rather than `getBoundingClientRect`, so this has an exact answer even in
-     * a test DOM that never actually lays anything out. The zone is centred and
-     * only as wide as it visibly is — a corner the player merely dragged *to*,
-     * such as the clamp at the edge of the screen, must not read as a drop on
-     * a target that was never anywhere near that corner.
-     *
-     * @param {number} left - The launcher's current `left`
-     * @param {number} top - The launcher's current `top`
-     * @returns {boolean}
-     */
-    isOverDropZone(left, top) {
-        if (!Number.isFinite(left) || !Number.isFinite(top)) return false;
-        const zoneLeft = (window.innerWidth - DROP_ZONE_WIDTH) / 2;
-        const zoneRight = zoneLeft + DROP_ZONE_WIDTH;
-        const zoneTop = window.innerHeight - DROP_ZONE_MARGIN - DROP_ZONE_HEIGHT;
-        const zoneBottom = window.innerHeight - DROP_ZONE_MARGIN;
-        return left < zoneRight && left + LAUNCHER_SIZE > zoneLeft && top < zoneBottom && top + LAUNCHER_SIZE > zoneTop;
-    }
-
-    /**
-     * The launcher was dropped on the dismiss zone: hide it, and say where it went.
-     */
-    dismissLauncherByDrag() {
-        this.setLauncherHidden(true).catch((error) => {
-            console.error('[OverlayTabButton] Hiding the launcher after a drag failed:', error);
-        });
-        showToast('Overlay launcher hidden. Bring it back from Toolasha settings → Show the overlay button.', {
-            kind: 'info',
-        });
+        // Under the Pinned entry when that one is already there
+        const pinned = navLinks.querySelector('.mwi-pinned-nav');
+        if (pinned?.parentElement === navLinks) pinned.after(item);
+        else navLinks.insertBefore(item, navLinks.firstChild);
+        this.navItem = item;
+        this.sync();
     }
 
     /**
@@ -579,7 +342,7 @@ class OverlayTabButton {
         // Applied before the write settles — the player must see the launcher
         // go (or come back) at once, not three seconds later when the debounced
         // save happens to land.
-        this.ensureLauncher();
+        this.ensureNavItem();
         try {
             await storage.set(LAUNCHER_HIDDEN_KEY, this.launcherHidden, 'settings');
         } catch (error) {
@@ -655,11 +418,15 @@ class OverlayTabButton {
         if (optimizer && optimizer.previousElementSibling !== this.button) list.insertBefore(this.button, optimizer);
     }
 
-    /** Dim them when the overlay is down, so each says which state it is in */
+    /** Show the overlay's state on each switch: dimmed tab, highlighted sidebar entry */
     sync() {
-        const open = overlayPanel.panel ? '1' : '0.6';
-        if (this.button) this.button.style.opacity = open;
-        if (this.launcher) this.launcher.style.opacity = open;
+        const shown = Boolean(overlayPanel.panel);
+        if (this.button) this.button.style.opacity = shown ? '1' : '0.6';
+        if (this.navItem) {
+            this.navItem.style.borderLeftColor = shown ? config.COLOR_ACCENT : 'transparent';
+            this.navItem.style.background = shown ? 'rgba(255, 255, 255, 0.08)' : '';
+            this.navItem.setAttribute('aria-pressed', shown ? 'true' : 'false');
+        }
     }
 }
 
