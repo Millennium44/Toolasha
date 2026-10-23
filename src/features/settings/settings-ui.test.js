@@ -489,8 +489,10 @@ vi.mock('../ui/overlay-tab-button.js', () => ({
     default: {
         isLauncherHidden: () => mocks.launcherHidden,
         setLauncherHidden: async (hidden) => {
+            // Like the real one: the flag changes at once, the save may take a while
             mocks.launcherHidden = Boolean(hidden);
             mocks.launcherShowCalls += 1;
+            if (mocks.slowSave) await mocks.slowSave;
         },
     },
 }));
@@ -1180,6 +1182,28 @@ describe('the Overlay sidebar entry switch', () => {
 
         expect(mocks.launcherHidden).toBe(true);
         expect(launcherButton().textContent).toBe('Show the Overlay sidebar entry');
+    });
+
+    test('relabels as soon as it is pressed, before the debounced save lands, so a second press undoes the first', async () => {
+        mocks.coarsePointer = true;
+        mocks.launcherHidden = false;
+        let finishSave;
+        mocks.slowSave = new Promise((resolve) => (finishSave = resolve));
+        drawPanel();
+        await settle();
+
+        launcherButton().click();
+        await settle();
+        expect(mocks.launcherHidden).toBe(true);
+        expect(launcherButton().textContent).toBe('Show the Overlay sidebar entry');
+
+        launcherButton().click();
+        await settle();
+        expect(mocks.launcherHidden).toBe(false);
+        expect(launcherButton().textContent).toBe('Hide the Overlay sidebar entry');
+
+        finishSave();
+        mocks.slowSave = null;
     });
 
     test("never writes a synced setting — only calls overlay-tab-button.js's own API", async () => {

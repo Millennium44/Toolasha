@@ -2325,12 +2325,20 @@ class SettingsUI {
             'Shows or hides the ⧉ Overlay entry in the left navigation on this phone. ' +
             'Device-local — each phone remembers this on its own, separately from any synced setting.';
         launcherBtn.addEventListener('click', async () => {
+            // The flag and the sidebar change at once; only the save is debounced (seconds). Relabel now,
+            // not after the save, or a second press inside that window would repeat the first
+            let pending;
             try {
-                await overlayTabButton.setLauncherHidden(!hidden);
+                pending = overlayTabButton.setLauncherHidden(!hidden);
             } catch (error) {
                 console.error('[SettingsUI] Changing the overlay launcher flag failed:', error);
             }
             await syncLabel();
+            try {
+                await pending;
+            } catch (error) {
+                console.error('[SettingsUI] Saving the overlay launcher flag failed:', error);
+            }
         });
 
         syncLabel();
