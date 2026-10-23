@@ -2278,7 +2278,7 @@ class SettingsUI {
     }
 
     /**
-     * "Show the overlay button" — brings back the phone's sidebar Overlay entry if it was hidden.
+     * "Hide/Show the Overlay sidebar entry" — a two-way switch for the phone's sidebar Overlay entry.
      *
      * Mobile-only: the sidebar entry (`overlay-tab-button.js`) only exists in mobile
      * mode, so the control has nothing to recover on desktop.
@@ -2307,26 +2307,28 @@ class SettingsUI {
         const launcherBtn = document.createElement('button');
         launcherBtn.className = 'toolasha-utility-button';
 
+        // A plain on/off switch: the sidebar entry is small, but a player who never uses the overlay
+        // should be able to take it off their phone's navigation, and put it back the same way
+        let hidden = false;
         const syncLabel = async () => {
             try {
-                const hidden = await overlayTabButton.isLauncherHidden();
-                launcherBtn.textContent = hidden ? 'Show the overlay button' : 'Overlay button is already shown';
-                launcherBtn.disabled = !hidden;
+                hidden = await overlayTabButton.isLauncherHidden();
             } catch (error) {
                 console.error('[SettingsUI] Checking the overlay launcher flag failed:', error);
-                launcherBtn.textContent = 'Show the overlay button';
-                launcherBtn.disabled = false;
+                hidden = false;
             }
+            launcherBtn.textContent = hidden ? 'Show the Overlay sidebar entry' : 'Hide the Overlay sidebar entry';
+            launcherBtn.setAttribute('aria-pressed', String(!hidden));
         };
 
         launcherBtn.title =
-            'Brings back the ⧉ Overlay entry in the left navigation if it was hidden. ' +
+            'Shows or hides the ⧉ Overlay entry in the left navigation on this phone. ' +
             'Device-local — each phone remembers this on its own, separately from any synced setting.';
         launcherBtn.addEventListener('click', async () => {
             try {
-                await overlayTabButton.setLauncherHidden(false);
+                await overlayTabButton.setLauncherHidden(!hidden);
             } catch (error) {
-                console.error('[SettingsUI] Bringing back the overlay launcher failed:', error);
+                console.error('[SettingsUI] Changing the overlay launcher flag failed:', error);
             }
             await syncLabel();
         });
