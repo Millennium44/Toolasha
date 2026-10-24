@@ -55,9 +55,13 @@ const NAV_ITEM_ID = 'toolasha-overlay-nav';
 const NAV_STYLE_ID = 'toolasha-overlay-nav-layout';
 // Same collapsed-sidebar rule as the Pinned entry: the game hides its own labels
 // inside NavigationBar_collapsed, ours is an independent row and follows suit.
+// The game's own collapse rules sit inside this query: above it the collapsed class keeps its labels
+// (a phone turned to landscape), so ours must too
 const NAV_CSS = `
-[class*="NavigationBar_collapsed"] #${NAV_ITEM_ID} > .toolasha-overlay-nav-label { display: none; }
-[class*="NavigationBar_collapsed"] #${NAV_ITEM_ID} { justify-content: center; gap: 0 !important; }
+@media only screen and (max-width: 48rem) {
+    [class*="NavigationBar_collapsed"] #${NAV_ITEM_ID} > .toolasha-overlay-nav-label { display: none; }
+    [class*="NavigationBar_collapsed"] #${NAV_ITEM_ID} { justify-content: center; gap: 0 !important; }
+}
 `;
 /**
  * Whether the sidebar entry has been hidden. Device-local - see the "Hiding it"

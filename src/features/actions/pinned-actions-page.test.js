@@ -630,6 +630,13 @@ describe('Pinned follows the native sidebar collapse state', () => {
         page.disable();
         document.body.replaceChildren();
         vi.restoreAllMocks();
+        window.happyDOM.setViewport({ width: 1024, height: 768 });
+    });
+
+    test('a phone in landscape keeps the label: the collapsed class alone does not hide it above 48rem', () => {
+        window.happyDOM.setViewport({ width: 924, height: 412 });
+        nav(true);
+        expect(getComputedStyle(page.navButton.lastElementChild).display).not.toBe('none');
     });
 
     test('keeps the expanded label and scopes hiding to the native collapse class, not viewport width', () => {
@@ -640,9 +647,12 @@ describe('Pinned follows the native sidebar collapse state', () => {
         // happy-dom caches descendant selector matches across ancestor class
         // changes. Inspect the actual state selector here; the next test checks
         // computed display for an initially collapsed nav, without a fake resize.
-        const rule = Array.from(document.querySelector('#toolasha-pinned-nav-layout').sheet.cssRules).find((rule) =>
-            rule.selectorText?.includes('mwi-pinned-nav-label')
+        const media = Array.from(document.querySelector('#toolasha-pinned-nav-layout').sheet.cssRules).find(
+            (rule) => rule.media
         );
+        // Inside the game's own collapse query: above 48rem the collapsed class keeps its labels
+        expect(media.media.mediaText).toContain('48rem');
+        const rule = Array.from(media.cssRules).find((inner) => inner.selectorText?.includes('mwi-pinned-nav-label'));
         expect(rule.selectorText).toBe('[class*="NavigationBar_collapsed"] .mwi-pinned-nav > .mwi-pinned-nav-label');
         expect(rule.style.display).toBe('none');
         expect(button.getAttribute('aria-label')).toBe('Pinned actions');
@@ -650,6 +660,7 @@ describe('Pinned follows the native sidebar collapse state', () => {
     });
 
     test('starts collapsed, does not duplicate, and reinjects after the sidebar is replaced', () => {
+        window.happyDOM.setViewport({ width: 400, height: 800 });
         const first = nav(true);
         page.injectNavButton();
         expect(first.querySelectorAll('.mwi-pinned-nav')).toHaveLength(1);
@@ -662,6 +673,7 @@ describe('Pinned follows the native sidebar collapse state', () => {
     });
 
     test('keeps the click action and removes only its own nodes and styles on disable', () => {
+        window.happyDOM.setViewport({ width: 400, height: 800 });
         const root = nav(true);
         const show = vi.spyOn(page, 'showPage').mockImplementation(() => {});
         page.navButton.click();

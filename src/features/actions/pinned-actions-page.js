@@ -171,9 +171,13 @@ const NAV_STYLE_ID = 'toolasha-pinned-nav-layout';
 // The game hides its own contentContainer inside NavigationBar_collapsed.
 // Our independent row has neither, so follow the same state without copying
 // build-hashed classes or guessing from the viewport width.
+// The game's own collapse rules sit inside this query: above it the collapsed class keeps its labels
+// (a phone turned to landscape), so ours must too
 const NAV_CSS = `
-[class*="NavigationBar_collapsed"] .mwi-pinned-nav > .mwi-pinned-nav-label { display: none; }
-[class*="NavigationBar_collapsed"] .mwi-pinned-nav { justify-content: center; gap: 0 !important; }
+@media only screen and (max-width: 48rem) {
+    [class*="NavigationBar_collapsed"] .mwi-pinned-nav > .mwi-pinned-nav-label { display: none; }
+    [class*="NavigationBar_collapsed"] .mwi-pinned-nav { justify-content: center; gap: 0 !important; }
+}
 `;
 
 class PinnedActionsPage {

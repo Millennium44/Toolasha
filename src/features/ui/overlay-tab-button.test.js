@@ -379,6 +379,8 @@ describe('opening the overlay from anywhere on a phone', () => {
 
         const css = document.getElementById('toolasha-overlay-nav-layout').textContent;
         expect(css).toContain('NavigationBar_collapsed');
+        // Only inside the game's own collapse query, so a phone in landscape keeps the label
+        expect(css).toContain('@media only screen and (max-width: 48rem)');
         expect(css).toContain('.toolasha-overlay-nav-label { display: none; }');
         expect(theNavItem().querySelector('.toolasha-overlay-nav-label')).toBeTruthy();
     });
