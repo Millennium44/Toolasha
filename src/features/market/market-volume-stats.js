@@ -25,6 +25,7 @@
  * the player has opted into `market_pooledHistory`.
  */
 
+import { MARKET_MOBILE_QUERY, ensureMarketMobileStyles, releaseMarketMobileStyles } from './market-mobile-layout.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
@@ -491,17 +492,25 @@ class MarketVolumeStats {
      * Ensure the panel div exists as a child of the current-item card, creating
      * it on first use.
      *
-     * An absolutely-positioned overlay anchored to the card's top-right corner,
+     * On desktop, an absolutely-positioned overlay anchored to the card's top-right corner,
      * not a sibling in normal flow: a sibling is taller than the icon and pushes
      * the whole info area down, adding height to the page for no gain. The
      * ask/bid "for sale" counts (queue-length-estimator.js) live in the button
      * row below, not on this card, so the overlay has nothing there to collide
-     * with.
+     * with. On phones, placePanel moves the same panel into a bounded in-flow row.
      * @param {HTMLElement} currentItemElement
      * @returns {HTMLElement} The panel's content container
      */
     attachPanel(currentItemElement) {
-        let panel = currentItemElement.querySelector('.mwi-volume-stats');
+        ensureMarketMobileStyles();
+        if (this.positionedCard?.element !== currentItemElement) {
+            this.restoreCardPosition();
+            if (getComputedStyle(currentItemElement).position === 'static') {
+                this.positionedCard = { element: currentItemElement, position: currentItemElement.style.position };
+                currentItemElement.style.position = 'relative';
+            }
+        }
+        let panel = this.panel?.isConnected ? this.panel : currentItemElement.querySelector('.mwi-volume-stats');
         if (!panel) {
             panel = document.createElement('div');
             panel.className = 'mwi-volume-stats';
@@ -510,18 +519,67 @@ class MarketVolumeStats {
                 'white-space:nowrap;font-size:13px;line-height:1.5;text-align:left;' +
                 'background:#101116;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,0.3);' +
                 'padding:4px 8px;pointer-events:auto;';
-            if (getComputedStyle(currentItemElement).position === 'static') {
-                currentItemElement.style.position = 'relative';
-            }
-            currentItemElement.appendChild(panel);
-        } else if (panel.parentElement !== currentItemElement) {
             currentItemElement.appendChild(panel);
         }
+        this.panel = panel;
+        this.panelCard = currentItemElement;
+        this.placePanel(panel);
+        this.watchPanelFit(panel);
         return panel;
     }
 
+    /** Keep phone stats in their own flowing row, not over the order buttons. */
+    placePanel(panel) {
+        const card = this.panelCard;
+        if (!card?.isConnected) return false;
+        const area = card.closest('[class*="MarketplacePanel_infoContainer"]');
+        const mobile = window.matchMedia(MARKET_MOBILE_QUERY).matches;
+        if (mobile && area?.parentElement) {
+            let host = this.mobileHost;
+            if (!host || host.parentElement !== area.parentElement) {
+                host?.remove();
+                host = document.createElement('div');
+                host.className = 'mwi-volume-stats-mobile-host';
+                area.before(host);
+                this.mobileHost = host;
+            }
+            // The game can be wider than the viewport. Bound only our addition by the
+            // visible space to the right of its real container, including the sidebar.
+            const left = Math.max(0, area.getBoundingClientRect().left);
+            host.style.maxWidth = `${Math.max(0, window.innerWidth - left - FIT_GAP_PX)}px`;
+            if (panel.parentElement !== host) {
+                this.closeColumnMenu();
+                host.appendChild(panel);
+            }
+            panel.style.transform = '';
+            return true;
+        }
+        if (panel.parentElement !== card) {
+            this.closeColumnMenu();
+            card.appendChild(panel);
+        }
+        this.mobileHost?.remove();
+        this.mobileHost = null;
+        return false;
+    }
+
+    /** Restore only the card style owned by this feature, including after a card replacement. */
+    restoreCardPosition() {
+        if (this.positionedCard?.element.style.position === 'relative') {
+            this.positionedCard.element.style.position = this.positionedCard.position;
+        }
+        this.positionedCard = null;
+    }
+
     removePanel() {
+        this.closeColumnMenu();
         document.querySelectorAll('.mwi-volume-stats').forEach((el) => el.remove());
+        this.mobileHost?.remove();
+        this.mobileHost = null;
+        this.panel = null;
+        this.panelCard = null;
+        this.restoreCardPosition();
+        releaseMarketMobileStyles();
     }
 
     renderLoading(panel) {
@@ -593,8 +651,9 @@ class MarketVolumeStats {
             `<button type="button" class="mwi-volume-stats-gear" title="Choose columns" ` +
             `style="position:absolute;top:2px;left:2px;background:none;border:none;color:#AAAAAA;` +
             `cursor:pointer;font-size:13px;padding:0;line-height:1;z-index:1;">⚙</button>` +
+            `<div class="mwi-volume-stats-table-scroll" tabindex="0" role="region" aria-label="Trade statistics">` +
             `<table style="border-collapse:collapse;font-size:13px;">` +
-            `<tr style="color:#AAAAAA;font-size:11px;"><td style="width:16px;"></td>${header}</tr>${rows}</table>` +
+            `<tr style="color:#AAAAAA;font-size:11px;"><td style="width:16px;"></td>${header}</tr>${rows}</table></div>` +
             `</div>`;
 
         panel.title =
@@ -626,6 +685,12 @@ class MarketVolumeStats {
     fitPanel(panel) {
         if (!panel?.isConnected) return;
         panel.style.transform = '';
+        if (this.placePanel(panel)) {
+            document.querySelectorAll('.mwi-queue-length-combined').forEach((el) => {
+                el.style.fontSize = COMBINED_COUNTS_FONT_FULL;
+            });
+            return;
+        }
         const buyButton = document.querySelector(GAME.MARKETPLACE_NEW_LISTING_BUTTONS)?.lastElementChild;
         if (!buyButton) return;
         const panelRect = panel.getBoundingClientRect();
@@ -652,12 +717,26 @@ class MarketVolumeStats {
      * @param {HTMLElement} panel - The overlay
      */
     watchPanelFit(panel) {
-        const area = panel.closest('[class*="MarketplacePanel_infoContainer"]') || panel.parentElement;
-        if (!area || typeof ResizeObserver === 'undefined' || this.fitObservedArea === area) return;
-        this.fitObserver?.disconnect();
-        this.fitObservedArea = area;
-        this.fitObserver = new ResizeObserver(() => this.fitPanel(document.querySelector('.mwi-volume-stats')));
-        this.fitObserver.observe(area);
+        const area =
+            this.panelCard?.closest('[class*="MarketplacePanel_infoContainer"]') ||
+            panel.closest('[class*="MarketplacePanel_infoContainer"]') ||
+            panel.parentElement;
+        if (!this.fitResizeCleanup) {
+            const resize = () => this.fitPanel(document.querySelector('.mwi-volume-stats'));
+            window.addEventListener('resize', resize);
+            this.fitResizeCleanup = true;
+            this.releaseFitResize = () => {
+                window.removeEventListener('resize', resize);
+                this.fitResizeCleanup = false;
+                this.releaseFitResize = null;
+            };
+        }
+        if (area && typeof ResizeObserver !== 'undefined' && this.fitObservedArea !== area) {
+            this.fitObserver?.disconnect();
+            this.fitObservedArea = area;
+            this.fitObserver = new ResizeObserver(() => this.fitPanel(document.querySelector('.mwi-volume-stats')));
+            this.fitObserver.observe(area);
+        }
         // Registered once per lifetime, not once per area: every item change whose
         // React re-creates the info-container swaps in a new `area` object, so this
         // runs many times per session while a single teardown callback (reading
@@ -668,6 +747,7 @@ class MarketVolumeStats {
         if (!this.fitCleanupRegistered) {
             this.fitCleanupRegistered = true;
             this.cleanupRegistry.registerCleanup(() => {
+                this.releaseFitResize?.();
                 this.fitObserver?.disconnect();
                 this.fitObserver = null;
                 this.fitObservedArea = null;

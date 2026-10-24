@@ -710,3 +710,15 @@ describe('decompose chain mode', () => {
         expect(marketSort.sortMode).toBe('profit');
     });
 });
+
+describe('sort row layout', () => {
+    test('the sort row wraps so Reset Order stays on a narrow screen', () => {
+        document.body.innerHTML = '<div class="MarketplacePanel_filter__x"><div id="filter"></div></div>';
+        marketSort.injectSortUI(document.getElementById('filter'));
+        const row = document.getElementById('toolasha-market-sort');
+        expect(row.style.flexWrap).toBe('wrap');
+        expect(row.style.minWidth).toBe('0');
+        expect(row.style.display).toBe('flex');
+        expect(Array.from(row.querySelectorAll('button')).map((b) => b.textContent)).toContain('Reset Order');
+    });
+});

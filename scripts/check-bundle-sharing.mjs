@@ -106,6 +106,12 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/responsive-dock.js',
+        // No module-level mutable state or import-time DOM effects. Each call owns its
+        // element, observer, listener, and cleanup closure; copies share no registry.
+        'Per-element responsive docking factory; all lifecycle state is owned by the caller.',
+    ],
+    [
         'src/utils/damage-taken.js',
         // Pure functions over a state object the caller owns (newTakenState); no module-level state
         // and no import of mutable modules. The combat bundle's Damage Taken tracker and the ui

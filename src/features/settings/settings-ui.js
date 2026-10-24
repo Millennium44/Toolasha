@@ -2278,10 +2278,9 @@ class SettingsUI {
     }
 
     /**
-     * "Show the overlay button" — brings back the phone launcher if it was
-     * dragged onto the drop zone and dismissed.
+     * "Hide/Show the Overlay sidebar entry" — a two-way switch for the phone's sidebar Overlay entry.
      *
-     * Mobile-only: the launcher (`overlay-tab-button.js`) only exists in mobile
+     * Mobile-only: the sidebar entry (`overlay-tab-button.js`) only exists in mobile
      * mode, so the control has nothing to recover on desktop.
      *
      * Deliberately not a `settings-schema.js` entry: whether the launcher is
@@ -2308,28 +2307,38 @@ class SettingsUI {
         const launcherBtn = document.createElement('button');
         launcherBtn.className = 'toolasha-utility-button';
 
+        // A plain on/off switch: the sidebar entry is small, but a player who never uses the overlay
+        // should be able to take it off their phone's navigation, and put it back the same way
+        let hidden = false;
         const syncLabel = async () => {
             try {
-                const hidden = await overlayTabButton.isLauncherHidden();
-                launcherBtn.textContent = hidden ? 'Show the overlay button' : 'Overlay button is already shown';
-                launcherBtn.disabled = !hidden;
+                hidden = await overlayTabButton.isLauncherHidden();
             } catch (error) {
                 console.error('[SettingsUI] Checking the overlay launcher flag failed:', error);
-                launcherBtn.textContent = 'Show the overlay button';
-                launcherBtn.disabled = false;
+                hidden = false;
             }
+            launcherBtn.textContent = hidden ? 'Show the Overlay sidebar entry' : 'Hide the Overlay sidebar entry';
+            launcherBtn.setAttribute('aria-pressed', String(!hidden));
         };
 
         launcherBtn.title =
-            'Brings back the round ⧉ overlay launcher if it was dragged onto its drop zone and dismissed. ' +
+            'Shows or hides the ⧉ Overlay entry in the left navigation on this phone. ' +
             'Device-local — each phone remembers this on its own, separately from any synced setting.';
         launcherBtn.addEventListener('click', async () => {
+            // The flag and the sidebar change at once; only the save is debounced (seconds). Relabel now,
+            // not after the save, or a second press inside that window would repeat the first
+            let pending;
             try {
-                await overlayTabButton.setLauncherHidden(false);
+                pending = overlayTabButton.setLauncherHidden(!hidden);
             } catch (error) {
-                console.error('[SettingsUI] Bringing back the overlay launcher failed:', error);
+                console.error('[SettingsUI] Changing the overlay launcher flag failed:', error);
             }
             await syncLabel();
+            try {
+                await pending;
+            } catch (error) {
+                console.error('[SettingsUI] Saving the overlay launcher flag failed:', error);
+            }
         });
 
         syncLabel();

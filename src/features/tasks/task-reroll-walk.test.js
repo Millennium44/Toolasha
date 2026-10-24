@@ -2269,3 +2269,77 @@ describe('what start-up costs the settings store', () => {
         expect(walk.cowbellThreshold).toBe(32);
     });
 });
+
+describe('narrow board widget placement', () => {
+    test('replacing a docked task board releases the old observer and resize listener', () => {
+        const observers = [];
+        vi.stubGlobal(
+            'ResizeObserver',
+            class {
+                disconnect = vi.fn();
+                observe() {}
+                constructor() {
+                    observers.push(this);
+                }
+            }
+        );
+        const addListener = vi.spyOn(window, 'addEventListener');
+        const removeListener = vi.spyOn(window, 'removeEventListener');
+        const createPanel = () => {
+            const panel = document.createElement('div');
+            panel.className = 'GamePage_gamePanel__fixture';
+            panel.innerHTML = '<div class="TasksPanel_taskList__fixture"></div>';
+            vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 350 });
+            document.body.appendChild(panel);
+            return panel;
+        };
+        try {
+            const oldPanel = createPanel();
+            const oldWidget = walk._ensureWidget();
+            const oldResize = addListener.mock.calls.find(([type]) => type === 'resize')[1];
+            oldPanel.remove();
+            const newPanel = createPanel();
+            const newWidget = walk._ensureWidget();
+            expect(newWidget).not.toBe(oldWidget);
+            expect(newWidget.element.parentElement).toBe(newPanel);
+            expect(observers[0].disconnect).toHaveBeenCalledOnce();
+            expect(removeListener).toHaveBeenCalledWith('resize', oldResize);
+            expect(observers[1].disconnect).not.toHaveBeenCalled();
+            expect(oldWidget.element.isConnected).toBe(false);
+            expect([...document.body.childNodes].filter((node) => node.nodeType === 8)).toHaveLength(1);
+            walk._removeWidget();
+            expect(observers[1].disconnect).toHaveBeenCalledOnce();
+        } finally {
+            walk._removeWidget();
+            vi.unstubAllGlobals();
+            vi.restoreAllMocks();
+        }
+    });
+
+    test('docks below the page tabs without changing one-press action handling or saved desktop position', () => {
+        const panel = document.createElement('div');
+        panel.className = 'GamePage_gamePanel__fixture';
+        const tabs = document.createElement('nav');
+        const list = document.createElement('div');
+        list.className = 'TasksPanel_taskList__fixture';
+        panel.append(tabs, list);
+        document.body.appendChild(panel);
+        const rect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 350 });
+        const beforeClicks = [...clicks];
+        walk.panelPosition = { left: 20, top: 120 };
+        const widget = walk._ensureWidget();
+        expect(widget.element.parentElement).toBe(panel);
+        expect(widget.element.previousElementSibling).toBe(tabs);
+        expect(widget.element.nextElementSibling).toBe(list);
+        expect(widget.element.style.position).toBe('relative');
+        expect(widget.main.style.whiteSpace).toBe('normal');
+        rect.mockReturnValue({ width: 1000 });
+        window.dispatchEvent(new Event('resize'));
+        expect(widget.element.parentElement).toBe(document.body);
+        expect(widget.element.style.left).toBe('20px');
+        expect(widget.element.style.top).toBe('120px');
+        expect(clicks).toEqual(beforeClicks);
+        walk._removeWidget();
+        rect.mockRestore();
+    });
+});

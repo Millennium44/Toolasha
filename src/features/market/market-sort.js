@@ -283,7 +283,8 @@ class MarketSort {
         // Create sort container
         const sortDiv = document.createElement('div');
         sortDiv.id = 'toolasha-market-sort';
-        sortDiv.style.cssText = 'display: flex; gap: 8px; margin-top: 8px; align-items: center;';
+        sortDiv.style.cssText =
+            'display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: center; min-width: 0; max-width: 100%;';
 
         // Create the mode dropdown
         const modeSelect = document.createElement('select');

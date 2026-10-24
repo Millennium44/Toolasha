@@ -455,3 +455,42 @@ describe('parseQuantityCell', () => {
         });
     });
 });
+
+describe('compact My Listings details', () => {
+    afterEach(() => {
+        listingPriceDisplay.clearDisplays();
+        document.body.innerHTML = '';
+    });
+
+    test('preserves native price/actions, unknown values, sorting data, and a full-column escape hatch', () => {
+        const table = document.createElement('table');
+        table.innerHTML = `<thead><tr><th>Status</th><th>Type</th><th>Progress</th><th>Price</th><th class="mwi-listing-price-header">Top Order Price</th><th class="mwi-listing-price-header">Total Price</th><th>Cancel</th></tr></thead>
+            <tbody><tr data-price="18400000" data-mwi-total-price="17664000"><td>Active</td><td>Sell</td><td>0 / 1</td><td>18.4M</td><td class="mwi-listing-price-cell">N/A</td><td class="mwi-listing-price-cell">17.66M</td><td><button>Cancel</button></td></tr></tbody>`;
+        document.body.append(table);
+        const row = table.querySelector('tbody tr');
+        const cancel = table.querySelector('button');
+        listingPriceDisplay.syncMobileDetails(table);
+        const observer = new MutationObserver(() => {});
+        observer.observe(table, { childList: true, subtree: true, attributes: true });
+        listingPriceDisplay.syncMobileDetails(table);
+        expect(observer.takeRecords()).toHaveLength(0);
+        observer.disconnect();
+        expect(row.children[3].textContent).toBe('18.4M');
+        expect(row.dataset.mwiTotalPrice).toBe('17664000');
+        expect(row.querySelector('[data-value="N/A"]').getAttribute('aria-label')).toBe('Top Order Price: N/A');
+        expect(table.querySelectorAll('.mwi-market-mobile-note')).toHaveLength(2);
+        expect(table.querySelector('button')).toBe(cancel);
+        expect(document.querySelectorAll('.mwi-my-listings-columns-toggle')).toHaveLength(1);
+        const toggle = document.querySelector('.mwi-my-listings-columns-toggle');
+        toggle.click();
+        expect(table.hasAttribute('data-mwi-show-full-columns')).toBe(true);
+        expect(toggle.getAttribute('aria-pressed')).toBe('true');
+        toggle.click();
+        expect(table.hasAttribute('data-mwi-show-full-columns')).toBe(false);
+        listingPriceDisplay.clearDisplays();
+        expect(document.querySelector('.mwi-market-mobile-note')).toBeNull();
+        expect(document.querySelector('.mwi-my-listings-columns-toggle')).toBeNull();
+        expect(table.hasAttribute('data-mwi-mobile-mwi-listing-price-cell')).toBe(false);
+        expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
+    });
+});

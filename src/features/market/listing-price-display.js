@@ -7,6 +7,7 @@
  * Ported from Ranged Way Idle's showListingInfo feature
  */
 
+import { ensureMarketMobileStyles, removeMobileListingNotes } from './market-mobile-layout.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
@@ -1081,6 +1082,70 @@ class ListingPriceDisplay {
                 }
             }
         }
+        this.syncMobileDetails(tbody.closest('table'));
+    }
+
+    /**
+     * Keep added values under the native Price cell on phones. A toggle restores all
+     * columns (and their sort headers) when the player wants the full table.
+     * @param {HTMLTableElement} table
+     */
+    syncMobileDetails(table) {
+        if (!table) return;
+        const headers = [...table.querySelectorAll('th.mwi-listing-price-header')];
+        const rows = [...table.querySelectorAll('tbody tr')];
+        if (!headers.length || !rows.length || rows.some((row) => !row.children[3])) return;
+        const notes = new Set(table.querySelectorAll('[data-mwi-mobile-column="mwi-listing-price-cell"]'));
+        ensureMarketMobileStyles();
+        if (!table.hasAttribute('data-mwi-mobile-mwi-listing-price-cell')) {
+            table.setAttribute('data-mwi-mobile-mwi-listing-price-cell', '');
+        }
+        for (const row of rows) {
+            const price = row.children[3];
+            [...row.querySelectorAll('.mwi-listing-price-cell')].forEach((cell, index) => {
+                const label = headers[index]?.textContent.replace(/\s*[▲▼#]$/, '').trim();
+                if (!label) return;
+                let note = price.querySelector(
+                    `[data-mwi-mobile-column="mwi-listing-price-cell"][data-mwi-detail-index="${index}"]`
+                );
+                if (!note) {
+                    note = document.createElement('span');
+                    note.className = 'mwi-market-mobile-note';
+                    note.dataset.mwiMobileColumn = 'mwi-listing-price-cell';
+                    note.dataset.mwiDetailIndex = String(index);
+                    note.setAttribute('role', 'note');
+                    price.appendChild(note);
+                }
+                notes.delete(note);
+                const values = {
+                    title: cell.title,
+                    'data-label': label,
+                    'data-value': cell.textContent,
+                    'aria-label': `${label}: ${cell.textContent}`,
+                };
+                for (const [name, value] of Object.entries(values)) {
+                    if (note.getAttribute(name) !== value) note.setAttribute(name, value);
+                }
+                if (note.style.color !== cell.style.color) note.style.color = cell.style.color;
+            });
+        }
+        notes.forEach((note) => note.remove());
+        if (!table.previousElementSibling?.classList.contains('mwi-my-listings-columns-toggle')) {
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'mwi-my-listings-columns-toggle';
+            const refresh = () => {
+                const full = table.hasAttribute('data-mwi-show-full-columns');
+                toggle.textContent = full ? 'Use compact listing details' : 'Show full columns / sorting';
+                toggle.setAttribute('aria-pressed', String(full));
+            };
+            toggle.addEventListener('click', () => {
+                table.toggleAttribute('data-mwi-show-full-columns');
+                refresh();
+            });
+            refresh();
+            table.before(toggle);
+        }
     }
 
     /**
@@ -1535,6 +1600,11 @@ class ListingPriceDisplay {
         document.querySelectorAll('.mwi-listing-price-cell').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-listing-marker-header').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-listing-marker-cell').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-my-listings-columns-toggle').forEach((el) => el.remove());
+        document
+            .querySelectorAll('[data-mwi-show-full-columns]')
+            .forEach((el) => el.removeAttribute('data-mwi-show-full-columns'));
+        removeMobileListingNotes(document, 'mwi-listing-price-cell');
         for (const colKey of this.sortHeaders.keys()) {
             this._updateHeaderIndicator(colKey, null);
         }

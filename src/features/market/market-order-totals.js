@@ -7,6 +7,7 @@
  * - Unclaimed (💰): Coins waiting to be collected
  */
 
+import { ensureMarketMobileStyles, releaseMarketMobileStyles } from './market-mobile-layout.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -149,6 +150,13 @@ class MarketOrderTotals {
             return;
         }
 
+        ensureMarketMobileStyles();
+        this.totalLevelElement = totalLevelElem;
+        if (!this.resizeHandler) {
+            this.resizeHandler = () => this.fitHeaderWidth();
+            window.addEventListener('resize', this.resizeHandler);
+        }
+
         // Create display container
         this.displayElement = document.createElement('div');
         this.displayElement.classList.add('mwi-market-order-totals');
@@ -189,6 +197,7 @@ class MarketOrderTotals {
             }
         }
 
+        this.fitHeaderWidth();
         const totals = this.calculateTotals();
 
         // Check if we have no data yet (all zeros)
@@ -241,6 +250,18 @@ class MarketOrderTotals {
         `;
     }
 
+    /** Limit mobile totals to the header's native width, not the totals' intrinsic width. */
+    fitHeaderWidth() {
+        if (!this.displayElement || !this.totalLevelElement?.isConnected) return;
+        // Temporarily remove only our addition from layout before measuring. Otherwise
+        // its unwrapped width feeds back into an intrinsically sized character header.
+        const display = this.displayElement.style.display;
+        this.displayElement.style.display = 'none';
+        const width = this.totalLevelElement.getBoundingClientRect().width;
+        this.displayElement.style.display = display;
+        if (width > 0) this.displayElement.style.setProperty('--mwi-market-header-width', `${width}px`);
+    }
+
     /**
      * Open the marketplace view
      */
@@ -288,6 +309,10 @@ class MarketOrderTotals {
             this.displayElement.remove();
             this.displayElement = null;
         }
+        if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler);
+        this.resizeHandler = null;
+        this.totalLevelElement = null;
+        releaseMarketMobileStyles();
     }
 
     /**

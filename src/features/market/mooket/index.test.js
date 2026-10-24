@@ -554,3 +554,47 @@ describe('autoRefresh of an open chart', () => {
         expect(panel.drawChart).toHaveBeenCalled();
     });
 });
+
+describe('the History window on a phone', () => {
+    test('a desktop-wide saved width opens pulled on screen, not hanging past the edge', () => {
+        vi.stubGlobal('window', { ...globalThis.window, innerWidth: 412 });
+        const style = { left: '20px' };
+        panel.panel = {
+            style,
+            offsetWidth: 396, // 520 saved, capped by max-width: calc(100vw - 16px)
+            getBoundingClientRect: () => ({ right: 20 + 396 }),
+            remove() {},
+        };
+        const savedSync = panel.syncTabButton;
+        panel.syncTabButton = () => {};
+        panel.current = null;
+        panel.prefs.open = true;
+        try {
+            panel.applyOpenState();
+            expect(style.display).toBe('flex');
+            expect(style.left).toBe('8px');
+        } finally {
+            panel.syncTabButton = savedSync;
+            panel.panel = null;
+            vi.unstubAllGlobals();
+        }
+    });
+
+    test('a window that already fits keeps its saved position', () => {
+        vi.stubGlobal('window', { ...globalThis.window, innerWidth: 1600 });
+        const style = { left: '20px' };
+        panel.panel = { style, offsetWidth: 520, getBoundingClientRect: () => ({ right: 540 }), remove() {} };
+        const savedSync = panel.syncTabButton;
+        panel.syncTabButton = () => {};
+        panel.current = null;
+        panel.prefs.open = true;
+        try {
+            panel.applyOpenState();
+            expect(style.left).toBe('20px');
+        } finally {
+            panel.syncTabButton = savedSync;
+            panel.panel = null;
+            vi.unstubAllGlobals();
+        }
+    });
+});

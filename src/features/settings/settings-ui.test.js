@@ -489,8 +489,10 @@ vi.mock('../ui/overlay-tab-button.js', () => ({
     default: {
         isLauncherHidden: () => mocks.launcherHidden,
         setLauncherHidden: async (hidden) => {
+            // Like the real one: the flag changes at once, the save may take a while
             mocks.launcherHidden = Boolean(hidden);
             mocks.launcherShowCalls += 1;
+            if (mocks.slowSave) await mocks.slowSave;
         },
     },
 }));
@@ -1134,11 +1136,11 @@ describe('opening the command palette on a phone', () => {
     });
 });
 
-describe('getting the overlay button back', () => {
+describe('the Overlay sidebar entry switch', () => {
     /** @returns {HTMLElement|undefined} The recovery button, once drawn */
     function launcherButton() {
-        return [...document.querySelectorAll('.toolasha-utility-button')].find(
-            (b) => b.textContent === 'Show the overlay button' || b.textContent === 'Overlay button is already shown'
+        return [...document.querySelectorAll('.toolasha-utility-button')].find((b) =>
+            /^(Show|Hide) the Overlay sidebar entry$/.test(b.textContent)
         );
     }
 
@@ -1149,42 +1151,59 @@ describe('getting the overlay button back', () => {
         expect(launcherButton()).toBeUndefined();
     });
 
-    test('on a phone with the launcher hidden, offers to bring it back', async () => {
+    test('on a phone with the entry hidden, offers to show it, and showing it relabels to Hide', async () => {
         mocks.coarsePointer = true;
         mocks.launcherHidden = true;
         drawPanel();
         await settle();
 
-        const button = launcherButton();
-        expect(button.textContent).toBe('Show the overlay button');
-        expect(button.disabled).toBe(false);
-    });
-
-    test('clicking it clears the flag, asks the launcher back, and relabels itself', async () => {
-        mocks.coarsePointer = true;
-        mocks.launcherHidden = true;
-        drawPanel();
-        await settle();
+        expect(launcherButton().textContent).toBe('Show the Overlay sidebar entry');
+        expect(launcherButton().disabled).toBe(false);
 
         launcherButton().click();
         await settle();
 
         expect(mocks.launcherShowCalls).toBe(1);
-        const button = launcherButton();
-        expect(button.textContent).toBe('Overlay button is already shown');
-        expect(button.disabled).toBe(true);
+        expect(mocks.launcherHidden).toBe(false);
+        expect(launcherButton().textContent).toBe('Hide the Overlay sidebar entry');
     });
 
-    test('with the flag unset, reports the button as already shown rather than being missing', async () => {
+    test('with the entry shown, offers to hide it, and hiding it relabels to Show', async () => {
         mocks.coarsePointer = true;
         mocks.launcherHidden = false;
         drawPanel();
         await settle();
 
-        const button = launcherButton();
-        expect(button).toBeTruthy();
-        expect(button.textContent).toBe('Overlay button is already shown');
-        expect(button.disabled).toBe(true);
+        expect(launcherButton().textContent).toBe('Hide the Overlay sidebar entry');
+        expect(launcherButton().disabled).toBe(false);
+
+        launcherButton().click();
+        await settle();
+
+        expect(mocks.launcherHidden).toBe(true);
+        expect(launcherButton().textContent).toBe('Show the Overlay sidebar entry');
+    });
+
+    test('relabels as soon as it is pressed, before the debounced save lands, so a second press undoes the first', async () => {
+        mocks.coarsePointer = true;
+        mocks.launcherHidden = false;
+        let finishSave;
+        mocks.slowSave = new Promise((resolve) => (finishSave = resolve));
+        drawPanel();
+        await settle();
+
+        launcherButton().click();
+        await settle();
+        expect(mocks.launcherHidden).toBe(true);
+        expect(launcherButton().textContent).toBe('Show the Overlay sidebar entry');
+
+        launcherButton().click();
+        await settle();
+        expect(mocks.launcherHidden).toBe(false);
+        expect(launcherButton().textContent).toBe('Hide the Overlay sidebar entry');
+
+        finishSave();
+        mocks.slowSave = null;
     });
 
     test("never writes a synced setting — only calls overlay-tab-button.js's own API", async () => {

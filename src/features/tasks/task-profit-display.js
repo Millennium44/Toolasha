@@ -5,6 +5,7 @@
  */
 
 import config from '../../core/config.js';
+import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
@@ -554,6 +555,7 @@ class TaskProfitDisplay {
         this.marketDataRetryHandler = null; // Market data retry handler
         this.pendingTaskNodes = new Set(); // Track task nodes waiting for data
         this.eventListeners = new WeakMap(); // Store listeners for cleanup
+        this._estimateLayouts = new Map();
         this.isInitialized = false;
         this.timerRegistry = createTimerRegistry();
         // `character|zoneHrid|loadout` → {promise, t} shared full-zone sims. Keyed by
@@ -1186,7 +1188,11 @@ class TaskProfitDisplay {
                 }
 
                 // Remove ALL old profit displays (visible + hidden markers)
-                taskNode.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => el.remove());
+                taskNode.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => {
+                    this._estimateLayouts.get(el)?.();
+                    this._estimateLayouts.delete(el);
+                    el.remove();
+                });
             }
 
             this.addProfitToTask(taskNode);
@@ -1252,6 +1258,11 @@ class TaskProfitDisplay {
      * @param {Element} taskNode - Task card DOM element
      */
     async addProfitToTask(taskNode) {
+        for (const [element, detach] of this._estimateLayouts) {
+            if (element.isConnected) continue;
+            detach();
+            this._estimateLayouts.delete(element);
+        }
         // Captured before any await: if disable() bumps this while we are suspended, every render
         // below is stale and must not touch the DOM, even once a later initialize() has moved
         // isInitialized back to true for an unrelated, more recent render pass.
@@ -1335,6 +1346,7 @@ class TaskProfitDisplay {
 
                     if (actionNode) {
                         actionNode.appendChild(estimateContainer);
+                        this._placeCombatEstimate(estimateContainer, actionNode, taskNode);
                     }
                 }
                 return;
@@ -1602,6 +1614,24 @@ class TaskProfitDisplay {
         return tier === null ? { tier: GO_ESTIMATE_TIER, known: false } : { tier, known: true };
     }
 
+    /** Give combat estimate controls a separate row on a narrow task card. */
+    _placeCombatEstimate(container, actionNode, taskNode) {
+        this._estimateLayouts.get(container)?.();
+        this._estimateLayouts.set(
+            container,
+            dockWhenNarrow(container, {
+                host: actionNode.parentElement,
+                before: actionNode.nextSibling,
+                // The Tasks panel, not the card: desktop boards lay cards out as ~430px tiles, which a
+                // card-width breakpoint read as a phone and docked every combat estimate
+                measure:
+                    taskNode.closest('[class*="TasksPanel_tasksPanel"]') ||
+                    taskNode.closest(GAME.TASK_LIST) ||
+                    taskNode,
+            })
+        );
+    }
+
     /**
      * Render the pre-run config state for the combat task estimate.
      * Shows a loadout dropdown and an "Estimate" button.
@@ -1624,9 +1654,10 @@ class TaskProfitDisplay {
 
         const defaultLoadout = config.getSettingValue('combatSim_defaultLoadout', '');
 
-        let html = '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">';
+        let html =
+            '<div class="mwi-combat-est-controls" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0; max-width:100%;">';
         html +=
-            '<select class="mwi-combat-est-loadout toolasha-select" style="font-size:11px; background:#1a1a1a; color:#ccc; border:1px solid #444; border-radius:3px; padding:2px 4px;">';
+            '<select class="mwi-combat-est-loadout toolasha-select" aria-label="Combat estimate loadout" style="min-width:0; max-width:100%; flex:0 1 auto; font-size:11px; background:#1a1a1a; color:#ccc; border:1px solid #444; border-radius:3px; padding:2px 4px;">';
         html += `<option value=""${!defaultLoadout ? ' selected' : ''}>— Current Gear —</option>`;
         for (const s of snapshots) {
             const selected = s.name === defaultLoadout ? ' selected' : '';
@@ -3451,6 +3482,9 @@ class TaskProfitDisplay {
 
             // Clear pending tasks
             this.pendingTaskNodes.clear();
+
+            for (const detach of this._estimateLayouts.values()) detach();
+            this._estimateLayouts.clear();
 
             // Clean up event listeners before removing profit displays
             document.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => {

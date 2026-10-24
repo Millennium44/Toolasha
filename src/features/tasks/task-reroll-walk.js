@@ -69,6 +69,7 @@
  */
 
 import config from '../../core/config.js';
+import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
@@ -1796,8 +1797,7 @@ class TaskRerollWalk {
      */
     _syncWidget() {
         if (!document.querySelector(GAME.TASK_LIST)) {
-            this.widget?.remove();
-            this.widget = null;
+            this._removeWidget();
             // The board is gone: the last walk's readout has nowhere to be read
             // and no longer describes what is on screen
             this.summary = '';
@@ -1850,6 +1850,9 @@ class TaskRerollWalk {
             return null;
         }
         if (this.widget && document.body.contains(this.widget.element)) return this.widget;
+        // A replaced task board can take its docked widget out of the DOM.
+        // Dispose its observer/listeners before losing the old widget handle.
+        this._removeWidget();
 
         const widget = createFloatingWidget({
             id: CHIP_ID,
@@ -1857,7 +1860,7 @@ class TaskRerollWalk {
             right: '24px',
             accent: config.COLOR_ACCENT || '#8ecfff',
             positionKey: PANEL_POSITION_KEY,
-            position: this.panelPosition,
+            position: null,
             zIndex: CHIP_Z_INDEX,
             mainClass: 'mwi-task-reroll-walk-advance',
             closeClass: 'mwi-task-reroll-walk-stop',
@@ -1871,6 +1874,40 @@ class TaskRerollWalk {
         widget.gear.addEventListener('click', () => this._renderSettings());
 
         document.body.appendChild(widget.element);
+        // Restore before the responsive dock captures desktop geometry. The
+        // shared shell normally defers this until layout, which is too late
+        // once the strip has already moved into its narrow flow row.
+        if (this.panelPosition) {
+            const { left, top } = this.panelPosition;
+            widget.element.style.left = `${Math.max(0, Math.min(left, window.innerWidth - widget.element.offsetWidth))}px`;
+            widget.element.style.top = `${Math.max(0, Math.min(top, window.innerHeight - widget.element.offsetHeight))}px`;
+            widget.element.style.right = 'auto';
+        }
+        const list = document.querySelector(GAME.TASK_LIST);
+        if (list?.parentElement) {
+            // Keep the walk below the tabs and in the board's scroll flow, not
+            // fixed over the page heading. Desktop keeps its saved position.
+            const detach = dockWhenNarrow(widget.element, {
+                host: list.parentElement,
+                before: list,
+                measure: list.closest(GAME.GAME_PANEL) || list.parentElement,
+                onChange: (narrow) => {
+                    widget.element.style.touchAction = narrow ? 'auto' : 'none';
+                    widget.element.style.cursor = narrow ? 'default' : 'move';
+                    widget.main.style.whiteSpace = narrow ? 'normal' : 'nowrap';
+                    widget.status.style.minWidth = narrow ? '0' : '';
+                    widget.status.style.maxWidth = narrow ? '100%' : '340px';
+                    widget.main.style.minWidth = '0';
+                    widget.main.style.maxWidth = '100%';
+                    widget.main.style.overflowWrap = 'anywhere';
+                },
+            });
+            const remove = widget.remove;
+            widget.remove = () => {
+                detach();
+                remove();
+            };
+        }
         this.widget = widget;
         this._renderSettings();
         return widget;

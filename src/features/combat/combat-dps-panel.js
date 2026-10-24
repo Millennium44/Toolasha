@@ -99,6 +99,7 @@ import { resolveRosterColors } from '../../utils/player-colors.js';
 import { formatKMB, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 
 /**
  * How often the opener is re-offered when the observer missed the panel.
@@ -1244,6 +1245,19 @@ function inGuildPanel(element) {
 
 /** The button last injected, so the re-inject timer can tell "still there" cheaply */
 let injected = null;
+let openerArea = null;
+let detachOpenerLayout = null;
+let positionedArea = null;
+
+function removeOpener() {
+    detachOpenerLayout?.();
+    detachOpenerLayout = null;
+    injected?.remove();
+    injected = null;
+    openerArea = null;
+    if (positionedArea?.style.position === 'relative') positionedArea.style.position = '';
+    positionedArea = null;
+}
 
 /**
  * The battle-panel area the button was last hung on.
@@ -1258,7 +1272,15 @@ function inject() {
     if (typeof document === 'undefined') return;
     // The button already placed is the common case for the slow timer below;
     // it is answered off the cached element before any document query
-    if (injected?.isConnected && !inGuildPanel(injected)) return;
+    const attached = injected?.isConnected && openerArea?.isConnected && !inGuildPanel(injected);
+    if (attached && openerArea.matches(PLAYERS_AREA)) return;
+    // A fallback battle-panel mount must upgrade when the real players area
+    // arrives later, even though its button is still connected.
+    const area =
+        Array.from(document.querySelectorAll(PLAYERS_AREA)).find((el) => !inGuildPanel(el)) ||
+        Array.from(document.querySelectorAll(GAME.BATTLE_PANEL)).find((el) => !inGuildPanel(el));
+    if (attached && openerArea === area) return;
+    removeOpener();
     const existing = document.getElementById(BUTTON_ID);
     if (existing) {
         // A button that landed in the trial's battle panel (In Progress tab)
@@ -1269,9 +1291,6 @@ function inject() {
 
     // The party's own battle, never the guild trial's: that panel renders the
     // same players area inside the Guild tab and has a scoreboard of its own
-    const area =
-        Array.from(document.querySelectorAll(PLAYERS_AREA)).find((el) => !inGuildPanel(el)) ||
-        Array.from(document.querySelectorAll(GAME.BATTLE_PANEL)).find((el) => !inGuildPanel(el));
     if (!area) return;
 
     const button = document.createElement('button');
@@ -1289,10 +1308,27 @@ function inject() {
 
     // Absolute to the tile area, or it escapes to whatever the nearest
     // positioned ancestor happens to be
-    if (!area.style.position) area.style.position = 'relative';
+    if (!area.style.position) {
+        area.style.position = 'relative';
+        positionedArea = area;
+    }
     area.appendChild(button);
     injected = button;
+    openerArea = area;
     lastArea = area;
+    const battleArea = area.closest('[class*="BattlePanel_battleArea"]');
+    if (battleArea?.parentElement) {
+        detachOpenerLayout = dockWhenNarrow(button, {
+            host: battleArea.parentElement,
+            before: battleArea,
+            measure:
+                battleArea.closest('[class*="GamePage_mainPanel"], [class*="GamePage_gamePanel"]') ||
+                battleArea.parentElement,
+            onChange: (narrow) => {
+                button.style.minHeight = narrow ? '28px' : '';
+            },
+        });
+    }
 }
 
 /** When the last speculative scan for a missed battle panel was made */
@@ -1369,13 +1405,9 @@ export default {
             closePlayerMenu();
             timers.clearAll();
             const button = typeof document === 'undefined' ? null : document.getElementById(BUTTON_ID);
-            injected = null;
+            removeOpener();
             lastArea = null;
-            // The tile area was made a positioning context for the button's
-            // sake; a game-owned element should not keep that once it is gone
-            const area = button?.parentElement;
             button?.remove();
-            if (area?.style?.position === 'relative') area.style.position = '';
             // Released rather than hidden, because the handle goes with it and
             // `initialize()` builds a fresh shell. `hide()` leaves the shell's
             // `character_switched` subscription in place — which is right for a

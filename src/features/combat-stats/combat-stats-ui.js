@@ -809,8 +809,11 @@ class CombatStatsUI {
 
         // Create header
         const header = document.createElement('div');
+        // Wraps on a phone: one row of title and buttons pushed the close button past the screen edge
         header.style.cssText = `
             display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
@@ -830,8 +833,12 @@ class CombatStatsUI {
         const buttonContainer = document.createElement('div');
         buttonContainer.style.cssText = `
             display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
             align-items: center;
             gap: 15px;
+            min-width: 0;
+            margin-left: auto;
         `;
 
         // Which run: Live, or one from the archive. Only offered when there is
