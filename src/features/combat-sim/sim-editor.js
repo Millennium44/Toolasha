@@ -611,6 +611,43 @@ export class SimEditor {
     }
 
     /**
+     * Replace the loaded scenario with a whole party — the Party Finder's "load this party". Player 1 is you;
+     * `selfIsLive` says whether that build is the live character (so the live house-room and shrine sync keeps
+     * applying to it) or an imported or edited one that must be left alone.
+     * @param {Array<Object>} players - Player DTOs, you first; copied, never kept
+     * @param {Array<string>} names - Display names, same order
+     * @param {Object} [options]
+     * @param {boolean} [options.selfIsLive=false]
+     * @param {string} [options.note] - A line shown above the editor about where the party came from
+     */
+    loadParty(players, names, { selfIsLive = false, note = '' } = {}) {
+        const dtoMap = {};
+        const info = [];
+        players.forEach((dto, index) => {
+            const hrid = `player${index + 1}`;
+            dtoMap[hrid] = { ...structuredClone(dto), hrid };
+            info.push({ hrid, name: names[index] || `Player ${index + 1}` });
+        });
+        this._originalDTOs = structuredClone(dtoMap);
+        this._editedDTOs = dtoMap;
+        this._editedPlayerInfo = info;
+        this._selfHrid = selfIsLive ? 'player1' : null;
+        this._activeEditPlayer = 'player1';
+        this._missingMembers = [];
+        this._profileStatus = [];
+        this._importSkipped = [];
+        this._partyKeyAtLoad = null;
+        this._externalNote = note || '';
+        this._loadoutFetchNote = '';
+        this._forgetAppliedLoadouts();
+        this._selectedLoadoutName = '';
+        this._editorInitialized = true;
+        this._scenarioToken++;
+        this._recomputeLevelGapDebuffs();
+        this.renderEditor();
+    }
+
+    /**
      * Import players from parsed export data.
      * @param {Array<Object>} players - Player DTOs
      * @param {Array<string>} names - Player names
