@@ -2020,9 +2020,13 @@ function dropUnitValue(itemHrid, saleTaxRate = null) {
     let unitValue = taxedDropValue(itemHrid, getSellPrice(itemHrid), saleTaxRate);
     if (unitValue === 0) {
         // The EV fallback already nets the sale tax (see expected-value-calculator),
-        // so it is taken as-is.
+        // so it is taken as-is — at the given rate when there is one.
         const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
-        const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
+        // Another player's tax rate: value the contents at it (the shared cache holds the live
+        // character's figure, so it is not read)
+        const ev = Number.isFinite(saleTaxRate)
+            ? evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate)
+            : evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
         if (ev !== null && ev > 0) unitValue = ev;
     }
     return { priced, unitValue };
