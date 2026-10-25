@@ -7,18 +7,20 @@
  * record in `settings` under a `combatSim` key, so the sync's owned-prefix list already
  * carries it.
  *
- * Sync: the record syncs whole and the later save wins (`laterSavedAtWins`). A roster is
- * a curated list, like any other setting — two devices that each edit it before syncing
- * keep the later device's list. Every write here is a read-merge-write in one
- * transaction (`storage.update`), so two tabs editing at once each land their change on
- * the other's, and the Party Finder tab re-reads the record when a pull writes it, so
- * the key is registered live-safe.
+ * Sync: merged per teammate (`mergeRoster`). Entries are matched by id and the later
+ * `updatedAt` wins each one, so two devices that add different teammates keep both, and an
+ * edit on one device is not undone by the other's older copy. A delete leaves a tombstone
+ * (`removed: {id: deletedAt}`, the convention `custom-tabs-data.js` uses) that beats any copy
+ * of that teammate last changed before it, so a stale device cannot bring a deleted teammate
+ * back; tombstones are forgotten after {@link TOMBSTONE_MAX_AGE_MS}. Every write here is a
+ * read-merge-write in one transaction (`storage.update`), so two tabs editing at once each
+ * land their change on the other's, and the Party Finder tab re-reads the record when a pull
+ * writes it, so the key is registered live-safe.
  */
 
 import storage from '../../core/storage.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { stableStringify } from '../../utils/stable-stringify.js';
-import { laterSavedAtWins } from './sim-sync-keys.js';
 
 /** Storage key, global (not character-scoped) */
 export const PARTY_ROSTER_KEY = 'combatSimPartyRoster';
@@ -55,7 +57,42 @@ const PER_PARTY_FIELDS = ['hrid', 'debuffOnLevelGap', 'taskMonsterHrids', 'taskM
  * @returns {{savedAt: number, entries: Array}}
  */
 function emptyRoster() {
-    return { savedAt: 0, entries: [] };
+    return { savedAt: 0, entries: [], removed: {} };
+}
+
+/**
+ * How long a deletion is remembered: long enough for the slowest device to catch up, as `custom-tabs-data.js`
+ * reasons it. After that a device still holding the teammate would bring them back.
+ */
+export const TOMBSTONE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * A roster's tombstones, malformed and expired ones dropped.
+ * @param {*} removed
+ * @param {number} now
+ * @returns {Object<string, number>} id → deletedAt
+ */
+function normalizeTombstones(removed, now) {
+    const out = {};
+    if (!removed || typeof removed !== 'object' || Array.isArray(removed)) return out;
+    for (const [id, at] of Object.entries(removed)) {
+        const when = Number(at);
+        if (!id || !Number.isFinite(when) || when <= 0 || now - when > TOMBSTONE_MAX_AGE_MS) continue;
+        out[id] = when;
+    }
+    return out;
+}
+
+/**
+ * Union two tombstone maps, the later deletion winning per id.
+ * @param {Object<string, number>} a
+ * @param {Object<string, number>} b
+ * @returns {Object<string, number>}
+ */
+function unionTombstones(a, b) {
+    const out = { ...a };
+    for (const [id, at] of Object.entries(b)) if (!(id in out) || at > out[id]) out[id] = at;
+    return out;
 }
 
 /**
@@ -142,13 +179,16 @@ export function normalizeAuraOptions(value) {
  *   `auras` are the aura options the sweep tries the teammate with; `includeAsBuilt` says whether it also tries
  *   them as built (always true when they have no aura options)
  */
-export function normalizeRoster(value) {
+export function normalizeRoster(value, now = Date.now()) {
     if (!value || typeof value !== 'object' || !Array.isArray(value.entries)) return emptyRoster();
+    const removed = normalizeTombstones(value.removed, now);
     const seen = new Set();
     const entries = [];
     for (const entry of value.entries) {
         if (!entry || typeof entry.id !== 'string' || !entry.id || seen.has(entry.id)) continue;
         if (!validateTeammateDTO(entry.dto).ok) continue;
+        // Deleted after it last changed: the deletion stands
+        if (removed[entry.id] >= (Number(entry.updatedAt) || 0)) continue;
         seen.add(entry.id);
         entries.push({
             id: entry.id,
@@ -162,7 +202,34 @@ export function normalizeRoster(value) {
         });
         if (entries.length >= MAX_ROSTER_SIZE) break;
     }
-    return { savedAt: Number(value.savedAt) || 0, entries };
+    return { savedAt: Number(value.savedAt) || 0, entries, removed };
+}
+
+/**
+ * The sync fold: both copies' teammates by id, the later `updatedAt` winning each (a tie to the incoming copy),
+ * both copies' tombstones, and every teammate deleted after it last changed dropped. This device's order first,
+ * then teammates only the incoming copy has; the size cap applies to the teammates left.
+ * @param {*} local - This device's stored roster
+ * @param {*} incoming - The other side's
+ * @returns {Object} The merged roster
+ */
+export function mergeRoster(local, incoming) {
+    const now = Date.now();
+    const a = normalizeRoster(local, now);
+    const b = normalizeRoster(incoming, now);
+    const removed = unionTombstones(
+        normalizeTombstones(local?.removed, now),
+        normalizeTombstones(incoming?.removed, now)
+    );
+    const byId = new Map(a.entries.map((entry) => [entry.id, entry]));
+    for (const entry of b.entries) {
+        const mine = byId.get(entry.id);
+        if (!mine || entry.updatedAt >= mine.updatedAt) byId.set(entry.id, entry);
+    }
+    const entries = [...byId.values()]
+        .filter((entry) => !(removed[entry.id] >= entry.updatedAt))
+        .slice(0, MAX_ROSTER_SIZE);
+    return { savedAt: Math.max(a.savedAt, b.savedAt), entries, removed };
 }
 
 let idCounter = 0;
@@ -330,11 +397,13 @@ export async function setTeammateAuras(id, auras, includeAsBuilt) {
  * @returns {Promise<{ok: boolean, roster: Object, found: boolean}>}
  */
 export async function removeTeammate(id) {
-    const result = await mutateRoster((roster) => {
-        const before = roster.entries.length;
+    const result = await mutateRoster((roster, now) => {
+        const entry = roster.entries.find((e) => e.id === id);
+        if (!entry) return { write: false, found: false };
         roster.entries = roster.entries.filter((e) => e.id !== id);
-        const found = roster.entries.length !== before;
-        return { write: found, found };
+        // Later than its last change, so the deletion beats every copy of it
+        roster.removed = { ...roster.removed, [id]: Math.max(now, (entry.updatedAt || 0) + 1) };
+        return { write: true, found: true };
     });
     return { ok: result.ok, roster: result.roster, found: Boolean(result.outcome?.found) };
 }
@@ -344,7 +413,7 @@ export async function removeTeammate(id) {
 registerSyncMerge({
     store: STORE,
     base: PARTY_ROSTER_KEY,
-    merge: laterSavedAtWins,
+    merge: mergeRoster,
     label: 'Combat Sim party finder roster',
     liveSafe: true,
 });

@@ -37,6 +37,7 @@ const {
     setTeammateAuras,
     normalizeAuraOptions,
     MAX_AURA_OPTIONS,
+    TOMBSTONE_MAX_AGE_MS,
 } = await import('./party-roster.js');
 const { isLiveSafeKey, mergeForKey } = await import('../../utils/sync-merge-registry.js');
 
@@ -197,7 +198,7 @@ describe('normalizeRoster', () => {
             entries: [good, { ...good }, { id: 'b', name: 'B', dto: {} }, null, { name: 'no id', dto: dto() }],
         });
         expect(roster.entries.map((e) => e.id)).toEqual(['a']);
-        expect(normalizeRoster('junk')).toEqual({ savedAt: 0, entries: [] });
+        expect(normalizeRoster('junk')).toEqual({ savedAt: 0, entries: [], removed: {} });
     });
 });
 
@@ -210,14 +211,85 @@ describe('buildFingerprint', () => {
     });
 });
 
-describe('sync', () => {
-    test('the roster key is live-safe and the later save wins', () => {
+describe('sync: merged per teammate, deletions remembered', () => {
+    const NOW = Date.now();
+    const e = (id, name, updatedAt, extra = {}) => ({
+        id,
+        name,
+        dto: dto(),
+        source: 'editor',
+        addedAt: 1,
+        updatedAt,
+        auras: [],
+        includeAsBuilt: true,
+        ...extra,
+    });
+    const merge = (local, incoming) => mergeForKey('settings', PARTY_ROSTER_KEY).merge(local, incoming);
+
+    test('the roster key is live-safe', () => {
         expect(isLiveSafeKey('settings', PARTY_ROSTER_KEY)).toBe(true);
-        const older = { savedAt: 1, entries: [] };
-        const newer = { savedAt: 2, entries: [{ id: 'x' }] };
-        const { merge } = mergeForKey('settings', PARTY_ROSTER_KEY);
-        expect(merge(newer, older)).toBe(newer);
-        expect(merge(older, newer)).toBe(newer);
+    });
+
+    test('two devices that each added a teammate keep both', () => {
+        const mine = { savedAt: NOW, entries: [e('a', 'Ann', NOW)], removed: {} };
+        const theirs = { savedAt: NOW - 5, entries: [e('b', 'Bob', NOW - 5)], removed: {} };
+        expect(merge(mine, theirs).entries.map((x) => x.name)).toEqual(['Ann', 'Bob']);
+        expect(merge(theirs, mine).entries.map((x) => x.name)).toEqual(['Bob', 'Ann']);
+    });
+
+    test('one renames, the other edits auras: the later change to that teammate wins, the rest of each kept', () => {
+        // The renaming device saved last (it also added Bob), but its change to Ann is the older one
+        const renamed = { savedAt: NOW, entries: [e('a', 'Ann (tank)', NOW - 10), e('b', 'Bob', NOW)], removed: {} };
+        const auras = [{ hrid: '/abilities/fierce_aura', level: 20 }];
+        const edited = { savedAt: NOW - 5, entries: [e('a', 'Ann', NOW - 5, { auras })], removed: {} };
+        for (const merged of [merge(renamed, edited), merge(edited, renamed)]) {
+            const ann = merged.entries.find((x) => x.id === 'a');
+            expect(ann.auras).toEqual(auras);
+            expect(merged.entries.map((x) => x.id).sort()).toEqual(['a', 'b']);
+        }
+    });
+
+    test('a teammate deleted on one device does not come back from the other device’s stale copy', () => {
+        // The stale device saved later (it added Cy), still holding Ann as she was before the delete
+        const stale = {
+            savedAt: NOW,
+            entries: [e('a', 'Ann', NOW - 100), e('b', 'Bob', NOW - 100), e('c', 'Cy', NOW)],
+        };
+        const deleted = { savedAt: NOW - 50, entries: [e('b', 'Bob', NOW - 100)], removed: { a: NOW - 50 } };
+        for (const merged of [merge(stale, deleted), merge(deleted, stale)]) {
+            expect(merged.entries.map((x) => x.id).sort()).toEqual(['b', 'c']);
+            expect(merged.removed.a).toBe(NOW - 50);
+        }
+    });
+
+    test('a teammate changed after the deletion is kept', () => {
+        const deleted = { savedAt: NOW - 50, entries: [], removed: { a: NOW - 50 } };
+        const edited = { savedAt: NOW, entries: [e('a', 'Ann', NOW)] };
+        expect(merge(deleted, edited).entries.map((x) => x.id)).toEqual(['a']);
+    });
+
+    test(`tombstones older than ${TOMBSTONE_MAX_AGE_MS / 86400000} days are forgotten`, () => {
+        const old = NOW - TOMBSTONE_MAX_AGE_MS - 1000;
+        const merged = merge({ savedAt: 1, entries: [], removed: { a: old, b: NOW } }, { savedAt: 1, entries: [] });
+        expect(Object.keys(merged.removed)).toEqual(['b']);
+    });
+
+    test('the cap applies to the teammates left, not to the deleted ones', () => {
+        const many = Array.from({ length: MAX_ROSTER_SIZE }, (_, i) => e(`m${i}`, `M${i}`, NOW - 100));
+        const local = { savedAt: NOW, entries: many.slice(1), removed: { m0: NOW } };
+        // The other device never saw the deletion and has room for one more of its own
+        const incoming = { savedAt: NOW, entries: [...many.slice(0, MAX_ROSTER_SIZE - 1), e('new', 'New', NOW)] };
+        const merged = merge(local, incoming);
+        expect(merged.entries).toHaveLength(MAX_ROSTER_SIZE);
+        expect(merged.entries.some((x) => x.id === 'm0')).toBe(false);
+        expect(merged.entries.some((x) => x.id === 'new')).toBe(true);
+    });
+
+    test('deleting here leaves a tombstone in storage', async () => {
+        const { added } = await addTeammates([{ name: 'Ann', dto: dto() }]);
+        await removeTeammate(added[0]);
+        expect(db.value.removed[added[0]]).toBeGreaterThan(0);
+        expect((await loadRoster()).entries).toEqual([]);
     });
 });
 
