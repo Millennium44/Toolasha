@@ -189,7 +189,6 @@ export class PartyFinderTab {
         this._sortAsc = false;
         this._running = false;
         this._runToken = 0;
-        this._stopRequested = false;
         this._repricePending = false;
         this._renderTimer = null;
         this._pendingConfirm = null;
@@ -234,7 +233,6 @@ export class PartyFinderTab {
      */
     detach() {
         if (this._running) {
-            this._stopRequested = true;
             cancelAllZonesSimulation();
             this._setRunningUi(false);
             if (this.host) {
@@ -1188,7 +1186,6 @@ export class PartyFinderTab {
      */
     stop() {
         if (!this._running) return;
-        this._stopRequested = true;
         cancelAllZonesSimulation();
     }
 
@@ -1250,7 +1247,6 @@ export class PartyFinderTab {
         const saleTaxRate = saleTaxRateOf(self.dto, self.isLive);
 
         this._running = true;
-        this._stopRequested = false;
         this._repricePending = false;
         this.host.isRunning = true;
         this._rows = new Map();
