@@ -35,6 +35,7 @@ import {
     parseShykaiImport,
 } from './combat-sim-adapter.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
+import { saleTaxRateOf } from './upgrade-advisor.js';
 import {
     PARTY_ROSTER_KEY,
     MAX_ROSTER_SIZE,
@@ -1240,6 +1241,9 @@ export class PartyFinderTab {
             token === this._runToken && Boolean(this.root) && dataManager.getCurrentCharacterId() === ownerId;
         const { quickHours, fullHours, topK, metric } = plan.settings;
         const communityBuffs = getCommunityBuffs();
+        // Your sale tax: the live character's own status, or for anyone else the game mode their DTO carries (an
+        // Iron Cow pays none), as the Upgrade tab prices a player who is not you
+        const saleTaxRate = saleTaxRateOf(self.dto, self.isLive);
 
         this._running = true;
         this._stopRequested = false;
@@ -1284,7 +1288,7 @@ export class PartyFinderTab {
                 current,
                 (task, sim) => {
                     const row = this._rowFor(task);
-                    row.quick = readResult(sim, gameData, quickHours, { priceCache: quickCache });
+                    row.quick = readResult(sim, gameData, quickHours, { priceCache: quickCache, saleTaxRate });
                     done += 1;
                 }
             );
@@ -1314,7 +1318,8 @@ export class PartyFinderTab {
                         current,
                         (task, sim) => {
                             const row = this._rows.get(task.id);
-                            if (row) row.full = readResult(sim, gameData, fullHours, { priceCache: fullCache });
+                            if (row)
+                                row.full = readResult(sim, gameData, fullHours, { priceCache: fullCache, saleTaxRate });
                             done += 1;
                         }
                     );

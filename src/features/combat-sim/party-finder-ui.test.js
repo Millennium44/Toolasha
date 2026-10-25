@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
     selfDTO: null,
     gameData: null,
     imported: null,
+    revenueTaxRates: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -63,13 +64,16 @@ vi.mock('./combat-sim-adapter.js', () => ({
     getCommunityBuffs: () => ({}),
     getCurrentCombatZone: () => null,
     parseShykaiImport: () => state.imported,
-    calculateSimRevenue: (sim, _gameData, playerHrid, hours) => ({
-        netPerHour: (sim.__profit?.[playerHrid] ?? 0) / hours,
-        dropEntries: [],
-        unpricedDrops: sim.__unpriced || [],
-        unpricedConsumables: [],
-        unpricedKeys: [],
-    }),
+    calculateSimRevenue: (sim, _gameData, playerHrid, hours, options = {}) => {
+        state.revenueTaxRates.push(options.saleTaxRate);
+        return {
+            netPerHour: (sim.__profit?.[playerHrid] ?? 0) / hours,
+            dropEntries: [],
+            unpricedDrops: sim.__unpriced || [],
+            unpricedConsumables: [],
+            unpricedKeys: [],
+        };
+    },
     recomputeLevelGapDebuffs: () => {},
 }));
 vi.mock('./all-zones-runner.js', () => ({
@@ -220,6 +224,7 @@ beforeEach(() => {
     ];
     state.selfDTO = build(90);
     state.imported = null;
+    state.revenueTaxRates = [];
     state.gameData = {
         itemDetailMap: {
             '/items/rippling_trident': {},
@@ -745,5 +750,33 @@ describe('the Configure tab while a party search runs', () => {
         tab.detach();
         expect(simulate.disabled).toBe(false);
         tab = null;
+    });
+});
+
+describe('whose sale tax prices "you"', () => {
+    test('an Iron Cow loaded in the editor is priced with no market tax; the live character with their own', async () => {
+        host._editor.players = [
+            { hrid: 'player1', name: 'Milkman', dto: build(90), self: true },
+            { hrid: 'player2', name: 'Cow', dto: { ...build(95), gameMode: 'ironcow' } },
+        ];
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        el('top-k').value = '0';
+        el('self').value = 'editor:player2';
+        tab.start();
+        await flush();
+        await finishPass((_z, index) => [sim(1000, 100), sim(1100, 100)][index]);
+        expect(state.revenueTaxRates).toEqual([0, 0]);
+        // Repricing keeps it
+        state.revenueTaxRates = [];
+        tab.onPricingChanged();
+        expect(state.revenueTaxRates).toEqual([0, 0]);
+
+        state.revenueTaxRates = [];
+        el('self').value = 'editor:player1';
+        tab.start();
+        await flush();
+        await finishPass((_z, index) => [sim(1000, 100), sim(1100, 100)][index]);
+        expect(state.revenueTaxRates).toEqual([undefined, undefined]);
     });
 });

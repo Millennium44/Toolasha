@@ -190,6 +190,38 @@ describe('calculateSimRevenue drop tax', () => {
     });
 });
 
+describe('calculateSimRevenue for a player other than the live character', () => {
+    test('an Iron Cow (sale tax 0) is credited the whole price, cowbell bags included', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        expect(calculateSimRevenue(simResult, gameData, 'player1', HOURS, { saleTaxRate: 0 }).revenuePerHour).toBe(
+            1000
+        );
+        const bag = simDropping('/items/bag_of_10_cowbells', KILLS, 1000);
+        expect(
+            calculateSimRevenue(bag.simResult, bag.gameData, 'player1', HOURS, { saleTaxRate: 0 }).revenuePerHour
+        ).toBe(1000);
+    });
+
+    test('a market player is taxed at the rate given, and a shared price cache keeps the two apart', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        const priceCache = new Map();
+        const taxed = calculateSimRevenue(simResult, gameData, 'player1', HOURS, {
+            saleTaxRate: MARKET_TAX,
+            priceCache,
+        });
+        const cow = calculateSimRevenue(simResult, gameData, 'player1', HOURS, { saleTaxRate: 0, priceCache });
+        expect(taxed.revenuePerHour).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
+        expect(cow.revenuePerHour).toBe(1000);
+    });
+
+    test('no rate given: the live character’s, as before', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        expect(
+            calculateSimRevenue(simResult, gameData, 'player1', HOURS, { saleTaxRate: null }).revenuePerHour
+        ).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
+    });
+});
+
 describe('calculateSimRevenue unpriced items', () => {
     test('a drop and a consumable with no price are named, not silently free', () => {
         const { simResult, gameData } = simDropping('/items/unlisted_drop', KILLS, 0);

@@ -374,19 +374,29 @@ export function buildCompositionParty(selfDTO, members) {
  * @param {Object} [options]
  * @param {Map} [options.priceCache] - Shared by every row of a pass, so a price change midway cannot read as a
  *   difference between parties
+ * @param {number|null} [options.saleTaxRate] - Your sale tax when "you" is not the live character
+ *   (`saleTaxRateOf`); null for the live character's own
  * @returns {{failed: true}|{failed: false, hours: number, xpPerHour: number, deathsPerHour: number,
  *   profitPerHour: number|null, uncappedProfit: number|null, liquidityLimit: Object|null,
  *   unpriced: Array<string>, simResult: Object}}
  */
-export function readResult(simResult, gameData, hours, { priceCache } = {}) {
+export function readResult(simResult, gameData, hours, { priceCache, saleTaxRate = null } = {}) {
     if (!simResult) return { failed: true };
     const playerHrid = 'player1';
     const simHours = (simResult.simulatedTime || 0) / ONE_HOUR_NS || hours;
     const xp = simResult.experienceGained?.[playerHrid] || {};
     const xpPerHour = Object.values(xp).reduce((sum, value) => sum + (Number(value) || 0), 0) / simHours;
     const deathsPerHour = (simResult.deaths?.[playerHrid] || 0) / simHours;
-    const priced = priceRow(simResult, gameData, simHours, priceCache);
-    return { failed: false, hours, xpPerHour, deathsPerHour, ...priced, simResult: slimSimResult(simResult) };
+    const priced = priceRow(simResult, gameData, simHours, priceCache, saleTaxRate);
+    return {
+        failed: false,
+        hours,
+        xpPerHour,
+        deathsPerHour,
+        ...priced,
+        saleTaxRate,
+        simResult: slimSimResult(simResult),
+    };
 }
 
 /**
@@ -437,10 +447,11 @@ export function slimSimResult(simResult) {
  * @returns {{profitPerHour: number|null, uncappedProfit: number|null, liquidityLimit: Object|null,
  *   unpriced: Array<string>}}
  */
-function priceRow(simResult, gameData, simHours, priceCache) {
+function priceRow(simResult, gameData, simHours, priceCache, saleTaxRate = null) {
     let revenue = null;
     try {
-        revenue = calculateSimRevenue(simResult, gameData, 'player1', simHours, priceCache ? { priceCache } : {});
+        const options = { ...(priceCache ? { priceCache } : {}), ...(saleTaxRate != null ? { saleTaxRate } : {}) };
+        revenue = calculateSimRevenue(simResult, gameData, 'player1', simHours, options);
     } catch (error) {
         console.error('[PartyFinder] Pricing a result failed:', error);
     }
@@ -481,7 +492,7 @@ function priceRow(simResult, gameData, simHours, priceCache) {
 export function repriceMetrics(metrics, gameData, priceCache) {
     if (!metrics || metrics.failed || !metrics.simResult) return metrics;
     const simHours = (metrics.simResult.simulatedTime || 0) / ONE_HOUR_NS || metrics.hours;
-    return { ...metrics, ...priceRow(metrics.simResult, gameData, simHours, priceCache) };
+    return { ...metrics, ...priceRow(metrics.simResult, gameData, simHours, priceCache, metrics.saleTaxRate ?? null) };
 }
 
 /**
