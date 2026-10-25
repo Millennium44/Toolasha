@@ -615,3 +615,113 @@ describe('every way a search can end', () => {
         await flush();
     });
 });
+
+describe('aura options in the tab', () => {
+    const auraDetail = (name) => ({
+        name,
+        isSpecialAbility: true,
+        abilityEffects: [{ effectType: '/ability_effect_types/buff', targetType: 'allAllies', buffs: [{}] }],
+    });
+    beforeEach(() => {
+        state.gameData.abilityDetailMap['/abilities/fierce_aura'] = auraDetail('Fierce Aura');
+        state.gameData.abilityDetailMap['/abilities/mystic_aura'] = auraDetail('Mystic Aura');
+        state.gameData.levelExperienceTable = Array.from({ length: 201 }, (_, i) => i);
+    });
+
+    const openAuras = async (id) => {
+        [...tab.root.querySelectorAll(`[data-pf-member="${id}"] button`)]
+            .find((b) => b.textContent.startsWith('Auras'))
+            .click();
+        await flush();
+    };
+
+    test('only auras are offered; add, refuse a level out of range, untick as built, remove', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        await openAuras('a');
+        const pick = tab.root.querySelector('[data-pf-aura-pick="a"]');
+        expect([...pick.options].map((o) => o.textContent)).toEqual(['Fierce Aura', 'Mystic Aura']);
+
+        tab.root.querySelector('[data-pf-aura-level="a"]').value = '999';
+        tab.root.querySelector('[data-pf-aura-add="a"]').click();
+        await flush();
+        expect(el('roster-note').textContent).toBe('Aura level must be 1-200.');
+        expect(state.db.entries[0].auras).toBeUndefined();
+
+        tab.root.querySelector('[data-pf-aura-pick="a"]').value = '/abilities/mystic_aura';
+        tab.root.querySelector('[data-pf-aura-level="a"]').value = '30';
+        tab.root.querySelector('[data-pf-aura-add="a"]').click();
+        await flush();
+        expect(state.db.entries[0].auras).toEqual([{ hrid: '/abilities/mystic_aura', level: 30 }]);
+        expect(el('plan').textContent).toMatch(/^3 quick sims/);
+
+        tab.root.querySelector('[data-pf-as-built="a"]').click();
+        await flush();
+        expect(state.db.entries[0].includeAsBuilt).toBe(false);
+        expect(el('plan').textContent).toMatch(/^2 quick sims/);
+
+        tab.root.querySelector('[data-pf-aura-option="/abilities/mystic_aura"] button').click();
+        await flush();
+        expect(state.db.entries[0].auras).toEqual([]);
+    });
+
+    test('a stored aura the game no longer has is shown as skipped, and the plan says so', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        state.db.entries[0].auras = [{ hrid: '/abilities/retired_aura', level: 10 }];
+        await mountTab();
+        await openAuras('a');
+        expect(tab.root.querySelector('[data-pf-aura-option="/abilities/retired_aura"]').textContent).toMatch(
+            /not in the game data; skipped/
+        );
+        expect(el('plan').textContent).toMatch(/Ann: \/abilities\/retired_aura is not in the game data, skipped/);
+    });
+
+    test('the run tries each aura, the row names it, and Load puts that aura on the teammate', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        state.db.entries[0].auras = [{ hrid: '/abilities/fierce_aura', level: 20 }];
+        await mountTab();
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        const zones = state.calls[0].params.zones;
+        expect(zones).toHaveLength(3);
+        expect(zones[2].playerDTOs[1].abilities[0]).toMatchObject({ hrid: '/abilities/fierce_aura', level: 20 });
+        expect(zones[1].playerDTOs[1].abilities[0]).toBeNull();
+        await finishPass((_z, index) => [sim(1000, 100), sim(1100, 100), sim(1300, 100)][index]);
+
+        const auraRow = tab.sortedRows()[0];
+        expect(rowText(auraRow.id)).toMatch(/Ann \[Fierce Aura 20\]/);
+        tab.root.querySelector(`[data-pf-load="${auraRow.id}"]`).click();
+        const [party] = host._editor.loadParty.mock.calls[0];
+        expect(party[1].abilities[0]).toMatchObject({ hrid: '/abilities/fierce_aura', level: 20 });
+    });
+
+    test('two players on one aura is run and flagged on the row', async () => {
+        state.selfDTO.abilities[0] = { hrid: '/abilities/fierce_aura', level: 10, triggers: null };
+        seedRoster([['a', 'Ann', build(80)]]);
+        state.db.entries[0].auras = [{ hrid: '/abilities/fierce_aura', level: 20 }];
+        state.db.entries[0].includeAsBuilt = false;
+        await mountTab();
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        await finishPass((_z, index) => [sim(1000, 100), sim(1100, 100)][index]);
+        const party = tab.sortedRows().find((r) => !r.isBaseline);
+        expect(rowText(party.id)).toMatch(/Fierce Aura ×2/);
+    });
+
+    test('the confirm count includes every aura variant', async () => {
+        seedRoster(Array.from({ length: 6 }, (_, i) => [`m${i}`, `M${i}`, build(60 + i)]));
+        for (const e of state.db.entries) {
+            e.auras = [
+                { hrid: '/abilities/fierce_aura', level: 20 },
+                { hrid: '/abilities/mystic_aura', level: 20 },
+            ];
+        }
+        await mountTab();
+        tab.start();
+        await flush();
+        // 6 teammates x 3 variants: 1 + 18 + 15 x 9 = 154 quick sims
+        expect(el('confirm').textContent).toMatch(/154 quick/);
+    });
+});

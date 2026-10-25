@@ -27,6 +27,9 @@ const STORE = 'settings';
 /** Most teammates the roster holds; a party of 5 from 40 is already ~100k compositions */
 export const MAX_ROSTER_SIZE = 40;
 
+/** Most aura options one teammate carries */
+export const MAX_AURA_OPTIONS = 8;
+
 /** Longest teammate name kept */
 const MAX_NAME_LENGTH = 40;
 
@@ -111,10 +114,33 @@ export function buildFingerprint(dto) {
 }
 
 /**
+ * A teammate's aura options as stored: each `{hrid, level}` with an ability hrid and a whole level of at least 1,
+ * one per hrid (the last level given wins), at most {@link MAX_AURA_OPTIONS}. Whether a hrid is an aura, still
+ * exists or has a level the game allows is judged against the game data when a sweep is planned, not here — the
+ * roster outlives a game patch.
+ * @param {*} value
+ * @returns {Array<{hrid: string, level: number}>}
+ */
+export function normalizeAuraOptions(value) {
+    if (!Array.isArray(value)) return [];
+    const byHrid = new Map();
+    for (const option of value) {
+        const hrid = typeof option?.hrid === 'string' ? option.hrid : '';
+        const level = Math.floor(Number(option?.level));
+        if (!hrid.startsWith('/abilities/') || !Number.isFinite(level) || level < 1) continue;
+        byHrid.delete(hrid);
+        byHrid.set(hrid, { hrid, level });
+    }
+    return [...byHrid.values()].slice(0, MAX_AURA_OPTIONS);
+}
+
+/**
  * A stored value read as a roster: anything malformed drops out rather than reaching the sweep.
  * @param {*} value - What storage holds
  * @returns {{savedAt: number, entries: Array<{id: string, name: string, dto: Object, source: string,
- *   addedAt: number, updatedAt: number}>}}
+ *   addedAt: number, updatedAt: number, auras: Array<{hrid: string, level: number}>, includeAsBuilt: boolean}>}}
+ *   `auras` are the aura options the sweep tries the teammate with; `includeAsBuilt` says whether it also tries
+ *   them as built (always true when they have no aura options)
  */
 export function normalizeRoster(value) {
     if (!value || typeof value !== 'object' || !Array.isArray(value.entries)) return emptyRoster();
@@ -131,6 +157,8 @@ export function normalizeRoster(value) {
             source: typeof entry.source === 'string' ? entry.source : 'editor',
             addedAt: Number(entry.addedAt) || 0,
             updatedAt: Number(entry.updatedAt) || 0,
+            auras: normalizeAuraOptions(entry.auras),
+            includeAsBuilt: entry.includeAsBuilt !== false,
         });
         if (entries.length >= MAX_ROSTER_SIZE) break;
     }
@@ -227,6 +255,8 @@ export async function addTeammates(items) {
                 source: item.source || 'editor',
                 addedAt: now,
                 updatedAt: now,
+                auras: [],
+                includeAsBuilt: true,
             });
             added.push(id);
         }
@@ -268,6 +298,26 @@ export async function replaceTeammateBuild(id, dto) {
         const entry = roster.entries.find((e) => e.id === id);
         if (!entry) return { write: false, found: false };
         entry.dto = sanitizeTeammateDTO(dto);
+        entry.updatedAt = now;
+        return { write: true, found: true };
+    });
+    return { ok: result.ok, roster: result.roster, found: Boolean(result.outcome?.found) };
+}
+
+/**
+ * Set the aura options a teammate is tried with.
+ * @param {string} id
+ * @param {Array<{hrid: string, level: number}>} auras - Replaces the whole list
+ * @param {boolean} includeAsBuilt - Also try them as built
+ * @returns {Promise<{ok: boolean, roster: Object, found: boolean}>}
+ */
+export async function setTeammateAuras(id, auras, includeAsBuilt) {
+    const clean = normalizeAuraOptions(auras);
+    const result = await mutateRoster((roster, now) => {
+        const entry = roster.entries.find((e) => e.id === id);
+        if (!entry) return { write: false, found: false };
+        entry.auras = clean;
+        entry.includeAsBuilt = includeAsBuilt !== false;
         entry.updatedAt = now;
         return { write: true, found: true };
     });

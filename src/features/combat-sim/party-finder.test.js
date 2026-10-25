@@ -47,6 +47,10 @@ const {
     partyLabel,
     csvRow,
     stoppedSweepText,
+    applyAura,
+    sharedAuras,
+    maxAbilityLevel,
+    checkAuraOption,
     MAX_QUICK_RUNS,
 } = await import('./party-finder.js');
 
@@ -171,10 +175,21 @@ describe('enumerateCompositions', () => {
     test('the cheap upper bound matches the count with distinct builds', () => {
         const roster = Array.from({ length: 6 }, (_, i) => mate(`m${i}`, `M${i}`, dto(60 + i)));
         const { pool, mustInclude } = narrowRoster(roster);
-        expect(enumerateCompositions(pool, mustInclude, 4)).toHaveLength(countCompositionsUpperBound(6, 0, 4));
+        const ones = pool.map(() => 1);
+        expect(enumerateCompositions(pool, mustInclude, 4)).toHaveLength(
+            countCompositionsUpperBound(
+                ones,
+                ones.map(() => false),
+                4
+            )
+        );
         const narrowed = narrowRoster(roster, { m0: 'always' });
         expect(enumerateCompositions(narrowed.pool, narrowed.mustInclude, 2)).toHaveLength(
-            countCompositionsUpperBound(6, 1, 2)
+            countCompositionsUpperBound(
+                ones,
+                narrowed.pool.map((t) => t.id === 'm0'),
+                2
+            )
         );
     });
 });
@@ -318,5 +333,147 @@ describe('ranking against solo', () => {
 
     test('stopped text', () => {
         expect(stoppedSweepText(3, 12)).toBe('stopped early — 3 of 12 sims');
+    });
+});
+
+describe('aura options', () => {
+    // Auras as the game data shapes them: a special ability buffing all allies
+    const aura = (name) => ({
+        name,
+        isSpecialAbility: true,
+        abilityEffects: [
+            { effectType: '/ability_effect_types/buff', targetType: 'allAllies', buffs: [{ typeHrid: '/x' }] },
+        ],
+    });
+    const gameData = {
+        abilityDetailMap: {
+            '/abilities/fierce_aura': aura('Fierce Aura'),
+            '/abilities/mystic_aura': aura('Mystic Aura'),
+            '/abilities/invincible': {
+                name: 'Invincible',
+                isSpecialAbility: true,
+                abilityEffects: [{ effectType: '/ability_effect_types/buff', targetType: 'self', buffs: [{}] }],
+            },
+            '/abilities/water_strike': { name: 'Water Strike', isSpecialAbility: false, abilityEffects: [] },
+        },
+        levelExperienceTable: Array.from({ length: 201 }, (_, i) => i * 10),
+    };
+    const withSpecial = (special, level = 30) => {
+        const d = dto(90);
+        d.abilities[0] = special ? { hrid: special, level, triggers: [{ dependencyHrid: '/x' }] } : null;
+        return d;
+    };
+    const entry = (id, name, build, auras, includeAsBuilt = true) => ({ id, name, dto: build, auras, includeAsBuilt });
+
+    test('an aura takes the special slot, replacing the special worn; triggers kept only for the same aura', () => {
+        const replaced = applyAura(withSpecial('/abilities/invincible'), { hrid: '/abilities/fierce_aura', level: 20 });
+        expect(replaced.dto.abilities[0]).toEqual({ hrid: '/abilities/fierce_aura', level: 20, triggers: null });
+        expect(replaced.replaced).toBe('/abilities/invincible');
+
+        const same = applyAura(withSpecial('/abilities/fierce_aura', 10), {
+            hrid: '/abilities/fierce_aura',
+            level: 25,
+        });
+        expect(same.dto.abilities[0].level).toBe(25);
+        expect(same.dto.abilities[0].triggers).toEqual([{ dependencyHrid: '/x' }]);
+        expect(same.replaced).toBeNull();
+
+        // No special worn, and a build whose ability list is short: the slot is there to fill
+        const bare = { ...dto(90), abilities: [] };
+        const filled = applyAura(bare, { hrid: '/abilities/mystic_aura', level: 5 });
+        expect(filled.dto.abilities).toHaveLength(5);
+        expect(filled.dto.abilities[0].hrid).toBe('/abilities/mystic_aura');
+        expect(bare.abilities).toEqual([]);
+    });
+
+    test('a teammate with two auras is tried three ways, and never twice in one party', () => {
+        const roster = [
+            entry('a', 'Ann', withSpecial(null), [
+                { hrid: '/abilities/fierce_aura', level: 20 },
+                { hrid: '/abilities/mystic_aura', level: 15 },
+            ]),
+            entry('b', 'Bob', dto(100), []),
+        ];
+        const plan = planSweep({ zones: [ZONE], roster, gameData });
+        // Solo; Ann x3; Bob; Ann x3 + Bob
+        expect(plan.total).toBe(8);
+        const labels = plan.tasks.map((t) => partyLabel(t.comp));
+        expect(labels).toContain('Ann [Fierce Aura 20] + Bob');
+        expect(labels).toContain('Ann [Mystic Aura 15]');
+        const distinct = plan.tasks.every(
+            (t) => new Set(t.comp.members.map((m) => m.id)).size === t.comp.members.length
+        );
+        expect(distinct).toBe(true);
+        const { pool } = narrowRoster(roster, {}, gameData);
+        expect(
+            countCompositionsUpperBound(
+                pool.map((t) => t.variants.length),
+                [false, false],
+                2
+            )
+        ).toBe(8);
+    });
+
+    test('as built off: only the aura variants', () => {
+        const roster = [entry('a', 'Ann', withSpecial(null), [{ hrid: '/abilities/fierce_aura', level: 20 }], false)];
+        const labels = planSweep({ zones: [ZONE], roster, gameData }).tasks.map((t) => partyLabel(t.comp));
+        expect(labels).toEqual(['Solo', 'Ann [Fierce Aura 20]']);
+    });
+
+    test('no aura offered: tried as built, whatever the checkbox says', () => {
+        const roster = [entry('a', 'Ann', dto(90), [], false)];
+        expect(planSweep({ zones: [ZONE], roster, gameData }).total).toBe(2);
+    });
+
+    test('options the game data cannot run are skipped with a note: gone, not an aura, level too high', () => {
+        const roster = [
+            entry('a', 'Ann', dto(90), [
+                { hrid: '/abilities/retired_aura', level: 10 },
+                { hrid: '/abilities/invincible', level: 10 },
+                { hrid: '/abilities/fierce_aura', level: 999 },
+            ]),
+        ];
+        const plan = planSweep({ zones: [ZONE], roster, gameData });
+        expect(plan.total).toBe(2);
+        const notes = plan.notes.join(' | ');
+        expect(notes).toMatch(/retired_aura is not in the game data/);
+        expect(notes).toMatch(/Invincible is not an aura/);
+        expect(notes).toMatch(/Fierce Aura level 999 is outside 1-200/);
+    });
+
+    test('every option unusable and as built off: the teammate is left out and says so', () => {
+        const roster = [entry('a', 'Ann', dto(90), [{ hrid: '/abilities/gone', level: 1 }], false)];
+        const plan = planSweep({ zones: [ZONE], roster, gameData });
+        expect(plan.total).toBe(0);
+        expect(plan.notes.join(' ')).toMatch(/Ann: no usable aura option/);
+    });
+
+    test('two teammates offering the same aura are both tried, and the party says the aura is doubled', () => {
+        const roster = [
+            entry('a', 'Ann', dto(80), [{ hrid: '/abilities/fierce_aura', level: 20 }], false),
+            entry('b', 'Bob', dto(100), [{ hrid: '/abilities/fierce_aura', level: 20 }], false),
+        ];
+        const plan = planSweep({ zones: [ZONE], roster, gameData });
+        const pair = plan.tasks.find((t) => t.comp.members.length === 2);
+        expect(partyLabel(pair.comp)).toBe('Ann [Fierce Aura 20] + Bob [Fierce Aura 20]');
+        const party = buildCompositionParty(withSpecial('/abilities/fierce_aura'), pair.comp.members);
+        expect(sharedAuras(party, gameData)).toEqual([{ name: 'Fierce Aura', count: 3 }]);
+    });
+
+    test('an aura option a teammate already wears at that level is the same build: folded, named as an alias', () => {
+        const build = withSpecial('/abilities/fierce_aura', 20);
+        build.abilities[0].triggers = null;
+        const roster = [entry('a', 'Ann', build, [{ hrid: '/abilities/fierce_aura', level: 20 }])];
+        const { pool, mustInclude } = narrowRoster(roster, {}, gameData);
+        const comps = enumerateCompositions(pool, mustInclude, 2);
+        expect(comps).toHaveLength(2);
+        expect(comps[1].aliases).toEqual([['Ann [Fierce Aura 20]']]);
+    });
+
+    test('the level ceiling comes from the game data', () => {
+        expect(maxAbilityLevel(gameData)).toBe(200);
+        expect(maxAbilityLevel({ levelExperienceTable: [0, 1, 2] })).toBe(2);
+        expect(maxAbilityLevel(null)).toBe(200);
+        expect(checkAuraOption({ hrid: '/abilities/fierce_aura', level: 0 }, gameData).ok).toBe(false);
     });
 });

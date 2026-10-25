@@ -23,6 +23,7 @@
 
 import { calculateSimRevenue, recomputeLevelGapDebuffs } from './combat-sim-adapter.js';
 import { capProfitRateCached } from '../../utils/liquidity-cap.js';
+import { isAuraAbility } from '../../utils/party-lint.js';
 import { buildFingerprint } from './party-roster.js';
 
 /** Largest party the game lets into an ordinary combat zone */
@@ -71,59 +72,152 @@ export function zoneTierKey(zone) {
     return `${zone.zoneHrid}#${Number(zone.difficultyTier) || 0}`;
 }
 
+/** Highest ability level the editor accepts, used when the game data carries no level table */
+const FALLBACK_MAX_ABILITY_LEVEL = 200;
+
 /**
- * n choose k.
- * @param {number} n
- * @param {number} k
+ * The highest level an ability can have, from the game's level table.
+ * @param {Object|null} gameData
  * @returns {number}
  */
-function choose(n, k) {
-    if (k < 0 || k > n) return 0;
-    let result = 1;
-    for (let i = 1; i <= k; i++) result = (result * (n - k + i)) / i;
-    return Math.round(result);
+export function maxAbilityLevel(gameData) {
+    const table = gameData?.levelExperienceTable;
+    return Array.isArray(table) && table.length > 1 ? table.length - 1 : FALLBACK_MAX_ABILITY_LEVEL;
 }
 
 /**
- * The roster narrowed by the include/exclude choices, each teammate with the build
- * fingerprint the plan dedupes by.
- * @param {Array<{id: string, name: string, dto: Object}>} roster
- * @param {Object<string, 'try'|'always'|'never'>} [choices] - By teammate id; missing means 'try'
- * @returns {{pool: Array<Object>, mustInclude: Array<Object>}} `pool` holds every teammate that may be picked
- *   (the must-includes among them)
+ * Whether an aura option can run against this game data, and why not.
+ * @param {{hrid: string, level: number}} option
+ * @param {Object|null} gameData - Without it nothing can be judged, and the option is taken as given
+ * @returns {{ok: boolean, reason?: string, name: string}}
  */
-export function narrowRoster(roster, choices = {}) {
+export function checkAuraOption(option, gameData) {
+    if (!gameData?.abilityDetailMap) return { ok: true, name: option.hrid.split('/').pop() };
+    const detail = gameData.abilityDetailMap[option.hrid];
+    if (!detail) return { ok: false, name: option.hrid, reason: `${option.hrid} is not in the game data` };
+    const name = detail.name || option.hrid;
+    if (!isAuraAbility(detail)) return { ok: false, name, reason: `${name} is not an aura` };
+    const max = maxAbilityLevel(gameData);
+    if (!(option.level >= 1 && option.level <= max)) {
+        return { ok: false, name, reason: `${name} level ${option.level} is outside 1-${max}` };
+    }
+    return { ok: true, name };
+}
+
+/**
+ * A copy of a build wearing an aura. An aura is a special ability, and a player has one special slot — slot 0,
+ * where `buildPlayerDTO` and the editor's ability picker put special abilities — so the aura takes that slot,
+ * replacing whatever special sits there; a build always has that slot, so there is never "no room". The slot's
+ * triggers are kept when it already held this aura, else left to the engine's defaults (null), as the editor's
+ * ability picker does.
+ * @param {Object} dto
+ * @param {{hrid: string, level: number}} aura
+ * @returns {{dto: Object, replaced: string|null}} `replaced` is the hrid of a different special it displaced
+ */
+export function applyAura(dto, aura) {
+    const copy = structuredClone(dto);
+    const abilities = Array.isArray(copy.abilities) ? copy.abilities : [];
+    while (abilities.length < 5) abilities.push(null);
+    const previous = abilities[0];
+    abilities[0] = {
+        hrid: aura.hrid,
+        level: aura.level,
+        triggers: previous?.hrid === aura.hrid ? (previous.triggers ?? null) : null,
+    };
+    copy.abilities = abilities;
+    return { dto: copy, replaced: previous?.hrid && previous.hrid !== aura.hrid ? previous.hrid : null };
+}
+
+/**
+ * The roster narrowed by the include/exclude choices. Each teammate comes with the variants a party may take
+ * them as: as built, and once per usable aura option. Options this game data cannot run are left out with a note.
+ * @param {Array<{id: string, name: string, dto: Object, auras?: Array, includeAsBuilt?: boolean}>} roster
+ * @param {Object<string, 'try'|'always'|'never'>} [choices] - By teammate id; missing means 'try'
+ * @param {Object|null} [gameData] - Judges aura options and names them
+ * @returns {{pool: Array<{id: string, name: string, variants: Array<Object>}>, mustInclude: Array<Object>,
+ *   notes: Array<string>}} `pool` holds every teammate that may be picked (the must-includes among them)
+ */
+export function narrowRoster(roster, choices = {}, gameData = null) {
     const pool = [];
     const mustInclude = [];
+    const notes = [];
+    const nameOf = (hrid) => gameData?.abilityDetailMap?.[hrid]?.name || hrid?.split('/').pop() || '';
     for (const entry of Array.isArray(roster) ? roster : []) {
         const choice = choices?.[entry.id] || 'try';
         if (choice === 'never') continue;
-        const member = { id: entry.id, name: entry.name, dto: entry.dto, fingerprint: buildFingerprint(entry.dto) };
-        pool.push(member);
-        if (choice === 'always') mustInclude.push(member);
+        const options = Array.isArray(entry.auras) ? entry.auras : [];
+        const variants = [];
+        if (!options.length || entry.includeAsBuilt !== false) {
+            variants.push({
+                id: entry.id,
+                variantKey: `${entry.id}:built`,
+                name: entry.name,
+                aura: null,
+                replaced: null,
+                dto: entry.dto,
+                fingerprint: buildFingerprint(entry.dto),
+            });
+        }
+        for (const option of options) {
+            const check = checkAuraOption(option, gameData);
+            if (!check.ok) {
+                notes.push(`${entry.name}: ${check.reason}, skipped`);
+                continue;
+            }
+            const { dto, replaced } = applyAura(entry.dto, option);
+            variants.push({
+                id: entry.id,
+                variantKey: `${entry.id}:${option.hrid}:${option.level}`,
+                name: entry.name,
+                aura: { hrid: option.hrid, level: option.level, name: check.name },
+                replaced: replaced ? nameOf(replaced) : null,
+                dto,
+                fingerprint: buildFingerprint(dto),
+            });
+        }
+        if (!variants.length) {
+            notes.push(`${entry.name}: no usable aura option and "as built" is off, left out`);
+            continue;
+        }
+        const teammate = { id: entry.id, name: entry.name, variants };
+        pool.push(teammate);
+        if (choice === 'always') mustInclude.push(teammate);
     }
-    return { pool, mustInclude };
+    return { pool, mustInclude, notes };
 }
 
 /**
  * An upper bound on how many parties a zone would try, before any duplicate builds fold together — cheap
- * enough to check before enumerating anything.
- * @param {number} poolSize - Teammates that may be picked
- * @param {number} mustCount - Of those, how many every party must hold
+ * enough to check before enumerating anything. A teammate with several variants (aura options) counts once per
+ * variant, and never twice in one party.
+ * @param {Array<number>} variantCounts - Variants per teammate that may be picked (must-includes included)
+ * @param {Array<boolean>} mustFlags - Same order: whether every party holds that teammate
  * @param {number} maxMembers - Most teammates beside you
  * @returns {number} Including the solo baseline
  */
-export function countCompositionsUpperBound(poolSize, mustCount, maxMembers) {
+export function countCompositionsUpperBound(variantCounts, mustFlags, maxMembers) {
+    const mustCount = mustFlags.filter(Boolean).length;
     if (mustCount > maxMembers) return 0;
-    let total = mustCount > 0 ? 1 : 0; // the solo baseline is run even when every party must hold someone
-    for (let k = mustCount; k <= Math.min(maxMembers, poolSize); k++)
-        total += choose(poolSize - mustCount, k - mustCount);
-    return total;
+    // ways[k]: parties of k teammates, each teammate taken as one of their variants
+    let ways = [1];
+    variantCounts.forEach((variants, i) => {
+        const next = new Array(Math.min(ways.length + 1, maxMembers + 1)).fill(0);
+        for (let k = 0; k < ways.length; k++) {
+            if (!ways[k]) continue;
+            if (!mustFlags[i]) next[k] += ways[k];
+            if (k + 1 <= maxMembers) next[k + 1] += ways[k] * variants;
+        }
+        ways = next;
+    });
+    // ways[0] is the empty party, possible only when nobody is required; the solo baseline is run either way
+    return ways.slice(1).reduce((sum, n) => sum + n, 0) + 1;
 }
 
 /**
- * Every party to try beside you: solo first, then by size. Two parties whose builds are the same multiset — the
- * same build saved under two names — are one party; the names it also goes by ride along as `aliases`.
+ * Every party to try beside you: solo first, then by size. A teammate joins as one of their variants, never two.
+ * Two parties whose builds are the same multiset — the same build saved under two names, or an aura option a
+ * teammate already wears — are one party; the names it also goes by ride along as `aliases`. Two teammates
+ * offering the same aura are two different builds and are both tried.
  * @param {Array<Object>} pool - From {@link narrowRoster}
  * @param {Array<Object>} mustInclude - From {@link narrowRoster}
  * @param {number} maxMembers - Most teammates beside you
@@ -136,26 +230,34 @@ export function enumerateCompositions(pool, mustInclude, maxMembers) {
 
     // Same build, same index, so a party's key is its multiset of builds
     const buildIndex = new Map();
-    for (const member of pool) {
-        if (!buildIndex.has(member.fingerprint)) buildIndex.set(member.fingerprint, buildIndex.size);
+    for (const teammate of pool) {
+        for (const variant of teammate.variants) {
+            if (!buildIndex.has(variant.fingerprint)) buildIndex.set(variant.fingerprint, buildIndex.size);
+        }
     }
-    const optional = pool.filter((m) => !mustIds.has(m.id));
-    const must = pool.filter((m) => mustIds.has(m.id));
+    // Required teammates first
+    const ordered = [...pool.filter((t) => mustIds.has(t.id)), ...pool.filter((t) => !mustIds.has(t.id))];
     const byKey = new Map();
 
-    const visit = (start, picked) => {
-        const members = [...must, ...picked];
-        if (members.length > 0 && members.length <= maxMembers) {
-            const key = members
-                .map((m) => buildIndex.get(m.fingerprint))
-                .sort((a, b) => a - b)
-                .join('+');
-            const existing = byKey.get(key);
-            if (existing) existing.aliases.push(members.map((m) => m.name));
-            else byKey.set(key, { key, members, aliases: [], isBaseline: false });
+    const record = (members) => {
+        const key = members
+            .map((m) => buildIndex.get(m.fingerprint))
+            .sort((a, b) => a - b)
+            .join('+');
+        const existing = byKey.get(key);
+        if (existing) existing.aliases.push(members.map(memberLabel));
+        else byKey.set(key, { key, members, aliases: [], isBaseline: false });
+    };
+    const visit = (index, picked) => {
+        if (index === ordered.length) {
+            if (picked.length) record(picked);
+            return;
         }
-        if (members.length >= maxMembers) return;
-        for (let i = start; i < optional.length; i++) visit(i + 1, [...picked, optional[i]]);
+        const teammate = ordered[index];
+        if (picked.length < maxMembers) {
+            for (const variant of teammate.variants) visit(index + 1, [...picked, variant]);
+        }
+        if (!mustIds.has(teammate.id)) visit(index + 1, picked);
     };
     visit(0, []);
 
@@ -170,12 +272,16 @@ export function enumerateCompositions(pool, mustInclude, maxMembers) {
  * @param {Array<Object>} options.roster - Saved teammates
  * @param {Object} [options.choices] - Include/exclude by teammate id
  * @param {number} [options.maxPartySize] - Largest party to try, you included; capped by each zone's own
+ * @param {Object|null} [options.gameData] - Judges aura options
  * @returns {{tasks: Array<{zone: Object, zoneKey: string, comp: Object}>, perZone: Array<{zone: Object,
- *   zoneKey: string, count: number, note: string|null}>, total: number, refused: string|null}}
- *   `refused` explains a sweep too large to plan
+ *   zoneKey: string, count: number, note: string|null}>, total: number, refused: string|null,
+ *   notes: Array<string>}} `refused` explains a sweep too large to plan; `notes` names aura options left out
  */
-export function planSweep({ zones, roster, choices = {}, maxPartySize = DUNGEON_MAX_PARTY }) {
-    const { pool, mustInclude } = narrowRoster(roster, choices);
+export function planSweep({ zones, roster, choices = {}, maxPartySize = DUNGEON_MAX_PARTY, gameData = null }) {
+    const { pool, mustInclude, notes } = narrowRoster(roster, choices, gameData);
+    const mustIds = new Set(mustInclude.map((m) => m.id));
+    const variantCounts = pool.map((t) => t.variants.length);
+    const mustFlags = pool.map((t) => mustIds.has(t.id));
     const seen = new Set();
     const uniqueZones = [];
     for (const zone of Array.isArray(zones) ? zones : []) {
@@ -189,11 +295,11 @@ export function planSweep({ zones, roster, choices = {}, maxPartySize = DUNGEON_
     let bound = 0;
     for (const zone of uniqueZones) {
         const maxMembers = Math.max(0, Math.min(Number(maxPartySize) || DUNGEON_MAX_PARTY, zoneMaxParty(zone)) - 1);
-        bound += countCompositionsUpperBound(pool.length, mustInclude.length, maxMembers);
+        bound += countCompositionsUpperBound(variantCounts, mustFlags, maxMembers);
         perZone.push({ zone, zoneKey: zoneTierKey(zone), maxMembers, count: 0, note: null });
     }
     if (bound > MAX_QUICK_RUNS * 20) {
-        return { tasks: [], perZone, total: bound, refused: tooManyText(bound) };
+        return { tasks: [], perZone, total: bound, refused: tooManyText(bound), notes };
     }
 
     const baselines = [];
@@ -227,6 +333,7 @@ export function planSweep({ zones, roster, choices = {}, maxPartySize = DUNGEON_
         perZone,
         total: tasks.length,
         refused: tasks.length > MAX_QUICK_RUNS ? tooManyText(tasks.length) : null,
+        notes,
     };
 }
 
@@ -454,13 +561,42 @@ export function pickRerunRows(rows, baselines, metric, k) {
 }
 
 /**
- * The names a party shows: you alone, or the teammates beside you.
+ * One teammate as a row names them: "Bob", or "Bob [Fierce Aura 20]" when the party tried them with an aura.
+ * @param {{name: string, aura?: {name: string, level: number}|null}} member
+ * @returns {string}
+ */
+export function memberLabel(member) {
+    return member?.aura ? `${member.name} [${member.aura.name} ${member.aura.level}]` : member?.name || '';
+}
+
+/**
+ * The names a party shows: you alone, or the teammates beside you (with the aura each was tried with).
  * @param {Object} comp
  * @returns {string}
  */
 export function partyLabel(comp) {
     if (!comp || comp.isBaseline || !comp.members?.length) return 'Solo';
-    return comp.members.map((m) => m.name).join(' + ');
+    return comp.members.map(memberLabel).join(' + ');
+}
+
+/**
+ * Auras two or more players of one party run — allowed (the engine decides whether they stack), and said on the
+ * row so nobody reads it as a mistake.
+ * @param {Array<Object>} partyDTOs - From {@link buildCompositionParty}
+ * @param {Object|null} gameData
+ * @returns {Array<{name: string, count: number}>}
+ */
+export function sharedAuras(partyDTOs, gameData) {
+    const counts = new Map();
+    for (const dto of partyDTOs || []) {
+        const hrid = dto?.abilities?.[0]?.hrid;
+        const detail = hrid ? gameData?.abilityDetailMap?.[hrid] : null;
+        if (!detail || !isAuraAbility(detail)) continue;
+        counts.set(hrid, (counts.get(hrid) || 0) + 1);
+    }
+    return [...counts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([hrid, count]) => ({ name: gameData.abilityDetailMap[hrid].name || hrid, count }));
 }
 
 /**

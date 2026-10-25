@@ -25,6 +25,7 @@ import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
+import { isAuraAbility } from '../../utils/party-lint.js';
 import {
     buildGameDataPayload,
     buildPlayerDTO,
@@ -42,6 +43,8 @@ import {
     renameTeammate,
     removeTeammate,
     replaceTeammateBuild,
+    setTeammateAuras,
+    MAX_AURA_OPTIONS,
 } from './party-roster.js';
 import {
     planSweep,
@@ -53,6 +56,9 @@ import {
     sortRows,
     pickRerunRows,
     partyLabel,
+    sharedAuras,
+    checkAuraOption,
+    maxAbilityLevel,
     csvRow,
     stoppedSweepText,
     zoneTierKey,
@@ -188,6 +194,8 @@ export class PartyFinderTab {
         this._pendingConfirm = null;
         this._pendingDelete = null;
         this._pendingDeleteTimer = null;
+        /** The teammate whose aura options are open, if any */
+        this._auraOpen = null;
         this._lastRun = null;
         this._summary = '';
         this._unsubscribePull = null;
@@ -249,6 +257,7 @@ export class PartyFinderTab {
         this._zonesSeeded = false;
         this._pendingConfirm = null;
         this._pendingDelete = null;
+        this._auraOpen = null;
         this._lastRun = null;
         this._summary = '';
     }
@@ -503,9 +512,14 @@ export class PartyFinderTab {
                 return b;
             };
             const deleting = this._pendingDelete === entry.id;
+            const auraCount = entry.auras?.length || 0;
             row.append(
                 name,
                 choice,
+                button(auraCount ? `Auras (${auraCount})` : 'Auras', 'Aura options to try this teammate with', () => {
+                    this._auraOpen = this._auraOpen === entry.id ? null : entry.id;
+                    this._renderRoster();
+                }),
                 button('Edit', 'Load into the editor (Configure tab) to change, then save back here', () =>
                     this._onEditInEditor(entry)
                 ),
@@ -516,9 +530,162 @@ export class PartyFinderTab {
             );
             if (deleting) row.lastChild.style.color = RED;
             list.appendChild(row);
+            if (this._auraOpen === entry.id) list.appendChild(this._auraEditor(entry));
         }
         this._renderAddFromEditor();
         this._renderPlan();
+    }
+
+    /**
+     * Every aura the game data knows, by name — classified by `isAuraAbility`, the same test the panel's
+     * party warnings use, never a list kept here.
+     * @param {Object|null} gameData
+     * @returns {Array<{hrid: string, name: string}>}
+     * @private
+     */
+    _auraAbilities(gameData) {
+        return Object.entries(gameData?.abilityDetailMap || {})
+            .filter(([, detail]) => isAuraAbility(detail))
+            .map(([hrid, detail]) => ({ hrid, name: detail.name || hrid }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /**
+     * The aura options editor under one teammate's row.
+     * @param {Object} entry - Roster entry
+     * @returns {HTMLElement}
+     * @private
+     */
+    _auraEditor(entry) {
+        const gameData = buildGameDataPayload();
+        const maxLevel = maxAbilityLevel(gameData);
+        const box = document.createElement('div');
+        box.dataset.pfAuras = entry.id;
+        box.style.cssText =
+            'margin:2px 0 6px 12px; padding:6px; border-left:2px solid #333; display:flex; flex-direction:column; gap:4px; font-size:11px;';
+
+        const intro = document.createElement('div');
+        intro.style.color = '#888';
+        intro.textContent =
+            'Try this teammate with each aura below as well. An aura takes their special ability slot, ' +
+            'replacing the special they wear.';
+        box.appendChild(intro);
+
+        const save = async (auras, includeAsBuilt) => {
+            const result = await setTeammateAuras(entry.id, auras, includeAsBuilt);
+            this._adoptRoster(result);
+            if (!result.ok) this._rosterNote('Could not save the aura options.', true);
+            else if (!result.found) this._rosterNote('That teammate is gone (deleted elsewhere?).', true);
+        };
+
+        const current = entry.dto?.abilities?.[0]?.hrid;
+        if (current && gameData?.abilityDetailMap?.[current]) {
+            const wears = document.createElement('div');
+            wears.style.color = '#666';
+            wears.textContent = `As built: ${gameData.abilityDetailMap[current].name || current} ${entry.dto.abilities[0].level || ''}`;
+            box.appendChild(wears);
+        }
+
+        entry.auras.forEach((option, index) => {
+            const line = document.createElement('div');
+            line.dataset.pfAuraOption = option.hrid;
+            line.style.cssText = 'display:flex; gap:6px; align-items:center;';
+            const check = checkAuraOption(option, gameData);
+            const label = document.createElement('span');
+            label.style.cssText = `flex:1; color:${check.ok ? '#ccc' : RED};`;
+            label.textContent = check.ok ? check.name : `${check.name} (${check.reason}; skipped)`;
+            const level = document.createElement('input');
+            level.type = 'number';
+            level.min = '1';
+            level.max = String(maxLevel);
+            level.value = String(option.level);
+            level.style.cssText = INPUT_STYLE + ' width:52px; font-size:11px; padding:1px 4px;';
+            level.addEventListener('change', () => {
+                const value = Math.floor(Number(level.value));
+                if (!(value >= 1 && value <= maxLevel)) {
+                    this._rosterNote(`Aura level must be 1-${maxLevel}.`, true);
+                    level.value = String(option.level);
+                    return;
+                }
+                const next = entry.auras.map((o, i) => (i === index ? { ...o, level: value } : o));
+                save(next, entry.includeAsBuilt);
+            });
+            const remove = document.createElement('button');
+            remove.style.cssText = SMALL_BTN_STYLE;
+            remove.textContent = '×';
+            remove.title = 'Remove this aura option';
+            remove.addEventListener('click', () =>
+                save(
+                    entry.auras.filter((_, i) => i !== index),
+                    entry.includeAsBuilt
+                )
+            );
+            line.append(label, document.createTextNode('Lv'), level, remove);
+            box.appendChild(line);
+        });
+
+        const auras = this._auraAbilities(gameData);
+        const add = document.createElement('div');
+        add.style.cssText = 'display:flex; gap:6px; align-items:center; flex-wrap:wrap;';
+        if (!auras.length) {
+            const none = document.createElement('span');
+            none.style.color = '#666';
+            none.textContent = 'No auras in the game data yet.';
+            add.appendChild(none);
+        } else if (entry.auras.length >= MAX_AURA_OPTIONS) {
+            const full = document.createElement('span');
+            full.style.color = '#666';
+            full.textContent = `At most ${MAX_AURA_OPTIONS} aura options.`;
+            add.appendChild(full);
+        } else {
+            const select = document.createElement('select');
+            select.className = 'toolasha-select';
+            select.dataset.pfAuraPick = entry.id;
+            select.style.cssText = INPUT_STYLE + ' font-size:11px; padding:1px 4px;';
+            for (const aura of auras) {
+                const option = document.createElement('option');
+                option.value = aura.hrid;
+                option.textContent = aura.name;
+                select.appendChild(option);
+            }
+            const level = document.createElement('input');
+            level.type = 'number';
+            level.min = '1';
+            level.max = String(maxLevel);
+            level.dataset.pfAuraLevel = entry.id;
+            level.value = String(entry.dto?.abilities?.[0]?.level || 1);
+            level.style.cssText = INPUT_STYLE + ' width:52px; font-size:11px; padding:1px 4px;';
+            const button = document.createElement('button');
+            button.style.cssText = SMALL_BTN_STYLE;
+            button.dataset.pfAuraAdd = entry.id;
+            button.textContent = 'Add aura';
+            button.addEventListener('click', () => {
+                const value = Math.floor(Number(level.value));
+                if (!(value >= 1 && value <= maxLevel)) {
+                    this._rosterNote(`Aura level must be 1-${maxLevel}.`, true);
+                    return;
+                }
+                const next = [
+                    ...entry.auras.filter((o) => o.hrid !== select.value),
+                    { hrid: select.value, level: value },
+                ];
+                save(next, entry.includeAsBuilt);
+            });
+            add.append(select, document.createTextNode('Lv'), level, button);
+        }
+        box.appendChild(add);
+
+        const asBuilt = document.createElement('label');
+        asBuilt.style.cssText = 'display:flex; gap:4px; align-items:center; color:#aaa;';
+        const tick = document.createElement('input');
+        tick.type = 'checkbox';
+        tick.dataset.pfAsBuilt = entry.id;
+        tick.checked = entry.includeAsBuilt !== false;
+        tick.disabled = !entry.auras.length;
+        tick.addEventListener('change', () => save(entry.auras, tick.checked));
+        asBuilt.append(tick, document.createTextNode('Also try them as built'));
+        box.appendChild(asBuilt);
+        return box;
     }
 
     /** @private */
@@ -916,6 +1083,7 @@ export class PartyFinderTab {
             roster,
             choices: this._choices,
             maxPartySize: settings.maxPartySize,
+            gameData,
         });
         const zoneCount = plan.perZone.filter((z) => z.count > 0).length;
         const rerunMax = settings.topK > 0 ? Math.min(settings.topK, Math.max(0, plan.total - zoneCount)) : 0;
@@ -950,6 +1118,7 @@ export class PartyFinderTab {
             if (zone.note) notes.push(`${zone.zone.name} T${zone.zone.difficultyTier}: ${zone.note}.`);
         }
         if (plan.skipped.length) notes.push(`Left out, not runnable here: ${plan.skipped.join('; ')}.`);
+        for (const note of plan.notes || []) notes.push(`${note}.`);
         el.textContent = notes.join(' ');
     }
 
@@ -1249,6 +1418,8 @@ export class PartyFinderTab {
                 zone: task.zone,
                 comp: task.comp,
                 isBaseline: task.comp.isBaseline,
+                // Two players on one aura is allowed (the engine decides whether it stacks), and said
+                shared: task.party ? sharedAuras(task.party, this._lastRun?.gameData) : [],
                 quick: null,
                 full: null,
             };
@@ -1336,10 +1507,21 @@ export class PartyFinderTab {
                 ? ` title="Same builds as: ${esc(row.comp.aliases.map((a) => a.join(' + ')).join('; '))}"`
                 : '';
             const party = `<span${aliases} style="${row.isBaseline ? 'font-weight:700; color:#ccc;' : ''}">${esc(partyLabel(row.comp))}</span>`;
+            const replaced = row.comp.members
+                .filter((m) => m.aura && m.replaced)
+                .map((m) => `${m.name}: ${m.aura.name} replaces ${m.replaced}`);
+            const sharedChip = row.shared?.length
+                ? ` <span style="color:#ffb74d; font-size:9px;" title="Two or more players run this aura">${esc(
+                      row.shared.map((a) => `${a.name} ×${a.count}`).join(', ')
+                  )}</span>`
+                : '';
+            const replacedChip = replaced.length
+                ? ` <span style="color:#888; font-size:9px;" title="${esc(replaced.join('; '))}">(swaps special)</span>`
+                : '';
             const hoursTag = shown
                 ? ` <span style="color:#555; font-size:9px;" title="${shown === row.full ? 'Re-run at full hours' : 'Quick pass'}">${shown.hours}h</span>`
                 : '';
-            html += `<tr data-pf-row="${esc(row.id)}" style="border-bottom:1px solid #1a1a1a;">${td(zoneLabel)}${td(party + hoursTag)}`;
+            html += `<tr data-pf-row="${esc(row.id)}" style="border-bottom:1px solid #1a1a1a;">${td(zoneLabel)}${td(party + sharedChip + replacedChip + hoursTag)}`;
             if (!shown) {
                 html += `${td('sim failed', `color:${RED};`)}${td('')}${td('')}${td('')}${td('')}`;
             } else {

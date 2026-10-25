@@ -34,6 +34,9 @@ const {
     normalizeRoster,
     validateTeammateDTO,
     buildFingerprint,
+    setTeammateAuras,
+    normalizeAuraOptions,
+    MAX_AURA_OPTIONS,
 } = await import('./party-roster.js');
 const { isLiveSafeKey, mergeForKey } = await import('../../utils/sync-merge-registry.js');
 
@@ -215,5 +218,40 @@ describe('sync', () => {
         const { merge } = mergeForKey('settings', PARTY_ROSTER_KEY);
         expect(merge(newer, older)).toBe(newer);
         expect(merge(older, newer)).toBe(newer);
+    });
+});
+
+describe('aura options on a teammate', () => {
+    test('new teammates start with none, tried as built', async () => {
+        await addTeammates([{ name: 'Ann', dto: dto() }]);
+        const [entry] = (await loadRoster()).entries;
+        expect(entry.auras).toEqual([]);
+        expect(entry.includeAsBuilt).toBe(true);
+    });
+
+    test('saved with the entry, one per aura, whole levels of at least 1', async () => {
+        const { added } = await addTeammates([{ name: 'Ann', dto: dto() }]);
+        await setTeammateAuras(
+            added[0],
+            [
+                { hrid: '/abilities/fierce_aura', level: 20 },
+                { hrid: '/abilities/fierce_aura', level: 25.7 },
+                { hrid: '/abilities/mystic_aura', level: 0 },
+                { hrid: 'not-an-ability', level: 5 },
+            ],
+            false
+        );
+        const [entry] = (await loadRoster()).entries;
+        expect(entry.auras).toEqual([{ hrid: '/abilities/fierce_aura', level: 25 }]);
+        expect(entry.includeAsBuilt).toBe(false);
+    });
+
+    test(`at most ${MAX_AURA_OPTIONS}, and an unknown teammate changes nothing`, async () => {
+        const { added } = await addTeammates([{ name: 'Ann', dto: dto() }]);
+        const many = Array.from({ length: MAX_AURA_OPTIONS + 3 }, (_, i) => ({ hrid: `/abilities/a${i}`, level: 1 }));
+        await setTeammateAuras(added[0], many, true);
+        expect((await loadRoster()).entries[0].auras).toHaveLength(MAX_AURA_OPTIONS);
+        expect(normalizeAuraOptions('junk')).toEqual([]);
+        expect((await setTeammateAuras('nope', [], true)).found).toBe(false);
     });
 });
