@@ -237,7 +237,11 @@ export class PartyFinderTab {
             this._stopRequested = true;
             cancelAllZonesSimulation();
             this._setRunningUi(false);
-            if (this.host) this.host.isRunning = false;
+            if (this.host) {
+                this.host.isRunning = false;
+                // A pricing change the panel held for the end of this run is replayed now, not never
+                this.host._flushPendingReprice?.();
+            }
         }
         this._runToken++;
         this._running = false;
@@ -1337,11 +1341,10 @@ export class PartyFinderTab {
             this._elapsedTimer = null;
             if (token === this._runToken) {
                 this._running = false;
-                if (this.host) {
-                    this.host.isRunning = false;
-                    this.host._flushPendingReprice?.();
-                }
+                if (this.host) this.host.isRunning = false;
                 this._setRunningUi(false);
+                // A run that outlived its character draws nothing below, but the panel's held reprice is still owed
+                if (!current()) this.host?._flushPendingReprice?.();
             }
         }
         if (!current()) return;
@@ -1359,12 +1362,16 @@ export class PartyFinderTab {
         if (failed) parts.push(`${failed} sim${failed === 1 ? '' : 's'} failed.`);
         this._summary = parts.join(' ');
         this._status(this._summary);
-        if (this._repricePending) {
-            this._repricePending = false;
-            this.onPricingChanged();
-        } else {
-            this._renderResults();
-        }
+        // One reprice, not two. A pricing change during the run reached this tab through the panel's
+        // `_redisplayLastResults`, which held its own replay too; when the panel replays, that replay reprices this
+        // table (through the same hook), so it is left to the panel. Only a change the panel did not hold is
+        // replayed here.
+        const replay = this._repricePending;
+        this._repricePending = false;
+        const panelReplays = Boolean(this.host?._repricePending);
+        this.host?._flushPendingReprice?.();
+        if (replay && !panelReplays) this.onPricingChanged();
+        else this._renderResults();
     }
 
     /**

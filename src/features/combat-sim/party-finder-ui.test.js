@@ -780,3 +780,52 @@ describe('whose sale tax prices "you"', () => {
         expect(state.revenueTaxRates).toEqual([undefined, undefined]);
     });
 });
+
+describe('a pricing change held for the end of a run', () => {
+    /** The panel's own hold and replay, as `_redisplayLastResults` / `_flushPendingReprice` do it */
+    const panelHolds = () => {
+        host._repricePending = false;
+        host._flushPendingReprice = vi.fn(() => {
+            if (!host._repricePending) return;
+            host._repricePending = false;
+            queueMicrotask(() => tab.onPricingChanged());
+        });
+        return () => {
+            if (host.isRunning) host._repricePending = true;
+            tab.onPricingChanged();
+        };
+    };
+
+    test('is replayed once, not twice', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        const pricingChanged = panelHolds();
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        const call = state.calls[0];
+        call.params.onResult(0, sim(1000, 100));
+        call.params.onResult(1, sim(1100, 100));
+        pricingChanged();
+        state.revenueTaxRates = [];
+        call.settled = true;
+        call.resolve([]);
+        await flush();
+        // Two rows, priced once each by the replay
+        expect(state.revenueTaxRates).toHaveLength(2);
+    });
+
+    test('a teardown mid-run lets the panel replay what it held', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        const pricingChanged = panelHolds();
+        tab.start();
+        await flush();
+        pricingChanged();
+        expect(host._repricePending).toBe(true);
+        tab.detach();
+        expect(host._flushPendingReprice).toHaveBeenCalled();
+        expect(host._repricePending).toBe(false);
+        tab = null;
+    });
+});
