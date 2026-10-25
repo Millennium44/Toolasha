@@ -81,8 +81,11 @@ const GREEN = '#4caf50';
 const DUNGEON_MAX_TIER = 2;
 const ZONE_MAX_TIER = 5;
 
-/** How often the results redraw while a run streams rows in */
-const RENDER_THROTTLE_MS = 250;
+/**
+ * How often the results redraw while a run streams rows in. Each redraw rebuilds the whole table, which on a
+ * large sweep is hundreds of rows; once a second is enough to watch it fill. The end of a run draws at once.
+ */
+const RENDER_THROTTLE_MS = 1000;
 
 const INPUT_STYLE =
     'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; font-family:inherit;';
@@ -405,6 +408,8 @@ export class PartyFinderTab {
         for (const name of ['max-party', 'top-k', 'quick-hours', 'full-hours']) {
             this._el(name).addEventListener('change', () => this._renderPlan());
         }
+        // One listener for the whole table, which is rebuilt on every redraw: sort headers, Load buttons, CSV
+        this._el('results').addEventListener('click', (event) => this._onResultsClick(event));
         this._el('metric').addEventListener('change', (e) => {
             this._sortKey = e.target.value;
             this._sortAsc = false;
@@ -1466,6 +1471,33 @@ export class PartyFinderTab {
         }
     }
 
+    /**
+     * @param {MouseEvent} event
+     * @private
+     */
+    _onResultsClick(event) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const sort = target.closest('[data-pf-sort]');
+        if (sort) {
+            const key = sort.dataset.pfSort;
+            if (this._sortKey === key) this._sortAsc = !this._sortAsc;
+            else {
+                this._sortKey = key;
+                // Fewer deaths is better
+                this._sortAsc = key === 'deaths';
+            }
+            this._renderResults();
+            return;
+        }
+        const load = target.closest('[data-pf-load]');
+        if (load) {
+            this.loadRowIntoEditor(load.dataset.pfLoad);
+            return;
+        }
+        if (target.closest('[data-pf="csv"]')) this.exportCsv();
+    }
+
     /** @private */
     _scheduleRender() {
         if (this._renderTimer) return;
@@ -1487,6 +1519,9 @@ export class PartyFinderTab {
 
     /** @private */
     _renderResults() {
+        // Whatever redraw was waiting is this one
+        clearTimeout(this._renderTimer);
+        this._renderTimer = null;
         const container = this._el('results');
         const summary = this._el('summary');
         if (!container) return;
@@ -1573,23 +1608,6 @@ export class PartyFinderTab {
             <button data-pf="csv" style="${SMALL_BTN_STYLE}">Export CSV</button>
             <span style="color:#555; font-size:10px;">Rows marked with hours were simmed that long; "vs solo" compares like with like.</span></div>`;
         container.innerHTML = html;
-
-        container.querySelectorAll('[data-pf-sort]').forEach((cell) => {
-            cell.addEventListener('click', () => {
-                const key = cell.dataset.pfSort;
-                if (this._sortKey === key) this._sortAsc = !this._sortAsc;
-                else {
-                    this._sortKey = key;
-                    // Fewer deaths is better
-                    this._sortAsc = key === 'deaths';
-                }
-                this._renderResults();
-            });
-        });
-        container.querySelectorAll('[data-pf-load]').forEach((button) => {
-            button.addEventListener('click', () => this.loadRowIntoEditor(button.dataset.pfLoad));
-        });
-        this._el('csv')?.addEventListener('click', () => this.exportCsv());
     }
 
     /**

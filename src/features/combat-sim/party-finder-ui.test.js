@@ -846,3 +846,42 @@ describe('a pricing change held for the end of a run', () => {
         tab = null;
     });
 });
+
+describe('redrawing while results stream in', () => {
+    test('at most once a second while streaming, at once at the end; clicks still work after redraws', async () => {
+        seedRoster([
+            ['a', 'Ann', build(80)],
+            ['b', 'Bob', build(100)],
+        ]);
+        await mountTab();
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        const renders = vi.spyOn(tab, '_renderResults');
+        const call = state.calls[0];
+        call.params.onResult(0, sim(1000, 100));
+        call.params.onResult(1, sim(1100, 100));
+        await new Promise((r) => setTimeout(r, 400));
+        call.params.onResult(2, sim(900, 100));
+        expect(renders).toHaveBeenCalledTimes(0);
+        await new Promise((r) => setTimeout(r, 800));
+        expect(renders).toHaveBeenCalledTimes(1);
+        call.params.onResult(3, sim(1300, 100));
+        call.settled = true;
+        call.resolve([]);
+        await flush();
+        expect(renders).toHaveBeenCalledTimes(2);
+        // The pending streamed redraw was folded into the final one
+        await new Promise((r) => setTimeout(r, 1100));
+        expect(renders).toHaveBeenCalledTimes(2);
+
+        // One click, one action, however many times the table was rebuilt
+        el('csv').click();
+        expect(state.downloads).toHaveLength(1);
+        const header = () => tab.root.querySelector('[data-pf-sort="xp"]');
+        header().click();
+        expect(tab._sortAsc).toBe(true);
+        header().click();
+        expect(tab._sortAsc).toBe(false);
+    });
+});
