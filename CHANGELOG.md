@@ -17,6 +17,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Narrow layouts give the Labyrinth controls their own row above the map and keep task reroll tools in the page flow instead of covering game controls. Task estimate controls wrap below the title, while wider layouts restore their original placement.
 - Marketplace pricing options collapse into an expandable strip, history statistics stay within the content area, and extra order statistics become compact price details on narrow screens. My Listings retains an option to show the full sortable columns, and header order totals wrap within the native header width on mobile.
 
+### Treasure popup on phones
+
+- The chest-opening summary no longer covers the game's loot window on a phone: with no room beside it, it sits above or below the window (scrolling if needed), so the game's Close stays reachable.
+
 ### Tea recommendation: an almost-as-fast choice
 
 - The tea recommendation for an action now also shows the best gold/hr setup that stays within 95% of the top XP/hr (the percentage is a setting), with the trade spelled out, e.g. "XP −4.0%, +30.0K gold/hr"; unpriced setups are flagged, never valued at zero.
