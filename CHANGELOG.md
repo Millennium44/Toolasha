@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Treasure popup on phones
+
+- The chest-opening summary no longer covers the game's loot window on a phone: with no room beside it, it sits above or below the window (scrolling if needed), so the game's Close stays reachable.
+
 ### Tea recommendation: an almost-as-fast choice
 
 - The tea recommendation for an action now also shows the best gold/hr setup that stays within 95% of the top XP/hr (the percentage is a setting), with the trade spelled out, e.g. "XP −4.0%, +30.0K gold/hr"; unpriced setups are flagged, never valued at zero.

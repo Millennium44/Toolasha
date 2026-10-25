@@ -167,6 +167,7 @@ const {
     itemName,
     worthShowing,
     capHeightToWindow,
+    placeBesideDialog,
     pricingBasis,
     buildTreasureSummaryRows,
     buildTreasureDetailRows,
@@ -1425,5 +1426,50 @@ describe('a cowbell is worth a bag less the bag tax', () => {
         // the two views must not price the same cowbell differently
         dm.gameMode = 'ironcow';
         expect(treasureTracker._cowbellValue()).toBeCloseTo(0.1, 10);
+    });
+});
+
+describe('placeBesideDialog never covers the game loot dialog', () => {
+    const popup = { width: 300, height: 240 };
+
+    test('desktop: to the right of the dialog, top-aligned', () => {
+        const place = placeBesideDialog({ left: 600, right: 900, top: 200, bottom: 500 }, popup, {
+            width: 1600,
+            height: 900,
+        });
+        expect(place).toEqual({ left: 912, top: 200 });
+    });
+
+    test('desktop with no room on the right: to the left', () => {
+        const place = placeBesideDialog({ left: 1000, right: 1500, top: 200, bottom: 500 }, popup, {
+            width: 1600,
+            height: 900,
+        });
+        expect(place).toEqual({ left: 688, top: 200 });
+    });
+
+    test('a phone (no room either side) with room above: above the dialog, clear of it', () => {
+        // The reported case: a 412px screen, the dialog in the middle with its Close at the bottom
+        const dialog = { left: 20, right: 392, top: 350, bottom: 575 };
+        const place = placeBesideDialog(dialog, popup, { width: 412, height: 850 });
+        expect(place.top + popup.height).toBeLessThanOrEqual(dialog.top);
+        expect(place.left).toBeGreaterThanOrEqual(8);
+        expect(place.left + popup.width).toBeLessThanOrEqual(412 - 8);
+        expect(place.height).toBeUndefined();
+    });
+
+    test('a phone with the dialog high up: below it', () => {
+        const dialog = { left: 20, right: 392, top: 60, bottom: 300 };
+        const place = placeBesideDialog(dialog, popup, { width: 412, height: 850 });
+        expect(place.top).toBeGreaterThanOrEqual(dialog.bottom);
+        expect(place.height).toBeUndefined();
+    });
+
+    test('a phone where neither gap fits it whole: the larger gap, with a height that keeps it clear', () => {
+        const dialog = { left: 20, right: 392, top: 200, bottom: 600 };
+        const place = placeBesideDialog(dialog, popup, { width: 412, height: 750 });
+        // above: 200 - 12 - 8 = 180; below: 750 - 600 - 12 - 8 = 130
+        expect(place).toEqual({ left: 20, top: 8, height: 180 });
+        expect(place.top + place.height).toBeLessThanOrEqual(dialog.top);
     });
 });
