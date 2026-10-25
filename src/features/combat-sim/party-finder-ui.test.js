@@ -805,7 +805,7 @@ describe('a pricing change held for the end of a run', () => {
         host._flushPendingReprice = vi.fn(() => {
             if (!host._repricePending) return;
             host._repricePending = false;
-            queueMicrotask(() => tab.onPricingChanged());
+            queueMicrotask(() => tab?.onPricingChanged());
         });
         return () => {
             if (host.isRunning) host._repricePending = true;
