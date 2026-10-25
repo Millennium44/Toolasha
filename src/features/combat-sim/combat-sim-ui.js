@@ -6781,6 +6781,11 @@ class CombatSimUI {
      */
     async _onSimulate() {
         if (this._runStarting) return;
+        // A party search marks the panel running too, but this button is not its Stop: it has its own
+        if (this._partyFinder?.isBusy()) {
+            this._setStatus('A party search is running. Stop it on the Party tab first.');
+            return;
+        }
         if (this.isRunning) {
             // Stop the running simulation. The warm workers stay: Stop here is
             // almost always "that is not what I meant" followed by an edit and

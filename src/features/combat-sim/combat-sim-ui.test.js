@@ -13092,6 +13092,21 @@ describe('the Party tab follows its setting', () => {
         expect(ui.panel.querySelector('.mwi-csim-party-finder')).not.toBeNull();
     });
 
+    test('Simulate refuses while a party search runs instead of cancelling it', async () => {
+        mocks.partyFinder = true;
+        ui.buildPanel();
+        ui._partyFinder._running = true;
+        ui.isRunning = true;
+        await ui._onSimulate();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe(
+            'A party search is running. Stop it on the Party tab first.'
+        );
+        // Still running: nothing cancelled it, and the tab was not switched away
+        expect(ui.isRunning).toBe(true);
+        ui._partyFinder._running = false;
+        ui.isRunning = false;
+    });
+
     test('a party search in flight makes the panel busy, and destroy lets the tab go', () => {
         mocks.partyFinder = true;
         ui.buildPanel();

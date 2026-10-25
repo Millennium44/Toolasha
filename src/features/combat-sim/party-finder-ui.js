@@ -235,6 +235,7 @@ export class PartyFinderTab {
         if (this._running) {
             this._stopRequested = true;
             cancelAllZonesSimulation();
+            this._setRunningUi(false);
             if (this.host) this.host.isRunning = false;
         }
         this._runToken++;
@@ -1443,6 +1444,13 @@ export class PartyFinderTab {
         }
         if (stop) stop.style.display = running ? '' : 'none';
         if (progress) progress.style.display = running ? 'block' : 'none';
+        // The Configure tab's Simulate, as the panel's own runs leave it while they go
+        const simulate = this.host?.panel?.querySelector('#mwi-csim-run');
+        if (simulate) {
+            simulate.disabled = running;
+            simulate.style.opacity = running ? '0.5' : '1';
+            simulate.style.cursor = running ? 'not-allowed' : 'pointer';
+        }
         if (running) {
             const fill = this._el('progress-fill');
             if (fill) fill.style.width = '0%';

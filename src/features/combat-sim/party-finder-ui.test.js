@@ -134,7 +134,8 @@ function sim(xp, profit, { hours = 2, deaths = 0, unpriced } = {}) {
 function makeHost() {
     const panel = document.createElement('div');
     panel.innerHTML = `<select id="mwi-csim-zone"><option value="${ZONE.hrid}">Swamp</option><option value="${DUNGEON.hrid}">Den</option></select>
-        <select id="mwi-csim-tier"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select>`;
+        <select id="mwi-csim-tier"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select>
+        <button id="mwi-csim-run">Simulate</button>`;
     panel.querySelector('#mwi-csim-zone').value = ZONE.hrid;
     panel.querySelector('#mwi-csim-tier').value = '1';
     document.body.appendChild(panel);
@@ -723,5 +724,26 @@ describe('aura options in the tab', () => {
         await flush();
         // 6 teammates x 3 variants: 1 + 18 + 15 x 9 = 154 quick sims
         expect(el('confirm').textContent).toMatch(/154 quick/);
+    });
+});
+
+describe('the Configure tab while a party search runs', () => {
+    test('Simulate is disabled for the run and enabled again when it stops or the tab goes', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        const simulate = host.panel.querySelector('#mwi-csim-run');
+        tab.start();
+        await flush();
+        expect(simulate.disabled).toBe(true);
+        tab.stop();
+        await flush();
+        expect(simulate.disabled).toBe(false);
+
+        tab.start();
+        await flush();
+        expect(simulate.disabled).toBe(true);
+        tab.detach();
+        expect(simulate.disabled).toBe(false);
+        tab = null;
     });
 });
