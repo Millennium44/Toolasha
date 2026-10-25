@@ -671,6 +671,23 @@ describe('aura options in the tab', () => {
         expect(state.db.entries[0].auras).toEqual([]);
     });
 
+    test('an edit drawn from an older copy lands on the list as stored now', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        await openAuras('a');
+        // Another tab adds an aura after this editor was drawn
+        state.db.entries[0].auras = [{ hrid: '/abilities/fierce_aura', level: 20 }];
+        state.db.entries[0].updatedAt = 2;
+        tab.root.querySelector('[data-pf-aura-pick="a"]').value = '/abilities/mystic_aura';
+        tab.root.querySelector('[data-pf-aura-level="a"]').value = '15';
+        tab.root.querySelector('[data-pf-aura-add="a"]').click();
+        await flush();
+        expect(state.db.entries[0].auras).toEqual([
+            { hrid: '/abilities/fierce_aura', level: 20 },
+            { hrid: '/abilities/mystic_aura', level: 15 },
+        ]);
+    });
+
     test('a stored aura the game no longer has is shown as skipped, and the plan says so', async () => {
         seedRoster([['a', 'Ann', build(80)]]);
         state.db.entries[0].auras = [{ hrid: '/abilities/retired_aura', level: 10 }];

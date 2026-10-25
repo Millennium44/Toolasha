@@ -575,8 +575,10 @@ export class PartyFinderTab {
             'replacing the special they wear.';
         box.appendChild(intro);
 
-        const save = async (auras, includeAsBuilt) => {
-            const result = await setTeammateAuras(entry.id, auras, includeAsBuilt);
+        // Every edit is a change to the list as stored when it is written, not to the copy this editor was drawn
+        // from: another tab (or a pull) may have changed it since
+        const save = async (change) => {
+            const result = await setTeammateAuras(entry.id, change);
             this._adoptRoster(result);
             if (!result.ok) this._rosterNote('Could not save the aura options.', true);
             else if (!result.found) this._rosterNote('That teammate is gone (deleted elsewhere?).', true);
@@ -590,7 +592,7 @@ export class PartyFinderTab {
             box.appendChild(wears);
         }
 
-        entry.auras.forEach((option, index) => {
+        entry.auras.forEach((option) => {
             const line = document.createElement('div');
             line.dataset.pfAuraOption = option.hrid;
             line.style.cssText = 'display:flex; gap:6px; align-items:center;';
@@ -611,18 +613,17 @@ export class PartyFinderTab {
                     level.value = String(option.level);
                     return;
                 }
-                const next = entry.auras.map((o, i) => (i === index ? { ...o, level: value } : o));
-                save(next, entry.includeAsBuilt);
+                save((stored) => ({
+                    ...stored,
+                    auras: stored.auras.map((o) => (o.hrid === option.hrid ? { ...o, level: value } : o)),
+                }));
             });
             const remove = document.createElement('button');
             remove.style.cssText = SMALL_BTN_STYLE;
             remove.textContent = '×';
             remove.title = 'Remove this aura option';
             remove.addEventListener('click', () =>
-                save(
-                    entry.auras.filter((_, i) => i !== index),
-                    entry.includeAsBuilt
-                )
+                save((stored) => ({ ...stored, auras: stored.auras.filter((o) => o.hrid !== option.hrid) }))
             );
             line.append(label, document.createTextNode('Lv'), level, remove);
             box.appendChild(line);
@@ -669,11 +670,11 @@ export class PartyFinderTab {
                     this._rosterNote(`Aura level must be 1-${maxLevel}.`, true);
                     return;
                 }
-                const next = [
-                    ...entry.auras.filter((o) => o.hrid !== select.value),
-                    { hrid: select.value, level: value },
-                ];
-                save(next, entry.includeAsBuilt);
+                const hrid = select.value;
+                save((stored) => ({
+                    ...stored,
+                    auras: [...stored.auras.filter((o) => o.hrid !== hrid), { hrid, level: value }],
+                }));
             });
             add.append(select, document.createTextNode('Lv'), level, button);
         }
@@ -686,7 +687,7 @@ export class PartyFinderTab {
         tick.dataset.pfAsBuilt = entry.id;
         tick.checked = entry.includeAsBuilt !== false;
         tick.disabled = !entry.auras.length;
-        tick.addEventListener('change', () => save(entry.auras, tick.checked));
+        tick.addEventListener('change', () => save((stored) => ({ ...stored, includeAsBuilt: tick.checked })));
         asBuilt.append(tick, document.createTextNode('Also try them as built'));
         box.appendChild(asBuilt);
         return box;

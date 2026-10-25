@@ -393,17 +393,22 @@ export async function replaceTeammateBuild(id, dto) {
 /**
  * Set the aura options a teammate is tried with.
  * @param {string} id
- * @param {Array<{hrid: string, level: number}>} auras - Replaces the whole list
- * @param {boolean} includeAsBuilt - Also try them as built
+ * @param {Array<{hrid: string, level: number}>|Function} auras - The whole new list, or a change to make to the
+ *   stored one: `({auras, includeAsBuilt}) => ({auras, includeAsBuilt})`, run inside the write against what is
+ *   stored then, so an edit drawn from an older copy (another tab saved since) is made on the current list
+ * @param {boolean} [includeAsBuilt] - Also try them as built (with a list; a change function returns its own)
  * @returns {Promise<{ok: boolean, roster: Object, found: boolean}>}
  */
 export async function setTeammateAuras(id, auras, includeAsBuilt) {
-    const clean = normalizeAuraOptions(auras);
     const result = await mutateRoster((roster, now) => {
         const entry = roster.entries.find((e) => e.id === id);
         if (!entry) return { write: false, found: false };
-        entry.auras = clean;
-        entry.includeAsBuilt = includeAsBuilt !== false;
+        const next =
+            typeof auras === 'function'
+                ? auras({ auras: entry.auras.map((o) => ({ ...o })), includeAsBuilt: entry.includeAsBuilt })
+                : { auras, includeAsBuilt };
+        entry.auras = normalizeAuraOptions(next?.auras);
+        entry.includeAsBuilt = next?.includeAsBuilt !== false;
         entry.updatedAt = now;
         return { write: true, found: true };
     });
