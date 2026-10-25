@@ -121,7 +121,10 @@ export function validateTeammateDTO(dto) {
         if (!Number.isFinite(dto[key])) return { ok: false, reason: `no ${key.replace('Level', '')} level` };
     }
     for (const list of ['food', 'drinks', 'abilities']) {
-        if (dto[list] !== undefined && !Array.isArray(dto[list])) return { ok: false, reason: `bad ${list} list` };
+        if (dto[list] != null && !Array.isArray(dto[list])) return { ok: false, reason: `bad ${list} list` };
+    }
+    if (dto.houseRooms != null && (typeof dto.houseRooms !== 'object' || Array.isArray(dto.houseRooms))) {
+        return { ok: false, reason: 'bad house rooms' };
     }
     return { ok: true };
 }
@@ -134,7 +137,23 @@ export function validateTeammateDTO(dto) {
 export function sanitizeTeammateDTO(dto) {
     const copy = structuredClone(dto);
     for (const field of PER_PARTY_FIELDS) delete copy[field];
-    return copy;
+    return withEmptySlots(copy);
+}
+
+/**
+ * A build with every list the engine reads present: `Player.createFromDTO` maps `food`, `drinks` and
+ * `abilities` and reads `houseRooms` unguarded, so a build (an old export, a hand-made one) missing one fails
+ * there. Missing ones are filled with the empty shapes `buildPlayerDTO` starts from — three food and drink slots,
+ * five ability slots, no rooms; ones present are left as they are. Mutates and returns `dto`.
+ * @param {Object} dto
+ * @returns {Object}
+ */
+function withEmptySlots(dto) {
+    if (!Array.isArray(dto.food)) dto.food = [null, null, null];
+    if (!Array.isArray(dto.drinks)) dto.drinks = [null, null, null];
+    if (!Array.isArray(dto.abilities)) dto.abilities = [null, null, null, null, null];
+    if (!dto.houseRooms || typeof dto.houseRooms !== 'object' || Array.isArray(dto.houseRooms)) dto.houseRooms = {};
+    return dto;
 }
 
 /**
@@ -193,7 +212,7 @@ export function normalizeRoster(value, now = Date.now()) {
         entries.push({
             id: entry.id,
             name: cleanTeammateName(entry.name) || 'Teammate',
-            dto: entry.dto,
+            dto: withEmptySlots({ ...entry.dto }),
             source: typeof entry.source === 'string' ? entry.source : 'editor',
             addedAt: Number(entry.addedAt) || 0,
             updatedAt: Number(entry.updatedAt) || 0,

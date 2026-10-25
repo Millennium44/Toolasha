@@ -327,3 +327,34 @@ describe('aura options on a teammate', () => {
         expect((await setTeammateAuras('nope', [], true)).found).toBe(false);
     });
 });
+
+describe('a build missing the lists the engine reads', () => {
+    test('is saved with the empty shapes the adapter starts from', async () => {
+        const bare = dto();
+        delete bare.food;
+        delete bare.drinks;
+        delete bare.abilities;
+        delete bare.houseRooms;
+        const result = await addTeammates([{ name: 'Bare', dto: bare }]);
+        expect(result.added).toHaveLength(1);
+        const [entry] = (await loadRoster()).entries;
+        expect(entry.dto.food).toEqual([null, null, null]);
+        expect(entry.dto.drinks).toEqual([null, null, null]);
+        expect(entry.dto.abilities).toEqual([null, null, null, null, null]);
+        expect(entry.dto.houseRooms).toEqual({});
+    });
+
+    test('one stored that way is filled in when read', async () => {
+        const bare = dto();
+        delete bare.abilities;
+        delete bare.houseRooms;
+        db.value = { savedAt: 1, entries: [{ id: 'x', name: 'Old', dto: bare, updatedAt: 1 }] };
+        const [entry] = (await loadRoster()).entries;
+        expect(entry.dto.abilities).toHaveLength(5);
+        expect(entry.dto.houseRooms).toEqual({});
+    });
+
+    test('house rooms that are not a map are refused with a reason', () => {
+        expect(validateTeammateDTO({ ...dto(), houseRooms: [] })).toEqual({ ok: false, reason: 'bad house rooms' });
+    });
+});
