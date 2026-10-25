@@ -33,7 +33,8 @@ let activeCleanup = null;
  *   for. Must be the same player the ranked table shows (the caller's self), or the skip decision
  *   prunes tiers by a figure the user never sees. Defaults to 'player1' for the solo path.
  * @param {Function} [params.onResult] - Called with (index, simResult|null) as each zone finishes, so a caller
- *   that cancels the run keeps the results that had already landed
+ *   that cancels the run keeps the results that had already landed. With it, results are delivered only there:
+ *   the coordinator keeps no copy, and the run resolves with an empty array
  * @param {Function} [onProgress] - Called with (percent: 0-100) for overall progress
  * @returns {Promise<Array<Object>>} Array of SimResults, one per zone (same order as input)
  */
@@ -107,7 +108,8 @@ export async function runAllZonesSimulation(params, onProgress) {
                 worker.terminate();
                 cleanup();
                 if (onProgress) onProgress(100);
-                resolve(msg.results);
+                // A streamed run's results went to onResult one by one; the final message carries none
+                resolve(Array.isArray(msg.results) ? msg.results : []);
             } else if (msg.type === 'error') {
                 worker.terminate();
                 cleanup();

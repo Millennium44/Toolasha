@@ -276,7 +276,12 @@ onmessage = async function (event) {
                         console.error(`[MultiWorker] Zone ${task.zoneHrid} T${task.difficultyTier} failed:`, error);
                     }
 
-                    results[task.index] = simResult;
+                    // Streamed, a result goes to the caller as it lands and is not
+                    // also held here for a second copy in the final message: a
+                    // composition sweep can run a thousand or more, and holding
+                    // each one three times over (posted, kept, posted again) is
+                    // what a tab runs out of memory on. Null marks it finished.
+                    results[task.index] = streamResults ? null : simResult;
                     zoneProgress[task.index] = 100;
                     reportProgress();
                     // Each result as it lands, so a caller that stops the sweep
@@ -348,7 +353,8 @@ onmessage = async function (event) {
                     .fill()
                     .map(() => processQueue())
             );
-            postMessage({ type: 'all_zones_result', results });
+            // Streamed, every result has already gone out on its own
+            postMessage({ type: 'all_zones_result', results: streamResults ? null : results });
         } catch (error) {
             postMessage({ type: 'error', error: error.message || String(error) });
         }

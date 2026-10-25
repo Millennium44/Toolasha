@@ -179,6 +179,18 @@ describe('per-zone parties and streamed results', () => {
         ]);
     });
 
+    test('a streamed run whose final message carries no results resolves with an empty array', async () => {
+        const run = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [{ zoneHrid: '/actions/combat/a', difficultyTier: 0 }],
+            hours: 1,
+            onResult: () => {},
+        });
+        workers[0].onmessage({ data: { type: 'all_zones_result', results: null } });
+        await expect(run).resolves.toEqual([]);
+    });
+
     test('results streamed before a cancel stay with the caller', async () => {
         const seen = [];
         const run = runAllZonesSimulation({

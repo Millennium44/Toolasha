@@ -386,7 +386,46 @@ export function readResult(simResult, gameData, hours, { priceCache } = {}) {
     const xpPerHour = Object.values(xp).reduce((sum, value) => sum + (Number(value) || 0), 0) / simHours;
     const deathsPerHour = (simResult.deaths?.[playerHrid] || 0) / simHours;
     const priced = priceRow(simResult, gameData, simHours, priceCache);
-    return { failed: false, hours, xpPerHour, deathsPerHour, ...priced, simResult };
+    return { failed: false, hours, xpPerHour, deathsPerHour, ...priced, simResult: slimSimResult(simResult) };
+}
+
+/**
+ * The fields of a sim result that pricing it again reads (`calculateSimRevenue` → `calculateExpectedDrops`, the
+ * consumables and the dungeon keys), and nothing else. A row is kept for the life of the table and a sweep can
+ * hold over a thousand; a weak party's dungeon result carries a wipe log per wipe (each with a 200-entry event
+ * log and HP readings), per-wave timing, attack counters and so on, which together can run to megabytes.
+ */
+const KEPT_RESULT_FIELDS = [
+    'simulatedTime',
+    'experienceGained',
+    'deaths',
+    'encounters',
+    'consumablesUsed',
+    'dropRateMultiplier',
+    'rareFindMultiplier',
+    'combatDropQuantity',
+    'debuffOnLevelGap',
+    'numberOfPlayers',
+    'zoneName',
+    'difficultyTier',
+    'isDungeon',
+    'dungeonsCompleted',
+    'dungeonsFailed',
+    'lootStates',
+    'dungeonQtyStates',
+];
+
+/**
+ * A sim result cut down to {@link KEPT_RESULT_FIELDS}.
+ * @param {Object} simResult
+ * @returns {Object}
+ */
+export function slimSimResult(simResult) {
+    const slim = {};
+    for (const field of KEPT_RESULT_FIELDS) {
+        if (simResult[field] !== undefined) slim[field] = simResult[field];
+    }
+    return slim;
 }
 
 /**

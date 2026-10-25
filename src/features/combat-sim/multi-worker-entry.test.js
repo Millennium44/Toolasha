@@ -278,6 +278,18 @@ describe('a composition sweep: one party per task, results as they land', () => 
         expect(streamed.find((m) => m.index === 1).simResult.tier).toBe(1);
     });
 
+    test('a streamed run keeps no copy: its final message carries no results', async () => {
+        const done = await sweep(tiers('a', 3), { useEarlyExit: false, streamResults: true });
+        expect(done?.type).toBe('all_zones_result');
+        expect(done.results).toBeNull();
+        expect(harness.sent.filter((m) => m.type === 'task_result')).toHaveLength(3);
+    });
+
+    test('without streaming the final message still carries every result (All Zones, Seek)', async () => {
+        const done = await sweep(tiers('a', 2), { useEarlyExit: false });
+        expect(done.results.map((r) => r.tier)).toEqual([0, 1]);
+    });
+
     test('without streamResults nothing extra is posted', async () => {
         const done = await sweep(tiers('a', 2), { useEarlyExit: false });
         expect(done?.type).toBe('all_zones_result');

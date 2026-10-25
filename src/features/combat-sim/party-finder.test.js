@@ -12,7 +12,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
     calculateSimRevenue: (simResult, _gameData, playerHrid, hours) => {
         if (pricing.throwFor && simResult === pricing.throwFor) throw new Error('no market');
         return {
-            netPerHour: (simResult.__profit?.[playerHrid] ?? 0) / hours,
+            netPerHour: ((simResult.__profit || simResult.lootStates?.__profit)?.[playerHrid] ?? 0) / hours,
             dropEntries: [{ itemHrid: '/items/x', name: 'X', countPerHour: 1 }],
             unpricedDrops: pricing.unpriced,
             unpricedConsumables: [],
@@ -218,7 +218,8 @@ describe('readResult', () => {
         simulatedTime: hours * HOUR,
         experienceGained: { player1: { magic: xp }, player2: { magic: 99999 } },
         deaths: { player1: deaths, player2: 50 },
-        __profit: { player1: profit, player2: 99999 },
+        // Read by the test adapter; a field the kept row keeps, so repricing can read it again
+        lootStates: { __profit: { player1: profit, player2: 99999 } },
     });
 
     test('reads you, never the party', () => {
@@ -475,5 +476,31 @@ describe('aura options', () => {
         expect(maxAbilityLevel({ levelExperienceTable: [0, 1, 2] })).toBe(2);
         expect(maxAbilityLevel(null)).toBe(200);
         expect(checkAuraOption({ hrid: '/abilities/fierce_aura', level: 0 }, gameData).ok).toBe(false);
+    });
+});
+
+describe('a kept row holds only what repricing reads', () => {
+    test('no wipe log or per-tick data survives, and repricing gives the same profit', () => {
+        const full = {
+            simulatedTime: 2 * HOUR,
+            experienceGained: { player1: { magic: 2000 } },
+            deaths: { player1: 1, '/monsters/x': 40 },
+            // Where the test adapter prices from: a field repricing keeps
+            lootStates: { __profit: { player1: 400 } },
+            consumablesUsed: { player1: {} },
+            wipeEvents: [{ log: Array.from({ length: 200 }, () => ({ playersHp: [1, 2, 3] })) }],
+            timeSpentAlive: [{ name: 'w', count: 3 }],
+            attacks: { player1: { a: 1 } },
+        };
+        const m = readResult(full, {}, 2);
+        expect(m.simResult.wipeEvents).toBeUndefined();
+        expect(m.simResult.timeSpentAlive).toBeUndefined();
+        expect(m.simResult.attacks).toBeUndefined();
+        expect(m.simResult.deaths).toEqual(full.deaths);
+        expect(Object.keys(m.simResult).sort()).toEqual(
+            ['consumablesUsed', 'deaths', 'experienceGained', 'lootStates', 'simulatedTime'].sort()
+        );
+        expect(m.profitPerHour).toBe(200);
+        expect(repriceMetrics(m, {}).profitPerHour).toBe(200);
     });
 });
