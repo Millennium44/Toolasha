@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: Party finder
+
+- New Party tab: save teammate builds (from the editor, an import or a copy of your own), give them aura options to try, and it sims every party of you plus your teammates across the zones you pick, ranking your own EXP/hr and profit/hr against solo (worse than solo in red); a quick pass is re-run in full for the top results, and any row loads into the editor.
+
 ### Treasure popup on phones
 
 - The chest-opening summary no longer covers the game's loot window on a phone: with no room beside it, it sits above or below the window (scrolling if needed), so the game's Close stays reachable.
