@@ -150,3 +150,71 @@ describe('early-exit decision keys on the reported player', () => {
         await expect(run).rejects.toThrow();
     });
 });
+
+describe('per-zone parties and streamed results', () => {
+    test('relays each task_result to onResult and still resolves with the full array', async () => {
+        const seen = [];
+        const run = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [
+                { zoneHrid: '/actions/combat/a', difficultyTier: 0, playerDTOs: [{ hrid: 'player1' }] },
+                {
+                    zoneHrid: '/actions/combat/a',
+                    difficultyTier: 0,
+                    playerDTOs: [{ hrid: 'player1' }, { hrid: 'player2' }],
+                },
+            ],
+            hours: 1,
+            onResult: (index, simResult) => seen.push([index, simResult]),
+        });
+        const worker = workers[0];
+        worker.onmessage({ data: { type: 'task_result', index: 1, simResult: { x: 1 } } });
+        worker.onmessage({ data: { type: 'task_result', index: 0, simResult: null } });
+        worker.onmessage({ data: { type: 'all_zones_result', results: [null, { x: 1 }] } });
+        await expect(run).resolves.toEqual([null, { x: 1 }]);
+        expect(seen).toEqual([
+            [1, { x: 1 }],
+            [0, null],
+        ]);
+    });
+
+    test('results streamed before a cancel stay with the caller', async () => {
+        const seen = [];
+        const run = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [
+                { zoneHrid: '/actions/combat/a', difficultyTier: 0 },
+                { zoneHrid: '/actions/combat/b', difficultyTier: 0 },
+            ],
+            hours: 1,
+            onResult: (index) => seen.push(index),
+        });
+        workers[0].onmessage({ data: { type: 'task_result', index: 0, simResult: { ok: true } } });
+        cancelAllZonesSimulation();
+        await expect(run).rejects.toThrow('Cancelled');
+        expect(seen).toEqual([0]);
+    });
+
+    test('a sweep with per-zone parties runs without early exit and asks for streamed results', () => {
+        let start = null;
+        globalThis.Worker = class extends FakeWorker {
+            postMessage(msg) {
+                if (msg.type === 'start_all_zones') start = msg;
+            }
+        };
+        const run = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [{ zoneHrid: '/actions/combat/a', difficultyTier: 0, playerDTOs: [{ hrid: 'player1' }] }],
+            hours: 1,
+            useEarlyExit: true,
+            onResult: () => {},
+        });
+        run.catch(() => {});
+        expect(start.useEarlyExit).toBe(false);
+        expect(start.streamResults).toBe(true);
+        cancelAllZonesSimulation();
+    });
+});

@@ -51,8 +51,17 @@ onmessage = async function (event) {
     const { type } = event.data;
 
     if (type === 'start_all_zones') {
-        const { workerScript, gameData, playerDTOs, zones, simulationTimeLimit, extraBuffs, maxWorkers, useEarlyExit } =
-            event.data;
+        const {
+            workerScript,
+            gameData,
+            playerDTOs,
+            zones,
+            simulationTimeLimit,
+            extraBuffs,
+            maxWorkers,
+            useEarlyExit,
+            streamResults,
+        } = event.data;
 
         // Create Blob URL for simulation workers from the bundled script string
         const blob = new Blob([workerScript], { type: 'application/javascript' });
@@ -228,7 +237,9 @@ onmessage = async function (event) {
                     // exists to avoid. `hasData` is a plain flag, not a compare:
                     // one sweep hands one game-data object to every child it has.
                     gameData: child.hasData ? undefined : gameData,
-                    playerDTOs,
+                    // A task may carry its own party (a composition sweep runs
+                    // many parties through one pool); otherwise the sweep's
+                    playerDTOs: task.playerDTOs || playerDTOs,
                     zoneHrid: task.zoneHrid,
                     difficultyTier: task.difficultyTier,
                     simulationTimeLimit,
@@ -268,6 +279,9 @@ onmessage = async function (event) {
                     results[task.index] = simResult;
                     zoneProgress[task.index] = 100;
                     reportProgress();
+                    // Each result as it lands, so a caller that stops the sweep
+                    // early keeps what already finished (null for a failed task)
+                    if (streamResults) postMessage({ type: 'task_result', index: task.index, simResult });
 
                     if (!useEarlyExit) continue;
                     const zoneInfo = zoneInfoMap.get(task.zoneHrid);
