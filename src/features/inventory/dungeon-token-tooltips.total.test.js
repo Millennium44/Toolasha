@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
     ev: {},
     extraTaskShop: {},
     profitMode: 'hybrid',
+    respectMode: true,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -29,12 +30,20 @@ vi.mock('../../core/data-manager.js', () => ({
         getInventory: () => state.inventory,
         getInitClientData: () => ({
             itemDetailMap: {
+                '/items/chimerical_token': { name: 'Chimerical Token' },
+                '/items/chimerical_chest_key': { name: 'Chimerical Key' },
                 '/items/labyrinth_token': { name: 'Labyrinth Token' },
                 '/items/pathseeker_lodestone': { name: 'Pathseeker Lodestone' },
                 '/items/labyrinth_essence': { name: 'Labyrinth Essence' },
                 '/items/task_token': { name: 'Task Token' },
                 '/items/task_crystal': { name: 'Task Crystal' },
                 '/items/large_treasure_chest': { name: 'Large Treasure Chest', isOpenable: true },
+            },
+            shopItemDetailMap: {
+                key: {
+                    itemHrid: '/items/chimerical_chest_key',
+                    costs: [{ itemHrid: '/items/chimerical_token', count: 5 }],
+                },
             },
             taskShopItemDetailMap: {
                 chest: { itemHrid: '/items/large_treasure_chest', cost: { itemHrid: '/items/task_token', count: 10 } },
@@ -57,7 +66,11 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid) => state.prices[hrid] || null,
     // The real mapping of a profit pricing mode to a book side, for a sale
-    getPricingMode: () => ({ conservative: 'bid', patientBuy: 'bid' })[state.profitMode] ?? 'ask',
+}));
+// The one function the inventory badge uses for a token's side, as the real one decides it
+vi.mock('../../utils/token-valuation.js', () => ({
+    tokenPricingSide: () =>
+        !state.respectMode || ['conservative', 'patientBuy'].includes(state.profitMode) ? 'bid' : 'ask',
 }));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: { calculateExpectedValue: (hrid) => state.ev[hrid] || null },
@@ -96,6 +109,7 @@ beforeEach(async () => {
     state.ev = {};
     state.extraTaskShop = {};
     state.profitMode = 'hybrid';
+    state.respectMode = true;
     state.prices = {
         '/items/pathseeker_lodestone': { ask: 6_800_000, bid: 6_000_000 },
         '/items/labyrinth_essence': { ask: 100, bid: 90 },
@@ -398,5 +412,56 @@ describe('the Value column', () => {
         await Promise.resolve();
         // The lodestone row (1,000 tokens) is the first listed when it outranks the essence row
         expect(valueCells(el).some((cell) => cell.trim() === shown)).toBe(true);
+    });
+});
+
+describe('rows use the side the inventory badge uses', () => {
+    const rowsOf = (el) => [...el.querySelectorAll('.dungeon-token-shop-injected tr')].slice(1);
+
+    beforeEach(() => {
+        state.prices['/items/chimerical_chest_key'] = { ask: 5000, bid: 4000 };
+        state.prices['/items/large_treasure_chest'] = { ask: 1000, bid: 900 };
+    });
+
+    test('with respect-the-mode off, task and labyrinth rows pin the bid like the badge', async () => {
+        state.respectMode = false;
+        const task = labyrinthTooltip('Amount: 20', 'Task Token');
+        state.handler(task);
+        await Promise.resolve();
+        expect(rowsOf(task)[0].cells[2].textContent).toContain('900');
+
+        const lab = labyrinthTooltip('Amount: 1,000');
+        state.handler(lab);
+        await Promise.resolve();
+        expect(lab.querySelector('.dungeon-token-shop-injected').textContent).toContain('6,000K');
+    });
+
+    test('dungeon rows follow the mode: ask under Hybrid, bid under Conservative', async () => {
+        const hybrid = labyrinthTooltip('Amount: 10', 'Chimerical Token');
+        state.handler(hybrid);
+        await Promise.resolve();
+        expect(rowsOf(hybrid)[0].cells[2].textContent).toBe('5.0K');
+        expect(hybrid.querySelector('[title*="ask price before tax"]')).not.toBeNull();
+
+        document.body.innerHTML = '';
+        state.profitMode = 'conservative';
+        const conservative = labyrinthTooltip('Amount: 10', 'Chimerical Token');
+        state.handler(conservative);
+        await Promise.resolve();
+        expect(rowsOf(conservative)[0].cells[2].textContent).toBe('4.0K');
+        expect(conservative.querySelector('.dungeon-token-shop-injected').textContent).toContain(
+            'Your 10 tokens ≈ 8.0K'
+        );
+    });
+
+    test('the held total of a dungeon token names the bid when the bid was read', async () => {
+        state.respectMode = false;
+        const el = labyrinthTooltip('Amount: 10', 'Chimerical Token');
+        state.handler(el);
+        await Promise.resolve();
+        const line = [...el.querySelectorAll('.dungeon-token-shop-injected div')].find((d) =>
+            d.textContent.startsWith('Your')
+        );
+        expect(line.getAttribute('title')).toContain('bid price before tax');
     });
 });

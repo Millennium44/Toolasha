@@ -9,7 +9,8 @@ import dataManager from '../../core/data-manager.js';
 import tooltipObserver from '../../core/tooltip-observer.js';
 import dom from '../../utils/dom.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
-import { getItemPrices, getPricingMode } from '../../utils/market-data.js';
+import { getItemPrices } from '../../utils/market-data.js';
+import { tokenPricingSide } from '../../utils/token-valuation.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { heldTokensWorth } from '../../utils/token-worth.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
@@ -51,15 +52,15 @@ const SEAL_HRIDS = new Set([
 const SEAL_TOKEN_COST = 30;
 
 /**
- * The side of the book the task and labyrinth shop rows read, from the profit pricing mode:
- * Conservative and Patient Buy value a sale at the bid, Hybrid and Optimistic at the ask. This is
- * the side net worth and the inventory badges use for token values, so a tooltip cannot disagree
- * with them. An item the chosen side has no price for is left unpriced rather than read off the
- * other side.
+ * The side of the book every shop row here reads: the one the inventory badge uses for a token
+ * (the profit pricing mode, pinned to the bid when expectedValue_respectPricingMode is off), so a
+ * tooltip cannot disagree with the badge. An item the chosen side has no price for is left
+ * unpriced rather than read off the other side. The patient tick is not applied: the table
+ * shows the book.
  * @returns {'ask'|'bid'}
  */
 function getPricingSide() {
-    return getPricingMode('profit', 'sell') === 'bid' ? 'bid' : 'ask';
+    return tokenPricingSide('profitCalc_pricingMode', 'expectedValue_respectPricingMode');
 }
 
 /**
@@ -326,11 +327,12 @@ class DungeonTokenTooltips {
      * @returns {Array} Priced shop items, best gold/token first
      */
     _getDungeonShopItems(tokenHrid) {
+        const side = getPricingSide();
         return (
-            dungeonShopOffers(tokenHrid)
+            dungeonShopOffers(tokenHrid, side)
                 .filter((offer) => offer.askPrice > 0)
                 // The table's Value is what one purchase is worth: every unit it hands over
-                .map((offer) => ({ ...offer, askPrice: offer.askPrice * (offer.outputCount || 1) }))
+                .map((offer) => ({ ...offer, askPrice: offer.askPrice * (offer.outputCount || 1), priceSide: side }))
                 .sort((a, b) => b.goldPerToken - a.goldPerToken)
         );
     }
@@ -503,10 +505,10 @@ class DungeonTokenTooltips {
      * The "Your N tokens ≈ X" line under the table.
      * @param {number} amount - Tokens held
      * @param {Object} held - From {@link heldTokensWorth}
-     * @param {'ask'|'bid'} [priceSide='ask'] - The book side the market-priced rows were read at
+     * @param {'ask'|'bid'} priceSide - The book side the market-priced rows were read at
      * @returns {string} HTML
      */
-    _heldTotalHtml(amount, held, priceSide = 'ask') {
+    _heldTotalHtml(amount, held, priceSide) {
         // Say what the rows actually bought are priced from: a task row can be an openable's expected value
         const evParts = held.parts.filter((part) => part.valueSource === 'EV');
         const lowerBound = evParts.some((part) => part.isPartial) ? ' (a lower bound, some drops are unpriced)' : '';
