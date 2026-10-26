@@ -32,12 +32,17 @@ const saleTax = vi.hoisted(() => ({ ironCow: false }));
 /** What the character holds, worn and loose; empty unless a test says otherwise */
 const held = vi.hoisted(() => ({ items: [] }));
 
+/** The live character's skills (`dataManager.getSkills`); none unless a test says otherwise */
+const liveSkills = vi.hoisted(() => ({ list: [] }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getGuildBuildingLevel: (hrid) => guild.shrineLevels[hrid] || 0,
         // What the forced armor candidates read to price a piece at the level
         // you already own it at, and what merged skilling rows cap resale at
         getInventory: () => held.items,
+        // The live character's XP, which a combat level's grind time starts from when it is theirs
+        getSkills: () => liveSkills.list,
         // Read by the shared params resolver, to ask whether the piece being costed could be
         // bought finished from anybody. Nothing in this suite is untradable, so the sweeps here
         // all run on whichever bench the simulator settings resolve to.
@@ -6316,6 +6321,70 @@ describe('the grind time for combat levels', () => {
         // than the flat run, and strictly slower than if it were 4× throughout
         expect(faster.levelTimeHours).toBeLessThan(flat.levelTimeHours);
         expect(faster.levelTimeHours).toBeGreaterThan(flat.levelTimeHours / 4);
+    });
+
+    describe('whose XP the grind starts from', () => {
+        afterEach(() => {
+            liveSkills.list = [];
+        });
+
+        /** Attack 10 → 30 for player1, the live character 90% of the way through their own Attack 10 */
+        const grindFor = async (selfHrid) => {
+            buildGameDataPayload.mockReturnValue({
+                ...buildGameData(),
+                levelExperienceTable: Array.from({ length: 40 }, (_, level) => level * 1_000_000),
+            });
+            calculateSimRevenue.mockReturnValue({ netPerHour: 0 });
+            // Melee is the weapon's skill, so Attack's grind also times Melee along with it
+            runSimulation.mockImplementation(async () => ({
+                simulatedTime: 3600 * 1e9,
+                encounters: 1000,
+                deaths: { player1: 0 },
+                totalDamageDealt: { player1: 1000 },
+                experienceGained: { player1: { attack: 100_000, melee: 100_000 } },
+            }));
+            liveSkills.list = [
+                { skillHrid: '/skills/attack', level: 10, experience: 10_900_000 },
+                { skillHrid: '/skills/melee', level: 10, experience: 10_900_000 },
+            ];
+            const { results } = await runUpgradeAnalysis({
+                playerDTOs: [
+                    {
+                        hrid: 'player1',
+                        equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                        abilities: [],
+                        attackLevel: 10,
+                        meleeLevel: 10,
+                        drinks: [],
+                    },
+                ],
+                playerIndex: 0,
+                selfHrid,
+                zoneHrid: '/actions/combat/zone',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeModes: ['combat_level'],
+                abilityTargetLevel: 20,
+                combatLevelTargets: { attackLevel: 30 },
+            });
+            return results.find((r) => r.candidate.skillKey === 'attackLevel');
+        };
+
+        test("a party member at the live character's level is timed from the start of that level", async () => {
+            const row = await grindFor('someone_else');
+            // 30M - 10M at 100K/h; the live character's 10.9M is not theirs
+            expect(row.levelTimeHours).toBeCloseTo(200, 6);
+            // Melee earns as much over the same 20M: 10M + 20M reaches level 30, not the live 10.9M + 20M
+            expect(row.alongside).toEqual(expect.objectContaining({ skillKey: 'meleeLevel', upgradeLevel: 30 }));
+            expect(row.alongside.xpGained).toBeCloseTo(20_000_000, 0);
+        });
+
+        test("the live character's own row starts from their live XP", async () => {
+            const row = await grindFor('player1');
+            expect(row.levelTimeHours).toBeCloseTo(191, 6);
+            expect(row.alongside.xpGained).toBeCloseTo(19_100_000, 0);
+        });
     });
 });
 

@@ -4842,7 +4842,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 xpSimResult,
                 gameData,
                 playerHrid,
-                row.levelXpSpeedup
+                row.levelXpSpeedup,
+                isSelf
             );
             row.levelingCharmName = matchingCharm
                 ? gameData.itemDetailMap[matchingCharm.hrid]?.name || 'matching charm'
@@ -4857,7 +4858,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             row.isMainSkill = candidate.skillKey === `${primary}Level`;
             row.alongside = null;
             if (!row.isMainSkill) {
-                const along = primaryLevelsAlongside(candidate, primary, xpSimResult, gameData, playerHrid, playerDTO);
+                const along = primaryLevelsAlongside(candidate, primary, xpSimResult, gameData, playerHrid, playerDTO, {
+                    isSelf,
+                });
                 if (along) {
                     row.alongside = along;
                     if (along.upgradeLevel > along.currentLevel && !abortSignal?.()) {
@@ -5027,9 +5030,10 @@ function xpRateSpeedup(baselineResult, upgradedResult, playerHrid) {
  * @param {Object} gameData - Game data (levelExperienceTable)
  * @param {string} playerHrid - Player HRID in the sim result
  * @param {number} [speedup=1] - XP-rate multiplier once the levels are in
+ * @param {boolean} [isSelf=true] - Whether the player is the live character; only then is their live XP read
  * @returns {number} Hours needed, or Infinity
  */
-function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid, speedup = 1) {
+function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid, speedup = 1, isSelf = true) {
     const levelXpTable = gameData.levelExperienceTable || [];
     const skillName = candidate.skillKey.replace('Level', '');
     const simHours = (baselineResult.simulatedTime || 0) / (3600 * 1e9) || 1;
@@ -5040,9 +5044,10 @@ function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid
     if (!Number.isFinite(targetXp)) return Infinity;
 
     // Use the character's actual XP when their live skill matches the simmed
-    // level; otherwise assume the start of the current level
+    // level; otherwise assume the start of the current level. Another player's
+    // level matching the live character's says nothing about their progress in it
     let currentXp = levelXpTable[candidate.currentLevel] || 0;
-    const liveSkill = dataManager.getSkills?.()?.find((s) => s.skillHrid === `/skills/${skillName}`);
+    const liveSkill = isSelf ? dataManager.getSkills?.()?.find((s) => s.skillHrid === `/skills/${skillName}`) : null;
     if (liveSkill && liveSkill.level === candidate.currentLevel && Number.isFinite(liveSkill.experience)) {
         currentXp = liveSkill.experience;
     }
@@ -5132,10 +5137,21 @@ function planLevelGrind(candidate, fights, gameData, pooledXp) {
  * @param {Object} gameData - Game data (levelExperienceTable)
  * @param {string} playerHrid - Player HRID in the sim result
  * @param {Object} playerDTO - The player's current DTO (for the primary level)
+ * @param {Object} [options]
+ * @param {boolean} [options.isSelf=true] - Whether the player is the live character; only then is their live XP
+ *   read, since another player at the same level is not at the same point in it
  * @returns {{skillKey: string, label: string, currentLevel: number, upgradeLevel: number, xpGained: number}|null}
  *   Null when the target skill earns no XP here (the grind never ends)
  */
-export function primaryLevelsAlongside(candidate, primary, xpSimResult, gameData, playerHrid, playerDTO) {
+export function primaryLevelsAlongside(
+    candidate,
+    primary,
+    xpSimResult,
+    gameData,
+    playerHrid,
+    playerDTO,
+    { isSelf = true } = {}
+) {
     const table = gameData.levelExperienceTable || [];
     const xp = xpSimResult?.experienceGained?.[playerHrid] || {};
     const targetSkill = candidate.skillKey.replace('Level', '');
@@ -5145,7 +5161,7 @@ export function primaryLevelsAlongside(candidate, primary, xpSimResult, gameData
 
     const currentXpOf = (skillName, level) => {
         let current = table[level] || 0;
-        const live = dataManager.getSkills?.()?.find((sk) => sk.skillHrid === `/skills/${skillName}`);
+        const live = isSelf ? dataManager.getSkills?.()?.find((sk) => sk.skillHrid === `/skills/${skillName}`) : null;
         if (live && live.level === level && Number.isFinite(live.experience)) current = live.experience;
         return current;
     };
