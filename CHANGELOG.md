@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26): Combat Sim upgrade analysis
+
+- Combat level grind times for a party member or imported profile start from their XP, not yours, when you happen to share their level.
+- In the Lab, a party member's checked ability swap with no market price shows as unpriced instead of costing 0 because you own the book.
+
 ### Audit round (2026-10-26): death recap
 
 - An open death recap updates when another death is recorded, and its Older/Newer buttons keep working after the recap you are viewing is dropped from the kept list.
