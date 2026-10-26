@@ -917,6 +917,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Shows material costs table with Ask/Bid prices, actions/hour, and profit breakdown',
             },
+            itemTooltip_craftCostSubMaterials: {
+                id: 'itemTooltip_craftCostSubMaterials',
+                label: 'Craft cost includes crafting sub-materials',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a "Best plan" row to the detailed materials table that prices the craft by buying or crafting each ingredient, whichever is cheaper, all the way down. Shown only when it differs from the Total row; a sub-material with no market price marks it as a floor (≥). The profit/hr figure always uses the Total row. Not shown while "direct recipe only" is on',
+            },
             itemTooltip_detailedProfitFlat: {
                 id: 'itemTooltip_detailedProfitFlat',
                 label: 'Profit: direct recipe only (buy base items, no sub-craft chain)',

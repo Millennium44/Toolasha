@@ -43,6 +43,7 @@ import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { getActionHridFromName, getActionHridFromFiber } from '../../utils/game-lookups.js';
 import { findProducingAction } from '../../utils/production-index.js';
+import { craftingPlanCalculator } from '../../utils/bundle-bridge.js';
 import { parseWearable, highestOwnedEnhancements, resolveEnhancementLevel } from '../../utils/loadout-equipment.js';
 import {
     bestSelfUseCandidate,
@@ -440,6 +441,49 @@ export function loadoutsContainingItem(loadoutMap, itemHrid, enhancementLevel, o
         .filter((loadout) => loadoutSlotsItem(loadout, itemHrid, enhancementLevel, owned))
         .map((loadout) => loadout.name);
     return { hasLoadouts: named.length > 0, loadouts };
+}
+
+/**
+ * Cost of one craft action of an item under the best buy-or-craft plan, from the crafting planner
+ * (reached through the actions bundle's global; null when it is not there).
+ * A planner leg that nothing could price carries an infinite cost, so a tree with one is a partial
+ * bill: the figure is then the sum of what could be priced and `partial` is set. 0 is never a price.
+ * @param {Object} profitData - Profit calculation data (itemHrid, outputAmount)
+ * @param {'ask'|'bid'} mode - Pricing side
+ * @returns {{cost: number, partial: boolean}|null} Coins per action, or null with no planner or on error
+ */
+function craftPlanPerAction(profitData, mode) {
+    const planner = craftingPlanCalculator()?.computeBestCraftingPlan;
+    if (!planner) return null;
+    try {
+        const plan = planner(
+            profitData.itemHrid,
+            1,
+            mode,
+            new Set(),
+            new Map(),
+            0,
+            undefined,
+            config.getSetting('actionPanel_craftingPlanBuyIntermediates'),
+            true,
+            0,
+            config.getSetting('actionPanel_craftingPlanNoProcessing')
+        );
+        if (!plan) return null;
+        const outputAmount = profitData.outputAmount > 0 ? profitData.outputAmount : 1;
+        if (Number.isFinite(plan.unitCost)) return { cost: plan.unitCost * outputAmount, partial: false };
+
+        // Sum the priced legs; an unpriced buy leg adds nothing and marks the bill partial
+        const walk = (node) => {
+            if (Number.isFinite(node.totalCost)) return node.totalCost;
+            if (node.strategy !== 'craft') return 0;
+            return (node.children || []).reduce((sum, child) => sum + walk(child), 0);
+        };
+        return { cost: (plan.children || []).reduce((sum, child) => sum + walk(child), 0), partial: true };
+    } catch (error) {
+        console.error('[TooltipPrices] The crafting planner failed:', error);
+        return null;
+    }
 }
 
 class TooltipPrices {
@@ -1523,6 +1567,45 @@ class TooltipPrices {
     }
 
     /**
+     * The "Best plan" rows of the materials table: the whole-tree cost of one craft action, each
+     * ingredient bought or crafted whichever is cheaper all the way down (the crafting plan's walk).
+     * Shown only when it differs from the Total row, with a note, so the two are never silently
+     * different. A sub-material nobody can price is never counted as 0: the figure becomes a lower
+     * bound, marked with a leading ≥, and says so in the note.
+     * @param {Object} profitData - Profit calculation data
+     * @param {number} totalAsk - The table's one-level Total, ask side
+     * @param {number} totalBid - The table's one-level Total, bid side
+     * @returns {string} Table rows, or '' when there is nothing to add
+     */
+    _buildBestPlanRows(profitData, totalAsk, totalBid) {
+        if (!profitData.itemHrid || !config.getSetting('itemTooltip_craftCostSubMaterials')) return '';
+        // The flat setting asks for the direct recipe only
+        if (config.getSetting('itemTooltip_detailedProfitFlat')) return '';
+
+        const ask = craftPlanPerAction(profitData, 'ask');
+        const bid = craftPlanPerAction(profitData, 'bid');
+        if (!ask || !bid) return '';
+
+        const differs = (plan, total) => plan.cost > 0 && Math.abs(plan.cost - total) > 0.5;
+        if (!differs(ask, totalAsk) && !differs(bid, totalBid)) return '';
+
+        const cell = (plan) => (plan.cost > 0 ? `${plan.partial ? '≥ ' : ''}${formatKMB(plan.cost)}` : '-');
+        const partial = ask.partial || bid.partial;
+        const note = partial
+            ? 'Best plan crafts sub-materials when cheaper. A sub-material has no market price, so ≥ marks a floor. Profit above uses the Total row.'
+            : 'Best plan crafts sub-materials when cheaper. Profit above uses the Total row.';
+
+        let html = `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
+        html += '<td style="padding: 2px 4px; font-weight: bold;">Best plan</td>';
+        html += '<td style="padding: 2px 4px; text-align: center;"></td>';
+        html += `<td style="padding: 2px 4px; text-align: right;">${cell(ask)}</td>`;
+        html += `<td style="padding: 2px 4px; text-align: right;">${cell(bid)}</td>`;
+        html += '</tr>';
+        html += `<tr><td colspan="4" style="padding: 2px 4px; opacity: 0.7; font-style: italic;">${note}</td></tr>`;
+        return html;
+    }
+
+    /**
      * Build detailed profit display with materials table
      * @param {Object} profitData - Profit calculation data
      * @returns {string} HTML string for detailed display
@@ -1602,6 +1685,8 @@ class TooltipPrices {
             html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(totalAsk)}</td>`;
             html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(totalBid)}</td>`;
             html += '</tr>';
+
+            html += this._buildBestPlanRows(profitData, totalAsk, totalBid);
 
             // Material rows
             for (const material of materialsWithPrices) {
