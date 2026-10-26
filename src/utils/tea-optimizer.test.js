@@ -939,6 +939,34 @@ describe('planned Alchemy context in tea optimization', () => {
         });
     });
 
+    describe('current-setup XP carries the catalyst of its gold figure', () => {
+        const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
+        // Coinify's base success is 0.7 and the item is far above level 5, so success is low
+        // and a +0.3 catalyst visibly raises XP (failures give 10%)
+        const withCatalyst = (catalyst) => () => ({
+            profitPerHour: 777,
+            successRateBreakdown: { catalyst },
+        });
+
+        test('calculateSkillPerformance XP rises with the catalyst', () => {
+            alchemyCalc.coinify = withCatalyst(0);
+            const plain = calculateSkillPerformance('alchemy', new Map(), [], 5, null, { alchemyContext: context });
+            alchemyCalc.coinify = withCatalyst(0.3);
+            const boosted = calculateSkillPerformance('alchemy', new Map(), [], 5, null, { alchemyContext: context });
+            expect(plain.xpPerHour).toBeGreaterThan(0);
+            expect(boosted.xpPerHour).toBeGreaterThan(plain.xpPerHour);
+        });
+
+        test('scoreEquipmentSetup XP rises with the catalyst', () => {
+            alchemyCalc.coinify = withCatalyst(0);
+            const plain = scoreEquipmentSetup('alchemy', 'xp', new Map(), 5, null, [], context);
+            alchemyCalc.coinify = withCatalyst(0.3);
+            const boosted = scoreEquipmentSetup('alchemy', 'xp', new Map(), 5, null, [], context);
+            expect(plain).toBeGreaterThan(0);
+            expect(boosted).toBeGreaterThan(plain);
+        });
+    });
+
     test('a speed tea in an Alchemy candidate speeds up its XP, as it speeds up its gold', () => {
         const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
         alchemyCalc.coinify = () => ({ profitPerHour: 777 });
