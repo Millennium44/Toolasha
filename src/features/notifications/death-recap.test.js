@@ -807,4 +807,81 @@ describe('death recap', () => {
             }
         });
     });
+
+    describe('a row that omits single fields means unchanged', () => {
+        const row = (fields, atk) => ({
+            battleId: 1,
+            pMap: { 0: { cMP: 500, isActive: true, ...fields } },
+            mMap: { 0: { atkCounter: atk, cMP: 0, dmgCounter: 0 } },
+        });
+        const recapHits = (counter = 3) => {
+            send('battle_updated', row({ cHP: 0, dmgCounter: counter }, 9));
+            return recap.recapHistory()[0].samples.flatMap((s) => s.hits);
+        };
+
+        test('a missed swing with cHP omitted is a miss, not a hit of NaN damage', () => {
+            send('new_battle', battle([['me', 0]]));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 1000, dmgCounter: 1 }, 1));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ dmgCounter: 2 }, 2));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 700, dmgCounter: 3 }, 3));
+            vi.advanceTimersByTime(700);
+            const hits = recapHits();
+            expect(hits.every((h) => Number.isFinite(h.amount))).toBe(true);
+            // The omitted tick kept the 1000 baseline, so the 300 loss lands whole on the next tick
+            expect(hits.filter((h) => !h.miss).map((h) => h.amount)).toEqual([300]);
+            expect(recap.recapHistory()[0].sources[0].amount).toBe(300);
+        });
+
+        test('an omitted dmgCounter does not turn the next reading into a new hit', () => {
+            send('new_battle', battle([['me', 0]]));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 1000, dmgCounter: 5 }, 1));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 1000 }, 2));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 1000, dmgCounter: 5 }, 3));
+            vi.advanceTimersByTime(700);
+            // Only the first swing (counter 5 against the seeded 0) is a miss
+            expect(recapHits(5).filter((h) => h.miss)).toHaveLength(1);
+        });
+    });
+
+    describe('an open recap follows the kept list', () => {
+        const die = (n) => {
+            send('new_battle', battle([['me', 0]], n));
+            run([500], { battleId: n });
+            run([0], { battleId: n });
+        };
+        const modalEl = () => document.getElementById('toolasha-death-recap-modal');
+        const navText = () => modalEl().querySelector('[data-role="recap-nav"]')?.textContent ?? '';
+
+        test('a death while viewing redraws the position and enables Newer', () => {
+            die(1);
+            vi.advanceTimersByTime(60_000);
+            die(2);
+            recap.openRecap(recap.recapHistory()[0].id);
+            expect(navText()).toContain('1 of 2');
+            vi.advanceTimersByTime(60_000);
+            die(3);
+            expect(navText()).toContain('2 of 3');
+            const newer = modalEl().querySelectorAll('[data-role="recap-nav"] button')[1];
+            expect(newer.disabled).toBe(false);
+        });
+
+        test('the viewed recap evicted by newer deaths leaves no dead navigation', () => {
+            for (let n = 1; n <= recap.MAX_RECAPS; n++) {
+                die(n);
+                vi.advanceTimersByTime(60_000);
+            }
+            const oldest = recap.recapHistory()[recap.MAX_RECAPS - 1];
+            recap.openRecap(oldest.id);
+            die(99);
+            expect(recap.recapHistory().some((r) => r.id === oldest.id)).toBe(false);
+            expect(modalEl()).not.toBeNull();
+            expect(navText()).toBe('');
+        });
+    });
 });
