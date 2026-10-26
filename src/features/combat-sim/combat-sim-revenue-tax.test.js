@@ -521,6 +521,29 @@ describe('an analysis price snapshot is taken before any run is valued', () => {
         expect(unpricedDrops).toContain('/items/rat_relic');
     });
 
+    test('a non-self analysis seeds the keys its rate reads: a drop only a candidate rolls keeps the start price', () => {
+        const { gameData } = simDropping('/items/cheese', KILLS, 1000);
+        gameData.combatMonsterDetailMap['/monsters/rat'].rareDropTable = [
+            { itemHrid: '/items/rat_relic', dropRate: 1, minCount: 1, maxCount: 1, minDifficultyTier: 0 },
+        ];
+        mocks.prices['/items/rat_relic'] = { ask: 2000, bid: 2000 };
+        const cache = seedSimPriceCache(new Map(), zoneOf(gameData), {
+            zoneHrid: '/actions/combat/rats',
+            saleTaxRate: 0,
+        });
+        expect(cache.has('drop@0|/items/rat_relic')).toBe(true);
+        expect(cache.has('drop|/items/rat_relic')).toBe(false);
+
+        // The market moves, then a candidate that finds the relic is valued at the same rate: cheese 1000 + relic 2000
+        mocks.prices['/items/rat_relic'] = { ask: 9000, bid: 9000 };
+        const { simResult: relicSim } = simDropping('/items/rat_relic', KILLS, 9000);
+        const { revenuePerHour } = calculateSimRevenue(relicSim, gameData, 'player1', HOURS, {
+            priceCache: cache,
+            saleTaxRate: 0,
+        });
+        expect(revenuePerHour).toBe(3000);
+    });
+
     test("a dungeon's chest keys are held at the start price too", () => {
         const { simResult, gameData } = simClearingDungeon(10, 1000, 200);
         const cache = seedSimPriceCache(new Map(), gameData, { zoneHrid: '/actions/combat/chimerical_den' });

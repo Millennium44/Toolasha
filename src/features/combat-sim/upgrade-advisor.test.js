@@ -8314,6 +8314,16 @@ describe('profit is taxed as the analysed player pays it', () => {
         for (const options of optionsSeen()) expect(options.saleTaxRate).toBe(MARKET_TAX);
     });
 
+    test('the price snapshot is taken under the keys the rate of whoever is analysed reads', async () => {
+        seedSimPriceCache.mockClear();
+        await runUpgradeAnalysis(setup({ gameMode: '/game_mode/ironcow' }), null, {});
+        expect(seedSimPriceCache.mock.calls[0][2].saleTaxRate).toBe(0);
+
+        seedSimPriceCache.mockClear();
+        await runUpgradeAnalysis(setup({ hrid: '/players/live' }), null, {});
+        expect('saleTaxRate' in seedSimPriceCache.mock.calls[0][2]).toBe(false);
+    });
+
     test('the live character: no rate is passed, so the live tax and the existing cache keys stand', async () => {
         const analysis = await runUpgradeAnalysis(setup({ hrid: '/players/live' }), null, {});
         expect(optionsSeen().length).toBeGreaterThan(1);

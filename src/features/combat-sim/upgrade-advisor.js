@@ -4670,6 +4670,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // the baseline never rolled) would otherwise be priced when that candidate finishes, after any change
     seedSimPriceCache(priceCache, gameData, {
         zoneHrid,
+        // The keys the metrics below read: the analysed player's rate, none for the live character
+        ...(saleTaxRate != null ? { saleTaxRate } : {}),
         consumableHrids: [
             ...(playerDTO.food || []).map((item) => item?.hrid),
             ...(playerDTO.drinks || []).map((item) => item?.hrid),
