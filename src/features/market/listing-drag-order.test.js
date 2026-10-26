@@ -178,6 +178,24 @@ describe('reordering controls', () => {
         expect(listingDragOrder.draggedRow).toBeNull();
     });
 
+    test('cleanup mid-drag restores the old order and strips both drag classes', () => {
+        const table = buildTable([1, 2, 3]);
+        listingDragOrder._decorate(table);
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const first = rows[0];
+
+        listingDragOrder._startDrag({ dataTransfer: null }, first, table);
+        listingDragOrder._moveRow(first, rows[2], true);
+        rows[1].classList.add('mwi-listing-drag-over');
+        expect(rowIds(table)).toEqual(['2', '3', '1']);
+
+        listingDragOrder.cleanup();
+
+        expect(rowIds(table)).toEqual(['1', '2', '3']);
+        expect(document.querySelectorAll('.mwi-listing-dragging, .mwi-listing-drag-over')).toHaveLength(0);
+        expect(game.set).not.toHaveBeenCalled();
+    });
+
     test('a drop onto the table is saved even if the browser reports no drop effect', () => {
         const table = buildTable([1, 2, 3]);
         listingDragOrder.storageKey = 'marketListingDragOrder_30404';
