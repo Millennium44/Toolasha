@@ -100,6 +100,7 @@ vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
 }));
 
 const { calculateSimRevenue, seedSimPriceCache } = await import('./combat-sim-adapter.js');
+const { computeMetrics } = await import('./upgrade-advisor.js');
 
 /**
  * A dungeon run whose completion always drops one chimerical chest, which costs
@@ -260,6 +261,29 @@ describe('calculateSimRevenue unpriced containers for another player', () => {
         const { simResult, gameData } = unpriced();
         expect(calculateSimRevenue(simResult, gameData, 'player1', HOURS).revenuePerHour).toBeCloseTo(960, 9);
         expect(mocks.evRateCalls).toEqual([]);
+    });
+});
+
+describe('computeMetrics follows the analysed player’s tax', () => {
+    test('an unpriced container is valued at the rate given; none given, the live character’s', () => {
+        mocks.liveContainerValue = 960;
+        const { simResult, gameData } = simDropping('/items/mystery_box', KILLS, 0);
+        delete mocks.prices['/items/mystery_box'];
+        simResult.simulatedTime = HOURS * 3600 * 1e9;
+        const profit = (options) => computeMetrics(simResult, gameData, 'player1', HOURS, options).profitPerHour;
+
+        expect(profit({ saleTaxRate: 0 })).toBe(1000);
+        expect(profit({ saleTaxRate: MARKET_TAX })).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
+        expect(profit({})).toBeCloseTo(960, 9);
+    });
+
+    test('a priced drop is untaxed for an Iron Cow and taxed for a market player', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        simResult.simulatedTime = HOURS * 3600 * 1e9;
+        expect(computeMetrics(simResult, gameData, 'player1', HOURS, { saleTaxRate: 0 }).profitPerHour).toBe(1000);
+        expect(
+            computeMetrics(simResult, gameData, 'player1', HOURS, { saleTaxRate: MARKET_TAX }).profitPerHour
+        ).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
     });
 });
 
