@@ -2773,6 +2773,23 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a button next to the Supplies section of the Labyrinth entry screen that opens the marketplace on whichever Torch/Shroud/Beacon is short of its carry cap, quantities filled in. Nothing is bought until you confirm in the game',
             },
+            labyrinthGridScaleControl: {
+                id: 'labyrinthGridScaleControl',
+                label: 'Labyrinth: Show grid size control',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a - / + control to the Labyrinth header row that enlarges the room grid',
+            },
+            labyrinthGridScale: {
+                id: 'labyrinthGridScale',
+                label: 'Labyrinth: Room grid size',
+                type: 'slider',
+                default: 1,
+                min: 1,
+                max: 2,
+                step: 0.25,
+                help: 'Scale of the Labyrinth room grid. Also adjustable with the - / + control on the Labyrinth panel',
+            },
             labyrinthMonsterStatCheck: {
                 id: 'labyrinthMonsterStatCheck',
                 label: 'Monster stat check (sim diagnostic)',

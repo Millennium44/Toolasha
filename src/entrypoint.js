@@ -1731,6 +1731,16 @@ function registerFeatures() {
             liveStop: true,
         },
         {
+            // Registered under the control switch, but the module also applies the saved size with the
+            // stepper hidden, so the gate is always open and the module reads both settings itself.
+            key: 'labyrinthGridScaleControl',
+            name: 'Labyrinth Grid Scale',
+            category: 'Combat',
+            module: Combat.labyrinthGridScale,
+            async: false,
+            customCheck: () => true,
+        },
+        {
             key: 'labyrinthMonsterStatCheck',
             name: 'Monster Stat Check',
             category: 'Combat',
