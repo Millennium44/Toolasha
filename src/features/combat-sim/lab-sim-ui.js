@@ -6241,9 +6241,15 @@ class LabSimUI {
         if (budget > 0) {
             const plan = planWithinBudget(results, budget, { baselineFights });
             if (!plan.picks.length) {
-                body = `<div style="color:#888; font-size:11px;">Nothing in the list fits ${money(budget)}${
-                    plan.skipped.length ? ' — the cheapest measured upgrade costs more.' : '.'
-                }</div>`;
+                // "Costs more" is true only of an upgrade skipped for being over budget; a row dropped as
+                // noise, excluded or already covered says nothing about its price
+                const overBudget = plan.skipped.some((s) => s.reason === 'over budget');
+                const why = overBudget
+                    ? ' — the cheapest measured upgrade costs more.'
+                    : plan.skipped.length
+                      ? ' — nothing listed fits the budget and improves the metric.'
+                      : '.';
+                body = `<div style="color:#888; font-size:11px;">Nothing in the list fits ${money(budget)}${why}</div>`;
             } else {
                 const rows = plan.picks
                     .map((pick) => {
@@ -6272,6 +6278,14 @@ class LabSimUI {
                             plan.totalCost < 0
                                 ? `${money(-plan.totalCost)} back, none of ${money(budget)} spent`
                                 : `${money(plan.totalCost)} of ${money(budget)}`
+                        }${
+                            // A pick priced on part of its bill (shrine credits with no token rate) makes
+                            // the total a floor, so it says what it leaves out
+                            plan.partialCostPicks?.length
+                                ? ` <span data-budget-partial-cost style="color:#ff9800;" title="${plan.partialCostPicks
+                                      .join(', ')
+                                      .replace(/"/g, '&quot;')}">+ guild tokens not priced</span>`
+                                : ''
                         } ·
                         <span style="color:#4caf50; font-weight:600;">−${plan.attemptsSaved.toFixed(1)} attempts</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
@@ -8785,7 +8799,15 @@ class LabSimUI {
         } else if (!detail.kept?.length && detail.credits?.length > 0) {
             for (const credit of detail.credits) {
                 parts.push(
-                    line(`Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`, '#8bc34a')
+                    credit.noSalePrice
+                        ? line(
+                              `Sell ${credit.name} +${credit.enhancementLevel} — no sale price, so nothing is credited back`,
+                              '#ff9800'
+                          )
+                        : line(
+                              `Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`,
+                              '#8bc34a'
+                          )
                 );
             }
             if (detail.creditCapped) {

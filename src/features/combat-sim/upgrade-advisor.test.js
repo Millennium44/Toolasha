@@ -4462,6 +4462,37 @@ describe('explainUpgradeCost', () => {
         expect(detail.credit).toBe(960_000);
     });
 
+    test('a sold piece with no sale price is flagged, and the row is still charged the full buy', () => {
+        resolveItemPrice.mockImplementation((_hrid, { side } = {}) => ({ price: side === 'sell' ? null : 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+            removedItems: [{ hrid: '/items/nature_top', enhancementLevel: 7 }],
+        };
+
+        const detail = explainUpgradeCost(candidate, costGameData());
+
+        expect(detail.credits).toEqual([expect.objectContaining({ name: 'Nature Top', price: 0, noSalePrice: true })]);
+        // The cost stays the full purchase: the conservative reading
+        expect(detail.net).toBe(detail.gross);
+        expect(detail.net).not.toBeNull();
+    });
+
+    test('a sold piece that does have a sale price is not flagged', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+        const detail = explainUpgradeCost(
+            {
+                type: 'cross_slot',
+                addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+                removedItems: [{ hrid: '/items/nature_top', enhancementLevel: 7 }],
+            },
+            costGameData()
+        );
+        expect(detail.credits[0].noSalePrice).toBeUndefined();
+    });
+
     test('names the unpriced item that makes a cost unknown', () => {
         // No listing at +7 and no enhancement recipe leaves the buy price unknown
         getItemPrices.mockReturnValue({ ask: 0, bid: 0 });
@@ -5771,6 +5802,127 @@ describe('guild shrine candidates', () => {
         expect(detail.guild).toMatchObject({ tokens: 40, shrineName: 'Force', tokenGold: null, creditGold: 3000 });
         expect(detail.net).toBe(3000);
         expect(detail.guild.rankedNote).toContain('credit half only');
+    });
+
+    test('a shrine with no exchange rate is flagged partial, and the budget plan carries the flag', () => {
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        const detail = explainUpgradeCost(candidate, buildGameData());
+
+        // Still rankable on the credit half
+        expect(detail.net).toBe(3000);
+        expect(detail.partialCost).toBe('guild tokens not priced');
+
+        const plan = planWithinBudget(
+            [{ candidate, cost: detail.net, costDetail: detail, attemptsDelta: -1, significant: true }],
+            10_000
+        );
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.partialCostPicks).toEqual([candidate.description]);
+    });
+
+    test('a shrine whose tokens are priced is not flagged partial', () => {
+        token.goldPerToken = 50;
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        const detail = explainUpgradeCost(candidate, buildGameData());
+        expect(detail.partialCost).toBeUndefined();
+        const plan = planWithinBudget(
+            [{ candidate, cost: detail.net, costDetail: detail, attemptsDelta: -1, significant: true }],
+            10_000
+        );
+        expect(plan.partialCostPicks).toEqual([]);
+    });
+
+    describe('the partial-cost flag survives each real analysis path into a budget plan', () => {
+        const levels = { staminaLevel: 50, intelligenceLevel: 50, attackLevel: 50, meleeLevel: 50 };
+        const shrine = () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            return generateGuildShrineCandidates(dto)[0];
+        };
+        const planOf = (rows) =>
+            planWithinBudget(
+                rows.map((row) => ({ ...row, attemptsDelta: -1, significant: true })),
+                1_000_000
+            );
+        beforeEach(() => {
+            token.goldPerToken = null;
+            buildGameDataPayload.mockReturnValue(buildGameData());
+            calculateSimRevenue.mockReturnValue({ totalRevenue: 0, itemRevenues: [] });
+            resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+            getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+            runLabyrinthSimulation.mockImplementation(async () => ({ labyAttemptCount: 100, encounters: 50 }));
+            runSimulation.mockImplementation(async () => ({
+                simulatedTime: 3.6e12,
+                deaths: 0,
+                playerRanOutOfFood: false,
+            }));
+        });
+
+        test('Lab all-fights', async () => {
+            const result = await runLabyrinthAllFightsAnalysis(
+                {
+                    fights: [
+                        {
+                            monsterHrid: '/monsters/m0',
+                            monsterName: 'M0',
+                            roomLevel: 100,
+                            dto: { equipment: {}, ...levels },
+                        },
+                    ],
+                    crates: [],
+                    hours: 1,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    modes: [],
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+
+        test('Lab single-fight', async () => {
+            const result = await runLabyrinthUpgradeAnalysis(
+                {
+                    playerDTOs: [{ equipment: {}, abilities: [], ...levels, guildShrineLevels: {} }],
+                    playerIndex: 0,
+                    monsterHrid: '/monsters/goblin',
+                    roomLevel: 100,
+                    crates: [],
+                    hours: 1,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    upgradeMode: 'ability_swap',
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+
+        test('Combat Sim runUpgradeAnalysis', async () => {
+            const result = await runUpgradeAnalysis(
+                {
+                    playerDTOs: [{ equipment: {}, abilities: [], hrid: '/players/me' }],
+                    playerIndex: 0,
+                    zoneHrid: '/actions/combat/fly',
+                    difficultyTier: 0,
+                    hours: 1,
+                    communityBuffs: {},
+                    upgradeMode: 'equipment',
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
     });
 
     test('a priced token is folded into the cost, with both halves still reported', () => {

@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ initClientData: null, settings: {}, prices: {}, sources: {} }));
+const game = vi.hoisted(() => ({ initClientData: null, settings: {}, prices: {}, sources: {}, profitSellSide: 'bid' }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: { getInitClientData: () => game.initClientData },
@@ -11,7 +11,8 @@ vi.mock('../core/config.js', () => ({
 // Prices go through getItemPrice, so a user's custom overrides count — reading the raw
 // order book (which the dungeon token valuation used to do) skips them entirely
 vi.mock('./market-data.js', () => ({
-    getItemPrice: (hrid, { mode } = {}) => game.prices[hrid]?.[mode] ?? null,
+    getItemPrice: (hrid, { mode, context } = {}) =>
+        game.prices[hrid]?.[mode ?? (context === 'profit' ? game.profitSellSide : undefined)] ?? null,
     getItemPriceInfo: (hrid, { mode } = {}) => {
         const price = game.prices[hrid]?.[mode] ?? null;
         return { price, source: price === null ? null : (game.sources[hrid] ?? 'book'), estimated: false };
@@ -24,6 +25,7 @@ const {
     labyrinthTokenValueDetail,
     labyrinthRewardValue,
     shopPurchasePrice,
+    shopPurchasePriceByMode,
     calculateDungeonTokenValue,
     calculateDungeonTokenValueDetail,
     calculateLabyrinthTokenValueDetail,
@@ -330,5 +332,35 @@ describe('calculateDungeonTokenValueDetail', () => {
             itemHrid: '/items/chimerical_essence',
             via: 'essence',
         });
+    });
+});
+
+describe('shopPurchasePriceByMode', () => {
+    const shops = [
+        {
+            cape: { itemHrid: '/items/cape', costs: [{ itemHrid: '/items/sinister_token', count: 100 }] },
+            cheese: { itemHrid: '/items/cheese', costs: [{ itemHrid: '/items/sinister_token', count: 10 }] },
+        },
+    ];
+
+    beforeEach(() => {
+        game.initClientData = { shopItemDetailMap: shops[0] };
+        game.prices = { '/items/cheese': { ask: 1000, bid: 400 } };
+        game.sources = {};
+        game.settings = {};
+    });
+
+    test('a dungeon token follows the pricing mode: Hybrid at the ask, Conservative at the bid', () => {
+        game.settings = { profitCalc_pricingMode: 'hybrid' };
+        expect(shopPurchasePriceByMode('/items/cape', shops)).toBe(10_000);
+        game.settings = { profitCalc_pricingMode: 'conservative' };
+        expect(shopPurchasePriceByMode('/items/cape', shops)).toBe(4_000);
+        game.settings = { profitCalc_pricingMode: 'patientBuy' };
+        expect(shopPurchasePriceByMode('/items/cape', shops)).toBe(4_000);
+    });
+
+    test('a token nothing prices leaves the piece unpriced, not free', () => {
+        game.prices = {};
+        expect(shopPurchasePriceByMode('/items/cape', shops)).toBeNull();
     });
 });
