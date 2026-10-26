@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### From upstream: Combat Stats pricing, guild credits and smaller fixes
+
+- Combat Stats income and profit follow your profit pricing mode; the key pricing setting now prices only keys.
+- Held guild credits count in net worth and inventory totals, and token shop tooltips follow your pricing mode.
+- Community Buff dialogs' Max button buys the right amount, the Labyrinth room grid gets a size control, and item tooltips show a "Best plan" row when crafting sub-materials is cheaper.
+- Action tiles no longer redraw unchanged stats.
+
 ### Leftovers (2026-10-26): craft costs, Alchemy XP and the goal planner
 
 - Craft-cost estimates price recipe inputs at your custom buy price rather than your custom sell price.
