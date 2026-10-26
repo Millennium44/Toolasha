@@ -429,6 +429,39 @@ export function capHeightToWindow(popup, viewportHeight = window.innerHeight) {
     return height;
 }
 
+/**
+ * Where the treasure popup goes so it never covers the game's loot dialog.
+ *
+ * Beside the dialog when the window is wide enough: right of it, else left of it, top-aligned. On a phone
+ * neither side has room, and the old fallback (the left edge) put the popup over the dialog and its Close
+ * button. There it goes above or below the dialog instead, whichever has the room; when neither fits it
+ * whole, it takes the larger gap and is given that gap as its height, so it scrolls rather than overlaps.
+ *
+ * @param {{left:number,right:number,top:number,bottom:number}} anchor - The dialog's rect
+ * @param {{width:number,height:number}} self - The popup's size
+ * @param {{width:number,height:number}} viewport - The window
+ * @returns {{left:number, top:number, height?:number}} Position, and a height when it had to shrink
+ */
+export function placeBesideDialog(anchor, self, viewport) {
+    const rightOf = anchor.right + DIALOG_GAP;
+    const leftOf = anchor.left - self.width - DIALOG_GAP;
+    const fitsRight = rightOf + self.width <= viewport.width - EDGE_MARGIN;
+    const fitsLeft = leftOf >= EDGE_MARGIN;
+    if (fitsRight || fitsLeft) {
+        // Top-aligned with the dialog, nudged up only if the popup would hang off the bottom
+        const maxTop = viewport.height - self.height - EDGE_MARGIN;
+        return { left: fitsRight ? rightOf : leftOf, top: Math.max(EDGE_MARGIN, Math.min(anchor.top, maxTop)) };
+    }
+
+    const left = Math.max(EDGE_MARGIN, Math.min(anchor.left, viewport.width - self.width - EDGE_MARGIN));
+    const above = anchor.top - DIALOG_GAP - EDGE_MARGIN;
+    const below = viewport.height - anchor.bottom - DIALOG_GAP - EDGE_MARGIN;
+    if (self.height <= above) return { left, top: anchor.top - DIALOG_GAP - self.height };
+    if (self.height <= below) return { left, top: anchor.bottom + DIALOG_GAP };
+    if (above >= below) return { left, top: EDGE_MARGIN, height: Math.max(0, above) };
+    return { left, top: anchor.bottom + DIALOG_GAP, height: Math.max(0, below) };
+}
+
 class TreasureTracker {
     constructor() {
         this.isInitialized = false;
@@ -772,19 +805,14 @@ class TreasureTracker {
             return;
         }
 
-        // To the right of the dialog, unless that would run off screen, in which
-        // case the left side has the room
-        const rightOf = anchor.right + DIALOG_GAP;
-        const leftOf = anchor.left - self.width - DIALOG_GAP;
-        const fitsRight = rightOf + self.width <= window.innerWidth - EDGE_MARGIN;
-        const left = fitsRight ? rightOf : Math.max(leftOf, EDGE_MARGIN);
-
-        // Top-aligned with the dialog, nudged up only if the popup is the taller
-        // of the two and would otherwise hang off the bottom
-        const maxTop = window.innerHeight - self.height - EDGE_MARGIN;
-        const top = Math.max(EDGE_MARGIN, Math.min(anchor.top, maxTop));
-
-        Object.assign(this.popup.style, { left: `${left}px`, top: `${top}px`, right: 'auto', visibility: '' });
+        const place = placeBesideDialog(anchor, self, { width: window.innerWidth, height: window.innerHeight });
+        if (place.height) this.popup.style.height = `${place.height}px`;
+        Object.assign(this.popup.style, {
+            left: `${place.left}px`,
+            top: `${place.top}px`,
+            right: 'auto',
+            visibility: '',
+        });
     }
 
     /**

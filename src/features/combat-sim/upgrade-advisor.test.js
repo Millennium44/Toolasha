@@ -32,12 +32,17 @@ const saleTax = vi.hoisted(() => ({ ironCow: false }));
 /** What the character holds, worn and loose; empty unless a test says otherwise */
 const held = vi.hoisted(() => ({ items: [] }));
 
+/** The live character's skills (`dataManager.getSkills`); none unless a test says otherwise */
+const liveSkills = vi.hoisted(() => ({ list: [] }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getGuildBuildingLevel: (hrid) => guild.shrineLevels[hrid] || 0,
         // What the forced armor candidates read to price a piece at the level
         // you already own it at, and what merged skilling rows cap resale at
         getInventory: () => held.items,
+        // The live character's XP, which a combat level's grind time starts from when it is theirs
+        getSkills: () => liveSkills.list,
         // Read by the shared params resolver, to ask whether the piece being costed could be
         // bought finished from anybody. Nothing in this suite is untradable, so the sweeps here
         // all run on whichever bench the simulator settings resolve to.
@@ -278,10 +283,29 @@ const config = (await import('../../core/config.js')).default;
 // that does not price anything itself ("the materials behind a house level")
 // only worked while some earlier test's `mockImplementation` was still
 // installed, and threw on destructuring as soon as it ran first.
+/**
+ * `resolveItemPrice` as the conservative profit mode (the default) answers it: an enhanced level reads the
+ * order book, the ask on a buy and the bid on a sale, and nothing has a production fallback above +0. A read
+ * that names no context gets the ask on either side, as the real resolver gives it. A +0 read is `base`,
+ * unpriced unless a test says otherwise.
+ * @param {Object} [base] - What a +0 read returns
+ * @returns {Function} An implementation for `resolveItemPrice`
+ */
+const conservativeBook =
+    (base = { price: 0, custom: false, missing: true, estimated: false }) =>
+    (hrid, { context, side = 'sell', enhancementLevel = 0 } = {}) => {
+        if (!(enhancementLevel > 0)) return base;
+        const book = getItemPrices(hrid, enhancementLevel);
+        const price = context === 'profit' && side === 'sell' ? book?.bid : book?.ask;
+        return price > 0
+            ? { price, custom: false, missing: false, estimated: false }
+            : { price: 0, custom: false, missing: true, estimated: false };
+    };
+
 beforeEach(() => {
     held.items = [];
     perAttemptMaterialCost.mockReturnValue({ cost: 0, hasCost: false, hasMissingPrices: true });
-    resolveItemPrice.mockReturnValue({ price: 0, custom: false, missing: true, estimated: false });
+    resolveItemPrice.mockImplementation(conservativeBook());
 });
 
 const MAIN_HAND = '/equipment_types/main_hand';
@@ -4356,9 +4380,9 @@ describe('explainUpgradeCost', () => {
         getItemPrices.mockImplementation((_hrid, level) =>
             level === 7 ? { ask: 5_000_000, bid: 4_500_000 } : { ask: 3_000_000, bid: 2_000_000 }
         );
-        // Production fallbacks and the tester shop may differ from the order
-        // book, but the enhancement row is ranked on the two listings above.
-        resolveItemPrice.mockReturnValue({ price: 500_000 });
+        // A +0 production fallback may differ from the order book, but the
+        // enhancement row is ranked on the two listings above.
+        resolveItemPrice.mockImplementation(conservativeBook({ price: 500_000 }));
         const candidate = {
             type: 'enhancement',
             slot: BODY,
@@ -4436,6 +4460,37 @@ describe('explainUpgradeCost', () => {
         expect(detail.buys.map((b) => b.name)).toEqual(['Fire Top', 'Fire Bottoms']);
         expect(detail.credits.map((c) => c.name)).toEqual(['Nature Top']);
         expect(detail.credit).toBe(960_000);
+    });
+
+    test('a sold piece with no sale price is flagged, and the row is still charged the full buy', () => {
+        resolveItemPrice.mockImplementation((_hrid, { side } = {}) => ({ price: side === 'sell' ? null : 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+            removedItems: [{ hrid: '/items/nature_top', enhancementLevel: 7 }],
+        };
+
+        const detail = explainUpgradeCost(candidate, costGameData());
+
+        expect(detail.credits).toEqual([expect.objectContaining({ name: 'Nature Top', price: 0, noSalePrice: true })]);
+        // The cost stays the full purchase: the conservative reading
+        expect(detail.net).toBe(detail.gross);
+        expect(detail.net).not.toBeNull();
+    });
+
+    test('a sold piece that does have a sale price is not flagged', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+        const detail = explainUpgradeCost(
+            {
+                type: 'cross_slot',
+                addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+                removedItems: [{ hrid: '/items/nature_top', enhancementLevel: 7 }],
+            },
+            costGameData()
+        );
+        expect(detail.credits[0].noSalePrice).toBeUndefined();
     });
 
     test('names the unpriced item that makes a cost unknown', () => {
@@ -5749,6 +5804,127 @@ describe('guild shrine candidates', () => {
         expect(detail.guild.rankedNote).toContain('credit half only');
     });
 
+    test('a shrine with no exchange rate is flagged partial, and the budget plan carries the flag', () => {
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        const detail = explainUpgradeCost(candidate, buildGameData());
+
+        // Still rankable on the credit half
+        expect(detail.net).toBe(3000);
+        expect(detail.partialCost).toBe('guild tokens not priced');
+
+        const plan = planWithinBudget(
+            [{ candidate, cost: detail.net, costDetail: detail, attemptsDelta: -1, significant: true }],
+            10_000
+        );
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.partialCostPicks).toEqual([candidate.description]);
+    });
+
+    test('a shrine whose tokens are priced is not flagged partial', () => {
+        token.goldPerToken = 50;
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        const detail = explainUpgradeCost(candidate, buildGameData());
+        expect(detail.partialCost).toBeUndefined();
+        const plan = planWithinBudget(
+            [{ candidate, cost: detail.net, costDetail: detail, attemptsDelta: -1, significant: true }],
+            10_000
+        );
+        expect(plan.partialCostPicks).toEqual([]);
+    });
+
+    describe('the partial-cost flag survives each real analysis path into a budget plan', () => {
+        const levels = { staminaLevel: 50, intelligenceLevel: 50, attackLevel: 50, meleeLevel: 50 };
+        const shrine = () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            return generateGuildShrineCandidates(dto)[0];
+        };
+        const planOf = (rows) =>
+            planWithinBudget(
+                rows.map((row) => ({ ...row, attemptsDelta: -1, significant: true })),
+                1_000_000
+            );
+        beforeEach(() => {
+            token.goldPerToken = null;
+            buildGameDataPayload.mockReturnValue(buildGameData());
+            calculateSimRevenue.mockReturnValue({ totalRevenue: 0, itemRevenues: [] });
+            resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+            getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+            runLabyrinthSimulation.mockImplementation(async () => ({ labyAttemptCount: 100, encounters: 50 }));
+            runSimulation.mockImplementation(async () => ({
+                simulatedTime: 3.6e12,
+                deaths: 0,
+                playerRanOutOfFood: false,
+            }));
+        });
+
+        test('Lab all-fights', async () => {
+            const result = await runLabyrinthAllFightsAnalysis(
+                {
+                    fights: [
+                        {
+                            monsterHrid: '/monsters/m0',
+                            monsterName: 'M0',
+                            roomLevel: 100,
+                            dto: { equipment: {}, ...levels },
+                        },
+                    ],
+                    crates: [],
+                    hours: 1,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    modes: [],
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+
+        test('Lab single-fight', async () => {
+            const result = await runLabyrinthUpgradeAnalysis(
+                {
+                    playerDTOs: [{ equipment: {}, abilities: [], ...levels, guildShrineLevels: {} }],
+                    playerIndex: 0,
+                    monsterHrid: '/monsters/goblin',
+                    roomLevel: 100,
+                    crates: [],
+                    hours: 1,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    upgradeMode: 'ability_swap',
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+
+        test('Combat Sim runUpgradeAnalysis', async () => {
+            const result = await runUpgradeAnalysis(
+                {
+                    playerDTOs: [{ equipment: {}, abilities: [], hrid: '/players/me' }],
+                    playerIndex: 0,
+                    zoneHrid: '/actions/combat/fly',
+                    difficultyTier: 0,
+                    hours: 1,
+                    communityBuffs: {},
+                    upgradeMode: 'equipment',
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+    });
+
     test('a priced token is folded into the cost, with both halves still reported', () => {
         token.goldPerToken = 50;
         const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
@@ -6316,6 +6492,70 @@ describe('the grind time for combat levels', () => {
         // than the flat run, and strictly slower than if it were 4× throughout
         expect(faster.levelTimeHours).toBeLessThan(flat.levelTimeHours);
         expect(faster.levelTimeHours).toBeGreaterThan(flat.levelTimeHours / 4);
+    });
+
+    describe('whose XP the grind starts from', () => {
+        afterEach(() => {
+            liveSkills.list = [];
+        });
+
+        /** Attack 10 → 30 for player1, the live character 90% of the way through their own Attack 10 */
+        const grindFor = async (selfHrid) => {
+            buildGameDataPayload.mockReturnValue({
+                ...buildGameData(),
+                levelExperienceTable: Array.from({ length: 40 }, (_, level) => level * 1_000_000),
+            });
+            calculateSimRevenue.mockReturnValue({ netPerHour: 0 });
+            // Melee is the weapon's skill, so Attack's grind also times Melee along with it
+            runSimulation.mockImplementation(async () => ({
+                simulatedTime: 3600 * 1e9,
+                encounters: 1000,
+                deaths: { player1: 0 },
+                totalDamageDealt: { player1: 1000 },
+                experienceGained: { player1: { attack: 100_000, melee: 100_000 } },
+            }));
+            liveSkills.list = [
+                { skillHrid: '/skills/attack', level: 10, experience: 10_900_000 },
+                { skillHrid: '/skills/melee', level: 10, experience: 10_900_000 },
+            ];
+            const { results } = await runUpgradeAnalysis({
+                playerDTOs: [
+                    {
+                        hrid: 'player1',
+                        equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                        abilities: [],
+                        attackLevel: 10,
+                        meleeLevel: 10,
+                        drinks: [],
+                    },
+                ],
+                playerIndex: 0,
+                selfHrid,
+                zoneHrid: '/actions/combat/zone',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeModes: ['combat_level'],
+                abilityTargetLevel: 20,
+                combatLevelTargets: { attackLevel: 30 },
+            });
+            return results.find((r) => r.candidate.skillKey === 'attackLevel');
+        };
+
+        test("a party member at the live character's level is timed from the start of that level", async () => {
+            const row = await grindFor('someone_else');
+            // 30M - 10M at 100K/h; the live character's 10.9M is not theirs
+            expect(row.levelTimeHours).toBeCloseTo(200, 6);
+            // Melee earns as much over the same 20M: 10M + 20M reaches level 30, not the live 10.9M + 20M
+            expect(row.alongside).toEqual(expect.objectContaining({ skillKey: 'meleeLevel', upgradeLevel: 30 }));
+            expect(row.alongside.xpGained).toBeCloseTo(20_000_000, 0);
+        });
+
+        test("the live character's own row starts from their live XP", async () => {
+            const row = await grindFor('player1');
+            expect(row.levelTimeHours).toBeCloseTo(191, 6);
+            expect(row.alongside.xpGained).toBeCloseTo(19_100_000, 0);
+        });
     });
 });
 
@@ -8195,8 +8435,8 @@ describe('a resale credits what the sale pays after the market tax (#539)', () =
 
     beforeEach(() => {
         saleTax.ironCow = false;
-        // No mirror quote, so the ordinary market route is the one priced
-        resolveItemPrice.mockImplementation(() => ({ price: null }));
+        // No mirror quote, so the ordinary market route is the one priced; enhanced levels read the book
+        resolveItemPrice.mockImplementation(conservativeBook({ price: null }));
     });
 
     afterEach(() => {
@@ -8285,6 +8525,21 @@ describe('a resale credits what the sale pays after the market tax (#539)', () =
         getItemPrices.mockReturnValue({ ask: 100_000_000, bid: 90_000_000 });
 
         expect(calculateUpgradeCost(enhance, gameData())).toBe(10_000_000);
+    });
+
+    test('an unlisted target or current level with no sweep to fall back on is unpriced, never free', () => {
+        // The bench sweep has a material nobody prices (the suite default), so it cannot stand in either
+        getItemPrices.mockImplementation((_hrid, level) =>
+            level === 10 ? { ask: null, bid: 90_000_000 } : { ask: 80_000_000, bid: 70_000_000 }
+        );
+        expect(calculateUpgradeCost(enhance, gameData())).toBeNull();
+        expect(explainUpgradeCost(enhance, gameData()).net).toBeNull();
+
+        getItemPrices.mockImplementation((_hrid, level) =>
+            level === 10 ? { ask: 100_000_000, bid: 90_000_000 } : { ask: 80_000_000, bid: null }
+        );
+        expect(calculateUpgradeCost(enhance, gameData())).toBeNull();
+        expect(explainUpgradeCost(enhance, gameData()).net).toBeNull();
     });
 
     test('the outlier cap is weighed against the after-tax proceeds', () => {
@@ -9117,6 +9372,19 @@ describe('the all-fights plan counts free drink slots per fight (#560 review)', 
 
         expect(plan.picks).toHaveLength(1);
         expect(plan.skipped.map((s) => s.reason)).toContain('no drink slot is left free for it');
+    });
+
+    test('a pinned addition that measured no gain still fits a room with a free slot', () => {
+        // A pin needs a price, not a measured gain: this coffee was installed in all three rooms and moved none
+        const flat = addition('a', [1, 1, 1]);
+        flat.fights = flat.fights.map((fight) => ({ ...fight, winRate: 0.5 }));
+        flat.attemptsDelta = 0;
+        flat.significant = false;
+        const plan = planWithinBudget([flat], 1000, { baselineFights: BASELINE, required: [candidateKey(flat)] });
+
+        expect(plan.blocked).toBeNull();
+        expect(plan.picks.map((pick) => pick.candidate.description)).toEqual(['Add a']);
+        expect(plan.attemptsSaved).toBe(0);
     });
 
     test('rows without per-fight slots keep the single capacity the candidate carried', () => {

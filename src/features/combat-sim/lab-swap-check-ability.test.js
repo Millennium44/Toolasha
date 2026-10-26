@@ -810,3 +810,43 @@ describe('the ability order section is ranked apart from the paid swaps', () => 
         expect(analysis.results).toEqual([paid]);
     });
 });
+
+describe("a party member's unlisted book", () => {
+    test("stays unpriced in the run rather than being priced from the live character's book bag", async () => {
+        // Nobody lists the book: a path from nothing has no price
+        vi.mocked(explainAbilityLevelUpCost).mockImplementation((hrid, fromLevel, _xp, toLevel) => {
+            const books = Math.max(0, toLevel - fromLevel);
+            return { books, total: fromLevel === 0 && books > 0 ? null : books * 1000, bookName: hrid };
+        });
+        // The live character has read it past the level asked for; the party member has not
+        state.abilities = [{ abilityHrid: QUICK_STRIKE, level: 9, experience: 0 }];
+        state.sim = async () => ({ encounters: 500, labyAttemptCount: 1000, experienceGained: {}, simulatedTime: 1 });
+        const member = fourAbilities();
+        const built = buildCombatAbilityCandidates({ hrid: QUICK_STRIKE, level: 7 }, [member], gameData, false);
+        expect(built.candidates.length).toBeGreaterThan(0);
+        expect(built.candidates.every((candidate) => candidate.cost === null)).toBe(true);
+
+        try {
+            const raw = await advisor.runLabyrinthAllFightsAnalysis(
+                {
+                    fights: [{ monsterHrid: '/monsters/mimic', monsterName: 'mimic', roomLevel: 50, dto: member }],
+                    crates: [],
+                    hours: 1,
+                    precision: null,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    modes: [],
+                    extraCandidates: built.candidates,
+                },
+                () => {}
+            );
+            expect(raw.results.length).toBe(built.candidates.length);
+            expect(raw.results.every((row) => row.cost === null)).toBe(true);
+        } finally {
+            vi.mocked(explainAbilityLevelUpCost).mockImplementation((hrid, fromLevel, _xp, toLevel) => {
+                const books = Math.max(0, toLevel - fromLevel);
+                return { books, total: books * 1000, bookName: hrid };
+            });
+        }
+    });
+});

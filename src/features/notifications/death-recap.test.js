@@ -716,4 +716,172 @@ describe('death recap', () => {
             expect(recap.recapHistory()).toHaveLength(0);
         });
     });
+    describe('observed deaths beyond the display cap stay owed a counter rise (#563)', () => {
+        const die = (n) => {
+            for (let i = 0; i < n; i++) {
+                run([1500]);
+                run([0]);
+                vi.advanceTimersByTime(21_000);
+            }
+        };
+        const start = () => {
+            game.actions = SOLO;
+            send('new_battle', battle([['me', 0]]));
+        };
+        const confirmedIds = () =>
+            recap
+                .recapHistory()
+                .filter((r) => r.confirmed)
+                .map((r) => r.id);
+
+        test.each([4, 5, 6])('%i observed deaths then a matching rise create no fallback', (n) => {
+            start();
+            die(n);
+            const before = recap.recapHistory().map((r) => r.id);
+            expect(before).toHaveLength(Math.min(n, recap.MAX_RECAPS));
+            send('new_battle', battle([['me', n]], 2));
+            const after = recap.recapHistory();
+            expect(after.map((r) => r.id)).toEqual(before);
+            expect(after.every((r) => r.source === 'both' && r.confirmed)).toBe(true);
+        });
+
+        test('catch-up in several increments consumes the oldest first', () => {
+            start();
+            die(8);
+            const ids = recap.recapHistory().map((r) => r.id);
+            expect(ids).toHaveLength(5);
+            // 3 evicted (1-3), pending holds 4-8
+            send('new_battle', battle([['me', 2]], 2));
+            send('new_battle', battle([['me', 3]], 3));
+            expect(confirmedIds()).toEqual([]);
+            expect(recap.recapHistory().map((r) => r.id)).toEqual(ids);
+            send('new_battle', battle([['me', 4]], 4));
+            expect(confirmedIds()).toEqual([ids[4]]);
+            send('new_battle', battle([['me', 8]], 5));
+            expect(recap.recapHistory().map((r) => r.id)).toEqual(ids);
+            expect(recap.recapHistory().every((r) => r.confirmed)).toBe(true);
+        });
+
+        test('6 observed then a rise of 7 makes exactly one fallback', () => {
+            start();
+            die(6);
+            send('new_battle', battle([['me', 7]], 2));
+            const h = recap.recapHistory();
+            expect(h).toHaveLength(5);
+            expect(h[0]).toMatchObject({ source: 'count', deaths: 1 });
+            expect(h.slice(1).every((r) => r.confirmed)).toBe(true);
+        });
+
+        test('an unchanged or repeated counter creates nothing', () => {
+            start();
+            die(6);
+            send('new_battle', battle([['me', 6]], 2));
+            send('new_battle', battle([['me', 6]], 3));
+            expect(recap.recapHistory().map((r) => r.source)).toEqual(Array(5).fill('both'));
+            const ids = recap.recapHistory().map((r) => r.id);
+            expect(ids).toEqual([ids[0], ids[0] - 1, ids[0] - 2, ids[0] - 3, ids[0] - 4]);
+        });
+
+        test('a counter decrease clears the evicted accounting', () => {
+            start();
+            send('new_battle', battle([['me', 3]], 2));
+            die(6);
+            send('new_battle', battle([['me', 0]], 3));
+            send('new_battle', battle([['me', 1]], 4));
+            // pending was cleared with the evicted count: the rise of 1 is unseen, not owed to a stale death
+            expect(recap.recapHistory()[0]).toMatchObject({ source: 'count', deaths: 1 });
+        });
+
+        test('a character switch and disable clear the evicted accounting', async () => {
+            for (const reset of [() => game.dm.character_switching(), () => feature.disable()]) {
+                feature.disable();
+                await feature.initialize();
+                start();
+                die(6);
+                reset();
+                await feature.initialize();
+                send('new_battle', battle([['me', 0]], 2));
+                send('new_battle', battle([['me', 1]], 3));
+                expect(recap.recapHistory()).toHaveLength(1);
+                expect(recap.recapHistory()[0]).toMatchObject({ source: 'count' });
+            }
+        });
+    });
+
+    describe('a row that omits single fields means unchanged', () => {
+        const row = (fields, atk) => ({
+            battleId: 1,
+            pMap: { 0: { cMP: 500, isActive: true, ...fields } },
+            mMap: { 0: { atkCounter: atk, cMP: 0, dmgCounter: 0 } },
+        });
+        const recapHits = (counter = 3) => {
+            send('battle_updated', row({ cHP: 0, dmgCounter: counter }, 9));
+            return recap.recapHistory()[0].samples.flatMap((s) => s.hits);
+        };
+
+        test('a missed swing with cHP omitted is a miss, not a hit of NaN damage', () => {
+            send('new_battle', battle([['me', 0]]));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 1000, dmgCounter: 1 }, 1));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ dmgCounter: 2 }, 2));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 700, dmgCounter: 3 }, 3));
+            vi.advanceTimersByTime(700);
+            const hits = recapHits();
+            expect(hits.every((h) => Number.isFinite(h.amount))).toBe(true);
+            // The omitted tick kept the 1000 baseline, so the 300 loss lands whole on the next tick
+            expect(hits.filter((h) => !h.miss).map((h) => h.amount)).toEqual([300]);
+            expect(recap.recapHistory()[0].sources[0].amount).toBe(300);
+        });
+
+        test('an omitted dmgCounter does not turn the next reading into a new hit', () => {
+            send('new_battle', battle([['me', 0]]));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 1000, dmgCounter: 5 }, 1));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 1000 }, 2));
+            vi.advanceTimersByTime(700);
+            send('battle_updated', row({ cHP: 1000, dmgCounter: 5 }, 3));
+            vi.advanceTimersByTime(700);
+            // Only the first swing (counter 5 against the seeded 0) is a miss
+            expect(recapHits(5).filter((h) => h.miss)).toHaveLength(1);
+        });
+    });
+
+    describe('an open recap follows the kept list', () => {
+        const die = (n) => {
+            send('new_battle', battle([['me', 0]], n));
+            run([500], { battleId: n });
+            run([0], { battleId: n });
+        };
+        const modalEl = () => document.getElementById('toolasha-death-recap-modal');
+        const navText = () => modalEl().querySelector('[data-role="recap-nav"]')?.textContent ?? '';
+
+        test('a death while viewing redraws the position and enables Newer', () => {
+            die(1);
+            vi.advanceTimersByTime(60_000);
+            die(2);
+            recap.openRecap(recap.recapHistory()[0].id);
+            expect(navText()).toContain('1 of 2');
+            vi.advanceTimersByTime(60_000);
+            die(3);
+            expect(navText()).toContain('2 of 3');
+            const newer = modalEl().querySelectorAll('[data-role="recap-nav"] button')[1];
+            expect(newer.disabled).toBe(false);
+        });
+
+        test('the viewed recap evicted by newer deaths leaves no dead navigation', () => {
+            for (let n = 1; n <= recap.MAX_RECAPS; n++) {
+                die(n);
+                vi.advanceTimersByTime(60_000);
+            }
+            const oldest = recap.recapHistory()[recap.MAX_RECAPS - 1];
+            recap.openRecap(oldest.id);
+            die(99);
+            expect(recap.recapHistory().some((r) => r.id === oldest.id)).toBe(false);
+            expect(modalEl()).not.toBeNull();
+            expect(navText()).toBe('');
+        });
+    });
 });

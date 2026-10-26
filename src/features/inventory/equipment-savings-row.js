@@ -60,7 +60,7 @@ import marketAPI from '../../api/marketplace.js';
 import networthHistory from '../networth/networth-history.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
-import { shopPurchasePrice } from '../../utils/token-valuation.js';
+import { shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { findProducingAction } from '../../utils/production-index.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
@@ -1471,7 +1471,7 @@ function basePrice(itemHrid) {
         // lookups — once per target and again for its ladder before this memo
         const data = dataManager.getInitClientData?.() || {};
         const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
-        return shopPurchasePrice(itemHrid, shops, (hrid) => getItemPrices(hrid, 0)?.ask || 0) || 0;
+        return shopPurchasePriceByMode(itemHrid, shops) || 0;
     });
 }
 

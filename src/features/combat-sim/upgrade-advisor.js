@@ -31,7 +31,7 @@ import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { priceAtLevel, priceBase, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
-import { shopPurchasePrice } from '../../utils/token-valuation.js';
+import { shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
@@ -2452,6 +2452,9 @@ function explainGuildShrineCost(candidate) {
         unpriced,
         creditApplied: false,
         source: 'guild',
+        // The net leaves the token half out when no exchange rate is known. The row stays rankable on
+        // the credits, but a plan total built from it must say it is not the whole price
+        ...(tokens > 0 && tokenGold === null ? { partialCost: 'guild tokens not priced' } : {}),
     };
 }
 
@@ -2488,7 +2491,7 @@ function calculateHouseUpgradeCost(candidate, gameData) {
                 total += count;
                 continue;
             }
-            const { price } = resolveItemPrice(entry.itemHrid, { side: 'buy' });
+            const { price } = resolveItemPrice(entry.itemHrid, { context: 'profit', side: 'buy' });
             if (!price || price <= 0) return null; // Unknown material cost must not rank as free
             total += price * count;
         }
@@ -2530,7 +2533,7 @@ export function houseUpgradeMaterials(candidate, gameData) {
     }
 
     const lines = [...counts.entries()].map(([itemHrid, count]) => {
-        const { price } = resolveItemPrice(itemHrid, { side: 'buy' });
+        const { price } = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy' });
         const unitPrice = price > 0 ? price : null;
         return {
             itemHrid,
@@ -2779,6 +2782,7 @@ function freedPiecesCredit(candidate, spend) {
             hrid: item.hrid,
             enhancementLevel: item.enhancementLevel || 0,
             price: sellValue(item.hrid, item.enhancementLevel || 0),
+            ...(hasSalePrice(item.hrid, item.enhancementLevel || 0) ? {} : { noSalePrice: true }),
         }));
     const rawCredit = entries.reduce((sum, entry) => sum + entry.price, 0);
     const credit = Math.min(rawCredit, Math.max(0, spend));
@@ -2983,17 +2987,9 @@ function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
             }).price;
         }
 
-        // Primary: market price delta (buy at target level - sell at current level)
-        // Only use if BOTH levels have actual market listings
-        const upgradedMarket = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
-        const currentMarket = getItemPrices(candidate.currentHrid, candidate.currentLevel);
-
-        if (upgradedMarket?.ask > 0 && currentMarket?.bid > 0) {
-            // Selling the current level pays its bid after tax, and that is what the outlier cap weighs
-            return (
-                upgradedMarket.ask - capEnhancementCredit(upgradedMarket.ask, afterSaleTax(currentMarket.bid)).credit
-            );
-        }
+        // Primary: a market trade (buy the target level, sell the worn one), when the mode prices both sides
+        const trade = enhancementMarketTrade(candidate);
+        if (trade) return trade.buy - trade.credit;
 
         // Fallback: enhancement cost estimate with protection
         return calculateDirectEnhancementCost(
@@ -3045,6 +3041,39 @@ function cappedResale(credit, spend, built) {
 }
 
 /**
+ * An enhancement row priced as a market trade: buy the target level, sell the level worn.
+ *
+ * Taken when both sides resolve the way the profit pricing mode reads them, as a tier row's rung does: the
+ * target's buy through `priceAtLevel` (the mode's buy side, a custom price first, a missing side cross-filled)
+ * and the worn level's sale on the mode's sell side (a custom sell price first). A raw ask/bid check would refuse
+ * a trade the mode can make (a worn level with only an ask, in a mode that sells at the ask) and ignore custom
+ * prices. Otherwise the row is an enhance at the bench. A worn +0 priced only from its crafting cost is not a
+ * sale, so it does not open the trade either.
+ *
+ * The trade-in is net of the sale tax once (`saleProceeds`, at the analysed character's rate under
+ * `withSaleTaxOf`), held to the buy by {@link capEnhancementCredit}.
+ *
+ * @param {Object} candidate - An `enhancement` row
+ * @returns {{buy: number, proceeds: number, grossSell: number, credit: number, capped: boolean}|null} Null when
+ *   either side does not resolve
+ */
+function enhancementMarketTrade(candidate) {
+    const buy = priceAtLevel(candidate.currentHrid, candidate.upgradeLevel).price;
+    if (!(buy > 0)) return null;
+    // The profit context, as `priceAtLevel` reads the buy: with no context the resolver reads the ask whatever the
+    // mode, which would sell the worn level at its ask even when the mode sells into the bid
+    const sold = resolveItemPrice(candidate.currentHrid, {
+        context: 'profit',
+        side: 'sell',
+        enhancementLevel: candidate.currentLevel || 0,
+    });
+    if (!(sold?.price > 0) || sold.production) return null;
+    const proceeds = saleProceeds(sold);
+    const { credit, capped } = capEnhancementCredit(buy, proceeds);
+    return { buy, proceeds, grossSell: sold.price, credit, capped };
+}
+
+/**
  * The trade-in credit for the level an enhancement row leaves, capped at what
  * the level it buys costs.
  *
@@ -3057,12 +3086,16 @@ function cappedResale(credit, spend, built) {
  * at the purchase leaves such a row at zero net cost — the most the trade can
  * honestly be said to be worth — and keeps the bid for the breakdown to name.
  *
- * @param {number} ask - Ask for the target level
- * @param {number} bid - Bid for the current level
- * @returns {{credit: number, capped: boolean}} Credit to apply, and whether the bid was cut down to it
+ * Both sides are read on the pricing mode's own sides (see `enhancementMarketTrade`), so the cap holds the
+ * trade-in to the target as that mode buys it: ask against bid when conservative, ask against ask in hybrid,
+ * bid against ask when optimistic, bid against bid in patient buy.
+ *
+ * @param {number} buy - What the target level costs to buy
+ * @param {number} proceeds - What the current level sells for, after tax
+ * @returns {{credit: number, capped: boolean}} Credit to apply, and whether the proceeds were cut down to it
  */
-function capEnhancementCredit(ask, bid) {
-    return bid > ask ? { credit: ask, capped: true } : { credit: bid, capped: false };
+function capEnhancementCredit(buy, proceeds) {
+    return proceeds > buy ? { credit: buy, capped: true } : { credit: proceeds, capped: false };
 }
 
 /**
@@ -3691,12 +3724,29 @@ function withSaleTaxOf(candidate, read) {
 
 /**
  * What a piece sells for after tax, for weighing a route that gives that sale up.
+ *
+ * On the profit pricing mode's sell side (the bid when conservative or patient buy, the ask in hybrid or
+ * optimistic) and a custom sell price first. The context has to be named: without one the resolver reads the
+ * ask in every mode.
  * @param {string} hrid - Item HRID
  * @param {number} level - Enhancement level
  * @returns {number} After-tax sale value, 0 when unpriced
  */
 function sellValue(hrid, level) {
-    return saleProceeds(resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }));
+    return saleProceeds(resolveItemPrice(hrid, { context: 'profit', side: 'sell', enhancementLevel: level }));
+}
+
+/**
+ * Whether a piece has any sale price at all, so a resale credit of 0 can be told from "nothing to sell
+ * into". A credit entry that reads 0 because the profit sell side resolved to null is flagged
+ * `noSalePrice`; the row is still charged the full buy, the conservative reading.
+ * @param {string} hrid - Item HRID
+ * @param {number} level - Enhancement level
+ * @returns {boolean} True when a sell price exists (a quote, a custom price or a production cost)
+ */
+function hasSalePrice(hrid, level) {
+    const resolved = resolveItemPrice(hrid, { context: 'profit', side: 'sell', enhancementLevel: level });
+    return resolved?.price > 0;
 }
 
 /**
@@ -3997,7 +4047,7 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
         // fallback for a piece no shop sells.
         const data = dataManager.getInitClientData?.() || {};
         const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
-        base = shopPurchasePrice(itemHrid, shops, (hrid) => getItemPrices(hrid, 0)?.ask || 0) || 0;
+        base = shopPurchasePriceByMode(itemHrid, shops) || 0;
         if (!(base > 0)) base = completePrice(priceBase(itemHrid));
         if (!(base > 0)) return { price: null, source: null, ladder };
         ladder.baseCost = base;
@@ -4197,6 +4247,7 @@ function explainUpgradeCostAtTax(candidate, gameData, isSelf) {
                 name: nameOf(entry.hrid),
                 enhancementLevel: entry.enhancementLevel,
                 price: entry.price,
+                ...(entry.noSalePrice ? { noSalePrice: true } : {}),
             })),
         ],
         credit: (detail.credit || 0) + freed.credit,
@@ -4334,18 +4385,17 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
 
     if (candidate.type === 'enhancement') {
         const upgraded = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
-        const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
-        if (upgraded?.ask > 0 && current?.bid > 0) {
+        const trade = enhancementMarketTrade(candidate);
+        if (trade) {
             const name = nameOf(candidate.currentHrid);
-            const proceeds = afterSaleTax(current.bid);
-            const { credit, capped } = capEnhancementCredit(upgraded.ask, proceeds);
+            const { buy, proceeds, credit, capped } = trade;
             return {
                 buys: [
                     {
                         hrid: candidate.currentHrid,
                         name,
                         enhancementLevel: candidate.upgradeLevel,
-                        price: upgraded.ask,
+                        price: buy,
                         source: 'market',
                     },
                 ],
@@ -4356,19 +4406,19 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                         enhancementLevel: candidate.currentLevel,
                         price: credit,
                         rawPrice: proceeds,
-                        grossPrice: current.bid,
+                        grossPrice: trade.grossSell,
                     },
                 ],
-                gross: upgraded.ask,
+                gross: buy,
                 credit,
-                net: upgraded.ask - credit,
+                net: buy - credit,
                 unpriced: [],
                 creditApplied: true,
-                // The current level's after-tax proceeds outbid the target's ask and were cut down to it;
-                // `rawCredit` is those proceeds, `rawBid` the bid as the order book had it
+                // The current level's after-tax proceeds outbid the target's buy price and were cut down to it;
+                // `rawCredit` is those proceeds, `rawBid` the sell-side price they came from
                 creditCapped: capped,
                 rawCredit: proceeds,
-                rawBid: current.bid,
+                rawBid: trade.grossSell,
                 source: 'market',
                 enhanceSource: null,
             };
@@ -4445,6 +4495,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         price:
             (1 - consumedShare(refineConsumed, item.hrid, item.enhancementLevel || 0)) *
             sellValue(item.hrid, item.enhancementLevel || 0),
+        ...(hasSalePrice(item.hrid, item.enhancementLevel || 0) ? {} : { noSalePrice: true }),
     }));
 
     const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);
@@ -4842,7 +4893,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 xpSimResult,
                 gameData,
                 playerHrid,
-                row.levelXpSpeedup
+                row.levelXpSpeedup,
+                isSelf
             );
             row.levelingCharmName = matchingCharm
                 ? gameData.itemDetailMap[matchingCharm.hrid]?.name || 'matching charm'
@@ -4857,7 +4909,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             row.isMainSkill = candidate.skillKey === `${primary}Level`;
             row.alongside = null;
             if (!row.isMainSkill) {
-                const along = primaryLevelsAlongside(candidate, primary, xpSimResult, gameData, playerHrid, playerDTO);
+                const along = primaryLevelsAlongside(candidate, primary, xpSimResult, gameData, playerHrid, playerDTO, {
+                    isSelf,
+                });
                 if (along) {
                     row.alongside = along;
                     if (along.upgradeLevel > along.currentLevel && !abortSignal?.()) {
@@ -5027,9 +5081,10 @@ function xpRateSpeedup(baselineResult, upgradedResult, playerHrid) {
  * @param {Object} gameData - Game data (levelExperienceTable)
  * @param {string} playerHrid - Player HRID in the sim result
  * @param {number} [speedup=1] - XP-rate multiplier once the levels are in
+ * @param {boolean} [isSelf=true] - Whether the player is the live character; only then is their live XP read
  * @returns {number} Hours needed, or Infinity
  */
-function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid, speedup = 1) {
+function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid, speedup = 1, isSelf = true) {
     const levelXpTable = gameData.levelExperienceTable || [];
     const skillName = candidate.skillKey.replace('Level', '');
     const simHours = (baselineResult.simulatedTime || 0) / (3600 * 1e9) || 1;
@@ -5040,9 +5095,10 @@ function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid
     if (!Number.isFinite(targetXp)) return Infinity;
 
     // Use the character's actual XP when their live skill matches the simmed
-    // level; otherwise assume the start of the current level
+    // level; otherwise assume the start of the current level. Another player's
+    // level matching the live character's says nothing about their progress in it
     let currentXp = levelXpTable[candidate.currentLevel] || 0;
-    const liveSkill = dataManager.getSkills?.()?.find((s) => s.skillHrid === `/skills/${skillName}`);
+    const liveSkill = isSelf ? dataManager.getSkills?.()?.find((s) => s.skillHrid === `/skills/${skillName}`) : null;
     if (liveSkill && liveSkill.level === candidate.currentLevel && Number.isFinite(liveSkill.experience)) {
         currentXp = liveSkill.experience;
     }
@@ -5132,10 +5188,21 @@ function planLevelGrind(candidate, fights, gameData, pooledXp) {
  * @param {Object} gameData - Game data (levelExperienceTable)
  * @param {string} playerHrid - Player HRID in the sim result
  * @param {Object} playerDTO - The player's current DTO (for the primary level)
+ * @param {Object} [options]
+ * @param {boolean} [options.isSelf=true] - Whether the player is the live character; only then is their live XP
+ *   read, since another player at the same level is not at the same point in it
  * @returns {{skillKey: string, label: string, currentLevel: number, upgradeLevel: number, xpGained: number}|null}
  *   Null when the target skill earns no XP here (the grind never ends)
  */
-export function primaryLevelsAlongside(candidate, primary, xpSimResult, gameData, playerHrid, playerDTO) {
+export function primaryLevelsAlongside(
+    candidate,
+    primary,
+    xpSimResult,
+    gameData,
+    playerHrid,
+    playerDTO,
+    { isSelf = true } = {}
+) {
     const table = gameData.levelExperienceTable || [];
     const xp = xpSimResult?.experienceGained?.[playerHrid] || {};
     const targetSkill = candidate.skillKey.replace('Level', '');
@@ -5145,7 +5212,7 @@ export function primaryLevelsAlongside(candidate, primary, xpSimResult, gameData
 
     const currentXpOf = (skillName, level) => {
         let current = table[level] || 0;
-        const live = dataManager.getSkills?.()?.find((sk) => sk.skillHrid === `/skills/${skillName}`);
+        const live = isSelf ? dataManager.getSkills?.()?.find((sk) => sk.skillHrid === `/skills/${skillName}`) : null;
         if (live && live.level === level && Number.isFinite(live.experience)) current = live.experience;
         return current;
     };
@@ -5828,7 +5895,11 @@ function explainLabCandidateCostAtTax(candidate, gameData, isSelf) {
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
     detail.kept = candidate.keptItems.map((item) => {
-        const resolved = resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 });
+        const resolved = resolveItemPrice(item.hrid, {
+            context: 'profit',
+            side: 'sell',
+            enhancementLevel: item.enhancementLevel || 0,
+        });
         const { price } = resolved;
         return {
             hrid: item.hrid,
@@ -6857,14 +6928,16 @@ export function planWithinBudget(
                 ),
             Infinity
         );
-        // With per-fight capacities, the same rule the fill uses: a pinned drink with no fight left that has room
-        // for it (after the pins before it) cannot be installed anywhere
+        // With per-fight capacities: a pinned drink with no fight it is installed in that still has room for it
+        // (after the pins before it) cannot be installed anywhere. Installed, not saving: a pin needs no gain
         const perFight = pinnedDrinks.length > 0 && pinnedDrinks.every((entry) => roomsOf(entry.result));
         const usedIn = [];
         const unplaceable = perFight
             ? pinnedDrinks.filter((entry) => {
                   const rooms = roomsOf(entry.result);
-                  const fits = entry.savings.some((saving, i) => saving > 0 && (usedIn[i] || 0) < (rooms[i] ?? 0));
+                  const fits = entry.savings.some(
+                      (_, i) => addedIn(entry.result, i) && (usedIn[i] || 0) < (rooms[i] ?? 0)
+                  );
                   entry.savings.forEach((_, i) => {
                       if (addedIn(entry.result, i)) usedIn[i] = (usedIn[i] || 0) + 1;
                   });
@@ -7017,6 +7090,11 @@ export function planWithinBudget(
     return {
         picks,
         totalCost: spent,
+        // Picks whose price leaves a half out (a shrine's guild tokens with no exchange rate), so the
+        // total reads as "at least this" rather than the whole bill
+        partialCostPicks: picks
+            .filter((pick) => pick.partialCost || pick.costDetail?.partialCost)
+            .map((pick) => pick.candidate?.description),
         attemptsSaved,
         skipped,
         budget,
@@ -7599,9 +7677,11 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             const candidate = withLoadoutClaims(pooled, loadoutClaims);
             return {
                 ...candidate,
+                // Priced as whoever the builder priced it for (`isSelf`), here too when it came back unpriced: the
+                // live character's own copies and books say nothing about what another player holds
                 cost: prePricedAgainstClaims(candidate)
                     ? calculateUpgradeCost(candidate, gameData, candidate.isSelf ?? true)
-                    : (candidate.cost ?? calculateUpgradeCost(candidate, gameData)),
+                    : (candidate.cost ?? calculateUpgradeCost(candidate, gameData, candidate.isSelf ?? true)),
                 appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
             };
         })
@@ -7847,6 +7927,11 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 !candidate.noPurchase && (candidate.keptItems?.length || candidate.checkedSwap)
                     ? explainLabCandidateCost(candidate, gameData, candidate.isSelf !== false)
                     : null,
+            // A shrine row carries no breakdown here, but a budget plan still has to know its price leaves
+            // the guild tokens out. The one cheap field rather than a full costDetail per row
+            ...(candidate.type === 'guild_shrine'
+                ? { partialCost: explainGuildShrineCost(candidate).partialCost }
+                : {}),
             appliedFights: applied.length,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,

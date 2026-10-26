@@ -13,12 +13,16 @@ import * as mathjs from 'mathjs';
 
 const SWORD = '/items/cheese_sword';
 const MAT = '/items/cheese';
+const OLD_SWORD = '/items/wooden_sword';
+const MIRROR = '/items/philosophers_mirror';
 const CHAR = 161296;
 
 const state = vi.hoisted(() => ({
     books: {},
     custom: {},
     craftingSetting: false,
+    // The profit mode's book side per transaction side; null is the conservative default (buy ask, sell bid)
+    sides: null,
 }));
 
 const ITEM_DETAIL_MAP = {
@@ -31,6 +35,13 @@ const ITEM_DETAIL_MAP = {
         enhancementCosts: [{ itemHrid: MAT, count: 2 }],
     },
     [MAT]: { hrid: MAT, name: 'Cheese' },
+    [OLD_SWORD]: {
+        hrid: OLD_SWORD,
+        name: 'Wooden Sword',
+        isTradable: true,
+        itemLevel: 1,
+        equipmentDetail: { type: '/equipment_types/main_hand' },
+    },
     '/items/mirror_of_protection': { name: 'Mirror of Protection' },
 };
 
@@ -74,7 +85,10 @@ vi.mock('../../utils/market-data.js', () => {
         const ask = book.ask > 0 ? book.ask : book.bid > 0 ? book.bid : null;
         return ask === null ? null : { ask, bid: book.bid > 0 ? book.bid : ask };
     };
-    const modeOf = (context, side) => (context === 'profit' && side === 'sell' ? 'bid' : 'ask');
+    const modeOf = (context, side) => {
+        if (context !== 'profit') return 'ask';
+        return state.sides?.[side] ?? (side === 'sell' ? 'bid' : 'ask');
+    };
     return {
         getPricingMode: modeOf,
         getItemPriceInfo: (hrid, { mode, context, side = 'sell', enhancementLevel = 0 } = {}) => {
@@ -125,7 +139,7 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 vi.mock('../../utils/tea-parser.js', () => ({ parseArtisanBonus: () => 0, getDrinkConcentration: () => 0 }));
 
-const { explainUpgradeCost } = await import('./upgrade-advisor.js');
+const { calculateUpgradeCost, explainUpgradeCost, saleTaxRateOf } = await import('./upgrade-advisor.js');
 const { calculateEnhancementPath } = await import('../enhancement/tooltip-enhancement.js');
 
 const gameData = { itemDetailMap: ITEM_DETAIL_MAP };
@@ -151,6 +165,7 @@ beforeEach(() => {
     };
     state.custom = {};
     state.craftingSetting = false;
+    state.sides = null;
 });
 
 const tooltipPath = () => calculateEnhancementPath(SWORD, 1, enhancingConfig, { priceContext: 'ask' });
@@ -181,5 +196,251 @@ describe('the advisor ladder and the tooltip read one base-item number', () => {
         expect(tooltipPath().optimalStrategy.materialBreakdown[0].unitPrice).toBe(50);
         state.custom[`${MAT}:0:buy`] = 7;
         expect(tooltipPath().optimalStrategy.materialBreakdown[0].unitPrice).toBe(7);
+    });
+});
+
+describe('an enhancement row prices both levels as the pricing mode and custom prices say', () => {
+    /** The worn Cheese Sword +3 enhanced to +5 */
+    const enhance = (extra = {}) => ({
+        type: 'enhancement',
+        slot: '/equipment_types/main_hand',
+        currentHrid: SWORD,
+        currentLevel: 3,
+        upgradeHrid: SWORD,
+        upgradeLevel: 5,
+        ...extra,
+    });
+    /** A swap from another weapon to the same Cheese Sword +5, selling nothing */
+    const swapTo5 = () => ({ ...tier(5), slot: '/equipment_types/main_hand' });
+    const PATIENT_BUY = { buy: 'bid', sell: 'bid' };
+
+    beforeEach(() => {
+        state.books[`${SWORD}:3`] = { ask: 600_000, bid: 500_000 };
+        state.books[`${SWORD}:5`] = { ask: 2_000_000, bid: 1_500_000 };
+    });
+
+    /** Cost and breakdown, which must agree */
+    const both = (candidate) => {
+        const cost = calculateUpgradeCost(candidate, gameData);
+        const detail = explainUpgradeCost(candidate, gameData);
+        expect(detail.net).toBe(cost);
+        return { cost, detail };
+    };
+
+    test('conservative: buys the +5 at its ask and sells the +3 into its bid, after tax', () => {
+        const { cost, detail } = both(enhance());
+        // 2M - floor(500K * 0.96)
+        expect(cost).toBe(2_000_000 - 480_000);
+        expect(detail).toMatchObject({ gross: 2_000_000, credit: 480_000, rawBid: 500_000, source: 'market' });
+    });
+
+    test('patient buy: the row and the matching swap both buy the +5 at its bid', () => {
+        state.sides = PATIENT_BUY;
+        const { cost, detail } = both(enhance());
+        const swapBuy = explainUpgradeCost(swapTo5(), gameData).buys[0].price;
+
+        expect(swapBuy).toBe(1_500_000);
+        expect(detail.buys[0].price).toBe(swapBuy);
+        expect(cost).toBe(1_500_000 - 480_000);
+    });
+
+    test('hybrid: the +3 is sold at its ask, as that mode sells', () => {
+        state.sides = { buy: 'ask', sell: 'ask' };
+        const { cost, detail } = both(enhance());
+        expect(detail.credit).toBe(576_000);
+        expect(cost).toBe(2_000_000 - 576_000);
+    });
+
+    test('a custom price on the target level is the buy', () => {
+        state.custom[`${SWORD}:5:buy`] = 1_800_000;
+        const { cost, detail } = both(enhance());
+        expect(detail.buys[0].price).toBe(1_800_000);
+        expect(cost).toBe(1_800_000 - 480_000);
+    });
+
+    test('a target the resolver cannot price is not a market trade: the row is an enhance at the bench', () => {
+        // A custom price of 0 reads as unpriced, though the book lists the +5. This suite's bench sweep is
+        // stubbed, so what is checked is the route; an unpriced sweep is null (upgrade-advisor.test.js)
+        state.custom[`${SWORD}:5:buy`] = 0;
+        const { detail } = both(enhance());
+        expect(detail).toMatchObject({ source: 'sim', enhancementPath: true });
+        expect(detail.buys).toEqual([]);
+    });
+
+    test('hybrid: a worn level with only an ask is sold at it, not dropped to the bench', () => {
+        state.sides = { buy: 'ask', sell: 'ask' };
+        state.books[`${SWORD}:3`] = { ask: 600_000 };
+        const { cost, detail } = both(enhance());
+        expect(detail.source).toBe('market');
+        expect(detail.credit).toBe(576_000);
+        expect(cost).toBe(2_000_000 - 576_000);
+    });
+
+    test('optimistic: a target with only a bid is bought at it', () => {
+        state.sides = { buy: 'bid', sell: 'ask' };
+        state.books[`${SWORD}:5`] = { bid: 1_500_000 };
+        const { cost, detail } = both(enhance());
+        expect(detail.source).toBe('market');
+        expect(detail.buys[0].price).toBe(1_500_000);
+        expect(cost).toBe(1_500_000 - 576_000);
+    });
+
+    test('a custom buy price on an unlisted target is the buy', () => {
+        delete state.books[`${SWORD}:5`];
+        state.custom[`${SWORD}:5:buy`] = 1_800_000;
+        const { cost, detail } = both(enhance());
+        expect(detail.source).toBe('market');
+        expect(cost).toBe(1_800_000 - 480_000);
+    });
+
+    test('an unlisted worn level falls back to the bench, as before', () => {
+        delete state.books[`${SWORD}:3`];
+        const { detail } = both(enhance());
+        expect(detail).toMatchObject({ source: 'sim', enhancementPath: true });
+        expect(detail.credits).toEqual([]);
+    });
+
+    test("an Iron Cow analysed by a market player trades the +3 in untaxed; the live character's own pays the tax", () => {
+        const ironCow = enhance({ saleTaxRate: saleTaxRateOf({ gameMode: 'ironcow' }, false) });
+        expect(both(ironCow).detail.credit).toBe(500_000);
+        expect(both(ironCow).cost).toBe(1_500_000);
+        expect(both(enhance()).detail.credit).toBe(480_000);
+    });
+
+    test('the outlier cap holds the trade-in to the target as the mode buys it', () => {
+        // Patient buy: a +3 bid above the +5 bid is cut to that bid, leaving the row free rather than refunding
+        state.sides = PATIENT_BUY;
+        state.books[`${SWORD}:3`] = { ask: 9_000_000, bid: 8_000_000 };
+        const { cost, detail } = both(enhance());
+        expect(cost).toBe(0);
+        expect(detail).toMatchObject({ creditCapped: true, credit: 1_500_000, rawCredit: 7_680_000 });
+    });
+});
+
+describe('resale and material buys follow the pricing mode', () => {
+    const HYBRID = { buy: 'ask', sell: 'ask' };
+    const OPTIMISTIC = { buy: 'bid', sell: 'ask' };
+    const PATIENT_BUY = { buy: 'bid', sell: 'bid' };
+
+    /** Cost and breakdown, which must agree */
+    const both = (candidate, data = gameData) => {
+        const cost = calculateUpgradeCost(candidate, data);
+        const detail = explainUpgradeCost(candidate, data);
+        expect(detail.net).toBe(cost);
+        return { cost, detail };
+    };
+
+    describe('a replaced tier piece', () => {
+        /** The Cheese Sword +5 in place of a worn Wooden Sword +2, which is sold */
+        const swap = () => ({
+            type: 'equipment',
+            slot: '/equipment_types/main_hand',
+            currentHrid: OLD_SWORD,
+            currentLevel: 2,
+            upgradeHrid: SWORD,
+            upgradeLevel: 5,
+        });
+
+        beforeEach(() => {
+            state.books[`${SWORD}:5`] = { ask: 2_000_000, bid: 1_500_000 };
+            state.books[`${OLD_SWORD}:2`] = { ask: 300_000, bid: 200_000 };
+        });
+
+        test('conservative: credited at its bid after tax', () => {
+            const { cost, detail } = both(swap());
+            expect(detail.credits[0].price).toBe(192_000);
+            expect(cost).toBe(2_000_000 - 192_000);
+        });
+
+        test('patient buy: credited at its bid after tax', () => {
+            state.sides = PATIENT_BUY;
+            const { cost, detail } = both(swap());
+            expect(detail.credits[0].price).toBe(192_000);
+            expect(cost).toBe(1_500_000 - 192_000);
+        });
+
+        test('hybrid: credited at its ask after tax', () => {
+            state.sides = HYBRID;
+            const { cost, detail } = both(swap());
+            expect(detail.credits[0].price).toBe(288_000);
+            expect(cost).toBe(2_000_000 - 288_000);
+        });
+
+        test('optimistic: credited at its ask after tax', () => {
+            state.sides = OPTIMISTIC;
+            const { cost, detail } = both(swap());
+            expect(detail.credits[0].price).toBe(288_000);
+            expect(cost).toBe(1_500_000 - 288_000);
+        });
+
+        test('a custom sell price is the resale, taxed once', () => {
+            state.custom[`${OLD_SWORD}:2:sell`] = 250_000;
+            expect(both(swap()).detail.credits[0].price).toBe(240_000);
+        });
+    });
+
+    describe('a house room', () => {
+        const ROOM = '/house_rooms/dairy_barn';
+        const houseData = {
+            ...gameData,
+            houseRoomDetailMap: {
+                [ROOM]: {
+                    upgradeCostsMap: {
+                        1: [
+                            { itemHrid: '/items/coin', count: 1000 },
+                            { itemHrid: MAT, count: 10 },
+                        ],
+                    },
+                },
+            },
+        };
+        const room = { type: 'house', slot: ROOM, roomHrid: ROOM, currentLevel: 0, upgradeLevel: 1 };
+
+        test("buys its materials on the mode's buy side", () => {
+            // Cheese books at 50 ask, 40 bid
+            expect(calculateUpgradeCost(room, houseData)).toBe(1000 + 10 * 50);
+            state.sides = PATIENT_BUY;
+            expect(calculateUpgradeCost(room, houseData)).toBe(1000 + 10 * 40);
+        });
+
+        test('a material nothing prices leaves the room unpriced, never free', () => {
+            delete state.books[`${MAT}:0`];
+            expect(calculateUpgradeCost(room, houseData)).toBeNull();
+        });
+    });
+
+    describe("a mirror route's trade-in", () => {
+        // Every level listed, the +5 dear enough that a mirror build of it is the cheaper route
+        const enhance = () => ({
+            type: 'enhancement',
+            slot: '/equipment_types/main_hand',
+            currentHrid: SWORD,
+            currentLevel: 2,
+            upgradeHrid: SWORD,
+            upgradeLevel: 5,
+        });
+
+        beforeEach(() => {
+            state.books[`${SWORD}:1`] = { ask: 100_000, bid: 100_000 };
+            state.books[`${SWORD}:2`] = { ask: 200_000, bid: 150_000 };
+            state.books[`${SWORD}:3`] = { ask: 400_000, bid: 400_000 };
+            state.books[`${SWORD}:4`] = { ask: 800_000, bid: 800_000 };
+            state.books[`${SWORD}:5`] = { ask: 3_000_000, bid: 3_000_000 };
+            state.books[`${MIRROR}:0`] = { ask: 100_000, bid: 100_000 };
+        });
+
+        test("sells the worn +2 on the mode's sell side", () => {
+            const conservative = both(enhance());
+            state.sides = HYBRID;
+            const hybrid = both(enhance());
+
+            // The same build, credited 0.96 x 150K into the bid, and 0.96 x 200K at the ask
+            expect(conservative.detail.source).toBe('mirror');
+            expect(hybrid.detail.source).toBe('mirror');
+            expect(conservative.detail.credit).toBe(144_000);
+            expect(hybrid.detail.credit).toBe(192_000);
+            expect(conservative.detail.gross).toBe(hybrid.detail.gross);
+            expect(conservative.cost - hybrid.cost).toBe(192_000 - 144_000);
+        });
     });
 });

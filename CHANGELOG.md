@@ -6,6 +6,40 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers (2026-10-26): Combat Sim and Lab upgrade costs
+
+- A cape or quiver bought with shop tokens is costed by your pricing mode in upgrade analysis and the equipment savings row, matching the treasure tracker's token value.
+- A replaced piece with no sale price now says "no sale price, so nothing is credited back" instead of "0 back".
+- The budget plan only says a cheaper upgrade costs more when a pick really was over budget, and its total notes unpriced guild shrine tokens.
+
+### Combat Sim: Party finder
+
+- New Party tab: save teammate builds and aura options, and it sims every party of you plus them across the zones you pick, ranking your EXP/hr and profit/hr against solo; any row loads into the editor.
+- Only teammates of your character's game mode (Iron Cow or market) are searched, since the two can't party; the others stay listed, greyed out.
+
+### Combat Sim upgrade costs follow the pricing mode
+
+- Upgrade analysis now prices enhancement rows, resale of a replaced or freed piece, and house materials by your pricing mode and custom prices, as tier rows already did. In the default Conservative mode a replaced piece is credited at its bid rather than its ask, so upgrades no longer look cheaper by the spread.
+
+### Audit round (2026-10-26): Combat Sim upgrade analysis
+
+- Combat level grind times for a party member or imported profile start from their XP, not yours, when you happen to share their level.
+- In the Lab, a party member's checked ability swap with no market price shows as unpriced instead of costing 0 because you own the book.
+
+### Audit round (2026-10-26): death recap
+
+- An open death recap updates when another death is recorded, and its Older/Newer buttons keep working after the recap you are viewing is dropped from the kept list.
+- A combat tick that leaves out your HP or damage counter no longer records a hit of unknown damage or a phantom miss.
+
+### Audit round (2026-10-26): Alchemy Profitability
+
+- Alchemy Profitability now redraws every time you come back from the marketplace; the earlier fix covered only one of the two paths that redraw it.
+- An update still running when the game rebuilds the panel no longer leaves it blank, and the Repeat box stops recalculating a panel that has been removed.
+
+### Treasure popup on phones
+
+- The chest-opening summary no longer covers the game's loot window on a phone: with no room beside it, it sits above or below the window (scrolling if needed), so the game's Close stays reachable.
+
 ### Tea recommendation: an almost-as-fast choice
 
 - The tea recommendation for an action now also shows the best gold/hr setup that stays within 95% of the top XP/hr (the percentage is a setting), with the trade spelled out, e.g. "XP −4.0%, +30.0K gold/hr"; unpriced setups are flagged, never valued at zero.
@@ -28,7 +62,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Combat: death recap, and the death alert fires when you die
 
 - The death alert now fires the moment you die (your HP reaching 0), not when you respawn; a solo death never sent the old signal until later.
-- New death recap (on by default): the last ~15 seconds before each death — HP, incoming hits and your last casts — opened from the death alert or a "Death recap" button; attackers are named even after a reload mid-fight; kept in memory only, last five deaths, with Older/Newer to step between them.
+- New death recap (on by default): the last ~15 seconds before each death — HP, incoming hits and your last casts — opened from the death alert or a "Death recap" button; attackers are named even after a reload mid-fight; kept in memory only, last five deaths, with Older/Newer to step between them; more than five deaths before the server count catches up no longer adds an empty extra recap.
 
 ### Achievements: tier finisher
 

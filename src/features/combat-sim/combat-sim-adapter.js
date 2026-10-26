@@ -1991,10 +1991,17 @@ function getBuyPrice(itemHrid) {
  *
  * @param {string} itemHrid - The dropped item
  * @param {number} grossValue - The gross market sell price
+ * @param {number|null} [saleTaxRate] - The market tax of the player the drop is priced for, when that is not
+ *   the live character (whose Iron Cow status `calculatePriceAfterTax` reads): 0 for an Iron Cow, which sells
+ *   nothing on the market, cowbell bags included. Omitted or null, the live character's
  * @returns {number} The value after sale tax
  */
-export function taxedDropValue(itemHrid, grossValue) {
+export function taxedDropValue(itemHrid, grossValue, saleTaxRate = null) {
     if (!(grossValue > 0) || itemHrid === '/items/coin') return grossValue;
+    if (Number.isFinite(saleTaxRate)) {
+        if (saleTaxRate === 0) return grossValue;
+        return grossValue * (1 - (itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : saleTaxRate));
+    }
     const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
     return calculatePriceAfterTax(grossValue, taxRate);
 }
@@ -2003,18 +2010,23 @@ export function taxedDropValue(itemHrid, grossValue) {
  * What one unit of a drop is worth to the sim: its sell price net of the sale
  * tax, or the expected value of opening it when it has no price.
  * @param {string} itemHrid - The dropped item
+ * @param {number|null} [saleTaxRate] - See {@link taxedDropValue}
  * @returns {{priced: boolean, unitValue: number}} `priced` is false only when
  *   nothing priced it; a price of 0 (e.g. a custom override) is a price
  */
-function dropUnitValue(itemHrid) {
+function dropUnitValue(itemHrid, saleTaxRate = null) {
     if (itemHrid === '/items/coin') return { priced: true, unitValue: 1 };
     const priced = getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) != null;
-    let unitValue = taxedDropValue(itemHrid, getSellPrice(itemHrid));
+    let unitValue = taxedDropValue(itemHrid, getSellPrice(itemHrid), saleTaxRate);
     if (unitValue === 0) {
         // The EV fallback already nets the sale tax (see expected-value-calculator),
-        // so it is taken as-is.
+        // so it is taken as-is — at the given rate when there is one.
         const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
-        const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
+        // Another player's tax rate: value the contents at it (the shared cache holds the live
+        // character's figure, so it is not read)
+        const ev = Number.isFinite(saleTaxRate)
+            ? evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate)
+            : evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
         if (ev !== null && ev > 0) unitValue = ev;
     }
     return { priced, unitValue };
@@ -2100,6 +2112,9 @@ export function seedSimPriceCache(priceCache, gameData, { zoneHrid, consumableHr
  *   answers later reads from it. A caller that values many results against each other passes one
  *   Map for all of them, so a market update, a custom-price edit or a pricing-setting change partway
  *   through cannot read as a difference between them (the trigger optimizer does).
+ * @param {number|null} [options.saleTaxRate] - The market tax of the player priced, when that is not the live
+ *   character (`saleTaxRateOf` in upgrade-advisor.js): drops are taxed at it instead of the live character's
+ *   rate. Prices themselves (including an Iron Cow's off-market valuation) still follow the live character
  * @returns {{ revenuePerHour: number, costPerHour: number, keyCostPerHour: number, netPerHour: number,
  *             dropEntries: Array, consumableEntries: Array, unpricedDrops: string[],
  *             unpricedConsumables: string[], unpricedKeys: string[] }} `unpricedDrops`,
@@ -2109,6 +2124,8 @@ export function seedSimPriceCache(priceCache, gameData, { zoneHrid, consumableHr
  */
 export function calculateSimRevenue(simResult, gameData, playerHrid, hours, options = {}) {
     const cache = options.priceCache instanceof Map ? options.priceCache : null;
+    const saleTaxRate = Number.isFinite(options.saleTaxRate) ? options.saleTaxRate : null;
+    const dropKey = saleTaxRate == null ? 'drop|' : `drop@${saleTaxRate}|`;
     const held = (key, read) => {
         if (!cache) return read();
         if (!cache.has(key)) cache.set(key, read());
@@ -2123,7 +2140,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
     for (const [itemHrid, total] of dropMap.entries()) {
         if (total <= 0) continue;
         // The finished per-unit value is what is held, so the sale tax is held with the price
-        const { priced, unitValue } = held(`drop|${itemHrid}`, () => dropUnitValue(itemHrid));
+        const { priced, unitValue } = held(`${dropKey}${itemHrid}`, () => dropUnitValue(itemHrid, saleTaxRate));
         const perHour = (total / hours) * unitValue;
         revenuePerHour += perHour;
         if (unitValue > 0 || priced) {

@@ -90,6 +90,8 @@ let dead = false;
 let lastCount = null;
 /** Recaps frozen by a tick in the current fight that no death count has matched yet */
 let pending = [];
+/** Observed deaths older than the retained `pending` recaps: owed a counter rise, nothing left to confirm */
+let evictedPending = 0;
 /** Frozen recaps, newest first */
 let recaps = [];
 let nextId = 1;
@@ -98,6 +100,8 @@ let seeded = false;
 
 let handlers = [];
 const uiNodes = { button: null, modal: null };
+/** The recap the open modal is showing, kept even after it is evicted from `recaps` */
+let viewing = null;
 
 /** @returns {string|null} The logged-in character id */
 function currentId() {
@@ -180,6 +184,12 @@ function keep(recap) {
     recaps.unshift(recap);
     if (recaps.length > MAX_RECAPS) recaps.length = MAX_RECAPS;
     refreshButton();
+    // An open modal's "n of N" and its Older/Newer targets were drawn for the old list
+    if (uiNodes.modal && viewing) {
+        const scroll = uiNodes.modal.scrollTop;
+        renderRecap(viewing);
+        if (uiNodes.modal) uiNodes.modal.scrollTop = scroll;
+    }
 }
 
 /**
@@ -195,7 +205,11 @@ export function detectDeath(signal, info = {}) {
         if (!ring.length) return null;
         const recap = buildRecap(ring.slice(), casts.slice(), { source: 'hp', confirmed: false });
         pending.push(recap);
-        if (pending.length > MAX_RECAPS) pending.shift();
+        // The display cap is not the accounting: an evicted reference is still an observed, unconfirmed death
+        if (pending.length > MAX_RECAPS) {
+            pending.shift();
+            evictedPending += 1;
+        }
         keep(recap);
         // The next death's tail must not include this one's samples or the time spent dead
         ring = [];
@@ -207,12 +221,16 @@ export function detectDeath(signal, info = {}) {
         const rise = info.rise || 0;
         // The tick-frozen recaps belong to the fight that ended either way; none carries over
         // Tick-frozen recaps stay owed until a rise consumes them; the counter can lag by several battles
-        const matched = pending.splice(0, Math.max(0, rise));
+        // Oldest first: evicted observed deaths, then the retained recaps in order
+        const owed = Math.max(0, rise);
+        const fromEvicted = Math.min(evictedPending, owed);
+        evictedPending -= fromEvicted;
+        const matched = pending.splice(0, owed - fromEvicted);
         for (const recap of matched) {
             recap.confirmed = true;
             recap.source = 'both';
         }
-        const unseen = rise - matched.length;
+        const unseen = rise - fromEvicted - matched.length;
         let created = null;
         if (unseen > 0) {
             // No tick-observed death for these: the previous fight's tail is the only evidence, and
@@ -241,7 +259,10 @@ function onNewBattle(data) {
             const count = Number(own.player.deathCount ?? 0);
             if (Number.isFinite(count)) {
                 // A counter that went down is a new session: nothing pending is owed a rise
-                if (lastCount !== null && count < lastCount) pending = [];
+                if (lastCount !== null && count < lastCount) {
+                    pending = [];
+                    evictedPending = 0;
+                }
                 // A first reading is only a baseline: it confirms and consumes nothing
                 if (lastCount !== null && count > lastCount) rise = count - lastCount;
                 lastCount = count;
@@ -290,6 +311,30 @@ function onNewBattle(data) {
     }
 }
 
+/**
+ * A tick whose own row omits `cHP` or `dmgCounter` means "unchanged". The damage diff reads a missing `cHP` as NaN
+ * (a hit of NaN damage, then a poisoned baseline) and a missing counter as 0 (so the next real counter reads as
+ * a new hit), so the last known values are filled in. With no baseline to fill from, the row is left out.
+ * @param {Object} data - `battle_updated` payload
+ * @param {string} index - Our seat
+ * @returns {Object} The payload to diff, never mutating `data`
+ */
+function carryOmitted(data, index) {
+    const row = data?.pMap?.[index];
+    if (!row) return data;
+    const known = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
+    const patch = {};
+    if (!known(row.cHP)) {
+        if (!known(takenState.playersHP[index])) {
+            const { [index]: _omitted, ...rest } = data.pMap;
+            return { ...data, pMap: rest };
+        }
+        patch.cHP = takenState.playersHP[index];
+    }
+    if (!known(row.dmgCounter) && known(takenState.playersDmg[index])) patch.dmgCounter = takenState.playersDmg[index];
+    return Object.keys(patch).length ? { ...data, pMap: { ...data.pMap, [index]: { ...row, ...patch } } } : data;
+}
+
 /** Handle a `battle_updated` tick */
 function onBattleUpdated(data) {
     try {
@@ -316,7 +361,9 @@ function onBattleUpdated(data) {
         if (!player) return;
 
         const now = Date.now();
-        const events = attributeIncoming(data, takenState).filter((e) => e.playerIndex === ownIndex);
+        const events = attributeIncoming(carryOmitted(data, ownIndex), takenState).filter(
+            (e) => e.playerIndex === ownIndex
+        );
 
         // A reload in an ongoing fight: its new_battle came before this module listened, and a solo respawn sends
         // none, so the names come from the data manager's cached copy, as the seat does (seatFromTick)
@@ -424,9 +471,13 @@ function fmt(n) {
  * @returns {boolean} Whether a recap was shown
  */
 export function openRecap(id) {
-    if (typeof document === 'undefined' || !document.body) return false;
     const recap = id === undefined ? recaps[0] : recaps.find((r) => r.id === id);
-    if (!recap) return false;
+    return recap ? renderRecap(recap) : false;
+}
+
+/** @param {Object} recap A recap object @returns {boolean} Whether it was drawn */
+function renderRecap(recap) {
+    if (typeof document === 'undefined' || !document.body) return false;
     closeModal();
 
     const modal = document.createElement('div');
@@ -514,6 +565,7 @@ export function openRecap(id) {
 
     document.body.appendChild(modal);
     uiNodes.modal = modal;
+    viewing = recap;
     return true;
 }
 
@@ -521,6 +573,7 @@ export function openRecap(id) {
 function closeModal() {
     uiNodes.modal?.remove();
     uiNodes.modal = null;
+    viewing = null;
 }
 
 /** Forget everything and detach */
@@ -531,6 +584,7 @@ function disable() {
     casts = [];
     recaps = [];
     pending = [];
+    evictedPending = 0;
     ownIndex = null;
     seatGuessed = false;
     battleSeen = false;
