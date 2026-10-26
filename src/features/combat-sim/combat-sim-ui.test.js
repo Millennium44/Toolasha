@@ -7192,6 +7192,24 @@ describe('the budget box', () => {
         expect(html).not.toContain('Ranked on estimates');
     });
 
+    test('a shrine pick with no token rate says the total leaves the guild tokens out', () => {
+        const shrine = row('Force Shrine Lv3 → Lv4', { slot: 'guild_shrine_force', cost: 3000, profitGain: 50 });
+        shrine.costDetail = { partialCost: 'guild tokens not priced', buys: [], credits: [], net: 3000 };
+        const html = ui._renderUpgradeBudget([shrine], BASELINE);
+
+        expect(html).toContain('+ guild tokens not priced');
+        expect(html).toContain('Force Shrine Lv3 → Lv4');
+    });
+
+    test('a fully priced plan carries no such note', () => {
+        const html = ui._renderUpgradeBudget(
+            [row('Ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 })],
+            BASELINE
+        );
+
+        expect(html).not.toContain('guild tokens not priced');
+    });
+
     test('and nothing affordable is still nothing affordable', () => {
         const html = ui._renderUpgradeBudget(
             [abilityRow('Berserk', { hrid: '/abilities/berserk', cost: 900_000_000 })],

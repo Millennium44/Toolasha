@@ -12667,7 +12667,15 @@ class CombatSimUI {
                     orderPlan.html +
                     `<div style="margin-top:4px; padding-top:4px; border-top:1px solid #222; color:#aaa; font-size:11px;">
                         ${plan.picks.length} upgrade${plan.picks.length === 1 ? '' : 's'}${orderPlan.appended ? ' + order' : ''} ·
-                        ${money(plan.totalCost)} of ${money(budget)} ·
+                        ${money(plan.totalCost)} of ${money(budget)}${
+                            // A pick priced on part of its bill (shrine credits with no token rate) makes
+                            // the total a floor, so it says what it leaves out
+                            plan.partialCostPicks?.length
+                                ? ` <span data-budget-partial-cost style="color:#ff9800;" title="${plan.partialCostPicks
+                                      .join(', ')
+                                      .replace(/"/g, '&quot;')}">+ guild tokens not priced</span>`
+                                : ''
+                        } ·
                         <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
                     </div>${provisional}${partialNote}${constraintsHtml}${this._renderBudgetConfirm(plan, baseline)}`;
