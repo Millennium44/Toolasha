@@ -10,7 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Craft-cost estimates price recipe inputs at your custom buy price rather than your custom sell price.
 - Alchemy XP/hr in the Skilling Optimizer counts the catalyst's higher success rate, as gold/hr already did.
-- The goal planner asks you to earn the most you are ever short along the plan, not every training step's startup cost added together (100K of training startup plus a 1M purchase now needs 1M, not 1.1M).
+- The goal planner asks you to earn the most you are ever short along the plan, not every training step's startup cost added together.
 - Turning off listing drag order mid-drag puts the rows back and clears the drag marks.
 
 ### Leftovers (2026-10-26): Combat Sim and Lab upgrade costs
