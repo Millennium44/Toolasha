@@ -283,10 +283,29 @@ const config = (await import('../../core/config.js')).default;
 // that does not price anything itself ("the materials behind a house level")
 // only worked while some earlier test's `mockImplementation` was still
 // installed, and threw on destructuring as soon as it ran first.
+/**
+ * `resolveItemPrice` as the conservative profit mode (the default) answers it: an enhanced level reads the
+ * order book, the ask on a buy and the bid on a sale, and nothing has a production fallback above +0. A read
+ * that names no context gets the ask on either side, as the real resolver gives it. A +0 read is `base`,
+ * unpriced unless a test says otherwise.
+ * @param {Object} [base] - What a +0 read returns
+ * @returns {Function} An implementation for `resolveItemPrice`
+ */
+const conservativeBook =
+    (base = { price: 0, custom: false, missing: true, estimated: false }) =>
+    (hrid, { context, side = 'sell', enhancementLevel = 0 } = {}) => {
+        if (!(enhancementLevel > 0)) return base;
+        const book = getItemPrices(hrid, enhancementLevel);
+        const price = context === 'profit' && side === 'sell' ? book?.bid : book?.ask;
+        return price > 0
+            ? { price, custom: false, missing: false, estimated: false }
+            : { price: 0, custom: false, missing: true, estimated: false };
+    };
+
 beforeEach(() => {
     held.items = [];
     perAttemptMaterialCost.mockReturnValue({ cost: 0, hasCost: false, hasMissingPrices: true });
-    resolveItemPrice.mockReturnValue({ price: 0, custom: false, missing: true, estimated: false });
+    resolveItemPrice.mockImplementation(conservativeBook());
 });
 
 const MAIN_HAND = '/equipment_types/main_hand';
@@ -4361,9 +4380,9 @@ describe('explainUpgradeCost', () => {
         getItemPrices.mockImplementation((_hrid, level) =>
             level === 7 ? { ask: 5_000_000, bid: 4_500_000 } : { ask: 3_000_000, bid: 2_000_000 }
         );
-        // Production fallbacks and the tester shop may differ from the order
-        // book, but the enhancement row is ranked on the two listings above.
-        resolveItemPrice.mockReturnValue({ price: 500_000 });
+        // A +0 production fallback may differ from the order book, but the
+        // enhancement row is ranked on the two listings above.
+        resolveItemPrice.mockImplementation(conservativeBook({ price: 500_000 }));
         const candidate = {
             type: 'enhancement',
             slot: BODY,
@@ -8264,8 +8283,8 @@ describe('a resale credits what the sale pays after the market tax (#539)', () =
 
     beforeEach(() => {
         saleTax.ironCow = false;
-        // No mirror quote, so the ordinary market route is the one priced
-        resolveItemPrice.mockImplementation(() => ({ price: null }));
+        // No mirror quote, so the ordinary market route is the one priced; enhanced levels read the book
+        resolveItemPrice.mockImplementation(conservativeBook({ price: null }));
     });
 
     afterEach(() => {
@@ -8354,6 +8373,21 @@ describe('a resale credits what the sale pays after the market tax (#539)', () =
         getItemPrices.mockReturnValue({ ask: 100_000_000, bid: 90_000_000 });
 
         expect(calculateUpgradeCost(enhance, gameData())).toBe(10_000_000);
+    });
+
+    test('an unlisted target or current level with no sweep to fall back on is unpriced, never free', () => {
+        // The bench sweep has a material nobody prices (the suite default), so it cannot stand in either
+        getItemPrices.mockImplementation((_hrid, level) =>
+            level === 10 ? { ask: null, bid: 90_000_000 } : { ask: 80_000_000, bid: 70_000_000 }
+        );
+        expect(calculateUpgradeCost(enhance, gameData())).toBeNull();
+        expect(explainUpgradeCost(enhance, gameData()).net).toBeNull();
+
+        getItemPrices.mockImplementation((_hrid, level) =>
+            level === 10 ? { ask: 100_000_000, bid: 90_000_000 } : { ask: 80_000_000, bid: null }
+        );
+        expect(calculateUpgradeCost(enhance, gameData())).toBeNull();
+        expect(explainUpgradeCost(enhance, gameData()).net).toBeNull();
     });
 
     test('the outlier cap is weighed against the after-tax proceeds', () => {

@@ -2488,7 +2488,7 @@ function calculateHouseUpgradeCost(candidate, gameData) {
                 total += count;
                 continue;
             }
-            const { price } = resolveItemPrice(entry.itemHrid, { side: 'buy' });
+            const { price } = resolveItemPrice(entry.itemHrid, { context: 'profit', side: 'buy' });
             if (!price || price <= 0) return null; // Unknown material cost must not rank as free
             total += price * count;
         }
@@ -2530,7 +2530,7 @@ export function houseUpgradeMaterials(candidate, gameData) {
     }
 
     const lines = [...counts.entries()].map(([itemHrid, count]) => {
-        const { price } = resolveItemPrice(itemHrid, { side: 'buy' });
+        const { price } = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy' });
         const unitPrice = price > 0 ? price : null;
         return {
             itemHrid,
@@ -2983,17 +2983,9 @@ function calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
             }).price;
         }
 
-        // Primary: market price delta (buy at target level - sell at current level)
-        // Only use if BOTH levels have actual market listings
-        const upgradedMarket = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
-        const currentMarket = getItemPrices(candidate.currentHrid, candidate.currentLevel);
-
-        if (upgradedMarket?.ask > 0 && currentMarket?.bid > 0) {
-            // Selling the current level pays its bid after tax, and that is what the outlier cap weighs
-            return (
-                upgradedMarket.ask - capEnhancementCredit(upgradedMarket.ask, afterSaleTax(currentMarket.bid)).credit
-            );
-        }
+        // Primary: a market trade (buy the target level, sell the worn one), when the mode prices both sides
+        const trade = enhancementMarketTrade(candidate);
+        if (trade) return trade.buy - trade.credit;
 
         // Fallback: enhancement cost estimate with protection
         return calculateDirectEnhancementCost(
@@ -3045,6 +3037,39 @@ function cappedResale(credit, spend, built) {
 }
 
 /**
+ * An enhancement row priced as a market trade: buy the target level, sell the level worn.
+ *
+ * Taken when both sides resolve the way the profit pricing mode reads them, as a tier row's rung does: the
+ * target's buy through `priceAtLevel` (the mode's buy side, a custom price first, a missing side cross-filled)
+ * and the worn level's sale on the mode's sell side (a custom sell price first). A raw ask/bid check would refuse
+ * a trade the mode can make (a worn level with only an ask, in a mode that sells at the ask) and ignore custom
+ * prices. Otherwise the row is an enhance at the bench. A worn +0 priced only from its crafting cost is not a
+ * sale, so it does not open the trade either.
+ *
+ * The trade-in is net of the sale tax once (`saleProceeds`, at the analysed character's rate under
+ * `withSaleTaxOf`), held to the buy by {@link capEnhancementCredit}.
+ *
+ * @param {Object} candidate - An `enhancement` row
+ * @returns {{buy: number, proceeds: number, grossSell: number, credit: number, capped: boolean}|null} Null when
+ *   either side does not resolve
+ */
+function enhancementMarketTrade(candidate) {
+    const buy = priceAtLevel(candidate.currentHrid, candidate.upgradeLevel).price;
+    if (!(buy > 0)) return null;
+    // The profit context, as `priceAtLevel` reads the buy: with no context the resolver reads the ask whatever the
+    // mode, which would sell the worn level at its ask even when the mode sells into the bid
+    const sold = resolveItemPrice(candidate.currentHrid, {
+        context: 'profit',
+        side: 'sell',
+        enhancementLevel: candidate.currentLevel || 0,
+    });
+    if (!(sold?.price > 0) || sold.production) return null;
+    const proceeds = saleProceeds(sold);
+    const { credit, capped } = capEnhancementCredit(buy, proceeds);
+    return { buy, proceeds, grossSell: sold.price, credit, capped };
+}
+
+/**
  * The trade-in credit for the level an enhancement row leaves, capped at what
  * the level it buys costs.
  *
@@ -3057,12 +3082,16 @@ function cappedResale(credit, spend, built) {
  * at the purchase leaves such a row at zero net cost — the most the trade can
  * honestly be said to be worth — and keeps the bid for the breakdown to name.
  *
- * @param {number} ask - Ask for the target level
- * @param {number} bid - Bid for the current level
- * @returns {{credit: number, capped: boolean}} Credit to apply, and whether the bid was cut down to it
+ * Both sides are read on the pricing mode's own sides (see `enhancementMarketTrade`), so the cap holds the
+ * trade-in to the target as that mode buys it: ask against bid when conservative, ask against ask in hybrid,
+ * bid against ask when optimistic, bid against bid in patient buy.
+ *
+ * @param {number} buy - What the target level costs to buy
+ * @param {number} proceeds - What the current level sells for, after tax
+ * @returns {{credit: number, capped: boolean}} Credit to apply, and whether the proceeds were cut down to it
  */
-function capEnhancementCredit(ask, bid) {
-    return bid > ask ? { credit: ask, capped: true } : { credit: bid, capped: false };
+function capEnhancementCredit(buy, proceeds) {
+    return proceeds > buy ? { credit: buy, capped: true } : { credit: proceeds, capped: false };
 }
 
 /**
@@ -3691,12 +3720,16 @@ function withSaleTaxOf(candidate, read) {
 
 /**
  * What a piece sells for after tax, for weighing a route that gives that sale up.
+ *
+ * On the profit pricing mode's sell side (the bid when conservative or patient buy, the ask in hybrid or
+ * optimistic) and a custom sell price first. The context has to be named: without one the resolver reads the
+ * ask in every mode.
  * @param {string} hrid - Item HRID
  * @param {number} level - Enhancement level
  * @returns {number} After-tax sale value, 0 when unpriced
  */
 function sellValue(hrid, level) {
-    return saleProceeds(resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }));
+    return saleProceeds(resolveItemPrice(hrid, { context: 'profit', side: 'sell', enhancementLevel: level }));
 }
 
 /**
@@ -4334,18 +4367,17 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
 
     if (candidate.type === 'enhancement') {
         const upgraded = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
-        const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
-        if (upgraded?.ask > 0 && current?.bid > 0) {
+        const trade = enhancementMarketTrade(candidate);
+        if (trade) {
             const name = nameOf(candidate.currentHrid);
-            const proceeds = afterSaleTax(current.bid);
-            const { credit, capped } = capEnhancementCredit(upgraded.ask, proceeds);
+            const { buy, proceeds, credit, capped } = trade;
             return {
                 buys: [
                     {
                         hrid: candidate.currentHrid,
                         name,
                         enhancementLevel: candidate.upgradeLevel,
-                        price: upgraded.ask,
+                        price: buy,
                         source: 'market',
                     },
                 ],
@@ -4356,19 +4388,19 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                         enhancementLevel: candidate.currentLevel,
                         price: credit,
                         rawPrice: proceeds,
-                        grossPrice: current.bid,
+                        grossPrice: trade.grossSell,
                     },
                 ],
-                gross: upgraded.ask,
+                gross: buy,
                 credit,
-                net: upgraded.ask - credit,
+                net: buy - credit,
                 unpriced: [],
                 creditApplied: true,
-                // The current level's after-tax proceeds outbid the target's ask and were cut down to it;
-                // `rawCredit` is those proceeds, `rawBid` the bid as the order book had it
+                // The current level's after-tax proceeds outbid the target's buy price and were cut down to it;
+                // `rawCredit` is those proceeds, `rawBid` the sell-side price they came from
                 creditCapped: capped,
                 rawCredit: proceeds,
-                rawBid: current.bid,
+                rawBid: trade.grossSell,
                 source: 'market',
                 enhanceSource: null,
             };
@@ -5844,7 +5876,11 @@ function explainLabCandidateCostAtTax(candidate, gameData, isSelf) {
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
     detail.kept = candidate.keptItems.map((item) => {
-        const resolved = resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 });
+        const resolved = resolveItemPrice(item.hrid, {
+            context: 'profit',
+            side: 'sell',
+            enhancementLevel: item.enhancementLevel || 0,
+        });
         const { price } = resolved;
         return {
             hrid: item.hrid,
