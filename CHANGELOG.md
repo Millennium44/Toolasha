@@ -10,6 +10,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A sync pull that brings task completions from another device now folds them in without asking you to reload, and a claim seen by two open devices counts once in task income.
 
+### Leftovers (2026-10-26): craft costs, Alchemy XP and the goal planner
+
+- Craft-cost estimates price recipe inputs at your custom buy price rather than your custom sell price.
+- Alchemy XP/hr in the Skilling Optimizer counts the catalyst's higher success rate, as gold/hr already did.
+- The goal planner asks you to earn the most you are ever short along the plan, not every training step's startup cost added together.
+- Turning off listing drag order mid-drag puts the rows back and clears the drag marks.
+
 ### Leftovers (2026-10-26): Combat Sim and Lab upgrade costs
 
 - A cape or quiver bought with shop tokens is costed by your pricing mode in upgrade analysis and the equipment savings row, matching the treasure tracker's token value.

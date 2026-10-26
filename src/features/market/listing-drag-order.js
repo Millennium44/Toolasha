@@ -566,6 +566,14 @@ class ListingDragOrder {
 
     cleanup() {
         noteTeardown(this);
+        // A drag still live when the feature goes away is a cancelled drag: put the rows back
+        // and strip its marks, or they outlive the feature with no dragend left to clear them
+        const dragTable = this.draggedRow?.closest?.('table');
+        if (dragTable && this.dragState) this._restoreRows(dragTable, this.dragState);
+        this.draggedRow?.classList.remove('mwi-listing-dragging');
+        document.querySelectorAll('.mwi-listing-dragging, .mwi-listing-drag-over').forEach((row) => {
+            row.classList.remove('mwi-listing-dragging', 'mwi-listing-drag-over');
+        });
         this.cleanupRegistry.cleanupAll();
         for (const table of [...this.tableResources.keys()]) this._disposeTable(table);
         document.querySelectorAll('.mwi-listing-drag-handle').forEach((handle) => handle.remove());

@@ -1096,7 +1096,7 @@ function planEquipmentGoal(goal, context) {
         );
     }
 
-    const spend = steps.reduce((sum, step) => sum + stepSpend(step), 0);
+    const spend = peakFunds(orderSteps(steps));
     const { step: funding, warnings: fundingWarnings } = fundingStep(
         context,
         spend,
@@ -1125,6 +1125,32 @@ function stepSpend(step) {
     const net = Math.max(0, -step.goldDelta);
     const startup = step.kind === 'train' && step.costKnown !== false ? Math.max(0, num(step.details?.upfrontCost)) : 0;
     return net + startup;
+}
+
+/**
+ * The most coins a plan needs in hand at any one moment, walking its steps in
+ * the order they will be done.
+ *
+ * Each step's net loss accumulates for good; a training step's startup bill is
+ * working capital, needed while the step runs and handed back after it (only the
+ * net loss stays spent). So 100K of startup followed by a 1M purchase needs 1M,
+ * not 1.1M, but the same purchase done first and the training after needs 1.1M.
+ * Within one step the conservative net-plus-startup requirement of
+ * {@link stepSpend} is kept.
+ *
+ * @param {Array<Object>} steps - Steps in the order they are done
+ * @returns {number} Peak coins needed, never negative
+ */
+export function peakFunds(steps) {
+    let spent = 0;
+    let peak = 0;
+    for (const step of Array.isArray(steps) ? steps : []) {
+        const need = stepSpend(step);
+        if (need <= 0) continue;
+        peak = Math.max(peak, spent + need);
+        spent += Math.max(0, -step.goldDelta);
+    }
+    return peak;
 }
 
 /**
