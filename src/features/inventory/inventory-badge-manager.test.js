@@ -869,6 +869,17 @@ describe('guild credits', () => {
         expect(mocks.goldPerCreditCalls).toBe(2);
     });
 
+    test('under the official value source both totals use the ask-based rate, as net worth does', async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+
+        expect(el.dataset.askValue).toBe(String(1000 * 42));
+        expect(el.dataset.bidValue).toBe(String(1000 * 42));
+        expect(el.dataset.bidPrice).toBe('1000');
+        expect(mocks.goldPerCreditCalls).toBe(1);
+    });
+
     test('with no known rate the stack counts 0', async () => {
         mocks.goldPerCredit = { ask: {}, bid: {} };
         const el = creditEl(42);

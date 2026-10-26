@@ -27,6 +27,7 @@ import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { calculateDungeonTokenValue, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
 import { buildGoldPerCredit } from '../../utils/guild-credit-pricing.js';
 import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
+import { isOfficialValueSource } from '../../utils/guild-credit-networth-side.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
 // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
@@ -561,7 +562,11 @@ class InventoryBadgeManager {
             // ask-based rate and the bid total the bid-based one. A credit with no known rate counts
             // 0 (unpriced), as on a dungeon token with no shop line. Opt-out setting shared with Net Worth.
             if (GUILD_CREDIT_HRIDS.has(itemHrid) && config.getSetting('networth_includeGuildCredits') !== false) {
-                creditRates ??= { ask: buildGoldPerCredit('ask'), bid: buildGoldPerCredit('bid') };
+                if (!creditRates) {
+                    // Net worth's rule: the game's own market value pins both totals to the ask-based rate
+                    const ask = buildGoldPerCredit('ask');
+                    creditRates = { ask, bid: isOfficialValueSource() ? ask : buildGoldPerCredit('bid') };
+                }
                 const askPerCredit = creditRates.ask[itemHrid] || 0;
                 const bidPerCredit = creditRates.bid[itemHrid] || 0;
                 itemElem.dataset.askPrice = askPerCredit;

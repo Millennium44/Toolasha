@@ -41,6 +41,7 @@ import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
+import { guildCreditPricingMode } from '../../utils/guild-credit-networth-side.js';
 
 /**
  * Calculate the value of a single item
@@ -265,20 +266,6 @@ export function tokenKind(itemHrid) {
 function isTokenIncluded(itemHrid) {
     const setting = TOKEN_INCLUDE_SETTINGS[tokenKind(itemHrid)];
     return !setting || config.getSetting(setting) !== false;
-}
-
-/**
- * The pricing side guild credits are read at for net worth: the net worth
- * pricing mode, pinned to ask when the value source is the game's own market
- * value (credits are never priced from that map, and the mode's help text
- * promises it is ignored there). Shared by the shrine levels and held guild
- * tokens so the two always agree on what a credit is worth.
- * @returns {string} 'ask' or 'bid'
- */
-function guildCreditPricingMode() {
-    return (config.getSettingValue('networth_valueSource') || 'orderBook') === 'officialValue'
-        ? 'ask'
-        : config.getSettingValue('networth_pricingMode') || 'ask';
 }
 
 /** Why a guild token is unpriced while its exchange rate is only the setting's assumption */
