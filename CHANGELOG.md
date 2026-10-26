@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers (2026-10-26): Combat Sim and Lab upgrade costs
+
+- A cape or quiver bought with shop tokens is costed by your pricing mode in upgrade analysis and the equipment savings row, matching the treasure tracker's token value.
+- A replaced piece with no sale price now says "no sale price, so nothing is credited back" instead of "0 back".
+- The budget plan says "the cheapest measured upgrade costs more" only when a pick was actually over budget, and its total notes when a guild shrine pick leaves out unpriced guild tokens.
+
 ### Combat Sim upgrade costs follow the pricing mode
 
 - Upgrade analysis now prices enhancement rows, resale of a replaced or freed piece, and house materials by your pricing mode and custom prices, as tier rows already did. In the default Conservative mode a replaced piece is credited at its bid rather than its ask, so upgrades no longer look cheaper by the spread.
