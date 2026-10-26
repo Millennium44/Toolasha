@@ -236,4 +236,28 @@ describe('the weekly records on a sync pull', () => {
 
         expect(tracker.entries.map((e) => e.questId)).toEqual([7, 9]);
     });
+
+    test('a peer completion a local save finds while a pull is draining reaches memory', async () => {
+        // The mock store folds like the real one: stored copies are combined under the written value
+        storageMock.set.mockImplementation(async (key, value, _store, _now, options) => {
+            const next = options?.fold ? options.fold(storageMock.store.get(key), value) : value;
+            storageMock.store.set(key, next);
+            return true;
+        });
+        const e1 = done(1, NOW - 2 * DAY);
+        const wk = keyFor(e1.completedAt);
+        storageMock.store.set(wk, [e1]);
+        await tracker.load();
+
+        // The pull has put a peer's completion on disk; the local claim saves before the pull is announced
+        const e2 = done(2, NOW - 2 * DAY + 5000);
+        storageMock.store.set(wk, [e1, e2]);
+        tracker.ingest([claimed({ id: 3 })], NOW - 2 * DAY + 9000);
+        await tracker.flush();
+        pull([wk]);
+        await settle();
+
+        expect(storageMock.store.get(wk).map((e) => e.questId)).toEqual([1, 2, 3]);
+        expect((await tracker.getCompletions()).map((e) => e.questId)).toEqual([1, 2, 3]);
+    });
 });
