@@ -7605,9 +7605,11 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             const candidate = withLoadoutClaims(pooled, loadoutClaims);
             return {
                 ...candidate,
+                // Priced as whoever the builder priced it for (`isSelf`), here too when it came back unpriced: the
+                // live character's own copies and books say nothing about what another player holds
                 cost: prePricedAgainstClaims(candidate)
                     ? calculateUpgradeCost(candidate, gameData, candidate.isSelf ?? true)
-                    : (candidate.cost ?? calculateUpgradeCost(candidate, gameData)),
+                    : (candidate.cost ?? calculateUpgradeCost(candidate, gameData, candidate.isSelf ?? true)),
                 appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
             };
         })
