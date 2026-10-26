@@ -4,7 +4,14 @@
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ handler: null, prices: {}, inventory: [], ev: {}, extraTaskShop: {} }));
+const state = vi.hoisted(() => ({
+    handler: null,
+    prices: {},
+    inventory: [],
+    ev: {},
+    extraTaskShop: {},
+    profitMode: 'hybrid',
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: { isFeatureEnabled: () => true, getSetting: () => true, COLOR_TOOLTIP_INFO: '#abc' },
@@ -47,7 +54,11 @@ vi.mock('../../core/data-manager.js', () => ({
         }),
     },
 }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => state.prices[hrid] || null }));
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrices: (hrid) => state.prices[hrid] || null,
+    // The real mapping of a profit pricing mode to a book side, for a sale
+    getPricingMode: () => ({ conservative: 'bid', patientBuy: 'bid' })[state.profitMode] ?? 'ask',
+}));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: { calculateExpectedValue: (hrid) => state.ev[hrid] || null },
 }));
@@ -84,6 +95,7 @@ beforeEach(async () => {
     state.inventory = [];
     state.ev = {};
     state.extraTaskShop = {};
+    state.profitMode = 'hybrid';
     state.prices = {
         '/items/pathseeker_lodestone': { ask: 6_800_000, bid: 6_000_000 },
         '/items/labyrinth_essence': { ask: 100, bid: 90 },
@@ -299,5 +311,92 @@ describe('price basis wording follows the winning row', () => {
             // 2 purchases = 10 crystals = 3,000
             expect(text).toContain('Your 20 tokens ≈ 3.0K as 10 × Task Crystal');
         });
+    });
+});
+
+describe('shop rows follow the profit pricing mode', () => {
+    const rowsOf = (el) => [...el.querySelectorAll('.dungeon-token-shop-injected tr')].slice(1);
+
+    beforeEach(() => {
+        state.prices['/items/large_treasure_chest'] = { ask: 1000, bid: 900 };
+        state.prices['/items/task_crystal'] = { ask: 300, bid: 250 };
+        state.extraTaskShop = {
+            crystal: { itemHrid: '/items/task_crystal', cost: { itemHrid: '/items/task_token', count: 10 } },
+        };
+    });
+
+    test.each([
+        ['conservative', 'bid'],
+        ['patientBuy', 'bid'],
+        ['hybrid', 'ask'],
+        ['optimistic', 'ask'],
+    ])('%s mode reads the %s side of the task shop', async (mode, side) => {
+        state.profitMode = mode;
+        const el = labyrinthTooltip('Amount: 20', 'Task Token');
+        state.handler(el);
+        await Promise.resolve();
+
+        const crystal = rowsOf(el).find((row) => row.textContent.includes('Task Crystal'));
+        // 10 tokens buy one crystal: Value is the crystal's price on the chosen side
+        expect(crystal.textContent).toContain(side === 'bid' ? '250' : '300');
+        expect(crystal.textContent).not.toContain(side === 'bid' ? '300' : '250');
+        expect(crystal.cells[3].textContent).toBe(side === 'bid' ? '25' : '30');
+    });
+
+    test('the task total names the side it was read at', async () => {
+        state.profitMode = 'conservative';
+        const el = labyrinthTooltip('Amount: 25', 'Task Token');
+        state.handler(el);
+        await Promise.resolve();
+        const line = [...el.querySelectorAll('.dungeon-token-shop-injected div')].find((d) =>
+            d.textContent.startsWith('Your')
+        );
+        expect(line.getAttribute('title')).toContain('bid price before tax');
+        expect(line.getAttribute('title')).not.toContain('ask price');
+    });
+
+    test('Conservative mode reads the bid of the labyrinth shop', async () => {
+        state.profitMode = 'conservative';
+        const el = labyrinthTooltip('Amount: 1,000');
+        state.handler(el);
+        await Promise.resolve();
+        // 1,000 tokens buy one lodestone at the bid: 6,000,000, not the 6,800,000 ask
+        expect(el.querySelector('.dungeon-token-shop-injected').textContent).toContain('6,000K');
+    });
+
+    test('Hybrid mode reads the ask of the labyrinth shop', async () => {
+        const el = labyrinthTooltip('Amount: 1,000');
+        state.handler(el);
+        await Promise.resolve();
+        expect(el.querySelector('.dungeon-token-shop-injected').textContent).toContain('6,800K');
+    });
+
+    test('a side with no price leaves the row out instead of reading the other side', async () => {
+        state.profitMode = 'conservative';
+        state.prices['/items/pathseeker_lodestone'] = { ask: 6_800_000, bid: 0 };
+        const el = labyrinthTooltip('Amount: 1,000');
+        state.handler(el);
+        await Promise.resolve();
+        expect(rowsOf(el).some((row) => row.textContent.includes('Pathseeker'))).toBe(false);
+    });
+});
+
+describe('the Value column', () => {
+    const valueCells = (el) =>
+        [...el.querySelectorAll('.dungeon-token-shop-injected tr')].slice(1).map((row) => row.cells[2].textContent);
+
+    test.each([
+        [999, '999'],
+        [1_500, '1.5K'],
+        [8_360_000, '8,360K'],
+        [999_999_999, '1,000,000K'],
+        [5_140_000_000, '5,140M'],
+    ])('%d is shown as %s', async (price, shown) => {
+        state.prices['/items/pathseeker_lodestone'] = { ask: price, bid: price };
+        const el = labyrinthTooltip('Amount: 1');
+        state.handler(el);
+        await Promise.resolve();
+        // The lodestone row (1,000 tokens) is the first listed when it outranks the essence row
+        expect(valueCells(el).some((cell) => cell.trim() === shown)).toBe(true);
     });
 });

@@ -9,7 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import tooltipObserver from '../../core/tooltip-observer.js';
 import dom from '../../utils/dom.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPrices, getPricingMode } from '../../utils/market-data.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { heldTokensWorth } from '../../utils/token-worth.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
@@ -49,6 +49,32 @@ const SEAL_HRIDS = new Set([
 ]);
 
 const SEAL_TOKEN_COST = 30;
+
+/**
+ * The side of the book the task and labyrinth shop rows read, from the profit pricing mode:
+ * Conservative and Patient Buy value a sale at the bid, Hybrid and Optimistic at the ask. This is
+ * the side net worth and the inventory badges use for token values, so a tooltip cannot disagree
+ * with them. An item the chosen side has no price for is left unpriced rather than read off the
+ * other side.
+ * @returns {'ask'|'bid'}
+ */
+function getPricingSide() {
+    return getPricingMode('profit', 'sell') === 'bid' ? 'bid' : 'ask';
+}
+
+/**
+ * A shop-table Value cell. Below 1M it is the usual K/M figure; from 1M up it keeps the thousands
+ * digits market prices are quoted in (8,360K rather than 8.4M), switching to whole millions from
+ * 1B (5,140M).
+ * @param {number} value - Gold value
+ * @returns {string}
+ */
+function formatShopValue(value) {
+    const abs = Math.abs(value);
+    if (abs >= 1e9) return `${formatWithSeparator(Math.round(value / 1e6))}M`;
+    if (abs >= 1e6) return `${formatWithSeparator(Math.round(value / 1e3))}K`;
+    return formatKMB(value);
+}
 
 /**
  * DungeonTokenTooltips class handles injecting shop item lists into currency token tooltips
@@ -318,6 +344,7 @@ class DungeonTokenTooltips {
         const gameData = dataManager.getInitClientData();
         if (!gameData?.taskShopItemDetailMap || !gameData?.itemDetailMap) return [];
 
+        const side = getPricingSide();
         return Object.values(gameData.taskShopItemDetailMap)
             .map((shopItem) => {
                 const itemDetails = gameData.itemDetailMap[shopItem.itemHrid];
@@ -330,9 +357,10 @@ class DungeonTokenTooltips {
 
                 // Try market price first (tradeable items like Task Crystal)
                 const prices = getItemPrices(shopItem.itemHrid, 0);
-                if (prices?.ask > 0) {
-                    itemValue = prices.ask;
-                    valueSource = 'ask';
+                const sidePrice = side === 'bid' ? prices?.bid : prices?.ask;
+                if (sidePrice > 0) {
+                    itemValue = sidePrice;
+                    valueSource = side;
                 }
 
                 // For openable items, use expected value if higher
@@ -360,6 +388,7 @@ class DungeonTokenTooltips {
                     goldPerToken: purchaseValue / tokenCost,
                     outputCount,
                     valueSource,
+                    priceSide: side,
                     isPartial,
                 };
             })
@@ -377,6 +406,7 @@ class DungeonTokenTooltips {
         const gameData = dataManager.getInitClientData();
         if (!gameData?.labyrinthShopItemDetailMap || !gameData?.itemDetailMap) return [];
 
+        const side = getPricingSide();
         return Object.values(gameData.labyrinthShopItemDetailMap)
             .map((shopItem) => {
                 const itemDetails = gameData.itemDetailMap[shopItem.itemHrid];
@@ -385,12 +415,12 @@ class DungeonTokenTooltips {
                 if (tokenCost <= 0) return null;
 
                 const prices = getItemPrices(shopItem.itemHrid, 0);
-                const askPrice = prices?.ask || null;
+                const sidePrice = (side === 'bid' ? prices?.bid : prices?.ask) || null;
 
-                if (!askPrice || askPrice <= 0) return null;
+                if (!sidePrice || sidePrice <= 0) return null;
 
-                // Total value = ask price × output count
-                const totalValue = askPrice * outputCount;
+                // Total value = price on the pricing mode's side × output count
+                const totalValue = sidePrice * outputCount;
 
                 return {
                     name: itemDetails?.name || 'Unknown Item',
@@ -398,6 +428,7 @@ class DungeonTokenTooltips {
                     askPrice: totalValue,
                     goldPerToken: totalValue / tokenCost,
                     outputCount,
+                    priceSide: side,
                 };
             })
             .filter(Boolean)
@@ -443,8 +474,8 @@ class DungeonTokenTooltips {
             // Show EV tag for expected-value priced items
             const valueDisplay =
                 item.valueSource === 'EV'
-                    ? `${formatKMB(item.askPrice)} <span style="color:#888; font-size:10px;">EV</span>`
-                    : formatKMB(item.askPrice);
+                    ? `${formatShopValue(item.askPrice)} <span style="color:#888; font-size:10px;">EV</span>`
+                    : formatShopValue(item.askPrice);
 
             html += `<tr style="${rowStyle}">`;
             html += `<td style="padding: 2px 4px;">${nameDisplay}</td>`;
@@ -461,7 +492,7 @@ class DungeonTokenTooltips {
         const amount = (tokenHrid && ownedTokenCount(tokenHrid)) || this._heldAmount(tooltipText.textContent);
         const held = heldTokensWorth(amount, shopItems);
         if (held) {
-            html += this._heldTotalHtml(amount, held);
+            html += this._heldTotalHtml(amount, held, shopItems[0].priceSide);
         }
 
         shopDiv.innerHTML = html;
@@ -472,17 +503,19 @@ class DungeonTokenTooltips {
      * The "Your N tokens ≈ X" line under the table.
      * @param {number} amount - Tokens held
      * @param {Object} held - From {@link heldTokensWorth}
+     * @param {'ask'|'bid'} [priceSide='ask'] - The book side the market-priced rows were read at
      * @returns {string} HTML
      */
-    _heldTotalHtml(amount, held) {
+    _heldTotalHtml(amount, held, priceSide = 'ask') {
         // Say what the rows actually bought are priced from: a task row can be an openable's expected value
         const evParts = held.parts.filter((part) => part.valueSource === 'EV');
         const lowerBound = evParts.some((part) => part.isPartial) ? ' (a lower bound, some drops are unpriced)' : '';
-        let basis = 'the ask price before tax';
+        const marketBasis = `the ${priceSide} price before tax`;
+        let basis = marketBasis;
         if (evParts.length === held.parts.length) {
             basis = `the expected value of its contents${lowerBound}`;
         } else if (evParts.length) {
-            basis = `the ask price before tax, and the expected value of contents for openable items${lowerBound}`;
+            basis = `${marketBasis}, and the expected value of contents for openable items${lowerBound}`;
         }
         const title =
             `Whole shop purchases: the best row first, then what is left on the best row it can still afford. ` +
