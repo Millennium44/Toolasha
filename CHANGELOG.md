@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26): death recap
+
+- An open death recap updates when another death is recorded, and its Older/Newer buttons keep working after the recap you are viewing is dropped from the kept list.
+- A combat tick that leaves out your HP or damage counter no longer records a hit of unknown damage or a phantom miss.
+
 ### Treasure popup on phones
 
 - The chest-opening summary no longer covers the game's loot window on a phone: with no room beside it, it sits above or below the window (scrolling if needed), so the game's Close stays reachable.
