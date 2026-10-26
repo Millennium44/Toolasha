@@ -24,7 +24,7 @@
 import { calculateSimRevenue, recomputeLevelGapDebuffs } from './combat-sim-adapter.js';
 import { capProfitRateCached } from '../../utils/liquidity-cap.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
-import { buildFingerprint } from './party-roster.js';
+import { buildFingerprint, teammateModeFit, teammateModeOf, modeMismatchReason } from './party-roster.js';
 
 /** Largest party the game lets into an ordinary combat zone */
 export const ZONE_MAX_PARTY = 3;
@@ -134,17 +134,28 @@ export function applyAura(dto, aura) {
  * @param {Array<{id: string, name: string, dto: Object, auras?: Array, includeAsBuilt?: boolean}>} roster
  * @param {Object<string, 'try'|'always'|'never'>} [choices] - By teammate id; missing means 'try'
  * @param {Object|null} [gameData] - Judges aura options and names them
+ * @param {'market'|'ironcow'|null} [selfMode] - The live character's party pool: market characters only party with
+ *   market characters and Iron Cows with Iron Cows, so teammates of the other pool are excluded whatever their
+ *   choice. A teammate whose mode is unknown stays in (with a note); null excludes no one.
  * @returns {{pool: Array<{id: string, name: string, variants: Array<Object>}>, mustInclude: Array<Object>,
- *   notes: Array<string>}} `pool` holds every teammate that may be picked (the must-includes among them)
+ *   notes: Array<string>, excluded: Array<{id: string, name: string, reason: string}>}} `pool` holds every
+ *   teammate that may be picked (the must-includes among them); `excluded` those of the other game mode
  */
-export function narrowRoster(roster, choices = {}, gameData = null) {
+export function narrowRoster(roster, choices = {}, gameData = null, selfMode = null) {
     const pool = [];
     const mustInclude = [];
     const notes = [];
+    const excluded = [];
     const nameOf = (hrid) => gameData?.abilityDetailMap?.[hrid]?.name || hrid?.split('/').pop() || '';
     for (const entry of Array.isArray(roster) ? roster : []) {
+        const fit = teammateModeFit(entry, selfMode);
+        if (fit === 'mismatch') {
+            excluded.push({ id: entry.id, name: entry.name, reason: modeMismatchReason(teammateModeOf(entry)) });
+            continue;
+        }
         const choice = choices?.[entry.id] || 'try';
         if (choice === 'never') continue;
+        if (fit === 'unknown' && selfMode) notes.push(`${entry.name}: game mode unknown, kept in the search`);
         const options = Array.isArray(entry.auras) ? entry.auras : [];
         const variants = [];
         if (!options.length || entry.includeAsBuilt !== false) {
@@ -183,7 +194,7 @@ export function narrowRoster(roster, choices = {}, gameData = null) {
         pool.push(teammate);
         if (choice === 'always') mustInclude.push(teammate);
     }
-    return { pool, mustInclude, notes };
+    return { pool, mustInclude, notes, excluded };
 }
 
 /**
@@ -273,12 +284,21 @@ export function enumerateCompositions(pool, mustInclude, maxMembers) {
  * @param {Object} [options.choices] - Include/exclude by teammate id
  * @param {number} [options.maxPartySize] - Largest party to try, you included; capped by each zone's own
  * @param {Object|null} [options.gameData] - Judges aura options
+ * @param {'market'|'ironcow'|null} [options.selfMode] - The live character's party pool (see {@link narrowRoster})
  * @returns {{tasks: Array<{zone: Object, zoneKey: string, comp: Object}>, perZone: Array<{zone: Object,
  *   zoneKey: string, count: number, note: string|null}>, total: number, refused: string|null,
- *   notes: Array<string>}} `refused` explains a sweep too large to plan; `notes` names aura options left out
+ *   notes: Array<string>, excluded: Array<Object>}} `refused` explains a sweep too large to plan; `notes` names aura
+ *   options left out; `excluded` the teammates of the other game mode
  */
-export function planSweep({ zones, roster, choices = {}, maxPartySize = DUNGEON_MAX_PARTY, gameData = null }) {
-    const { pool, mustInclude, notes } = narrowRoster(roster, choices, gameData);
+export function planSweep({
+    zones,
+    roster,
+    choices = {},
+    maxPartySize = DUNGEON_MAX_PARTY,
+    gameData = null,
+    selfMode = null,
+}) {
+    const { pool, mustInclude, notes, excluded } = narrowRoster(roster, choices, gameData, selfMode);
     const mustIds = new Set(mustInclude.map((m) => m.id));
     const variantCounts = pool.map((t) => t.variants.length);
     const mustFlags = pool.map((t) => mustIds.has(t.id));
@@ -299,7 +319,7 @@ export function planSweep({ zones, roster, choices = {}, maxPartySize = DUNGEON_
         perZone.push({ zone, zoneKey: zoneTierKey(zone), maxMembers, count: 0, note: null });
     }
     if (bound > MAX_QUICK_RUNS * 20) {
-        return { tasks: [], perZone, total: bound, refused: tooManyText(bound), notes };
+        return { tasks: [], perZone, total: bound, refused: tooManyText(bound), notes, excluded };
     }
 
     const baselines = [];
@@ -318,7 +338,11 @@ export function planSweep({ zones, roster, choices = {}, maxPartySize = DUNGEON_
         const comps = compsByCap.get(entry.maxMembers);
         // With no teammate that may join, the baseline alone answers nothing
         if (comps.length === 1) {
-            entry.note = pool.length ? 'no party fits the size limit' : 'no teammates to try';
+            entry.note = pool.length
+                ? 'no party fits the size limit'
+                : excluded.length && excluded.length === (Array.isArray(roster) ? roster.length : 0)
+                  ? "no teammates of this character's mode"
+                  : 'no teammates to try';
             continue;
         }
         entry.count = comps.length;
@@ -334,6 +358,7 @@ export function planSweep({ zones, roster, choices = {}, maxPartySize = DUNGEON_
         total: tasks.length,
         refused: tasks.length > MAX_QUICK_RUNS ? tooManyText(tasks.length) : null,
         notes,
+        excluded,
     };
 }
 

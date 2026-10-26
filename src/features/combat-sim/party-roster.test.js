@@ -38,6 +38,10 @@ const {
     normalizeAuraOptions,
     MAX_AURA_OPTIONS,
     TOMBSTONE_MAX_AGE_MS,
+    mergeRoster,
+    partyModeOf,
+    teammateModeOf,
+    teammateModeFit,
 } = await import('./party-roster.js');
 const { isLiveSafeKey, mergeForKey } = await import('../../utils/sync-merge-registry.js');
 
@@ -356,5 +360,57 @@ describe('a build missing the lists the engine reads', () => {
 
     test('house rooms that are not a map are refused with a reason', () => {
         expect(validateTeammateDTO({ ...dto(), houseRooms: [] })).toEqual({ ok: false, reason: 'bad house rooms' });
+    });
+});
+
+describe('teammate game mode', () => {
+    test('the mode given at save time is kept; an older entry without one reads as unknown', async () => {
+        const { roster } = await addTeammates([
+            { name: 'Cow', dto: dto(), gameMode: 'ironcow' },
+            { name: 'Plain', dto: dto() },
+        ]);
+        expect(roster.entries.map((e) => e.gameMode)).toEqual(['ironcow', null]);
+        const old = normalizeRoster({ entries: [{ id: 'x', name: 'Old', dto: dto(), updatedAt: 1 }] });
+        expect(old.entries[0].gameMode).toBeNull();
+        expect(teammateModeOf(old.entries[0])).toBeNull();
+        expect(teammateModeFit(old.entries[0], 'market')).toBe('unknown');
+    });
+
+    test('a build that carries its own mode supplies it', async () => {
+        const { roster } = await addTeammates([{ name: 'Cow', dto: dto({ gameMode: 'legacy_ironcow' }) }]);
+        expect(roster.entries[0].gameMode).toBe('legacy_ironcow');
+        expect(teammateModeOf({ dto: { gameMode: 'standard' } })).toBe('market');
+    });
+
+    test('maps modes to party pools', () => {
+        expect(partyModeOf('standard')).toBe('market');
+        expect(partyModeOf('ironcow')).toBe('ironcow');
+        expect(partyModeOf('legacy_ironcow')).toBe('ironcow');
+        expect(partyModeOf(undefined)).toBeNull();
+        expect(partyModeOf('')).toBeNull();
+        expect(teammateModeFit({ gameMode: 'ironcow' }, 'market')).toBe('mismatch');
+        expect(teammateModeFit({ gameMode: 'ironcow' }, null)).toBe('match');
+    });
+
+    test('replacing a build keeps the saved mode unless the new one says otherwise', async () => {
+        const { roster } = await addTeammates([{ name: 'Cow', dto: dto(), gameMode: 'ironcow' }]);
+        const id = roster.entries[0].id;
+        expect((await replaceTeammateBuild(id, dto())).roster.entries[0].gameMode).toBe('ironcow');
+        expect((await replaceTeammateBuild(id, dto(), 'standard')).roster.entries[0].gameMode).toBe('standard');
+    });
+
+    test('the mode survives a cross-device merge, whichever copy wins', () => {
+        const entry = (over) => ({ id: 'a', name: 'A', dto: dto(), addedAt: 1, updatedAt: 1, ...over });
+        const local = { savedAt: 1, entries: [entry({ gameMode: 'ironcow', updatedAt: 5 })] };
+        const incoming = {
+            savedAt: 2,
+            entries: [entry({ gameMode: 'standard', updatedAt: 9 }), entry({ id: 'b', gameMode: 'ironcow' })],
+        };
+        const merged = mergeRoster(local, incoming);
+        expect(merged.entries.map((e) => [e.id, e.gameMode])).toEqual([
+            ['a', 'standard'],
+            ['b', 'ironcow'],
+        ]);
+        expect(mergeRoster(incoming, local).entries.find((e) => e.id === 'a').gameMode).toBe('standard');
     });
 });

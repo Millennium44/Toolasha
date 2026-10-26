@@ -96,6 +96,50 @@ function unionTombstones(a, b) {
 }
 
 /**
+ * The party pool a game mode belongs to. The game only parties market characters with market characters and Iron
+ * Cows (either kind) with Iron Cows.
+ * @param {*} gameMode - A `character.gameMode` value: 'standard', 'ironcow', 'legacy_ironcow'
+ * @returns {'market'|'ironcow'|null} null when the mode is not known
+ */
+export function partyModeOf(gameMode) {
+    if (typeof gameMode !== 'string' || !gameMode) return null;
+    return gameMode.includes('ironcow') ? 'ironcow' : 'market';
+}
+
+/**
+ * A teammate's party pool: the mode saved with them, else the one their build carries (a shared profile stamps it).
+ * @param {{gameMode?: *, dto?: Object}} entry
+ * @returns {'market'|'ironcow'|null}
+ */
+export function teammateModeOf(entry) {
+    return partyModeOf(entry?.gameMode) ?? partyModeOf(entry?.dto?.gameMode);
+}
+
+/**
+ * Whether a teammate can party with a character of the given mode.
+ * @param {{gameMode?: *, dto?: Object}} entry
+ * @param {'market'|'ironcow'|null} selfMode - The live character's pool; null when unknown (nothing is excluded)
+ * @returns {'match'|'mismatch'|'unknown'} `unknown` when the teammate's mode was never recorded
+ */
+export function teammateModeFit(entry, selfMode) {
+    const mode = teammateModeOf(entry);
+    if (!mode) return 'unknown';
+    if (!selfMode) return 'match';
+    return mode === selfMode ? 'match' : 'mismatch';
+}
+
+/**
+ * Why a teammate of the other mode is left out of the search.
+ * @param {'market'|'ironcow'|null} mode - The teammate's pool
+ * @returns {string}
+ */
+export function modeMismatchReason(mode) {
+    return mode === 'ironcow'
+        ? "Iron Cow — can't party with a market character"
+        : "market character — can't party with an Iron Cow";
+}
+
+/**
  * Trim and bound a teammate name.
  * @param {*} name
  * @returns {string} '' when nothing usable is left
@@ -194,7 +238,8 @@ export function normalizeAuraOptions(value) {
  * A stored value read as a roster: anything malformed drops out rather than reaching the sweep.
  * @param {*} value - What storage holds
  * @returns {{savedAt: number, entries: Array<{id: string, name: string, dto: Object, source: string,
- *   addedAt: number, updatedAt: number, auras: Array<{hrid: string, level: number}>, includeAsBuilt: boolean}>}}
+ *   addedAt: number, updatedAt: number, auras: Array<{hrid: string, level: number}>, includeAsBuilt: boolean,
+ *   gameMode: string|null}>}}
  *   `auras` are the aura options the sweep tries the teammate with; `includeAsBuilt` says whether it also tries
  *   them as built (always true when they have no aura options)
  */
@@ -218,6 +263,7 @@ export function normalizeRoster(value, now = Date.now()) {
             updatedAt: Number(entry.updatedAt) || 0,
             auras: normalizeAuraOptions(entry.auras),
             includeAsBuilt: entry.includeAsBuilt !== false,
+            gameMode: typeof entry.gameMode === 'string' && entry.gameMode ? entry.gameMode : null,
         });
         if (entries.length >= MAX_ROSTER_SIZE) break;
     }
@@ -313,7 +359,8 @@ async function mutateRoster(change) {
 
 /**
  * Add teammates.
- * @param {Array<{name: string, dto: Object, source?: string}>} items
+ * @param {Array<{name: string, dto: Object, source?: string, gameMode?: string}>} items - `gameMode` is the
+ *   teammate's game mode when the source knows it and the build does not carry it
  * @returns {Promise<{ok: boolean, roster: Object, added: Array<string>, rejected: Array<{name: string,
  *   reason: string}>}>} `added` holds the new entries' ids
  */
@@ -343,6 +390,7 @@ export async function addTeammates(items) {
                 updatedAt: now,
                 auras: [],
                 includeAsBuilt: true,
+                gameMode: item.gameMode || item.dto.gameMode || null,
             });
             added.push(id);
         }
@@ -375,15 +423,18 @@ export async function renameTeammate(id, name) {
  * Replace a teammate's build, keeping their name and id.
  * @param {string} id
  * @param {Object} dto
+ * @param {string} [gameMode] - Their game mode when the source knows it and the build does not carry it; the one
+ *   already saved is kept otherwise
  * @returns {Promise<{ok: boolean, roster: Object, found: boolean, reason?: string}>}
  */
-export async function replaceTeammateBuild(id, dto) {
+export async function replaceTeammateBuild(id, dto, gameMode) {
     const valid = validateTeammateDTO(dto);
     if (!valid.ok) return { ok: false, roster: await loadRoster(), found: false, reason: valid.reason };
     const result = await mutateRoster((roster, now) => {
         const entry = roster.entries.find((e) => e.id === id);
         if (!entry) return { write: false, found: false };
         entry.dto = sanitizeTeammateDTO(dto);
+        entry.gameMode = dto.gameMode || gameMode || entry.gameMode || null;
         entry.updatedAt = now;
         return { write: true, found: true };
     });

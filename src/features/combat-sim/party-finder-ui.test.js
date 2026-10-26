@@ -29,6 +29,7 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => state.charId,
+        getCurrentCharacterGameMode: () => state.gameMode,
         get characterData() {
             return { character: { name: 'Milkman' } };
         },
@@ -120,7 +121,15 @@ function build(magicLevel, weapon = '/items/rippling_trident') {
 function seedRoster(entries) {
     state.db = {
         savedAt: 1,
-        entries: entries.map(([id, name, dto]) => ({ id, name, dto, source: 'editor', addedAt: 1, updatedAt: 1 })),
+        entries: entries.map(([id, name, dto, gameMode]) => ({
+            id,
+            name,
+            dto,
+            source: 'editor',
+            addedAt: 1,
+            updatedAt: 1,
+            ...(gameMode ? { gameMode } : {}),
+        })),
     };
 }
 
@@ -214,6 +223,7 @@ async function mountTab() {
 
 beforeEach(() => {
     state.charId = 'me';
+    state.gameMode = undefined;
     state.db = undefined;
     state.failWrite = false;
     state.calls = [];
@@ -883,5 +893,70 @@ describe('redrawing while results stream in', () => {
         expect(tab._sortAsc).toBe(true);
         header().click();
         expect(tab._sortAsc).toBe(false);
+    });
+});
+
+describe('teammates of the other game mode', () => {
+    const planText = () => el('plan').textContent;
+    const member = (id) => tab.root.querySelector(`[data-pf-member="${id}"]`);
+
+    test('a market character searches without its Iron Cow teammates, who show greyed with the reason', async () => {
+        state.gameMode = 'standard';
+        seedRoster([
+            ['a', 'Ann', build(80), 'standard'],
+            ['b', 'Bob', build(81), 'ironcow'],
+            ['c', 'Cy', build(82)],
+        ]);
+        await mountTab();
+        expect(member('b').textContent).toContain("Iron Cow — can't party with a market character");
+        expect(member('b').querySelector('[data-pf-choice]').disabled).toBe(true);
+        expect(member('a').querySelector('[data-pf-choice]').disabled).toBe(false);
+        expect(member('c').textContent).toContain('game mode unknown');
+        expect(planText()).toContain('Left out, other game mode: Bob');
+        // Bob out leaves solo, Ann, Cy and both per zone/tier; with him in it would be more
+        const withBob = Number(/^(\d+) quick sim/.exec(planText())[1]);
+        state.gameMode = undefined;
+        tab._renderRoster();
+        expect(Number(/^(\d+) quick sim/.exec(planText())[1])).toBeGreaterThan(withBob);
+    });
+
+    test('an Iron Cow searches without its market teammates', async () => {
+        state.gameMode = 'legacy_ironcow';
+        seedRoster([
+            ['a', 'Ann', build(80), 'standard'],
+            ['b', 'Bob', build(81), 'ironcow'],
+        ]);
+        await mountTab();
+        expect(member('a').textContent).toContain("market character — can't party with an Iron Cow");
+        expect(member('b').textContent).not.toContain("can't party");
+        expect(planText()).toContain('Left out, other game mode: Ann');
+    });
+
+    test('when every teammate is of the other mode, the plan and the status say so', async () => {
+        state.gameMode = 'standard';
+        seedRoster([
+            ['a', 'Ann', build(80), 'ironcow'],
+            ['b', 'Bob', build(81), 'ironcow'],
+        ]);
+        await mountTab();
+        expect(planText()).toContain("No teammates of this character's mode");
+        await tab.start();
+        await flush();
+        expect(lastStatus()).toContain("No teammates of this character's mode");
+        expect(state.calls).toHaveLength(0);
+    });
+
+    test('an unknown live mode excludes nobody', async () => {
+        seedRoster([['a', 'Ann', build(80), 'ironcow']]);
+        await mountTab();
+        expect(member('a').textContent).not.toContain("can't party");
+        expect(planText()).not.toContain('other game mode');
+    });
+
+    test('copying your own build saves the live mode with it', async () => {
+        state.gameMode = 'ironcow';
+        await mountTab();
+        await tab._onCopySelf();
+        expect(tab._roster.entries[0].gameMode).toBe('ironcow');
     });
 });

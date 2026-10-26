@@ -504,3 +504,68 @@ describe('a kept row holds only what repricing reads', () => {
         expect(repriceMetrics(m, {}).profitPerHour).toBe(200);
     });
 });
+
+describe('party game mode', () => {
+    const power = (id) => dto(70 + id.charCodeAt(0));
+    const market = (id, name) => ({ ...mate(id, name, power(id)), gameMode: 'standard' });
+    const cow = (id, name) => ({ ...mate(id, name, power(id)), gameMode: 'ironcow' });
+    const labels = (plan) => plan.tasks.map((t) => partyLabel(t.comp));
+
+    test('a market character never gets an Iron Cow teammate', () => {
+        const plan = planSweep({ zones: [ZONE], roster: [market('a', 'Ann'), cow('b', 'Bob')], selfMode: 'market' });
+        expect(plan.total).toBe(2);
+        expect(labels(plan).join('|')).not.toContain('Bob');
+        expect(plan.excluded.map((e) => e.name)).toEqual(['Bob']);
+        expect(plan.excluded[0].reason).toContain('Iron Cow');
+    });
+
+    test('an Iron Cow never gets a market teammate, legacy Iron Cows count as Iron Cows', () => {
+        const roster = [
+            market('a', 'Ann'),
+            cow('b', 'Bob'),
+            { ...mate('c', 'Cy', power('c')), gameMode: 'legacy_ironcow' },
+        ];
+        const plan = planSweep({ zones: [ZONE], roster, selfMode: 'ironcow' });
+        expect(plan.excluded.map((e) => e.name)).toEqual(['Ann']);
+        expect(plan.total).toBe(4);
+    });
+
+    test('a mode carried by the build counts as much as one saved beside it', () => {
+        const roster = [mate('a', 'Ann', { ...dto(), gameMode: 'ironcow' })];
+        expect(planSweep({ zones: [ZONE], roster, selfMode: 'market' }).excluded).toHaveLength(1);
+    });
+
+    test('a teammate whose mode is unknown stays in, with a note', () => {
+        const plan = planSweep({
+            zones: [ZONE],
+            roster: [mate('a', 'Ann', power('a')), cow('b', 'Bob')],
+            selfMode: 'market',
+        });
+        expect(plan.total).toBe(2);
+        expect(plan.notes.join(' ')).toContain('Ann: game mode unknown');
+    });
+
+    test('an unknown live mode excludes no one and notes nothing', () => {
+        const plan = planSweep({ zones: [ZONE], roster: [market('a', 'Ann'), cow('b', 'Bob')], selfMode: null });
+        expect(plan.excluded).toEqual([]);
+        expect(plan.total).toBe(4);
+        expect(plan.notes).toEqual([]);
+    });
+
+    test('an excluded teammate stays out even when set to Always', () => {
+        const plan = planSweep({
+            zones: [ZONE],
+            roster: [market('a', 'Ann'), cow('b', 'Bob')],
+            choices: { b: 'always' },
+            selfMode: 'market',
+        });
+        expect(plan.total).toBe(2);
+        expect(plan.perZone[0].note).toBeNull();
+    });
+
+    test('every teammate of the other mode leaves the no-teammates-of-this-mode state', () => {
+        const plan = planSweep({ zones: [ZONE], roster: [cow('a', 'Ann'), cow('b', 'Bob')], selfMode: 'market' });
+        expect(plan.total).toBe(0);
+        expect(plan.perZone[0].note).toBe("no teammates of this character's mode");
+    });
+});

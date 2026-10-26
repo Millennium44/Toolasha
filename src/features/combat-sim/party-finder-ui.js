@@ -46,6 +46,10 @@ import {
     replaceTeammateBuild,
     setTeammateAuras,
     MAX_AURA_OPTIONS,
+    partyModeOf,
+    teammateModeOf,
+    teammateModeFit,
+    modeMismatchReason,
 } from './party-roster.js';
 import {
     planSweep,
@@ -480,6 +484,7 @@ export class PartyFinderTab {
             list.appendChild(empty);
         }
         const names = displayNames(entries);
+        const selfMode = this._selfMode();
         for (const entry of entries) {
             const row = document.createElement('div');
             row.dataset.pfMember = entry.id;
@@ -490,6 +495,20 @@ export class PartyFinderTab {
             name.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
             name.textContent = names.get(entry.id);
             name.title = `Saved from ${entry.source}`;
+            const fit = teammateModeFit(entry, selfMode);
+            let modeTag = null;
+            if (fit === 'mismatch' || (fit === 'unknown' && selfMode)) {
+                modeTag = document.createElement('span');
+                modeTag.dataset.pfModeNote = fit;
+                modeTag.style.cssText = 'font-size:10px; color:#ff9800; white-space:nowrap;';
+                modeTag.textContent =
+                    fit === 'mismatch' ? modeMismatchReason(teammateModeOf(entry)) : 'game mode unknown, kept';
+                if (fit === 'mismatch') {
+                    row.dataset.pfExcluded = '';
+                    name.style.opacity = '0.45';
+                    modeTag.style.color = '#888';
+                }
+            }
 
             const choice = document.createElement('select');
             choice.className = 'toolasha-select';
@@ -507,6 +526,10 @@ export class PartyFinderTab {
                 choice.appendChild(option);
             }
             choice.value = this._choices[entry.id] || 'try';
+            if (fit === 'mismatch') {
+                choice.disabled = true;
+                choice.style.opacity = '0.45';
+            }
             choice.addEventListener('change', () => {
                 this._choices[entry.id] = choice.value;
                 this._renderPlan();
@@ -524,6 +547,7 @@ export class PartyFinderTab {
             const auraCount = entry.auras?.length || 0;
             row.append(
                 name,
+                ...(modeTag ? [modeTag] : []),
                 choice,
                 button(auraCount ? `Auras (${auraCount})` : 'Auras', 'Aura options to try this teammate with', () => {
                     this._auraOpen = this._auraOpen === entry.id ? null : entry.id;
@@ -737,7 +761,7 @@ export class PartyFinderTab {
         }
         const target = this._el('editor-target')?.value;
         if (target) {
-            const result = await replaceTeammateBuild(target, player.dto);
+            const result = await replaceTeammateBuild(target, player.dto, this._editorPlayerMode(player));
             this._adoptRoster(result);
             this._rosterNote(
                 !result.ok
@@ -749,7 +773,9 @@ export class PartyFinderTab {
             );
             return;
         }
-        const result = await addTeammates([{ name: player.name, dto: player.dto, source: 'editor' }]);
+        const result = await addTeammates([
+            { name: player.name, dto: player.dto, source: 'editor', gameMode: this._editorPlayerMode(player) },
+        ]);
         this._adoptRoster(result);
         this._reportAdd(result);
     }
@@ -762,7 +788,9 @@ export class PartyFinderTab {
             return;
         }
         const name = `${dataManager.characterData?.character?.name || 'Me'} (copy)`;
-        const result = await addTeammates([{ name, dto, source: 'your build' }]);
+        const result = await addTeammates([
+            { name, dto, source: 'your build', gameMode: dataManager.getCurrentCharacterGameMode?.() || undefined },
+        ]);
         this._adoptRoster(result);
         this._reportAdd(result);
     }
@@ -911,6 +939,41 @@ export class PartyFinderTab {
         const options = this._selfOptions();
         select.innerHTML = options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
         if (options.some((o) => o.value === prior)) select.value = prior;
+        if (!select.dataset.pfModeBound) {
+            select.dataset.pfModeBound = '1';
+            // Who "you" are decides which teammates can party with you
+            select.addEventListener('change', () => this._renderRoster());
+        }
+    }
+
+    /**
+     * The party pool of the character the search is for: the live character's game mode, or for another player
+     * loaded in the editor and picked as "you" the one their build carries. Read from the picker, without building
+     * a DTO.
+     * @returns {'market'|'ironcow'|null} null when not known (no teammate is excluded)
+     * @private
+     */
+    _selfMode() {
+        const choice = this._el('self')?.value || 'live';
+        if (choice.startsWith('editor:')) {
+            const hrid = choice.slice('editor:'.length);
+            const player = this._editorPlayers().find((p) => p.hrid === hrid);
+            if (player && hrid !== this.host?._editor?.getSelfHrid?.()) return partyModeOf(player.dto?.gameMode);
+        }
+        return partyModeOf(dataManager.getCurrentCharacterGameMode?.());
+    }
+
+    /**
+     * The game mode a player loaded in the editor is saved with: the one their build carries, else the live
+     * character's when it is the live character.
+     * @param {{hrid: string, dto: Object}} player
+     * @returns {string|undefined}
+     * @private
+     */
+    _editorPlayerMode(player) {
+        if (player.dto?.gameMode) return player.dto.gameMode;
+        const isSelf = player.hrid === this.host?._editor?.getSelfHrid?.();
+        return (isSelf && dataManager.getCurrentCharacterGameMode?.()) || undefined;
     }
 
     /**
@@ -1094,6 +1157,7 @@ export class PartyFinderTab {
             choices: this._choices,
             maxPartySize: settings.maxPartySize,
             gameData,
+            selfMode: this._selfMode(),
         });
         const zoneCount = plan.perZone.filter((z) => z.count > 0).length;
         const rerunMax = settings.topK > 0 ? Math.min(settings.topK, Math.max(0, plan.total - zoneCount)) : 0;
@@ -1122,6 +1186,15 @@ export class PartyFinderTab {
             notes.push(
                 `${plan.total} quick sim${plan.total === 1 ? '' : 's'} at ${quickHours} h` +
                     (plan.rerunMax ? `, then up to ${plan.rerunMax} re-run at ${fullHours} h.` : '.')
+            );
+        }
+        if (plan.excluded?.length) {
+            const left = this._roster.entries.length - plan.skipped.length - plan.excluded.length;
+            notes.push(
+                left > 0
+                    ? `Left out, other game mode: ${plan.excluded.map((e) => e.name).join(', ')}.`
+                    : "No teammates of this character's mode: every saved teammate is of the other game mode " +
+                          '(market characters only party with market characters, Iron Cows with Iron Cows).'
             );
         }
         for (const zone of plan.perZone) {
@@ -1166,7 +1239,11 @@ export class PartyFinderTab {
             return;
         }
         if (!plan.total) {
-            this._status('Nothing to run: no party fits these zones and choices.');
+            this._status(
+                plan.excluded?.length && plan.excluded.length === this._roster.entries.length - plan.skipped.length
+                    ? "No teammates of this character's mode: every saved teammate is of the other game mode."
+                    : 'Nothing to run: no party fits these zones and choices.'
+            );
             this._renderPlan();
             return;
         }
