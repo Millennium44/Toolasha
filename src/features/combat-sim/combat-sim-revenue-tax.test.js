@@ -100,6 +100,7 @@ vi.mock('../../utils/enhancement-pricing.js', async (importOriginal) => ({
 }));
 
 const { calculateSimRevenue, seedSimPriceCache } = await import('./combat-sim-adapter.js');
+const { computeMetrics } = await import('./upgrade-advisor.js');
 
 /**
  * A dungeon run whose completion always drops one chimerical chest, which costs
@@ -260,6 +261,29 @@ describe('calculateSimRevenue unpriced containers for another player', () => {
         const { simResult, gameData } = unpriced();
         expect(calculateSimRevenue(simResult, gameData, 'player1', HOURS).revenuePerHour).toBeCloseTo(960, 9);
         expect(mocks.evRateCalls).toEqual([]);
+    });
+});
+
+describe('computeMetrics follows the analysed player’s tax', () => {
+    test('an unpriced container is valued at the rate given; none given, the live character’s', () => {
+        mocks.liveContainerValue = 960;
+        const { simResult, gameData } = simDropping('/items/mystery_box', KILLS, 0);
+        delete mocks.prices['/items/mystery_box'];
+        simResult.simulatedTime = HOURS * 3600 * 1e9;
+        const profit = (options) => computeMetrics(simResult, gameData, 'player1', HOURS, options).profitPerHour;
+
+        expect(profit({ saleTaxRate: 0 })).toBe(1000);
+        expect(profit({ saleTaxRate: MARKET_TAX })).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
+        expect(profit({})).toBeCloseTo(960, 9);
+    });
+
+    test('a priced drop is untaxed for an Iron Cow and taxed for a market player', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        simResult.simulatedTime = HOURS * 3600 * 1e9;
+        expect(computeMetrics(simResult, gameData, 'player1', HOURS, { saleTaxRate: 0 }).profitPerHour).toBe(1000);
+        expect(
+            computeMetrics(simResult, gameData, 'player1', HOURS, { saleTaxRate: MARKET_TAX }).profitPerHour
+        ).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
     });
 });
 
@@ -495,6 +519,29 @@ describe('an analysis price snapshot is taken before any run is valued', () => {
         expect(revenuePerHour).toBeCloseTo(1000 * (1 - MARKET_TAX));
         // Nothing priced it when the analysis started: missing, never 0 and never today's price
         expect(unpricedDrops).toContain('/items/rat_relic');
+    });
+
+    test('a non-self analysis seeds the keys its rate reads: a drop only a candidate rolls keeps the start price', () => {
+        const { gameData } = simDropping('/items/cheese', KILLS, 1000);
+        gameData.combatMonsterDetailMap['/monsters/rat'].rareDropTable = [
+            { itemHrid: '/items/rat_relic', dropRate: 1, minCount: 1, maxCount: 1, minDifficultyTier: 0 },
+        ];
+        mocks.prices['/items/rat_relic'] = { ask: 2000, bid: 2000 };
+        const cache = seedSimPriceCache(new Map(), zoneOf(gameData), {
+            zoneHrid: '/actions/combat/rats',
+            saleTaxRate: 0,
+        });
+        expect(cache.has('drop@0|/items/rat_relic')).toBe(true);
+        expect(cache.has('drop|/items/rat_relic')).toBe(false);
+
+        // The market moves, then a candidate that finds the relic is valued at the same rate: cheese 1000 + relic 2000
+        mocks.prices['/items/rat_relic'] = { ask: 9000, bid: 9000 };
+        const { simResult: relicSim } = simDropping('/items/rat_relic', KILLS, 9000);
+        const { revenuePerHour } = calculateSimRevenue(relicSim, gameData, 'player1', HOURS, {
+            priceCache: cache,
+            saleTaxRate: 0,
+        });
+        expect(revenuePerHour).toBe(3000);
     });
 
     test("a dungeon's chest keys are held at the start price too", () => {
