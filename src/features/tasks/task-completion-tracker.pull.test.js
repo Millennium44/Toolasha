@@ -187,4 +187,53 @@ describe('the weekly records on a sync pull', () => {
         // The arriving character reads its own history, not the departing one's
         expect(await tracker.getCompletions()).toEqual([]);
     });
+
+    test('a deleted duplicate does not take the copy this device keeps with it', async () => {
+        const e1 = done(7, NOW - DAY);
+        const e2 = done(7, NOW - DAY + 10);
+        storageMock.store.set(keyFor(e1.completedAt), [e1, e2]);
+        await tracker.load();
+        expect(tracker.entries).toEqual([e1]);
+
+        // The peer's tombstone for the later duplicate reaches the store as a removal of exactly that copy
+        tracker._adoptPulled('cow1', [], [e2]);
+        expect(tracker.entries).toEqual([e1]);
+
+        await tracker.flush();
+        tracker.ingest([claimed({ id: 8 })], NOW - 1000);
+        await tracker.flush();
+        const stored = Object.entries(Object.fromEntries(storageMock.store)).filter(([k]) =>
+            k.startsWith('taskCompletionRec_cow1_')
+        );
+        expect(stored.flatMap(([, v]) => v).map((e) => e.questId)).toContain(7);
+        const tombs = JSON.stringify(
+            Object.entries(Object.fromEntries(storageMock.store)).filter(([k]) => k.startsWith('taskCompletionTomb_'))
+        );
+        expect(tombs).not.toContain(JSON.stringify(e1).replace(/"/g, '\\"'));
+        tracker.forget();
+        expect((await tracker.getCompletions()).map((e) => e.questId)).toContain(7);
+    });
+
+    test('a peer deleting the only copy still removes it', async () => {
+        const e1 = done(7, NOW - DAY);
+        storageMock.store.set(keyFor(e1.completedAt), [e1]);
+        await tracker.load();
+        expect(tracker.entries).toEqual([e1]);
+
+        tracker._adoptPulled('cow1', [], [e1]);
+        expect(tracker.entries).toEqual([]);
+        expect(tracker.recordedIds.has(7)).toBe(false);
+    });
+
+    test('a removal arriving during the first read is applied when it commits', async () => {
+        const e1 = done(7, NOW - DAY);
+        const e2 = done(8, NOW - DAY + 10);
+        storageMock.store.set(keyFor(e1.completedAt), [e1, e2]);
+        const loading = tracker.load();
+        // The first read has not committed: the removal and an addition are parked
+        tracker._adoptPulled('cow1', [done(9, NOW - DAY + 20)], [e2]);
+        await loading;
+
+        expect(tracker.entries.map((e) => e.questId)).toEqual([7, 9]);
+    });
 });

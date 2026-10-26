@@ -268,6 +268,19 @@ export function pruneEntries(entries, now, windowMs = WINDOW_MS) {
 }
 
 /**
+ * One recorded copy of a completion, as the store tells copies apart (the entry's own contents).
+ * @param {Object} entry - A completion
+ * @returns {string} The copy's identity
+ */
+function copyKey(entry) {
+    try {
+        return JSON.stringify(entry);
+    } catch {
+        return '';
+    }
+}
+
+/**
  * One entry per task. A quest id is the server's, unique within a character, so two entries that carry the
  * same one are the same claim recorded twice: by two open devices that each saw it, whose timestamps differ
  * by milliseconds and so are different entries to the store. The earliest stays; an entry with no id is kept.
@@ -392,6 +405,8 @@ class TaskCompletionTracker {
         this._generation = 0;
         /** Entries a pull brought while the first read was still going, folded in when it commits */
         this._pulledEarly = [];
+        /** Exact copies a pull deleted in the same window, as `copyKey` strings */
+        this._goneEarly = new Set();
 
         this._store = createChunkedHistory({
             storeName: STORE_NAME,
@@ -499,7 +514,11 @@ class TaskCompletionTracker {
             // Entries a pull adopted while this read was in flight may post-date what it returned
             const early = this._pulledEarly;
             this._pulledEarly = [];
-            this.entries = dedupeByQuest(pruneEntries([...stored, ...early], Date.now()));
+            const goneEarly = this._goneEarly;
+            this._goneEarly = new Set();
+            this.entries = dedupeByQuest(
+                pruneEntries([...stored, ...early], Date.now()).filter((entry) => !goneEarly.has(copyKey(entry)))
+            );
             this.recordedIds = new Set(this.entries.map((entry) => entry.questId));
             this._loaded = true;
 
@@ -525,6 +544,7 @@ class TaskCompletionTracker {
         this.entries = [];
         this.recordedIds = new Set();
         this._pulledEarly = [];
+        this._goneEarly = new Set();
         this._loaded = false;
         this._store.forget();
     }
@@ -547,10 +567,13 @@ class TaskCompletionTracker {
         if (!this._loaded) {
             // The first read is still going; it folds these in when it commits (a switch clears them)
             this._pulledEarly.push(...fresh);
+            for (const entry of removed) this._goneEarly.add(copyKey(entry));
             return;
         }
-        const gone = new Set(removed.map((entry) => entry?.questId));
-        const kept = gone.size > 0 ? this.entries.filter((entry) => !gone.has(entry.questId)) : this.entries;
+        // The exact copies the pull deleted, never every entry of the same quest: a deleted duplicate (the
+        // later copy another device recorded) must not take the copy this device keeps with it
+        const gone = new Set(removed.map(copyKey));
+        const kept = gone.size > 0 ? this.entries.filter((entry) => !gone.has(copyKey(entry))) : this.entries;
         const next = dedupeByQuest(pruneEntries([...kept, ...fresh], Date.now()));
         if (next.length === this.entries.length && next.every((entry, i) => entry === this.entries[i])) return;
         this.entries = next;
