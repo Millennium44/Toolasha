@@ -268,6 +268,28 @@ export function pruneEntries(entries, now, windowMs = WINDOW_MS) {
 }
 
 /**
+ * One entry per task. A quest id is the server's, unique within a character, so two entries that carry the
+ * same one are the same claim recorded twice: by two open devices that each saw it, whose timestamps differ
+ * by milliseconds and so are different entries to the store. The earliest stays; an entry with no id is kept.
+ *
+ * @param {Array<Object>} entries - Completions
+ * @returns {Array<Object>} The entries, one per quest id, in their given order
+ */
+export function dedupeByQuest(entries) {
+    const first = new Map();
+    for (const entry of entries || []) {
+        const id = entry?.questId;
+        if (id === undefined || id === null) continue;
+        const kept = first.get(id);
+        if (!kept || (entry.completedAt || 0) < (kept.completedAt || 0)) first.set(id, entry);
+    }
+    return (entries || []).filter((entry) => {
+        const id = entry?.questId;
+        return id === undefined || id === null || first.get(id) === entry;
+    });
+}
+
+/**
  * A rate over one window of completions.
  *
  * The clock starts at the first completion in the window and its rewards are
@@ -368,6 +390,8 @@ class TaskCompletionTracker {
          * key alongside the departing character's entire history.
          */
         this._generation = 0;
+        /** Entries a pull brought while the first read was still going, folded in when it commits */
+        this._pulledEarly = [];
 
         this._store = createChunkedHistory({
             storeName: STORE_NAME,
@@ -378,8 +402,12 @@ class TaskCompletionTracker {
             // A pull does not take back a completion the window already let go of
             // (see `registerTaskCompletionRetention` for whole weeks)
             pruneIncoming: (entries) => pruneEntries(entries, Date.now()),
+            // Every write goes through `save()`'s folding chunk write, and the tracker adopts what a pull
+            // brought (`_adoptPulled`), so a pulled week lands under the running page with no reload
+            liveSafe: true,
             label: 'TaskCompletionTracker',
         });
+        this._store.onRefreshed?.((charId, fresh, removed) => this._adoptPulled(charId, fresh, removed));
     }
 
     /**
@@ -468,7 +496,10 @@ class TaskCompletionTracker {
             // departing character's, and `forget()` has already reset the
             // fields this would otherwise refill for whoever is current now
             if (this._generation !== generation) return [];
-            this.entries = pruneEntries(stored, Date.now());
+            // Entries a pull adopted while this read was in flight may post-date what it returned
+            const early = this._pulledEarly;
+            this._pulledEarly = [];
+            this.entries = dedupeByQuest(pruneEntries([...stored, ...early], Date.now()));
             this.recordedIds = new Set(this.entries.map((entry) => entry.questId));
             this._loaded = true;
 
@@ -493,8 +524,37 @@ class TaskCompletionTracker {
         this.live.clear();
         this.entries = [];
         this.recordedIds = new Set();
+        this._pulledEarly = [];
         this._loaded = false;
         this._store.forget();
+    }
+
+    /**
+     * Take in the completions a sync pull brought, which the store has already adopted.
+     *
+     * The pull wrote a week's record under the running page; memory is behind it. Entries are folded into
+     * `entries`/`recordedIds` by quest id (a claim recorded here and also arriving from a peer is one
+     * completion), anything the window has let go of is left out, and the ones a deletion removed leave.
+     * Subscribers are not told: the claim toast is for a claim made now, not for a peer's history.
+     * @param {string} charId - Whose completions the pull was for
+     * @param {Array<Object>} fresh - Entries memory lacked
+     * @param {Array<Object>} [removed] - Entries a deletion the pull brought took out
+     * @private
+     */
+    _adoptPulled(charId, fresh, removed = []) {
+        // A pull for a character that is no longer current describes somebody else
+        if (!charId || charId !== this._charId()) return;
+        if (!this._loaded) {
+            // The first read is still going; it folds these in when it commits (a switch clears them)
+            this._pulledEarly.push(...fresh);
+            return;
+        }
+        const gone = new Set(removed.map((entry) => entry?.questId));
+        const kept = gone.size > 0 ? this.entries.filter((entry) => !gone.has(entry.questId)) : this.entries;
+        const next = dedupeByQuest(pruneEntries([...kept, ...fresh], Date.now()));
+        if (next.length === this.entries.length && next.every((entry, i) => entry === this.entries[i])) return;
+        this.entries = next;
+        this.recordedIds = new Set(next.map((entry) => entry.questId));
     }
 
     /**
@@ -678,7 +738,7 @@ class TaskCompletionTracker {
             }
 
             if (this._generation !== generation) return;
-            this.entries = pruneEntries(this.entries, Date.now());
+            this.entries = dedupeByQuest(pruneEntries(this.entries, Date.now()));
             this.recordedIds = new Set(this.entries.map((entry) => entry.questId));
             await this._store.save(charId, this.entries);
         } catch (error) {
