@@ -2089,6 +2089,50 @@ describe('buildDetailedProfitDisplay Best plan row', () => {
         expect(html).toContain('has no market price');
     });
 
+    test('a 2-yield intermediate with one unpriced input gives a per-unit floor of 50, not 100', () => {
+        const unpriced = { strategy: 'buy', unitCost: Infinity, totalCost: Infinity, children: [] };
+        const intermediate = {
+            strategy: 'craft',
+            quantity: 1,
+            outputCount: 2,
+            actionsNeeded: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [leaf(100), unpriced],
+        };
+        planState.planner = vi.fn(() => rootOf(Infinity, [intermediate]));
+
+        const html = render();
+
+        expect(html).toContain(`≥ ${formatKMB(50)}`);
+        expect(html).not.toContain(`≥ ${formatKMB(100)}`);
+    });
+
+    test('the same floor holds for an intermediate nested under another', () => {
+        const unpriced = { strategy: 'buy', unitCost: Infinity, totalCost: Infinity, children: [] };
+        const inner = {
+            strategy: 'craft',
+            quantity: 1,
+            outputCount: 2,
+            actionsNeeded: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [leaf(100), unpriced],
+        };
+        const outer = {
+            strategy: 'craft',
+            quantity: 1,
+            outputCount: 1,
+            actionsNeeded: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [inner, leaf(10)],
+        };
+        planState.planner = vi.fn(() => rootOf(Infinity, [outer]));
+
+        expect(render()).toContain(`≥ ${formatKMB(60)}`);
+    });
+
     test('a plan with nothing priced at all shows no row rather than a zero', () => {
         const unpriced = { strategy: 'buy', unitCost: Infinity, totalCost: Infinity, children: [] };
         planState.planner = vi.fn(() => rootOf(Infinity, [unpriced]));

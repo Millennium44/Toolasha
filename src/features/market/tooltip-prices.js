@@ -475,13 +475,21 @@ function craftPlanPerAction(profitData, mode) {
         const outputAmount = profitData.outputAmount > 0 ? profitData.outputAmount : 1;
         if (Number.isFinite(plan.unitCost)) return { cost: plan.unitCost * outputAmount, partial: false };
 
-        // Sum the priced legs; an unpriced buy leg adds nothing and marks the bill partial
+        // Sum the priced legs; an unpriced buy leg adds nothing and marks the bill partial. A crafted
+        // node's children are sized for whole actions, so its share of the bill is scaled back to the
+        // units wanted from it (quantity over actions x yield) - the same per-unit cost `unitCost` is
+        // built from. Left unscaled, a multi-yield intermediate would charge the full craft for each
+        // unit, and the floor could exceed the complete cost.
         const walk = (node) => {
             if (Number.isFinite(node.totalCost)) return node.totalCost;
             if (node.strategy !== 'craft') return 0;
-            return (node.children || []).reduce((sum, child) => sum + walk(child), 0);
+            const quantity = node.quantity > 0 ? node.quantity : 1;
+            const yieldPerAction = node.outputCount > 0 ? node.outputCount : 1;
+            const actions = node.actionsNeeded > 0 ? node.actionsNeeded : Math.ceil(quantity / yieldPerAction);
+            const inputs = (node.children || []).reduce((sum, child) => sum + walk(child), 0);
+            return (inputs * quantity) / (actions * yieldPerAction);
         };
-        return { cost: (plan.children || []).reduce((sum, child) => sum + walk(child), 0), partial: true };
+        return { cost: walk(plan) * outputAmount, partial: true };
     } catch (error) {
         console.error('[TooltipPrices] The crafting planner failed:', error);
         return null;
