@@ -1015,6 +1015,92 @@ describe('planUpgradeBudget', () => {
     });
 });
 
+describe('planUpgradeBudget keeps a pinned loss as a loss (#562)', () => {
+    const body = () => row('Pinned body', { slot: '/equipment_types/body', cost: 100, profitGain: -1000 });
+    const ring = () => row('Ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 200 });
+    const pin = (r) => [candidateKey(r)];
+
+    test('the issue case: a -1000 pin and a +200 ring total -800, and the pinned row shows -1000', () => {
+        const b = body();
+        const plan = planUpgradeBudget([b, ring()], 500, { baseline: BASELINE, required: pin(b) });
+
+        expect(plan.blocked).toBeNull();
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Pinned body', 'Ring']);
+        expect(plan.picks[0].marginalAttemptsSaved).toBeCloseTo(-1000);
+        expect(plan.picks[1].marginalAttemptsSaved).toBeCloseTo(200);
+        expect(plan.gainTotal).toBeCloseTo(-800);
+    });
+
+    test('a lone losing pin gives a negative total, and an unpinned loser is never auto-picked', () => {
+        const b = body();
+        expect(planUpgradeBudget([b], 500, { baseline: BASELINE, required: pin(b) }).gainTotal).toBeCloseTo(-1000);
+        const free = planUpgradeBudget([b, ring()], 500, { baseline: BASELINE });
+        expect(free.picks.map((p) => p.candidate.description)).toEqual(['Ring']);
+    });
+
+    test('mixed positive, zero and negative pins sum with their signs', () => {
+        const a = row('A', { slot: '/equipment_types/body', profitGain: 300 });
+        const z = row('Z', { slot: '/equipment_types/legs', profitGain: 0 });
+        const n = row('N', { slot: '/equipment_types/neck', profitGain: -500 });
+        const plan = planUpgradeBudget([a, z, n], 1000, { baseline: BASELINE, required: [a, z, n].map(candidateKey) });
+
+        expect(plan.gainTotal).toBeCloseTo(-200);
+        expect(plan.picks.reduce((sum, p) => sum + p.marginalAttemptsSaved, 0)).toBeCloseTo(-200);
+    });
+
+    test('a pin chosen for DPS keeps its profit loss when the plan is on Profit/hr', () => {
+        const b = body();
+        b.metrics.dps = 150;
+        const onProfit = planUpgradeBudget([b], 500, { baseline: BASELINE, metricKey: 'profit', required: pin(b) });
+        const onDps = planUpgradeBudget([b], 500, { baseline: BASELINE, metricKey: 'dps', required: pin(b) });
+
+        expect(onProfit.gainTotal).toBeCloseTo(-1000);
+        expect(onDps.gainTotal).toBeCloseTo(50);
+    });
+
+    test('the inverted deaths axis: a pin that adds deaths is a negative gain, one that avoids them positive', () => {
+        const worse = row('Worse', { slot: '/equipment_types/body' });
+        const better = row('Better', { slot: '/equipment_types/legs' });
+        worse.metrics.deathsPerHour = 3;
+        better.metrics.deathsPerHour = 0.5;
+        const baseline = { ...BASELINE, deathsPerHour: 2 };
+        const plan = planUpgradeBudget([worse, better], 1000, {
+            baseline,
+            metricKey: 'deaths',
+            required: [worse, better].map(candidateKey),
+        });
+
+        expect(plan.picks.find((p) => p.candidate.description === 'Worse').marginalAttemptsSaved).toBeCloseTo(-1);
+        expect(plan.gainTotal).toBeCloseTo(0.5);
+        const metric = UPGRADE_PLAN_METRICS.find((m) => m.key === 'deaths');
+        expect(metric.format(-1)).toBe('1.00/hr more deaths');
+        expect(metric.format(1.5)).toBe('1.50/hr fewer deaths');
+    });
+
+    test('XP, encounters and score pins keep their sign too', () => {
+        for (const [metricKey, patch, expected] of [
+            ['xp', { xpPerHour: 700 }, -300],
+            ['encounters', { encountersPerHour: 8 }, -2],
+            ['score', null, -4],
+        ]) {
+            const r = row('Pin', { slot: '/equipment_types/body' });
+            if (patch) Object.assign(r.metrics, patch);
+            else r.score = -4;
+            const plan = planUpgradeBudget([r], 500, { baseline: BASELINE, metricKey, required: pin(r) });
+            expect(plan.gainTotal).toBeCloseTo(expected);
+        }
+    });
+
+    test('a within-noise pin still carries its loss and the estimate flag', () => {
+        const b = body();
+        b.significant = false;
+        const plan = planUpgradeBudget([b], 500, { baseline: BASELINE, required: pin(b) });
+
+        expect(plan.picks[0].provisional).toBe(true);
+        expect(plan.gainTotal).toBeCloseTo(-1000);
+    });
+});
+
 describe('the panel', () => {
     beforeEach(() => {
         mocks.upgradeResult = { baseline: null, results: [], food: null };
