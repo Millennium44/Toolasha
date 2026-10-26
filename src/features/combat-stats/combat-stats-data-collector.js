@@ -111,8 +111,9 @@ const DISCARD_LEGACY = { migrate: 'discard' };
 
 /**
  * Stored shape of the trackers that carries a wall-clock `startTime` plus the
- * time deliberately left out of the rate (`excludedMs`) and the last moment
- * anything was observed (`lastObservedAt`). Older records carry only
+ * time deliberately left out of the rate (`excludedMs`), the last snapshot
+ * reconciled (`lastSnapshotAt`) and the battle-traffic clock (`trafficAt`,
+ * `silenceMs`). Older records carry only
  * `elapsedMs`, which already dropped the time the page was closed, so they
  * have no observation point to reconcile from and start from a fresh baseline.
  */
@@ -137,7 +138,13 @@ function createSelfTracker(startTime) {
         lastUpdate: null, // Last consumption event timestamp
         lastEventByItem: {}, // { itemHrid: timestamp } - for deduplication
         excludedMs: 0, // Unobserved time left out of the rate
-        lastObservedAt: null, // Last event or snapshot seen for this character
+        lastSnapshotAt: null, // When this tracker was last reconciled against a snapshot
+        // The observation clock, shared by the whole party: the last battle message of
+        // any kind, and the total of the silences longer than UNOBSERVED_GAP_SECONDS
+        trafficAt: null,
+        silenceMs: 0,
+        silenceAtSnapshot: 0, // silenceMs when this tracker's last snapshot was reconciled
+        silenceAtLastBattle: 0, // silenceMs at the last new_battle, for the wave samples
         runKey: null, // combatStartTime of the run being tracked
         lastBattleId: null,
         lastWave: null,
@@ -176,6 +183,7 @@ class CombatStatsDataCollector {
         this.isInitialized = false;
         this.newBattleHandler = null;
         this.consumableEventHandler = null;
+        this.battleTrafficHandler = null;
         this.socketCloseHandler = null;
         /** Set when the game socket closed during the current session; cleared when a new session starts */
         this.connectionInterrupted = false;
@@ -250,6 +258,11 @@ class CombatStatsDataCollector {
 
         // Listen for battle_consumable_ability_updated (fires on each consumable use)
         webSocketHook.on('battle_consumable_ability_updated', this.consumableEventHandler);
+
+        // Every combat tick, for the whole party: the clock that says whether anybody
+        // was watching between two snapshots (see noteBattleTraffic). Only a timestamp.
+        this.battleTrafficHandler = () => this.noteBattleTraffic(Date.now());
+        webSocketHook.on('battle_updated', this.battleTrafficHandler);
 
         // A mid-session disconnect means events during the gap may have been missed, so the
         // session's numbers are flagged as possibly incomplete rather than silently trusted.
@@ -433,8 +446,28 @@ class CombatStatsDataCollector {
             startTime: Date.now(),
             lastUpdate: null,
             excludedMs: 0,
-            lastObservedAt: null,
+            lastSnapshotAt: null,
+            silenceAtSnapshot: this.consumableTracker.silenceMs || 0,
         };
+    }
+
+    /**
+     * Record a battle message of any kind arriving.
+     *
+     * During a fight the page hears about the whole party on every tick, so the
+     * time since the last battle message is the one observation clock for every
+     * tracker. A silence longer than `UNOBSERVED_GAP_SECONDS` (a closed or
+     * suspended page, a dropped connection, the feature switched off) is added to
+     * `silenceMs`; a long battle watched throughout adds nothing.
+     * @param {number} now - Timestamp (ms)
+     */
+    noteBattleTraffic(now) {
+        const tracker = this.consumableTracker;
+        if (typeof tracker.trafficAt === 'number') {
+            const silentMs = now - tracker.trafficAt;
+            if (silentMs > UNOBSERVED_GAP_SECONDS * 1000) tracker.silenceMs = (tracker.silenceMs || 0) + silentMs;
+        }
+        tracker.trafficAt = now;
     }
 
     /**
@@ -485,11 +518,15 @@ class CombatStatsDataCollector {
         const tracker = this.consumableTracker;
         if (tracker.lastBattleAt) {
             const intervalSeconds = (now - tracker.lastBattleAt) / 1000;
-            if (intervalSeconds > 0 && intervalSeconds <= UNOBSERVED_GAP_SECONDS) {
+            // A battle watched throughout is a sample however long it ran; one with a
+            // silence in it is not, since the page cannot say how much of it was fighting
+            const watched = (tracker.silenceMs || 0) === (tracker.silenceAtLastBattle || 0);
+            if (intervalSeconds > 0 && watched) {
                 tracker.waveIntervalSum += intervalSeconds;
                 tracker.waveIntervalCount++;
             }
         }
+        tracker.silenceAtLastBattle = tracker.silenceMs || 0;
         tracker.lastBattleAt = now;
         tracker.lastBattleId = data.battleId || 0;
         tracker.lastWave = typeof data.wave === 'number' ? data.wave : null;
@@ -513,7 +550,9 @@ class CombatStatsDataCollector {
      * @returns {{excludeSeconds: number, items: Array<{itemHrid: string, action: string, credited: number}>}}
      */
     reconcileTracker(tracker, lastKnown, consumables, fightingSeconds, now) {
-        const gapSeconds = typeof tracker.lastObservedAt === 'number' ? (now - tracker.lastObservedAt) / 1000 : null;
+        const gapSeconds = typeof tracker.lastSnapshotAt === 'number' ? (now - tracker.lastSnapshotAt) / 1000 : null;
+        const silenceMs = this.consumableTracker.silenceMs || 0;
+        const unobservedSeconds = Math.max(0, (silenceMs - (tracker.silenceAtSnapshot || 0)) / 1000);
         const result = reconcileSnapshot({
             items: consumables.map((consumable) => ({
                 itemHrid: consumable.itemHrid,
@@ -522,13 +561,14 @@ class CombatStatsDataCollector {
                 maxRatePerSecond: this.getMaxRatePerDay(consumable.itemHrid) / 86400,
             })),
             gapSeconds,
+            unobservedSeconds,
             fightingSeconds,
         });
 
         for (const entry of result.items) {
             if (entry.action !== 'credit') continue;
             // Consumption recovered before anything started the clock starts it where we last looked
-            if (!tracker.startTime) tracker.startTime = tracker.lastObservedAt || now;
+            if (!tracker.startTime) tracker.startTime = tracker.lastSnapshotAt || now;
             if (tracker.actualConsumed[entry.itemHrid] === undefined) {
                 tracker.actualConsumed[entry.itemHrid] = 0;
                 tracker.defaultConsumed[entry.itemHrid] = this.getDefaultConsumed(entry.itemHrid);
@@ -541,7 +581,8 @@ class CombatStatsDataCollector {
         if (tracker.startTime) {
             tracker.excludedMs = (tracker.excludedMs || 0) + Math.round(result.excludeSeconds * 1000);
         }
-        tracker.lastObservedAt = now;
+        tracker.lastSnapshotAt = now;
+        tracker.silenceAtSnapshot = silenceMs;
         return result;
     }
 
@@ -572,7 +613,12 @@ class CombatStatsDataCollector {
                     // silently dropped
                     tracker.startTime = typeof saved.startTime === 'number' ? saved.startTime : null;
                     tracker.excludedMs = saved.excludedMs || 0;
-                    tracker.lastObservedAt = typeof saved.lastObservedAt === 'number' ? saved.lastObservedAt : null;
+                    tracker.lastSnapshotAt = typeof saved.lastSnapshotAt === 'number' ? saved.lastSnapshotAt : null;
+                    // The closed time becomes a silence when the next battle message arrives
+                    tracker.trafficAt = typeof saved.trafficAt === 'number' ? saved.trafficAt : tracker.lastSnapshotAt;
+                    tracker.silenceMs = saved.silenceMs || 0;
+                    tracker.silenceAtSnapshot = saved.silenceAtSnapshot || 0;
+                    tracker.silenceAtLastBattle = saved.silenceAtLastBattle || 0;
                     tracker.runKey = saved.runKey || null;
                     tracker.lastBattleId = typeof saved.lastBattleId === 'number' ? saved.lastBattleId : null;
                     tracker.lastWave = typeof saved.lastWave === 'number' ? saved.lastWave : null;
@@ -590,7 +636,11 @@ class CombatStatsDataCollector {
                         tracker.startTime = typeof saved.startTime === 'number' ? saved.startTime : null;
                     }
                     tracker.excludedMs = 0;
-                    tracker.lastObservedAt = null;
+                    tracker.lastSnapshotAt = null;
+                    tracker.trafficAt = null;
+                    tracker.silenceMs = 0;
+                    tracker.silenceAtSnapshot = 0;
+                    tracker.silenceAtLastBattle = 0;
                     tracker.runKey = null;
                     tracker.lastBattleId = null;
                     tracker.lastWave = null;
@@ -622,10 +672,11 @@ class CombatStatsDataCollector {
                             startTime: current && playerTracker.startTime ? playerTracker.startTime : now - elapsedMs,
                             lastUpdate: playerTracker.lastUpdate || null,
                             excludedMs: current ? playerTracker.excludedMs || 0 : 0,
-                            lastObservedAt:
-                                current && typeof playerTracker.lastObservedAt === 'number'
-                                    ? playerTracker.lastObservedAt
+                            lastSnapshotAt:
+                                current && typeof playerTracker.lastSnapshotAt === 'number'
+                                    ? playerTracker.lastSnapshotAt
                                     : null,
+                            silenceAtSnapshot: current ? playerTracker.silenceAtSnapshot || 0 : 0,
                         };
                     }
                 });
@@ -707,7 +758,11 @@ class CombatStatsDataCollector {
                 // Moved forward with the 24-hour cap, so the capped counts and the clock stay in step
                 startTime: self.startTime ? Date.now() - cappedElapsed - selfExcludedMs : null,
                 excludedMs: selfExcludedMs,
-                lastObservedAt: self.lastObservedAt,
+                lastSnapshotAt: self.lastSnapshotAt,
+                trafficAt: self.trafficAt,
+                silenceMs: self.silenceMs,
+                silenceAtSnapshot: self.silenceAtSnapshot,
+                silenceAtLastBattle: self.silenceAtLastBattle,
                 runKey: self.runKey,
                 lastBattleId: self.lastBattleId,
                 lastWave: self.lastWave,
@@ -747,7 +802,8 @@ class CombatStatsDataCollector {
                         trackerVersion: TRACKER_VERSION,
                         startTime: tracker.startTime ? Date.now() - pCappedElapsed - partyExcludedMs : null,
                         excludedMs: partyExcludedMs,
-                        lastObservedAt: tracker.lastObservedAt ?? null,
+                        lastSnapshotAt: tracker.lastSnapshotAt ?? null,
+                        silenceAtSnapshot: tracker.silenceAtSnapshot || 0,
                     };
                 }
             });
@@ -817,7 +873,7 @@ class CombatStatsDataCollector {
                 return; // Skip duplicate event
             }
             this.consumableTracker.lastEventByItem[itemHrid] = now;
-            this.consumableTracker.lastObservedAt = now;
+            this.noteBattleTraffic(now);
 
             // A snapshot that arrived ahead of this use's event has already credited
             // it: the event then carries the very count that snapshot was credited at
@@ -914,6 +970,8 @@ class CombatStatsDataCollector {
             // Get current character ID to identify which player is the current user
             const currentCharacterId = dataManager.getCurrentCharacterId();
             const now = Date.now();
+            // After any reset above, so a fresh tracker's clock starts here
+            this.noteBattleTraffic(now);
 
             // Recover the consumption the event stream missed while the page was closed,
             // suspended or reconnecting. Only the current player's own entry feeds the
@@ -1360,6 +1418,11 @@ class CombatStatsDataCollector {
         if (this.consumableEventHandler) {
             webSocketHook.off('battle_consumable_ability_updated', this.consumableEventHandler);
             this.consumableEventHandler = null;
+        }
+
+        if (this.battleTrafficHandler) {
+            webSocketHook.off('battle_updated', this.battleTrafficHandler);
+            this.battleTrafficHandler = null;
         }
 
         if (this.socketCloseHandler) {

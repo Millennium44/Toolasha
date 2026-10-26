@@ -18,7 +18,7 @@
  * the snapshot, so the next comparison starts from what is really there.
  */
 
-/** A silence longer than this between two observations means nobody was watching. */
+/** A silence in battle traffic longer than this means nobody was watching. */
 export const UNOBSERVED_GAP_SECONDS = 180;
 
 /** Headroom over the cooldown-based maximum rate, for rounding and drink concentration. */
@@ -54,19 +54,28 @@ export function classifyItem({ lastKnown, snapshot, effectiveGapSeconds, maxRate
 /**
  * Reconcile every item of one tracker against one snapshot.
  *
- * Time base: a gap of at most {@link UNOBSERVED_GAP_SECONDS} is ordinary and
- * stays in. A longer one was not watched. Its drops are credited only when the
- * time spent fighting in it can be estimated; then that share of the gap stays
- * in and the rest is excluded. When nothing was credited, its consumption is
- * unknown and the whole gap is excluded.
+ * The span is the time since this tracker was last reconciled against a
+ * snapshot; the drop could have happened anywhere in it. Whether anybody was
+ * watching is a separate question, answered by `unobservedSeconds`: the battle
+ * traffic silences longer than {@link UNOBSERVED_GAP_SECONDS} inside the span.
+ * A long battle watched throughout is not a gap, however long it ran.
+ *
+ * - Watched throughout: the whole span bounds the drop and stays in the time base.
+ * - A silence, with the fighting time estimable: that time bounds the drop; a
+ *   credit keeps it in the time base and leaves out the rest of the silence.
+ * - A silence with no estimate: nothing bounds the drop (it could be a sell-off
+ *   as easily as hours of eating), so nothing is credited.
+ * - Nothing credited across a silence: its consumption is unknown and the
+ *   silence is left out whole.
  *
  * @param {Object} params
  * @param {Array<{itemHrid: string, lastKnown: (number|undefined), snapshot: number, maxRatePerSecond: number}>} params.items
- * @param {number|null} params.gapSeconds - Seconds since this tracker was last observed; null if never
- * @param {number|null} params.fightingSeconds - Estimated fighting time inside the gap; null if unknown
+ * @param {number|null} params.gapSeconds - Seconds since this tracker's last snapshot; null if never
+ * @param {number} [params.unobservedSeconds] - Seconds of that span nobody was watching
+ * @param {number|null} params.fightingSeconds - Estimated fighting time in the span; null if unknown
  * @returns {{unobserved: boolean, excludeSeconds: number, items: Array<{itemHrid: string, action: string, credited: number, missed: number}>}}
  */
-export function reconcileSnapshot({ items, gapSeconds, fightingSeconds }) {
+export function reconcileSnapshot({ items, gapSeconds, unobservedSeconds = 0, fightingSeconds }) {
     if (gapSeconds === null || gapSeconds === undefined || !Number.isFinite(gapSeconds)) {
         return {
             unobserved: false,
@@ -76,7 +85,8 @@ export function reconcileSnapshot({ items, gapSeconds, fightingSeconds }) {
     }
 
     const gap = Math.max(0, gapSeconds);
-    const unobserved = gap > UNOBSERVED_GAP_SECONDS;
+    const silence = Math.min(gap, Math.max(0, Number(unobservedSeconds) || 0));
+    const unobserved = silence > 0;
     const estimated = fightingSeconds > 0;
     const effectiveGap = unobserved && estimated ? Math.min(gap, fightingSeconds) : gap;
 
@@ -87,10 +97,6 @@ export function reconcileSnapshot({ items, gapSeconds, fightingSeconds }) {
             effectiveGapSeconds: effectiveGap,
             maxRatePerSecond: item.maxRatePerSecond,
         });
-        // An unobserved gap with no estimate of the time spent fighting has nothing to
-        // bound a drop by, nor any share of the gap that could honestly stay in the
-        // time base: the drop could be a sell-off as easily as hours of eating, so it
-        // is not credited and the whole gap is left out, as before reconciliation
         if (unobserved && !estimated && classified.action === 'credit') {
             return { itemHrid: item.itemHrid, action: 'reject', credited: 0, missed: classified.missed };
         }
@@ -100,7 +106,7 @@ export function reconcileSnapshot({ items, gapSeconds, fightingSeconds }) {
     let excludeSeconds = 0;
     if (unobserved) {
         const creditedAny = results.some((result) => result.action === 'credit');
-        excludeSeconds = creditedAny ? gap - effectiveGap : gap;
+        excludeSeconds = creditedAny ? Math.min(silence, gap - effectiveGap) : silence;
     }
 
     return { unobserved, excludeSeconds, items: results };

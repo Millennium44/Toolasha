@@ -23,12 +23,18 @@ const world = vi.hoisted(() => ({
     stored: new Map(),
     /** Called inside every storage.get, so a test can land a switch inside a read */
     onGet: null,
+    /** Live websocket handlers by message type */
+    handlers: {},
 }));
 
 vi.mock('../../core/websocket.js', () => ({
     default: {
-        on: () => {},
-        off: () => {},
+        on: (type, handler) => {
+            (world.handlers[type] ??= []).push(handler);
+        },
+        off: (type, handler) => {
+            world.handlers[type] = (world.handlers[type] || []).filter((h) => h !== handler);
+        },
         onSocketEvent: () => {},
         offSocketEvent: () => {},
         activeGameSocket: null,
@@ -137,6 +143,14 @@ const warmUp = async (make) => {
 };
 const AFTER_GAP = 304;
 
+/** `battle_updated` ticks every 5 s for `seconds`, as a watched fight sends them */
+const watch = (seconds) => {
+    for (let t = 0; t < seconds; t += 5) {
+        vi.advanceTimersByTime(5 * SECOND);
+        for (const handler of world.handlers.battle_updated || []) handler({ type: 'battle_updated' });
+    }
+};
+
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(T0);
@@ -145,6 +159,8 @@ beforeEach(() => {
     world.actionDetails = {};
     world.stored = new Map();
     world.onGet = null;
+    collector.cleanup();
+    world.handlers = {};
     _resetReadProbe();
     collector.isInitialized = false;
     collector.onCharacterSwitching();
@@ -164,7 +180,7 @@ describe('the first battle after load', () => {
         expect(self().actualConsumed[GUMMY]).toBeUndefined();
         expect(self().inventoryAmount[GUMMY]).toBe(1000);
         expect(self().excludedMs).toBe(0);
-        expect(self().lastObservedAt).toBe(T0);
+        expect(self().lastSnapshotAt).toBe(T0);
     });
 
     test('after a reload it credits what was used while the page was closed, from the saved observation point', async () => {
@@ -197,7 +213,7 @@ describe('the first battle after load', () => {
 
         // Its elapsed time already left the closed hours out, so crediting them would inflate the rate
         expect(self().actualConsumed[GUMMY]).toBe(5);
-        expect(self().lastObservedAt).toBe(T0);
+        expect(self().lastSnapshotAt).toBe(T0);
         expect(collector.calcElapsedSeconds()).toBeCloseTo(600, 0);
     });
 });
@@ -399,7 +415,7 @@ describe('a character swap mid-gap', () => {
         await collector.loadConsumableTracking();
 
         expect(self().inventoryAmount).toEqual({});
-        expect(self().lastObservedAt).toBeNull();
+        expect(self().lastSnapshotAt).toBeNull();
 
         // So the arriving character's first battle is a baseline, not a 600-gummy credit
         await collector.onNewBattle({
@@ -471,7 +487,7 @@ describe('a party', () => {
             trackerVersion: 2,
             startTime: null,
             excludedMs: 0,
-            lastObservedAt: at,
+            lastSnapshotAt: at,
             runKey: RUN,
             lastBattleId: 4,
             lastWave: 0,
@@ -490,7 +506,7 @@ describe('a party', () => {
                 trackerVersion: 2,
                 startTime: at - 600 * SECOND,
                 excludedMs: 0,
-                lastObservedAt: at,
+                lastSnapshotAt: at,
             },
         });
         world.stored.set('partyConsumableSnapshots_char-self', { Ally: { [GUMMY]: 800 } });
@@ -562,5 +578,59 @@ describe('saving', () => {
         const party = world.stored.get('partyConsumableTrackers_char-self').Ally;
         expect(party.elapsedMs).toBe(0);
         expect(party.startTime).toBeLessThanOrEqual(Date.now());
+    });
+});
+
+describe('the observation clock is battle traffic, not the time between snapshots', () => {
+    test("an event after a silence does not shrink the other items' gap", async () => {
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 1000), slot(COFFEE, 500)] }));
+        // Suspended for an hour with 60 gummies used unseen; a coffee event arrives first
+        vi.advanceTimersByTime(HOUR);
+        await collector.onConsumableUsed(used(COFFEE, 499));
+        vi.advanceTimersByTime(SECOND);
+        await collector.onNewBattle(battle({ battleId: AFTER_GAP, self: [slot(GUMMY, 940), slot(COFFEE, 499)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(60);
+        expect(self().actualConsumed[COFFEE]).toBe(1);
+        expect(self().excludedMs).toBe(0);
+    });
+
+    test("a 240 s battle watched throughout credits a party member's four foods", async () => {
+        await collector.initialize();
+        const ally = (count) => player('char-ally', 'Ally', [slot(GUMMY, count)]);
+        await collector.onNewBattle(battle({ self: [slot(COFFEE, 500)], others: [ally(100)] }));
+        watch(240);
+        await collector.onNewBattle(battle({ battleId: 2, self: [slot(COFFEE, 500)], others: [ally(96)] }));
+
+        expect(collector.partyConsumableTrackers.Ally.actualConsumed[GUMMY]).toBe(4);
+        expect(collector.partyConsumableTrackers.Ally.excludedMs).toBe(0);
+    });
+
+    test('a run of long watched battles builds a wave estimate, so a later disconnect can be credited', async () => {
+        await collector.initialize();
+        for (let battleId = 1; battleId <= 4; battleId++) {
+            if (battleId > 1) watch(240);
+            await collector.onNewBattle(battle({ battleId, self: [slot(GUMMY, 1000)] }));
+        }
+        expect(self().waveIntervalCount).toBe(3);
+
+        // Disconnected for an hour: no ticks, 16 battles (~64 minutes) fought meanwhile
+        vi.advanceTimersByTime(HOUR);
+        await collector.onNewBattle(battle({ battleId: 20, self: [slot(GUMMY, 940)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(60);
+    });
+
+    test('a real disconnect, with no ticks, is still unobserved', async () => {
+        await collector.initialize();
+        const ally = (count) => player('char-ally', 'Ally', [slot(GUMMY, count)]);
+        await collector.onNewBattle(battle({ self: [slot(COFFEE, 500)], others: [ally(100)] }));
+        vi.advanceTimersByTime(240 * SECOND);
+        await collector.onNewBattle(battle({ battleId: 2, self: [slot(COFFEE, 500)], others: [ally(96)] }));
+
+        // No ticks, and no wave estimate yet: the drop cannot be bounded
+        expect(collector.partyConsumableTrackers.Ally.actualConsumed[GUMMY] || 0).toBe(0);
+        expect(collector.partyConsumableTrackers.Ally.excludedMs).toBe(240 * SECOND);
+        expect(self().waveIntervalCount).toBe(0);
     });
 });
