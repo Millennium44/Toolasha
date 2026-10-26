@@ -1019,7 +1019,34 @@ export const simCacheMethods = {
      * @returns {Object|null}
      */
     getCachedCombatResult(monsterHrid, roomLevel, precisionPct = null) {
-        return this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, null, precisionPct)) || null;
+        return (
+            this._withLiveExperience(
+                this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, null, precisionPct))
+            ) || null
+        );
+    },
+
+    /**
+     * A cached combat result with its experience figures worked out under the
+     * bonus in force now.
+     *
+     * The win rate and fight time are the sim's and belong to the key; the
+     * experience a clear pays is not: it is `roomLevel x 50 x (1 + bonus)`,
+     * and the bonus (the labyrinth experience upgrade, the Experience community
+     * buff) is in neither the key nor the build fingerprint. Without this a
+     * result cached before a purchase or a community buff change kept quoting
+     * the old EXP / Room and EXP / Hour until an unrelated wipe. Re-simming a
+     * room for a ratio would cost minutes, so the two fields are recomputed on
+     * read. The same object comes back when nothing moved.
+     * @param {Object|null|undefined} result - From combatCache
+     * @returns {Object|null|undefined} The result, or a copy with fresh XP
+     */
+    _withLiveExperience(result) {
+        if (!result || !(result.roomLevel > 0) || !Number.isFinite(result.xpPerRoom)) return result;
+        const xpPerRoom = result.roomLevel * 50 * (1 + this.getCombatExperienceBonus());
+        const xpPerHour = roomXpPerHour(xpPerRoom, result.expectedSeconds, result.winRate);
+        if (xpPerRoom === result.xpPerRoom && xpPerHour === result.xpPerHour) return result;
+        return { ...result, xpPerRoom, xpPerHour };
     },
 
     // -------------------------------------------------------------------------
@@ -1328,7 +1355,9 @@ export const simCacheMethods = {
         const rawBar = Number(options.decideAgainst);
         const bar = Number.isFinite(rawBar) && rawBar > 0 && rawBar < 1 ? rawBar : null;
         const precisionPct = clampPrecisionPct(options.precisionPct);
-        const cached = this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, bar, precisionPct));
+        const cached = this._withLiveExperience(
+            this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, bar, precisionPct))
+        );
         if (cached && !(options.uncapped === true && cached.hitTarget === false)) return cached;
         return null;
     },
@@ -1348,7 +1377,9 @@ export const simCacheMethods = {
         // A measured result already in hand answers a decision for free, as
         // long as its interval clears the bar — no reason to simulate again
         if (bar !== null) {
-            const measured = this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, null, precisionPct));
+            const measured = this._withLiveExperience(
+                this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, null, precisionPct))
+            );
             if (
                 measured?.trials > 0 &&
                 decidedAgainst(Math.round(measured.clearChance * measured.trials), measured.trials, bar)

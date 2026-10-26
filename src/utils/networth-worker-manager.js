@@ -15,6 +15,7 @@ import { createMatrixMath } from './matrix-inverse.js';
 import { getShopCoinCost } from './game-lookups.js';
 import { yieldToBrowser } from './yield-to-browser.js';
 import { TRAINEE_SHOP_PRICE } from './enhancement-pricing.js';
+import { getArtisanBonus } from './artisan-bonus.js';
 import { priceBase, priceGuarded, priceMaterial } from './enhancement-input-pricing.js';
 
 // Worker pool instance
@@ -88,8 +89,8 @@ function calculateProductionCost(itemHrid, priceMap, recipes, flags) {
         }
     }
 
-    // Apply Artisan Tea reduction (0.9x)
-    totalPrice *= 0.9;
+    // Artisan reduction, resolved on the main thread per action skill and shipped in the payload
+    totalPrice *= 1 - (action.artisanBonus > 0 ? action.artisanBonus : 0);
 
     // Add upgrade item cost if this is an upgrade recipe (for refined items)
     if (action.upgradeItemHrid) {
@@ -688,6 +689,7 @@ function recipeIndexFor(actionDetailMap) {
             index.set(output.itemHrid, {
                 inputItems: action.inputItems || null,
                 upgradeItemHrid: action.upgradeItemHrid || null,
+                actionType: action.type || null,
                 outputCount: output.count || 1,
             });
         }
@@ -751,11 +753,18 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
     // Only the reachable slice of each shared structure crosses the thread
     // boundary. Keys are copied only where they exist, because the worker's
     // enhancement-material path tests presence, not value.
+    // The Artisan bonus is read fresh for every batch (never kept in the memoized recipe index), so a tea
+    // change shows in the next recalculation
     const recipes = {};
     const prunedPriceMap = {};
+    const artisanByType = new Map();
+    const artisanFor = (type) => {
+        if (!artisanByType.has(type)) artisanByType.set(type, type ? getArtisanBonus(type) : 0);
+        return artisanByType.get(type);
+    };
     for (const hrid of needed) {
         const recipe = recipeIndex.get(hrid);
-        if (recipe) recipes[hrid] = recipe;
+        if (recipe) recipes[hrid] = { ...recipe, artisanBonus: artisanFor(recipe.actionType) };
         for (const suffix of [':0', ':0_ask', ':0_bid']) {
             const key = hrid + suffix;
             if (key in priceMap) prunedPriceMap[key] = priceMap[key];
