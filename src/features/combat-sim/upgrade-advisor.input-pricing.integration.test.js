@@ -258,13 +258,46 @@ describe('an enhancement row prices both levels as the pricing mode and custom p
         expect(cost).toBe(1_800_000 - 480_000);
     });
 
-    test('a target the resolver cannot price leaves the row unpriced, never free', () => {
-        // A custom price of 0 reads as unpriced, though the book lists the +5
+    test('a target the resolver cannot price is not a market trade: the row is an enhance at the bench', () => {
+        // A custom price of 0 reads as unpriced, though the book lists the +5. This suite's bench sweep is
+        // stubbed, so what is checked is the route; an unpriced sweep is null (upgrade-advisor.test.js)
         state.custom[`${SWORD}:5:buy`] = 0;
+        const { detail } = both(enhance());
+        expect(detail).toMatchObject({ source: 'sim', enhancementPath: true });
+        expect(detail.buys).toEqual([]);
+    });
+
+    test('hybrid: a worn level with only an ask is sold at it, not dropped to the bench', () => {
+        state.sides = { buy: 'ask', sell: 'ask' };
+        state.books[`${SWORD}:3`] = { ask: 600_000 };
         const { cost, detail } = both(enhance());
-        expect(cost).toBeNull();
-        expect(detail.net).toBeNull();
-        expect(detail.unpriced).toEqual(['Cheese Sword']);
+        expect(detail.source).toBe('market');
+        expect(detail.credit).toBe(576_000);
+        expect(cost).toBe(2_000_000 - 576_000);
+    });
+
+    test('optimistic: a target with only a bid is bought at it', () => {
+        state.sides = { buy: 'bid', sell: 'ask' };
+        state.books[`${SWORD}:5`] = { bid: 1_500_000 };
+        const { cost, detail } = both(enhance());
+        expect(detail.source).toBe('market');
+        expect(detail.buys[0].price).toBe(1_500_000);
+        expect(cost).toBe(1_500_000 - 576_000);
+    });
+
+    test('a custom buy price on an unlisted target is the buy', () => {
+        delete state.books[`${SWORD}:5`];
+        state.custom[`${SWORD}:5:buy`] = 1_800_000;
+        const { cost, detail } = both(enhance());
+        expect(detail.source).toBe('market');
+        expect(cost).toBe(1_800_000 - 480_000);
+    });
+
+    test('an unlisted worn level falls back to the bench, as before', () => {
+        delete state.books[`${SWORD}:3`];
+        const { detail } = both(enhance());
+        expect(detail).toMatchObject({ source: 'sim', enhancementPath: true });
+        expect(detail.credits).toEqual([]);
     });
 
     test("an Iron Cow analysed by a market player trades the +3 in untaxed; the live character's own pays the tax", () => {
