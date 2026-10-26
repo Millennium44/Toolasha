@@ -14,6 +14,7 @@ import { getIconHref, getItemHridFromIconHref, getItemHridFromName } from './gam
 
 const INVENTORY_LOCATION = '/item_locations/inventory';
 const COWBELL_HRID = '/items/cowbell';
+const BUFF_KEY_PREFIX = '/community_buff_types/';
 const BUFF_TYPE_PREFIX = '/buff_types/';
 const AMOUNT_RE = /\d[\d.,\s]*\d|\d/;
 
@@ -107,20 +108,32 @@ export function resolveCostLines(inputContainer) {
  *   Community Buff dialog or the buff/cost cannot be resolved
  */
 export function resolveCommunityBuffCostLines(inputContainer) {
-    const buffIcon = inputContainer?.parentElement?.querySelector('[class*="CommunityBuff_communityBuff"]');
-    const iconName = getIconHref(buffIcon, 'buffs_sprite')?.split('#')[1];
+    const iconName = getIconHref(findCommunityBuffIcon(inputContainer), 'buffs_sprite')?.split('#')[1];
     if (!iconName) return null;
 
     const detailMap = dataManager.getInitClientData()?.communityBuffTypeDetailMap;
     if (!detailMap) return null;
 
-    const buffType = Object.values(detailMap).find(
-        (detail) => detail?.buff?.typeHrid === `${BUFF_TYPE_PREFIX}${iconName}`
-    );
-    const cost = buffType?.cowbellCost;
+    // The icon fragment names the map key suffix for some buffs and the buff.typeHrid suffix for
+    // others (experience / wisdom): an exact key match wins, then the typeHrid.
+    const entries = Object.entries(detailMap);
+    const match =
+        entries.find(([key]) => key === `${BUFF_KEY_PREFIX}${iconName}`)?.[1] ||
+        entries.find(([, detail]) => detail?.buff?.typeHrid === `${BUFF_TYPE_PREFIX}${iconName}`)?.[1];
+    const cost = match?.cowbellCost;
     if (!(cost > 0)) return null;
 
     return [{ itemHrid: COWBELL_HRID, perUnitAmount: cost }];
+}
+
+/**
+ * The Community Buff icon block of a Cowbell Store dialog, or null for any other dialog (item
+ * purchases, MooPass), whose "You Pay" row is already a per-unit price.
+ * @param {Element} inputContainer
+ * @returns {Element|null}
+ */
+export function findCommunityBuffIcon(inputContainer) {
+    return inputContainer?.parentElement?.querySelector('[class*="CommunityBuff_communityBuff"]') || null;
 }
 
 /**

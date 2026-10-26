@@ -15,6 +15,7 @@ import {
     computeMaxAffordable,
     findMaxValidQuantity,
     resolveCommunityBuffCostLines,
+    findCommunityBuffIcon,
     normalizeCostLinesToUnit,
 } from '../../utils/shop-max-buy.js';
 import { setReactInputValue } from '../../utils/react-input.js';
@@ -148,7 +149,8 @@ class ShopMaxBuyButton {
      * @returns {Array<{itemHrid: string, perUnitAmount: number}>}
      */
     resolveUnitCostLines(container, input, panelKey) {
-        if (panelKey !== 'cowbellStore') return resolveCostLines(container);
+        // Only Community Buff dialogs open at a multi-minute total; item dialogs show a unit price
+        if (panelKey !== 'cowbellStore' || !findCommunityBuffIcon(container)) return resolveCostLines(container);
 
         const fromGameData = resolveCommunityBuffCostLines(container);
         if (fromGameData) return fromGameData;

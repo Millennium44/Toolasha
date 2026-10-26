@@ -31,6 +31,7 @@ vi.mock('../../core/data-manager.js', () => ({
                     buff: { typeHrid: '/buff_types/gathering' },
                     cowbellCost: 10,
                 },
+                '/community_buff_types/experience': { buff: { typeHrid: '/buff_types/wisdom' }, cowbellCost: 20 },
             },
         }),
         getInventory: () => [],
@@ -255,6 +256,29 @@ describe('ShopMaxBuyButton.resolveUnitCostLines', () => {
             { itemHrid: '/items/cowbell', perUnitAmount: 10 },
         ]);
         state.cost = [];
+    });
+
+    test('a Cowbell Store item dialog without a buff icon keeps its per-unit price', () => {
+        document.body.innerHTML = `
+            <div class="CowbellStorePanel_modalContent">
+                <div class="CowbellStorePanel_inputContainer"><input type="number" value="5"></div>
+                <div>You Pay: 100</div>
+            </div>`;
+        const container = document.querySelector('[class*="inputContainer"]');
+        state.cost = [{ itemHrid: '/items/cowbell', perUnitAmount: 100 }];
+        expect(
+            shopMaxBuyButton.resolveUnitCostLines(container, container.querySelector('input'), 'cowbellStore')
+        ).toEqual(state.cost);
+        state.cost = [];
+    });
+
+    test('a buff dialog matching by key suffix (experience) or typeHrid suffix (wisdom) resolves', () => {
+        for (const icon of ['experience', 'wisdom']) {
+            const { container, input } = buffDialog(icon, '200');
+            expect(shopMaxBuyButton.resolveUnitCostLines(container, input, 'cowbellStore')).toEqual([
+                { itemHrid: '/items/cowbell', perUnitAmount: 20 },
+            ]);
+        }
     });
 
     test('other shops keep reading the cost row as it is', () => {

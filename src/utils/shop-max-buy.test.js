@@ -17,9 +17,21 @@ vi.mock('../core/data-manager.js', () => ({
                 '/items/cowbell': { name: 'Cowbell' },
             },
             communityBuffTypeDetailMap: {
+                '/community_buff_types/combat_drop_quantity': {
+                    buff: { typeHrid: '/buff_types/combat_drop_quantity' },
+                    cowbellCost: 10,
+                },
+                '/community_buff_types/enhancing_speed': {
+                    buff: { typeHrid: '/buff_types/action_speed' },
+                    cowbellCost: 10,
+                },
                 '/community_buff_types/experience': { buff: { typeHrid: '/buff_types/wisdom' }, cowbellCost: 20 },
                 '/community_buff_types/gathering_quantity': {
                     buff: { typeHrid: '/buff_types/gathering' },
+                    cowbellCost: 10,
+                },
+                '/community_buff_types/production_efficiency': {
+                    buff: { typeHrid: '/buff_types/efficiency' },
                     cowbellCost: 10,
                 },
             },
@@ -184,6 +196,13 @@ describe('Community Buff dialogs', () => {
     test('each buff resolves its own cost by icon, whatever language the dialog text is in', () => {
         expect(resolveCommunityBuffCostLines(buffDialog('wisdom'))[0].perUnitAmount).toBe(20);
         expect(resolveCommunityBuffCostLines(buffDialog('gathering'))[0].perUnitAmount).toBe(10);
+    });
+
+    test('the icon matches the map key suffix (experience) or the typeHrid suffix (wisdom)', () => {
+        expect(resolveCommunityBuffCostLines(buffDialog('experience'))[0].perUnitAmount).toBe(20);
+        expect(resolveCommunityBuffCostLines(buffDialog('wisdom'))[0].perUnitAmount).toBe(20);
+        expect(resolveCommunityBuffCostLines(buffDialog('gathering_quantity'))[0].perUnitAmount).toBe(10);
+        expect(resolveCommunityBuffCostLines(buffDialog('action_speed'))[0].perUnitAmount).toBe(10);
     });
 
     test('an unknown buff or a non-buff dialog resolves to null so the caller can divide instead', () => {
