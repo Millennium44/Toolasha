@@ -13,6 +13,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The goal planner asks you to earn the most you are ever short along the plan, not every training step's startup cost added together (100K of training startup plus a 1M purchase now needs 1M, not 1.1M).
 - Turning off listing drag order mid-drag puts the rows back and clears the drag marks.
 
+### Leftovers (2026-10-26): Combat Sim and Lab upgrade costs
+
+- A cape or quiver bought with shop tokens is costed by your pricing mode in upgrade analysis and the equipment savings row, matching the treasure tracker's token value.
+- A replaced piece with no sale price now says "no sale price, so nothing is credited back" instead of "0 back".
+- The budget plan says "the cheapest measured upgrade costs more" only when a pick was actually over budget, and its total notes when a guild shrine pick leaves out unpriced guild tokens.
+
 ### Combat Sim: Party finder
 
 - New Party tab: save teammate builds (from the editor, an import or a copy of your own), give them aura options to try, and it sims every party of you plus your teammates across the zones you pick, ranking your own EXP/hr and profit/hr against solo (worse than solo in red); a quick pass is re-run in full for the top results, and any row loads into the editor.

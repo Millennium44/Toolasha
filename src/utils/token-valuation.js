@@ -267,6 +267,22 @@ export function shopPurchasePrice(itemHrid, shopMaps, priceOf) {
 }
 
 /**
+ * {@link shopPurchasePrice} with every currency valued the way the profit pricing mode
+ * values a sale: a dungeon token through its own shop at the mode's side, anything else
+ * at the profit sell price. This is the reading the treasure tracker prices a shop-only
+ * piece with, so a cape's cost agrees wherever it is shown. No tax is added.
+ *
+ * @param {string} itemHrid - The item
+ * @param {Array<Object>} shopMaps - The game's shop maps, in preference order
+ * @returns {number|null} Coins, or null when nothing prices it
+ */
+export function shopPurchasePriceByMode(itemHrid, shopMaps) {
+    return shopPurchasePrice(itemHrid, shopMaps, (hrid) =>
+        hrid ? (calculateDungeonTokenValue(hrid) ?? getItemPrice(hrid, { context: 'profit', side: 'sell' })) : null
+    );
+}
+
+/**
  * The best coins a labyrinth token can be turned into.
  *
  * Labyrinth rewards are bought with tokens, and a token is worth whatever the
