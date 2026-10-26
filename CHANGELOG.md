@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task completions sync without a reload
+
+- A sync pull that brings task completions from another device now folds them in without asking you to reload, and a claim seen by two open devices counts once in task income.
+
 ### Leftovers (2026-10-26): Combat Sim and Lab upgrade costs
 
 - A cape or quiver bought with shop tokens is costed by your pricing mode in upgrade analysis and the equipment savings row, matching the treasure tracker's token value.
