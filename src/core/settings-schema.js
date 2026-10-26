@@ -2373,6 +2373,14 @@ export const settingsGroups = {
                 help: 'Value guild tokens you hold through the Guild Shop credit exchange (credits per token × the gold value of a credit). Tokens already spent on shrine levels are not counted. Disable to exclude them from net worth.',
                 requires: 'networth',
             },
+            networth_includeGuildCredits: {
+                id: 'networth_includeGuildCredits',
+                label: 'Value guild credits (net worth, inventory totals)',
+                type: 'checkbox',
+                default: true,
+                help: 'Guild Credits cannot be sold, so each is valued at the cheapest tradeable item that converts into it. Disable to leave them out of net worth and inventory totals.',
+                requires: 'networth',
+            },
             networth_abilityBooksAsInventory: {
                 id: 'networth_abilityBooksAsInventory',
                 label: 'Count ability books as inventory (Current Assets)',

@@ -40,6 +40,7 @@ import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
+import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
 
 /**
  * Calculate the value of a single item
@@ -215,7 +216,7 @@ function resolveNetworthPrices(itemHrid, enhancementLevel, priceCache = null) {
  */
 export function isUnpricedCurrency(itemHrid) {
     const kind = tokenKind(itemHrid);
-    if (kind !== 'task' && kind !== 'labyrinth' && kind !== 'guild') return false;
+    if (kind !== 'task' && kind !== 'labyrinth' && kind !== 'guild' && kind !== 'credit') return false;
     if (!isTokenIncluded(itemHrid)) return false;
 
     return !(explainTokenValue(itemHrid).rate > 0);
@@ -237,18 +238,20 @@ export const TOKEN_INCLUDE_SETTINGS = {
     task: 'networth_includeTaskTokens',
     labyrinth: 'networth_includeLabyrinthTokens',
     guild: 'networth_includeGuildTokens',
+    credit: 'networth_includeGuildCredits',
 };
 
 /**
  * Which kind of token an item is, if any.
  * @param {string} itemHrid - Item HRID
- * @returns {'task'|'dungeon'|'labyrinth'|'guild'|null} The kind, or null for anything else
+ * @returns {'task'|'dungeon'|'labyrinth'|'guild'|'credit'|null} The kind, or null for anything else
  */
 export function tokenKind(itemHrid) {
     if (itemHrid === '/items/task_token') return 'task';
     if (DUNGEON_TOKEN_HRIDS.has(itemHrid)) return 'dungeon';
     if (itemHrid === LABYRINTH_TOKEN_HRID) return 'labyrinth';
     if (isGuildTokenHrid(itemHrid)) return 'guild';
+    if (GUILD_CREDIT_HRIDS.has(itemHrid)) return 'credit';
     return null;
 }
 
@@ -290,6 +293,7 @@ export const GUILD_RATE_UNKNOWN_NOTE = 'no exchange rate yet — open the Guild 
  * - Labyrinth tokens: the best labyrinth shop line, priced the way the dungeon
  *   tokens are — the tooltip's best Gold/Token under the default mode.
  * - Guild tokens: the guild-token valuation, tokens → credits → gold.
+ * - Guild credits: the cheapest gold cost of one credit through the items that convert into it.
  *
  * @param {string} itemHrid - Token HRID
  * @returns {{rate: number|null, bestItemHrid: string|null, note: string|null}} Coins per token
@@ -327,6 +331,13 @@ export function explainTokenValue(itemHrid) {
             return valuation?.gold > 0
                 ? { rate: valuation.gold, bestItemHrid: valuation.creditItemHrid || null, note: valuation.note }
                 : none;
+        }
+        case 'credit': {
+            // Never listed: the cheapest tradeable item that converts into one, read at the
+            // same side the shrine levels and held guild tokens use. No rate is unpriced,
+            // not free
+            const perCredit = buildGoldPerCredit(guildCreditPricingMode())[itemHrid];
+            return perCredit > 0 ? { rate: perCredit, bestItemHrid: null, note: null } : none;
         }
         default:
             return none;
@@ -492,7 +503,7 @@ function calculateCurrencyValue(itemHrid) {
     // labyrinth shop. Guild tokens: tokens → credits → gold. An excluded
     // labyrinth or guild token is worth 0 here, not whatever a fallback finds
     const kind = tokenKind(itemHrid);
-    if (kind === 'dungeon' || kind === 'labyrinth' || kind === 'guild') {
+    if (kind === 'dungeon' || kind === 'labyrinth' || kind === 'guild' || kind === 'credit') {
         if (!isTokenIncluded(itemHrid)) return 0;
         return explainTokenValue(itemHrid).rate || 0;
     }

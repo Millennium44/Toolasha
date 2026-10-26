@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
     chestKeys: {},
     keyCost: 0,
     tokenValues: {},
+    goldPerCredit: { ask: {}, bid: {} },
+    goldPerCreditCalls: 0,
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, onReady: () => () => {} } }));
@@ -91,6 +93,12 @@ vi.mock('../../utils/token-valuation.js', () => ({
     DUNGEON_TOKEN_HRIDS: new Set(['/items/chimerical_token', '/items/pirate_token']),
     calculateDungeonTokenValue: (hrid) => mocks.tokenValues[hrid] ?? null,
 }));
+vi.mock('../../utils/guild-credit-pricing.js', () => ({
+    buildGoldPerCredit: (mode) => {
+        mocks.goldPerCreditCalls++;
+        return mocks.goldPerCredit[mode] || {};
+    },
+}));
 vi.mock('../../utils/key-cost.js', () => ({ getKeyUnitCost: () => mocks.keyCost }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('../../utils/background-work.js', () => ({
@@ -112,6 +120,8 @@ beforeEach(() => {
     for (const k of Object.keys(mocks.chestKeys)) delete mocks.chestKeys[k];
     mocks.keyCost = 0;
     mocks.tokenValues = {};
+    mocks.goldPerCredit = { ask: {}, bid: {} };
+    mocks.goldPerCreditCalls = 0;
     mocks.yieldSpy.mockClear();
     inventoryBadgeManager.nameToHridMap = null;
 });
@@ -793,6 +803,7 @@ describe('dungeon tokens', () => {
         'invSort_netOfTax',
         'profitCalc_patientTickBuy',
         'profitCalc_patientTickSell',
+        'networth_includeGuildCredits',
     ])('changing %s reprices the tiles', async (key) => {
         inventoryBadgeManager.initialize();
         const spy = vi.spyOn(inventoryBadgeManager, 'renderAllBadges').mockResolvedValue();
@@ -813,5 +824,64 @@ describe('dungeon tokens', () => {
         const el = tokenEl('cowbell', 10);
         await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
         expect(el.dataset.askValue).toBe('0');
+    });
+});
+
+describe('guild credits', () => {
+    const CREDIT = '/items/brown_guild_credit';
+
+    function creditEl(count) {
+        const el = document.createElement('div');
+        el.className = 'Item_itemContainer';
+        el.innerHTML = '<svg><use href="/static/items_sprite.svg#brown_guild_credit"></use></svg>';
+        const countEl = document.createElement('div');
+        countEl.className = 'Item_count';
+        countEl.textContent = String(count);
+        el.appendChild(countEl);
+        return el;
+    }
+
+    beforeEach(() => {
+        mocks.initData = { itemDetailMap: { [CREDIT]: { name: 'Brown Guild Credit' } } };
+        mocks.settings.networth_includeGuildCredits = true;
+        mocks.goldPerCredit = { ask: { [CREDIT]: 1000 }, bid: { [CREDIT]: 400 } };
+    });
+
+    test('a stack counts toward the ask total at the ask rate and the bid total at the bid rate', async () => {
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+
+        expect(el.dataset.askPrice).toBe('1000');
+        expect(el.dataset.bidPrice).toBe('400');
+        expect(el.dataset.askValue).toBe(String(1000 * 42));
+        expect(el.dataset.bidValue).toBe(String(400 * 42));
+    });
+
+    test('takes no sales tax even in net-of-tax mode (a credit is bought, not sold)', async () => {
+        mocks.settings.invSort_netOfTax = true;
+        const el = creditEl(2);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.askValue).toBe('2000');
+    });
+
+    test('the rate map is built once per pass, not per tile', async () => {
+        await inventoryBadgeManager.calculateItemPrices([creditEl(1), creditEl(2), creditEl(3)], [], new Map());
+        expect(mocks.goldPerCreditCalls).toBe(2);
+    });
+
+    test('with no known rate the stack counts 0', async () => {
+        mocks.goldPerCredit = { ask: {}, bid: {} };
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.askValue).toBe('0');
+        expect(el.dataset.bidValue).toBe('0');
+    });
+
+    test('the setting off leaves credits out of the totals', async () => {
+        mocks.settings.networth_includeGuildCredits = false;
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(mocks.goldPerCreditCalls).toBe(0);
+        expect(el.dataset.askValue).not.toBe(String(1000 * 42));
     });
 });
