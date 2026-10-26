@@ -285,17 +285,18 @@ const config = (await import('../../core/config.js')).default;
 // installed, and threw on destructuring as soon as it ran first.
 /**
  * `resolveItemPrice` as the conservative profit mode (the default) answers it: an enhanced level reads the
- * order book, the ask on a buy and the bid on a sale, and nothing has a production fallback above +0. A +0
- * read is `base`, unpriced unless a test says otherwise.
+ * order book, the ask on a buy and the bid on a sale, and nothing has a production fallback above +0. A read
+ * that names no context gets the ask on either side, as the real resolver gives it. A +0 read is `base`,
+ * unpriced unless a test says otherwise.
  * @param {Object} [base] - What a +0 read returns
  * @returns {Function} An implementation for `resolveItemPrice`
  */
 const conservativeBook =
     (base = { price: 0, custom: false, missing: true, estimated: false }) =>
-    (hrid, { side = 'sell', enhancementLevel = 0 } = {}) => {
+    (hrid, { context, side = 'sell', enhancementLevel = 0 } = {}) => {
         if (!(enhancementLevel > 0)) return base;
         const book = getItemPrices(hrid, enhancementLevel);
-        const price = side === 'buy' ? book?.ask : book?.bid;
+        const price = context === 'profit' && side === 'sell' ? book?.bid : book?.ask;
         return price > 0
             ? { price, custom: false, missing: false, estimated: false }
             : { price: 0, custom: false, missing: true, estimated: false };

@@ -2488,7 +2488,7 @@ function calculateHouseUpgradeCost(candidate, gameData) {
                 total += count;
                 continue;
             }
-            const { price } = resolveItemPrice(entry.itemHrid, { side: 'buy' });
+            const { price } = resolveItemPrice(entry.itemHrid, { context: 'profit', side: 'buy' });
             if (!price || price <= 0) return null; // Unknown material cost must not rank as free
             total += price * count;
         }
@@ -2530,7 +2530,7 @@ export function houseUpgradeMaterials(candidate, gameData) {
     }
 
     const lines = [...counts.entries()].map(([itemHrid, count]) => {
-        const { price } = resolveItemPrice(itemHrid, { side: 'buy' });
+        const { price } = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy' });
         const unitPrice = price > 0 ? price : null;
         return {
             itemHrid,
@@ -3719,12 +3719,16 @@ function withSaleTaxOf(candidate, read) {
 
 /**
  * What a piece sells for after tax, for weighing a route that gives that sale up.
+ *
+ * On the profit pricing mode's sell side (the bid when conservative or patient buy, the ask in hybrid or
+ * optimistic) and a custom sell price first. The context has to be named: without one the resolver reads the
+ * ask in every mode.
  * @param {string} hrid - Item HRID
  * @param {number} level - Enhancement level
  * @returns {number} After-tax sale value, 0 when unpriced
  */
 function sellValue(hrid, level) {
-    return saleProceeds(resolveItemPrice(hrid, { side: 'sell', enhancementLevel: level }));
+    return saleProceeds(resolveItemPrice(hrid, { context: 'profit', side: 'sell', enhancementLevel: level }));
 }
 
 /**
@@ -5871,7 +5875,11 @@ function explainLabCandidateCostAtTax(candidate, gameData, isSelf) {
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
     detail.kept = candidate.keptItems.map((item) => {
-        const resolved = resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 });
+        const resolved = resolveItemPrice(item.hrid, {
+            context: 'profit',
+            side: 'sell',
+            enhancementLevel: item.enhancementLevel || 0,
+        });
         const { price } = resolved;
         return {
             hrid: item.hrid,
