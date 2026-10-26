@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers (2026-10-26): craft costs, Alchemy XP and the goal planner
+
+- Craft-cost estimates price recipe inputs at your custom buy price rather than your custom sell price.
+- Alchemy XP/hr in the Skilling Optimizer counts the catalyst's higher success rate, as gold/hr already did.
+- The goal planner asks you to earn the most you are ever short along the plan, not every training step's startup cost added together (100K of training startup plus a 1M purchase now needs 1M, not 1.1M).
+- Turning off listing drag order mid-drag puts the rows back and clears the drag marks.
+
 ### Combat Sim upgrade costs follow the pricing mode
 
 - Upgrade analysis now prices enhancement rows, resale of a replaced or freed piece, and house materials by your pricing mode and custom prices, as tier rows already did. In the default Conservative mode a replaced piece is credited at its bid rather than its ask, so upgrades no longer look cheaper by the spread.
