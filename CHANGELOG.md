@@ -10,10 +10,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - New Party tab: save teammate builds (from the editor, an import or a copy of your own), give them aura options to try, and it sims every party of you plus your teammates across the zones you pick, ranking your own EXP/hr and profit/hr against solo (worse than solo in red); a quick pass is re-run in full for the top results, and any row loads into the editor.
 
+### Audit round (2026-10-26): Combat Sim upgrade analysis
+
+- Combat level grind times for a party member or imported profile start from their XP, not yours, when you happen to share their level.
+- In the Lab, a party member's checked ability swap with no market price shows as unpriced instead of costing 0 because you own the book.
+
 ### Audit round (2026-10-26): death recap
 
 - An open death recap updates when another death is recorded, and its Older/Newer buttons keep working after the recap you are viewing is dropped from the kept list.
 - A combat tick that leaves out your HP or damage counter no longer records a hit of unknown damage or a phantom miss.
+
+### Audit round (2026-10-26): Alchemy Profitability
+
+- Alchemy Profitability now redraws every time you come back from the marketplace; the earlier fix covered only one of the two paths that redraw it.
+- An update still running when the game rebuilds the panel no longer leaves it blank, and the Repeat box stops recalculating a panel that has been removed.
 
 ### Treasure popup on phones
 
