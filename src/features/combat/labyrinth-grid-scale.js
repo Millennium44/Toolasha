@@ -22,7 +22,12 @@ export const MIN_SCALE = 1;
 export const MAX_SCALE = 2;
 export const SCALE_STEP = 0.25;
 
+const GRID_ATTR = 'data-mwi-grid-scale';
+
 let domObserverUnregister = null;
+let cellObserverUnregister = null;
+/** chargeLeft node -> MutationObserver that puts the stepper back after a React re-render */
+const headerWatchers = new Map();
 let unregisterScaleListener = null;
 let unregisterControlListener = null;
 
@@ -45,7 +50,20 @@ function getScale() {
 function applyScale(scale) {
     removeStyles(STYLE_ID);
     if (scale === MIN_SCALE) return;
-    addStyles(`[class*="LabyrinthPanel_roomGrid"] { zoom: ${scale}; }`, STYLE_ID);
+    addStyles(`[class*="LabyrinthPanel_roomGrid"], [${GRID_ATTR}] { zoom: ${scale}; }`, STYLE_ID);
+}
+
+/**
+ * Mark the element that holds the room tiles. `LabyrinthPanel_roomCell` is the class the other
+ * labyrinth modules match live, and the grid is the parent holding those cells, so this does not
+ * depend on the grid's own class name. Called again whenever tiles are inserted, which is what
+ * catches a grid node React replaced.
+ */
+function markGrids() {
+    document.querySelectorAll('div[class*="LabyrinthPanel_roomCell"]').forEach((cell) => {
+        const parent = cell.parentElement;
+        if (parent && !parent.hasAttribute(GRID_ATTR)) parent.setAttribute(GRID_ATTR, '');
+    });
 }
 
 function setScale(scale) {
@@ -106,19 +124,45 @@ export function injectControl(chargeLeft) {
     updateControls();
 }
 
+/**
+ * Inject the stepper and keep it there: React owns the header's children and may rebuild them
+ * without replacing the header node, which `onClass` would never report again.
+ * @param {Element} chargeLeft - The header element
+ */
+function watchHeader(chargeLeft) {
+    injectControl(chargeLeft);
+    if (headerWatchers.has(chargeLeft)) return;
+    const watcher = new MutationObserver(() => {
+        if (!chargeLeft.isConnected) {
+            watcher.disconnect();
+            headerWatchers.delete(chargeLeft);
+            return;
+        }
+        injectControl(chargeLeft);
+    });
+    watcher.observe(chargeLeft, { childList: true });
+    headerWatchers.set(chargeLeft, watcher);
+}
+
+function stopWatchingHeaders() {
+    headerWatchers.forEach((watcher) => watcher.disconnect());
+    headerWatchers.clear();
+}
+
 /** Start or stop drawing the stepper to match the control setting. */
 function syncControl() {
     const wanted = config.getSetting(CONTROL_SETTING);
     if (wanted && !domObserverUnregister) {
         domObserverUnregister = domObserver.onClass('LabyrinthGridScale', 'LabyrinthPanel_chargeLeft', (el) =>
-            injectControl(el)
+            watchHeader(el)
         );
-        document.querySelectorAll('[class*="LabyrinthPanel_chargeLeft"]').forEach((el) => injectControl(el));
+        document.querySelectorAll('[class*="LabyrinthPanel_chargeLeft"]').forEach((el) => watchHeader(el));
     } else if (!wanted) {
         if (domObserverUnregister) {
             domObserverUnregister();
             domObserverUnregister = null;
         }
+        stopWatchingHeaders();
         document.querySelectorAll(`.${CONTROL_CLASS}`).forEach((el) => el.remove());
     }
 }
@@ -126,12 +170,22 @@ function syncControl() {
 export function initialize() {
     cleanup();
     applyScale(getScale());
+    markGrids();
+    cellObserverUnregister = domObserver.onClass('LabyrinthGridScaleCells', 'LabyrinthPanel_roomCell', markGrids, {
+        debounce: true,
+    });
     unregisterScaleListener = config.onSettingChange(SCALE_SETTING, updateControls);
     unregisterControlListener = config.onSettingChange(CONTROL_SETTING, syncControl);
     syncControl();
 }
 
 export function cleanup() {
+    if (cellObserverUnregister) {
+        cellObserverUnregister();
+        cellObserverUnregister = null;
+    }
+    stopWatchingHeaders();
+    document.querySelectorAll(`[${GRID_ATTR}]`).forEach((el) => el.removeAttribute(GRID_ATTR));
     if (domObserverUnregister) {
         domObserverUnregister();
         domObserverUnregister = null;

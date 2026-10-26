@@ -31,9 +31,14 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-const observer = vi.hoisted(() => ({ unregister: vi.fn() }));
+const observer = vi.hoisted(() => ({ unregister: vi.fn(), handlers: {} }));
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { onClass: vi.fn(() => observer.unregister) },
+    default: {
+        onClass: vi.fn((name, _classes, callback) => {
+            observer.handlers[name] = callback;
+            return observer.unregister;
+        }),
+    },
 }));
 
 const { default: config } = await import('../../core/config.js');
@@ -59,6 +64,7 @@ beforeEach(() => {
     config.characterSettingsLoaded = true;
     domObserver.onClass.mockClear();
     observer.unregister.mockClear();
+    observer.handlers = {};
     document.head.innerHTML = '';
 });
 
@@ -138,7 +144,11 @@ describe('labyrinth grid scale', () => {
         renderHeader();
         initialize();
 
-        expect(domObserver.onClass).not.toHaveBeenCalled();
+        expect(domObserver.onClass).not.toHaveBeenCalledWith(
+            'LabyrinthGridScale',
+            expect.anything(),
+            expect.anything()
+        );
         expect(document.querySelector('.mwi-labyrinth-grid-scale')).toBeNull();
         expect(styleText()).toContain('zoom: 1.5');
     });
@@ -150,6 +160,7 @@ describe('labyrinth grid scale', () => {
 
         config.setSetting('labyrinthGridScaleControl', false);
         expect(document.querySelector('.mwi-labyrinth-grid-scale')).toBeNull();
+        // Only the header registration is released; the tile registration stays
         expect(observer.unregister).toHaveBeenCalledTimes(1);
 
         config.setSetting('labyrinthGridScaleControl', true);
@@ -164,7 +175,7 @@ describe('labyrinth grid scale', () => {
 
         expect(document.querySelector('.mwi-labyrinth-grid-scale')).toBeNull();
         expect(styleText()).toBeNull();
-        expect(observer.unregister).toHaveBeenCalledTimes(1);
+        expect(observer.unregister).toHaveBeenCalledTimes(2);
         expect(config.settingChangeCallbacks.labyrinthGridScale).toHaveLength(0);
         expect(config.settingChangeCallbacks.labyrinthGridScaleControl).toHaveLength(0);
 
@@ -179,5 +190,54 @@ describe('labyrinth grid scale', () => {
 
         expect(config.settingChangeCallbacks.labyrinthGridScale).toHaveLength(1);
         expect(config.settingChangeCallbacks.labyrinthGridScaleControl).toHaveLength(1);
+    });
+});
+
+describe('labyrinth grid scale: React re-renders', () => {
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const gridHtml = '<div class="LabyrinthPanel_roomCell__a"></div><div class="LabyrinthPanel_roomCell__b"></div>';
+
+    test('the stepper comes back when React replaces the header children', async () => {
+        const header = renderHeader();
+        initialize();
+        expect(header.querySelectorAll('.mwi-labyrinth-grid-scale')).toHaveLength(1);
+
+        header.innerHTML = '<div>7 Max Path <button class="Button_button__abc">Upgrade</button></div>';
+        await tick();
+
+        expect(header.querySelectorAll('.mwi-labyrinth-grid-scale')).toHaveLength(1);
+    });
+
+    test('cleanup stops watching the header: a later re-render leaves nothing behind', async () => {
+        const header = renderHeader();
+        initialize();
+        cleanup();
+
+        header.innerHTML = '<div>7 Max Path</div>';
+        await tick();
+
+        expect(header.querySelector('.mwi-labyrinth-grid-scale')).toBeNull();
+    });
+
+    test('the zoom lands on the replaced grid node', async () => {
+        config.settingsMap.labyrinthGridScale.value = 1.5;
+        document.body.innerHTML = `<div id="panel"><div class="grid1">${gridHtml}</div></div>`;
+        initialize();
+        expect(document.querySelector('.grid1').hasAttribute('data-mwi-grid-scale')).toBe(true);
+
+        document.getElementById('panel').innerHTML = `<div class="grid2">${gridHtml}</div>`;
+        observer.handlers.LabyrinthGridScaleCells();
+
+        expect(document.querySelector('.grid2').hasAttribute('data-mwi-grid-scale')).toBe(true);
+        expect(styleText()).toContain('[data-mwi-grid-scale]');
+    });
+
+    test('cleanup removes the grid markers', () => {
+        document.body.innerHTML = `<div class="grid1">${gridHtml}</div>`;
+        initialize();
+        cleanup();
+
+        expect(document.querySelector('[data-mwi-grid-scale]')).toBeNull();
+        expect(observer.handlers.LabyrinthGridScaleCells).toBeDefined();
     });
 });
