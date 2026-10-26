@@ -321,7 +321,8 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
                 totalPrice += input.count * (1 - artisanBonus);
                 continue;
             }
-            let inputPrice = getItemPrice(input.itemHrid, { mode }) || 0;
+            // Inputs are bought, so a per-side custom price must answer with its buy figure
+            let inputPrice = getItemPrice(input.itemHrid, { mode, side: 'buy' }) || 0;
             if (inputPrice === 0) {
                 const crafted = getProductionCostDetailed(input.itemHrid, mode);
                 inputPrice = crafted.cost;
@@ -335,7 +336,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     // Add upgrade item cost if this is an upgrade recipe (not affected by artisan tea)
     // Use min(market, craft) so refined items reflect the cheapest way to obtain the base item
     if (action.upgradeItemHrid) {
-        const upgradeMarketPrice = getItemPrice(action.upgradeItemHrid, { mode }) || 0;
+        const upgradeMarketPrice = getItemPrice(action.upgradeItemHrid, { mode, side: 'buy' }) || 0;
         const upgradeCraft = getProductionCostDetailed(action.upgradeItemHrid, mode);
         const upgradeCraftPrice = upgradeCraft.cost;
         let upgradePrice;
@@ -390,7 +391,7 @@ function _computeProductionChainTime(itemHrid) {
     let totalTime = action.baseTimeCost / 1e9;
 
     if (action.upgradeItemHrid) {
-        const marketPrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
+        const marketPrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask', side: 'buy' }) || 0;
         const craftPrice = getProductionCost(action.upgradeItemHrid, 'ask');
         if (craftPrice > 0 && (marketPrice === 0 || craftPrice < marketPrice)) {
             totalTime += getProductionChainTime(action.upgradeItemHrid);

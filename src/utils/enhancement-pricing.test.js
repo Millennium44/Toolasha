@@ -27,6 +27,8 @@ const game = vi.hoisted(() => ({
     resolvedDrinks: undefined,
     buffVersion: 0,
     customVersion: 0,
+    // Per-side custom prices by hrid: { buy, sell }
+    customSides: {},
 }));
 
 vi.mock('../core/data-manager.js', () => ({
@@ -53,7 +55,8 @@ vi.mock('../features/settings/custom-price-overrides.js', () => ({
 }));
 vi.mock('./market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
-    getItemPrice: (hrid, { mode = 'ask' } = {}) => game.prices[`${hrid}:0`]?.[mode] || 0,
+    getItemPrice: (hrid, { mode = 'ask', side = 'sell' } = {}) =>
+        game.customSides[hrid]?.[side] ?? (game.prices[`${hrid}:0`]?.[mode] || 0),
 }));
 
 const {
@@ -72,6 +75,7 @@ beforeEach(() => {
         '/items/fine_sword': { name: 'Fine Sword' },
     };
     game.prices = {};
+    game.customSides = {};
     game.actions = {};
     game.equipment = new Map();
     game.drinks = [];
@@ -242,6 +246,13 @@ describe('production-cost memo invalidation', () => {
         expect(getProductionCost('/items/custom_mat')).toBe(500);
         game.customVersion++;
         expect(getProductionCost('/items/custom_mat')).toBe(2_000);
+    });
+
+    test('inputs are priced at the custom buy figure, not the custom sell one', () => {
+        makeRecipe('/items/side_mat', '/items/side_ore');
+        game.customSides['/items/side_ore'] = { buy: 300, sell: 900 };
+        // 2 ore at the buy price of 300
+        expect(getProductionCost('/items/side_mat')).toBe(600);
     });
 
     test('a bill that counted an unpriced input as nothing is partial, and says so up the chain', () => {
