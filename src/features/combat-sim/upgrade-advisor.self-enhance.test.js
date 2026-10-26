@@ -38,6 +38,8 @@ const state = vi.hoisted(() => ({
     sweeps: [],
     /** Extra init_client_data maps (shops) */
     shops: {},
+    /** Overrides for config.getSettingValue */
+    settings: {},
 }));
 
 const CAPE = '/items/sinister_cape';
@@ -106,9 +108,30 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     // A cape base with no listing: the craft estimate the ordinary +0 path returns
     resolveItemPrice: vi.fn((hrid) => ({ price: hrid === CAPE ? 5_000_000 : 2_000_000 })),
 }));
+vi.mock('../../core/config.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    const original = actual.default.getSettingValue.bind(actual.default);
+    return {
+        ...actual,
+        default: new Proxy(actual.default, {
+            get: (target, key) =>
+                key === 'getSettingValue'
+                    ? (name, fallback) => (name in state.settings ? state.settings[name] : original(name, fallback))
+                    : target[key],
+        }),
+    };
+});
 vi.mock('../../utils/market-data.js', () => ({
     // Every level of everything has an ask; a cape must never use one
     getItemPrices: vi.fn(() => ({ ask: 999_000_000, bid: 1 })),
+    // The mode-aware reading: a bid is what Conservative / Patient Buy would sell into
+    getItemPrice: vi.fn((hrid, { mode = 'ask' } = {}) =>
+        hrid === '/items/cheese' ? (mode === 'bid' ? 400 : 1000) : 0
+    ),
+    getItemPriceInfo: vi.fn((hrid, { mode = 'ask' } = {}) => ({
+        price: hrid === '/items/cheese' ? (mode === 'bid' ? 400 : 1000) : null,
+        source: 'custom',
+    })),
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 
@@ -149,6 +172,7 @@ describe('self-enhanced upgrade pricing', () => {
         state.items = [];
         state.sweeps = [];
         state.shops = {};
+        state.settings = {};
     });
 
     test('best copy at +6 and second at +3: a +5 row ladders the +3 up, never the ask', () => {
@@ -190,16 +214,50 @@ describe('self-enhanced upgrade pricing', () => {
     });
 
     test('no copy held: a cape sold only for task tokens is priced from the token shop, not the estimate', () => {
-        // 10 tokens at an ask of 999M each would be absurd; the token is valued by its own shop's best line
+        // 100 tokens at an ask of 999M each would be absurd; the token is valued by its own shop's best line
         state.shops = {
             taskShopItemDetailMap: {
                 a: { itemHrid: CAPE, cost: { itemHrid: '/items/task_token', count: 100 } },
+                b: { itemHrid: '/items/cheese', cost: { itemHrid: '/items/task_token', count: 10 } },
             },
         };
         const detail = explainUpgradeCost(tier(CAPE, 5), gameData);
         expect(detail.ladder.fresh).toBe(true);
         expect(detail.ladder.baseCost).not.toBe(5_000_000);
-        expect(detail.ladder.baseCost).toBe(100 * 999_000_000);
+        // The token is what its best shop line converts to (cheese 1000 / 10 tokens), not a market ask on the token
+        expect(detail.ladder.baseCost).toBe(100 * 100);
+    });
+
+    describe('a dungeon-token cape follows the pricing mode', () => {
+        const tokenShops = () => ({
+            shopItemDetailMap: {
+                cape: { itemHrid: CAPE, costs: [{ itemHrid: '/items/sinister_token', count: 100 }] },
+                cheese: {
+                    itemHrid: '/items/cheese',
+                    costs: [{ itemHrid: '/items/sinister_token', count: 10 }],
+                },
+            },
+        });
+
+        test('Hybrid values the token at the ask, Conservative at the bid', () => {
+            state.shops = tokenShops();
+            state.settings = { profitCalc_pricingMode: 'hybrid', expectedValue_respectPricingMode: true };
+            // cheese 1000 / 10 tokens = 100 per token, 100 tokens
+            expect(explainUpgradeCost(tier(CAPE, 5), gameData).ladder.baseCost).toBe(10_000);
+            state.settings = { profitCalc_pricingMode: 'conservative', expectedValue_respectPricingMode: true };
+            expect(explainUpgradeCost(tier(CAPE, 5), gameData).ladder.baseCost).toBe(4_000);
+        });
+
+        test('a token no shop line prices stays unpriced rather than free', () => {
+            state.shops = {
+                shopItemDetailMap: {
+                    cape: { itemHrid: CAPE, costs: [{ itemHrid: '/items/sinister_token', count: 100 }] },
+                },
+            };
+            const detail = explainUpgradeCost(tier(CAPE, 5), gameData);
+            // Falls through to the craft estimate, never a zero base
+            expect(detail.ladder.baseCost).toBe(5_000_000);
+        });
     });
 
     test('a stack of two +6 copies ladders the second +6, which already meets +5', () => {
