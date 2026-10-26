@@ -3447,6 +3447,63 @@ describe('the budget plan when a pick pays for itself', () => {
     });
 });
 
+describe('the budget plan when nothing is picked', () => {
+    const fight = (i, winRate) => ({
+        monsterHrid: `/monsters/m${i}`,
+        monsterName: `Monster ${i}`,
+        loadoutName: 'Loadout',
+        roomLevel: 100,
+        winRate,
+        winRateDelta: winRate - 0.5,
+        applied: true,
+        trials: 1000,
+    });
+    const baseline = { fights: [fight(0, 0.5), fight(1, 0.5)], runClearChance: 0.25, expectedAttempts: 4 };
+    const result = (description, over = {}) => ({
+        candidate: { type: 'cross_slot', slot: '/equipment_types/two_hand', description },
+        costType: 'gold',
+        cost: 900_000_000,
+        fights: [fight(0, 0.8), fight(1, 0.8)],
+        appliedFights: 2,
+        expectedAttempts: 2.5,
+        attemptsDelta: -1.5,
+        attemptsDeltaNoise: 0.1,
+        significant: true,
+        ...over,
+    });
+    const text = (results) => {
+        ui._allFightsBudget = 500_000_000;
+        const host = document.createElement('div');
+        host.innerHTML = ui._renderBudgetPlan(results, baseline);
+        ui._allFightsBudget = 0;
+        return host.textContent;
+    };
+
+    beforeEach(() => {
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    test('an upgrade skipped for being over budget says the cheapest costs more', () => {
+        expect(text([result('Pricey Bow')])).toContain('the cheapest measured upgrade costs more');
+    });
+
+    test('an upgrade skipped as noise does not claim it costs more', () => {
+        const out = text([result('Noisy Bow', { cost: 1_000, significant: false })]);
+        expect(out).not.toContain('costs more');
+        expect(out).toContain('nothing listed fits the budget and improves the metric');
+    });
+
+    test('an empty list gets the plain line', () => {
+        const out = text([]);
+        expect(out).toContain('Nothing in the list fits');
+        expect(out).not.toContain('costs more');
+    });
+});
+
 describe('the cost breakdown', () => {
     test('a sweep-priced buy names whose enhancing stats it ran on', () => {
         // Nothing is listed at that enhancement, so half the figure is a

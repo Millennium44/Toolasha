@@ -6241,9 +6241,15 @@ class LabSimUI {
         if (budget > 0) {
             const plan = planWithinBudget(results, budget, { baselineFights });
             if (!plan.picks.length) {
-                body = `<div style="color:#888; font-size:11px;">Nothing in the list fits ${money(budget)}${
-                    plan.skipped.length ? ' — the cheapest measured upgrade costs more.' : '.'
-                }</div>`;
+                // "Costs more" is true only of an upgrade skipped for being over budget; a row dropped as
+                // noise, excluded or already covered says nothing about its price
+                const overBudget = plan.skipped.some((s) => s.reason === 'over budget');
+                const why = overBudget
+                    ? ' — the cheapest measured upgrade costs more.'
+                    : plan.skipped.length
+                      ? ' — nothing listed fits the budget and improves the metric.'
+                      : '.';
+                body = `<div style="color:#888; font-size:11px;">Nothing in the list fits ${money(budget)}${why}</div>`;
             } else {
                 const rows = plan.picks
                     .map((pick) => {
