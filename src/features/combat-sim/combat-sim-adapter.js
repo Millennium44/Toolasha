@@ -2080,15 +2080,23 @@ function zoneDropItems(gameData, zoneHrid) {
  * @param {Object} options
  * @param {string} options.zoneHrid - Combat zone the analysis fights in
  * @param {Iterable<string>} [options.consumableHrids] - Food and drinks any run of the analysis may use
+ * @param {number|null} [options.saleTaxRate] - The analysed player's sale tax when not the live character: drops
+ *   are held under the `drop@<rate>|` keys `calculateSimRevenue` reads for that rate, not the live `drop|` ones
  * @returns {Map} The same cache
  */
-export function seedSimPriceCache(priceCache, gameData, { zoneHrid, consumableHrids = [] } = {}) {
+export function seedSimPriceCache(
+    priceCache,
+    gameData,
+    { zoneHrid, consumableHrids = [], saleTaxRate: rate = null } = {}
+) {
+    const saleTaxRate = Number.isFinite(rate) ? rate : null;
+    const dropKey = saleTaxRate == null ? 'drop|' : `drop@${saleTaxRate}|`;
     if (!(priceCache instanceof Map)) return priceCache;
     const hold = (key, read) => {
         if (!priceCache.has(key)) priceCache.set(key, read());
     };
     for (const itemHrid of zoneDropItems(gameData, zoneHrid)) {
-        hold(`drop|${itemHrid}`, () => dropUnitValue(itemHrid));
+        hold(`${dropKey}${itemHrid}`, () => dropUnitValue(itemHrid, saleTaxRate));
         for (const keyHrid of [DUNGEON_CHEST_ENTRY_KEYS[itemHrid], DUNGEON_CHEST_CHEST_KEYS[itemHrid]]) {
             if (keyHrid) hold(`key|${keyHrid}`, () => getKeyUnitCost(keyHrid));
         }

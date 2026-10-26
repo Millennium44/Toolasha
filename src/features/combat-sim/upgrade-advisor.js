@@ -4670,6 +4670,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // the baseline never rolled) would otherwise be priced when that candidate finishes, after any change
     seedSimPriceCache(priceCache, gameData, {
         zoneHrid,
+        // The keys the metrics below read: the analysed player's rate, none for the live character
+        ...(saleTaxRate != null ? { saleTaxRate } : {}),
         consumableHrids: [
             ...(playerDTO.food || []).map((item) => item?.hrid),
             ...(playerDTO.drinks || []).map((item) => item?.hrid),
@@ -4724,7 +4726,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     onProgress?.({ current, total, description: 'Baseline complete' });
 
     // Calculate baseline metrics
-    const baselineMetrics = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache });
+    const baselineMetrics = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache, saleTaxRate });
 
     // Run sim for each candidate: one worker each, several candidates at a time.
     //
@@ -4831,7 +4833,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
         if (abortSignal?.()) return null;
 
-        const metrics = computeMetrics(simResult, gameData, playerHrid, hours, { priceCache });
+        const metrics = computeMetrics(simResult, gameData, playerHrid, hours, { priceCache, saleTaxRate });
         const deltas = computeDeltas(baselineMetrics, metrics);
         const goldPer = computeGoldPerImprovement(candidate.cost, deltas);
 
@@ -4942,7 +4944,10 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                             if (stoppedHere()) return null;
                             throw error;
                         }
-                        const bothMetrics = computeMetrics(bothResult, gameData, playerHrid, hours, { priceCache });
+                        const bothMetrics = computeMetrics(bothResult, gameData, playerHrid, hours, {
+                            priceCache,
+                            saleTaxRate,
+                        });
                         row.alongside.metrics = bothMetrics;
                         row.alongside.deltas = computeDeltas(baselineMetrics, bothMetrics);
                     }
@@ -5026,6 +5031,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             baselineResult,
             baseline: baselineMetrics,
             priceCache,
+            // The analysed player's sale tax (null for the live character), for a re-run that prices again
+            saleTaxRate,
         },
     };
 }
@@ -5242,8 +5249,12 @@ export function primaryLevelsAlongside(
 
 /**
  * Compute key metrics from a sim result.
+ * @param {Object} [options]
+ * @param {Map} [options.priceCache] - Held prices shared across the results being compared
+ * @param {number|null} [options.saleTaxRate] - The analysed player's sale tax when they are not the live
+ *   character (`saleTaxRateOf`); null or omitted for the live character
  */
-export function computeMetrics(simResult, gameData, playerHrid, hours, { priceCache } = {}) {
+export function computeMetrics(simResult, gameData, playerHrid, hours, { priceCache, saleTaxRate = null } = {}) {
     const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
     const xp = simResult.experienceGained?.[playerHrid] || {};
     const totalXpPerHour = Object.values(xp).reduce((s, v) => s + v, 0) / simHours;
@@ -5251,7 +5262,12 @@ export function computeMetrics(simResult, gameData, playerHrid, hours, { priceCa
     const encounters = (simResult.encounters || 0) / simHours;
 
     // Profit/hr
-    const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours, { priceCache });
+    // The live character's tax unless the analysis is of someone else (`saleTaxRateOf`): then drops are taxed at
+    // theirs. The live character's own call carries no rate, so its price-cache keys are unchanged
+    const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours, {
+        priceCache,
+        ...(Number.isFinite(saleTaxRate) ? { saleTaxRate } : {}),
+    });
 
     return {
         xpPerHour: totalXpPerHour,
@@ -7151,6 +7167,7 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
         precision = null,
         baselineResult,
         baseline,
+        saleTaxRate = null,
     } = context || {};
     if (!gameData || !playerDTOs?.[playerIndex] || !baselineResult || !baseline) {
         return { ok: false, reason: 'The analysis this plan came from is no longer available — run it again.' };
@@ -7240,8 +7257,8 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
     // came back through storage or a sync has lost it, and the baseline is then revalued on the same fresh
     // snapshot as the basket rather than compared, at its old prices, with a basket priced today
     const priceCache = context.priceCache instanceof Map ? context.priceCache : new Map();
-    const pricedBaseline = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache });
-    const metrics = computeMetrics(combinedResult, gameData, playerHrid, hours, { priceCache });
+    const pricedBaseline = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache, saleTaxRate });
+    const metrics = computeMetrics(combinedResult, gameData, playerHrid, hours, { priceCache, saleTaxRate });
     const deltas = computeDeltas(pricedBaseline, metrics);
     const economics = computeEconomics(totalCost, pricedBaseline, metrics);
     const noise = rateDeltaNoisePct(baselineResult, combinedResult, playerHrid);
