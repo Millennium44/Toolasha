@@ -123,6 +123,20 @@ const used = (itemHrid, count) => ({
 
 const self = () => collector.consumableTracker;
 
+/**
+ * Battles 1-4 of a run, 15 s apart: enough ordinary intervals for the average
+ * wave time, so a later gap's fighting time can be estimated. A gap closed by
+ * battle {@link AFTER_GAP} then holds 300 waves, about 75 minutes of fighting.
+ * @param {function(number): Object} make - The message for one battleId
+ */
+const warmUp = async (make) => {
+    for (let battleId = 1; battleId <= 4; battleId++) {
+        if (battleId > 1) vi.advanceTimersByTime(15 * SECOND);
+        await collector.onNewBattle(make(battleId));
+    }
+};
+const AFTER_GAP = 304;
+
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(T0);
@@ -154,21 +168,19 @@ describe('the first battle after load', () => {
     });
 
     test('after a reload it credits what was used while the page was closed, from the saved observation point', async () => {
-        await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000)] }));
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 1000)] }));
         await collector.onConsumableUsed(used(GUMMY, 999));
-        vi.advanceTimersByTime(10 * SECOND);
-        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 999)] }));
 
         // Page closed for an hour; the character kept fighting
         collector.onCharacterSwitching();
         vi.advanceTimersByTime(HOUR);
         await collector.loadConsumableTracking();
-        await collector.onNewBattle(battle({ battleId: 300, self: [slot(GUMMY, 939)] }));
+        await collector.onNewBattle(battle({ battleId: AFTER_GAP, self: [slot(GUMMY, 939)] }));
 
         expect(self().actualConsumed[GUMMY]).toBe(61);
         // The hour was spent consuming, so it stays in the time base
         expect(self().excludedMs).toBe(0);
-        expect(collector.calcElapsedSeconds()).toBeCloseTo(HOUR / SECOND + 10, 0);
+        expect(collector.calcElapsedSeconds()).toBeCloseTo(HOUR / SECOND, 0);
     });
 
     test('a record saved by an older build is a fresh baseline, not a gap to credit', async () => {
@@ -225,19 +237,32 @@ describe('a normal tick', () => {
     });
 
     test('a duplicated slot is reconciled once', async () => {
-        await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000), slot(GUMMY, 1000)] }));
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 1000), slot(GUMMY, 1000)] }));
         vi.advanceTimersByTime(HOUR);
-        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 940), slot(GUMMY, 940)] }));
+        await collector.onNewBattle(battle({ battleId: AFTER_GAP, self: [slot(GUMMY, 940), slot(GUMMY, 940)] }));
 
         expect(self().actualConsumed[GUMMY]).toBe(60);
     });
 });
 
 describe('a gap the page did not see', () => {
+    test('with consumption and no way to tell how long was spent fighting: nothing credited, the gap left out', async () => {
+        // A fresh run: no wave intervals yet, so the gap's fighting time is unknown
+        await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000)] }));
+        await collector.onConsumableUsed(used(GUMMY, 999));
+        vi.advanceTimersByTime(8 * HOUR);
+        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 998)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(1);
+        expect(self().inventoryAmount[GUMMY]).toBe(998);
+        expect(self().excludedMs).toBe(8 * HOUR);
+        expect(collector.calcElapsedSeconds()).toBeCloseTo(0, 0);
+    });
+
     test('with consumption: the drop is credited and the time kept', async () => {
-        await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000), slot(COFFEE, 500)] }));
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 1000), slot(COFFEE, 500)] }));
         vi.advanceTimersByTime(HOUR);
-        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 940), slot(COFFEE, 486)] }));
+        await collector.onNewBattle(battle({ battleId: AFTER_GAP, self: [slot(GUMMY, 940), slot(COFFEE, 486)] }));
 
         expect(self().actualConsumed[GUMMY]).toBe(60);
         expect(self().actualConsumed[COFFEE]).toBe(14);
@@ -265,9 +290,9 @@ describe('a gap the page did not see', () => {
 
     test('with a refill and use: a net drop within the cooldowns is credited as the net drop', async () => {
         // Refilled 20 and used 60 unseen: only the net 40 is visible
-        await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000)] }));
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 1000)] }));
         vi.advanceTimersByTime(HOUR);
-        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 960)] }));
+        await collector.onNewBattle(battle({ battleId: AFTER_GAP, self: [slot(GUMMY, 960)] }));
 
         expect(self().actualConsumed[GUMMY]).toBe(40);
         expect(self().excludedMs).toBe(0);
@@ -390,8 +415,9 @@ describe('a party', () => {
         const ally = (consumables) => player('char-ally', 'Ally', consumables);
         const quiet = (consumables) => player('char-quiet', 'Quiet', consumables);
 
-        await collector.onNewBattle(
+        await warmUp((battleId) =>
             battle({
+                battleId,
                 self: [slot(GUMMY, 1000)],
                 others: [ally([slot(GUMMY, 800), slot(YOGURT, 300)]), quiet([slot(GUMMY, 50)])],
             })
@@ -400,7 +426,7 @@ describe('a party', () => {
         // The quiet member's consumables are missing from this message
         await collector.onNewBattle(
             battle({
-                battleId: 2,
+                battleId: AFTER_GAP,
                 self: [slot(GUMMY, 1000)],
                 others: [ally([slot(GUMMY, 750), slot(YOGURT, 280)]), quiet([])],
             })
@@ -419,34 +445,78 @@ describe('a party', () => {
 
     test('a member tracker survives a reload with its observation point', async () => {
         const ally = (consumables) => player('char-ally', 'Ally', consumables);
-        await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000)], others: [ally([slot(GUMMY, 800)])] }));
-        vi.advanceTimersByTime(10 * SECOND);
-        await collector.onNewBattle(
-            battle({ battleId: 2, self: [slot(GUMMY, 1000)], others: [ally([slot(GUMMY, 800)])] })
-        );
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 1000)], others: [ally([slot(GUMMY, 800)])] }));
 
         collector.onCharacterSwitching();
         vi.advanceTimersByTime(HOUR);
         await collector.loadConsumableTracking();
         await collector.onNewBattle(
-            battle({ battleId: 200, self: [slot(GUMMY, 1000)], others: [ally([slot(GUMMY, 760)])] })
+            battle({ battleId: AFTER_GAP, self: [slot(GUMMY, 1000)], others: [ally([slot(GUMMY, 760)])] })
         );
 
         expect(collector.partyConsumableTrackers.Ally.actualConsumed[GUMMY]).toBe(40);
+    });
+
+    test('a member baseline whose separate snapshot write never landed is not credited twice', async () => {
+        // The member tracker was saved after crediting 50 (800 -> 750), but the
+        // snapshots record, written seconds later, still holds the old 800
+        const at = T0 - HOUR;
+        world.stored.set('consumableTracker_char-self', {
+            actualConsumed: {},
+            defaultConsumed: {},
+            inventoryAmount: { [GUMMY]: 1000 },
+            lastUpdate: null,
+            elapsedMs: 0,
+            saveTimestamp: at,
+            trackerVersion: 2,
+            startTime: null,
+            excludedMs: 0,
+            lastObservedAt: at,
+            runKey: RUN,
+            lastBattleId: 4,
+            lastWave: 0,
+            lastBattleAt: at,
+            waveIntervalSum: 45,
+            waveIntervalCount: 3,
+        });
+        world.stored.set('partyConsumableTrackers_char-self', {
+            Ally: {
+                actualConsumed: { [GUMMY]: 50 },
+                defaultConsumed: { [GUMMY]: 10 },
+                inventoryAmount: { [GUMMY]: 750 },
+                elapsedMs: 600 * SECOND,
+                lastUpdate: at,
+                saveTimestamp: at,
+                trackerVersion: 2,
+                startTime: at - 600 * SECOND,
+                excludedMs: 0,
+                lastObservedAt: at,
+            },
+        });
+        world.stored.set('partyConsumableSnapshots_char-self', { Ally: { [GUMMY]: 800 } });
+
+        await collector.loadConsumableTracking();
+        await collector.onNewBattle(
+            battle({
+                battleId: AFTER_GAP,
+                self: [slot(GUMMY, 1000)],
+                others: [player('char-ally', 'Ally', [slot(GUMMY, 750)])],
+            })
+        );
+
+        expect(collector.partyConsumableTrackers.Ally.actualConsumed[GUMMY]).toBe(50);
     });
 });
 
 describe('disable and re-enable', () => {
     test('what was used while the feature was off is reconciled on the first battle back', async () => {
         await collector.initialize();
-        await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000)] }));
-        vi.advanceTimersByTime(10 * SECOND);
-        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 1000)] }));
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 1000)] }));
 
         collector.cleanup();
         vi.advanceTimersByTime(HOUR);
         await collector.initialize();
-        await collector.onNewBattle(battle({ battleId: 250, self: [slot(GUMMY, 940)] }));
+        await collector.onNewBattle(battle({ battleId: AFTER_GAP, self: [slot(GUMMY, 940)] }));
 
         expect(self().actualConsumed[GUMMY]).toBe(60);
         collector.cleanup();
@@ -473,5 +543,24 @@ describe('the clock and the baseline stay in step', () => {
         await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 999)] }));
 
         expect(self().actualConsumed[GUMMY]).toBe(1);
+    });
+});
+
+describe('saving', () => {
+    test('a clock that reads behind the tracking start never saves a negative elapsed time', async () => {
+        // The system clock moved back an hour after tracking started
+        collector.consumableTracker.startTime = Date.now() + HOUR;
+        collector.partyConsumableTrackers.Ally = {
+            ...collector.createPartyTracker(),
+            startTime: Date.now() + HOUR,
+        };
+        await collector.saveConsumableTracking();
+
+        const saved = world.stored.get('consumableTracker_char-self');
+        expect(saved.elapsedMs).toBe(0);
+        expect(saved.startTime).toBeLessThanOrEqual(Date.now());
+        const party = world.stored.get('partyConsumableTrackers_char-self').Ally;
+        expect(party.elapsedMs).toBe(0);
+        expect(party.startTime).toBeLessThanOrEqual(Date.now());
     });
 });

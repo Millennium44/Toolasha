@@ -55,9 +55,9 @@ export function classifyItem({ lastKnown, snapshot, effectiveGapSeconds, maxRate
  * Reconcile every item of one tracker against one snapshot.
  *
  * Time base: a gap of at most {@link UNOBSERVED_GAP_SECONDS} is ordinary and
- * stays in. A longer one was not watched. When anything in it was credited, the
- * part of the gap that was spent fighting (when that can be estimated) stays in
- * and the rest is excluded; when nothing was credited, its consumption is
+ * stays in. A longer one was not watched. Its drops are credited only when the
+ * time spent fighting in it can be estimated; then that share of the gap stays
+ * in and the rest is excluded. When nothing was credited, its consumption is
  * unknown and the whole gap is excluded.
  *
  * @param {Object} params
@@ -77,17 +77,25 @@ export function reconcileSnapshot({ items, gapSeconds, fightingSeconds }) {
 
     const gap = Math.max(0, gapSeconds);
     const unobserved = gap > UNOBSERVED_GAP_SECONDS;
-    const effectiveGap = unobserved && fightingSeconds > 0 ? Math.min(gap, fightingSeconds) : gap;
+    const estimated = fightingSeconds > 0;
+    const effectiveGap = unobserved && estimated ? Math.min(gap, fightingSeconds) : gap;
 
-    const results = items.map((item) => ({
-        itemHrid: item.itemHrid,
-        ...classifyItem({
+    const results = items.map((item) => {
+        const classified = classifyItem({
             lastKnown: item.lastKnown,
             snapshot: item.snapshot,
             effectiveGapSeconds: effectiveGap,
             maxRatePerSecond: item.maxRatePerSecond,
-        }),
-    }));
+        });
+        // An unobserved gap with no estimate of the time spent fighting has nothing to
+        // bound a drop by, nor any share of the gap that could honestly stay in the
+        // time base: the drop could be a sell-off as easily as hours of eating, so it
+        // is not credited and the whole gap is left out, as before reconciliation
+        if (unobserved && !estimated && classified.action === 'credit') {
+            return { itemHrid: item.itemHrid, action: 'reject', credited: 0, missed: classified.missed };
+        }
+        return { itemHrid: item.itemHrid, ...classified };
+    });
 
     let excludeSeconds = 0;
     if (unobserved) {

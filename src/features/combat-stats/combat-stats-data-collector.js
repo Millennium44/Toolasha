@@ -684,7 +684,7 @@ class CombatStatsDataCollector {
             // Save current player tracker
             const self = this.consumableTracker;
             const selfExcludedMs = self.excludedMs || 0;
-            const rawElapsedMs = self.startTime ? Date.now() - self.startTime - selfExcludedMs : 0;
+            const rawElapsedMs = self.startTime ? Math.max(0, Date.now() - self.startTime - selfExcludedMs) : 0;
             const { counts: cappedActual, elapsedMs: cappedElapsed } = this.capToWindow(
                 this.consumableTracker.actualConsumed,
                 rawElapsedMs,
@@ -724,7 +724,9 @@ class CombatStatsDataCollector {
                 const tracker = this.partyConsumableTrackers[playerName];
                 if (tracker && tracker.actualConsumed && tracker.defaultConsumed && tracker.inventoryAmount) {
                     const partyExcludedMs = tracker.excludedMs || 0;
-                    const rawPartyElapsedMs = tracker.startTime ? Date.now() - tracker.startTime - partyExcludedMs : 0;
+                    const rawPartyElapsedMs = tracker.startTime
+                        ? Math.max(0, Date.now() - tracker.startTime - partyExcludedMs)
+                        : 0;
                     const { counts: pCappedActual, elapsedMs: pCappedElapsed } = this.capToWindow(
                         tracker.actualConsumed,
                         rawPartyElapsedMs,
@@ -1001,10 +1003,13 @@ class CombatStatsDataCollector {
                 }
 
                 // Credit what this member used since their last snapshot (however long ago
-                // that was), from their own entry only; the loop below takes the new baseline
+                // that was), from their own entry only; the loop below takes the new baseline.
+                // The baseline is the tracker's own `inventoryAmount`, saved in the same record
+                // as its counts and its clock: the separate snapshots record lands seconds
+                // apart, and a stale copy of it would credit the same drop a second time.
                 this.reconcileTracker(
                     tracker,
-                    this.partyConsumableSnapshots[playerName],
+                    tracker.inventoryAmount,
                     snapshotConsumables(player),
                     fightingSeconds,
                     now

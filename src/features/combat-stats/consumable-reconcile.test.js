@@ -96,10 +96,18 @@ describe('reconcileSnapshot', () => {
         expect(result.excludeSeconds).toBe(0);
     });
 
-    test('an unobserved gap with credited use keeps its time', () => {
-        const result = reconcileSnapshot({ items: [item(1000, 940)], gapSeconds: 3600, fightingSeconds: null });
+    test('an unobserved gap with credited use keeps its time when it was all spent fighting', () => {
+        const result = reconcileSnapshot({ items: [item(1000, 940)], gapSeconds: 3600, fightingSeconds: 4500 });
         expect(result.items[0]).toMatchObject({ action: 'credit', credited: 60 });
         expect(result.excludeSeconds).toBe(0);
+    });
+
+    test('an unobserved gap with no fighting estimate credits nothing and is excluded whole', () => {
+        for (const fightingSeconds of [null, 0]) {
+            const result = reconcileSnapshot({ items: [item(1000, 999)], gapSeconds: 8 * 3600, fightingSeconds });
+            expect(result.items[0]).toMatchObject({ action: 'reject', credited: 0, missed: 1 });
+            expect(result.excludeSeconds).toBe(8 * 3600);
+        }
     });
 
     test('an unobserved gap keeps only the time spent fighting when that is known', () => {
@@ -118,7 +126,7 @@ describe('reconcileSnapshot', () => {
         const result = reconcileSnapshot({
             items: [item(1000, 940, '/items/a'), item(10, 500, '/items/b'), item(1000, 1, '/items/c')],
             gapSeconds: 3600,
-            fightingSeconds: null,
+            fightingSeconds: 4500,
         });
         expect(result.items.map((entry) => entry.action)).toEqual(['credit', 'restock', 'reject']);
         expect(result.excludeSeconds).toBe(0);
