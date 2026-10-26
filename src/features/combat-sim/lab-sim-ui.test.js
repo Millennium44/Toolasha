@@ -3464,6 +3464,29 @@ describe('the cost breakdown', () => {
         expect(html).toContain('Pro rates: enhancing 140');
     });
 
+    test('a credit with no sale price says so rather than "0 back"', () => {
+        const html = ui._renderCostBreakdown({
+            buys: [{ name: 'Fire Top', enhancementLevel: 7, price: 5_000_000 }],
+            credits: [{ name: 'Nature Top', enhancementLevel: 7, price: 0, noSalePrice: true }],
+            gross: 5_000_000,
+            net: 5_000_000,
+        });
+        expect(html).toContain('Sell Nature Top +7');
+        expect(html).toContain('no sale price');
+        expect(html).not.toContain('0 back');
+    });
+
+    test('a priced credit still reads as money back', () => {
+        const html = ui._renderCostBreakdown({
+            buys: [{ name: 'Fire Top', enhancementLevel: 7, price: 5_000_000 }],
+            credits: [{ name: 'Nature Top', enhancementLevel: 7, price: 1_920_000 }],
+            gross: 5_000_000,
+            net: 3_080_000,
+        });
+        expect(html).toContain('back');
+        expect(html).not.toContain('no sale price');
+    });
+
     test('a market-quoted buy says nothing about benches', () => {
         const html = ui._renderCostBreakdown({
             buys: [{ name: 'Fire Top', enhancementLevel: 0, price: 5_000_000 }],

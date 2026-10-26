@@ -4462,6 +4462,37 @@ describe('explainUpgradeCost', () => {
         expect(detail.credit).toBe(960_000);
     });
 
+    test('a sold piece with no sale price is flagged, and the row is still charged the full buy', () => {
+        resolveItemPrice.mockImplementation((_hrid, { side } = {}) => ({ price: side === 'sell' ? null : 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+            removedItems: [{ hrid: '/items/nature_top', enhancementLevel: 7 }],
+        };
+
+        const detail = explainUpgradeCost(candidate, costGameData());
+
+        expect(detail.credits).toEqual([expect.objectContaining({ name: 'Nature Top', price: 0, noSalePrice: true })]);
+        // The cost stays the full purchase: the conservative reading
+        expect(detail.net).toBe(detail.gross);
+        expect(detail.net).not.toBeNull();
+    });
+
+    test('a sold piece that does have a sale price is not flagged', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+        const detail = explainUpgradeCost(
+            {
+                type: 'cross_slot',
+                addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+                removedItems: [{ hrid: '/items/nature_top', enhancementLevel: 7 }],
+            },
+            costGameData()
+        );
+        expect(detail.credits[0].noSalePrice).toBeUndefined();
+    });
+
     test('names the unpriced item that makes a cost unknown', () => {
         // No listing at +7 and no enhancement recipe leaves the buy price unknown
         getItemPrices.mockReturnValue({ ask: 0, bid: 0 });

@@ -2779,6 +2779,7 @@ function freedPiecesCredit(candidate, spend) {
             hrid: item.hrid,
             enhancementLevel: item.enhancementLevel || 0,
             price: sellValue(item.hrid, item.enhancementLevel || 0),
+            ...(hasSalePrice(item.hrid, item.enhancementLevel || 0) ? {} : { noSalePrice: true }),
         }));
     const rawCredit = entries.reduce((sum, entry) => sum + entry.price, 0);
     const credit = Math.min(rawCredit, Math.max(0, spend));
@@ -3733,6 +3734,19 @@ function sellValue(hrid, level) {
 }
 
 /**
+ * Whether a piece has any sale price at all, so a resale credit of 0 can be told from "nothing to sell
+ * into". A credit entry that reads 0 because the profit sell side resolved to null is flagged
+ * `noSalePrice`; the row is still charged the full buy, the conservative reading.
+ * @param {string} hrid - Item HRID
+ * @param {number} level - Enhancement level
+ * @returns {boolean} True when a sell price exists (a quote, a custom price or a production cost)
+ */
+function hasSalePrice(hrid, level) {
+    const resolved = resolveItemPrice(hrid, { context: 'profit', side: 'sell', enhancementLevel: level });
+    return resolved?.price > 0;
+}
+
+/**
  * What a resolved sell-side price pays when the piece is sold.
  *
  * A market quote is a sale and pays the tax. The production-cost fallback (`production: true`, an item with no
@@ -4230,6 +4244,7 @@ function explainUpgradeCostAtTax(candidate, gameData, isSelf) {
                 name: nameOf(entry.hrid),
                 enhancementLevel: entry.enhancementLevel,
                 price: entry.price,
+                ...(entry.noSalePrice ? { noSalePrice: true } : {}),
             })),
         ],
         credit: (detail.credit || 0) + freed.credit,
@@ -4477,6 +4492,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         price:
             (1 - consumedShare(refineConsumed, item.hrid, item.enhancementLevel || 0)) *
             sellValue(item.hrid, item.enhancementLevel || 0),
+        ...(hasSalePrice(item.hrid, item.enhancementLevel || 0) ? {} : { noSalePrice: true }),
     }));
 
     const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);

@@ -8785,7 +8785,15 @@ class LabSimUI {
         } else if (!detail.kept?.length && detail.credits?.length > 0) {
             for (const credit of detail.credits) {
                 parts.push(
-                    line(`Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`, '#8bc34a')
+                    credit.noSalePrice
+                        ? line(
+                              `Sell ${credit.name} +${credit.enhancementLevel} — no sale price, so nothing is credited back`,
+                              '#ff9800'
+                          )
+                        : line(
+                              `Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`,
+                              '#8bc34a'
+                          )
                 );
             }
             if (detail.creditCapped) {
