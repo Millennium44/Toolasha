@@ -3193,6 +3193,16 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Default simulation duration in hours for Seek Best Source runs',
             },
+            combatSim_partyFinder: {
+                id: 'combatSim_partyFinder',
+                label: 'Combat Simulator: Party tab (find your best party)',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Adds a Party tab to the Combat Simulator: save teammate builds to a roster, then sim you with ' +
+                    'every party you could make from it, in the zones you pick, and rank the parties by your own ' +
+                    'EXP/hr and profit/hr against going solo. Off: the tab and its roster controls are not drawn.',
+            },
             combatSim_decimalMinutes: {
                 id: 'combatSim_decimalMinutes',
                 label: 'Combat Simulator: Show completion time as decimal minutes',

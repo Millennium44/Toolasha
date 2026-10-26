@@ -14,7 +14,13 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 import { MARKET_TAX, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 
-const mocks = vi.hoisted(() => ({ prices: {}, pricingMode: 'hybrid', patientTick: false }));
+const mocks = vi.hoisted(() => ({
+    prices: {},
+    pricingMode: 'hybrid',
+    patientTick: false,
+    liveContainerValue: null,
+    evRateCalls: [],
+}));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: { getItemDetails: (hrid) => ({ name: hrid.split('/').pop() }) },
@@ -36,7 +42,14 @@ vi.mock('../../api/marketplace.js', () => ({
     default: { getPrice: (hrid) => mocks.prices[hrid] || null },
 }));
 vi.mock('../market/expected-value-calculator.js', () => ({
-    default: { getCachedValue: () => null, calculateSingleContainer: () => null },
+    default: {
+        getCachedValue: () => mocks.liveContainerValue ?? null,
+        calculateSingleContainer: () => null,
+        calculateContainerValueAtTaxRate: (hrid, rate) => {
+            mocks.evRateCalls.push([hrid, rate]);
+            return 1000 * (1 - rate);
+        },
+    },
 }));
 vi.mock('../../utils/dungeon-level-gap.js', () => ({ partyLevelGaps: () => ({}) }));
 // profit-helpers pulls these in at load; stub the ones that touch the live
@@ -161,6 +174,8 @@ beforeEach(() => {
     mocks.prices = {};
     mocks.pricingMode = 'hybrid';
     mocks.patientTick = false;
+    mocks.liveContainerValue = null;
+    mocks.evRateCalls = [];
 });
 
 describe('calculateSimRevenue drop tax', () => {
@@ -187,6 +202,64 @@ describe('calculateSimRevenue drop tax', () => {
 
         // One coin per kill, valued at 1 apiece, untouched by tax
         expect(revenuePerHour).toBeCloseTo(1, 9);
+    });
+});
+
+describe('calculateSimRevenue for a player other than the live character', () => {
+    test('an Iron Cow (sale tax 0) is credited the whole price, cowbell bags included', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        expect(calculateSimRevenue(simResult, gameData, 'player1', HOURS, { saleTaxRate: 0 }).revenuePerHour).toBe(
+            1000
+        );
+        const bag = simDropping('/items/bag_of_10_cowbells', KILLS, 1000);
+        expect(
+            calculateSimRevenue(bag.simResult, bag.gameData, 'player1', HOURS, { saleTaxRate: 0 }).revenuePerHour
+        ).toBe(1000);
+    });
+
+    test('a market player is taxed at the rate given, and a shared price cache keeps the two apart', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        const priceCache = new Map();
+        const taxed = calculateSimRevenue(simResult, gameData, 'player1', HOURS, {
+            saleTaxRate: MARKET_TAX,
+            priceCache,
+        });
+        const cow = calculateSimRevenue(simResult, gameData, 'player1', HOURS, { saleTaxRate: 0, priceCache });
+        expect(taxed.revenuePerHour).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
+        expect(cow.revenuePerHour).toBe(1000);
+    });
+
+    test('no rate given: the live character’s, as before', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        expect(
+            calculateSimRevenue(simResult, gameData, 'player1', HOURS, { saleTaxRate: null }).revenuePerHour
+        ).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
+    });
+});
+
+describe('calculateSimRevenue unpriced containers for another player', () => {
+    // An openable with no sell price falls through to its expected value
+    const unpriced = () => {
+        const sim = simDropping('/items/mystery_crate', KILLS, 0);
+        delete mocks.prices['/items/mystery_crate'];
+        return sim;
+    };
+
+    test('values the contents at the given rate, not the live character’s cached figure', () => {
+        mocks.liveContainerValue = 960; // netted at the live character’s tax
+        const { simResult, gameData } = unpriced();
+        const cow = calculateSimRevenue(simResult, gameData, 'player1', HOURS, { saleTaxRate: 0 });
+        const std = calculateSimRevenue(simResult, gameData, 'player1', HOURS, { saleTaxRate: MARKET_TAX });
+        expect(cow.revenuePerHour).toBe(1000);
+        expect(std.revenuePerHour).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
+        expect(mocks.evRateCalls.map((c) => c[1])).toEqual([0, MARKET_TAX]);
+    });
+
+    test('no rate given: the live character’s cached figure, unchanged', () => {
+        mocks.liveContainerValue = 960;
+        const { simResult, gameData } = unpriced();
+        expect(calculateSimRevenue(simResult, gameData, 'player1', HOURS).revenuePerHour).toBeCloseTo(960, 9);
+        expect(mocks.evRateCalls).toEqual([]);
     });
 });
 

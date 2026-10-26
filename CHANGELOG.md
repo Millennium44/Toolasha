@@ -13,6 +13,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The goal planner asks you to earn the most you are ever short along the plan, not every training step's startup cost added together (100K of training startup plus a 1M purchase now needs 1M, not 1.1M).
 - Turning off listing drag order mid-drag puts the rows back and clears the drag marks.
 
+### Combat Sim: Party finder
+
+- New Party tab: save teammate builds (from the editor, an import or a copy of your own), give them aura options to try, and it sims every party of you plus your teammates across the zones you pick, ranking your own EXP/hr and profit/hr against solo (worse than solo in red); a quick pass is re-run in full for the top results, and any row loads into the editor.
+- A search only uses teammates who share your character's game mode (Iron Cow or market), since the game won't let the two party; the others stay listed, greyed out with the reason.
+
 ### Combat Sim upgrade costs follow the pricing mode
 
 - Upgrade analysis now prices enhancement rows, resale of a replaced or freed piece, and house materials by your pricing mode and custom prices, as tier rows already did. In the default Conservative mode a replaced piece is credited at its bid rather than its ask, so upgrades no longer look cheaper by the spread.

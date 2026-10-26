@@ -105,6 +105,8 @@ const mocks = vi.hoisted(() => ({
     characterId: 'char1',
     /** Whether the House Upgrade target grid omits skilling-only rooms */
     skipSkillingRooms: false,
+    /** `combatSim_partyFinder`: off unless a test turns the Party tab on */
+    partyFinder: false,
     settingChangeCallbacks: new Map(),
     /** The `getSettingValue` mock's `profitCalc_keyPricingMode`, for the pricing quick-settings row */
     keyPricingMode: 'ask',
@@ -169,8 +171,11 @@ vi.mock('../../core/config.js', () => ({
             if (key === 'combatSim_autoVerifyCloseCalls') return mocks.autoVerify;
             return fallback;
         },
-        getSetting: (key, fallback = false) =>
-            key === 'combatSim_upgradeSkipSkillingRooms' ? mocks.skipSkillingRooms : fallback,
+        getSetting: (key, fallback = false) => {
+            if (key === 'combatSim_upgradeSkipSkillingRooms') return mocks.skipSkillingRooms;
+            if (key === 'combatSim_partyFinder') return mocks.partyFinder;
+            return fallback;
+        },
         // Real `setSetting`/`setSettingValue` fire the registered change callback
         // synchronously; the pricing quick-settings row (and the dropdowns it is
         // built from) depend on that to resync themselves after their own write.
@@ -385,6 +390,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
     seedSimPriceCache: (cache) => cache,
 
     buildGameDataPayload: () => mocks.gameData,
+    // The Party tab reads the live build only when asked to (Copy my build, or simming as yourself)
+    buildPlayerDTO: () => null,
     buildAllPlayerDTOs: async () =>
         mocks.buildPlayerDTOs
             ? mocks.buildPlayerDTOs()
@@ -13046,5 +13053,72 @@ describe('pinning and excluding picks in the budget plan (#545)', () => {
 
         expect(planText()).toContain('Nothing in the list both fits');
         expect(container().querySelectorAll('[data-budget-constraint="Excluded"]')).toHaveLength(3);
+    });
+});
+
+describe('the Party tab follows its setting', () => {
+    afterEach(() => {
+        ui.destroy();
+        mocks.partyFinder = false;
+    });
+
+    test('off: no tab, and switching to it lands on Configure', () => {
+        mocks.partyFinder = false;
+        ui.buildPanel();
+        expect(ui.panel.querySelector('#mwi-csim-tab-party').style.display).toBe('none');
+        expect(ui.panel.querySelector('.mwi-csim-party-finder')).toBeNull();
+        ui._switchTab('party');
+        expect(ui._activeMainTab).toBe('configure');
+    });
+
+    test('on: the tab is built; turned off live, it goes, nodes and all; on again, it comes back', () => {
+        mocks.partyFinder = true;
+        ui.buildPanel();
+        expect(ui.panel.querySelector('#mwi-csim-tab-party').style.display).toBe('');
+        ui._switchTab('party');
+        expect(ui._activeMainTab).toBe('party');
+        expect(ui.panel.querySelector('#mwi-csim-party-content').style.display).toBe('flex');
+        expect(ui.panel.querySelector('.mwi-csim-party-finder')).not.toBeNull();
+
+        mocks.partyFinder = false;
+        mocks.settingChangeCallbacks.get('combatSim_partyFinder')?.('combatSim_partyFinder', false);
+        expect(ui._partyFinder).toBeNull();
+        expect(ui.panel.querySelector('.mwi-csim-party-finder')).toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-tab-party').style.display).toBe('none');
+        expect(ui._activeMainTab).toBe('configure');
+
+        mocks.partyFinder = true;
+        mocks.settingChangeCallbacks.get('combatSim_partyFinder')?.('combatSim_partyFinder', true);
+        expect(ui.panel.querySelector('.mwi-csim-party-finder')).not.toBeNull();
+    });
+
+    test('Simulate refuses while a party search runs instead of cancelling it', async () => {
+        mocks.partyFinder = true;
+        ui.buildPanel();
+        ui._partyFinder._running = true;
+        ui.isRunning = true;
+        await ui._onSimulate();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe(
+            'A party search is running. Stop it on the Party tab first.'
+        );
+        // Still running: nothing cancelled it, and the tab was not switched away
+        expect(ui.isRunning).toBe(true);
+        ui._partyFinder._running = false;
+        ui.isRunning = false;
+    });
+
+    test('a party search in flight makes the panel busy, and destroy lets the tab go', () => {
+        mocks.partyFinder = true;
+        ui.buildPanel();
+        const tab = ui._partyFinder;
+        tab._running = true;
+        expect(ui._isBusy()).toBe(true);
+        tab._running = false;
+        ui.destroy();
+        expect(tab.root).toBeNull();
+        expect(ui._partyFinder).toBeNull();
+        expect(mocks.settingChangeCallbacks.has('combatSim_partyFinder')).toBe(false);
+        // destroy() runs again in afterEach; build a panel for it to take down
+        ui.buildPanel();
     });
 });
