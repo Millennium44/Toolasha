@@ -2096,6 +2096,17 @@ describe('buildDetailedProfitDisplay Best plan row', () => {
         expect(render()).not.toContain('Best plan');
     });
 
+    test('a buy root (no-processing on a processing output) shows no row rather than its market price', () => {
+        planState.planner = vi.fn((_hrid, _qty, mode) => ({
+            strategy: 'buy',
+            unitCost: mode === 'ask' ? 120 : 110,
+            totalCost: mode === 'ask' ? 120 : 110,
+            children: [],
+        }));
+
+        expect(render()).not.toContain('Best plan');
+    });
+
     test('a finite plan is scaled to one action when the recipe yields several', () => {
         profitData.outputAmount = 2;
         planState.planner = vi.fn((_hrid, _qty, mode) => rootOf(mode === 'ask' ? 60 : 55, []));

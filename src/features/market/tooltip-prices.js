@@ -469,7 +469,9 @@ function craftPlanPerAction(profitData, mode) {
             0,
             config.getSetting('actionPanel_craftingPlanNoProcessing')
         );
-        if (!plan) return null;
+        // The root is forced to craft, but the planner's no-processing branch buys a processing
+        // output anyway: its price is then a purchase, not a craft cost
+        if (!plan || plan.strategy !== 'craft') return null;
         const outputAmount = profitData.outputAmount > 0 ? profitData.outputAmount : 1;
         if (Number.isFinite(plan.unitCost)) return { cost: plan.unitCost * outputAmount, partial: false };
 
