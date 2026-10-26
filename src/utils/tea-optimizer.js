@@ -1169,7 +1169,7 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
  * @param {string|null} locationName - Optional location name to filter actions (e.g., "Silly Cow Valley")
  * @param {string|null} actionNameFilter - Optional action name to restrict optimization to a single action
  * @param {number|null} playerLevelOverride - Planned level; null uses the live character level
- * @param {{collectAll?: boolean, teaSetGoal?: string, includeEmpty?: boolean, matchGoldCatalyst?: boolean}|null} options - `collectAll` adds `evaluatedAll`
+ * @param {{collectAll?: boolean, teaSetGoal?: string, includeEmpty?: boolean}|null} options - `collectAll` adds `evaluatedAll`
  *   (every scored combination, not just the top five); `teaSetGoal` picks which goal's tea list is
  *   enumerated, so an XP pass and a gold pass can score the identical set of combinations
  * @returns {Object} Optimization result
@@ -1333,11 +1333,10 @@ export function findOptimalTeas(
                 skills: skillsWithPlannedLevel('/skills/alchemy', playerLevel),
             };
             if (goal === 'xp') {
-                // The floor search compares one real setup per candidate: score XP with the catalyst
-                // its gold figure used (a catalyst raises success, and failures give 10% XP)
-                const catalystBonus = options?.matchGoldCatalyst
-                    ? calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext).catalystBonus
-                    : 0;
+                // Always score XP with the catalyst this candidate's gold figure used (a catalyst
+                // raises success, and failures give 10% XP), so a search, the XP floor and
+                // calculateSkillPerformance all read the same setup the same way
+                const catalystBonus = calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext).catalystBonus;
                 score = calculateAlchemyXpPerHour(
                     alchemyContext,
                     buffs,
@@ -1635,7 +1634,7 @@ export function findXpFloorChoice(skillName, params = {}) {
             null,
             null,
             params.playerLevel ?? null,
-            { collectAll: true, teaSetGoal: 'gold', includeEmpty: true, matchGoldCatalyst: true }
+            { collectAll: true, teaSetGoal: 'gold', includeEmpty: true }
         );
     const xpPass = run('xp');
     const goldPass = run('gold');

@@ -919,23 +919,57 @@ describe('planned Alchemy context in tea optimization', () => {
             }).evaluatedAll;
         };
 
-        test('a success-raising catalyst raises the candidate XP; without matching, XP ignores it', () => {
-            alchemyCalc.coinify = () => ({
-                profitPerHour: 777,
-                winningCatalystHrid: '/items/prime_catalyst',
-                successRateBreakdown: { catalyst: 0.3 },
-            });
+        const catalystOf = (catalyst) => () => ({
+            profitPerHour: 777,
+            winningCatalystHrid: '/items/prime_catalyst',
+            successRateBreakdown: { catalyst },
+        });
+
+        test('a success-raising catalyst raises every candidate XP by default', () => {
+            alchemyCalc.coinify = catalystOf(0);
             const plain = xpOf({});
-            const matched = xpOf({ matchGoldCatalyst: true });
-            expect(matched.length).toBe(plain.length);
-            for (let i = 0; i < plain.length; i++) expect(matched[i].score).toBeGreaterThan(plain[i].score);
+            alchemyCalc.coinify = catalystOf(0.3);
+            const boosted = xpOf({});
+            expect(boosted.length).toBe(plain.length);
+            for (let i = 0; i < plain.length; i++) expect(boosted[i].score).toBeGreaterThan(plain[i].score);
         });
 
         test('a catalyst-free gold setup leaves XP unchanged', () => {
             alchemyCalc.coinify = () => ({ profitPerHour: 777, successRateBreakdown: { catalyst: 0 } });
             const plain = xpOf({});
-            const matched = xpOf({ matchGoldCatalyst: true });
-            expect(matched.map((r) => r.score)).toEqual(plain.map((r) => r.score));
+            alchemyCalc.coinify = () => ({ profitPerHour: 777 });
+            expect(xpOf({}).map((r) => r.score)).toEqual(plain.map((r) => r.score));
+        });
+
+        test('the search XP for a combo equals calculateSkillPerformance XP for the same combo', () => {
+            alchemyCalc.coinify = catalystOf(0.3);
+            const empty = xpOf({ includeEmpty: true }).find((r) => r.teas.length === 0);
+            const perf = calculateSkillPerformance('alchemy', new Map(), [], 5, null, { alchemyContext: context });
+            expect(perf.xpPerHour).toBeGreaterThan(0);
+            expect(empty.score).toBeCloseTo(perf.xpPerHour, 6);
+        });
+
+        test('the catalyst can change which combo wins the XP search', () => {
+            const tea = '/items/efficiency_tea';
+            const original = state.gameData.itemDetailMap[tea];
+            state.gameData.itemDetailMap[tea] = {
+                consumableDetail: {
+                    usableInActionTypeMap: { '/action_types/alchemy': true },
+                    buffs: [{ typeHrid: '/buff_types/action_speed', flatBoost: 0.05 }],
+                },
+            };
+            try {
+                // Only the no-tea setup gets the catalyst; the tea setup is 5% faster but fails more
+                alchemyCalc.coinify = (...args) => ({
+                    profitPerHour: 777,
+                    successRateBreakdown: { catalyst: args[4]?.drinks?.length ? 0 : 0.3 },
+                });
+                const all = xpOf({ includeEmpty: true });
+                const best = all.reduce((a, b) => (b.score > a.score ? b : a));
+                expect(best.teas).toEqual([]);
+            } finally {
+                state.gameData.itemDetailMap[tea] = original;
+            }
         });
     });
 
