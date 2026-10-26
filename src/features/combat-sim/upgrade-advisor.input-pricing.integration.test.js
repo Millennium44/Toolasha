@@ -13,6 +13,8 @@ import * as mathjs from 'mathjs';
 
 const SWORD = '/items/cheese_sword';
 const MAT = '/items/cheese';
+const OLD_SWORD = '/items/wooden_sword';
+const MIRROR = '/items/philosophers_mirror';
 const CHAR = 161296;
 
 const state = vi.hoisted(() => ({
@@ -33,6 +35,13 @@ const ITEM_DETAIL_MAP = {
         enhancementCosts: [{ itemHrid: MAT, count: 2 }],
     },
     [MAT]: { hrid: MAT, name: 'Cheese' },
+    [OLD_SWORD]: {
+        hrid: OLD_SWORD,
+        name: 'Wooden Sword',
+        isTradable: true,
+        itemLevel: 1,
+        equipmentDetail: { type: '/equipment_types/main_hand' },
+    },
     '/items/mirror_of_protection': { name: 'Mirror of Protection' },
 };
 
@@ -272,5 +281,133 @@ describe('an enhancement row prices both levels as the pricing mode and custom p
         const { cost, detail } = both(enhance());
         expect(cost).toBe(0);
         expect(detail).toMatchObject({ creditCapped: true, credit: 1_500_000, rawCredit: 7_680_000 });
+    });
+});
+
+describe('resale and material buys follow the pricing mode', () => {
+    const HYBRID = { buy: 'ask', sell: 'ask' };
+    const OPTIMISTIC = { buy: 'bid', sell: 'ask' };
+    const PATIENT_BUY = { buy: 'bid', sell: 'bid' };
+
+    /** Cost and breakdown, which must agree */
+    const both = (candidate, data = gameData) => {
+        const cost = calculateUpgradeCost(candidate, data);
+        const detail = explainUpgradeCost(candidate, data);
+        expect(detail.net).toBe(cost);
+        return { cost, detail };
+    };
+
+    describe('a replaced tier piece', () => {
+        /** The Cheese Sword +5 in place of a worn Wooden Sword +2, which is sold */
+        const swap = () => ({
+            type: 'equipment',
+            slot: '/equipment_types/main_hand',
+            currentHrid: OLD_SWORD,
+            currentLevel: 2,
+            upgradeHrid: SWORD,
+            upgradeLevel: 5,
+        });
+
+        beforeEach(() => {
+            state.books[`${SWORD}:5`] = { ask: 2_000_000, bid: 1_500_000 };
+            state.books[`${OLD_SWORD}:2`] = { ask: 300_000, bid: 200_000 };
+        });
+
+        test('conservative: credited at its bid after tax', () => {
+            const { cost, detail } = both(swap());
+            expect(detail.credits[0].price).toBe(192_000);
+            expect(cost).toBe(2_000_000 - 192_000);
+        });
+
+        test('patient buy: credited at its bid after tax', () => {
+            state.sides = PATIENT_BUY;
+            const { cost, detail } = both(swap());
+            expect(detail.credits[0].price).toBe(192_000);
+            expect(cost).toBe(1_500_000 - 192_000);
+        });
+
+        test('hybrid: credited at its ask after tax', () => {
+            state.sides = HYBRID;
+            const { cost, detail } = both(swap());
+            expect(detail.credits[0].price).toBe(288_000);
+            expect(cost).toBe(2_000_000 - 288_000);
+        });
+
+        test('optimistic: credited at its ask after tax', () => {
+            state.sides = OPTIMISTIC;
+            const { cost, detail } = both(swap());
+            expect(detail.credits[0].price).toBe(288_000);
+            expect(cost).toBe(1_500_000 - 288_000);
+        });
+
+        test('a custom sell price is the resale, taxed once', () => {
+            state.custom[`${OLD_SWORD}:2:sell`] = 250_000;
+            expect(both(swap()).detail.credits[0].price).toBe(240_000);
+        });
+    });
+
+    describe('a house room', () => {
+        const ROOM = '/house_rooms/dairy_barn';
+        const houseData = {
+            ...gameData,
+            houseRoomDetailMap: {
+                [ROOM]: {
+                    upgradeCostsMap: {
+                        1: [
+                            { itemHrid: '/items/coin', count: 1000 },
+                            { itemHrid: MAT, count: 10 },
+                        ],
+                    },
+                },
+            },
+        };
+        const room = { type: 'house', slot: ROOM, roomHrid: ROOM, currentLevel: 0, upgradeLevel: 1 };
+
+        test("buys its materials on the mode's buy side", () => {
+            // Cheese books at 50 ask, 40 bid
+            expect(calculateUpgradeCost(room, houseData)).toBe(1000 + 10 * 50);
+            state.sides = PATIENT_BUY;
+            expect(calculateUpgradeCost(room, houseData)).toBe(1000 + 10 * 40);
+        });
+
+        test('a material nothing prices leaves the room unpriced, never free', () => {
+            delete state.books[`${MAT}:0`];
+            expect(calculateUpgradeCost(room, houseData)).toBeNull();
+        });
+    });
+
+    describe("a mirror route's trade-in", () => {
+        // Every level listed, the +5 dear enough that a mirror build of it is the cheaper route
+        const enhance = () => ({
+            type: 'enhancement',
+            slot: '/equipment_types/main_hand',
+            currentHrid: SWORD,
+            currentLevel: 2,
+            upgradeHrid: SWORD,
+            upgradeLevel: 5,
+        });
+
+        beforeEach(() => {
+            state.books[`${SWORD}:1`] = { ask: 100_000, bid: 100_000 };
+            state.books[`${SWORD}:2`] = { ask: 200_000, bid: 150_000 };
+            state.books[`${SWORD}:3`] = { ask: 400_000, bid: 400_000 };
+            state.books[`${SWORD}:4`] = { ask: 800_000, bid: 800_000 };
+            state.books[`${SWORD}:5`] = { ask: 3_000_000, bid: 3_000_000 };
+            state.books[`${MIRROR}:0`] = { ask: 100_000, bid: 100_000 };
+        });
+
+        test("sells the worn +2 on the mode's sell side", () => {
+            const conservative = both(enhance());
+            state.sides = HYBRID;
+            const hybrid = both(enhance());
+
+            // The same build, credited 0.96 x 150K into the bid, and 0.96 x 200K at the ask
+            expect(conservative.detail.source).toBe('mirror');
+            expect(hybrid.detail.source).toBe('mirror');
+            expect(conservative.detail.credit).toBe(144_000);
+            expect(hybrid.detail.credit).toBe(192_000);
+            expect(conservative.detail.gross).toBe(hybrid.detail.gross);
+            expect(conservative.cost - hybrid.cost).toBe(192_000 - 144_000);
+        });
     });
 });
