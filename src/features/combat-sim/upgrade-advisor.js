@@ -2452,6 +2452,9 @@ function explainGuildShrineCost(candidate) {
         unpriced,
         creditApplied: false,
         source: 'guild',
+        // The net leaves the token half out when no exchange rate is known. The row stays rankable on
+        // the credits, but a plan total built from it must say it is not the whole price
+        ...(tokens > 0 && tokenGold === null ? { partialCost: 'guild tokens not priced' } : {}),
     };
 }
 
@@ -7077,6 +7080,11 @@ export function planWithinBudget(
     return {
         picks,
         totalCost: spent,
+        // Picks whose price leaves a half out (a shrine's guild tokens with no exchange rate), so the
+        // total reads as "at least this" rather than the whole bill
+        partialCostPicks: picks
+            .filter((pick) => pick.costDetail?.partialCost)
+            .map((pick) => pick.candidate?.description),
         attemptsSaved,
         skipped,
         budget,

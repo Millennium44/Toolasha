@@ -6278,6 +6278,14 @@ class LabSimUI {
                             plan.totalCost < 0
                                 ? `${money(-plan.totalCost)} back, none of ${money(budget)} spent`
                                 : `${money(plan.totalCost)} of ${money(budget)}`
+                        }${
+                            // A pick priced on part of its bill (shrine credits with no token rate) makes
+                            // the total a floor, so it says what it leaves out
+                            plan.partialCostPicks?.length
+                                ? ` <span data-budget-partial-cost style="color:#ff9800;" title="${plan.partialCostPicks
+                                      .join(', ')
+                                      .replace(/"/g, '&quot;')}">+ guild tokens not priced</span>`
+                                : ''
                         } ·
                         <span style="color:#4caf50; font-weight:600;">−${plan.attemptsSaved.toFixed(1)} attempts</span>
                         <span style="color:#666;"> if gains in different slots add up</span>

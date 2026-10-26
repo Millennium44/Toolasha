@@ -3497,6 +3497,20 @@ describe('the budget plan when nothing is picked', () => {
         expect(out).toContain('nothing listed fits the budget and improves the metric');
     });
 
+    test('a pick priced on part of its bill says the total leaves the guild tokens out', () => {
+        const out = text([
+            result('Force Shrine Lv3 → Lv4', {
+                cost: 3_000,
+                costDetail: { partialCost: 'guild tokens not priced', buys: [], credits: [], net: 3_000 },
+            }),
+        ]);
+        expect(out).toContain('+ guild tokens not priced');
+    });
+
+    test('a fully priced plan does not', () => {
+        expect(text([result('Plain Bow', { cost: 3_000 })])).not.toContain('guild tokens not priced');
+    });
+
     test('an empty list gets the plain line', () => {
         const out = text([]);
         expect(out).toContain('Nothing in the list fits');

@@ -5804,6 +5804,36 @@ describe('guild shrine candidates', () => {
         expect(detail.guild.rankedNote).toContain('credit half only');
     });
 
+    test('a shrine with no exchange rate is flagged partial, and the budget plan carries the flag', () => {
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        const detail = explainUpgradeCost(candidate, buildGameData());
+
+        // Still rankable on the credit half
+        expect(detail.net).toBe(3000);
+        expect(detail.partialCost).toBe('guild tokens not priced');
+
+        const plan = planWithinBudget(
+            [{ candidate, cost: detail.net, costDetail: detail, attemptsDelta: -1, significant: true }],
+            10_000
+        );
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.partialCostPicks).toEqual([candidate.description]);
+    });
+
+    test('a shrine whose tokens are priced is not flagged partial', () => {
+        token.goldPerToken = 50;
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        const detail = explainUpgradeCost(candidate, buildGameData());
+        expect(detail.partialCost).toBeUndefined();
+        const plan = planWithinBudget(
+            [{ candidate, cost: detail.net, costDetail: detail, attemptsDelta: -1, significant: true }],
+            10_000
+        );
+        expect(plan.partialCostPicks).toEqual([]);
+    });
+
     test('a priced token is folded into the cost, with both halves still reported', () => {
         token.goldPerToken = 50;
         const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
