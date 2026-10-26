@@ -10,6 +10,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - New Party tab: save teammate builds (from the editor, an import or a copy of your own), give them aura options to try, and it sims every party of you plus your teammates across the zones you pick, ranking your own EXP/hr and profit/hr against solo (worse than solo in red); a quick pass is re-run in full for the top results, and any row loads into the editor.
 
+### Audit round (2026-10-26): death recap
+
+- An open death recap updates when another death is recorded, and its Older/Newer buttons keep working after the recap you are viewing is dropped from the kept list.
+- A combat tick that leaves out your HP or damage counter no longer records a hit of unknown damage or a phantom miss.
+
 ### Treasure popup on phones
 
 - The chest-opening summary no longer covers the game's loot window on a phone: with no room beside it, it sits above or below the window (scrolling if needed), so the game's Close stays reachable.
