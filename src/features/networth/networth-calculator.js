@@ -39,6 +39,7 @@ import { validateNetworthCache } from './networth-cache-validation.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
+import { getArtisanBonus } from '../../utils/artisan-bonus.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
 import { guildCreditPricingMode } from '../../utils/guild-credit-networth-side.js';
@@ -543,7 +544,7 @@ function getActionIndexes() {
 
 /**
  * Calculate crafting cost for an item (simple version without efficiency bonuses)
- * Applies Artisan Tea reduction (0.9x) to input materials
+ * Applies the player's real Artisan reduction (x1 with no tea) to input materials
  * @param {string} itemHrid - Item HRID
  * @returns {number} Total material cost or 0 if not craftable
  */
@@ -575,8 +576,8 @@ function craftingBill(itemHrid) {
         }
     }
 
-    // Apply Artisan Tea reduction (0.9x) to input materials
-    inputCost *= 0.9;
+    // Artisan reduces input materials by the player's real bonus for this action's skill (none: x1)
+    inputCost *= 1 - getArtisanBonus(action.type);
 
     // Add upgrade item cost (not affected by Artisan Tea)
     let upgradeCost = 0;

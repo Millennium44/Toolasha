@@ -13,6 +13,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Community Buff dialogs' Max button buys the right amount, the Labyrinth room grid gets a size control, and item tooltips show a "Best plan" row when crafting sub-materials is cheaper.
 - Action tiles no longer redraw unchanged stats.
 
+### Combat Sim upgrade profit for an imported player
+
+- Upgrade analysis of an imported profile or a saved teammate now taxes its drop profit at that player's own rate, so an Iron Cow's profit isn't cut by a market tax it never pays (and the reverse).
+
+### Task completions sync without a reload
+
+- A sync pull that brings task completions from another device now folds them in without asking you to reload, and a claim seen by two open devices counts once in task income.
+
+### Leftovers (2026-10-26): networth craft costs and Lab room EXP
+
+- Net worth values an unlisted item's craft cost with your real Artisan bonus for that skill, instead of always assuming 10% savings.
+- A Lab room's EXP / Room and EXP / Hour update after you buy the labyrinth XP upgrade or a community XP buff changes, instead of keeping the cached figure.
+
 ### Leftovers (2026-10-26): craft costs, Alchemy XP and the goal planner
 
 - Craft-cost estimates price recipe inputs at your custom buy price rather than your custom sell price.

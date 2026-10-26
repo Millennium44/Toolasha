@@ -4,6 +4,7 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const guild = vi.hoisted(() => ({
     /** buffHrid → detail, as initClientData.guildBuffDetailMap sends it */
@@ -8243,6 +8244,103 @@ describe('one price snapshot per analysis (#544)', () => {
         const analysis = await runUpgradeAnalysis(setup(), null, {});
 
         expect(analysis.results[0].deltas.profit).toBeCloseTo(20);
+    });
+});
+
+describe('profit is taxed as the analysed player pays it', () => {
+    const fight = () => ({
+        simulatedTime: 3.6e12,
+        experienceGained: {},
+        deaths: {},
+        encounters: 100,
+        totalDamageDealt: {},
+    });
+
+    /** `calculateSimRevenue`'s options, one entry per call */
+    const optionsSeen = () => calculateSimRevenue.mock.calls.map((call) => call[4]);
+
+    function setup(dtoOver = {}, selfHrid = '/players/live') {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+        plannedWorkerCount.mockReturnValue(1);
+        return {
+            playerDTOs: [
+                {
+                    equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                    abilities: [],
+                    hrid: '/players/target',
+                    ...dtoOver,
+                },
+            ],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: {},
+            upgradeMode: 'equipment',
+            selfHrid,
+        };
+    }
+
+    beforeEach(() => {
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(async () => fight());
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0, revenuePerHour: 0, costPerHour: 0 });
+    });
+
+    test('an Iron Cow profile analyzed from a market character: every pricing is untaxed, the basket too', async () => {
+        const analysis = await runUpgradeAnalysis(setup({ gameMode: '/game_mode/ironcow' }), null, {});
+        expect(analysis.results.length).toBeGreaterThan(0);
+        expect(optionsSeen().length).toBeGreaterThan(1);
+        for (const options of optionsSeen()) expect(options.saleTaxRate).toBe(0);
+
+        calculateSimRevenue.mockClear();
+        const outcome = await confirmUpgradeBudgetPlan([analysis.results[0]], analysis.context);
+        expect(outcome.ok).toBe(true);
+        expect(optionsSeen()).toHaveLength(2);
+        for (const options of optionsSeen()) expect(options.saleTaxRate).toBe(0);
+    });
+
+    test('a market profile analyzed from an Iron Cow character: every pricing is taxed', async () => {
+        const analysis = await runUpgradeAnalysis(setup({ gameMode: '/game_mode/standard' }), null, {});
+        expect(optionsSeen().length).toBeGreaterThan(1);
+        for (const options of optionsSeen()) expect(options.saleTaxRate).toBe(MARKET_TAX);
+
+        calculateSimRevenue.mockClear();
+        await confirmUpgradeBudgetPlan([analysis.results[0]], analysis.context);
+        for (const options of optionsSeen()) expect(options.saleTaxRate).toBe(MARKET_TAX);
+    });
+
+    test('the price snapshot is taken under the keys the rate of whoever is analysed reads', async () => {
+        seedSimPriceCache.mockClear();
+        await runUpgradeAnalysis(setup({ gameMode: '/game_mode/ironcow' }), null, {});
+        expect(seedSimPriceCache.mock.calls[0][2].saleTaxRate).toBe(0);
+
+        seedSimPriceCache.mockClear();
+        await runUpgradeAnalysis(setup({ hrid: '/players/live' }), null, {});
+        expect('saleTaxRate' in seedSimPriceCache.mock.calls[0][2]).toBe(false);
+    });
+
+    test('the live character: no rate is passed, so the live tax and the existing cache keys stand', async () => {
+        const analysis = await runUpgradeAnalysis(setup({ hrid: '/players/live' }), null, {});
+        expect(optionsSeen().length).toBeGreaterThan(1);
+        for (const options of optionsSeen()) expect('saleTaxRate' in options).toBe(false);
+
+        calculateSimRevenue.mockClear();
+        await confirmUpgradeBudgetPlan([analysis.results[0]], analysis.context);
+        expect(optionsSeen()).toHaveLength(2);
+        for (const options of optionsSeen()) expect('saleTaxRate' in options).toBe(false);
+    });
+
+    test('a context stored before the rate existed prices the basket at the live tax', async () => {
+        const analysis = await runUpgradeAnalysis(setup({ hrid: '/players/live' }), null, {});
+        const { saleTaxRate: _dropped, ...older } = analysis.context;
+        calculateSimRevenue.mockClear();
+        await confirmUpgradeBudgetPlan([analysis.results[0]], older);
+        for (const options of optionsSeen()) expect('saleTaxRate' in options).toBe(false);
     });
 });
 

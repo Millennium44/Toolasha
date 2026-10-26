@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
     excluded: new Set(), // "type:value" pairs isExcluded() answers true for
     characterGuildBuffMap: null,
     loadoutSnapshots: [],
+    artisan: 0.1, // the player's Artisan bonus for any action type
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -130,6 +131,7 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid) => mocks.itemPrices[hrid] ?? null,
 }));
 vi.mock('../../utils/networth-worker-manager.js', () => ({ calculateItemValueBatch: vi.fn() }));
+vi.mock('../../utils/artisan-bonus.js', () => ({ getArtisanBonus: () => mocks.artisan }));
 vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
 vi.mock('../../utils/game-lookups.js', () => ({
     getShopCoinOnlyCost: () => 0,
@@ -213,6 +215,7 @@ beforeEach(() => {
     mocks.excluded = new Set();
     mocks.characterGuildBuffMap = null;
     mocks.loadoutSnapshots = [];
+    mocks.artisan = 0.1;
     workerBatch.mockReset();
     _resetMarketValues();
 });
@@ -792,6 +795,7 @@ describe('craft-cost parity between the main thread and the worker', () => {
                     inputItems: action.inputItems || null,
                     upgradeItemHrid: action.upgradeItemHrid || null,
                     outputCount: output.count || 1,
+                    artisanBonus: mocks.artisan,
                 };
             }
         }
@@ -818,6 +822,46 @@ describe('craft-cost parity between the main thread and the worker', () => {
         const workerProductionCost = await loadWorkerProductionCost();
         const { priceMap, recipes } = shippedContext();
         expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
+    });
+
+    describe('the Artisan bonus is the real one', () => {
+        const setUp = () => {
+            mocks.settings.networth_pricingMode = 'ask';
+            mocks.initData = {
+                houseRoomDetailMap: {},
+                actionDetailMap: {
+                    '/actions/saw_planks': {
+                        type: '/action_types/woodcutting_craft',
+                        outputItems: [{ itemHrid: '/items/plank', count: 10 }],
+                        inputItems: [{ itemHrid: '/items/log', count: 3 }],
+                    },
+                },
+            };
+            mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+        };
+
+        test('no Artisan is a factor of 1 on both threads', async () => {
+            setUp();
+            mocks.artisan = 0;
+            const fromMain = calculateCraftingCost('/items/plank');
+            expect(fromMain).toBeCloseTo(3, 9); // 3 logs x 10, split ten ways
+            const workerProductionCost = await loadWorkerProductionCost();
+            const { priceMap, recipes } = shippedContext();
+            expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
+        });
+
+        test('a known bonus gives the same result on both threads, and a tea change recomputes', async () => {
+            setUp();
+            mocks.artisan = 0.25;
+            const fromMain = calculateCraftingCost('/items/plank');
+            expect(fromMain).toBeCloseTo(2.25, 9);
+            const workerProductionCost = await loadWorkerProductionCost();
+            const { priceMap, recipes } = shippedContext();
+            expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
+
+            mocks.artisan = 0;
+            expect(calculateCraftingCost('/items/plank')).toBeCloseTo(3, 9);
+        });
     });
 
     test('a by-product is priced by the action that makes it, on both threads', async () => {
