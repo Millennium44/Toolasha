@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A replaced piece with no sale price now says "no sale price, so nothing is credited back" instead of "0 back".
 - The budget plan says "the cheapest measured upgrade costs more" only when a pick was actually over budget, and its total notes when a guild shrine pick leaves out unpriced guild tokens.
 
+### Combat Sim: Party finder
+
+- New Party tab: save teammate builds (from the editor, an import or a copy of your own), give them aura options to try, and it sims every party of you plus your teammates across the zones you pick, ranking your own EXP/hr and profit/hr against solo (worse than solo in red); a quick pass is re-run in full for the top results, and any row loads into the editor.
+- A search only uses teammates who share your character's game mode (Iron Cow or market), since the game won't let the two party; the others stay listed, greyed out with the reason.
+
 ### Combat Sim upgrade costs follow the pricing mode
 
 - Upgrade analysis now prices enhancement rows, resale of a replaced or freed piece, and house materials by your pricing mode and custom prices, as tier rows already did. In the default Conservative mode a replaced piece is credited at its bid rather than its ask, so upgrades no longer look cheaper by the spread.

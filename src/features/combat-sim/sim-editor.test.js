@@ -2456,3 +2456,35 @@ describe('applying optimizer trigger values', () => {
         expect(slotOf(editor).triggers.map((t) => t.value)).toEqual([700, 30]);
     });
 });
+
+describe('loadParty (the Party Finder hands a whole party over)', () => {
+    test('replaces the scenario: you are player1, teammates follow, each a copy', () => {
+        const { editor } = editorWithStrangers();
+        const me = { ...emptyDTO('player4'), magicLevel: 90 };
+        const mate = { ...emptyDTO('player9'), magicLevel: 120 };
+        editor.loadParty([me, mate], ['Milkman', 'Bob'], { selfIsLive: true });
+
+        expect(editor.getPlayerInfo()).toEqual([
+            { hrid: 'player1', name: 'Milkman' },
+            { hrid: 'player2', name: 'Bob' },
+        ]);
+        expect(editor.getSelfHrid()).toBe('player1');
+        expect(editor.getActiveEditPlayer()).toBe('player1');
+        const dtos = editor.getEditedDTOs();
+        expect(dtos.player2.magicLevel).toBe(120);
+        // Copies: the caller's objects are not adopted
+        expect(mate.hrid).toBe('player9');
+        dtos.player2.magicLevel = 1;
+        expect(mate.magicLevel).toBe(120);
+    });
+
+    test('a self that is not the live character is not synced from the game', () => {
+        const { editor } = editorWithStrangers();
+        const imported = emptyDTO('player1');
+        imported.houseRooms = { '/house_rooms/dojo': 5 };
+        editor.loadParty([imported], ['Imported me'], { selfIsLive: false });
+        game.houseRooms = new Map([['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 2 }]]);
+        expect(editor.getSelfHrid()).toBeNull();
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(5);
+    });
+});

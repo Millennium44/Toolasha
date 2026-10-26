@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     marketListeners: [],
     marketLoaded: true,
     emitted: [],
+    ironCow: false,
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
@@ -90,6 +91,11 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     calculatePriceAfterTax: (price, taxRate = 0.02) => price * (1 - taxRate),
 }));
 
+vi.mock('../../utils/ironcow-valuation.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    isIronCowCharacter: () => mocks.ironCow,
+}));
+
 vi.mock('../../utils/ev-worker-manager.js', () => ({
     calculateEVBatch: vi.fn(),
     terminateEVWorkerPool: vi.fn(),
@@ -129,6 +135,7 @@ beforeEach(() => {
     expectedValueCalculator.isInitialized = false;
     expectedValueCalculator._initPromise = null;
     mocks.emitted = [];
+    mocks.ironCow = false;
 });
 
 describe('getDropPrice', () => {
@@ -1092,6 +1099,55 @@ describe('calculateGrossContainerValue', () => {
 
         expect(expectedValueCalculator.resolveSellSideValue('/items/cowbell', 0, ctx).value).toBeCloseTo(100, 6);
         expect(expectedValueCalculator.resolveSellSideValue('/items/cowbell').value).toBeCloseTo(
+            (1000 * (1 - COWBELL_BAG_TAX)) / 10,
+            6
+        );
+    });
+});
+
+describe('calculateContainerValueAtTaxRate', () => {
+    // 500 (gem, sellable) + 150 (untradable junk, exempt) + 100 (coin, exempt)
+    test('an Iron Cow rate on a standard live character leaves sellable contents untaxed', () => {
+        expect(expectedValueCalculator.calculateContainerValueAtTaxRate(CHEST_HRID, 0)).toBeCloseTo(750, 6);
+        // The live path is unchanged and nothing leaked into its cache
+        expect(expectedValueCalculator.getCachedValue(CHEST_HRID)).toBeNull();
+        expect(expectedValueCalculator.calculateSingleContainer(CHEST_HRID, mocks.initData)).toBeCloseTo(
+            500 * (1 - MARKET_TAX) + 250,
+            6
+        );
+    });
+
+    test('a market rate on a live Iron Cow taxes the sellable contents only', () => {
+        mocks.ironCow = true;
+        expect(expectedValueCalculator.calculateContainerValueAtTaxRate(CHEST_HRID, MARKET_TAX)).toBeCloseTo(
+            500 * (1 - MARKET_TAX) + 250,
+            6
+        );
+        // The live Iron Cow path stays untaxed
+        expect(expectedValueCalculator.calculateSingleContainer(CHEST_HRID, mocks.initData)).toBeCloseTo(750, 6);
+    });
+
+    test('a cached live figure is not read, and a rate pass does not feed the cache', () => {
+        expectedValueCalculator.calculateSingleContainer(CHEST_HRID, mocks.initData);
+        const cached = expectedValueCalculator.getCachedValue(CHEST_HRID);
+        expect(expectedValueCalculator.calculateContainerValueAtTaxRate(CHEST_HRID, 0)).toBeCloseTo(750, 6);
+        expect(expectedValueCalculator.getCachedValue(CHEST_HRID)).toBe(cached);
+    });
+
+    test('a nested container is re-valued at the rate rather than read from the cache', () => {
+        const OUTER = '/items/test_outer';
+        mocks.itemDetails[OUTER] = { name: 'Outer', isOpenable: true };
+        mocks.initData.openableLootDropMap[OUTER] = [{ itemHrid: CHEST_HRID, dropRate: 1, minCount: 1, maxCount: 1 }];
+        expectedValueCalculator.calculateSingleContainer(OUTER, mocks.initData); // warms the cache, taxed
+        expect(expectedValueCalculator.calculateContainerValueAtTaxRate(OUTER, 0)).toBeCloseTo(750, 6);
+    });
+
+    test('a cowbell takes its bag rate on a market rate and none at 0, whatever the live character is', () => {
+        mocks.prices['/items/bag_of_10_cowbells'] = 1000;
+        mocks.ironCow = true;
+        const ctx = (saleTaxRate) => ({ path: new Set(), truncated: false, saleTaxRate });
+        expect(expectedValueCalculator.resolveSellSideValue('/items/cowbell', 0, ctx(0)).value).toBeCloseTo(100, 6);
+        expect(expectedValueCalculator.resolveSellSideValue('/items/cowbell', 0, ctx(MARKET_TAX)).value).toBeCloseTo(
             (1000 * (1 - COWBELL_BAG_TAX)) / 10,
             6
         );

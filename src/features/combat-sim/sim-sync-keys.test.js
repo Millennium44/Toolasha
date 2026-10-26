@@ -40,6 +40,7 @@ const { incomingWins, laterSavedAtWins, mergeFieldRecord, StoredValueMemo, pulle
 const { mergeLabComparison, LabComparisonStore } = await import('./lab-sim-comparison.js');
 await import('./trigger-result-cache.js');
 await import('./lab-skilling-loadouts.js');
+await import('./party-roster.js');
 const { mergeZoneSimRates, mergeAllZonesSnapshot, mergeSimConsumableRates, mergeSimConsumableRatesByZone } =
     await import('../../utils/all-zones-snapshot.js');
 const { scriptVersion } = await import('../../utils/script-version.js');
@@ -83,6 +84,7 @@ const KEYS = [
     ['settings', 'combatSimBestiaryPlanPoints'],
     ['settings', 'combatSimBestiaryPlanTotal'],
     ['settings', 'combatSimBestiaryPlanTolerance'],
+    ['settings', 'combatSimPartyRoster'],
     ['combatExport', 'combatSimUpgradeResults'],
     ['combatExport', 'zoneSimRates'],
     ['combatExport', 'allZonesSnapshot'],
@@ -116,7 +118,7 @@ describe('every simulator key a pull writes is live-safe', () => {
         const notStorageKeys = new Set(['labSimPanel', 'combatSimPanel']);
         const listed = new Set([...KEYS.map(([, base]) => base), ...LATCHED.map(([, base]) => base)]);
         const declared = [];
-        for (const file of ['lab-sim-ui.js', 'combat-sim-ui.js', 'sim-editor.js']) {
+        for (const file of ['lab-sim-ui.js', 'combat-sim-ui.js', 'sim-editor.js', 'party-roster.js']) {
             const text = readFileSync(join(here, file), 'utf8');
             for (const match of text.matchAll(/^const \w+ = '((?:labSim|combatSim|simEditor)[\w-]*)';/gm)) {
                 if (!notStorageKeys.has(match[1])) declared.push(match[1]);

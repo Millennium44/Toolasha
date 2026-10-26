@@ -108,6 +108,7 @@ import {
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelActiveSimulations } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
+import { PartyFinderTab } from './party-finder-ui.js';
 import {
     runUpgradeAnalysis,
     getStyleExcludedSkills,
@@ -3166,6 +3167,9 @@ class CombatSimUI {
         this._seekResults = null;
         this._seekSortCol = null;
         this._seekSortAsc = true;
+        // Party tab (`party-finder-ui.js`): built while `combatSim_partyFinder` is on
+        this._partyFinder = null;
+        this._unsubscribePartyFinderSetting = null;
     }
 
     /**
@@ -3248,6 +3252,7 @@ class CombatSimUI {
             <button id="mwi-csim-tab-results" style="${tabStyle(false)}">Results</button>
             <button id="mwi-csim-tab-seek" style="${tabStyle(false)}">Seek</button>
             <button id="mwi-csim-tab-upgrade" style="${tabStyle(false)}">Upgrade</button>
+            <button id="mwi-csim-tab-party" style="${tabStyle(false)}" title="Find the best party from your saved teammates">Party</button>
         `;
 
         // Configure tab content
@@ -3709,6 +3714,11 @@ class CombatSimUI {
         upgradeContent.appendChild(triggerBox);
         upgradeContent.appendChild(upgradeResults);
 
+        // Party tab content (hidden by default; filled by the party finder while its setting is on)
+        const partyContent = document.createElement('div');
+        partyContent.id = 'mwi-csim-party-content';
+        partyContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow-y:auto; overflow-x:hidden;';
+
         // Status bar
         const status = document.createElement('div');
         status.id = 'mwi-csim-status';
@@ -3722,6 +3732,7 @@ class CombatSimUI {
         this.panel.appendChild(resultsContent);
         this.panel.appendChild(seekContent);
         this.panel.appendChild(upgradeContent);
+        this.panel.appendChild(partyContent);
         this.panel.appendChild(progressContainer);
         this.panel.appendChild(status);
 
@@ -3759,7 +3770,16 @@ class CombatSimUI {
         this.minimizeCtl = attachMinimize({
             panel: this.panel,
             header,
-            body: [tabBar, configureContent, resultsContent, seekContent, upgradeContent, progressContainer, status],
+            body: [
+                tabBar,
+                configureContent,
+                resultsContent,
+                seekContent,
+                upgradeContent,
+                partyContent,
+                progressContainer,
+                status,
+            ],
             panelKey: GEOMETRY_KEY,
             beforeEl: header.querySelector('#mwi-csim-close'),
             accent: '#aaa',
@@ -3778,6 +3798,12 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-tab-results').addEventListener('click', () => this._switchTab('results'));
         this.panel.querySelector('#mwi-csim-tab-seek').addEventListener('click', () => this._switchTab('seek'));
         this.panel.querySelector('#mwi-csim-tab-upgrade').addEventListener('click', () => this._switchTab('upgrade'));
+        this.panel.querySelector('#mwi-csim-tab-party').addEventListener('click', () => this._switchTab('party'));
+        this._syncPartyFinderTab();
+        this._unsubscribePartyFinderSetting?.();
+        this._unsubscribePartyFinderSetting = config.onSettingChange('combatSim_partyFinder', () =>
+            this._syncPartyFinderTab()
+        );
         // The Configure and Upgrade Hours boxes are one setting: editing either updates the other
         for (const [id, twinId] of [
             ['#mwi-csim-hours', '#mwi-csim-upgrade-hours'],
@@ -6632,11 +6658,13 @@ class CombatSimUI {
     }
 
     /**
-     * Switch between Configure and Results tabs.
-     * @param {string} tab - 'configure' or 'results'
+     * Switch between the panel's tabs.
+     * @param {string} requested - 'configure', 'results', 'seek', 'upgrade' or 'party'
      * @private
      */
-    _switchTab(tab) {
+    _switchTab(requested) {
+        // The Party tab only exists while its setting is on
+        const tab = requested === 'party' && !this._partyFinder ? 'configure' : requested;
         this._activeMainTab = tab;
         const configureContent = this.panel.querySelector('#mwi-csim-configure-content');
         const resultsContent = this.panel.querySelector('#mwi-csim-results-content');
@@ -6646,6 +6674,8 @@ class CombatSimUI {
         const tabResults = this.panel.querySelector('#mwi-csim-tab-results');
         const tabSeek = this.panel.querySelector('#mwi-csim-tab-seek');
         const tabUpgrade = this.panel.querySelector('#mwi-csim-tab-upgrade');
+        const partyContent = this.panel.querySelector('#mwi-csim-party-content');
+        const tabParty = this.panel.querySelector('#mwi-csim-tab-party');
 
         const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${ACCENT}; border-bottom:2px solid ${ACCENT};`;
         const inactiveStyle =
@@ -6655,10 +6685,12 @@ class CombatSimUI {
         resultsContent.style.display = 'none';
         if (seekContent) seekContent.style.display = 'none';
         if (upgradeContent) upgradeContent.style.display = 'none';
+        if (partyContent) partyContent.style.display = 'none';
         tabConfigure.style.cssText = inactiveStyle;
         tabResults.style.cssText = inactiveStyle;
         if (tabSeek) tabSeek.style.cssText = inactiveStyle;
         if (tabUpgrade) tabUpgrade.style.cssText = inactiveStyle;
+        if (tabParty) tabParty.style.cssText = inactiveStyle + (this._partyFinder ? '' : ' display:none;');
 
         // A run owns the status line. The prompts below describe what the tab is
         // for, which is true when nothing is happening and a lie mid-run — the
@@ -6682,6 +6714,10 @@ class CombatSimUI {
             if (idle) this._setStatus('Select a player and click Analyze.');
             // The zone, tier or build may have been changed on Configure since a remembered result was drawn
             this._refreshCachedTriggerResult();
+        } else if (tab === 'party') {
+            if (partyContent) partyContent.style.display = 'flex';
+            if (tabParty) tabParty.style.cssText = activeStyle;
+            this._partyFinder.onShow();
         } else {
             resultsContent.style.display = 'flex';
             tabResults.style.cssText = activeStyle;
@@ -6713,7 +6749,30 @@ class CombatSimUI {
      * @private
      */
     _isBusy() {
-        return Boolean(this._runStarting || this.isRunning || this._upgradeRunning);
+        return Boolean(this._runStarting || this.isRunning || this._upgradeRunning || this._partyFinder?.isBusy());
+    }
+
+    /**
+     * Build or tear down the Party tab to match `combatSim_partyFinder`. Off takes the tab, its nodes, its
+     * listeners and any search in flight with it; on builds it fresh.
+     * @private
+     */
+    _syncPartyFinderTab() {
+        if (!this.panel) return;
+        const wanted = config.getSetting('combatSim_partyFinder') !== false;
+        const tabButton = this.panel.querySelector('#mwi-csim-tab-party');
+        const content = this.panel.querySelector('#mwi-csim-party-content');
+        if (wanted && !this._partyFinder && content) {
+            this._partyFinder = new PartyFinderTab(this);
+            this._partyFinder.mount(content);
+        } else if (!wanted && this._partyFinder) {
+            const wasActive = this._activeMainTab === 'party';
+            this._partyFinder.detach();
+            this._partyFinder = null;
+            if (content) content.textContent = '';
+            if (wasActive) this._switchTab('configure');
+        }
+        if (tabButton) tabButton.style.display = this._partyFinder ? '' : 'none';
     }
 
     /**
@@ -6722,6 +6781,11 @@ class CombatSimUI {
      */
     async _onSimulate() {
         if (this._runStarting) return;
+        // A party search marks the panel running too, but this button is not its Stop: it has its own
+        if (this._partyFinder?.isBusy()) {
+            this._setStatus('A party search is running. Stop it on the Party tab first.');
+            return;
+        }
         if (this.isRunning) {
             // Stop the running simulation. The warm workers stay: Stop here is
             // almost always "that is not what I meant" followed by an edit and
@@ -7573,6 +7637,8 @@ class CombatSimUI {
      * case.
      */
     _redisplayLastResults() {
+        // The Party tab prices its own rows (and holds the change for the end of its own run)
+        this._partyFinder?.onPricingChanged();
         // A run in progress has hidden the old results; redrawing them would show them
         // beside its progress.
         // Not dropped, though: a run's revenue is captured before its final draw awaits,
@@ -9632,6 +9698,10 @@ class CombatSimUI {
         this._unsubscribePricingQuickSettings = [];
         this._pricingQuickSettings = null;
         cleanupUpgradeMarketAutofill();
+        this._unsubscribePartyFinderSetting?.();
+        this._unsubscribePartyFinderSetting = null;
+        this._partyFinder?.detach();
+        this._partyFinder = null;
         // An in-flight verify (or analysis) reads the abort flag and is terminated the way Stop terminates it
         this._upgradeAborted = true;
         cancelActiveSimulations();

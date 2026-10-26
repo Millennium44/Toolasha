@@ -379,6 +379,22 @@ class ExpectedValueCalculator {
     }
 
     /**
+     * A container's expected value with its contents netted at an explicit market tax rate instead of
+     * the live character's, for pricing another player's drops (an Iron Cow pays none, a standard
+     * character the market rate). Per-content netting is kept: coins, dungeon tokens and nested
+     * containers' own contents are never taxed twice, and a cowbell takes its bag's rate (none at 0).
+     * Computed fresh and never cached, since the shared cache holds the live character's figure.
+     * @param {string} containerHrid - Container item HRID
+     * @param {number} saleTaxRate - The tax rate to net sellable contents at (0 for no tax)
+     * @returns {number|null} Expected value, or null when unavailable
+     */
+    calculateContainerValueAtTaxRate(containerHrid, saleTaxRate) {
+        const ctx = { path: new Set([containerHrid]), truncated: false, saleTaxRate };
+        const result = this.calculateContainerValue(containerHrid, null, ctx);
+        return result.expectedValue;
+    }
+
+    /**
      * Calculate a container's expected value, and say how much of it is missing.
      *
      * A drop nobody can price is skipped, which makes the total a lower bound rather
@@ -413,6 +429,8 @@ class ExpectedValueCalculator {
         let missingCount = 0;
         // Gross pass: contents are not market-taxed and the shared cache is neither read nor written
         const gross = Boolean(ctx.gross);
+        // Explicit-rate pass: contents are netted at that rate and, like the gross pass, never cached
+        const hasRate = Number.isFinite(ctx.saleTaxRate);
 
         // Calculate expected value for each drop
         for (const drop of dropTable) {
@@ -460,7 +478,9 @@ class ExpectedValueCalculator {
             // when resolved. The same applies to net special-currency values.
             const dropValue =
                 canBeSold && resolved.needsTax && !gross
-                    ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
+                    ? hasRate
+                        ? avgCount * dropRate * price * (1 - ctx.saleTaxRate)
+                        : calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
                     : avgCount * dropRate * price;
             totalExpectedValue += dropValue;
         }
@@ -468,7 +488,7 @@ class ExpectedValueCalculator {
         // Cache the result for future lookups — but not when the cycle guard cut a
         // branch off this pass, because the figure is then an artefact of where the
         // recursion started rather than what the container is worth
-        if (!ctx.truncated && !gross) {
+        if (!ctx.truncated && !gross && !hasRate) {
             // The value cache stays gated on a positive figure — a zero is indistinguishable
             // from "not costed yet" to the readers that check `has()`. The missing count is
             // not: a container whose drops are ALL unpriceable is worth 0 and has N missing,
@@ -512,7 +532,12 @@ class ExpectedValueCalculator {
                 // Apply the Cowbell Bag's own market tax, then divide by 10. The gross
                 // (personal-use) traversal sells nothing, so it takes the bag untaxed.
                 return {
-                    value: (context?.gross ? bagValue : calculatePriceAfterTax(bagValue, COWBELL_BAG_TAX)) / 10,
+                    value:
+                        (context?.gross || context?.saleTaxRate === 0
+                            ? bagValue
+                            : Number.isFinite(context?.saleTaxRate)
+                              ? bagValue * (1 - COWBELL_BAG_TAX)
+                              : calculatePriceAfterTax(bagValue, COWBELL_BAG_TAX)) / 10,
                     source: 'cowbell',
                     needsTax: false,
                 };
@@ -550,7 +575,11 @@ class ExpectedValueCalculator {
         const dropPrice = getItemPrice(itemHrid, { enhancementLevel, context: 'profit', side: 'sell' });
         if (!(dropPrice > 0)) return null;
         const hasOverride = getCustomPrice(itemHrid, enhancementLevel, 'sell') !== null;
-        return { value: dropPrice, source: hasOverride ? 'custom' : 'market', needsTax: !isIronCowCharacter() };
+        return {
+            value: dropPrice,
+            source: hasOverride ? 'custom' : 'market',
+            needsTax: Number.isFinite(context?.saleTaxRate) || !isIronCowCharacter(),
+        };
     }
 
     /**
@@ -637,7 +666,7 @@ class ExpectedValueCalculator {
      * @returns {{value: number, missingCount: number}|null} Value and unpriced-drop count, or null when this is not a container
      */
     resolveContainerValue(itemHrid, context = null) {
-        if (!context?.gross && this.containerCache.has(itemHrid)) {
+        if (!context?.gross && !Number.isFinite(context?.saleTaxRate) && this.containerCache.has(itemHrid)) {
             return {
                 value: this.containerCache.get(itemHrid),
                 missingCount: this.containerMissingCounts.get(itemHrid) || 0,
