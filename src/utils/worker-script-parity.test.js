@@ -10,6 +10,15 @@
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// The player's Artisan bonus, which the manager reads on the main thread and ships with each recipe
+const artisan = vi.hoisted(() => ({ bonus: 0.1, askedTypes: [] }));
+vi.mock('./artisan-bonus.js', () => ({
+    getArtisanBonus: (type) => {
+        artisan.askedTypes.push(type);
+        return artisan.bonus;
+    },
+}));
+
 // Each manager memoises its worker pool at module scope, and a memoised pool
 // builds no Blob — so a test that only wants to READ the generated source has
 // to start from a fresh module registry or `captureWorkerScript` captures
@@ -17,6 +26,8 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 // before, rather than each test having to remember.
 beforeEach(() => {
     vi.resetModules();
+    artisan.bonus = 0.1;
+    artisan.askedTypes = [];
 });
 
 /**
@@ -119,7 +130,11 @@ describe('generated worker sources', () => {
                 '/items/log:0': 10,
             },
             recipes: {
-                '/items/plank': { inputItems: [{ itemHrid: '/items/log', count: 2 }], upgradeItemHrid: null },
+                '/items/plank': {
+                    inputItems: [{ itemHrid: '/items/log', count: 2 }],
+                    upgradeItemHrid: null,
+                    artisanBonus: 0.1,
+                },
             },
             useHighEnhancementCost: false,
             minLevel: 13,
@@ -167,10 +182,15 @@ describe('generated worker sources', () => {
         // Bid-mode map: base key carries the mode price, `_ask` is the ask side
         const bidMap = { '/items/log:0': 6, '/items/log:0_ask': 10, '/items/log:0_bid': 6 };
         const recipes = {
-            '/items/plank': { inputItems: [{ itemHrid: '/items/log', count: 2 }], upgradeItemHrid: null },
+            '/items/plank': {
+                inputItems: [{ itemHrid: '/items/log', count: 2 }],
+                upgradeItemHrid: null,
+                artisanBonus: 0.1,
+            },
             '/items/board': {
                 inputItems: [{ itemHrid: '/items/log', count: 1 }],
                 upgradeItemHrid: '/items/plank',
+                artisanBonus: 0.1,
             },
         };
 
@@ -184,8 +204,12 @@ describe('generated worker sources', () => {
         const askOnlyMap = { '/items/log:0_ask': 10, '/items/log:0_bid': 6 };
         const withLogRecipe = {
             ...recipes,
-            '/items/log': { inputItems: [{ itemHrid: '/items/seed', count: 1 }], upgradeItemHrid: null },
-            '/items/seed': { inputItems: [], upgradeItemHrid: null },
+            '/items/log': {
+                inputItems: [{ itemHrid: '/items/seed', count: 1 }],
+                upgradeItemHrid: null,
+                artisanBonus: 0.1,
+            },
+            '/items/seed': { inputItems: [], upgradeItemHrid: null, artisanBonus: 0.1 },
         };
         // log prices through its own recipe (0 inputs priced) => 0, so plank is 0
         expect(calculateProductionCost('/items/plank', askOnlyMap, withLogRecipe)).toBe(0);
@@ -288,7 +312,13 @@ describe('generated worker sources', () => {
         const crafted = {
             ...params,
             priceMap: { ...params.priceMap, '/items/ore:0': 50 },
-            recipes: { '/items/test_material': { inputItems: [{ itemHrid: '/items/ore', count: 1 }], outputCount: 1 } },
+            recipes: {
+                '/items/test_material': {
+                    inputItems: [{ itemHrid: '/items/ore', count: 1 }],
+                    outputCount: 1,
+                    artisanBonus: 0.1,
+                },
+            },
         };
         expect(calculateEnhancementCost(crafted)).toBeCloseTo(100 + 2 * 45, 6);
     });
@@ -372,6 +402,7 @@ describe('generated worker sources', () => {
         const gameData = {
             actionDetailMap: {
                 '/actions/craft_sword': {
+                    type: '/action_types/crafting',
                     // Two outputs: the sword, and slag as a by-product. Only an
                     // any-output index can price the slag at all.
                     outputItems: [
@@ -381,20 +412,24 @@ describe('generated worker sources', () => {
                     inputItems: [{ itemHrid: '/items/iron_bar', count: 2 }],
                 },
                 '/actions/craft_ingot': {
+                    type: '/action_types/crafting',
                     // A batch recipe, so the per-item divide has to happen too
                     outputItems: [{ itemHrid: '/items/ingot', count: 4 }],
                     inputItems: [{ itemHrid: '/items/iron_slag', count: 3 }],
                 },
                 '/actions/craft_prot_orb': {
+                    type: '/action_types/crafting',
                     outputItems: [{ itemHrid: '/items/prot_orb', count: 1 }],
                     inputItems: [{ itemHrid: '/items/orb_shard', count: 3 }],
                     upgradeItemHrid: '/items/orb_core',
                 },
                 '/actions/craft_orb_core': {
+                    type: '/action_types/crafting',
                     outputItems: [{ itemHrid: '/items/orb_core', count: 1 }],
                     inputItems: [{ itemHrid: '/items/core_dust', count: 2 }],
                 },
                 '/actions/craft_mirror': {
+                    type: '/action_types/crafting',
                     outputItems: [{ itemHrid: '/items/philosophers_mirror', count: 1 }],
                     inputItems: [{ itemHrid: '/items/mirror_shard', count: 5 }],
                 },
@@ -478,6 +513,7 @@ describe('generated worker sources', () => {
                     inputItems: action.inputItems || null,
                     upgradeItemHrid: action.upgradeItemHrid || null,
                     outputCount: output.count || 1,
+                    artisanBonus: 0.1,
                 };
             }
         }
