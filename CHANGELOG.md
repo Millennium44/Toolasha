@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Stats counts consumables used while the page was closed
+
+- Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
+
 ### Leftovers (2026-10-26): craft costs, Alchemy XP and the goal planner
 
 - Craft-cost estimates price recipe inputs at your custom buy price rather than your custom sell price.
