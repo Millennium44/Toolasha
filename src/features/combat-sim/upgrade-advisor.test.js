@@ -9104,6 +9104,19 @@ describe('the all-fights plan counts free drink slots per fight (#560 review)', 
         expect(plan.skipped.map((s) => s.reason)).toContain('no drink slot is left free for it');
     });
 
+    test('a pinned addition that measured no gain still fits a room with a free slot', () => {
+        // A pin needs a price, not a measured gain: this coffee was installed in all three rooms and moved none
+        const flat = addition('a', [1, 1, 1]);
+        flat.fights = flat.fights.map((fight) => ({ ...fight, winRate: 0.5 }));
+        flat.attemptsDelta = 0;
+        flat.significant = false;
+        const plan = planWithinBudget([flat], 1000, { baselineFights: BASELINE, required: [candidateKey(flat)] });
+
+        expect(plan.blocked).toBeNull();
+        expect(plan.picks.map((pick) => pick.candidate.description)).toEqual(['Add a']);
+        expect(plan.attemptsSaved).toBe(0);
+    });
+
     test('rows without per-fight slots keep the single capacity the candidate carried', () => {
         const rows = ['a', 'b', 'c', 'd'].map((name) => {
             const row = addition(name, [3, 3, 3]);

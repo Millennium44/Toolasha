@@ -6855,14 +6855,16 @@ export function planWithinBudget(
                 ),
             Infinity
         );
-        // With per-fight capacities, the same rule the fill uses: a pinned drink with no fight left that has room
-        // for it (after the pins before it) cannot be installed anywhere
+        // With per-fight capacities: a pinned drink with no fight it is installed in that still has room for it
+        // (after the pins before it) cannot be installed anywhere. Installed, not saving: a pin needs no gain
         const perFight = pinnedDrinks.length > 0 && pinnedDrinks.every((entry) => roomsOf(entry.result));
         const usedIn = [];
         const unplaceable = perFight
             ? pinnedDrinks.filter((entry) => {
                   const rooms = roomsOf(entry.result);
-                  const fits = entry.savings.some((saving, i) => saving > 0 && (usedIn[i] || 0) < (rooms[i] ?? 0));
+                  const fits = entry.savings.some(
+                      (_, i) => addedIn(entry.result, i) && (usedIn[i] || 0) < (rooms[i] ?? 0)
+                  );
                   entry.savings.forEach((_, i) => {
                       if (addedIn(entry.result, i)) usedIn[i] = (usedIn[i] || 0) + 1;
                   });
