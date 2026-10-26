@@ -5834,6 +5834,97 @@ describe('guild shrine candidates', () => {
         expect(plan.partialCostPicks).toEqual([]);
     });
 
+    describe('the partial-cost flag survives each real analysis path into a budget plan', () => {
+        const levels = { staminaLevel: 50, intelligenceLevel: 50, attackLevel: 50, meleeLevel: 50 };
+        const shrine = () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            return generateGuildShrineCandidates(dto)[0];
+        };
+        const planOf = (rows) =>
+            planWithinBudget(
+                rows.map((row) => ({ ...row, attemptsDelta: -1, significant: true })),
+                1_000_000
+            );
+        beforeEach(() => {
+            token.goldPerToken = null;
+            buildGameDataPayload.mockReturnValue(buildGameData());
+            calculateSimRevenue.mockReturnValue({ totalRevenue: 0, itemRevenues: [] });
+            resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+            getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+            runLabyrinthSimulation.mockImplementation(async () => ({ labyAttemptCount: 100, encounters: 50 }));
+            runSimulation.mockImplementation(async () => ({
+                simulatedTime: 3.6e12,
+                deaths: 0,
+                playerRanOutOfFood: false,
+            }));
+        });
+
+        test('Lab all-fights', async () => {
+            const result = await runLabyrinthAllFightsAnalysis(
+                {
+                    fights: [
+                        {
+                            monsterHrid: '/monsters/m0',
+                            monsterName: 'M0',
+                            roomLevel: 100,
+                            dto: { equipment: {}, ...levels },
+                        },
+                    ],
+                    crates: [],
+                    hours: 1,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    modes: [],
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+
+        test('Lab single-fight', async () => {
+            const result = await runLabyrinthUpgradeAnalysis(
+                {
+                    playerDTOs: [{ equipment: {}, abilities: [], ...levels, guildShrineLevels: {} }],
+                    playerIndex: 0,
+                    monsterHrid: '/monsters/goblin',
+                    roomLevel: 100,
+                    crates: [],
+                    hours: 1,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    upgradeMode: 'ability_swap',
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+
+        test('Combat Sim runUpgradeAnalysis', async () => {
+            const result = await runUpgradeAnalysis(
+                {
+                    playerDTOs: [{ equipment: {}, abilities: [], hrid: '/players/me' }],
+                    playerIndex: 0,
+                    zoneHrid: '/actions/combat/fly',
+                    difficultyTier: 0,
+                    hours: 1,
+                    communityBuffs: {},
+                    upgradeMode: 'equipment',
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+    });
+
     test('a priced token is folded into the cost, with both halves still reported', () => {
         token.goldPerToken = 50;
         const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };

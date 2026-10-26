@@ -7083,7 +7083,7 @@ export function planWithinBudget(
         // Picks whose price leaves a half out (a shrine's guild tokens with no exchange rate), so the
         // total reads as "at least this" rather than the whole bill
         partialCostPicks: picks
-            .filter((pick) => pick.costDetail?.partialCost)
+            .filter((pick) => pick.partialCost || pick.costDetail?.partialCost)
             .map((pick) => pick.candidate?.description),
         attemptsSaved,
         skipped,
@@ -7917,6 +7917,11 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 !candidate.noPurchase && (candidate.keptItems?.length || candidate.checkedSwap)
                     ? explainLabCandidateCost(candidate, gameData, candidate.isSelf !== false)
                     : null,
+            // A shrine row carries no breakdown here, but a budget plan still has to know its price leaves
+            // the guild tokens out. The one cheap field rather than a full costDetail per row
+            ...(candidate.type === 'guild_shrine'
+                ? { partialCost: explainGuildShrineCost(candidate).partialCost }
+                : {}),
             appliedFights: applied.length,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,
