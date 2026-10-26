@@ -31,7 +31,7 @@ import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { priceAtLevel, priceBase, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
-import { shopPurchasePrice } from '../../utils/token-valuation.js';
+import { shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
@@ -2452,6 +2452,9 @@ function explainGuildShrineCost(candidate) {
         unpriced,
         creditApplied: false,
         source: 'guild',
+        // The net leaves the token half out when no exchange rate is known. The row stays rankable on
+        // the credits, but a plan total built from it must say it is not the whole price
+        ...(tokens > 0 && tokenGold === null ? { partialCost: 'guild tokens not priced' } : {}),
     };
 }
 
@@ -2779,6 +2782,7 @@ function freedPiecesCredit(candidate, spend) {
             hrid: item.hrid,
             enhancementLevel: item.enhancementLevel || 0,
             price: sellValue(item.hrid, item.enhancementLevel || 0),
+            ...(hasSalePrice(item.hrid, item.enhancementLevel || 0) ? {} : { noSalePrice: true }),
         }));
     const rawCredit = entries.reduce((sum, entry) => sum + entry.price, 0);
     const credit = Math.min(rawCredit, Math.max(0, spend));
@@ -3733,6 +3737,19 @@ function sellValue(hrid, level) {
 }
 
 /**
+ * Whether a piece has any sale price at all, so a resale credit of 0 can be told from "nothing to sell
+ * into". A credit entry that reads 0 because the profit sell side resolved to null is flagged
+ * `noSalePrice`; the row is still charged the full buy, the conservative reading.
+ * @param {string} hrid - Item HRID
+ * @param {number} level - Enhancement level
+ * @returns {boolean} True when a sell price exists (a quote, a custom price or a production cost)
+ */
+function hasSalePrice(hrid, level) {
+    const resolved = resolveItemPrice(hrid, { context: 'profit', side: 'sell', enhancementLevel: level });
+    return resolved?.price > 0;
+}
+
+/**
  * What a resolved sell-side price pays when the piece is sold.
  *
  * A market quote is a sale and pays the tax. The production-cost fallback (`production: true`, an item with no
@@ -4030,7 +4047,7 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
         // fallback for a piece no shop sells.
         const data = dataManager.getInitClientData?.() || {};
         const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
-        base = shopPurchasePrice(itemHrid, shops, (hrid) => getItemPrices(hrid, 0)?.ask || 0) || 0;
+        base = shopPurchasePriceByMode(itemHrid, shops) || 0;
         if (!(base > 0)) base = completePrice(priceBase(itemHrid));
         if (!(base > 0)) return { price: null, source: null, ladder };
         ladder.baseCost = base;
@@ -4230,6 +4247,7 @@ function explainUpgradeCostAtTax(candidate, gameData, isSelf) {
                 name: nameOf(entry.hrid),
                 enhancementLevel: entry.enhancementLevel,
                 price: entry.price,
+                ...(entry.noSalePrice ? { noSalePrice: true } : {}),
             })),
         ],
         credit: (detail.credit || 0) + freed.credit,
@@ -4477,6 +4495,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         price:
             (1 - consumedShare(refineConsumed, item.hrid, item.enhancementLevel || 0)) *
             sellValue(item.hrid, item.enhancementLevel || 0),
+        ...(hasSalePrice(item.hrid, item.enhancementLevel || 0) ? {} : { noSalePrice: true }),
     }));
 
     const unpriced = buys.filter((buy) => buy.price === null).map((buy) => buy.name);
@@ -7075,6 +7094,11 @@ export function planWithinBudget(
     return {
         picks,
         totalCost: spent,
+        // Picks whose price leaves a half out (a shrine's guild tokens with no exchange rate), so the
+        // total reads as "at least this" rather than the whole bill
+        partialCostPicks: picks
+            .filter((pick) => pick.partialCost || pick.costDetail?.partialCost)
+            .map((pick) => pick.candidate?.description),
         attemptsSaved,
         skipped,
         budget,
@@ -7908,6 +7932,11 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 !candidate.noPurchase && (candidate.keptItems?.length || candidate.checkedSwap)
                     ? explainLabCandidateCost(candidate, gameData, candidate.isSelf !== false)
                     : null,
+            // A shrine row carries no breakdown here, but a budget plan still has to know its price leaves
+            // the guild tokens out. The one cheap field rather than a full costDetail per row
+            ...(candidate.type === 'guild_shrine'
+                ? { partialCost: explainGuildShrineCost(candidate).partialCost }
+                : {}),
             appliedFights: applied.length,
             runClearChance,
             runClearDelta: runClearChance - baselineRunClear,
