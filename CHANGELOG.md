@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim upgrade profit for an imported player
+
+- Upgrade analysis of an imported profile or a saved teammate now taxes its drop profit at that player's own rate, so an Iron Cow's profit isn't cut by a market tax it never pays (and the reverse).
+
 ### Combat Sim: Party finder
 
 - New Party tab: save teammate builds (from the editor, an import or a copy of your own), give them aura options to try, and it sims every party of you plus your teammates across the zones you pick, ranking your own EXP/hr and profit/hr against solo (worse than solo in red); a quick pass is re-run in full for the top results, and any row loads into the editor.
