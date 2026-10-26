@@ -275,19 +275,21 @@ describe('a gap the page did not see', () => {
 
     test('with a refill and use: a net rise credits nothing and the time is left out', async () => {
         await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000)] }));
+        await collector.onConsumableUsed(used(GUMMY, 999));
         vi.advanceTimersByTime(HOUR);
         await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 1500)] }));
 
-        expect(self().actualConsumed[GUMMY]).toBeUndefined();
+        expect(self().actualConsumed[GUMMY]).toBe(1);
         expect(self().excludedMs).toBe(HOUR);
     });
 
     test('a drop no cooldown allows (items sold or moved) is rejected and the time left out', async () => {
         await collector.onNewBattle(battle({ self: [slot(COFFEE, 5552)] }));
+        await collector.onConsumableUsed(used(COFFEE, 5551));
         vi.advanceTimersByTime(11 * HOUR);
         await collector.onNewBattle(battle({ battleId: 2, self: [slot(COFFEE, 1667)] }));
 
-        expect(self().actualConsumed[COFFEE]).toBeUndefined();
+        expect(self().actualConsumed[COFFEE]).toBe(1);
         expect(self().inventoryAmount[COFFEE]).toBe(1667);
         expect(self().excludedMs).toBe(11 * HOUR);
     });
@@ -448,5 +450,28 @@ describe('disable and re-enable', () => {
 
         expect(self().actualConsumed[GUMMY]).toBe(60);
         collector.cleanup();
+    });
+});
+
+describe('the clock and the baseline stay in step', () => {
+    test('a gap left out before the clock started does not hold the time base at zero afterwards', async () => {
+        // No use seen yet, so nothing has started the clock
+        await collector.onNewBattle(battle({ self: [slot(GUMMY, 100)] }));
+        vi.advanceTimersByTime(HOUR);
+        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 2000)] }));
+        await collector.onConsumableUsed(used(GUMMY, 1999));
+        vi.advanceTimersByTime(60 * SECOND);
+
+        expect(collector.calcElapsedSeconds()).toBeCloseTo(60, 0);
+    });
+
+    test('an event without a count still moves the baseline, so the next snapshot does not count it again', async () => {
+        await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000)] }));
+        vi.advanceTimersByTime(5 * SECOND);
+        await collector.onConsumableUsed({ consumable: { itemHrid: GUMMY } });
+        vi.advanceTimersByTime(10 * SECOND);
+        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 999)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(1);
     });
 });

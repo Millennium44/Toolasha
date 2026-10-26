@@ -536,7 +536,11 @@ class CombatStatsDataCollector {
             tracker.actualConsumed[entry.itemHrid] += entry.credited;
             tracker.lastUpdate = now;
         }
-        tracker.excludedMs = (tracker.excludedMs || 0) + Math.round(result.excludeSeconds * 1000);
+        // Only once the clock runs: time excluded before it starts would be taken off
+        // a clock that starts later, and hold the rate's time base at zero for that long
+        if (tracker.startTime) {
+            tracker.excludedMs = (tracker.excludedMs || 0) + Math.round(result.excludeSeconds * 1000);
+        }
         tracker.lastObservedAt = now;
         return result;
     }
@@ -838,8 +842,15 @@ class CombatStatsDataCollector {
             this.consumableTracker.lastUpdate = now;
 
             // Update inventory amount from event data
-            if (data.consumable.count !== undefined) {
+            if (typeof data.consumable.count === 'number') {
                 this.consumableTracker.inventoryAmount[itemHrid] = data.consumable.count;
+            } else if (typeof this.consumableTracker.inventoryAmount[itemHrid] === 'number') {
+                // Keep the baseline in step with the use just counted, or the next snapshot
+                // would credit the same use a second time
+                this.consumableTracker.inventoryAmount[itemHrid] = Math.max(
+                    0,
+                    this.consumableTracker.inventoryAmount[itemHrid] - 1
+                );
             }
 
             // Persist after each consumption (MCS-style)
