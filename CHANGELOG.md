@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim upgrade costs follow the pricing mode
+
+- Upgrade analysis now prices enhancement rows, resale of a replaced or freed piece, and house materials by your pricing mode and custom prices, as tier rows already did. In the default Conservative mode a replaced piece is credited at its bid rather than its ask, so upgrades no longer look cheaper by the spread.
+
 ### Audit round (2026-10-26): Combat Sim upgrade analysis
 
 - Combat level grind times for a party member or imported profile start from their XP, not yours, when you happen to share their level.
