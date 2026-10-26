@@ -312,13 +312,15 @@ class AlchemyProfitDisplay {
         // Show if: alchemy component exists AND instructions NOT present AND info container exists
         const shouldShow = alchemyComponent && !instructionsEl && infoContainer;
 
-        if (shouldShow && (!this.displayElement || !this.displayElement.parentNode)) {
+        // isConnected, not parentNode: a display left on the game's detached old panel (back from the
+        // marketplace) still has a parent, so a parentNode test treats it as live and never redraws
+        if (shouldShow && (!this.displayElement || !this.displayElement.isConnected)) {
             // Should show but doesn't exist - create it
             this.handleAlchemyPanelUpdate(alchemyComponent);
-        } else if (!shouldShow && this.displayElement?.parentNode) {
-            // Shouldn't show but exists - remove it
+        } else if (!shouldShow && this.displayElement) {
+            // Shouldn't show but exists (on the page or stranded on a dead panel) - remove it
             this.removeDisplay();
-        } else if (shouldShow && this.displayElement?.parentNode) {
+        } else if (shouldShow && this.displayElement?.isConnected) {
             // Should show and exists - check if state changed
             const fingerprint = this._fingerprint();
             if (fingerprint !== this.lastFingerprint) {
@@ -430,6 +432,8 @@ class AlchemyProfitDisplay {
      */
     async updateDisplay(infoContainer) {
         try {
+            const containerWasLive = infoContainer.isConnected;
+
             // Get current action HRID to determine action type
             const actionHrid = alchemyProfit.getCurrentActionHrid();
 
@@ -438,6 +442,11 @@ class AlchemyProfitDisplay {
             // Check alchemy action type by examining the drops and requirements
             const drops = await alchemyProfit.extractDrops(actionHrid);
             const requirements = await alchemyProfit.extractRequirements();
+
+            // The extraction awaits per item. If the game rebuilt the panel meanwhile, this container is
+            // dead: drawing into it would remove the live display and strand a new one off the page.
+            // The rebuild's own pass redraws.
+            if (containerWasLive && !infoContainer.isConnected) return;
 
             // Determine action type from DOM tab state (primary) or actionHrid (fallback).
             // Tab detection is preferred because getCurrentActionHrid() returns ANY running
@@ -1922,6 +1931,11 @@ class AlchemyProfitDisplay {
      * Remove profit display
      */
     removeDisplay() {
+        // The Repeat input outlives the display (it is reused across rebuilds), so listeners that
+        // write into the removed sections must go with them
+        this.removeSpeedTimeInputListeners();
+        this.removeProfitSummaryInputListeners();
+
         // Remove profitability section
         if (this.displayElement && this.displayElement.parentNode) {
             this.displayElement.remove();
