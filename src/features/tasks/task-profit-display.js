@@ -2137,8 +2137,10 @@ class TaskProfitDisplay {
         const completionHours = completionSeconds > 0 ? completionSeconds / 3600 : 0;
         const totalDropValue = dropEntries.reduce((s, d) => s + d.totalValue * completionHours, 0);
         const totalConsumableCost = consumableEntries.reduce((s, c) => s + c.totalCost * completionHours, 0);
+        // No kills of the task monster in the sim means no completion time, so the drops and consumables
+        // over that time are unknown too; rewards alone would read as the task's whole profit
         const totalProfit =
-            rewardValue.error || hasUnpricedConsumable
+            rewardValue.error || hasUnpricedConsumable || completionSeconds === null
                 ? null
                 : Math.round(totalDropValue - totalConsumableCost + rewardValue.total);
         const profitIsPartial = Boolean(rewardValue.isPartial) || hasUnpricedDrop;
