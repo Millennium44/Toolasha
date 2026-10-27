@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, seventh): Lab Sim
+
+- Lab upgrade analysis no longer offers combat scrolls (they don't work in the Labyrinth), chooses the right loadout when two share a name, and prices a party member's book swaps at their own level.
+- A Lab run interrupted by a switch or rebuild can't draw into the new panel, Find Max no longer survives a rebuild unticked, and remembered all-target runs are saved, bannered and flag a pricing-mode change.
+
 ### Audit round (2026-10-26, third): market
 
 - Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.
