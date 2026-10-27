@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, second): party finder
+
+- Loading a party keeps the what-if house rooms and shrines it was simmed with, and teammates keep their game mode through Edit and Load.
+- Profit vs solo is marked when an unpriced item is counted as 0, and two teammates never show under the same numbered name.
+
 ### From upstream: Combat Stats pricing, guild credits and smaller fixes
 
 - Combat Stats income and profit follow your profit pricing mode; the key pricing setting now prices only keys.
