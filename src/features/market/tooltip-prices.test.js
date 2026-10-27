@@ -2303,3 +2303,42 @@ describe('a reused popper that moved to another item during an await', () => {
         expect(el.querySelector('.market-profit-injected')).toBeNull();
     });
 });
+
+describe('buildDetailedProfitDisplay materials table quotes', () => {
+    const profitData = {
+        itemHrid: '/items/gadget',
+        outputAmount: 1,
+        materialCosts: [
+            { itemHrid: '/items/alloy', itemName: 'Alloy', amount: 1 },
+            { itemHrid: '/items/ore', itemName: 'Ore', amount: 1 },
+        ],
+    };
+    const render = () => tooltipPrices.buildDetailedProfitDisplay(profitData, false);
+    const totalRow = (html) => html.match(/Total<\/td>.*?<\/tr>/s)[0];
+
+    beforeEach(() => {
+        settings.subMaterials = false;
+    });
+    afterEach(() => {
+        planState.prices = {};
+    });
+
+    test('a material nobody prices reads "-" and makes the Total a floor, not a free input', () => {
+        planState.prices = { '/items/alloy': { ask: 100, bid: 90 } };
+
+        const html = render();
+
+        expect(totalRow(html)).toContain('≥ 100');
+        expect(totalRow(html)).toContain('≥ 90');
+        expect(html).toMatch(/Ore<\/td>.*?>-<\/td>.*?>-<\/td>/s);
+    });
+
+    test('fully quoted materials carry no mark', () => {
+        planState.prices = { '/items/alloy': { ask: 100, bid: 90 }, '/items/ore': { ask: 100, bid: 90 } };
+
+        const html = render();
+
+        expect(totalRow(html)).not.toContain('≥');
+        expect(totalRow(html)).toContain('200');
+    });
+});

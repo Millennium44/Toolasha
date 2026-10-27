@@ -1668,8 +1668,14 @@ class TooltipPrices {
                     return { ...material, askPrice: 1, bidPrice: 1 };
                 }
 
-                let askPrice = resolveItemPrice(material.itemHrid, { mode: 'ask', side: 'buy' }).price ?? 0;
-                let bidPrice = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' }).price ?? 0;
+                // A material with no quote on a side adds nothing to that side's Total: the row says "-"
+                // and the Total becomes a floor, instead of a 0 that reads like a free input
+                const askResolved = resolveItemPrice(material.itemHrid, { mode: 'ask', side: 'buy' });
+                const bidResolved = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' });
+                const askQuote = askResolved.price;
+                const bidQuote = bidResolved.price;
+                let askPrice = askQuote ?? 0;
+                let bidPrice = bidQuote ?? 0;
 
                 if (material.isUpgradeItem) {
                     const craftEnabled = config.getSetting('profitCalc_craftUpgradeItems');
@@ -1694,7 +1700,15 @@ class TooltipPrices {
                     return { ...material, itemName: `Buy ${material.itemName}`, askPrice, bidPrice };
                 }
 
-                return { ...material, askPrice, bidPrice };
+                return {
+                    ...material,
+                    askPrice,
+                    bidPrice,
+                    askUnpriced: askQuote == null,
+                    bidUnpriced: bidQuote == null,
+                    askEstimated: Boolean(askResolved.estimated),
+                    bidEstimated: Boolean(bidResolved.estimated),
+                };
             });
 
             // Calculate totals (include sub-rows for correct additive sum)
@@ -1715,11 +1729,20 @@ class TooltipPrices {
             }
 
             // Total row
+            // A floor when a material has no quote; an estimate (~) when one is a value-map stand-in
+            const boundMark = (unpricedKey, estimatedKey) =>
+                materialsWithPrices.some((m) => m[unpricedKey])
+                    ? '≥ '
+                    : materialsWithPrices.some((m) => m[estimatedKey])
+                      ? '~'
+                      : '';
+            const askFloor = boundMark('askUnpriced', 'askEstimated');
+            const bidFloor = boundMark('bidUnpriced', 'bidEstimated');
             html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
             html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
             html += `<td style="padding: 2px 4px; text-align: center;">${totalCount.toFixed(1)}</td>`;
-            html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(totalAsk)}</td>`;
-            html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(totalBid)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right;">${askFloor}${formatKMB(totalAsk)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right;">${bidFloor}${formatKMB(totalBid)}</td>`;
             html += '</tr>';
 
             html += this._buildBestPlanRows(profitData, totalAsk, totalBid);
@@ -1729,8 +1752,8 @@ class TooltipPrices {
                 html += '<tr>';
                 html += `<td style="padding: 2px 4px;">${material.itemName}</td>`;
                 html += `<td style="padding: 2px 4px; text-align: center;">${material.amount.toFixed(1)}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(material.askPrice)}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(material.bidPrice)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${material.askUnpriced ? '-' : (material.askEstimated ? '~' : '') + formatKMB(material.askPrice)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${material.bidUnpriced ? '-' : (material.bidEstimated ? '~' : '') + formatKMB(material.bidPrice)}</td>`;
                 html += '</tr>';
                 if (material.subRows) {
                     for (const sub of material.subRows) {
