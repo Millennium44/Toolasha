@@ -752,8 +752,9 @@ describe('training margins are held to what the market absorbs', () => {
     test('a gathering drop table is held the same way', async () => {
         rates.gathering = {
             '/actions/milking/cow': {
-                baseOutputs: [{ itemHrid: '/items/milk', itemsPerHour: 200 }],
+                baseOutputs: [{ itemHrid: '/items/milk', itemsPerHour: 200, priceEach: 500 }],
                 revenuePerHour: 100_000,
+                excludeSellTax: true,
                 marketTax: 0,
                 profitPerHour: 100_000,
             },
@@ -812,5 +813,53 @@ describe('training margins are held to what the market absorbs', () => {
 
         const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
         expect(cooking.goldPerHour).toBe(50_000);
+    });
+
+    test('a thin milk book does not cut the logs that still sell, and bonus drops survive', async () => {
+        rates.gathering = {
+            '/actions/milking/cow': {
+                baseOutputs: [
+                    { itemHrid: '/items/milk', itemsPerHour: 200, priceEach: 100 },
+                    { itemHrid: '/items/log', itemsPerHour: 100, priceEach: 100 },
+                ],
+                // 30k of bonus drops sit in revenue but in no sold output
+                revenuePerHour: 60_000,
+                excludeSellTax: true,
+                marketTax: 0,
+                profitPerHour: 60_000,
+            },
+        };
+        liquidity.throttle['/items/milk'] = 0.5;
+
+        const context = await buildPlannerContext();
+        // Only milk's 20k is halved; logs and the 30k of bonus stay: 60k - 10k
+        expect(context.xpRates('/skills/milking')[0].goldPerHour).toBe(50_000);
+    });
+
+    test('Processing: the thin processed item loses its own proceeds, not the raw milk', async () => {
+        rates.gathering = {
+            '/actions/milking/cow': {
+                baseOutputs: [{ itemHrid: '/items/milk', itemsPerHour: 200, priceEach: 100 }],
+                processingConversions: [
+                    {
+                        rawItemHrid: '/items/milk',
+                        processedItemHrid: '/items/cheese',
+                        rawConsumedPerHour: 50,
+                        rawPriceEach: 100,
+                        conversionsPerHour: 50,
+                        processedPriceEach: 400,
+                    },
+                ],
+                revenuePerHour: 35_000,
+                excludeSellTax: true,
+                marketTax: 0,
+                profitPerHour: 35_000,
+            },
+        };
+        liquidity.throttle['/items/cheese'] = 0.5;
+
+        const context = await buildPlannerContext();
+        // 150 milk (15k) sells; 50 cheese (20k) is half unsold
+        expect(context.xpRates('/skills/milking')[0].goldPerHour).toBe(25_000);
     });
 });

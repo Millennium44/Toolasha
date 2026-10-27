@@ -311,58 +311,107 @@ function trainingMarginOf(profit) {
 }
 
 /**
- * Remember what a trained action sells, for {@link boundTrainingMargins}.
+ * What a gathering method sells each hour, with what each line is worth before tax: the drop table
+ * less the raw items Processing turns into their processed item, plus that processed item. The same
+ * lines (and units) as {@link gatheringSells}, with the price the calculator valued them at.
+ *
+ * @param {Object|null} profit - A result from `calculateGatheringProfit`
+ * @returns {Array<{itemHrid: string, name: string|null, unitsPerHour: number, grossPerHour: number}>}
+ */
+function gatheringSaleLines(profit) {
+    const byItem = new Map();
+    const add = (itemHrid, name, units, price) => {
+        const value = units * price;
+        if (!itemHrid || !Number.isFinite(units) || !Number.isFinite(value)) return;
+        const line = byItem.get(itemHrid) || { itemHrid, name: name || null, unitsPerHour: 0, grossPerHour: 0 };
+        line.unitsPerHour += units;
+        line.grossPerHour += value;
+        byItem.set(itemHrid, line);
+    };
+    for (const output of profit?.baseOutputs || []) {
+        add(output?.itemHrid, output?.name, output?.itemsPerHour, Number(output?.priceEach) || 0);
+    }
+    for (const conversion of profit?.processingConversions || []) {
+        const consumed = -(conversion?.rawConsumedPerHour || 0);
+        add(conversion?.rawItemHrid, conversion?.rawItem, consumed, Number(conversion?.rawPriceEach) || 0);
+        add(
+            conversion?.processedItemHrid,
+            conversion?.processedItem,
+            conversion?.conversionsPerHour || 0,
+            Number(conversion?.processedPriceEach) || 0
+        );
+    }
+    return [...byItem.values()].filter((line) => line.unitsPerHour > 0);
+}
+
+/**
+ * Remember what a trained action sells, output by output, for {@link boundTrainingMargins}.
+ *
+ * Each output carries its own net proceeds: units per hour times the price the calculator used,
+ * less the market tax by the calculator's rule (untaxed when it excluded the sell tax, which also
+ * covers Iron Cow). Revenue outside these outputs (bonus drops, Gourmet extras) is not listed, so
+ * the earning path's `sells` and this one throttle the same things.
  *
  * @param {Array<Object>} sales - Accumulator
  * @param {string} actionHrid - The action
  * @param {Object|null} profit - Its profit calculator result
- * @param {Array<Object>} sells - What one hour puts on the market
+ * @param {Array<{itemHrid: string, name: string|null, unitsPerHour: number, grossPerHour: number}>} lines - What
+ *   one hour puts on the market, with its pre-tax value
  */
-function noteTrainingSales(sales, actionHrid, profit, sells, { primaryOnly = false } = {}) {
-    const margin = trainingMarginOf(profit);
-    if (margin === null || !sells.length) return;
-    // Net of tax, because the margin already is: this is the coin the unsold part never brings in
-    // A production result's revenuePerHour is the main item alone while its marketTax also covers the
-    // taxable bonus drops, which the earning path does not throttle (`sells` is the main item). So tax
-    // the main item by itself, by the calculator's own rule: untaxed when it excluded the sell tax
-    // (which also covers Iron Cow), otherwise the market rate.
-    const revenue = Number(profit.revenuePerHour) || 0;
-    const tax = primaryOnly
-        ? profit.excludeSellTax
-            ? 0
-            : revenue * outputTaxRate(MARKET_TAX)
-        : Number(profit.marketTax) || 0;
-    const proceeds = revenue - tax;
-    if (!(proceeds > 0)) return;
-    sales.push({ actionHrid, sells, proceeds });
+function noteTrainingSales(sales, actionHrid, profit, lines) {
+    if (trainingMarginOf(profit) === null) return;
+    const keep = profit.excludeSellTax ? 1 : 1 - outputTaxRate(MARKET_TAX);
+    const outputs = lines
+        .map((line) => ({
+            itemHrid: line.itemHrid,
+            name: line.name,
+            unitsPerHour: line.unitsPerHour,
+            proceeds: line.grossPerHour * keep,
+        }))
+        .filter((output) => output.proceeds > 0 && output.unitsPerHour > 0);
+    if (outputs.length) sales.push({ actionHrid, outputs });
 }
 
 /**
  * Hold each training margin to what the market can absorb.
  *
- * Runs the sale proceeds through `applyLiquidityLimits`, the very bound an earning rate gets, and
- * takes the unsold share out of the margin. Not `margin * throttle`: a loss-making craft would
- * shrink toward zero and read better. The action still runs at full speed (the XP is the point), so
- * costs stay; only the proceeds of the units the book cannot absorb go. An output with no volume
- * measurement is not throttled, exactly as for an earning rate.
+ * Each output is bounded on its own, through `applyLiquidityLimits` (the bound an earning rate
+ * gets), and its unsold share comes out of the margin. This differs from the earning path on
+ * purpose. Earning applies the slowest-selling output's throttle to the whole rate, because
+ * steady income is limited by its worst product. Training runs at full speed whatever sells, so a
+ * thin cheese book does not stop the milk from selling; cutting milk with it would understate
+ * the margin. Not `margin * throttle` either: a loss-making craft would shrink toward zero and
+ * read better. Costs stay (the action still runs); only the proceeds of units the book cannot
+ * absorb go. An output with no volume measurement is not throttled, as for an earning rate.
  *
- * @param {Array<{actionHrid: string, sells: Array<Object>, proceeds: number}>} sales - From {@link noteTrainingSales}
+ * @param {Array<{actionHrid: string, outputs: Array<Object>}>} sales - From {@link noteTrainingSales}
  * @param {Map<string, number|null>} trainingMargin - Edited in place
  * @returns {Promise<void>}
  */
 async function boundTrainingMargins(sales, trainingMargin) {
     if (!sales.length) return;
     try {
-        const bounded = await applyLiquidityLimits(
-            sales.map((sale) => ({ actionHrid: sale.actionHrid, goldPerHour: sale.proceeds, sells: sale.sells }))
-        );
-        const byAction = new Map((bounded?.rates || []).map((rate) => [rate.actionHrid, rate]));
+        const pseudo = [];
         for (const sale of sales) {
-            const kept = Number(byAction.get(sale.actionHrid)?.goldPerHour);
-            if (!Number.isFinite(kept) || kept >= sale.proceeds) continue;
+            for (const output of sale.outputs) {
+                pseudo.push({
+                    actionHrid: `${sale.actionHrid}|${output.itemHrid}`,
+                    goldPerHour: output.proceeds,
+                    sells: [{ itemHrid: output.itemHrid, name: output.name, unitsPerHour: output.unitsPerHour }],
+                });
+            }
+        }
+        const bounded = await applyLiquidityLimits(pseudo);
+        const byKey = new Map((bounded?.rates || []).map((rate) => [rate.actionHrid, rate]));
+        for (const sale of sales) {
+            let unsold = 0;
+            for (const output of sale.outputs) {
+                const kept = Number(byKey.get(`${sale.actionHrid}|${output.itemHrid}`)?.goldPerHour);
+                if (!Number.isFinite(kept) || kept >= output.proceeds) continue;
+                unsold += output.proceeds - Math.max(0, kept);
+            }
             const margin = trainingMargin.get(sale.actionHrid);
-            if (typeof margin === 'number')
-                trainingMargin.set(sale.actionHrid, margin - (sale.proceeds - Math.max(0, kept)));
+            if (unsold > 0 && typeof margin === 'number') trainingMargin.set(sale.actionHrid, margin - unsold);
         }
     } catch (error) {
         console.error('[GoalPlanner] Bounding training margins by market volume failed:', error);
@@ -464,7 +513,7 @@ async function measureGoldRates() {
             trainingMargin.set(hrid, trainingMarginOf(profit));
             trainingDrinkCost.set(hrid, trainingDrinkCostOf(profit));
             trainingUpfront.set(hrid, 0);
-            noteTrainingSales(trainingSales, hrid, profit, gatheringSells(profit));
+            noteTrainingSales(trainingSales, hrid, profit, gatheringSaleLines(profit));
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -503,10 +552,11 @@ async function measureGoldRates() {
                               itemHrid: profit.itemHrid,
                               name: profit.itemName || null,
                               unitsPerHour: Number(profit.totalItemsPerHour) || 0,
+                              // The main item alone: bonus drops are in marketTax but not here
+                              grossPerHour: Number(profit.revenuePerHour) || 0,
                           },
                       ]
-                    : [],
-                { primaryOnly: true }
+                    : []
             );
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
