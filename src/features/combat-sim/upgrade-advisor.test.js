@@ -1128,54 +1128,6 @@ describe('the charm slot is in the equipment candidates', () => {
 });
 
 describe('runLabyrinthAllFightsAnalysis', () => {
-    test('a drink addition records each fight its own free slots (#560 review)', async () => {
-        buildGameDataPayload.mockReturnValue(buildGameData());
-        runLabyrinthSimulation.mockImplementation(async () => ({ labyAttemptCount: 100, encounters: 50 }));
-        const levels = { staminaLevel: 50, intelligenceLevel: 50, attackLevel: 50, meleeLevel: 50 };
-        const worn = (hrid) => ({ hrid, triggers: null });
-        const dtos = [
-            { equipment: {}, drinks: [null, null, null], ...levels },
-            { equipment: {}, drinks: [worn('/items/a'), worn('/items/b'), null], ...levels },
-            { equipment: {}, drinks: [worn('/items/a'), worn('/items/b'), worn('/items/c')], ...levels },
-        ];
-        const result = await runLabyrinthAllFightsAnalysis(
-            {
-                fights: dtos.map((dto, i) => ({
-                    monsterHrid: `/monsters/m${i}`,
-                    monsterName: `M${i}`,
-                    roomLevel: 100,
-                    dto,
-                })),
-                crates: [],
-                hours: 1,
-                communityBuffs: {},
-                labyrinthCombatBuffs: [],
-                modes: [],
-                extraCandidates: [
-                    {
-                        type: 'drink',
-                        slot: 'drink_0',
-                        drinkIndex: 0,
-                        currentHrid: null,
-                        upgradeHrid: '/items/wisdom_coffee',
-                        upgradeLevel: 0,
-                        triggers: null,
-                        buffFamily: '/buff_uniques/wisdom_coffee',
-                        fillsFreeDrinkSlot: true,
-                        freeDrinkSlots: 3,
-                        description: 'Add Wisdom Coffee',
-                    },
-                ],
-            },
-            null,
-            {}
-        );
-
-        const row = result.results.find((r) => r.candidate.upgradeHrid === '/items/wisdom_coffee');
-        expect(row.fights.map((fight) => fight.freeDrinkSlots)).toEqual([3, 1, 0]);
-        expect(row.fights.map((fight) => fight.applied)).toEqual([true, true, false]);
-    });
-
     test('unions candidates across loadout styles and ranks by run-clear delta', async () => {
         const gameData = buildGameData();
         gameData.itemDetailMap['/items/fine_bow'] = {
@@ -6320,7 +6272,6 @@ describe('community buff candidates', () => {
         // so the equipment test below it answered "this loadout is not wearing
         // community_buff|comExp" and dropped the row from a multi-fight run
         expect(candidateAppliesToDTO({ type: 'community_buff', buffKey: 'comExp' }, { equipment: {} })).toBe(true);
-        expect(candidateAppliesToDTO({ type: 'drink', drinkIndex: 0 }, { equipment: {} })).toBe(true);
     });
 
     test('unknown rather than free, so it lands in the unpriced group', () => {
@@ -7408,6 +7359,76 @@ describe('the skilling escalation walk only climbs items the clear-rate model ca
             (r) => r.candidate.type === 'enhancement' && r.candidate.currentHrid === '/items/necklace_of_speed'
         );
         expect(speed.candidate.upgradeLevel).toBe(20);
+    });
+});
+
+describe('the skilling analysis prices another player at their own sale tax', () => {
+    const NECK = '/equipment_types/neck';
+
+    beforeEach(() => {
+        clearRate.impl = {
+            getSkillingMetricsFromOverrides: (skillId) => ({ skillId }),
+            computeSkillingClearWithParams: () => ({ clearChance: 0.5, xpPerRoom: 1000 }),
+            computeEnhancingClearWithParams: () => ({ clearChance: 0.5, xpPerRoom: 1000 }),
+        };
+        // Every piece sells and buys for the same 1,000,000, so the trade-in is the only thing tax touches
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue(null);
+        buildGameDataPayload.mockReturnValue({
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/necklace_of_speed': {
+                    name: 'Necklace Of Speed',
+                    itemLevel: 60,
+                    equipmentDetail: { type: NECK, noncombatStats: { skillingSpeed: 0.05 } },
+                },
+                '/items/philosophers_necklace': {
+                    name: "Philosopher's Necklace",
+                    itemLevel: 90,
+                    equipmentDetail: {
+                        type: NECK,
+                        combatStats: { stabDamage: 0.05 },
+                        noncombatStats: { skillingExperience: 0.05 },
+                    },
+                },
+            },
+        });
+    });
+
+    const costOfPhilo = async (editorDTO, extra = {}) => {
+        const { results } = await runSkillingUpgradeAnalysis({
+            editorDTO: {
+                equipment: { [NECK]: { hrid: '/items/necklace_of_speed', enhancementLevel: 0 } },
+                houseRooms: {},
+                tokenUpgrades: {},
+                communityBuffLevels: {},
+                ...editorDTO,
+            },
+            roomLevel: 100,
+            crateHrids: [],
+            ...extra,
+        });
+        const philo = results.find((r) => r.candidate.upgradeHrid === '/items/philosophers_necklace');
+        expect(philo).toBeDefined();
+        return philo;
+    };
+
+    test('an imported Iron Cow trades the worn piece in untaxed; the same DTO as the live character does not', async () => {
+        const imported = await costOfPhilo({ gameMode: '/game_mode/ironcow' }, { isSelf: false });
+        const self = await costOfPhilo({ gameMode: '/game_mode/ironcow' }, { isSelf: true });
+        const omitted = await costOfPhilo({ gameMode: '/game_mode/ironcow' });
+        // Selling the worn necklace brings in all of its price when nothing is taxed
+        expect(imported.costDetail.credit).toBe(1_000_000);
+        expect(imported.candidate.saleTaxRate).toBe(0);
+        expect(self.costDetail.credit).toBeLessThan(1_000_000);
+        expect(self.candidate).not.toHaveProperty('saleTaxRate');
+        // Omitting isSelf is the live character, as before
+        expect(omitted.costDetail.credit).toBe(self.costDetail.credit);
+    });
+
+    test('an imported market player is taxed at the market rate, the same as the combat analysis', async () => {
+        const imported = await costOfPhilo({}, { isSelf: false });
+        expect(imported.candidate.saleTaxRate).toBe(MARKET_TAX);
     });
 });
 
@@ -8782,74 +8803,26 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
         expect(outcome.reason).toMatch(/cannot fit on the drink bar/);
         expect(runSimulation).not.toHaveBeenCalled();
     });
-});
 
-describe('a coffee applies only to a lab loadout whose drink bar can take it', () => {
-    function drinkGameData() {
-        const coffee = (hrid, family, itemLevel) => [
-            hrid,
-            {
-                name: hrid,
-                itemLevel,
-                categoryHrid: '/item_categories/drink',
-                consumableDetail: {
-                    hitpointRestore: 0,
-                    manapointRestore: 0,
-                    cooldownDuration: 300,
-                    buffs: [{ uniqueHrid: `/buff_uniques/${family}`, typeHrid: '/buff_types/damage' }],
-                    defaultCombatTriggers: [],
-                },
+    test('a second coffee of one family takes no slot and is not bought', () => {
+        const addition = (name) => ({
+            candidate: {
+                type: 'drink',
+                slot: 'drink_0',
+                drinkIndex: 0,
+                currentHrid: null,
+                upgradeHrid: `/items/${name}`,
+                buffFamily: '/buff_uniques/same_family',
+                fillsFreeDrinkSlot: true,
+                freeDrinkSlots: 3,
+                description: `Add ${name}`,
             },
-        ];
-        return {
-            itemDetailMap: Object.fromEntries([
-                coffee('/items/power_coffee', 'power', 20),
-                coffee('/items/super_power_coffee', 'power', 50),
-                coffee('/items/wisdom_coffee', 'wisdom', 30),
-                coffee('/items/speed_coffee', 'speed', 30),
-                coffee('/items/lucky_coffee', 'lucky', 30),
-            ]),
-        };
-    }
-    const gameData = drinkGameData();
-    let addWisdom;
-    let tierUp;
-    beforeEach(() => {
-        resolveItemPrice.mockImplementation(() => ({ price: 1000 }));
-        addWisdom = generateDrinkCandidates({ drinks: [null, null, null] }, gameData).find(
-            (c) => c.upgradeHrid === '/items/wisdom_coffee'
-        );
-        tierUp = generateDrinkCandidates({ drinks: [{ hrid: '/items/power_coffee' }, null, null] }, gameData).find(
-            (c) => c.currentHrid === '/items/power_coffee'
-        );
-    });
-    const bar = (...hrids) => ({ drinks: hrids.map((hrid) => (hrid ? { hrid } : null)) });
-
-    test('an addition skips a full bar, so it never overwrites a coffee that loadout wears', () => {
-        expect(
-            candidateAppliesToDTO(
-                addWisdom,
-                bar('/items/power_coffee', '/items/speed_coffee', '/items/lucky_coffee'),
-                gameData
-            )
-        ).toBe(false);
-    });
-
-    test('an addition skips a bar already running its family, and applies to one with a free slot', () => {
-        expect(candidateAppliesToDTO(addWisdom, bar('/items/wisdom_coffee', null, null), gameData)).toBe(false);
-        expect(candidateAppliesToDTO(addWisdom, bar('/items/power_coffee', null, null), gameData)).toBe(true);
-        expect(candidateAppliesToDTO(addWisdom, { drinks: [] }, gameData)).toBe(true);
-    });
-
-    test('a tier up applies only where the drink it replaces is worn', () => {
-        expect(candidateAppliesToDTO(tierUp, bar(null, '/items/power_coffee', null), gameData)).toBe(true);
-        expect(
-            candidateAppliesToDTO(
-                tierUp,
-                bar('/items/wisdom_coffee', '/items/speed_coffee', '/items/lucky_coffee'),
-                gameData
-            )
-        ).toBe(false);
+            cost: 0,
+            attemptsDelta: -1,
+            significant: true,
+        });
+        const plan = planWithinBudget([addition('a'), addition('a2')], 1000);
+        expect(plan.picks.map((pick) => pick.candidate.description)).toEqual(['Add a']);
     });
 });
 
@@ -9337,160 +9310,108 @@ describe('a pinned loss stays a loss in the plan (#562)', () => {
         expect(sum(plan)).toBeCloseTo(plan.attemptsSaved);
         expect(plan.attemptsSaved).toBeLessThan(0);
     });
-
-    test('a pinned per-room drink still works beside a negative pin', () => {
-        const drinkRow = {
-            candidate: {
-                type: 'drink',
-                slot: 'drink_0',
-                upgradeHrid: '/items/tea',
-                description: 'Add tea',
-                buffFamily: 'tea',
-                fillsFreeDrinkSlot: true,
-                freeDrinkSlots: 3,
-            },
-            cost: 0,
-            attemptsDelta: -1,
-            significant: true,
-            fights: [
-                { ...BASE[0], freeDrinkSlots: 1, winRate: 1, applied: true },
-                { ...BASE[1], freeDrinkSlots: 0, applied: false },
-            ],
-        };
-        const loser = piece('loser', 5);
-        const plan = planWithinBudget([drinkRow, loser], 500, {
-            baselineFights: BASE,
-            required: [candidateKey(drinkRow), candidateKey(loser)],
-        });
-
-        expect(plan.blocked).toBeNull();
-        expect(plan.attemptsSaved).toBeCloseTo(1 - 5);
-        expect(sum(plan)).toBeCloseTo(-4);
-    });
 });
 
-describe('the all-fights plan counts free drink slots per fight (#560 review)', () => {
-    // Three rooms at a 50% win rate: two expected attempts each
-    const BASELINE = [0, 1, 2].map((i) => ({ monsterHrid: `/monsters/m${i}`, roomLevel: 100, winRate: 0.5 }));
-    /**
-     * An addition pooled from a three-slot bar. `free` is each room's own free drink slots; a room with none
-     * is not simulated (applied false), as `drinkAppliesToDTO` leaves it.
-     */
-    const addition = (name, free, { family = name, rooms = [0, 1, 2] } = {}) => ({
-        candidate: {
-            type: 'drink',
-            slot: 'drink_0',
-            drinkIndex: 0,
-            currentHrid: null,
-            upgradeHrid: `/items/${name}`,
-            upgradeLevel: 0,
-            buffFamily: `/buff_uniques/${family}`,
-            fillsFreeDrinkSlot: true,
-            freeDrinkSlots: 3,
-            description: `Add ${name}`,
-        },
-        cost: 0,
-        attemptsDelta: -rooms.length,
-        significant: true,
-        fights: BASELINE.map((fight, i) => ({
-            ...fight,
-            freeDrinkSlots: free[i],
-            ...(rooms.includes(i) && free[i] > 0 ? { winRate: 1, applied: true } : { applied: false }),
-        })),
-    });
-    const planFor = (results) => planWithinBudget(results, 1000, { baselineFights: BASELINE });
-
-    test('a pooled three-slot addition does not count gains in a room that only has one slot', () => {
-        const free = [3, 1, 0];
-        const plan = planFor([addition('a', free), addition('b', free), addition('c', free)]);
-
-        expect(plan.picks).toHaveLength(3);
-        // Room 0 takes all three coffees, room 1 only the first; room 2 has no slot at all.
-        // The old plan summed all three coffees in room 1 as well (6, not 4).
-        expect(plan.attemptsSaved).toBeCloseTo(4);
-        expect(plan.picks.map((pick) => pick.rooms).sort()).toEqual([1, 1, 2]);
-        expect(plan.picks.reduce((sum, pick) => sum + pick.marginalAttemptsSaved, 0)).toBeCloseTo(4);
-    });
-
-    test('an addition whose every room is already full is skipped for want of a slot', () => {
-        const free = [0, 1, 0];
-        const plan = planFor([addition('a', free, { rooms: [1] }), addition('b', free, { rooms: [1] })]);
-
-        expect(plan.picks).toHaveLength(1);
-        expect(plan.skipped.map((s) => s.reason)).toContain('no drink slot is left free for it');
-    });
-
-    test('a second coffee of one family takes no slot', () => {
-        const free = [1, 1, 1];
-        const plan = planFor([addition('a', free, { family: 'f' }), addition('a2', free, { family: 'f' })]);
-
-        expect(plan.picks).toHaveLength(1);
-        expect(plan.attemptsSaved).toBeCloseTo(3);
-    });
-
-    test('two coffees on a bar with one free slot in the middle room share that room once', () => {
-        const free = [3, 1, 3];
-        const plan = planFor([addition('a', free), addition('b', free)]);
-        // Rooms 0 and 2 take both coffees (2 + 2); room 1 only the first (1)
-        expect(plan.picks).toHaveLength(2);
-        expect(plan.attemptsSaved).toBeCloseTo(5);
-    });
-
-    test('pinned additions are credited only in the rooms that still had a free slot', () => {
-        const free = [3, 1, 0];
-        const rows = [addition('a', free), addition('b', free), addition('c', free)];
-        const plan = planWithinBudget(rows, 1000, { baselineFights: BASELINE, required: rows.map(candidateKey) });
-
-        expect(plan.blocked).toBeNull();
-        expect(plan.picks).toHaveLength(3);
-        expect(plan.attemptsSaved).toBeCloseTo(4);
-        expect(plan.picks.map((pick) => pick.rooms).sort()).toEqual([1, 1, 2]);
-        expect(plan.picks.reduce((sum, pick) => sum + pick.marginalAttemptsSaved, 0)).toBeCloseTo(4);
-    });
-
-    test('pinning more additions than any room has free slots blocks the plan', () => {
-        const free = [1, 1, 0];
-        const rows = [addition('a', free), addition('b', free)];
-        const plan = planWithinBudget(rows, 1000, { baselineFights: BASELINE, required: rows.map(candidateKey) });
-
-        expect(plan.blocked.map((x) => x.kind)).toEqual(['drink-slots']);
-        expect(plan.blocked[0].reason).toContain('no fight has a free drink slot left');
-        expect(plan.picks).toEqual([]);
-    });
-
-    test('an addition takes a slot in every room it is installed in, even one where it saves nothing', () => {
-        // Both coffees apply to rooms 0 and 1 (one free slot each); a saves only in room 0, b only in room 1
-        const saveIn = (row, room) => ({
-            ...row,
-            fights: row.fights.map((fight, i) => (i === room ? fight : { ...fight, winRate: 0.5 })),
+describe('drinks are never a Labyrinth upgrade, since drink slots do not run there', () => {
+    const COFFEE = '/items/wisdom_coffee';
+    const levels = { staminaLevel: 50, intelligenceLevel: 50, attackLevel: 50, meleeLevel: 50 };
+    /** buildGameData plus two coffees of different families, so the drink generator has something to offer */
+    function gameDataWithCoffees() {
+        const gameData = buildGameData();
+        const coffee = (hrid, family) => ({
+            name: hrid,
+            itemLevel: 30,
+            isTradable: true,
+            categoryHrid: '/item_categories/drink',
+            consumableDetail: {
+                hitpointRestore: 0,
+                manapointRestore: 0,
+                cooldownDuration: 300,
+                buffs: [{ uniqueHrid: `/buff_uniques/${family}`, typeHrid: '/buff_types/damage', flatBoost: 0.05 }],
+                defaultCombatTriggers: [],
+            },
         });
-        const a = saveIn(addition('a', [1, 1, 0], { rooms: [0, 1] }), 0);
-        const b = saveIn(addition('b', [1, 1, 0], { rooms: [0, 1] }), 1);
-        const plan = planFor([a, b]);
+        gameData.itemDetailMap[COFFEE] = coffee(COFFEE, 'wisdom_coffee');
+        gameData.itemDetailMap['/items/power_coffee'] = coffee('/items/power_coffee', 'power_coffee');
+        return gameData;
+    }
+    const addCoffee = () => ({
+        type: 'drink',
+        slot: 'drink_0',
+        drinkIndex: 0,
+        currentHrid: null,
+        upgradeHrid: COFFEE,
+        upgradeLevel: 0,
+        triggers: null,
+        buffFamily: '/buff_uniques/wisdom_coffee',
+        fillsFreeDrinkSlot: true,
+        freeDrinkSlots: 3,
+        description: 'Add Wisdom Coffee',
+    });
+    const simmedACoffee = () =>
+        runLabyrinthSimulation.mock.calls.some(([params]) =>
+            (params.playerDTOs || []).some((dto) => (dto.drinks || []).some((drink) => drink?.hrid === COFFEE))
+        );
 
-        expect(plan.picks).toHaveLength(1);
-        expect(plan.skipped.map((s) => s.reason)).toContain('no drink slot is left free for it');
+    beforeEach(() => {
+        buildGameDataPayload.mockReturnValue(gameDataWithCoffees());
+        resolveItemPrice.mockImplementation(() => ({ price: 1000 }));
+        runLabyrinthSimulation.mockReset();
+        runLabyrinthSimulation.mockImplementation(async () => ({ labyAttemptCount: 100, encounters: 50 }));
     });
 
-    test('a pinned addition that measured no gain still fits a room with a free slot', () => {
-        // A pin needs a price, not a measured gain: this coffee was installed in all three rooms and moved none
-        const flat = addition('a', [1, 1, 1]);
-        flat.fights = flat.fights.map((fight) => ({ ...fight, winRate: 0.5 }));
-        flat.attemptsDelta = 0;
-        flat.significant = false;
-        const plan = planWithinBudget([flat], 1000, { baselineFights: BASELINE, required: [candidateKey(flat)] });
-
-        expect(plan.blocked).toBeNull();
-        expect(plan.picks.map((pick) => pick.candidate.description)).toEqual(['Add a']);
-        expect(plan.attemptsSaved).toBe(0);
+    test('the Combat Sim still generates drink candidates', () => {
+        const dto = { equipment: {}, drinks: [null, null, null], ...levels };
+        const drinks = generateCandidates(dto, gameDataWithCoffees(), 'drink');
+        expect(drinks.length).toBeGreaterThan(0);
+        expect(drinks.every((candidate) => candidate.type === 'drink')).toBe(true);
     });
 
-    test('rows without per-fight slots keep the single capacity the candidate carried', () => {
-        const rows = ['a', 'b', 'c', 'd'].map((name) => {
-            const row = addition(name, [3, 3, 3]);
-            return { ...row, fights: row.fights.map(({ freeDrinkSlots: _free, ...fight }) => fight) };
-        });
-        const plan = planFor(rows);
-        expect(plan.picks).toHaveLength(3);
+    test('the Lab single-fight analysis ranks no drink, from the drink mode or handed in by name', async () => {
+        const result = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [{ equipment: {}, abilities: [], drinks: [null, null, null], ...levels }],
+                playerIndex: 0,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'drink',
+                extraCandidates: [addCoffee()],
+            },
+            null,
+            {}
+        );
+        expect(result.results.filter((row) => row.candidate.type === 'drink')).toEqual([]);
+        expect(simmedACoffee()).toBe(false);
+    });
+
+    test('the Lab all-fights analysis pools no drink, from a mode or handed in by name', async () => {
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [0, 1].map((i) => ({
+                    monsterHrid: `/monsters/m${i}`,
+                    monsterName: `M${i}`,
+                    roomLevel: 100,
+                    dto: { equipment: {}, drinks: [null, null, null], ...levels },
+                })),
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['drink'],
+                extraCandidates: [addCoffee()],
+            },
+            null,
+            {}
+        );
+        expect(result.results.filter((row) => row.candidate.type === 'drink')).toEqual([]);
+        expect(simmedACoffee()).toBe(false);
+    });
+
+    test('a drink applies to no Lab loadout, even one with a free drink slot', () => {
+        expect(candidateAppliesToDTO(addCoffee(), { drinks: [null, null, null] }, gameDataWithCoffees())).toBe(false);
     });
 });

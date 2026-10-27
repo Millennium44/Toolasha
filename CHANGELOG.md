@@ -11,6 +11,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Loading a party keeps the what-if house rooms and shrines it was simmed with, and teammates keep their game mode through Edit and Load.
 - Profit vs solo is marked when an unpriced item is counted as 0, and two teammates never show under the same numbered name.
 
+### Lab upgrade analysis ignores coffee and tea
+
+- Lab upgrade analyses never rank a coffee or tea, since drink slots do not run in the Labyrinth (crates provide those buffs); the Lab simulation already left them out.
+
+### Imported players' profit at their own tax rate everywhere
+
+- All Zones, Seek, Reprice, trigger tuning and the skilling upgrade analysis now price an imported or other-mode player's drops and trade-ins at that player's own sale tax, as upgrade analysis already did.
+
 ### From upstream: Combat Stats pricing, guild credits and smaller fixes
 
 - Combat Stats income and profit follow your profit pricing mode; the key pricing setting now prices only keys.
