@@ -10,6 +10,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The guild XP tracker no longer brings back the previous character's guild after a switch, and the net worth Guild Shrines total says when an unpriced credit is left out.
 
+### Combat Stats counts consumables used while the page was closed
+
+- Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
+
+### Audit round (2026-10-26, fourth): action bar
+
+- The action bar's time for a counted run stops at what your materials can pay for, matching the queue panel, and a character switch no longer paints the previous character's run into the new one's row.
+
 ### Audit round (2026-10-26, third): treasure and Gold Sources
 
 - Replacing the chest history from a file now survives a sync instead of being undone by another device, and appending keeps a reset in place.
