@@ -647,6 +647,18 @@ describe('resolveItemPrice', () => {
         });
     });
 
+    test('a shop price equal to an estimated market ask wins the tie, and is not an estimate', () => {
+        chain.market = { price: 400, source: 'book', estimated: true };
+        chain.shop = 400;
+
+        expect(resolveItemPrice('/items/cheese', { side: 'buy' })).toEqual({
+            price: 400,
+            custom: false,
+            missing: false,
+            estimated: false,
+        });
+    });
+
     test('an enhanced buy never takes the +0 shop floor', () => {
         chain.shop = 400;
 
