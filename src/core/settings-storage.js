@@ -1424,9 +1424,10 @@ class SettingsStorage {
                 return write();
             });
         } catch (error) {
-            // A write that ran and threw is the caller's to see; only a request that never granted retries
-            if (granted || error?.name !== 'AbortError') throw error;
-            // Another tab is stuck holding it: go ahead unlocked rather than lose the save
+            // A write that ran and threw is the caller's to see; a request that never granted, for any reason
+            // (timeout abort, SecurityError, NotSupportedError, InvalidStateError in bfcache), writes unlocked.
+            // After the 10 s timeout this can race a stuck holder, by design: a late save beats a lost one.
+            if (granted) throw error;
             return write();
         } finally {
             if (timer) clearTimeout(timer);

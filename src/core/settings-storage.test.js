@@ -2181,6 +2181,22 @@ describe('settings change stamps, for the sync merge', () => {
             expect(stamps.whatsNew_showPopup.at).toBeGreaterThan(0);
         });
 
+        test('a lock request that rejects before granting, for any reason, still saves', async () => {
+            vi.useRealTimers();
+            vi.stubGlobal('navigator', {
+                locks: {
+                    request: () => Promise.reject(Object.assign(new Error('bfcache'), { name: 'InvalidStateError' })),
+                },
+            });
+            stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
+            const saved = await settingsStorage.saveSettings(
+                { chatCommands: { isTrue: false } },
+                new Set(['chatCommands'])
+            );
+            expect(saved).toBe(true);
+            expect(stored.get('json:script_settingsMap_alice').chatCommands.isTrue).toBe(false);
+        });
+
         test('a lock that never grants does not lose the save', async () => {
             vi.useRealTimers();
             vi.stubGlobal('navigator', {
