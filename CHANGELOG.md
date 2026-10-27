@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, third): market
+
+- Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.
+- Undercut alerts and the overbid table no longer count your own listing as a rival, and market filters show the filter actually in force after the marketplace reopens.
+
 ### Lab upgrade analysis ignores coffee and tea
 
 - Lab upgrade analyses never rank a coffee or tea, since drink slots do not run in the Labyrinth (crates provide those buffs); the Lab simulation already left them out.
