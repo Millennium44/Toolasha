@@ -42,6 +42,11 @@ describe('calculateDirectEnhancementCost', () => {
         expect(calculateDirectEnhancementCost(SWORD, 0, 3, gameData)).toBeNull();
     });
 
+    test('a craft-priced material with an unpriced input is a partial bill: unknown too', () => {
+        state.materials = { cost: 100, hasCost: true, hasMissingPrices: false, hasPartialPrices: true };
+        expect(calculateDirectEnhancementCost(SWORD, 0, 3, gameData)).toBeNull();
+    });
+
     test('nothing priced at all is unknown too', () => {
         state.materials = { cost: 0, hasCost: false, hasMissingPrices: true };
         expect(calculateDirectEnhancementCost(SWORD, 0, 3, gameData)).toBeNull();

@@ -89,6 +89,7 @@ const gameData = {
     },
     actionDetailMap: {},
 };
+gameData.itemDetailMap['/items/crafted_material'] = { name: 'Crafted Material' };
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -754,6 +755,29 @@ describe('calculatePerAttemptMaterialCost', () => {
         expect(result.cost).toBe(10000);
         expect(result.hasCost).toBe(true);
         expect(result.costPartial).toBe(true);
+    });
+
+    test('flags costPartial for a craft-priced material whose recipe has an unpriced input', () => {
+        gameData.actionDetailMap = {
+            '/actions/make_crafted': {
+                type: '/action_types/crafting',
+                inputItems: [
+                    { itemHrid: MATERIAL, count: 1 },
+                    { itemHrid: UNPRICED_MATERIAL, count: 1 },
+                ],
+                outputItems: [{ itemHrid: '/items/crafted_material', count: 1 }],
+            },
+        };
+        try {
+            const result = calculatePerAttemptMaterialCost({
+                enhancementCosts: [{ itemHrid: '/items/crafted_material', count: 1 }],
+            });
+
+            expect(result.hasCost).toBe(true);
+            expect(result.costPartial).toBe(true);
+        } finally {
+            gameData.actionDetailMap = {};
+        }
     });
 
     test('returns a zero-cost, non-partial result when there are no enhancement costs', () => {
