@@ -101,7 +101,7 @@ export const MARKET_SELL_TAX = MARKET_TAX;
  * leaves the +0 to +5 path out of the cost entirely.
  *
  * @param {Object} session - Live enhancement session
- * @param {(hrid: string, level: number) => ({bid:number, ask:number}|null)} getPrices
+ * @param {(hrid: string, level: number) => ({bid:number, ask:number, bidEstimated?:boolean}|null)} getPrices
  *   - Market price lookup (injected for testability)
  * @param {number} [sellTax] - Fraction taken on a sale; `MARKET_SELL_TAX`, or `0` for the
  *   current Iron Cow character, which has no market access to sell an enhanced piece on
@@ -119,8 +119,10 @@ export function valueVsCost(session, getPrices, sellTax = isIronCowCharacter() ?
     const spent = session.totalCost || 0;
     const nPrices = getPrices?.(session.itemHrid, level) || null;
     const basePrices = getPrices?.(session.itemHrid, baseLevel) || null;
-    const valueN = nPrices?.bid ?? null;
-    const value0 = basePrices?.bid ?? null;
+    // A bid filled in from the official value map (nobody bids) is an estimate, not what the piece
+    // would fetch: a net built on it would read as a sale price. It counts as no price.
+    const valueN = nPrices?.bidEstimated === true ? null : (nPrices?.bid ?? null);
+    const value0 = basePrices?.bidEstimated === true ? null : (basePrices?.bid ?? null);
 
     if (valueN == null || value0 == null) return { level, baseLevel, spent, valueN, value0, net: null, sellTax };
     const keep = 1 - sellTax;

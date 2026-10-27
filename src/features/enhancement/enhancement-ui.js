@@ -1699,14 +1699,14 @@ class EnhancementUI {
         if (worth.valueN == null) {
             return `
             <div style="margin-top: 6px; font-size: 12px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
-                💎 No market price for +${worth.level} — worth-it unknown.
+                💎 No market bid for +${worth.level} — worth-it unknown.
             </div>`;
         }
 
         if (worth.value0 == null) {
             return `
             <div style="margin-top: 6px; font-size: 12px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
-                💎 No market price for the starting +${worth.baseLevel} item — worth-it unknown.
+                💎 No market bid for the starting +${worth.baseLevel} item — worth-it unknown.
             </div>`;
         }
 
