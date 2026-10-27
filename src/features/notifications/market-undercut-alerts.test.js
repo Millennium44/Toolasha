@@ -87,6 +87,16 @@ vi.mock('../market/mooket/market-history-api.js', () => ({
     },
 }));
 
+// A settable tradable band per `itemHrid:level`; absent = no band, pass-through
+const bands = vi.hoisted(() => ({ byKey: {} }));
+vi.mock('../../utils/market-values.js', () => ({
+    clampToBand: (price, itemHrid, enhancementLevel = 0) => {
+        const band = bands.byKey[`${itemHrid}:${enhancementLevel}`];
+        if (typeof price !== 'number' || !band) return price ?? null;
+        return Math.min(Math.max(price, band.min), band.max);
+    },
+}));
+
 const { default: marketUndercutAlerts, MASTER_SETTING } = await import('./market-undercut-alerts.js');
 
 /** An active sell listing of yours, unless overridden */
@@ -125,6 +135,7 @@ describe('market undercut alerts', () => {
         game.notified = [];
         game.mooketRows = {};
         game.notifyResult = { fired: true, channels: ['toast'] };
+        bands.byKey = {};
         // A forced refresh, by default, just re-notifies subscribers — the real
         // fetch() calls notifyListeners() on success. Runs synchronously so a
         // faked-timer tick fully re-runs the undercut check before returning.
@@ -171,6 +182,48 @@ describe('market undercut alerts', () => {
         check();
 
         expect(game.notified[0].message).toContain('(as of just now)');
+    });
+
+    describe('a price in front of you that is your own order', () => {
+        test('your cheaper sell listing of the same item is not a rival, and a real one at another level still is', () => {
+            game.itemNames['/items/cheese'] = 'Cheese';
+            game.listings = [
+                listing({ id: 1, price: 920000 }),
+                listing({ id: 2, price: 900000 }),
+                listing({ id: 3, price: 900000 }),
+                listing({ id: 4, enhancementLevel: 2, price: 500000 }),
+            ];
+            setPrice('/items/cheese', 0, 900000, 850000);
+            setPrice('/items/cheese', 2, 450000, null);
+            game.lastFetchTimestamp = NOW - 60 * 1000;
+
+            check();
+
+            expect(game.notified.map((n) => n.key)).toEqual(['market-undercut-4:1']);
+            expect(game.notified[0].message).toContain('Cheese +2 sell listing undercut');
+        });
+
+        test('a lone ask above the band read back at the band top is not an undercut; a rival below it is', () => {
+            bands.byKey['/items/cheese:0'] = { min: 40, max: 80 };
+            game.listings = [listing({ id: 7, price: 100 })];
+            // getPrice clamps the snapshot into the band: your own 100 ask reads back as 80
+            setPrice('/items/cheese', 0, 80, 50);
+            check();
+            expect(game.notified).toHaveLength(0);
+
+            setPrice('/items/cheese', 0, 75, 50);
+            check();
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('ask now 75');
+        });
+
+        test('a buy order below the band read back at the band bottom is not outbid', () => {
+            bands.byKey['/items/cheese:0'] = { min: 40, max: 80 };
+            game.listings = [listing({ id: 8, isSell: false, price: 10 })];
+            setPrice('/items/cheese', 0, 70, 40);
+            check();
+            expect(game.notified).toHaveLength(0);
+        });
     });
 
     test('holding the best ask is not being undercut, tied or outright', () => {

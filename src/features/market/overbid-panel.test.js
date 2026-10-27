@@ -107,7 +107,17 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     clampPanelToViewport: vi.fn(),
 }));
 
-import overbidPanel, { findBeatenListings } from './overbid-panel.js';
+// A settable tradable band per `itemHrid:level`; absent = no band, pass-through
+const bands = vi.hoisted(() => ({ byKey: {} }));
+vi.mock('../../utils/market-values.js', () => ({
+    clampToBand: (price, itemHrid, enhancementLevel = 0) => {
+        const band = bands.byKey[`${itemHrid}:${enhancementLevel}`];
+        if (typeof price !== 'number' || !band) return price ?? null;
+        return Math.min(Math.max(price, band.min), band.max);
+    },
+}));
+
+import overbidPanel, { currentBeatenListings, findBeatenListings } from './overbid-panel.js';
 
 const ACTIVE = '/market_listing_status/active';
 const CHEESE = '/items/cheese';
@@ -121,6 +131,35 @@ function observe(map) {
     return (hrid, level, isSell) => map[`${hrid}:${level}:${isSell ? 'sell' : 'buy'}`] ?? null;
 }
 const fresh = (price) => ({ price, timestamp: NOW - 1000 });
+
+describe('the live table reads your own listings through the band', () => {
+    afterEach(() => {
+        bands.byKey = {};
+        hoisted.listings = [];
+        hoisted.observations = {};
+    });
+
+    it('leaves out a listing whose clamped figure is itself or another of yours, and keeps a real rival', () => {
+        const recent = { timestamp: Date.now() - 1000 };
+        bands.byKey[`${CHEESE}:0`] = { min: 40, max: 80 };
+        bands.byKey[`${CHEESE}:3`] = { min: 400, max: 800 };
+        hoisted.listings = [
+            // Two asks above the +0 band's top: the snapshot reads either back as 80
+            listing({ id: 1, price: 100 }),
+            listing({ id: 2, price: 90 }),
+            // A +3 ask with a rival in front of it
+            listing({ id: 3, enhancementLevel: 3, price: 700 }),
+            // A +3 buy order below the band's bottom, read back at 400
+            listing({ id: 4, enhancementLevel: 3, isSell: false, price: 300 }),
+        ];
+        hoisted.observations = {
+            [`${CHEESE}:0:sell`]: { price: 80, ...recent },
+            [`${CHEESE}:3:sell`]: { price: 650, ...recent },
+            [`${CHEESE}:3:buy`]: { price: 400, ...recent },
+        };
+        expect(currentBeatenListings().map((row) => row.id)).toEqual([3]);
+    });
+});
 
 describe('findBeatenListings', () => {
     it('flags a sell listing with a cheaper ask', () => {

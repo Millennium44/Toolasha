@@ -19,9 +19,10 @@
  * marketplace cache refresh) and, while open, on the panel shell's redraw
  * timer, which only reads memory.
  *
- * One refinement over the alert: if another active listing of yours sits at a
- * price that matches or beats the market's, you are only beating yourself and
- * the row is left out.
+ * As in the alert: if another active listing of yours sits at a price that
+ * matches or beats the market's, or the market's figure is your own listing
+ * read back at the band's edge, you are only beating yourself and the row is
+ * left out.
  *
  * ## Showing and hiding
  *
@@ -45,12 +46,13 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import localMarketUndercutAlerts from '../notifications/market-undercut-alerts.js';
 import { marketUndercutAlerts as liveMarketUndercutAlerts } from '../../utils/bundle-bridge.js';
-import { listingBeaten } from '../notifications/notification-predicates.js';
+import { beatenByOwnListing, listingBeaten } from '../notifications/notification-predicates.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
 import { navigateToMarketplace, visibleTabsContainer, insertTabInOrder } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { formatKMB3Digits } from '../../utils/formatters.js';
+import { clampToBand } from '../../utils/market-values.js';
 
 /** Master switch for the panel */
 export const SETTING = 'market_overbidPanel';
@@ -122,10 +124,12 @@ export function findBeatenListings(listings, observe, now, maxAgeMs) {
  * @param {Function} observe - See {@link findBeatenListings}
  * @param {number} now - Current time in ms
  * @param {number} maxAgeMs - How old a figure may be and still count
+ * @param {(price: number, itemHrid: string, level: number) => number|null} [clamp] - The band clamp the
+ *   figures went through, so a listing's raw price can be matched against them; identity when omitted
  * @returns {{beaten: ReturnType<typeof findBeatenListings>, settled: Set<*>, activeIds: Set<*>,
  *   unknown: number}} `unknown` counts active listings with no usable figure
  */
-export function classifyListings(listings, observe, now, maxAgeMs) {
+export function classifyListings(listings, observe, now, maxAgeMs, clamp = (price) => price) {
     const active = (listings || []).filter((listing) => listing?.status === ACTIVE_STATUS && listing.itemHrid);
     const beaten = [];
     const settled = new Set();
@@ -157,16 +161,9 @@ export function classifyListings(listings, observe, now, maxAgeMs) {
             continue;
         }
 
-        // The price in front of you is another listing of yours: not a rival
-        const beatenByYourself = active.some(
-            (other) =>
-                other !== listing &&
-                other.itemHrid === listing.itemHrid &&
-                (other.enhancementLevel || 0) === level &&
-                (other.isSell === true) === isSell &&
-                (isSell ? other.price <= observation.price : other.price >= observation.price)
-        );
-        if (beatenByYourself) {
+        // The price in front of you is another listing of yours, or this one read back at the band's edge:
+        // not a rival
+        if (beatenByOwnListing(listing, active, observation.price, clamp)) {
             settled.add(listing.id);
             continue;
         }
@@ -210,7 +207,8 @@ function currentClassification() {
         dataManager.getMarketListings(),
         (itemHrid, level, isSell) => undercutAlerts().sideObservation(itemHrid, level, isSell),
         Date.now(),
-        marketAPI.CACHE_DURATION
+        marketAPI.CACHE_DURATION,
+        (price, itemHrid, level) => clampToBand(price, itemHrid, level, { foreign: marketAPI.liveSourced })
     );
 }
 
