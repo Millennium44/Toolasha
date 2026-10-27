@@ -28,6 +28,8 @@ vi.mock('../../utils/enhancement-input-pricing.js', () => {
         perAttemptMaterialCost: () => ({ cost: 0, hasCost: false, hasMissingPrices: true }),
     };
 });
+// Mocked above; a banner test sets the pricing label it reads
+import config from '../../core/config.js';
 // The real module — never mocked in this file, unlike combat-sim-ui.test.js,
 // so a `guild shrine guild-allowed cap` test spies on individual exports
 // rather than replacing the whole module.
@@ -3312,6 +3314,21 @@ describe('remembered-run banner', () => {
             'Showing results remembered from a previous session. Run a new analysis to refresh them.'
         );
         expect(html).not.toContain('—');
+    });
+
+    test('says when the remembered costs were priced at another pricing mode', () => {
+        const before = config.getPricingModeDisplayLabel;
+        config.getPricingModeDisplayLabel = () => 'Buy: Bid / Sell: Ask';
+        try {
+            const html = ui._restoredUpgradeNote(null, { characterName: 'M', pricingLabel: 'Buy: Ask / Sell: Bid' });
+            expect(html).toContain(
+                'Costs were priced at Buy: Ask / Sell: Bid; prices are now set to Buy: Bid / Sell: Ask.'
+            );
+            const same = ui._restoredUpgradeNote(null, { characterName: 'M', pricingLabel: 'Buy: Bid / Sell: Ask' });
+            expect(same).not.toContain('Costs were priced at');
+        } finally {
+            config.getPricingModeDisplayLabel = before;
+        }
     });
 
     test('escapes markup in the character name', () => {
@@ -6600,6 +6617,74 @@ describe('the Ability order Include option', () => {
                 game.loadoutNames = {};
                 game.loadoutAbilities = {};
             }
+        });
+
+        /** One all-fights table row over two fights, as runLabyrinthAllFightsAnalysis returns it */
+        const allFightsTable = () => {
+            const fightRow = (i) => ({
+                monsterHrid: `/monsters/m${i}`,
+                monsterName: `Monster ${i}`,
+                loadoutName: 'Loadout',
+                roomLevel: 100,
+                winRate: 0.6,
+                winRateDelta: 0.1,
+                applied: true,
+                trials: 1000,
+            });
+            return {
+                baseline: { fights: [fightRow(0), fightRow(1)], runClearChance: 0.25, expectedAttempts: 4 },
+                results: [
+                    {
+                        candidate: {
+                            type: 'equipment',
+                            slot: '/equipment_types/head',
+                            description: 'Plain → Fancy Helm',
+                        },
+                        costType: 'gold',
+                        cost: 1_000_000,
+                        fights: [fightRow(0), fightRow(1)],
+                        appliedFights: 2,
+                        expectedAttempts: 3.4,
+                        attemptsDelta: -0.6,
+                        attemptsDeltaNoise: 0.1,
+                        significant: true,
+                        avgWinDelta: 0.1,
+                        attemptsSavedPerMillion: 0.6,
+                        costDetail: null,
+                    },
+                ],
+            };
+        };
+
+        test('a plain all-targets run is remembered, and comes back with the remembered-run banner', async () => {
+            // Only a run with the Ability order pass saved its all-fights table, so a reload after a plain
+            // all-targets run brought back whichever older run was remembered; a restored all-fights table
+            // also drew no banner, reading as a live result
+            game.rememberUpgradeResults = true;
+            allSpy.mockImplementation(async (params) => (params.modes?.length ? allFightsTable() : rawOrders(params)));
+            setScope('all');
+            tick('equipment');
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY]?.data?.allFights).toBe(true);
+            expect(storage.written[KEY].data.results).toHaveLength(1);
+
+            await reload();
+            const results = ui.panel.querySelector('#mwi-labsim-upgrade-results');
+            expect(results.querySelector('tr[data-allfights-row]').textContent).toContain('Plain → Fancy Helm');
+            expect(results.textContent).toContain('Showing results remembered from');
+            expect(results.querySelector('[data-clear-remembered-upgrade]')).toBeTruthy();
+        });
+
+        test('a fresh all-targets run drops the banner a restored set drew', async () => {
+            allSpy.mockImplementation(async (params) => (params.modes?.length ? allFightsTable() : rawOrders(params)));
+            ui._restoredUpgradeAt = Date.now();
+            ui._restoredUpgradeMeta = { characterName: 'Old' };
+            setScope('all');
+            tick('equipment');
+            await ui._onUpgradeAnalyze();
+            const results = ui.panel.querySelector('#mwi-labsim-upgrade-results');
+            expect(results.querySelector('tr[data-allfights-row]')).toBeTruthy();
+            expect(results.textContent).not.toContain('Showing results remembered from');
         });
 
         test('an order-only run brings its section back, drawn with the saved collapse state', async () => {
