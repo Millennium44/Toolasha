@@ -725,7 +725,7 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
  *
  * @param {Object} characterGuildBuffMap - buffHrid → `{guildBuffHrid, level}`
  * @param {string} [pricingMode='ask'] - Pricing side, as the net worth setting selects it
- * @returns {{totalCost: number, tokens: number, breakdown: Array<Object>, known: boolean}}
+ * @returns {{totalCost: number, tokens: number, breakdown: Array<Object>, known: boolean, unpriced?: Array<string>}}
  */
 export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = 'ask') {
     const detailMap = dataManager.getInitClientData()?.guildBuffDetailMap;
@@ -739,6 +739,8 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
     let totalCost = 0;
     let totalTokens = 0;
     const breakdown = [];
+    // Credits no conversion prices: counted at 0 in the total, so the total is a floor and has to say so
+    const unpriced = new Set();
 
     for (const [buffHrid, entry] of Object.entries(characterGuildBuffMap)) {
         const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
@@ -747,15 +749,23 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
 
         let cost = 0;
         let tokens = 0;
+        const shrineUnpriced = new Set();
         for (let step = 1; step <= level; step++) {
             const levelCost = detail.levelCosts?.[String(step)];
             if (!levelCost) continue;
             tokens += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
             // An unpriced credit contributes nothing rather than blocking the
             // whole row: this is a running total of what was spent, and one
-            // credit type without a conversion should not blank the other four
+            // credit type without a conversion should not blank the other four.
+            // It is named, though, so the display can say the figure is a floor
             const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { mode: pricingMode, goldPerCredit });
-            for (const line of lines) cost += line.gold || 0;
+            for (const line of lines) {
+                cost += line.gold || 0;
+                if (line.gold === null) {
+                    shrineUnpriced.add(line.name);
+                    unpriced.add(line.name);
+                }
+            }
         }
 
         totalCost += cost;
@@ -769,12 +779,19 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
             .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
             .join(' ');
 
-        breakdown.push({ hrid: buffHrid, name: `${buffName} ${level}`, level, cost, tokens });
+        breakdown.push({
+            hrid: buffHrid,
+            name: `${buffName} ${level}`,
+            level,
+            cost,
+            tokens,
+            unpriced: [...shrineUnpriced],
+        });
     }
 
     breakdown.sort((a, b) => b.cost - a.cost);
 
-    return { totalCost, tokens: totalTokens, breakdown, known: true };
+    return { totalCost, tokens: totalTokens, breakdown, known: true, unpriced: [...unpriced] };
 }
 
 /**
@@ -1492,7 +1509,7 @@ export async function calculateNetworth() {
     let guildShrinesData = calculateGuildShrinesCost(dataManager.characterGuildBuffMap, shrinesPricingMode);
     if (isExcluded('assetType', 'guildShrines') && guildShrinesData.totalCost > 0) {
         trackExcluded('assetType', 'guildShrines', 'All Guild Shrines', guildShrinesData.totalCost);
-        guildShrinesData = { totalCost: 0, tokens: 0, breakdown: [], known: guildShrinesData.known };
+        guildShrinesData = { totalCost: 0, tokens: 0, breakdown: [], known: guildShrinesData.known, unpriced: [] };
     } else {
         let excludedShrineCost = 0;
         let excludedShrineTokens = 0;
@@ -1512,6 +1529,8 @@ export async function calculateNetworth() {
                 tokens: guildShrinesData.tokens - excludedShrineTokens,
                 breakdown: remainingShrines,
                 known: guildShrinesData.known,
+                // Only the credits of the shrines still counted can leave the total short
+                unpriced: [...new Set(remainingShrines.flatMap((shrine) => shrine.unpriced || []))],
             };
         }
     }

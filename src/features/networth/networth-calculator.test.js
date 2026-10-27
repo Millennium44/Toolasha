@@ -169,7 +169,8 @@ vi.mock('../../utils/guild-credit-pricing.js', () => ({
     priceGuildCreditCosts: (costs, { goldPerCredit }) => ({
         lines: (costs || []).map(({ itemHrid, count }) => {
             const each = goldPerCredit[itemHrid] ?? null;
-            return { itemHrid, count, goldEach: each, gold: each === null ? null : each * count };
+            const name = itemHrid.split('/').pop();
+            return { itemHrid, name, count, goldEach: each, gold: each === null ? null : each * count };
         }),
         total: null,
         unpriced: [],
@@ -637,6 +638,30 @@ describe('calculateGuildShrinesCost', () => {
         const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/force_combat': 3 }));
 
         expect(result).toEqual({ totalCost: 0, tokens: 0, breakdown: [], known: false });
+    });
+
+    test('a credit nothing converts into is named, so the total reads as a floor and not as the whole bill', () => {
+        mocks.initData.guildBuffDetailMap['/guild_buffs/force_combat'].levelCosts[1].creditCosts.push({
+            itemHrid: '/items/guild_credit_unconvertible',
+            count: 3,
+        });
+
+        const result = calculateGuildShrinesCost(
+            shrines({ '/guild_buffs/force_combat': 1, '/guild_buffs/scholar_skilling': 1 })
+        );
+
+        // The priced credits still count; the unconvertible one adds nothing and is reported
+        expect(result.totalCost).toBe(7500 + 3000);
+        expect(result.unpriced).toEqual(['guild_credit_unconvertible']);
+        const byHrid = Object.fromEntries(result.breakdown.map((row) => [row.hrid, row]));
+        expect(byHrid['/guild_buffs/force_combat'].unpriced).toEqual(['guild_credit_unconvertible']);
+        expect(byHrid['/guild_buffs/scholar_skilling'].unpriced).toEqual([]);
+    });
+
+    test('a fully priced shrine list reports nothing unpriced', () => {
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/force_combat': 3 }));
+
+        expect(result.unpriced).toEqual([]);
     });
 
     test('a buff the cost table does not know is skipped rather than counted as free', () => {

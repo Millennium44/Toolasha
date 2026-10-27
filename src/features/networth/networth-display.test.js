@@ -123,6 +123,59 @@ describe('guild shrines row', () => {
         expect(breakdown).toContain('60 tokens');
     });
 
+    test('a total that leaves an unpriced credit out says it is a floor', () => {
+        networthInventoryDisplay.update(
+            networthData({
+                totalCost: 7500,
+                tokens: 10,
+                known: true,
+                unpriced: ['Purple Guild Credit'],
+                breakdown: [
+                    {
+                        hrid: '/guild_buffs/force_combat',
+                        name: 'Force Combat 1',
+                        level: 1,
+                        cost: 7500,
+                        tokens: 10,
+                        unpriced: ['Purple Guild Credit'],
+                    },
+                ],
+            })
+        );
+
+        const toggle = networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-toggle');
+        expect(toggle.textContent).toContain('at least');
+        expect(toggle.title).toContain('Purple Guild Credit');
+        expect(networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-breakdown').textContent).toContain(
+            'at least; Purple Guild Credit unpriced'
+        );
+    });
+
+    test('a fully priced total carries no floor wording', () => {
+        networthInventoryDisplay.update(
+            networthData({
+                totalCost: 7500,
+                tokens: 10,
+                known: true,
+                unpriced: [],
+                breakdown: [
+                    {
+                        hrid: '/guild_buffs/force_combat',
+                        name: 'Force Combat 1',
+                        level: 1,
+                        cost: 7500,
+                        tokens: 10,
+                        unpriced: [],
+                    },
+                ],
+            })
+        );
+
+        expect(networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-toggle').textContent).not.toContain(
+            'at least'
+        );
+    });
+
     test('unknown shrine levels draw no row rather than a zero', () => {
         networthInventoryDisplay.update(networthData({ totalCost: 0, tokens: 0, breakdown: [], known: false }));
 
