@@ -721,6 +721,12 @@ describe('an input nobody can price', () => {
         const full = buildEnhancementTooltipHTML(calculateEnhancementPath(ITEM, 3, enhancingConfig));
         expect(full).not.toContain('costs are understated');
     });
+
+    test('a chosen input that is itself a partial crafting bill gets the same warning', () => {
+        const data = calculateEnhancementPath(ITEM, 3, enhancingConfig);
+        expect(buildEnhancementTooltipHTML({ ...data, inputsPartial: false })).not.toContain('costs are understated');
+        expect(buildEnhancementTooltipHTML({ ...data, inputsPartial: true })).toContain('costs are understated');
+    });
 });
 
 describe('calculatePerAttemptMaterialCost', () => {
