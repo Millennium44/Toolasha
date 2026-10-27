@@ -710,4 +710,29 @@ describe('the reroll spend window', () => {
             else process.env.TZ = originalTZ;
         }
     });
+
+    test('a history that could not be read withholds the net instead of showing no reroll cost', async () => {
+        game.completions = {
+            rates: {
+                week: {
+                    completions: 3,
+                    tokens: 6,
+                    coins: 100000,
+                    spanMs: 3600000,
+                    tokensPerHour: 3,
+                    coinsPerHour: 50000,
+                },
+                session: null,
+            },
+            recent: [],
+        };
+        game.rerollHistory = null;
+
+        const result = await taskStatistics.calculateCompletions(0);
+
+        expect(result.rerollSpend.unavailable).toBe(true);
+        expect(result.netValue).toBe(null);
+        expect(result.rewardValue).not.toBe(null);
+        expect(taskStatistics.createCompletionsSection(result, '#fff').textContent).toContain('Unavailable');
+    });
 });

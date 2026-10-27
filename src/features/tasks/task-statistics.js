@@ -279,10 +279,13 @@ class TaskStatistics {
             // Only the rerolls paid on tasks retired inside the same window, so
             // the two halves of the net are measuring the same seven days
             const windowStart = calendarDaysBefore(now, 7);
-            const history = await taskRerollTracker.loadHistory();
+            // Strict: a history that could not be read is not a history of no rerolls, and reading it as
+            // one would show the week's income with none of its cost taken off
+            const history = await taskRerollTracker.loadHistory({ strict: true });
+            const spendKnown = Array.isArray(history);
             let gold = 0;
             let cowbells = 0;
-            for (const retired of history) {
+            for (const retired of spendKnown ? history : []) {
                 if (!(retired?.retiredAt >= windowStart)) continue;
                 gold += retired.goldSpent || 0;
                 cowbells += retired.cowbellsSpent || 0;
@@ -293,12 +296,12 @@ class TaskStatistics {
                 week,
                 session: rates.session,
                 recent: recent.slice(0, 5),
-                rerollSpend: { gold, cowbells, totalValue: spendValue },
+                rerollSpend: { gold, cowbells, totalValue: spendValue, unavailable: !spendKnown },
                 rewardValue,
                 // Carried so the section can mark a figure that is a floor rather
                 // than presenting a partial valuation as a firm one
                 tokenValuation: tokenValue,
-                netValue: rewardValue === null ? null : rewardValue - spendValue,
+                netValue: rewardValue === null || !spendKnown ? null : rewardValue - spendValue,
             };
         } catch (error) {
             console.error('[TaskStatistics] Reading the recorded completions failed:', error);
@@ -1302,7 +1305,9 @@ class TaskStatistics {
         // What those claims cost: the rerolls paid on tasks retired in the same
         // window, and what is left after them
         const spend = completions.rerollSpend;
-        if (spend.totalValue > 0) {
+        if (spend.unavailable) {
+            section.appendChild(this.createRow('Reroll Spend', 'Unavailable', config.COLOR_TEXT_SECONDARY));
+        } else if (spend.totalValue > 0) {
             const parts = [];
             if (spend.gold > 0) parts.push(`${formatKMB(Math.round(spend.gold))}💰`);
             if (spend.cowbells > 0) parts.push(`${spend.cowbells}🔔`);
