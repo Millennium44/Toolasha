@@ -2325,7 +2325,9 @@ class BulkSellAssistant {
         const tiles = document.querySelectorAll('[class*="Inventory_items"] [class*="Item_itemContainer"]');
         let tile = null;
         for (const container of tiles) {
-            const href = container.querySelector('svg use')?.getAttribute('href') || '';
+            // Both spellings: many item icons carry only `xlink:href`
+            const use = container.querySelector('svg use');
+            const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
             if (!href.endsWith(`#${iconName}`)) continue;
             // Vendor path only runs for +0 items — skip enhanced variants
             if (shownEnhancementLevel(container) > 0) continue;

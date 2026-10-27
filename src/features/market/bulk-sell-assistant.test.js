@@ -1944,6 +1944,25 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(2);
         });
 
+        test('an inventory tile whose icon carries only xlink:href is still found for the vendor sale', () => {
+            runAtStep0();
+            bulkSell.state = 'preparing';
+            const inventory = document.createElement('div');
+            inventory.className = 'Inventory_items__x';
+            // A +2 milk ahead of it, then a +3 cheese, then the +0 cheese with the legacy attribute only
+            inventory.innerHTML =
+                '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use xlink:href="#milk"></use></svg></div></div>' +
+                '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use xlink:href="#cheese"></use></svg>' +
+                '<div class="Item_enhancementLevel__x">+3</div></div></div>' +
+                '<div class="Item_itemContainer__x"><div class="Item_item__x plain"><svg><use xlink:href="#cheese"></use></svg></div></div>';
+            document.body.appendChild(inventory);
+            const clicked = [];
+            inventory.addEventListener('click', (event) => clicked.push(event.target.className));
+            expect(bulkSell._openVendorSell(PRICE, 1)).toBe(true);
+            expect(clicked).toEqual(['Item_item__x plain']);
+            inventory.remove();
+        });
+
         test('an arming while the run waits for the menu to open still counts as recent', async () => {
             runAtStep0();
             bulkSell.state = 'preparing';
