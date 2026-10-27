@@ -475,19 +475,27 @@ function craftPlanPerAction(profitData, mode) {
         const outputAmount = profitData.outputAmount > 0 ? profitData.outputAmount : 1;
         if (Number.isFinite(plan.unitCost)) return { cost: plan.unitCost * outputAmount, partial: false };
 
-        // Sum the priced legs; an unpriced buy leg adds nothing and marks the bill partial. A crafted
-        // node's children are sized for whole actions, so its share of the bill is scaled back to the
-        // units wanted from it (quantity over actions x yield) - the same per-unit cost `unitCost` is
-        // built from. Left unscaled, a multi-yield intermediate would charge the full craft for each
-        // unit, and the floor could exceed the complete cost.
+        // Sum the priced legs; an unpriced buy leg adds nothing and marks the bill partial. The sum is
+        // built the way the planner builds `unitCost`: a crafted node's cost per unit is its inputs'
+        // per-unit costs times the average (Artisan-reduced, unrounded) count one craft uses, over the
+        // units one craft yields. A priced node contributes its own `unitCost`. Reading a priced leg's
+        // `totalCost` instead would bill it at the whole-unit quantity the plan buys, which the
+        // complete bill never does, so the floor could exceed the cost it is a floor of.
         const walk = (node) => {
-            if (Number.isFinite(node.totalCost)) return node.totalCost;
+            if (Number.isFinite(node.unitCost)) return node.unitCost;
             if (node.strategy !== 'craft') return 0;
-            const quantity = node.quantity > 0 ? node.quantity : 1;
             const yieldPerAction = node.outputCount > 0 ? node.outputCount : 1;
+            const quantity = node.quantity > 0 ? node.quantity : 1;
             const actions = node.actionsNeeded > 0 ? node.actionsNeeded : Math.ceil(quantity / yieldPerAction);
-            const inputs = (node.children || []).reduce((sum, child) => sum + walk(child), 0);
-            return (inputs * quantity) / (actions * yieldPerAction);
+            const perAction = (node.children || []).reduce((sum, child) => {
+                const meta = child.craftInputMeta;
+                let used;
+                if (meta && meta.countPerAction > 0) used = meta.countPerAction * (1 - (meta.artisanBonus || 0));
+                else if (child.isUpgradeItem) used = 1;
+                else used = child.quantity > 0 ? child.quantity / actions : 1;
+                return sum + walk(child) * used;
+            }, 0);
+            return perAction / yieldPerAction;
         };
         return { cost: walk(plan) * outputAmount, partial: true };
     } catch (error) {

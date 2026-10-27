@@ -2133,6 +2133,41 @@ describe('buildDetailedProfitDisplay Best plan row', () => {
         expect(render()).toContain(`≥ ${formatKMB(60)}`);
     });
 
+    test('a priced leg is billed at the average Artisan count, so the floor never exceeds the complete cost', () => {
+        // 4 per craft at 10% Artisan: the plan buys 4 whole units (400) but the complete bill uses 3.6 (360)
+        const artisanLeaf = {
+            strategy: 'buy',
+            quantity: 4,
+            unitCost: 100,
+            totalCost: 400,
+            children: [],
+            craftInputMeta: { countPerAction: 4, artisanBonus: 0.1 },
+        };
+        const unpriced = {
+            strategy: 'buy',
+            quantity: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [],
+            craftInputMeta: { countPerAction: 1, artisanBonus: 0.1 },
+        };
+        const root = {
+            strategy: 'craft',
+            quantity: 1,
+            outputCount: 1,
+            actionsNeeded: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [artisanLeaf, unpriced],
+        };
+        planState.planner = vi.fn(() => root);
+
+        const html = render();
+
+        expect(html).toContain(`≥ ${formatKMB(360)}`);
+        expect(html).not.toContain(`≥ ${formatKMB(400)}`);
+    });
+
     test('a plan with nothing priced at all shows no row rather than a zero', () => {
         const unpriced = { strategy: 'buy', unitCost: Infinity, totalCost: Infinity, children: [] };
         planState.planner = vi.fn(() => rootOf(Infinity, [unpriced]));
