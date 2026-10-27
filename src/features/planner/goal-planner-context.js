@@ -387,7 +387,8 @@ function noteTrainingSales(sales, actionHrid, profit, lines) {
  * @param {Array<{actionHrid: string, outputs: Array<Object>}>} sales - From {@link noteTrainingSales}
  * @param {Map<string, number|null>} trainingMargin - Edited in place
  * @param {Map<string, {proceedsPerHour: number, capPerHour: number}>} trainingSaleCap - Filled for each
- *   action the book limits: its uncapped proceeds and what the market absorbs, both per hour
+ *   action the book limits: the uncapped proceeds of the outputs it limits and what the market absorbs of
+ *   them, both per hour (an output that sells freely is in neither)
  * @returns {Promise<void>}
  */
 async function boundTrainingMargins(sales, trainingMargin, trainingSaleCap) {
@@ -407,11 +408,13 @@ async function boundTrainingMargins(sales, trainingMargin, trainingSaleCap) {
         const byKey = new Map((bounded?.rates || []).map((rate) => [rate.actionHrid, rate]));
         for (const sale of sales) {
             let unsold = 0;
+            // Only the outputs the book limits: one that sells freely has no hourly cap, so a climb that
+            // speeds up sells all of it, and counting it here would cap it at its starting pace
             let proceeds = 0;
             for (const output of sale.outputs) {
-                proceeds += output.proceeds;
                 const kept = Number(byKey.get(`${sale.actionHrid}|${output.itemHrid}`)?.goldPerHour);
                 if (!Number.isFinite(kept) || kept >= output.proceeds) continue;
+                proceeds += output.proceeds;
                 unsold += output.proceeds - Math.max(0, kept);
             }
             const margin = trainingMargin.get(sale.actionHrid);

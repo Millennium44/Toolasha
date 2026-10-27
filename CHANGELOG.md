@@ -14,6 +14,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The price history chart's tooltip now shows that day's base market value, taken from the history the price service sends (adapted from mooket II); a new setting turns it off, and nothing shows for days without one.
 
+### Audit round (2026-10-27): imported-player tax and the goal planner
+
+- The goal planner no longer charges freely-selling gathering outputs as unsold when a climb speeds up, a Lab merged gear row for an imported profile is no longer priced from your own held copies, and Combat Sim's single-zone Results price an imported player's drops at their own sale tax.
+
 ### Audit round (2026-10-26, sixth): dungeons and Party Loot
 
 - Party Loot's combined view adds up every session's consumables instead of charging only the newest one, and a finished run keeps its own duration.

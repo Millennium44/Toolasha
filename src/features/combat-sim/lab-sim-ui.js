@@ -9543,6 +9543,9 @@ class LabSimUI {
                         roomLevel,
                         targetSkill,
                         gameData,
+                        // An imported profile's single purchase is priced as its parts were: not from the live
+                        // character's held copies
+                        isSelf: Boolean(selfHrid) && dto.hrid === selfHrid,
                     });
                 }
                 if (analysisResult?.baseline && !isAborted()) {
