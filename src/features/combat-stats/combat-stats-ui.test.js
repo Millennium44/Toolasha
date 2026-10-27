@@ -27,6 +27,11 @@ const mocks = vi.hoisted(() => ({
     currentActions: [],
     /** damageBreakdown() */
     damage: null,
+    /** profit pricing mode's sell side and the key pricing setting's resolved side */
+    sellSide: 'ask',
+    keySide: 'ask',
+    /** when set, replaces the calculator's per-player stats */
+    statsOverride: null,
     /** combatBossEta.getEtaText() */
     bossEta: null,
 }));
@@ -135,9 +140,20 @@ vi.mock('./combat-session-history.js', () => ({
 vi.mock('../../utils/key-cost.js', () => ({
     formatKeyCostNote: () => '',
     describeKeyCost: () => ({ unitCost: null }),
-    getKeyPricingMode: () => 'ask',
-    resolveKeyPricing: () => ({ setting: 'ask', priceSide: 'ask', basis: 'market' }),
+    getKeyPricingMode: () => mocks.keySide,
+    resolveKeyPricing: () => ({ setting: mocks.keySide, priceSide: mocks.keySide, basis: 'market' }),
 }));
+vi.mock('../../utils/market-data.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getPricingMode: () => mocks.sellSide,
+}));
+vi.mock('./combat-stats-calculator.js', async (importOriginal) => {
+    const original = await importOriginal();
+    return {
+        ...original,
+        calculateAllPlayerStats: (...args) => mocks.statsOverride ?? original.calculateAllPlayerStats(...args),
+    };
+});
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: {
         isInitialized: false,
@@ -210,6 +226,9 @@ afterEach(() => {
     mocks.damage = null;
     mocks.bossEta = null;
     mocks.currentActions = [];
+    mocks.sellSide = 'ask';
+    mocks.keySide = 'ask';
+    mocks.statsOverride = null;
     store.values.clear();
     store.charId = 'char-1';
     store.charName = 'LiveGuy';
@@ -1054,5 +1073,72 @@ describe('cleanup unregisters the setting-change listener it registered', () => 
         }
 
         expect(settingListeners.combatStats).toHaveLength(1);
+    });
+});
+
+describe('Combat Stats pricing sides', () => {
+    // Distinct figures per side, so the side that was read is visible in the output
+    const priced = () => [
+        {
+            name: 'LiveGuy',
+            isCurrentPlayer: true,
+            durationFormatted: '1h 0m',
+            income: { ask: 1000, bid: 900 },
+            dailyIncome: { ask: 24000, bid: 21600 },
+            consumableCosts: { ask: 50, bid: 50 },
+            dailyProfit: { ask: 23000, bid: 20600 },
+            keyCosts: { ask: 777, bid: 777 },
+            keyBreakdown: [{ keyHrid: '/items/mirror_of_protection', count: 1, unitCost: 777, totalCost: 777 }],
+            dailyKeyCosts: 777,
+            totalExp: 0,
+            expPerHour: 0,
+            deathCount: 0,
+            deathsPerHour: 0,
+        },
+    ];
+    const copied = async () => {
+        mocks.statsOverride = priced();
+        await combatStatsUI.showPopup();
+        const written = [];
+        vi.spyOn(navigator.clipboard, 'writeText').mockImplementation((value) => {
+            written.push(value);
+            return Promise.resolve();
+        });
+        [...popup().querySelectorAll('button')].find((b) => b.textContent.includes('Copy')).click();
+        await flush();
+        return written[0];
+    };
+
+    test('an explicit bid key setting does not pin income to bid when the profit mode sells at the ask', async () => {
+        mocks.keySide = 'bid';
+        mocks.sellSide = 'ask';
+        const text = await copied();
+        expect(text).toContain('Income (ask): 1,000');
+        expect(text).toContain('Daily profit: 23K/d');
+    });
+
+    test('the profit mode sell side decides income, whatever the key setting resolves to', async () => {
+        mocks.keySide = 'ask';
+        mocks.sellSide = 'bid';
+        const text = await copied();
+        expect(text).toContain('Income (bid): 900');
+        expect(text).toContain('Daily profit: 20K/d');
+    });
+
+    test('the popup rows read income from the sell side and key costs from the key side', async () => {
+        mocks.statsOverride = [
+            {
+                ...priced()[0],
+                keyCosts: { ask: 111, bid: 222 },
+            },
+        ];
+        mocks.keySide = 'bid';
+        mocks.sellSide = 'ask';
+        await combatStatsUI.showPopup();
+        const text = popup().textContent;
+        expect(text).toContain('Income:1,000');
+        expect(text).not.toContain('Income:900');
+        expect(text).toContain('222');
+        expect(text).not.toContain('111');
     });
 });

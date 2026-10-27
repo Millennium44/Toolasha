@@ -283,6 +283,34 @@ describe('Craftable sort mode', () => {
         ]);
     });
 
+    test('does not re-attach panels that are already in sorted order', () => {
+        const { container } = makePanels({ '/actions/low': 3, '/actions/high': 50 });
+        actionPanelSort.sortMode = 'craftable';
+        actionPanelSort.sortPanelsByProfit();
+        expect([...container.children].map((el) => el.dataset.hrid)).toEqual(['/actions/high', '/actions/low']);
+
+        const appendSpy = vi.spyOn(container, 'appendChild');
+        actionPanelSort.sortPanelsByProfit();
+
+        expect(appendSpy).not.toHaveBeenCalled();
+        expect([...container.children].map((el) => el.dataset.hrid)).toEqual(['/actions/high', '/actions/low']);
+    });
+
+    test('still reorders when an unregistered element trails the sorted panels', () => {
+        const { container } = makePanels({ '/actions/low': 3, '/actions/high': 50 });
+        const trailer = document.createElement('div');
+        container.appendChild(trailer);
+        actionPanelSort.sortMode = 'craftable';
+        actionPanelSort.sortPanelsByProfit();
+
+        expect([...container.children].map((el) => el.dataset.hrid)).toEqual([
+            undefined,
+            '/actions/high',
+            '/actions/low',
+        ]);
+        expect(container.firstElementChild).toBe(trailer);
+    });
+
     test('a stored craftable mode is adopted and an unknown one falls back to default', async () => {
         store.data.actionSortMode_char1 = 'craftable';
         await actionPanelSort.initialize();

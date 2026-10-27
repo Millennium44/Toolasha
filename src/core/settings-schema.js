@@ -917,6 +917,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Shows material costs table with Ask/Bid prices, actions/hour, and profit breakdown',
             },
+            itemTooltip_craftCostSubMaterials: {
+                id: 'itemTooltip_craftCostSubMaterials',
+                label: 'Craft cost includes crafting sub-materials',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a "Best plan" row to the detailed materials table that prices the craft by buying or crafting each ingredient, whichever is cheaper, all the way down. Shown only when it differs from the Total row; a sub-material with no market price marks it as a floor (≥). The profit/hr figure always uses the Total row. Not shown while "direct recipe only" is on',
+            },
             itemTooltip_detailedProfitFlat: {
                 id: 'itemTooltip_detailedProfitFlat',
                 label: 'Profit: direct recipe only (buy base items, no sub-craft chain)',
@@ -2170,9 +2177,10 @@ export const settingsGroups = {
                 ],
                 help:
                     'How a dungeon key is valued everywhere the script prices one: item tooltips, net worth and the ' +
-                    'inventory badges, combat income and the key-cost breakdown, the combat simulator, the dungeon ' +
+                    'inventory badges, Combat Stats key costs (it prices keys only; the rest of Combat Stats follows the ' +
+                    'profit calculation pricing mode), the combat simulator, the dungeon ' +
                     'ROI board, the chest risk-of-ruin model, and the consumables panel’s dungeon readiness card. ' +
-                    'Changing it moves your net worth and your combat profit/hr, not only the dungeon card. “Same ' +
+                    'Changing it moves your net worth and your combat key costs, not only the dungeon card. “Same ' +
                     'as the profit calculation pricing mode” follows that setting’s buy side — keys are only ever ' +
                     'bought, so its sell side has nothing to say here — and it also takes that setting’s ' +
                     'patient-tick delay on a bid quote the same way ordinary profit prices do, so it can read ' +
@@ -2363,6 +2371,14 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Value guild tokens you hold through the Guild Shop credit exchange (credits per token × the gold value of a credit). Tokens already spent on shrine levels are not counted. Disable to exclude them from net worth.',
+                requires: 'networth',
+            },
+            networth_includeGuildCredits: {
+                id: 'networth_includeGuildCredits',
+                label: 'Value guild credits (net worth, inventory totals)',
+                type: 'checkbox',
+                default: true,
+                help: 'Guild Credits cannot be sold, so each is valued at the cheapest tradeable item that converts into it. Disable to leave them out of net worth and inventory totals.',
                 requires: 'networth',
             },
             networth_abilityBooksAsInventory: {
@@ -2772,6 +2788,23 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a button next to the Supplies section of the Labyrinth entry screen that opens the marketplace on whichever Torch/Shroud/Beacon is short of its carry cap, quantities filled in. Nothing is bought until you confirm in the game',
+            },
+            labyrinthGridScaleControl: {
+                id: 'labyrinthGridScaleControl',
+                label: 'Labyrinth: Show grid size control',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a - / + control to the Labyrinth header row that enlarges the room grid',
+            },
+            labyrinthGridScale: {
+                id: 'labyrinthGridScale',
+                label: 'Labyrinth: Room grid size',
+                type: 'slider',
+                default: 1,
+                min: 1,
+                max: 2,
+                step: 0.25,
+                help: 'Scale of the Labyrinth room grid. Also adjustable with the - / + control on the Labyrinth panel',
             },
             labyrinthMonsterStatCheck: {
                 id: 'labyrinthMonsterStatCheck',
