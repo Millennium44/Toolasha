@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Loading a party keeps the what-if house rooms and shrines it was simmed with, and teammates keep their game mode through Edit and Load.
 - Profit vs solo is marked when an unpriced item is counted as 0, and two teammates never show under the same numbered name.
 
+### Audit round (2026-10-26, fourth): action bar
+
+- The action bar's time for a counted run stops at what your materials can pay for, matching the queue panel, and a character switch no longer paints the previous character's run into the new one's row.
+
 ### Audit round (2026-10-26, third): treasure and Gold Sources
 
 - Replacing the chest history from a file now survives a sync instead of being undone by another device, and appending keeps a reset in place.
