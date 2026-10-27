@@ -261,18 +261,22 @@ class TaskRerollTracker {
 
     /**
      * Load the reroll history — the tasks that have already left the board.
-     * @returns {Promise<Array<Object>>} History entries, oldest first
+     * @param {Object} [options]
+     * @param {boolean} [options.strict=false] - Answer null when storage could not be read and nothing has
+     *   been read before, so a caller summing spend can tell "no history" from "history not available"
+     * @returns {Promise<Array<Object>|null>} History entries, oldest first
      */
-    async loadHistory() {
+    async loadHistory({ strict = false } = {}) {
         try {
             // Folds the stored history under any entries held since a read
             // that could not be made; an unreadable read keeps those
-            await this.historyRecord.load();
+            const readable = await this.historyRecord.load();
+            if (strict && !readable && !this.historyRecord.isLoaded()) return null;
             const held = this.historyRecord.get();
             return Array.isArray(held) ? held : [];
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to load reroll history:', error);
-            return [];
+            return strict ? null : [];
         }
     }
 

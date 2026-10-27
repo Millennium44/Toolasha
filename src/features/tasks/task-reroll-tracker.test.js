@@ -296,6 +296,25 @@ describe('the stored records survive a read that cannot be made', () => {
         expect(await tracker.loadHistory()).toHaveLength(3);
     });
 
+    test('a strict load tells a history it could not read from one with no rerolls in it', async () => {
+        spend().set('taskRerollHistory_market123', [{ taskId: 1, retiredAt: 10, goldSpent: 100 }]);
+        storageMock.unavailable = true;
+
+        expect(await tracker.loadHistory({ strict: true })).toBeNull();
+        // The plain load keeps its old answer for callers that only list
+        expect(await tracker.loadHistory()).toEqual([]);
+
+        storageMock.unavailable = false;
+        expect(await tracker.loadHistory({ strict: true })).toHaveLength(1);
+        // Once read, a later hiccup still answers with what is held
+        storageMock.unavailable = true;
+        expect(await tracker.loadHistory({ strict: true })).toHaveLength(1);
+    });
+
+    test('a history that is genuinely empty is an empty list, not an unreadable one', async () => {
+        expect(await tracker.loadHistory({ strict: true })).toEqual([]);
+    });
+
     test('an append while storage is unreadable is kept in hand and lands with the next one', async () => {
         spend().set('taskRerollHistory_market123', [{ taskId: 1, retiredAt: 10, goldSpent: 100 }]);
         storageMock.unavailable = true;

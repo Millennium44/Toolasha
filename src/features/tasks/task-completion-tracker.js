@@ -46,6 +46,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
+import { calendarDaysBefore } from '../../utils/calendar-days.js';
 import { createChunkedHistory } from '../../utils/chunked-history.js';
 import { registerSyncRetention } from '../../utils/sync-merge-registry.js';
 
@@ -369,7 +370,7 @@ export function computeRates(entries, now = Date.now()) {
     const midnight = new Date(now);
     midnight.setHours(0, 0, 0, 0);
     const dayStart = midnight.getTime();
-    const weekAgo = now - 7 * DAY_MS;
+    const weekAgo = calendarDaysBefore(now, 7);
 
     return {
         session: rateOver(sorted.filter((entry) => entry.completedAt >= dayStart)),
