@@ -7775,6 +7775,98 @@ describe('one skilling purchase is one row, raised to one level for every kit', 
         ]);
         expect(costDetail.ownershipNotes).toBeUndefined();
     });
+
+    test('a freed piece with no sale price is flagged on its merged credit line, not shown as 0 back', () => {
+        const NOSALE = '/items/unsellable_ring';
+        resolveItemPrice.mockImplementation((hrid) =>
+            hrid === NOSALE
+                ? { price: null, custom: false, missing: true, estimated: false }
+                : { price: 100, custom: false, missing: false, estimated: false }
+        );
+        const enhance = {
+            candidate: { skillKey: BREWING, type: 'enhancement', currentHrid: PHILO, currentLevel: 3, upgradeLevel: 5 },
+            cost: 500,
+            costDetail: { buys: [], credits: [], gross: 500, credit: 0, net: 500, unpriced: [] },
+        };
+        const freeing = {
+            candidate: {
+                skillKey: CRAFTING,
+                type: 'skilling_gear',
+                currentHrid: NOSALE,
+                currentLevel: 0,
+                upgradeHrid: PHILO,
+                upgradeLevel: 5,
+                removedItems: [
+                    { hrid: NOSALE, enhancementLevel: 0 },
+                    { hrid: SPEED, enhancementLevel: 5 },
+                ],
+            },
+            cost: null,
+            costDetail: null,
+        };
+        const { costDetail } = priceMergedAcquisition(
+            [enhance, freeing],
+            { itemDetailMap },
+            {
+                // Each priced piece sold takes 100 off the purchase; the unsellable ring takes nothing off
+                price: (candidate) =>
+                    1000 - 100 * (candidate.removedItems || []).filter((i) => i.hrid === SPEED).length,
+                explain: () => ({}),
+            }
+        );
+
+        const ring = costDetail.credits.find((line) => line.hrid === NOSALE);
+        const speed = costDetail.credits.find((line) => line.hrid === SPEED);
+        expect(ring).toMatchObject({ price: 0, noSalePrice: true });
+        expect(speed.noSalePrice).toBeUndefined();
+    });
+
+    test('an unsellable piece listed last keeps the remainder as a real credit and is not flagged', () => {
+        const NOSALE = '/items/unsellable_ring';
+        resolveItemPrice.mockImplementation((hrid) =>
+            hrid === NOSALE
+                ? { price: null, custom: false, missing: true, estimated: false }
+                : { price: 100, custom: false, missing: false, estimated: false }
+        );
+        const enhance = {
+            candidate: { skillKey: BREWING, type: 'enhancement', currentHrid: PHILO, currentLevel: 3, upgradeLevel: 5 },
+            cost: 500,
+            costDetail: { buys: [], credits: [], gross: 500, credit: 0, net: 500, unpriced: [] },
+        };
+        const freeing = {
+            candidate: {
+                skillKey: CRAFTING,
+                type: 'skilling_gear',
+                currentHrid: SPEED,
+                currentLevel: 5,
+                upgradeHrid: PHILO,
+                upgradeLevel: 5,
+                removedItems: [
+                    { hrid: SPEED, enhancementLevel: 5 },
+                    { hrid: NOSALE, enhancementLevel: 0 },
+                ],
+            },
+            cost: null,
+            costDetail: null,
+        };
+        const { costDetail } = priceMergedAcquisition(
+            [enhance, freeing],
+            { itemDetailMap },
+            {
+                // The purchase falls 130 for the pair but only 100 for the ring-free piece: the last line takes 30
+                price: (candidate) =>
+                    1000 -
+                    (candidate.removedItems?.length === 2
+                        ? 130
+                        : 100 * (candidate.removedItems || []).filter((i) => i.hrid === SPEED).length),
+                explain: () => ({}),
+            }
+        );
+
+        const ring = costDetail.credits.find((line) => line.hrid === NOSALE);
+        expect(ring.price).toBe(30);
+        expect(ring.noSalePrice).toBeUndefined();
+    });
 });
 
 describe('ability order candidates', () => {

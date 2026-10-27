@@ -9650,6 +9650,23 @@ describe('the cost basis detail', () => {
         expect(html).toContain('Enhance rates: Yours.');
     });
 
+    test('a piece with no sale price says nothing is credited back for it', () => {
+        const html = ui._renderUpgradeCostBasis({
+            costSource: 'market',
+            costDetail: {
+                gross: 5_000_000,
+                credit: 0,
+                credits: [
+                    { name: 'Nature Top', enhancementLevel: 0, price: 0, noSalePrice: true },
+                    { name: 'Wooden Sword', enhancementLevel: 0, price: 100 },
+                ],
+            },
+            candidate: {},
+        });
+        expect(html).toContain('No sale price for Nature Top, so nothing is credited back for it.');
+        expect(html).not.toContain('Wooden Sword');
+    });
+
     test('a row with no sweep behind it says nothing about benches', () => {
         const html = ui._renderUpgradeCostBasis({
             costSource: 'market',

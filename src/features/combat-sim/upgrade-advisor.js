@@ -9483,6 +9483,11 @@ export function priceMergedAcquisition(members, gameData, pricing = {}) {
                 if (lines.length) {
                     lines[lines.length - 1].price += credit - lines.reduce((sum, line) => sum + line.price, 0);
                 }
+                // A piece nothing sells for adds 0 to the purchase's discount: say so, not "0 back". Judged on the
+                // final price (the last line absorbs the remainder) and only for a line that reads 0
+                for (const line of lines) {
+                    if (line.price === 0 && !hasSalePrice(line.hrid, line.enhancementLevel)) line.noSalePrice = true;
+                }
                 return withNotes({
                     ...base,
                     credits: [...(base.credits || []), ...lines],
