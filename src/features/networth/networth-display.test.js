@@ -349,3 +349,33 @@ describe('a partial crafting bill', () => {
         expect(panelText()).not.toContain('*');
     });
 });
+
+describe('token row hover', () => {
+    const row = (extra) => ({
+        name: 'Token',
+        count: 5,
+        rate: 1000,
+        value: 5000,
+        counted: true,
+        unpriced: false,
+        ...extra,
+    });
+    const titles = (items) => {
+        const host = document.createElement('div');
+        host.innerHTML = networthInventoryDisplay.renderTokensBreakdown(items);
+        return [...host.querySelectorAll('.mwi-token-row')].map((el) => el.getAttribute('title'));
+    };
+
+    test('a guild credit row reads gold per credit, not per token', () => {
+        const [title] = titles([row({ kind: 'credit' })]);
+        expect(title).toContain('gold/credit');
+        expect(title).not.toContain('gold/token');
+        expect(title).toContain('cheapest gold per credit');
+    });
+
+    test('other token rows keep the gold/token wording', () => {
+        const [title] = titles([row({ kind: 'dungeon', bestItemName: 'Chest' })]);
+        expect(title).toContain('into Chest and sold at the best rate');
+        expect(title).toContain('gold/token');
+    });
+});

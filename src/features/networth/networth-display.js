@@ -751,8 +751,11 @@ class NetworthInventoryDisplay {
                     ? token.note
                         ? `Not counted: ${token.note}.`
                         : 'Nothing can price this token yet.'
-                    : `If converted ${token.bestItemName ? `into ${token.bestItemName} ` : ''}and sold at the best rate: ` +
-                      `${formatKMB(token.count)} × ${formatKMB(token.rate)} gold/token = ${formatKMB(token.value)}` +
+                    : (token.kind === 'credit'
+                          ? 'If sold at the cheapest gold per credit: ' +
+                            `${formatKMB(token.count)} × ${formatKMB(token.rate)} gold/credit = ${formatKMB(token.value)}`
+                          : `If converted ${token.bestItemName ? `into ${token.bestItemName} ` : ''}and sold at the best rate: ` +
+                            `${formatKMB(token.count)} × ${formatKMB(token.rate)} gold/token = ${formatKMB(token.value)}`) +
                       (token.note ? ` (${token.note})` : '') +
                       '.';
                 const notCounted = token.counted ? '' : ' (not counted)';
