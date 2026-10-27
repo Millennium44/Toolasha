@@ -17,6 +17,7 @@ import dataManager from '../../../core/data-manager.js';
 import storage from '../../../core/storage.js';
 import inventorySort from '../inventory-sort.js';
 import { totalValueKey } from '../inventory-badge-mode.js';
+import { summarizeTileValues, unpricedTitle, UNPRICED_MARK } from '../inventory-unpriced.js';
 import inventoryBadgeManager from '../inventory-badge-manager.js';
 // Lazy accessor: in production multi-bundle builds, the Market bundle can't statically import
 // from Combat (it loads first). Resolve at runtime through the bundle bridge, with a fallback
@@ -2192,7 +2193,7 @@ export default class CustomTabsUI {
             // Identity too: an item swapped for one of equal value can belong to another section
             const level = tile.querySelector('[class*="Item_enhancementLevel"]')?.textContent.trim() ?? '';
             values.push(
-                `${this._tileBaseHrid(tile) ?? ''}${level},${tile.dataset.askValue ?? ''},${tile.dataset.bidValue ?? ''}`
+                `${this._tileBaseHrid(tile) ?? ''}${level},${tile.dataset.askValue ?? ''},${tile.dataset.bidValue ?? ''},${tile.dataset.expectPrice ? 'p' : ''}`
             );
         }
         return `${totalValueKey(inventorySort.currentMode)}|${values.join(';')}`;
@@ -3093,12 +3094,13 @@ export default class CustomTabsUI {
             // total, not a per-item badge — it always shows, following the
             // sorted side when a sort is live and falling back to ask otherwise.
             const valueKey = totalValueKey(inventorySort.currentMode);
-            const total = sectionTiles.reduce((sum, t) => sum + (parseFloat(t.dataset[valueKey]) || 0), 0);
+            const { total, unpriced } = summarizeTileValues(sectionTiles, valueKey);
             if (total > 0) {
                 const valueBadge = document.createElement('span');
                 valueBadge.className = 'toolasha-ct-section-value';
-                valueBadge.textContent = formatKMB(total, 2);
+                valueBadge.textContent = `${unpriced.length > 0 ? UNPRICED_MARK : ''}${formatKMB(total, 2)}`;
                 valueBadge.title = tabValueTooltip(valueKey, sectionTiles.length);
+                if (unpriced.length > 0) valueBadge.title += `\n${unpricedTitle(unpriced)}`;
                 const rightEl = header.querySelector('.toolasha-ct-section-right');
                 if (rightEl) rightEl.appendChild(valueBadge);
                 else header.appendChild(valueBadge);
@@ -3129,11 +3131,12 @@ export default class CustomTabsUI {
             // Show rolled-up value on the collapsed header (own items + all descendants)
             // Must peek BEFORE claiming tiles so values are still in the map.
             const valueKey = totalValueKey(inventorySort.currentMode);
-            const total = this._peekTileValue(tab, tileMap, valueKey);
+            const { total, unpriced } = this._peekTileValue(tab, tileMap, valueKey);
             if (total > 0) {
                 const valueBadge = document.createElement('span');
                 valueBadge.className = 'toolasha-ct-section-value';
-                valueBadge.textContent = formatKMB(total, 2);
+                valueBadge.textContent = `${unpriced.length > 0 ? UNPRICED_MARK : ''}${formatKMB(total, 2)}`;
+                if (unpriced.length > 0) valueBadge.title = unpricedTitle(unpriced);
                 const rightEl = header.querySelector('.toolasha-ct-section-right');
                 if (rightEl) rightEl.appendChild(valueBadge);
                 else header.appendChild(valueBadge);
@@ -3177,25 +3180,26 @@ export default class CustomTabsUI {
      * @param {Map} tileMap
      * @param {string} valueKey - dataset key to sum (e.g. 'askValue', 'bidValue')
      * @param {Set<HTMLElement>} [seen] - tiles already counted in this rollup
-     * @returns {number}
+     * @returns {{total: number, unpriced: string[]}} Total, and names of tiles left out for want of a price
      */
     _peekTileValue(tab, tileMap, valueKey, seen = new Set()) {
-        let total = 0;
-        for (const hrid of tab.items) {
-            if (hrid === LINEBREAK_HRID) continue;
-            const tiles = tileMap.get(hrid);
-            if (tiles) {
-                for (const tile of tiles) {
-                    if (seen.has(tile)) continue;
-                    seen.add(tile);
-                    total += parseFloat(tile.dataset[valueKey]) || 0;
+        const counted = [];
+        const collect = (node) => {
+            for (const hrid of node.items) {
+                if (hrid === LINEBREAK_HRID) continue;
+                const tiles = tileMap.get(hrid);
+                if (tiles) {
+                    for (const tile of tiles) {
+                        if (seen.has(tile)) continue;
+                        seen.add(tile);
+                        counted.push(tile);
+                    }
                 }
             }
-        }
-        for (const child of tab.children) {
-            total += this._peekTileValue(child, tileMap, valueKey, seen);
-        }
-        return total;
+            for (const child of node.children) collect(child);
+        };
+        collect(tab);
+        return summarizeTileValues(counted, valueKey);
     }
 
     /**

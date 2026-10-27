@@ -26,6 +26,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Switching characters while the last combat run was still loading no longer shows the previous character's run as the new one's, and no longer counts its loot in Gold Sources or files it into the new character's history.
 
+- **Inventory totals mark unpriced items**: an inventory, category or custom-tab total that left out items with no market price now shows a "≥", and its hover names the missing items, so a partial figure no longer reads as the full value.
+
 ### Audit round (2026-10-26, sixth): dungeons and Party Loot
 
 - Party Loot's combined view adds up every session's consumables instead of charging only the newest one, and a finished run keeps its own duration.
