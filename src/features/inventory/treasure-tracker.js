@@ -1815,7 +1815,7 @@ class TreasureTracker {
                 if (!mode) return;
                 if (!this._answerStillApplies(owner)) return;
 
-                this.tally = mergeTally(this.tally, read.tally, mode);
+                this.tally = mergeTally(this.tally, read.tally, mode, Date.now());
                 if (Object.keys(read.settings || {}).length) {
                     this.settings = { ...this.settings, ...read.settings };
                     this._saveSettings();
@@ -1904,7 +1904,7 @@ class TreasureTracker {
             if (!mode) return;
             if (!this._answerStillApplies(owner)) return;
 
-            this.tally = mergeTally(this.tally, tally, mode);
+            this.tally = mergeTally(this.tally, tally, mode, Date.now());
             this._save({ replace: true });
             this._render();
         } catch (error) {

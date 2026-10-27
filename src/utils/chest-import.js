@@ -168,13 +168,33 @@ export function findEdibleToolsData(stored, characterId, characterName) {
  * adds counts, never the `last` opening, which belongs to whichever ledger saw
  * it most recently.
  *
+ * Counts only ever grow under a sync fold (the larger of each counter wins), so
+ * a replace that lowers a count, or drops a chest the file lacks, is undone by
+ * the next pull unless the buckets carry a newer `since` stamp — the mechanism a
+ * reset relies on (see `resetTally`). A caller that means the replace to stick
+ * passes `now`: every imported bucket is stamped with it and every held chest
+ * the file does not have is emptied and stamped. An append keeps the stamp the
+ * held bucket carries, because a bucket that lost it would lose whole to a peer
+ * holding the same reset's stamp.
+ *
  * @param {Object} current - The tally now
  * @param {Object} incoming - The tally being imported
  * @param {string} mode - `'replace'` or `'append'`
+ * @param {number} [now] - Stamp for a replace, so it survives a sync fold; omitted, nothing is stamped
  * @returns {Object} A new tally
  */
-export function mergeTally(current, incoming, mode = 'replace') {
-    if (mode !== 'append') return { ...incoming };
+export function mergeTally(current, incoming, mode = 'replace', now = undefined) {
+    if (mode !== 'append') {
+        if (!Number.isFinite(now)) return { ...incoming };
+        const replaced = {};
+        for (const chestHrid of Object.keys(current || {})) {
+            replaced[chestHrid] = { opened: 0, loot: {}, since: now };
+        }
+        for (const [chestHrid, entry] of Object.entries(incoming || {})) {
+            replaced[chestHrid] = { ...entry, since: now };
+        }
+        return replaced;
+    }
 
     const merged = { ...current };
     for (const [chestHrid, entry] of Object.entries(incoming || {})) {
@@ -193,6 +213,7 @@ export function mergeTally(current, incoming, mode = 'replace') {
             loot,
             last: existing.last || entry.last,
         };
+        if (existing.since != null) merged[chestHrid].since = existing.since;
     }
     return merged;
 }
