@@ -42,6 +42,8 @@ describe('computeZoneBottleneck', () => {
         expect(fightsPerHour({ encounters: 40, deaths: { a: 100 } })).toBe(40);
         expect(fightsPerHour({ deaths: { a: 100, b: 20 } })).toBe(120);
         expect(fightsPerHour({ encounters: 0, deaths: { a: 7 } })).toBe(7);
+        // A result without the encounter counter still reads per hour over a longer run
+        expect(fightsPerHour({ deaths: { a: 100, b: 20 } }, 2)).toBe(60);
     });
 
     test('a monster never killed is the bottleneck with Infinity hours and fights', () => {

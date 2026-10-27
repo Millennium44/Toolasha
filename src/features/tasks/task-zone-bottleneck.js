@@ -23,7 +23,7 @@ export const ZONE_SIM_HOURS = 1;
  */
 export function fightsPerHour(simResult, simHours = ZONE_SIM_HOURS) {
     if ((simResult?.encounters ?? 0) > 0) return simResult.encounters / simHours;
-    return Object.values(simResult?.deaths || {}).reduce((sum, v) => sum + v, 0);
+    return Object.values(simResult?.deaths || {}).reduce((sum, v) => sum + v, 0) / simHours;
 }
 
 /**
