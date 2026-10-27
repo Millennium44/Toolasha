@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, third): enhancing
+
+- The loot-log enhancing summary no longer counts unpriced protection or an unlisted base item as free, and the "worth it" line needs a real bid rather than an estimate.
+- The enhancing panel finds its protection slot and Repeat box on any client language, and the marketplace enhance column refreshes when your pricing mode changes.
+
 ### Lab upgrade analysis ignores coffee and tea
 
 - Lab upgrade analyses never rank a coffee or tea, since drink slots do not run in the Labyrinth (crates provide those buffs); the Lab simulation already left them out.
