@@ -3745,6 +3745,18 @@ describe('the Skilling tab’s per-character loadout assignments', () => {
         expect(ui._skillLoadouts['/skills/woodcutting']).toBe('Alt WC');
     });
 
+    test('a loadout whose name holds a quote is offered, and saved, under its whole name', async () => {
+        game.loadoutNames = { l1: 'Main WC', l3: 'The "Good" Axe' };
+        await ui._renderSkillLoadoutTable();
+        const select = ui.panel.querySelector('[data-skill-loadout="/skills/woodcutting"]');
+        expect([...select.options].map((o) => o.value)).toContain('The "Good" Axe');
+
+        select.value = 'The "Good" Axe';
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        await vi.waitFor(() => expect(storage.written.labSimSkillingLoadouts_me).toBeDefined());
+        expect(storage.written.labSimSkillingLoadouts_me['/skills/woodcutting']).toBe('The "Good" Axe');
+    });
+
     test('a change made from a table left on screen across a switch is written back to its own character', async () => {
         await ui._renderSkillLoadoutTable();
         // The panel is sitting on the Skilling tab; nothing re-renders it, so

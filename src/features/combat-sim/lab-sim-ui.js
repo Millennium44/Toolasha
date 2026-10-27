@@ -9085,9 +9085,11 @@ class LabSimUI {
             html += `<select class="toolasha-select" data-skill-loadout="${skill.hrid}" style="${selectStyle}">`;
             html += `<option value=""${!current ? ' selected' : ''}>Current Gear</option>`;
             for (const snap of [...nonCombatSnapshots, ...allSkillsSnapshots]) {
-                const label = snap.name + (snap.actionTypeHrid ? '' : ' (All)');
+                // Escaped: a loadout is named by the player, and a quote in the name cut the value short, so
+                // picking it saved a name no loadout has and the room silently fell back to current gear
+                const label = escapeHtmlAttribute(snap.name + (snap.actionTypeHrid ? '' : ' (All)'));
                 const selected = current === snap.name ? ' selected' : '';
-                html += `<option value="${snap.name}"${selected}>${label}</option>`;
+                html += `<option value="${escapeHtmlAttribute(snap.name)}"${selected}>${label}</option>`;
             }
             html += '</select></div>';
         }
