@@ -20,7 +20,21 @@ const db = vi.hoisted(() => ({ map: new Map(), hold: null, transactions: [] }));
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => world.enabled, getSettingValue: (_k, d) => d },
 }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+/** The class handlers the feature registered, by name, so a test can fire one */
+const observer = vi.hoisted(() => ({ classHandlers: {} }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: (name, _classes, callback) => {
+            observer.classHandlers[name] = callback;
+            return () => {};
+        },
+        // Runs at once, as the real observer does when it is already attached
+        onReady: (_name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
+}));
 vi.mock('../../core/storage.js', () => ({
     default: {
         getJSON: async (key, _store, fallback = []) => {
@@ -232,5 +246,44 @@ describe('the config popup fits a phone-width screen', () => {
         expect(popup.style.width).toBe('400px');
         expect(popup.style.maxWidth).toBe('calc(100vw - 20px)');
         popup.remove();
+    });
+});
+
+describe('starting and stopping against a board that is already there', () => {
+    beforeEach(() => {
+        world.charId = 'market';
+        world.enabled = true;
+        db.map.clear();
+        db.hold = null;
+        taskAutoReroll.disable();
+    });
+
+    test('a Tasks panel that is already open gets its config button when the feature starts', async () => {
+        document.body.innerHTML = '<div><div class="TasksPanel_taskSlotCount__abc"></div></div>';
+
+        await taskAutoReroll.initialize();
+
+        expect(document.querySelector('.mwi-task-autoreroll-btn')).not.toBeNull();
+        document.body.innerHTML = '';
+    });
+
+    test('a pass booked before the feature was switched off does not run after', async () => {
+        vi.useFakeTimers();
+        try {
+            document.body.innerHTML = '<div class="RandomTask_randomTask__abc"></div>';
+            const judged = vi.spyOn(taskAutoReroll, '_processTaskCard').mockImplementation(() => {});
+            await taskAutoReroll.initialize();
+            judged.mockClear();
+
+            observer.classHandlers.TaskAutoReroll();
+            taskAutoReroll.disable();
+            vi.advanceTimersByTime(1000);
+
+            expect(judged).not.toHaveBeenCalled();
+            judged.mockRestore();
+        } finally {
+            vi.useRealTimers();
+            document.body.innerHTML = '';
+        }
     });
 });

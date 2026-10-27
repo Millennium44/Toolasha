@@ -22,6 +22,7 @@ import { calculateTaskTokenValue } from './task-profit-calculator.js';
 import { readVisibleTaskRatings } from './task-profit-display.js';
 import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { GAME } from '../../utils/selectors.js';
 import { buildSkillGroups, toggleSkillGroup, renderSkillBar } from './task-skill-groups.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
@@ -164,6 +165,17 @@ class TaskAutoReroll {
 
         // Closing a reroll chooser adds no card, so nothing above fires for it
         this.unregisterHandlers.push(onConfirmFlowSettled(() => this._processAllCards()));
+
+        // The observers above only report elements that appear. With the Tasks panel already open when the
+        // feature starts (the setting switched on, a character switch), no config button was drawn and no
+        // card judged until the next quest update or a panel reopen
+        this.unregisterHandlers.push(
+            domObserver.onReady('TaskAutoRerollCatchUp', () => {
+                const panel = document.querySelector(GAME.TASK_PANEL);
+                if (panel) this._injectConfigButton(panel);
+                this._processAllCards();
+            })
+        );
     }
 
     /**
@@ -185,6 +197,9 @@ class TaskAutoReroll {
     }
 
     _processAllCards() {
+        // The delayed passes this feature books (a card arriving, a quest update) can land after it was
+        // switched off; they would paint badges and outlines onto a board it no longer owns
+        if (!this.isInitialized) return;
         const cards = Array.from(document.querySelectorAll('[class*="RandomTask_randomTask"]'));
         const board = readVisibleTaskRatings(cards);
         for (const card of cards) {
