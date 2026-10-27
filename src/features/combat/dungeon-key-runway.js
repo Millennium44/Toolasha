@@ -43,6 +43,25 @@ export function estimateKeyRunway(clears, keys, keysPerClear = 1) {
 }
 
 /**
+ * The live character's combat drop quantity bonus.
+ *
+ * Read from the last `new_battle` the data manager kept, which exists whether or not
+ * Combat Stats is running; the Combat Stats snapshot is only a fallback.
+ *
+ * @returns {number|null} A fraction, or null when it cannot be read
+ */
+function ownDropQuantity() {
+    const characterId = dataManager.getCurrentCharacterId?.();
+    const fromBattle = dataManager.battleData?.players?.find((player) => player?.character?.id === characterId);
+    const live = Number(fromBattle?.combatDetails?.combatStats?.combatDropQuantity);
+    if (Number.isFinite(live)) return live;
+
+    const me = combatStatsDataCollector.getLatestData?.()?.players?.find((player) => player?.isCurrentPlayer);
+    const stored = Number(me?.combatStats?.combatDropQuantity);
+    return Number.isFinite(stored) ? stored : null;
+}
+
+/**
  * Entry keys one clear spends. A key is consumed per regular chest received, and a
  * solo player is paid several shares of the chest, so a party of one runs through
  * several keys per clear where a full party spends one.
@@ -57,8 +76,9 @@ export function entryKeysPerClear(dungeonHrid, tier, partySize) {
         const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap || {};
         if (!Array.isArray(actionDetailMap[dungeonHrid]?.combatZoneInfo?.dungeonInfo?.rewardDropTable)) return null;
 
-        const me = combatStatsDataCollector.getLatestData?.()?.players?.find((player) => player?.isCurrentPlayer);
-        const quantity = Number(me?.combatStats?.combatDropQuantity);
+        const quantity = ownDropQuantity();
+        // Never assume zero: a bonus that cannot be read would lengthen the runway
+        if (quantity === null) return null;
         const rewards = calculateExpectedDrops(
             {
                 isDungeon: true,
@@ -68,7 +88,7 @@ export function entryKeysPerClear(dungeonHrid, tier, partySize) {
                 difficultyTier: tier || 0,
                 dropRateMultiplier: { player1: 1 },
                 rareFindMultiplier: { player1: 1 },
-                combatDropQuantity: { player1: Number.isFinite(quantity) ? quantity : 0 },
+                combatDropQuantity: { player1: quantity },
                 debuffOnLevelGap: { player1: 0 },
                 deaths: {},
             },

@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
+    battle: null,
     table: [
         { itemHrid: '/items/pirate_chest', dropRate: 1, minCount: 1, maxCount: 1 },
         { itemHrid: '/items/pirate_refinement_chest', dropRate: 1, minCount: 1, maxCount: 1 },
@@ -9,6 +10,10 @@ const game = vi.hoisted(() => ({
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
+        getCurrentCharacterId: () => 7,
+        get battleData() {
+            return game.battle;
+        },
         getInitClientData: () => ({
             actionDetailMap: {
                 '/actions/combat/pirate_cove': { combatZoneInfo: { dungeonInfo: { rewardDropTable: game.table } } },
@@ -21,7 +26,7 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({ default: { ge
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     calculateExpectedDrops: (simResult) =>
         new Map([
-            ['/items/pirate_chest', 5 / simResult.numberOfPlayers],
+            ['/items/pirate_chest', (5 / simResult.numberOfPlayers) * (1 + simResult.combatDropQuantity.player1)],
             ['/items/pirate_refinement_chest', 1],
             ['/items/pirate_token', 50],
         ]),
@@ -96,8 +101,30 @@ describe('entry keys per clear', () => {
     const PIRATE = '/actions/combat/pirate_cove';
 
     test('a solo player spends a key per chest share, a full party one, and a refinement chest none', () => {
+        game.battle = {
+            players: [{ character: { id: 7 }, combatDetails: { combatStats: { combatDropQuantity: 0 } } }],
+        };
         expect(entryKeysPerClear(PIRATE, 1, 1)).toBe(5);
         expect(entryKeysPerClear(PIRATE, 1, 5)).toBe(1);
+    });
+
+    test('the drop quantity bonus comes from the battle, with Combat Stats off', () => {
+        game.battle = {
+            players: [
+                { character: { id: 3 }, combatDetails: { combatStats: { combatDropQuantity: 0.9 } } },
+                { character: { id: 7 }, combatDetails: { combatStats: { combatDropQuantity: 0.3 } } },
+            ],
+        };
+        try {
+            expect(entryKeysPerClear(PIRATE, 1, 1)).toBeCloseTo(6.5);
+        } finally {
+            game.battle = null;
+        }
+    });
+
+    test('a bonus that cannot be read hides the runway rather than assuming zero', () => {
+        game.battle = null;
+        expect(entryKeysPerClear(PIRATE, 1, 1)).toBeNull();
     });
 
     test('an unloaded reward table is unknown, not one key', () => {
