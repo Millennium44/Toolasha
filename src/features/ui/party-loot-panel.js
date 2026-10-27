@@ -269,8 +269,11 @@ function partyRuns() {
     // The same dating rule the overlay rows use: a live run times itself from
     // the server's start time, so the daily rates agree with the tile that
     // opened this rather than being a second answer
+    // Only the live run: an archived one is over, and re-timing it off "now"
+    // would stretch its clock (and shrink its daily rates) with every minute
+    // since it ended instead of using the duration it was archived with
     let duration = data.durationSeconds || null;
-    if (data.combatStartTime) {
+    if (viewing === 'live' && data.combatStartTime) {
         const elapsed = Date.now() / 1000 - new Date(data.combatStartTime).getTime() / 1000;
         if (elapsed > 0) duration = elapsed;
     }
