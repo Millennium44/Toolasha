@@ -1201,9 +1201,53 @@ describe('detectAlchemyType', () => {
         expect(bestItems.detectAlchemyType()).toBe('transmute');
     });
 
+    test('a translated client is read by the position of the selected tab', () => {
+        const mount = (selected) => {
+            document.body.innerHTML = `
+                <div class="AlchemyPanel_tabsComponentContainer__x1">
+                    ${['点金', '分解', '转化', '精炼还原', '当前行动']
+                        .map((label, i) => `<div role="tab" aria-selected="${i === selected}">${label}</div>`)
+                        .join('')}
+                </div>`;
+        };
+        mount(1);
+        expect(bestItems.detectAlchemyType()).toBe('decompose');
+        mount(2);
+        expect(bestItems.detectAlchemyType()).toBe('transmute');
+        mount(0);
+        expect(bestItems.detectAlchemyType()).toBe('coinify');
+        mount(4);
+        expect(bestItems.detectAlchemyType()).toBe('coinify');
+    });
+
     test('with no panel on screen it falls back to coinify', () => {
         document.body.innerHTML = '';
         expect(bestItems.detectAlchemyType()).toBe('coinify');
+    });
+});
+
+describe('the Best Items tab', () => {
+    afterEach(() => {
+        bestItems.tabWatcher?.disconnect?.();
+        bestItems.tabWatcher = null;
+        bestItems.alchemyTab = null;
+        document.body.innerHTML = '';
+    });
+
+    test('a translated client gets the tab, found through the panel strip', () => {
+        document.body.innerHTML = `
+            <div role="tablist"><button role="tab">Other</button></div>
+            <div class="AlchemyPanel_tabsComponentContainer__x1">
+                <div role="tablist">
+                    ${['点金', '分解', '转化', '精炼还原', '当前行动'].map((l) => `<button role="tab">${l}</button>`).join('')}
+                </div>
+            </div>`;
+
+        bestItems.addAlchemyTab();
+
+        const strip = document.querySelector('.AlchemyPanel_tabsComponentContainer__x1 [role="tablist"]');
+        expect(strip.querySelector('[data-mwi-best-items-tab="true"]')).not.toBeNull();
+        expect(document.querySelectorAll('[data-mwi-best-items-tab="true"]')).toHaveLength(1);
     });
 });
 

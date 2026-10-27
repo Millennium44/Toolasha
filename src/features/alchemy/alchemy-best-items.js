@@ -36,6 +36,7 @@ import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { findAlchemyTablist, getAlchemyTabElements, readAlchemyTabType } from './alchemy-tabs.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
 import { effectiveInventory, onReservationsChanged } from '../../utils/inventory-reservations.js';
 import tooltipPrices from '../market/tooltip-prices.js';
@@ -415,23 +416,23 @@ class AlchemyBestItems {
      */
     addAlchemyTab() {
         const ensureTabExists = () => {
-            const tablist = document.querySelector('[role="tablist"]');
+            // The panel's own strip first, so a translated client finds it too; the first tablist on the
+            // page is the fallback for a strip whose container cannot be found
+            const alchemyStrip = findAlchemyTablist();
+            const tablist = alchemyStrip || document.querySelector('[role="tablist"]');
             if (!tablist) return;
 
+            // Clone an existing tab for structure: the Coinify tab by its label, else (a translated client)
+            // the game's first tab, which is Coinify
+            const referenceTab =
+                Array.from(tablist.children).find(
+                    (btn) => btn.textContent.includes('Coinify') && !btn.dataset.mwiBestItemsTab
+                ) || (alchemyStrip ? getAlchemyTabElements()[0] : null);
             // Verify this is the alchemy tablist
-            const hasCoinify = Array.from(tablist.children).some(
-                (btn) => btn.textContent.includes('Coinify') && !btn.dataset.mwiBestItemsTab
-            );
-            if (!hasCoinify) return;
+            if (!referenceTab || referenceTab.dataset.mwiBestItemsTab) return;
 
             // Already injected?
             if (tablist.querySelector('[data-mwi-best-items-tab="true"]')) return;
-
-            // Clone an existing tab for structure
-            const referenceTab = Array.from(tablist.children).find(
-                (btn) => btn.textContent.includes('Coinify') && !btn.dataset.mwiBestItemsTab
-            );
-            if (!referenceTab) return;
 
             const tab = referenceTab.cloneNode(true);
             tab.setAttribute('data-mwi-best-items-tab', 'true');
@@ -489,6 +490,11 @@ class AlchemyBestItems {
 
         if (text.includes('decompose')) return 'decompose';
         if (text.includes('transmute')) return 'transmute';
+        // A translated client has no English label to match: the tab's position says which it is
+        if (!text.includes('coinify')) {
+            const byPosition = readAlchemyTabType();
+            if (byPosition === 'decompose' || byPosition === 'transmute') return byPosition;
+        }
         return 'coinify';
     }
 
