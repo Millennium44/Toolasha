@@ -4783,10 +4783,6 @@ class LabSimUI {
             this._upgradeRunning = false;
             return;
         }
-        // A remembered result a sync pull brings is no longer drawn over this panel's own runs. Set once the
-        // run is really starting: a press that ran nothing must not stop a pull from repainting the table
-        this._upgradeRunStarted = true;
-
         let playerDTOs;
         let selfHrid = null;
         try {
@@ -4819,6 +4815,10 @@ class LabSimUI {
             this._upgradeRunning = false;
             return;
         }
+        // A remembered result a sync pull brings is no longer drawn over this panel's own runs. Set once the
+        // run is really starting: a press that ran nothing (no sets ticked, a failed profile read) must not stop
+        // a pull from repainting the table. While the profile loads, `_upgradeRunning` already holds it off
+        this._upgradeRunStarted = true;
 
         const communityBuffs = getCommunityBuffs();
         // Both halves of the same answer: the buff array the sims run under, and
@@ -4994,7 +4994,8 @@ class LabSimUI {
                     if (analysisResult?.results?.length) allFightsAnalysis = { ...analysisResult, allFights: true };
                     // Remembered here unless the order pass follows, which saves this table with its section.
                     // Unsaved, a reload brought back whichever older run was remembered instead of this one
-                    if (allFightsAnalysis && !plan.includeAbilityOrder) {
+                    // Not a stopped run's partial rows: they would replace a complete remembered run
+                    if (allFightsAnalysis && !plan.includeAbilityOrder && !this._upgradeAborted) {
                         const playerIndex =
                             parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
                         this._saveLabUpgradeResults(allFightsAnalysis, {

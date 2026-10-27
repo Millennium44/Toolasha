@@ -989,6 +989,8 @@ describe('a house room level reaches the character the simulation is handed', ()
         await ui._onUpgradeAnalyze();
 
         expect(ui._upgradeRunning).toBe(false);
+        // Nothing ran, so a remembered result may still be drawn
+        expect(ui._upgradeRunStarted).toBe(false);
         expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toContain('profile unavailable');
         game.buildPlayers = null;
     });
@@ -6752,6 +6754,20 @@ describe('the Ability order Include option', () => {
                 delete storage.pending[KEY];
                 game.characterId = 'me';
             }
+        });
+
+        test('a stopped plain all-targets run does not replace the remembered run', async () => {
+            game.rememberUpgradeResults = true;
+            allSpy.mockImplementation(async (params) => {
+                if (!params.modes?.length) return rawOrders(params);
+                // Stop pressed during the run: the analysis returns the rows measured so far
+                ui._upgradeAborted = true;
+                return allFightsTable();
+            });
+            setScope('all');
+            tick('equipment');
+            await ui._onUpgradeAnalyze();
+            expect(storage.written[KEY]).toBeUndefined();
         });
 
         test('a fresh all-targets run drops the banner a restored set drew', async () => {
