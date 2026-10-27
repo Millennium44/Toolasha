@@ -2266,3 +2266,40 @@ describe('injectExpectedValueDisplay key deduction', () => {
         expect(out).not.toContain('Key Cost');
     });
 });
+
+const { default: profitCalculator } = await import('./profit-calculator.js');
+
+describe('a reused popper that moved to another item during an await', () => {
+    const profitFor = () => ({
+        itemPrice: { ask: 0, bid: 0 },
+        totalMaterialCost: 5,
+        materialCosts: [],
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('the finished craft profit is drawn when the tooltip is still on its item', async () => {
+        vi.spyOn(profitCalculator, 'calculateProfit').mockResolvedValue(profitFor());
+        const el = itemTooltip('Cheese');
+        await tooltipPrices.handleTooltip(el);
+
+        expect(el.querySelector('.market-profit-injected')).not.toBeNull();
+    });
+
+    test('a profit that resolves after the tooltip moved on is dropped, not drawn under the new item', async () => {
+        let resolveProfit;
+        vi.spyOn(profitCalculator, 'calculateProfit').mockImplementation(
+            () => new Promise((resolve) => (resolveProfit = resolve))
+        );
+        const el = itemTooltip('Cheese');
+        const pending = tooltipPrices.handleTooltip(el);
+        // The popper is reused for Apple: the next pass marks it and clears what the old one drew
+        el.dataset.pricesProcessedItem = 'Apple';
+        resolveProfit(profitFor());
+        await pending;
+
+        expect(el.querySelector('.market-profit-injected')).toBeNull();
+    });
+});

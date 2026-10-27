@@ -852,6 +852,10 @@ class TooltipPrices {
             enhancementLevel = info.enhancementLevel;
         }
 
+        // The pointer may move to another item while an await below is pending: a reused popper is then
+        // reprocessed for that item, and this pass must not draw its figures into the new item's tooltip
+        const isStale = () => tooltipElement.dataset.pricesProcessedItem !== itemName;
+
         // Get market price for the specific enhancement level (0 for base items, 1-20 for enhanced)
         const price = getItemPrices(itemHrid, enhancementLevel);
 
@@ -872,6 +876,7 @@ class TooltipPrices {
             // Enhanced items show their cost in the enhancement path section instead
             const profitData = await profitCalculator.calculateProfit(itemHrid, { keepSellTax: true });
             craftProfitData = profitData ?? null;
+            if (isStale()) return;
             if (profitData) {
                 this.injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip);
             }
@@ -884,7 +889,9 @@ class TooltipPrices {
             // Multi-action profit display (alchemy actions only - craft shown above)
             await this.injectMultiActionProfitDisplay(tooltipElement, itemHrid, enhancementLevel, isCollectionTooltip, {
                 craftProfitData,
+                isStale,
             });
+            if (isStale()) return;
         }
 
         // The cheapest alchemy route to this item, when one beats buying it
@@ -900,6 +907,7 @@ class TooltipPrices {
         // Check for gathering sources (Foraging, Woodcutting, Milking)
         if (config.getSetting('itemTooltip_gathering') && enhancementLevel === 0) {
             const gatheringData = await this.findGatheringSources(itemHrid);
+            if (isStale()) return;
             if (gatheringData && (gatheringData.soloActions.length > 0 || gatheringData.zoneActions.length > 0)) {
                 this.injectGatheringDisplay(tooltipElement, gatheringData, isCollectionTooltip);
             }
@@ -2110,13 +2118,14 @@ class TooltipPrices {
      * @param {Object} [options]
      * @param {Object|null} [options.craftProfitData] - The craft profit already computed for
      *   this tooltip (undefined when it was not), reused for the self-use own-use cost
+     * @param {Function} [options.isStale] - True once the tooltip has moved to another item
      */
     async injectMultiActionProfitDisplay(
         tooltipElement,
         itemHrid,
         enhancementLevel,
         isCollectionTooltip = false,
-        { craftProfitData } = {}
+        { craftProfitData, isStale = () => false } = {}
     ) {
         const tooltipText = isCollectionTooltip
             ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
@@ -2153,6 +2162,7 @@ class TooltipPrices {
             config.getSetting('itemTooltip_selfUseAlchemy') && enhancementLevel === 0
                 ? await this.buildSelfUseAlchemyLines(itemHrid, alchemyProfits, craftProfitData)
                 : [];
+        if (isStale()) return;
 
         // If no profitable actions found, return
         if (allProfits.length === 0 && selfUseLines.length === 0) {
