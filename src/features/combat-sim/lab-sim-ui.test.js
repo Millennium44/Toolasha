@@ -5392,6 +5392,12 @@ describe('Tune triggers', () => {
     const results = () => ui.panel.querySelector('#mwi-labsim-trigger-results');
     const status = () => ui.panel.querySelector('#mwi-labsim-status').textContent;
 
+    test('the Tune triggers help says only abilities are tuned, never that a food or drink fires', () => {
+        const help = ui.panel.querySelector('#mwi-labsim-trigger-header').getAttribute('title');
+        expect(help).not.toMatch(/food or drink fires/);
+        expect(help).toContain('only abilities are tuned');
+    });
+
     test('opening the section lists one checkbox per loadout, ticked, with the cost before any run', async () => {
         ui.panel.querySelector('#mwi-labsim-trigger-header').click();
         await settle();

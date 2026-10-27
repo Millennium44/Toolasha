@@ -3490,9 +3490,9 @@ class LabSimUI {
             'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa; border-radius:6px; ' +
             'padding:4px 10px; font-size:12px; cursor:pointer; font-family:inherit;';
         const what =
-            'Tune the numbers in each loadout’s trigger rows (how much enemy HP an ability waits for, how low ' +
-            'your HP or MP gets before a food or drink fires) to need fewer attempts in the labyrinth fights the ' +
-            'loadout is assigned to. Tunes the fights the Upgrade tab’s Targets scope names (the Configure fight, ' +
+            'Tune the numbers in each loadout’s ability trigger rows (how much enemy HP an ability waits for, how ' +
+            'low your HP or MP gets before a heal fires) to need fewer attempts in the labyrinth fights the ' +
+            'loadout is assigned to. The labyrinth allows no food or drink, so only abilities are tuned. Tunes the fights the Upgrade tab’s Targets scope names (the Configure fight, ' +
             'all targets, or the chosen ones). Only simulates: set any change in the game by hand.';
         bar.innerHTML = `
             <div id="mwi-labsim-trigger-header" style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;"
