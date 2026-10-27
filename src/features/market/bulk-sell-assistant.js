@@ -1012,8 +1012,9 @@ class BulkSellAssistant {
                     ? 'click Sell For in the item menu, or press Confirm here'
                     : 'confirm in the modal, or press Confirm here';
             const shown = d?.insta && d.avgPrice ? d.avgPrice : d?.price || 0;
-            const warn = d?.warning ? ` ⚠ ${d.warning}` : '';
-            const detail = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})${warn}`;
+            // Ahead of the price and the reason, which run past where the strip cuts the line off
+            const warn = d?.warning ? `⚠ ${d.warning} · ` : '';
+            const detail = `${warn}${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})`;
             // A refusal leads. It used to be appended after the price and the
             // reason, which is past where the strip truncates — so a Confirm
             // that had refused for a stated reason looked like a dead button.
@@ -1460,7 +1461,10 @@ class BulkSellAssistant {
                 };
             }
         }
+        const newlyWarned = Boolean(next.decision.warning) && !this.decision.warning;
         this.decision = next.decision;
+        // A warning the press would act on without the strip ever having shown it: said first, sold on the next press
+        if (newlyWarned) return { why: `${next.decision.warning}; press again to sell anyway` };
         return {};
     }
 
@@ -2289,9 +2293,10 @@ class BulkSellAssistant {
                   `${depthShort ? ' (book still short)' : ''}`
                 : '';
         // Selling into a bid above the band maximum is still done; the game may refuse it, which is unverified,
-        // so the strip says so before anything is pressed
-        const aboveBand =
-            insta && clampToBand(instaPrice, this.current.itemHrid, this.current.enhancementLevel) < instaPrice;
+        // so the strip says so before anything is pressed. Judged on the top bid, not the walked price: the fill
+        // is best-first, so the top bid is always sold into, even when the walk ends inside the band
+        const topBid = bids[0]?.price ?? 0;
+        const aboveBand = insta && clampToBand(topBid, this.current.itemHrid, this.current.enhancementLevel) < topBid;
         return {
             insta,
             askPrice,
