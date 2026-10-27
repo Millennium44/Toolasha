@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Imported players' profit at their own tax rate everywhere
+
+- All Zones, Seek, Reprice, trigger tuning and the skilling upgrade analysis now price an imported or other-mode player's drops and trade-ins at that player's own sale tax, as upgrade analysis already did.
+
 ### From upstream: Combat Stats pricing, guild credits and smaller fixes
 
 - Combat Stats income and profit follow your profit pricing mode; the key pricing setting now prices only keys.
