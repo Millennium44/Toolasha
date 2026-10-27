@@ -895,6 +895,13 @@ describe('guild credits', () => {
         expect(mocks.goldPerCreditCalls).toBe(0);
         expect(el.dataset.askValue).not.toBe(String(1000 * 42));
     });
+
+    test('credits left out by the setting are not flagged as unpriced', async () => {
+        mocks.settings.networth_includeGuildCredits = false;
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.expectPrice).toBeUndefined();
+    });
 });
 
 describe('icon-first identity on a translated, xlink-only tile', () => {

@@ -811,7 +811,10 @@ class InventoryBadgeManager {
             // Store stack totals (for sorting and stack value badges)
             itemElem.dataset.askValue = askPrice * itemCount;
             itemElem.dataset.bidValue = bidPrice * itemCount;
-            if (itemCount > 0) itemElem.dataset.expectPrice = itemDetails?.name || itemHrid;
+            // Guild credits reach here only when the player left them out of totals on purpose
+            if (itemCount > 0 && !GUILD_CREDIT_HRIDS.has(itemHrid)) {
+                itemElem.dataset.expectPrice = itemDetails?.name || itemHrid;
+            }
         }
     }
 
