@@ -228,6 +228,52 @@ describe('two tabs saving the same sessions', () => {
         expect(stored().s2.gapAttempts).toBeUndefined();
     });
 
+    test('a stale writer after a reload reconcile keeps the gap watermark beside the gap count', async () => {
+        const withLast = (actionId) => ({
+            ...session('s1', 100, 10),
+            lastAttempt: { level: 5, timestamp: 100, actionId, currentCount: 10 },
+        });
+        settings().set(SESSIONS, { s1: withLast('a1') });
+        const a = await openTab();
+        const b = await openTab();
+
+        // A reconciles a snapshot at 14: the gap and watermark move, no stamp does
+        a.sessions.s1.gapAttempts = 4;
+        a.sessions.s1.lastAttempt = { ...a.sessions.s1.lastAttempt, gapThrough: 14 };
+        await a.saveSessions(a.sessions);
+        await a.flushSessionWrites();
+        // B saves a stale copy of the same moment
+        b.sessions.s1.coinCost = 50;
+        await b.saveSessions(b.sessions);
+        await b.flushSessionWrites();
+
+        expect(stored().s1.gapAttempts).toBe(4);
+        expect(stored().s1.lastAttempt.gapThrough).toBe(14);
+        expect(b.sessions.s1.lastAttempt).toMatchObject({ currentCount: 10, gapThrough: 14 });
+        // A reopen reads both: the same snapshot has nothing new to count
+        const c = await openTab();
+        expect(c.sessions.s1).toMatchObject({ gapAttempts: 4, lastAttempt: { gapThrough: 14 } });
+    });
+
+    test('a gap watermark from a different action is never taken', async () => {
+        const withLast = (actionId) => ({
+            ...session('s1', 100, 10),
+            lastAttempt: { level: 5, timestamp: 100, actionId, currentCount: 10 },
+        });
+        settings().set(SESSIONS, { s1: withLast('a1') });
+        const a = await openTab();
+        const b = await openTab();
+
+        a.sessions.s1.lastAttempt = { ...a.sessions.s1.lastAttempt, gapThrough: 14 };
+        await a.saveSessions(a.sessions);
+        await a.flushSessionWrites();
+        b.sessions.s1.lastAttempt = { level: 2, timestamp: 100, actionId: 'a2', currentCount: 3 };
+        await b.saveSessions(b.sessions);
+        await b.flushSessionWrites();
+
+        expect(b.sessions.s1.lastAttempt.gapThrough).toBeUndefined();
+    });
+
     test('a tab that removes nothing keeps its own unsaved changes over a stale stored copy', async () => {
         settings().set(SESSIONS, { s1: session('s1', 100, 1) });
         const a = await openTab();
