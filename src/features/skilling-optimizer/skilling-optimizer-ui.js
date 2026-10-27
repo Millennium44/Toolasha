@@ -331,6 +331,9 @@ class SkillingSimulatorUI {
                 simulateBtn.disabled = true;
                 requestAnimationFrame(() =>
                     setTimeout(() => {
+                        // The panel was torn down (a character switch, a tab change) while the frame
+                        // waited: its character is gone, so there is nothing to simulate for
+                        if (this.panel !== panel) return;
                         this._runSimulation();
                         simulateBtn.textContent = 'Simulate';
                         simulateBtn.disabled = false;
@@ -399,6 +402,10 @@ class SkillingSimulatorUI {
                 optimizeBtn.disabled = true;
                 requestAnimationFrame(() =>
                     setTimeout(() => {
+                        // Torn down while the frame waited (a character switch runs cleanup()): the
+                        // optimizer would score the new character at the old character's level and
+                        // leave that result standing as lastOptimizerResult
+                        if (this.panel !== panel) return;
                         const result = optimizeSkill(
                             this.currentSkill,
                             this.currentLevel,
@@ -1230,6 +1237,17 @@ class SkillingSimulatorUI {
             cost.style.cssText = 'font-size: 11px; color: rgba(255,255,255,0.4);';
             cost.textContent = `Tea cost: ${formatKMB(result.teaCostPerHour)}/hr`;
             section.appendChild(cost);
+        }
+
+        // The XP figure averages every action offered, a blocked one as 0: say so, or the number
+        // just reads low
+        if (result.blockedActionCount > 0) {
+            const blocked = document.createElement('div');
+            blocked.style.cssText = 'font-size: 11px; color: #eab308; margin-top: 4px;';
+            blocked.textContent =
+                `⚠ ${result.blockedActionCount} of ${result.actionsOffered} actions cannot start with these ` +
+                'teas (Action Level raises the requirement); they count as 0 XP/hr and no gold.';
+            section.appendChild(blocked);
         }
 
         this._resultsArea.appendChild(section);
@@ -2121,6 +2139,16 @@ class SkillingSimulatorUI {
         this.lastOptimizerResult = null;
         this.optimizerLoadout = null;
         this.alchemyItemOverride = null;
+        // The Simulator's own inputs were picked from the departing character's loadouts (gear,
+        // drinks) and action list; a new character starts from an empty setup
+        this.equipment = new Map();
+        this.teas = [null, null, null];
+        this.selectedActionHrids = null;
+        this._resultsArea = null;
+        this._actionBtn = null;
+        this._actionBtnGetLabel = null;
+        this._slotBtns.clear();
+        this._teaBtns = [];
     }
 }
 
