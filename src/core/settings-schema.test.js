@@ -370,3 +370,11 @@ describe('modules that gate themselves on a setting their registry key does not 
         }
     });
 });
+
+describe('guild credit valuation', () => {
+    test('is not greyed out with net worth, since inventory totals read it on their own', () => {
+        // inventory-badge-manager.js values credit tiles by this setting whether or not net worth is on, so
+        // a `requires: 'networth'` left it ticked and unchangeable for anyone with net worth off
+        expect(getSettingDefinition('networth_includeGuildCredits').requires).toBeUndefined();
+    });
+});
