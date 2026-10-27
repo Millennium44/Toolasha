@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, fourth): sync
+
+- A sync pull no longer overwrites a self-use mark or party roster edit you saved while it was merging, and a pruned snapshot can't come back because a delete was reported done too early.
+- Guild loadouts pulled from another device show in the roster and trial panels straight away.
+
 ### Audit round (2026-10-26, third): treasure and Gold Sources
 
 - Replacing the chest history from a file now survives a sync instead of being undone by another device, and appending keeps a reset in place.
