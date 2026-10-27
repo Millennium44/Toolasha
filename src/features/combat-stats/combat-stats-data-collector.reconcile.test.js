@@ -634,3 +634,58 @@ describe('the observation clock is battle traffic, not the time between snapshot
         expect(self().waveIntervalCount).toBe(0);
     });
 });
+
+describe('an event resuming after a silence, before the next snapshot', () => {
+    test('uses recovered from before a later-started clock move the clock back to cover them', async () => {
+        // No event yet, so nothing has started the clock
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 1000), slot(COFFEE, 500)] }));
+        vi.advanceTimersByTime(HOUR);
+        // The first event after the silence starts the clock; the snapshot a second later finds 20 gummies
+        await collector.onConsumableUsed(used(COFFEE, 499));
+        vi.advanceTimersByTime(SECOND);
+        await collector.onNewBattle(battle({ battleId: AFTER_GAP, self: [slot(GUMMY, 980), slot(COFFEE, 499)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(20);
+        expect(self().excludedMs).toBe(0);
+        // Twenty gummies over the hour they were used in, not over one second
+        expect(collector.calcElapsedSeconds()).toBeCloseTo(HOUR / SECOND + 1, 0);
+        const row = collector.latestCombatData.players[0].consumables.find((c) => c.itemHrid === GUMMY);
+        expect(row.elapsedSeconds).toBeCloseTo(HOUR / SECOND + 1, 0);
+    });
+
+    test("the item's own event keeps its pre-silence baseline, so its missed uses are still found", async () => {
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 999)] }));
+        // 60 uses missed in the silence, then the event for the 61st reports 938
+        vi.advanceTimersByTime(HOUR);
+        await collector.onConsumableUsed(used(GUMMY, 938));
+        vi.advanceTimersByTime(SECOND);
+        await collector.onNewBattle(battle({ battleId: AFTER_GAP, self: [slot(GUMMY, 938)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(61);
+        expect(self().excludedMs).toBe(0);
+        expect(self().inventoryAmount[GUMMY]).toBe(938);
+        expect(collector.calcElapsedSeconds()).toBeCloseTo(HOUR / SECOND + 1, 0);
+
+        // And the next watched use counts once
+        vi.advanceTimersByTime(60 * SECOND);
+        await collector.onConsumableUsed(used(GUMMY, 937));
+        vi.advanceTimersByTime(5 * SECOND);
+        await collector.onNewBattle(battle({ battleId: AFTER_GAP + 1, self: [slot(GUMMY, 937)] }));
+        expect(self().actualConsumed[GUMMY]).toBe(62);
+    });
+
+    test('a watched event still takes its count as the baseline, so a lagging snapshot is not credited twice', async () => {
+        await collector.onNewBattle(battle({ self: [slot(GUMMY, 100)] }));
+        vi.advanceTimersByTime(5 * SECOND);
+        await collector.onConsumableUsed(used(GUMMY, 99));
+        vi.advanceTimersByTime(5 * SECOND);
+        // A snapshot taken before that use
+        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 100)] }));
+        vi.advanceTimersByTime(60 * SECOND);
+        await collector.onConsumableUsed(used(GUMMY, 98));
+        vi.advanceTimersByTime(5 * SECOND);
+        await collector.onNewBattle(battle({ battleId: 3, self: [slot(GUMMY, 98)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(2);
+    });
+});

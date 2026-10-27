@@ -144,6 +144,7 @@ function createSelfTracker(startTime) {
         trafficAt: null,
         silenceMs: 0,
         silenceAtSnapshot: 0, // silenceMs when this tracker's last snapshot was reconciled
+        silenceAtStart: 0, // silenceMs when the clock started: earlier silences are not on it
         silenceAtLastBattle: 0, // silenceMs at the last new_battle, for the wave samples
         runKey: null, // combatStartTime of the run being tracked
         lastBattleId: null,
@@ -448,6 +449,7 @@ class CombatStatsDataCollector {
             excludedMs: 0,
             lastSnapshotAt: null,
             silenceAtSnapshot: this.consumableTracker.silenceMs || 0,
+            silenceAtStart: this.consumableTracker.silenceMs || 0,
         };
     }
 
@@ -567,8 +569,18 @@ class CombatStatsDataCollector {
 
         for (const entry of result.items) {
             if (entry.action !== 'credit') continue;
-            // Consumption recovered before anything started the clock starts it where we last looked
-            if (!tracker.startTime) tracker.startTime = tracker.lastSnapshotAt || now;
+            // Recovered uses happened somewhere in the span since the last snapshot, so the
+            // clock has to cover all of it: start it there, or move it back there when an
+            // event inside the span (one landing after a silence) started it later
+            if (typeof tracker.lastSnapshotAt === 'number') {
+                if (!tracker.startTime || tracker.startTime > tracker.lastSnapshotAt) {
+                    tracker.startTime = tracker.lastSnapshotAt;
+                    tracker.silenceAtStart = tracker.silenceAtSnapshot || 0;
+                }
+            } else if (!tracker.startTime) {
+                tracker.startTime = now;
+                tracker.silenceAtStart = silenceMs;
+            }
             if (tracker.actualConsumed[entry.itemHrid] === undefined) {
                 tracker.actualConsumed[entry.itemHrid] = 0;
                 tracker.defaultConsumed[entry.itemHrid] = this.getDefaultConsumed(entry.itemHrid);
@@ -576,10 +588,14 @@ class CombatStatsDataCollector {
             tracker.actualConsumed[entry.itemHrid] += entry.credited;
             tracker.lastUpdate = now;
         }
-        // Only once the clock runs: time excluded before it starts would be taken off
-        // a clock that starts later, and hold the rate's time base at zero for that long
+        // Only silence the clock actually runs over: silence from before it started (an
+        // event that ended a silence starts it) would be taken off time it never counted,
+        // and hold the rate's time base at zero for that long
         if (tracker.startTime) {
-            tracker.excludedMs = (tracker.excludedMs || 0) + Math.round(result.excludeSeconds * 1000);
+            const fromMs = Math.max(tracker.silenceAtSnapshot || 0, tracker.silenceAtStart || 0);
+            const onClockSeconds = Math.max(0, (silenceMs - fromMs) / 1000);
+            const excludeSeconds = Math.min(result.excludeSeconds, onClockSeconds);
+            tracker.excludedMs = (tracker.excludedMs || 0) + Math.round(excludeSeconds * 1000);
         }
         tracker.lastSnapshotAt = now;
         tracker.silenceAtSnapshot = silenceMs;
@@ -618,6 +634,7 @@ class CombatStatsDataCollector {
                     tracker.trafficAt = typeof saved.trafficAt === 'number' ? saved.trafficAt : tracker.lastSnapshotAt;
                     tracker.silenceMs = saved.silenceMs || 0;
                     tracker.silenceAtSnapshot = saved.silenceAtSnapshot || 0;
+                    tracker.silenceAtStart = saved.silenceAtStart || 0;
                     tracker.silenceAtLastBattle = saved.silenceAtLastBattle || 0;
                     tracker.runKey = saved.runKey || null;
                     tracker.lastBattleId = typeof saved.lastBattleId === 'number' ? saved.lastBattleId : null;
@@ -640,6 +657,7 @@ class CombatStatsDataCollector {
                     tracker.trafficAt = null;
                     tracker.silenceMs = 0;
                     tracker.silenceAtSnapshot = 0;
+                    tracker.silenceAtStart = 0;
                     tracker.silenceAtLastBattle = 0;
                     tracker.runKey = null;
                     tracker.lastBattleId = null;
@@ -677,6 +695,7 @@ class CombatStatsDataCollector {
                                     ? playerTracker.lastSnapshotAt
                                     : null,
                             silenceAtSnapshot: current ? playerTracker.silenceAtSnapshot || 0 : 0,
+                            silenceAtStart: current ? playerTracker.silenceAtStart || 0 : 0,
                         };
                     }
                 });
@@ -762,6 +781,7 @@ class CombatStatsDataCollector {
                 trafficAt: self.trafficAt,
                 silenceMs: self.silenceMs,
                 silenceAtSnapshot: self.silenceAtSnapshot,
+                silenceAtStart: self.silenceAtStart,
                 silenceAtLastBattle: self.silenceAtLastBattle,
                 runKey: self.runKey,
                 lastBattleId: self.lastBattleId,
@@ -804,6 +824,7 @@ class CombatStatsDataCollector {
                         excludedMs: partyExcludedMs,
                         lastSnapshotAt: tracker.lastSnapshotAt ?? null,
                         silenceAtSnapshot: tracker.silenceAtSnapshot || 0,
+                        silenceAtStart: tracker.silenceAtStart || 0,
                     };
                 }
             });
@@ -887,6 +908,7 @@ class CombatStatsDataCollector {
             // Initialize tracking if first event
             if (!this.consumableTracker.startTime) {
                 this.consumableTracker.startTime = now;
+                this.consumableTracker.silenceAtStart = this.consumableTracker.silenceMs || 0;
             }
 
             // Initialize item if first time seen (MCS-style)
@@ -899,16 +921,19 @@ class CombatStatsDataCollector {
             this.consumableTracker.actualConsumed[itemHrid]++;
             this.consumableTracker.lastUpdate = now;
 
-            // Update inventory amount from event data
-            if (typeof data.consumable.count === 'number') {
-                this.consumableTracker.inventoryAmount[itemHrid] = data.consumable.count;
-            } else if (typeof this.consumableTracker.inventoryAmount[itemHrid] === 'number') {
-                // Keep the baseline in step with the use just counted, or the next snapshot
-                // would credit the same use a second time
-                this.consumableTracker.inventoryAmount[itemHrid] = Math.max(
-                    0,
-                    this.consumableTracker.inventoryAmount[itemHrid] - 1
-                );
+            // Update the item's baseline. While the page has watched since the last snapshot,
+            // the event's count is the truth. After a silence it is not a baseline: it already
+            // reflects the uses missed in the silence, which the next snapshot has to find
+            // against the count from before it, so that count only drops by the use counted
+            // here. Without a count the baseline also drops by one, or the next snapshot would
+            // credit the same use a second time.
+            const self = this.consumableTracker;
+            const known = typeof self.inventoryAmount[itemHrid] === 'number';
+            const silentSinceSnapshot = (self.silenceMs || 0) !== (self.silenceAtSnapshot || 0);
+            if (typeof data.consumable.count === 'number' && !(silentSinceSnapshot && known)) {
+                self.inventoryAmount[itemHrid] = data.consumable.count;
+            } else if (known) {
+                self.inventoryAmount[itemHrid] = Math.max(0, self.inventoryAmount[itemHrid] - 1);
             }
 
             // Persist after each consumption (MCS-style)
