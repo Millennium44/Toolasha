@@ -7,6 +7,7 @@ const world = vi.hoisted(() => ({
     itemDetails: { '/items/iron_sword': { enhancementCosts: [{ itemHrid: '/items/iron_bar', count: 1 }] } },
     path: null,
     ironCowCharacter: false,
+    stamp: 'ask|ask|||buy||0',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -36,6 +37,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
 vi.mock('../../utils/enhancement-config.js', () => ({
     getEnhancingParams: () => ({ enhancingLevel: 100, houseLevel: 4, toolBonus: 10, speedBonus: 20, teas: {} }),
 }));
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({ pricingStamp: () => world.stamp }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => world.ironCowCharacter }));
 
 const {
@@ -135,6 +137,7 @@ beforeEach(() => {
     world.settings.market_enhanceProfitPerHour = true;
     world.settings.ironCow_enabled = false;
     world.ironCowCharacter = false;
+    world.stamp = 'ask|ask|||buy||0';
     world.path = pathFixture();
     dataManager.on.mockClear();
     calculateEnhancementPath.mockClear();
@@ -203,6 +206,17 @@ describe('the order-book column', () => {
         expect(cells[0].title).toMatch(/Expected protections: 15/);
         expect(cells[0].title).toMatch(/Expected time: 3h 00m 00s/);
         expect(buyTable.querySelector('.mwi-enh-profit-header, .mwi-enh-profit-cell')).toBeNull();
+    });
+
+    test('a changed pricing mode or custom price recomputes the held quote', () => {
+        feedBook('/items/iron_sword', 5, [25_000_000]);
+        column.getQuote('/items/iron_sword', 5);
+        column.getQuote('/items/iron_sword', 5);
+        expect(calculateEnhancementPath).toHaveBeenCalledTimes(1);
+        // Nothing the market feed announces: the player switched the profit pricing mode
+        world.stamp = 'bid|ask|||buy||0';
+        column.getQuote('/items/iron_sword', 5);
+        expect(calculateEnhancementPath).toHaveBeenCalledTimes(2);
     });
 
     test('drawing twice does not duplicate the column', () => {
