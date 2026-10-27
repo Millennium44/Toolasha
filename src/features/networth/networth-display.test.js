@@ -151,6 +151,33 @@ describe('guild shrines row', () => {
         );
     });
 
+    test('the floor wording survives expanding and collapsing the row', () => {
+        networthInventoryDisplay.update(
+            networthData({
+                totalCost: 7500,
+                tokens: 10,
+                known: true,
+                unpriced: ['Purple Guild Credit'],
+                breakdown: [
+                    {
+                        hrid: '/guild_buffs/force_combat',
+                        name: 'Force Combat 1',
+                        level: 1,
+                        cost: 7500,
+                        tokens: 10,
+                        unpriced: ['Purple Guild Credit'],
+                    },
+                ],
+            })
+        );
+
+        const toggle = networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-toggle');
+        toggle.click();
+        expect(toggle.textContent).toContain('at least');
+        toggle.click();
+        expect(toggle.textContent).toContain('at least');
+    });
+
     test('a fully priced total carries no floor wording', () => {
         networthInventoryDisplay.update(
             networthData({

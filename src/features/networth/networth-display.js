@@ -1036,7 +1036,7 @@ class NetworthInventoryDisplay {
                 this.setupToggle(
                     'mwi-other-abilities-toggle',
                     'mwi-other-abilities-breakdown',
-                    `Other Abilities: ${networthFormatter(Math.round(fa.abilities.totalCost - fa.abilities.equippedCost))}`
+                    `Other (${fa.abilities.otherBreakdown.length}): ${networthFormatter(Math.round(fa.abilities.totalCost - fa.abilities.equippedCost))}`
                 );
             }
         }
@@ -1046,7 +1046,7 @@ class NetworthInventoryDisplay {
             this.setupToggle(
                 'mwi-ability-books-toggle',
                 'mwi-ability-books-breakdown',
-                `Ability Books: ${networthFormatter(Math.round(fa.abilityBooks.totalCost))}`
+                `Ability Books (${fa.abilityBooks.breakdown.length}): ${networthFormatter(Math.round(fa.abilityBooks.totalCost))}`
             );
         }
 
@@ -1055,7 +1055,7 @@ class NetworthInventoryDisplay {
             this.setupToggle(
                 'mwi-guild-shrines-toggle',
                 'mwi-guild-shrines-breakdown',
-                `Guild Shrines: ${networthFormatter(Math.round(fa.guildShrines.totalCost))}`
+                `Guild Shrines: ${fa.guildShrines.unpriced?.length ? 'at least ' : ''}${networthFormatter(Math.round(fa.guildShrines.totalCost))}`
             );
         }
 
