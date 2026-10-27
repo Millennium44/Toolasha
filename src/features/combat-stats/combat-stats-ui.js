@@ -27,6 +27,7 @@ import {
     isAbbreviationEnabled,
 } from '../../utils/formatters.js';
 import { formatKeyCostNote, getKeyPricingMode, resolveKeyPricing } from '../../utils/key-cost.js';
+import { getPricingMode } from '../../utils/market-data.js';
 import { shortDuration } from '../../utils/overlay-format.js';
 import { compareBurnToSim, formatBurnLine } from '../../utils/consumable-burn.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
@@ -38,6 +39,17 @@ import { showToast } from '../../utils/toast.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { percentOfExpected } from '../../utils/combat-drop-model.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+
+/**
+ * Which of the ask/bid-only stats fields (income, dailyIncome, dailyProfit) to
+ * display. It follows the profit pricing mode's sell side, since income is what
+ * the player sells; the key pricing setting prices keys only (`keyCosts` carries
+ * the same resolved figure under both sides, so it is read with its own key).
+ * @returns {'ask'|'bid'}
+ */
+function resolveDisplayPriceKey() {
+    return getPricingMode('profit', 'sell') === 'bid' ? 'bid' : 'ask';
+}
 
 /** Per-character storage key for the chat field picker's selection */
 const CHAT_FIELDS_KEY = 'combatStatsChatFields';
@@ -463,7 +475,7 @@ class CombatStatsUI {
         const zoneName = actionHrid ? dataManager.getActionDetails?.(actionHrid)?.name || null : null;
 
         return {
-            priceKey: getKeyPricingMode(),
+            priceKey: resolveDisplayPriceKey(),
             formatNum: this.chatFormatNum(),
             luckPercentile,
             luckIsChest,
@@ -949,7 +961,7 @@ class CombatStatsUI {
                 copyButton.style.background = '#4a4a4a';
             };
             copyButton.onclick = () => {
-                const priceKey = getKeyPricingMode();
+                const priceKey = resolveDisplayPriceKey();
                 const useKMB = isAbbreviationEnabled();
                 const formatNum = (num) =>
                     useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num));
@@ -1321,7 +1333,9 @@ class CombatStatsUI {
                 ? coinFormatter(Math.round(num))
                 : new Intl.NumberFormat('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(num);
 
-        const priceKey = getKeyPricingMode();
+        const priceKey = resolveDisplayPriceKey();
+        // Key costs follow the key pricing setting, not the profit pricing mode
+        const keyPriceKey = getKeyPricingMode();
 
         // Chest EVs scaled by the player's own measured luck must say so on
         // every figure that carries them — income, and the profit built on it
@@ -1375,7 +1389,7 @@ class CombatStatsUI {
                 ? [
                       {
                           label: 'Key Costs',
-                          value: formatNum(stats.keyCosts[priceKey]),
+                          value: formatNum(stats.keyCosts[keyPriceKey]),
                           color: '#ff6b6b',
                           expandable: true,
                           breakdown: stats.keyBreakdown,

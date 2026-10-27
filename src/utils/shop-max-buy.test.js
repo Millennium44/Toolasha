@@ -16,11 +16,36 @@ vi.mock('../core/data-manager.js', () => ({
                 '/items/task_token': { name: 'Task Token' },
                 '/items/cowbell': { name: 'Cowbell' },
             },
+            communityBuffTypeDetailMap: {
+                '/community_buff_types/combat_drop_quantity': {
+                    buff: { typeHrid: '/buff_types/combat_drop_quantity' },
+                    cowbellCost: 10,
+                },
+                '/community_buff_types/enhancing_speed': {
+                    buff: { typeHrid: '/buff_types/action_speed' },
+                    cowbellCost: 10,
+                },
+                '/community_buff_types/experience': { buff: { typeHrid: '/buff_types/wisdom' }, cowbellCost: 20 },
+                '/community_buff_types/gathering_quantity': {
+                    buff: { typeHrid: '/buff_types/gathering' },
+                    cowbellCost: 10,
+                },
+                '/community_buff_types/production_efficiency': {
+                    buff: { typeHrid: '/buff_types/efficiency' },
+                    cowbellCost: 10,
+                },
+            },
         }),
     },
 }));
 
-import { resolveCostLines, computeMaxAffordable, findMaxValidQuantity } from './shop-max-buy.js';
+import {
+    resolveCostLines,
+    computeMaxAffordable,
+    findMaxValidQuantity,
+    resolveCommunityBuffCostLines,
+    normalizeCostLinesToUnit,
+} from './shop-max-buy.js';
 
 const INV = '/item_locations/inventory';
 
@@ -135,5 +160,68 @@ describe('findMaxValidQuantity', () => {
         const probe = vi.fn(async (q) => (q === 50 ? true : null));
         expect(await findMaxValidQuantity(50, probe)).toBeNull();
         expect(probe).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('Community Buff dialogs', () => {
+    // Mirrors the real dialog: buff icon block, then the input container, then the "You Pay" row.
+    function buffDialog(iconName, { quantity = 10, total = 100 } = {}) {
+        document.body.innerHTML = `
+            <div class="CowbellStorePanel_modalContent__1JNWg">
+                <div class="CommunityBuff_communityBuff__1BILG">
+                    <svg aria-label="buff"><use href="/static/media/buffs_sprite.cd54d85e.svg#${iconName}"></use></svg>
+                </div>
+                <div class="CowbellStorePanel_inputContainer__3iH6M"><input type="number" value="${quantity}"></div>
+                <div>You Pay: ${total} ${icon('cowbell')}</div>
+            </div>`;
+        return document.querySelector('[class*="inputContainer"]');
+    }
+
+    beforeEach(() => {
+        state.inventory = [];
+    });
+
+    test('a 10-minute dialog takes the unit cost from game data, not the displayed total', () => {
+        const container = buffDialog('gathering', { quantity: 10, total: 100 });
+        // The displayed row alone reads as a 100-cowbell unit price, which is the bug
+        expect(resolveCostLines(container)).toEqual([{ itemHrid: '/items/cowbell', perUnitAmount: 100 }]);
+
+        const lines = resolveCommunityBuffCostLines(container);
+        expect(lines).toEqual([{ itemHrid: '/items/cowbell', perUnitAmount: 10 }]);
+
+        state.inventory = [{ itemHrid: '/items/cowbell', itemLocationHrid: INV, count: 1234 }];
+        expect(computeMaxAffordable(lines)).toBe(Math.floor(1234 / 10));
+    });
+
+    test('each buff resolves its own cost by icon, whatever language the dialog text is in', () => {
+        expect(resolveCommunityBuffCostLines(buffDialog('wisdom'))[0].perUnitAmount).toBe(20);
+        expect(resolveCommunityBuffCostLines(buffDialog('gathering'))[0].perUnitAmount).toBe(10);
+    });
+
+    test('the icon matches the map key suffix (experience) or the typeHrid suffix (wisdom)', () => {
+        expect(resolveCommunityBuffCostLines(buffDialog('experience'))[0].perUnitAmount).toBe(20);
+        expect(resolveCommunityBuffCostLines(buffDialog('wisdom'))[0].perUnitAmount).toBe(20);
+        expect(resolveCommunityBuffCostLines(buffDialog('gathering_quantity'))[0].perUnitAmount).toBe(10);
+        expect(resolveCommunityBuffCostLines(buffDialog('action_speed'))[0].perUnitAmount).toBe(10);
+    });
+
+    test('an unknown buff or a non-buff dialog resolves to null so the caller can divide instead', () => {
+        expect(resolveCommunityBuffCostLines(buffDialog('mystery'))).toBeNull();
+        document.body.innerHTML =
+            '<div><div class="CowbellStorePanel_inputContainer__3iH6M"><input type="number"></div></div>';
+        expect(resolveCommunityBuffCostLines(document.querySelector('[class*="inputContainer"]'))).toBeNull();
+    });
+
+    test('normalizeCostLinesToUnit divides a displayed total by the typed quantity', () => {
+        expect(normalizeCostLinesToUnit([{ itemHrid: '/items/cowbell', perUnitAmount: 100 }], 10)).toEqual([
+            { itemHrid: '/items/cowbell', perUnitAmount: 10 },
+        ]);
+    });
+
+    test('normalizeCostLinesToUnit leaves lines alone for quantity 1, invalid, or uneven division', () => {
+        const lines = [{ itemHrid: '/items/cowbell', perUnitAmount: 105 }];
+        expect(normalizeCostLinesToUnit(lines, 1)).toBe(lines);
+        expect(normalizeCostLinesToUnit(lines, NaN)).toBe(lines);
+        expect(normalizeCostLinesToUnit(lines, 10)).toBe(lines);
     });
 });

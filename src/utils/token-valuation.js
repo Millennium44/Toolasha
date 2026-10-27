@@ -26,7 +26,7 @@ export const DUNGEON_TOKEN_HRIDS = new Set(Object.keys(TOKEN_ESSENCE_MAP));
  * @param {string} respectModeSetting - Config key for whether that mode is respected
  * @returns {'ask'|'bid'}
  */
-function tokenPricingSide(pricingModeSetting, respectModeSetting) {
+export function tokenPricingSide(pricingModeSetting, respectModeSetting) {
     // `false` in place of a setting key pins the bid outright, for a caller that promises an instant sale
     if (respectModeSetting === false) return 'bid';
     const pricingMode = config.getSettingValue(pricingModeSetting, 'hybrid');

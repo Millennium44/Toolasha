@@ -23,6 +23,21 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getInitClientData: () => ({
+            communityBuffTypeDetailMap: {
+                '/community_buff_types/gathering_quantity': {
+                    buff: { typeHrid: '/buff_types/gathering' },
+                    cowbellCost: 10,
+                },
+                '/community_buff_types/experience': { buff: { typeHrid: '/buff_types/wisdom' }, cowbellCost: 20 },
+            },
+        }),
+        getInventory: () => [],
+    },
+}));
+
 vi.mock('../../utils/shop-max-buy.js', async (importOriginal) => {
     const actual = await importOriginal();
     return {
@@ -205,5 +220,71 @@ describe('shop Max buy button', () => {
         container.querySelector('.toolasha-shop-max-buy-button').click();
         await flush();
         expect(input.value).toBe('1');
+    });
+});
+
+describe('ShopMaxBuyButton.resolveUnitCostLines', () => {
+    function buffDialog(iconName, total) {
+        document.body.innerHTML = `
+            <div class="CowbellStorePanel_modalContent">
+                <div class="CommunityBuff_communityBuff__x">
+                    <svg><use href="/static/media/buffs_sprite.abc.svg#${iconName}"></use></svg>
+                </div>
+                <div class="CowbellStorePanel_inputContainer"><input type="number" value="10"></div>
+                <div>${total}</div>
+            </div>`;
+        const container = document.querySelector('[class*="inputContainer"]');
+        return { container, input: container.querySelector('input') };
+    }
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('a known Community Buff takes the per-minute cost from game data at 10 minutes', () => {
+        const { container, input } = buffDialog('gathering', '100');
+        expect(shopMaxBuyButton.resolveUnitCostLines(container, input, 'cowbellStore')).toEqual([
+            { itemHrid: '/items/cowbell', perUnitAmount: 10 },
+        ]);
+    });
+
+    test('an unknown buff falls back to dividing the displayed total by the typed quantity', () => {
+        const { container, input } = buffDialog('mystery', '100');
+        // resolveCostLines is mocked to the displayed "You Pay" total
+        state.cost = [{ itemHrid: '/items/cowbell', perUnitAmount: 100 }];
+        expect(shopMaxBuyButton.resolveUnitCostLines(container, input, 'cowbellStore')).toEqual([
+            { itemHrid: '/items/cowbell', perUnitAmount: 10 },
+        ]);
+        state.cost = [];
+    });
+
+    test('a Cowbell Store item dialog without a buff icon keeps its per-unit price', () => {
+        document.body.innerHTML = `
+            <div class="CowbellStorePanel_modalContent">
+                <div class="CowbellStorePanel_inputContainer"><input type="number" value="5"></div>
+                <div>You Pay: 100</div>
+            </div>`;
+        const container = document.querySelector('[class*="inputContainer"]');
+        state.cost = [{ itemHrid: '/items/cowbell', perUnitAmount: 100 }];
+        expect(
+            shopMaxBuyButton.resolveUnitCostLines(container, container.querySelector('input'), 'cowbellStore')
+        ).toEqual(state.cost);
+        state.cost = [];
+    });
+
+    test('a buff dialog matching by key suffix (experience) or typeHrid suffix (wisdom) resolves', () => {
+        for (const icon of ['experience', 'wisdom']) {
+            const { container, input } = buffDialog(icon, '200');
+            expect(shopMaxBuyButton.resolveUnitCostLines(container, input, 'cowbellStore')).toEqual([
+                { itemHrid: '/items/cowbell', perUnitAmount: 20 },
+            ]);
+        }
+    });
+
+    test('other shops keep reading the cost row as it is', () => {
+        const { container, input } = buffDialog('gathering', '100');
+        state.cost = [{ itemHrid: '/items/task_token', perUnitAmount: 50 }];
+        expect(shopMaxBuyButton.resolveUnitCostLines(container, input, 'tasks')).toEqual(state.cost);
+        state.cost = [];
     });
 });

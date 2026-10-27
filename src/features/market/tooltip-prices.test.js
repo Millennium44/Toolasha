@@ -22,7 +22,11 @@ const settings = vi.hoisted(() => ({
     patientTickBuy: false,
     patientTickSell: false,
     pricingMode: undefined,
+    subMaterials: true,
+    flat: false,
 }));
+/** Crafting planner stand-in and direct-material prices for the Best plan row */
+const planState = vi.hoisted(() => ({ planner: null, prices: {} }));
 const characterState = vi.hoisted(() => ({ data: null }));
 const alchemyState = vi.hoisted(() => ({ profits: {}, candidates: {}, decompose: {} }));
 const openableState = vi.hoisted(() => ({ drops: {} }));
@@ -44,6 +48,10 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_alchemyInsteadOfBuying') return settings.insteadOfBuying;
             if (id === 'itemTooltip_alchemyInsteadOfSelling') return settings.insteadOfSelling;
             if (id === 'actionPanel_craftingPlanGoldPerHour') return settings.goldRate;
+            if (id === 'itemTooltip_craftCostSubMaterials') return settings.subMaterials;
+            if (id === 'itemTooltip_detailedProfitFlat') return settings.flat;
+            if (id === 'actionPanel_craftingPlanBuyIntermediates') return false;
+            if (id === 'actionPanel_craftingPlanNoProcessing') return false;
             return true;
         },
         getSettingValue: (id, fallback) => {
@@ -244,8 +252,12 @@ vi.mock('../../utils/alchemy-shop-value.js', () => ({
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     explainAbilityCost: () => ({ total: 1234, books: 3 }),
 }));
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    craftingPlanCalculator: () => (planState.planner ? { computeBestCraftingPlan: planState.planner } : null),
+}));
 vi.mock('../../utils/profit-helpers.js', () => ({
-    resolveItemPrice: () => 0,
+    resolveItemPrice: (hrid, opts) => (hrid in planState.prices ? { price: planState.prices[hrid][opts.mode] } : 0),
     calculatePriceAfterTax: (price) => price * (1 - taxState.rate),
 }));
 // The keep list's storage: one character's list, read and written whole
@@ -1997,5 +2009,157 @@ describe('scroll stack duration', () => {
 
     test('a non-scroll shows nothing', async () => {
         expect(await lineFor('Frenzy', 20)).toBeNull();
+    });
+});
+
+describe('buildDetailedProfitDisplay Best plan row', () => {
+    // Two direct materials at 100 ask / 90 bid each: Total 200 / 180 per action
+    const profitData = {
+        itemHrid: '/items/gadget',
+        outputAmount: 1,
+        materialCosts: [
+            { itemHrid: '/items/alloy', itemName: 'Alloy', amount: 1 },
+            { itemHrid: '/items/ore', itemName: 'Ore', amount: 1 },
+        ],
+    };
+    const leaf = (totalCost) => ({ strategy: 'buy', unitCost: totalCost, totalCost, children: [] });
+    const rootOf = (unitCost, children) => ({ strategy: 'craft', unitCost, totalCost: unitCost, children });
+    const render = () => tooltipPrices.buildDetailedProfitDisplay(profitData, false);
+
+    beforeEach(() => {
+        settings.subMaterials = true;
+        settings.flat = false;
+        planState.prices = {
+            '/items/alloy': { ask: 100, bid: 90 },
+            '/items/ore': { ask: 100, bid: 90 },
+        };
+        planState.planner = vi.fn((_hrid, _qty, mode) =>
+            rootOf(mode === 'ask' ? 120 : 110, [leaf(mode === 'ask' ? 120 : 110)])
+        );
+    });
+
+    afterEach(() => {
+        planState.planner = null;
+        planState.prices = {};
+    });
+
+    test('appears, with its note, when sub-crafting is cheaper than the Total row', () => {
+        const html = render();
+
+        expect(html).toContain('Best plan');
+        expect(html).toContain(formatKMB(120));
+        expect(html).toContain(formatKMB(110));
+        expect(html).toContain('Profit above uses the Total row');
+        expect(html).not.toContain('≥');
+    });
+
+    test('is hidden when the plan costs the same as the Total row', () => {
+        planState.planner = vi.fn((_hrid, _qty, mode) => rootOf(mode === 'ask' ? 200 : 180, []));
+
+        expect(render()).not.toContain('Best plan');
+    });
+
+    test('is hidden with the setting off, without asking the planner', () => {
+        settings.subMaterials = false;
+
+        expect(render()).not.toContain('Best plan');
+        expect(planState.planner).not.toHaveBeenCalled();
+    });
+
+    test('is hidden while the direct-recipe-only setting is on', () => {
+        settings.flat = true;
+
+        expect(render()).not.toContain('Best plan');
+    });
+
+    test('is hidden when the planner is not loaded', () => {
+        planState.planner = null;
+
+        expect(render()).not.toContain('Best plan');
+    });
+
+    test('an unpriced sub-material is a floor marked with a ≥, never a free leg', () => {
+        const unpriced = { strategy: 'buy', unitCost: Infinity, totalCost: Infinity, children: [] };
+        planState.planner = vi.fn((_hrid, _qty, mode) => rootOf(Infinity, [leaf(mode === 'ask' ? 70 : 60), unpriced]));
+
+        const html = render();
+
+        expect(html).toContain(`≥ ${formatKMB(70)}`);
+        expect(html).toContain(`≥ ${formatKMB(60)}`);
+        expect(html).toContain('has no market price');
+    });
+
+    test('a 2-yield intermediate with one unpriced input gives a per-unit floor of 50, not 100', () => {
+        const unpriced = { strategy: 'buy', unitCost: Infinity, totalCost: Infinity, children: [] };
+        const intermediate = {
+            strategy: 'craft',
+            quantity: 1,
+            outputCount: 2,
+            actionsNeeded: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [leaf(100), unpriced],
+        };
+        planState.planner = vi.fn(() => rootOf(Infinity, [intermediate]));
+
+        const html = render();
+
+        expect(html).toContain(`≥ ${formatKMB(50)}`);
+        expect(html).not.toContain(`≥ ${formatKMB(100)}`);
+    });
+
+    test('the same floor holds for an intermediate nested under another', () => {
+        const unpriced = { strategy: 'buy', unitCost: Infinity, totalCost: Infinity, children: [] };
+        const inner = {
+            strategy: 'craft',
+            quantity: 1,
+            outputCount: 2,
+            actionsNeeded: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [leaf(100), unpriced],
+        };
+        const outer = {
+            strategy: 'craft',
+            quantity: 1,
+            outputCount: 1,
+            actionsNeeded: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [inner, leaf(10)],
+        };
+        planState.planner = vi.fn(() => rootOf(Infinity, [outer]));
+
+        expect(render()).toContain(`≥ ${formatKMB(60)}`);
+    });
+
+    test('a plan with nothing priced at all shows no row rather than a zero', () => {
+        const unpriced = { strategy: 'buy', unitCost: Infinity, totalCost: Infinity, children: [] };
+        planState.planner = vi.fn(() => rootOf(Infinity, [unpriced]));
+
+        expect(render()).not.toContain('Best plan');
+    });
+
+    test('a buy root (no-processing on a processing output) shows no row rather than its market price', () => {
+        planState.planner = vi.fn((_hrid, _qty, mode) => ({
+            strategy: 'buy',
+            unitCost: mode === 'ask' ? 120 : 110,
+            totalCost: mode === 'ask' ? 120 : 110,
+            children: [],
+        }));
+
+        expect(render()).not.toContain('Best plan');
+    });
+
+    test('a finite plan is scaled to one action when the recipe yields several', () => {
+        profitData.outputAmount = 2;
+        planState.planner = vi.fn((_hrid, _qty, mode) => rootOf(mode === 'ask' ? 60 : 55, []));
+        try {
+            const html = render();
+            expect(html).toContain(formatKMB(120));
+            expect(html).toContain(formatKMB(110));
+        } finally {
+            profitData.outputAmount = 1;
+        }
     });
 });

@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### From upstream: Combat Stats pricing, guild credits and smaller fixes
+
+- Combat Stats income and profit follow your profit pricing mode; the key pricing setting now prices only keys.
+- Held guild credits count in net worth and inventory totals, and token shop tooltips follow your pricing mode.
+- Community Buff dialogs' Max button buys the right amount, the Labyrinth room grid gets a size control, and item tooltips show a "Best plan" row when crafting sub-materials is cheaper.
+- Action tiles no longer redraw unchanged stats.
+
 ### Combat Sim upgrade profit for an imported player
 
 - Upgrade analysis of an imported profile or a saved teammate now taxes its drop profit at that player's own rate, so an Iron Cow's profit isn't cut by a market tax it never pays (and the reverse).

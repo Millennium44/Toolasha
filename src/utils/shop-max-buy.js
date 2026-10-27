@@ -13,6 +13,9 @@ import dataManager from '../core/data-manager.js';
 import { getIconHref, getItemHridFromIconHref, getItemHridFromName } from './game-lookups.js';
 
 const INVENTORY_LOCATION = '/item_locations/inventory';
+const COWBELL_HRID = '/items/cowbell';
+const BUFF_KEY_PREFIX = '/community_buff_types/';
+const BUFF_TYPE_PREFIX = '/buff_types/';
 const AMOUNT_RE = /\d[\d.,\s]*\d|\d/;
 
 /**
@@ -92,6 +95,59 @@ export function resolveCostLines(inputContainer) {
     }
 
     return lines;
+}
+
+/**
+ * Resolve the Cowbell Store's Community Buff dialog to its per-minute cowbell cost from game data.
+ * The dialog's "You Pay" row shows the cost of whatever quantity is typed in (it opens at 10
+ * minutes), so it cannot be read as a unit price. The buff is identified by the dialog's icon
+ * (`buffs_sprite.svg#<name>`, which does not change with the game language), matching each buff's
+ * `buff.typeHrid` minus `/buff_types/`.
+ * @param {Element} inputContainer - the CowbellStorePanel_inputContainer element
+ * @returns {Array<{itemHrid: string, perUnitAmount: number}>|null} null when this is not a
+ *   Community Buff dialog or the buff/cost cannot be resolved
+ */
+export function resolveCommunityBuffCostLines(inputContainer) {
+    const iconName = getIconHref(findCommunityBuffIcon(inputContainer), 'buffs_sprite')?.split('#')[1];
+    if (!iconName) return null;
+
+    const detailMap = dataManager.getInitClientData()?.communityBuffTypeDetailMap;
+    if (!detailMap) return null;
+
+    // The icon fragment names the map key suffix for some buffs and the buff.typeHrid suffix for
+    // others (experience / wisdom): an exact key match wins, then the typeHrid.
+    const entries = Object.entries(detailMap);
+    const match =
+        entries.find(([key]) => key === `${BUFF_KEY_PREFIX}${iconName}`)?.[1] ||
+        entries.find(([, detail]) => detail?.buff?.typeHrid === `${BUFF_TYPE_PREFIX}${iconName}`)?.[1];
+    const cost = match?.cowbellCost;
+    if (!(cost > 0)) return null;
+
+    return [{ itemHrid: COWBELL_HRID, perUnitAmount: cost }];
+}
+
+/**
+ * The Community Buff icon block of a Cowbell Store dialog, or null for any other dialog (item
+ * purchases, MooPass), whose "You Pay" row is already a per-unit price.
+ * @param {Element} inputContainer
+ * @returns {Element|null}
+ */
+export function findCommunityBuffIcon(inputContainer) {
+    return inputContainer?.parentElement?.querySelector('[class*="CommunityBuff_communityBuff"]') || null;
+}
+
+/**
+ * Convert cost lines read from a dialog that shows the total for the typed quantity into
+ * per-unit lines. Returns the lines unchanged when the quantity is not an integer above 1 that
+ * divides every amount exactly (nothing reliable to normalize by).
+ * @param {Array<{itemHrid: string, perUnitAmount: number}>} costLines
+ * @param {number} quantity - the quantity currently typed into the dialog
+ * @returns {Array<{itemHrid: string, perUnitAmount: number}>}
+ */
+export function normalizeCostLinesToUnit(costLines, quantity) {
+    if (!Number.isInteger(quantity) || quantity <= 1) return costLines;
+    if (costLines.some((line) => line.perUnitAmount % quantity !== 0)) return costLines;
+    return costLines.map((line) => ({ ...line, perUnitAmount: line.perUnitAmount / quantity }));
 }
 
 /**

@@ -32,6 +32,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid) => (hrid === '/items/bag_of_10_cowbells' ? { ask: 1000, bid: 900 } : null),
 }));
+vi.mock('../../utils/token-valuation.js', () => ({ tokenPricingSide: () => 'ask' }));
 vi.mock('../market/expected-value-calculator.js', () => ({ default: { calculateExpectedValue: () => null } }));
 vi.mock('../../utils/dom.js', () => ({
     default: {
