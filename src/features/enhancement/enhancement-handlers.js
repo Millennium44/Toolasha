@@ -227,13 +227,20 @@ async function reconcileReloadGap(session, active) {
     if (!itemHrid || session.itemHrid !== itemHrid || !last) return;
     if (last.actionId == null || last.actionId !== active.id) return;
     if (!Number.isFinite(last.currentCount) || !Number.isFinite(active.currentCount)) return;
-    const delta = active.currentCount - last.currentCount;
-    if (delta > 1) {
+    // Attempts already counted by an earlier reload that found the same gap (gapThrough) are
+    // not counted again; the live-result path reads the same watermark
+    const hasWatermark = Number.isFinite(last.gapThrough);
+    const seenTo = Math.max(last.currentCount, hasWatermark ? last.gapThrough : -Infinity);
+    const delta = active.currentCount - seenTo;
+    if (delta > 1 || (delta === 1 && hasWatermark)) {
+        // With a watermark the recorded level is stale, so even a single new attempt cannot be
+        // scored. No watermark and delta 1 falls through to be scored below.
         try {
-            // Remember how far the gap has been counted, so the next live attempt does not
-            // count the same attempts again
+            // Remember how far the gap has been counted, so neither the next live attempt nor
+            // another reload counts the same attempts again. The snapshot already includes its
+            // own count, and the next live result is the one after it, so the whole delta is missed.
             session.lastAttempt = { ...last, gapThrough: active.currentCount };
-            addGapAttempts(session, delta - 1);
+            addGapAttempts(session, delta);
             await enhancementTracker.saveSessions();
             enhancementUI.scheduleUpdate();
         } catch (error) {
