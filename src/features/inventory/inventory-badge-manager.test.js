@@ -896,3 +896,21 @@ describe('guild credits', () => {
         expect(el.dataset.askValue).not.toBe(String(1000 * 42));
     });
 });
+
+describe('icon-first identity on a translated, xlink-only tile', () => {
+    test('prices a tile whose icon carries only xlink:href and whose label is not English', async () => {
+        mocks.initData = { itemDetailMap: { '/items/radiant_fiber': { name: 'Radiant Fiber' } } };
+        mocks.inventory = [
+            { itemLocationHrid: '/item_locations/inventory', itemHrid: '/items/radiant_fiber', count: 5 },
+        ];
+        mocks.priceBatch = new Map([['/items/radiant_fiber:0', { ask: 100, bid: 80 }]]);
+        document.body.innerHTML = `
+            <div class="Item_itemContainer__q">
+                <svg aria-label="Fibre radieuse"><use xlink:href="/static/media/items_sprite.abc.svg#radiant_fiber"></use></svg>
+                <div class="Item_count__q">5</div>
+            </div>`;
+        const el = document.querySelector('[class*="Item_itemContainer"]');
+        await inventoryBadgeManager.calculateItemPrices([el], mocks.inventory, new Map());
+        expect([el.dataset.askValue, el.dataset.bidValue]).toEqual(['500', '400']);
+    });
+});

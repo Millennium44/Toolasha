@@ -23,7 +23,9 @@
  * @returns {string|null} Item HRID (e.g. `/items/radiant_fiber`) or null
  */
 export function itemHridFromIcon(container, itemDetailMap) {
-    const href = container?.querySelector?.('svg use')?.getAttribute?.('href');
+    // Item icons often carry the sprite id on `xlink:href` alone, which a plain `href` read misses
+    const use = container?.querySelector?.('svg use');
+    const href = use?.getAttribute?.('href') || use?.getAttribute?.('xlink:href');
     const match = href?.match(/#(.+)$/);
     if (!match) return null;
     const itemHrid = `/items/${match[1]}`;
