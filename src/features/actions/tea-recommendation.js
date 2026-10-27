@@ -190,6 +190,9 @@ class TeaRecommendation {
         this.dragCleanup = null;
         this.pinnedTeas = new Set();
         this.bannedTeas = new Set();
+        // Bumped by every popup request and by closePopup(), so a request that was awaiting the
+        // Alchemy panel when the popup was closed (or another request began) can tell it is stale
+        this.requestToken = 0;
     }
 
     /**
@@ -343,6 +346,7 @@ class TeaRecommendation {
     async showRecommendation(goal, anchorButton) {
         // Close existing popup
         this.closePopup();
+        const token = this.requestToken;
 
         // Detect if we're on the alchemy page by checking if the button is inside an alchemy panel
         const isAlchemy = !!anchorButton.closest('[class*="AlchemyPanel_"]');
@@ -361,6 +365,9 @@ class TeaRecommendation {
         let alchemyContext = null;
         if (isAlchemy) {
             alchemyContext = await getAlchemyContext();
+            // A newer click, a close or a teardown landed while the panel was read: that request owns
+            // the popup now, and drawing this one as well would leave an orphan nothing tracks
+            if (token !== this.requestToken || !anchorButton.isConnected) return;
             if (!alchemyContext) {
                 this.showError(anchorButton, 'No item selected in alchemy panel');
                 return;
@@ -420,18 +427,7 @@ class TeaRecommendation {
 
         this.currentPopup = popup;
 
-        // Close on click outside
-        const closeHandler = (e) => {
-            if (!popup.contains(e.target) && e.target !== anchorButton && e.target.isConnected) {
-                this.closePopup();
-                document.removeEventListener('click', closeHandler);
-            }
-        };
-        // Delay to prevent immediate close
-        setTimeout(() => {
-            document.addEventListener('click', closeHandler);
-            this.closeHandlerCleanup = () => document.removeEventListener('click', closeHandler);
-        }, 100);
+        this._armOutsideClose(popup, anchorButton);
     }
 
     /**
@@ -610,7 +606,7 @@ class TeaRecommendation {
             `;
             backLink.textContent = `← All ${skillName} actions`;
             backLink.addEventListener('click', () => {
-                const allResult = findOptimalTeas(skillName, goal, locationTab, null, null, alchemyContext);
+                const allResult = this._searchWithConstraints(goal, skillName, locationTab, null, alchemyContext);
                 if (!allResult.error && allResult.optimal) {
                     this.buildPopupContent(popup, allResult, goal, skillName, locationTab, null, alchemyContext);
                 }
@@ -692,12 +688,11 @@ class TeaRecommendation {
                     actionRow.style.background = '';
                 });
                 actionRow.addEventListener('click', () => {
-                    const drillResult = findOptimalTeas(
-                        skillName,
+                    const drillResult = this._searchWithConstraints(
                         goal,
+                        skillName,
                         locationTab,
                         actionData.action,
-                        null,
                         alchemyContext
                     );
                     if (!drillResult.error && drillResult.optimal) {
@@ -1213,16 +1208,7 @@ class TeaRecommendation {
 
         this.currentPopup = popup;
 
-        // Close on click outside
-        const closeHandler = (e) => {
-            if (!popup.contains(e.target) && e.target !== anchorButton) {
-                this.closePopup();
-                document.removeEventListener('click', closeHandler);
-            }
-        };
-        setTimeout(() => {
-            document.addEventListener('click', closeHandler);
-        }, 100);
+        this._armOutsideClose(popup, anchorButton);
     }
 
     /**
@@ -1274,27 +1260,65 @@ class TeaRecommendation {
      * @param {Object|null} alchemyContext - Alchemy context for alchemy skills
      */
     _rerunWithConstraints(popup, goal, skillName, locationTab, drilldownAction, alchemyContext = null) {
-        const constraints = { pinned: this.pinnedTeas, banned: this.bannedTeas };
-        const result = findOptimalTeas(
+        const result = this._searchWithConstraints(goal, skillName, locationTab, drilldownAction, alchemyContext);
+        if (result.error) return;
+        this.buildPopupContent(popup, result, goal, skillName, locationTab, drilldownAction, alchemyContext);
+    }
+
+    /**
+     * Run the tea search the way the open popup's pin/ban controls describe it. Every re-render
+     * (drilling into an action, going back to all actions, a pin or ban click) goes through here:
+     * a search that skipped the constraints drew the pins as active over a result that ignored them.
+     * @param {string} goal - 'xp' or 'gold'
+     * @param {string} skillName - Current skill name
+     * @param {string|null} locationTab - Current location tab
+     * @param {string|null} actionName - Single action to score, or null for every action
+     * @param {Object|null} alchemyContext - Alchemy context for alchemy skills
+     * @returns {Object} findOptimalTeas result
+     */
+    _searchWithConstraints(goal, skillName, locationTab, actionName, alchemyContext = null) {
+        return findOptimalTeas(
             skillName,
             goal,
             locationTab,
-            drilldownAction || null,
-            constraints,
+            actionName || null,
+            { pinned: this.pinnedTeas, banned: this.bannedTeas },
             alchemyContext,
             null,
             null,
             null,
-            this._xpFloorActive(drilldownAction, alchemyContext) ? { teaSetGoal: 'gold' } : null
+            this._xpFloorActive(actionName, alchemyContext) ? { teaSetGoal: 'gold' } : null
         );
-        if (result.error) return;
-        this.buildPopupContent(popup, result, goal, skillName, locationTab, drilldownAction, alchemyContext);
+    }
+
+    /**
+     * Close the popup on the next click outside it. The listener attaches after a short delay so the
+     * click that opened the popup does not close it; the teardown cancels a still-pending attach too,
+     * otherwise a popup closed inside the delay leaves a stray listener that closes whichever popup is
+     * open on its next click.
+     * @param {HTMLElement} popup
+     * @param {HTMLElement} anchorButton - Opening button; clicks on it are not "outside"
+     */
+    _armOutsideClose(popup, anchorButton) {
+        const closeHandler = (e) => {
+            if (!popup.contains(e.target) && e.target !== anchorButton && e.target.isConnected) {
+                this.closePopup();
+            }
+        };
+        const timerId = this.timerRegistry.scheduleTimeout(() => {
+            document.addEventListener('click', closeHandler);
+        }, 100);
+        this.closeHandlerCleanup = () => {
+            this.timerRegistry.cancelTimeout(timerId);
+            document.removeEventListener('click', closeHandler);
+        };
     }
 
     /**
      * Close the current popup
      */
     closePopup() {
+        this.requestToken++;
         if (this.closeHandlerCleanup) {
             this.closeHandlerCleanup();
             this.closeHandlerCleanup = null;
