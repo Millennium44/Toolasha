@@ -827,7 +827,8 @@ class TooltipPrices {
                 const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
                 if (chestKeyHrid) {
                     const keyDetails = dataManager.getItemDetails(chestKeyHrid);
-                    keyPrice = getKeyUnitCost(chestKeyHrid) ?? 0;
+                    // null stays null: a key nobody can price is not a free one, and the display says so
+                    keyPrice = getKeyUnitCost(chestKeyHrid);
                     this.injectExpectedValueDisplay(
                         tooltipElement,
                         evData,
@@ -1796,6 +1797,8 @@ class TooltipPrices {
      * @param {Element} tooltipElement - Tooltip element
      * @param {Object} evData - Expected value calculation data
      * @param {boolean} isCollectionTooltip - True if this is a collection tooltip
+     * @param {number|null} [keyPrice=0] - Gold per key to take off; 0 for a chest with no key, null for a key that cannot be priced
+     * @param {string|null} [keyName] - The key's name, for its line
      */
     injectExpectedValueDisplay(tooltipElement, evData, isCollectionTooltip = false, keyPrice = 0, keyName = null) {
         const tooltipText = isCollectionTooltip
@@ -1831,10 +1834,13 @@ class TooltipPrices {
             ? ` <span style="color: ${config.COLOR_TEXT_SECONDARY}; font-weight: normal;">(${evData.missingCount} drop${evData.missingCount === 1 ? '' : 's'} unpriced)</span>`
             : '';
         html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Expected Return: ${evPrefix}${formatTooltipPrice(evData.expectedValue)}${evSuffix}</div>`;
-        if (keyPrice > 0) {
-            const keyLabel = keyName ? `Key Cost (${keyName})` : 'Key Cost';
+        const keyLabel = keyName ? `Key Cost (${keyName})` : 'Key Cost';
+        if (keyPrice === null) {
+            // The chest takes a key but neither the market nor the recipe can price it, so no net is shown
+            html += `<div style="color: ${config.COLOR_TEXT_SECONDARY};">- ${keyLabel}: no price, net value not shown</div>`;
+        } else if (keyPrice > 0) {
             html += `<div style="color: ${config.COLOR_TOOLTIP_LOSS};">- ${keyLabel}: ${formatTooltipPrice(keyPrice)}</div>`;
-            html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Net Value: ${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
+            html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Net Value: ${evPrefix}${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
         }
 
         html += '</div>'; // Close summary section
@@ -1878,9 +1884,9 @@ class TooltipPrices {
 
             // Show total
             html += '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin: 4px 0;"></div>';
-            html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Total from ${evData.drops.length} drops: ${formatTooltipPrice(evData.expectedValue)}</div>`;
+            html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Total from ${evData.drops.length} drops: ${evPrefix}${formatTooltipPrice(evData.expectedValue)}</div>`;
             if (keyPrice > 0) {
-                html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Net after key: ${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
+                html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Net after key: ${evPrefix}${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
             }
         }
 

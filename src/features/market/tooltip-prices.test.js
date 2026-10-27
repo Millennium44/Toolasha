@@ -2227,3 +2227,42 @@ describe('injectPriceDisplay estimated sides', () => {
         expect(line.title).toBe('');
     });
 });
+
+describe('injectExpectedValueDisplay key deduction', () => {
+    const drop = { itemName: 'Coin', dropRate: 1, avgCount: 1, expectedValue: 1000, hasPriceData: true };
+    const evOf = (extra = {}) => ({ expectedValue: 1000, isPartial: false, missingCount: 0, drops: [drop], ...extra });
+    const text = (ev, keyPrice) => {
+        const el = itemTooltip('Chimerical Chest');
+        tooltipPrices.injectExpectedValueDisplay(el, ev, false, keyPrice, 'Chimerical Chest Key');
+        return el.querySelector('.market-ev-injected').textContent;
+    };
+
+    test('a priced key is taken off and a complete figure carries no bound mark', () => {
+        const out = text(evOf(), 300);
+
+        expect(out).toContain('Net Value: 700');
+        expect(out).toContain('Net after key: 700');
+        expect(out).not.toContain('≥');
+    });
+
+    test('a partial EV makes every net figure a floor too', () => {
+        const out = text(evOf({ isPartial: true, missingCount: 1 }), 300);
+
+        expect(out).toContain('Net Value: ≥ 700');
+        expect(out).toContain('Total from 1 drops: ≥ 1');
+        expect(out).toContain('Net after key: ≥ 700');
+    });
+
+    test('a key nobody can price says so instead of silently dropping the deduction', () => {
+        const out = text(evOf(), null);
+
+        expect(out).toContain('Key Cost (Chimerical Chest Key): no price, net value not shown');
+        expect(out).not.toContain('Net Value');
+    });
+
+    test('a chest with no key (0) shows no key line', () => {
+        const out = text(evOf(), 0);
+
+        expect(out).not.toContain('Key Cost');
+    });
+});
