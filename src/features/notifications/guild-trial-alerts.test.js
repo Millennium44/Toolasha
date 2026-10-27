@@ -247,6 +247,37 @@ describe('the guild chat line', () => {
         expect(game.sent).toEqual([]);
     });
 
+    test('a player typing the words is not the game saying so', () => {
+        const text = 'The guild trials have begun!';
+        game.wsHandlers.chat_message_received({
+            message: { m: text, sName: 'Joker', chan: '/chat_channel_types/general' },
+        });
+        game.wsHandlers.chat_message_received({ message: { m: text, sName: 'Joker', isSystemMessage: false } });
+        expect(game.sent).toEqual([]);
+
+        game.wsHandlers.chat_message_received({ message: { m: text, isSystemMessage: true } });
+        expect(game.sent).toHaveLength(1);
+    });
+
+    test('history the client replays on load is not a start', () => {
+        const hourAgo = new Date(Date.now() - 3600_000).toISOString();
+        game.wsHandlers.chat_message_received({ message: { m: 'The guild trials have begun!', t: hourAgo } });
+        expect(game.sent).toEqual([]);
+    });
+
+    test('the same line replayed after a reconnect is not announced again', () => {
+        const line = { m: 'The guild trials have begun!', isSystemMessage: true, t: new Date().toISOString() };
+        game.wsHandlers.chat_message_received({ message: line });
+        game.wsHandlers.chat_message_received({ message: { ...line } });
+        expect(game.sent).toHaveLength(1);
+
+        // A later cycle's line is a new start
+        game.wsHandlers.chat_message_received({
+            message: { ...line, t: new Date(Date.now() + 7 * 86400_000).toISOString() },
+        });
+        expect(game.sent).toHaveLength(2);
+    });
+
     test('switched off, the line passes quietly', () => {
         game.settings = { [START_SETTING]: false };
         guildTrialAlerts.noteChatLine('The guild trials have begun!');
