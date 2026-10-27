@@ -606,8 +606,21 @@ class TeaRecommendation {
             `;
             backLink.textContent = `← All ${skillName} actions`;
             backLink.addEventListener('click', () => {
+                // The drilldown offered the gold tea set (the floor search's superset); the all-actions
+                // view offers the goal's own set. A pin the target set cannot supply would fail every
+                // combination, so drop pins and bans on teas that view does not list
+                const offered = getRelevantTeas(
+                    skillName.toLowerCase(),
+                    this._xpFloorActive(null, alchemyContext) ? 'gold' : goal
+                );
+                const offeredTeas = new Set([...offered.skillTeas, ...offered.generalTeas]);
+                for (const tea of [...this.pinnedTeas]) if (!offeredTeas.has(tea)) this.pinnedTeas.delete(tea);
+                for (const tea of [...this.bannedTeas]) if (!offeredTeas.has(tea)) this.bannedTeas.delete(tea);
                 const allResult = this._searchWithConstraints(goal, skillName, locationTab, null, alchemyContext);
-                if (!allResult.error && allResult.optimal) {
+                // A remaining conflict (pins that cannot share the drink slots) still draws, with the
+                // "no valid combinations" notice and the controls to undo it, rather than leaving the
+                // user stuck in the drilldown
+                if (!allResult.error) {
                     this.buildPopupContent(popup, allResult, goal, skillName, locationTab, null, alchemyContext);
                 }
             });

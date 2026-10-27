@@ -9,6 +9,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
     optCalls: [],
     requirements: [],
+    floorOn: false,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -20,7 +21,7 @@ vi.mock('../../core/config.js', () => ({
         COLOR_LOSS: '#f00',
         COLOR_GOLD: '#fc0',
         COLOR_ACCENT: '#a0f',
-        getSetting: (key, fallback = false) => (key === 'teaRecommendation_xpFloor' ? false : fallback),
+        getSetting: (key, fallback = false) => (key === 'teaRecommendation_xpFloor' ? mocks.floorOn : fallback),
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -37,6 +38,15 @@ vi.mock('../alchemy/alchemy-profit.js', () => ({
 vi.mock('../../utils/tea-optimizer.js', () => ({
     findOptimalTeas: (...args) => {
         mocks.optCalls.push(args);
+        // Like the real search: a pin outside the enumerated tea set rules out every combination
+        const set = args[9]?.teaSetGoal || args[1];
+        const offered =
+            set === 'gold'
+                ? ['/items/wisdom_tea', '/items/efficiency_tea', '/items/gathering_tea']
+                : ['/items/wisdom_tea', '/items/efficiency_tea'];
+        if ([...(args[4]?.pinned || [])].some((t) => !offered.includes(t))) {
+            return { optimal: null, playerLevel: 50, actionsEvaluated: 1, excludedActions: [], allResults: [] };
+        }
         return {
             optimal: {
                 teas: [{ hrid: '/items/a', name: 'A' }],
@@ -52,7 +62,13 @@ vi.mock('../../utils/tea-optimizer.js', () => ({
         };
     },
     getTeaBuffDescription: () => '',
-    getRelevantTeas: () => ({ skillTeas: [], generalTeas: ['/items/wisdom_tea'] }),
+    getRelevantTeas: (_skill, goal) => ({
+        skillTeas: [],
+        generalTeas:
+            goal === 'gold'
+                ? ['/items/wisdom_tea', '/items/efficiency_tea', '/items/gathering_tea']
+                : ['/items/wisdom_tea', '/items/efficiency_tea'],
+    }),
     findXpFloorChoice: () => ({ status: 'none' }),
 }));
 
@@ -71,6 +87,7 @@ beforeEach(() => {
     vi.useFakeTimers();
     mocks.optCalls = [];
     mocks.requirements = [];
+    mocks.floorOn = false;
 });
 
 afterEach(() => {
@@ -142,6 +159,30 @@ describe('constraints survive a re-render', () => {
         const all = mocks.optCalls.at(-1);
         expect([...all[4].pinned]).toEqual(['/items/wisdom_tea']);
         expect([...all[4].banned]).toEqual(['/items/efficiency_tea']);
+    });
+});
+
+describe('back link after pinning a gold-set tea in a drilldown', () => {
+    test('drops the pin the all-actions tea set cannot supply and still shows a result', async () => {
+        mocks.floorOn = true;
+        const anchor = makeAnchor();
+        await teaRecommendation.showRecommendation('xp', anchor);
+        const popup = popups()[0];
+        const row = [...popup.querySelectorAll('div')].find(
+            (el) => el.textContent === 'Pincer Gloves5' && el.style.cursor === 'pointer'
+        );
+        row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        // Pin through the drilldown's own control (the gold set is offered while the floor is on)
+        teaRecommendation.pinnedTeas.add('/items/gathering_tea');
+        teaRecommendation._rerunWithConstraints(popup, 'xp', 'Foraging', null, 'Pincer Gloves');
+        expect(popup.textContent).toContain('Optimal XP/hr for Pincer Gloves');
+
+        const back = [...popup.querySelectorAll('span')].find((el) => el.textContent.startsWith('←'));
+        back.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        expect(popup.textContent).toContain('Optimal XP/hr for Foraging');
+        expect(popup.textContent).not.toContain('No valid combinations');
+        expect(teaRecommendation.pinnedTeas.size).toBe(0);
     });
 });
 
