@@ -317,7 +317,7 @@ class LabyrinthClearRate {
         // skip threshold in the automation panel itself — so recommendations are
         // only dropped when something they depend on actually changed (loadout
         // assignments, crates, or loadout contents). The combat cache never needs
-        // clearing here: its key already includes loadoutId/roomLevel/crates/hours.
+        // clearing here: its key already includes the loadout, room level, crates and precision (hours are only a ceiling, tracked through _tileSimCap).
         this.settingHandler = () => {
             this._invalidateIfInputsChanged();
             this.injectOverlays();
