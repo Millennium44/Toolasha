@@ -17,6 +17,7 @@ class TaskClaimCollector {
     constructor() {
         this.initialized = false;
         this.unregisterObserver = null;
+        this.unregisterReady = null;
         this.mutationObserver = null;
         this.proxyButton = null;
     }
@@ -30,6 +31,14 @@ class TaskClaimCollector {
             'TasksPanel_taskSlotCount',
             (headerElement) => this._onTaskPanelAppeared(headerElement)
         );
+
+        // The observer only reports elements that appear. Switching the setting on (or a re-initialize)
+        // with the Tasks panel already open would draw no button until the panel was closed and reopened,
+        // so the panel that is already there is picked up once the shared observer is attached.
+        this.unregisterReady = domObserver.onReady('TaskClaimCollectorCatchUp', () => {
+            const header = document.querySelector(GAME.TASK_PANEL);
+            if (header) this._onTaskPanelAppeared(header);
+        });
 
         this.initialized = true;
     }
@@ -123,6 +132,11 @@ class TaskClaimCollector {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             if (this.proxyButton) {

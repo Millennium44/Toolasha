@@ -10,7 +10,16 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const reactClick = vi.hoisted(() => ({ clickThroughReact: vi.fn(() => 'react') }));
 vi.mock('../../utils/react-click.js', () => reactClick);
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+// onReady runs its callback at once, as the real observer does when it is already attached
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => () => {},
+        onReady: (_name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
+}));
 
 const { default: collector } = await import('./task-claim-collector.js');
 
@@ -51,5 +60,22 @@ describe('the Claim Reward proxy', () => {
         board(['Reroll']);
         collector._claimNext();
         expect(reactClick.clickThroughReact).not.toHaveBeenCalled();
+    });
+
+    test('a Tasks panel that is already open gets its button when the feature starts', () => {
+        board(['Claim Reward']);
+        const header = document.createElement('div');
+        header.className = 'TasksPanel_taskSlotCount__abc';
+        document.body.appendChild(header);
+
+        collector.disable();
+        collector.initialize();
+
+        const proxy = document.getElementById('mwi-claim-proxy-btn');
+        expect(proxy).not.toBeNull();
+        expect(proxy.textContent).toBe('Claim Reward');
+
+        collector.disable();
+        expect(document.getElementById('mwi-claim-proxy-btn')).toBeNull();
     });
 });
