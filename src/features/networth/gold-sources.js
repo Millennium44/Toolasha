@@ -1017,9 +1017,11 @@ export function marketMovement(snapshots) {
  * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
  * @param {Function} [basisPrice] - Cost-basis pricer, defaults to `price`
  * @param {Function} [chestKeyOf] - `(chestHrid) => keyHrid|null`, the key a chest takes to open
+ * @param {Function} [marketPrice] - The raw market quote, with no holding fallback: `price` may fall back to net
+ *   worth's own valuation, which would make every chest look market-priced
  * @returns {{value: number, unpricedItems: number, unpricedChests: number, unpricedKeys: number}} The day
  */
-export function chestOpeningDayValue(row, price, basisPrice = price, chestKeyOf = () => null) {
+export function chestOpeningDayValue(row, price, basisPrice = price, chestKeyOf = () => null, marketPrice = price) {
     let value = 0;
     let unpricedItems = 0;
     let unpricedChests = 0;
@@ -1054,7 +1056,7 @@ export function chestOpeningDayValue(row, price, basisPrice = price, chestKeyOf 
         value += loot - chestPrice * count;
 
         const keyHrid = chestKeyOf(chestHrid);
-        if (keyHrid && Number.isFinite(price(chestHrid, 0))) {
+        if (keyHrid && Number.isFinite(marketPrice(chestHrid, 0))) {
             const keyPrice = basisPrice(keyHrid, 0);
             if (Number.isFinite(keyPrice)) value -= keyPrice * count;
             else unpricedKeys += count;
@@ -1818,7 +1820,7 @@ export function attributeGoldSources(input) {
     let unpricedChestKeys = 0;
     for (const row of chestDays || []) {
         if (!row?.d) continue;
-        const day = chestOpeningDayValue(row, dropPrice, basisPrice, chestKeyOf);
+        const day = chestOpeningDayValue(row, dropPrice, basisPrice, chestKeyOf, price);
         add(row.d, 'chests', day.value);
         if (!inWindow.has(row.d)) continue;
         unpricedChestItems += day.unpricedItems;

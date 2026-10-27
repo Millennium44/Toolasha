@@ -2183,3 +2183,45 @@ describe('chest openings spend their chest key', () => {
         expect(day.unpricedKeys).toBe(0);
     });
 });
+
+describe('chest key charge through the attribution', () => {
+    test('a chest priced only by the holding fallback is not charged its key again', () => {
+        const chest = '/items/pirate_chest';
+        const market = (hrid) => ({ '/items/cheese': 100, '/items/pirate_chest_key': 150 })[hrid] ?? null;
+        const result = attributeGoldSources({
+            from: D19,
+            to: D20 + 3600_000,
+            price: market,
+            // Net worth carries the chest at EV less its key; the cost basis is the gross EV
+            holdingPrice: (hrid) => (hrid === chest ? 300 : market(hrid)),
+            basisPrice: (hrid) => (hrid === chest ? 450 : market(hrid)),
+            chestKeyOf: (hrid) => (hrid === chest ? '/items/pirate_chest_key' : null),
+            series: [
+                { t: D18, total: 0 },
+                { t: D20, total: 100000 },
+            ],
+            chestDays: [{ d: localDayId(D19), openings: { [chest]: { count: 2, gained: { '/items/cheese': 40 } } } }],
+        });
+
+        expect(result.totals.sources.chests).toBe(4000 - 2 * 450);
+        expect(result.unpricedChestKeys).toBe(0);
+    });
+
+    test('a chest with a real market quote is charged its key', () => {
+        const chest = '/items/pirate_chest';
+        const market = (hrid) => ({ '/items/cheese': 100, [chest]: 450, '/items/pirate_chest_key': 150 })[hrid] ?? null;
+        const result = attributeGoldSources({
+            from: D19,
+            to: D20 + 3600_000,
+            price: market,
+            chestKeyOf: (hrid) => (hrid === chest ? '/items/pirate_chest_key' : null),
+            series: [
+                { t: D18, total: 0 },
+                { t: D20, total: 100000 },
+            ],
+            chestDays: [{ d: localDayId(D19), openings: { [chest]: { count: 2, gained: { '/items/cheese': 40 } } } }],
+        });
+
+        expect(result.totals.sources.chests).toBe(4000 - 2 * 450 - 2 * 150);
+    });
+});
