@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pricing: estimated crate values and partial material bills
+
+- Crate and chest values that rest on the game's value map rather than real listings now show "~" in the tooltip, and an enhancing material priced from a recipe with an unpriced input now counts as unpriced in the enhancing panel, planner, score and savings card, not as a complete bill.
+
 ### Queue time left past an untimed action
 
 - Queue time left keeps counting down as "≥ X" once an action with no known duration is running, rather than switching to "?" (it shows "?" only when that bound reaches zero), and a Combat Sim max-tier food or zones score change made during a sync pull is no longer reverted.
