@@ -3435,6 +3435,19 @@ describe('the budget plan when a pick pays for itself', () => {
         ui.destroy();
     });
 
+    test('a typed budget of 0 still plans the refunding pick; an empty box shows nothing', () => {
+        ui._allFightsBudget = 0;
+        ui._allFightsBudgetText = '0';
+        ui._renderAllFightsResults(analysis(), container);
+        expect(container.querySelector('#mwi-labsim-budget').textContent).toContain('Cursed Bow +7');
+
+        ui._allFightsBudgetText = '';
+        ui._renderAllFightsResults(analysis(), container);
+        const plan = container.querySelector('#mwi-labsim-budget');
+        expect(plan.textContent).not.toContain('Cursed Bow +7');
+        expect(plan.textContent).not.toContain('Nothing in the list');
+    });
+
     test('the shopping list says what the swap hands back, not a negative price', () => {
         // formatKMB of a negative reads as a price of −17.7M in a column of
         // prices; the table above the plan already says '+17.7M back'

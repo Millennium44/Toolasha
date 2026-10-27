@@ -12697,7 +12697,9 @@ class CombatSimUI {
             'padding:2px 4px; font-size:11px; font-family:inherit;';
 
         let body = '';
-        if (budget > 0) {
+        // A typed 0 is a budget: free and refunding picks cost nothing. An empty or unreadable box
+        // is not one (parseKMB answers NaN for it) and shows nothing.
+        if (budget > 0 || Number.isFinite(parseKMB(this._upgradeBudgetText))) {
             const { pins, excludes } = this._budgetConstraints();
             const plan = planUpgradeBudget(rows, budget, {
                 baseline,

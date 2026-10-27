@@ -7269,6 +7269,20 @@ describe('the budget box', () => {
         ui.destroy();
     });
 
+    test('a typed budget of 0 still plans a refunding pick; an empty box shows nothing', () => {
+        const refund = row('Ring', { slot: '/equipment_types/ring', cost: -40, profitGain: 50 });
+        ui._upgradeBudget = 0;
+
+        ui._upgradeBudgetText = '0';
+        expect(ui._renderUpgradeBudget([refund], BASELINE)).toContain('Ring');
+
+        ui._upgradeBudgetText = '';
+        const empty = ui._renderUpgradeBudget([refund], BASELINE);
+        expect(empty).not.toContain('Ring');
+        expect(empty).not.toContain('Nothing in the list');
+        ui._upgradeBudgetText = '';
+    });
+
     test('a plan made of unproven gains says so on its face', () => {
         const html = ui._renderUpgradeBudget([abilityRow('Berserk', { hrid: '/abilities/berserk' })], BASELINE);
 
