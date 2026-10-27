@@ -11,6 +11,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Loading a party keeps the what-if house rooms and shrines it was simmed with, and teammates keep their game mode through Edit and Load.
 - Profit vs solo is marked when an unpriced item is counted as 0, and two teammates never show under the same numbered name.
 
+### Audit round (2026-10-26, third): treasure and Gold Sources
+
+- Replacing the chest history from a file now survives a sync instead of being undone by another device, and appending keeps a reset in place.
+- Gold Sources' Day and Week views cover the right dates around daylight-saving changes.
+
 ### Lab upgrade analysis ignores coffee and tea
 
 - Lab upgrade analyses never rank a coffee or tea, since drink slots do not run in the Labyrinth (crates provide those buffs); the Lab simulation already left them out.

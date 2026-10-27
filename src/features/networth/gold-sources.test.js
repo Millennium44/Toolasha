@@ -1,4 +1,5 @@
-import { describe, test, expect } from 'vitest';
+/* global process */
+import { describe, test, expect, afterEach } from 'vitest';
 import {
     attributeGoldSources,
     alchemySessionNet,
@@ -17,6 +18,8 @@ import {
     marketMovement,
     taskCompletionValue,
     chestOpeningDayValue,
+    dayEnd,
+    windowStart,
 } from './gold-sources.js';
 import {
     createSession,
@@ -2089,5 +2092,42 @@ describe('the deeper cost-basis fallback', () => {
         const day = chestOpeningDayValue(row, price, basis);
         expect(day.unpricedChests).toBe(0);
         expect(day.value).toBe(900_000 - 3 * 220_000);
+    });
+});
+
+describe('window edges across a daylight-saving change', () => {
+    const originalTZ = process.env.TZ;
+    afterEach(() => {
+        if (originalTZ === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTZ;
+    });
+
+    test('the end of a 23-hour day is still that day', () => {
+        process.env.TZ = 'America/New_York';
+        // 2026-03-08 is the spring-forward day
+        expect(localDayId(dayEnd('2026-03-08'))).toBe('2026-03-08');
+        expect(localDayId(dayEnd('2026-03-08') + 1)).toBe('2026-03-09');
+    });
+
+    test('the end of a 25-hour day is its last millisecond', () => {
+        process.env.TZ = 'America/New_York';
+        // 2026-11-01 is the fall-back day
+        expect(localDayId(dayEnd('2026-11-01'))).toBe('2026-11-01');
+        expect(localDayId(dayEnd('2026-11-01') + 1)).toBe('2026-11-02');
+    });
+
+    test('a week ending just after midnight still covers seven local days', () => {
+        process.env.TZ = 'America/New_York';
+        // 00:30 on 2026-03-09, the morning after spring-forward
+        const to = new Date(2026, 2, 9, 0, 30).getTime();
+        expect(localDayId(windowStart(to, 7))).toBe('2026-03-03');
+        expect(daysBetween(windowStart(to, 7), to)).toHaveLength(7);
+    });
+
+    test('a week ending late on a day after fall-back still covers seven local days', () => {
+        process.env.TZ = 'America/New_York';
+        const to = new Date(2026, 10, 3, 23, 30).getTime();
+        expect(localDayId(windowStart(to, 7))).toBe('2026-10-28');
+        expect(daysBetween(windowStart(to, 7), to)).toHaveLength(7);
     });
 });
