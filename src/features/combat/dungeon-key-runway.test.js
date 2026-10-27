@@ -1,5 +1,38 @@
-import { describe, expect, test } from 'vitest';
-import { estimateKeyRunway, KEY_RUNWAY_WINDOW, KEY_RUNWAY_MIN_SAMPLES } from './dungeon-key-runway.js';
+import { describe, expect, test, vi } from 'vitest';
+
+const game = vi.hoisted(() => ({
+    table: [
+        { itemHrid: '/items/pirate_chest', dropRate: 1, minCount: 1, maxCount: 1 },
+        { itemHrid: '/items/pirate_refinement_chest', dropRate: 1, minCount: 1, maxCount: 1 },
+        { itemHrid: '/items/pirate_token', dropRate: 1, minCount: 50, maxCount: 50 },
+    ],
+}));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getInitClientData: () => ({
+            actionDetailMap: {
+                '/actions/combat/pirate_cove': { combatZoneInfo: { dungeonInfo: { rewardDropTable: game.table } } },
+            },
+        }),
+    },
+}));
+vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({ default: { getLatestData: () => null } }));
+// The sim pays five shares of the completion chest across the party
+vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    calculateExpectedDrops: (simResult) =>
+        new Map([
+            ['/items/pirate_chest', 5 / simResult.numberOfPlayers],
+            ['/items/pirate_refinement_chest', 1],
+            ['/items/pirate_token', 50],
+        ]),
+}));
+
+import {
+    estimateKeyRunway,
+    entryKeysPerClear,
+    KEY_RUNWAY_WINDOW,
+    KEY_RUNWAY_MIN_SAMPLES,
+} from './dungeon-key-runway.js';
 
 const MIN = 60 * 1000;
 
@@ -56,5 +89,24 @@ describe('estimateKeyRunway', () => {
         const copy = JSON.stringify(clears);
         estimateKeyRunway(clears, 2);
         expect(JSON.stringify(clears)).toBe(copy);
+    });
+});
+
+describe('entry keys per clear', () => {
+    const PIRATE = '/actions/combat/pirate_cove';
+
+    test('a solo player spends a key per chest share, a full party one, and a refinement chest none', () => {
+        expect(entryKeysPerClear(PIRATE, 1, 1)).toBe(5);
+        expect(entryKeysPerClear(PIRATE, 1, 5)).toBe(1);
+    });
+
+    test('an unloaded reward table is unknown, not one key', () => {
+        expect(entryKeysPerClear('/actions/combat/never_heard_of_it', 0, 1)).toBeNull();
+    });
+
+    test('the runway divides the held keys by the keys each clear spends', () => {
+        const clears = clearsWith([10 * MIN, 10 * MIN, 10 * MIN]);
+        expect(estimateKeyRunway(clears, 10, 5).seconds).toBe(10 * 60 * 2);
+        expect(estimateKeyRunway(clears, 10).seconds).toBe(10 * 60 * 10);
     });
 });
