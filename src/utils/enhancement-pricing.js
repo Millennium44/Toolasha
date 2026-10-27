@@ -265,6 +265,9 @@ export function getProductionCost(itemHrid, mode = 'ask') {
  * @returns {{cost: number, partial: boolean}} Coins per unit produced and whether an input was unpriced
  */
 export function getProductionCostDetailed(itemHrid, mode = 'ask') {
+    // Game data not loaded yet: nothing can be priced. Unpriced (cost 0, flagged partial), never a
+    // throw, and not cached, so the answer is recomputed once the data arrives
+    if (!dataManager.getInitClientData()) return { cost: 0, partial: true };
     const cacheKey = `${itemHrid}|${mode}`;
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
