@@ -133,7 +133,11 @@ function createSelfTracker(startTime) {
     return {
         actualConsumed: {}, // { itemHrid: count }
         defaultConsumed: {}, // { itemHrid: baselineCount }
-        inventoryAmount: {}, // { itemHrid: currentCount }
+        inventoryAmount: {}, // { itemHrid: currentCount }, as last seen (shown and run down)
+        // { itemHrid: count } a snapshot is reconciled against: the last snapshot's count,
+        // lowered by each use an event counted since. Kept apart from inventoryAmount,
+        // which a stale snapshot is allowed to overwrite for display and this is not.
+        reconcileBaseline: {},
         startTime, // When tracking started
         lastUpdate: null, // Last consumption event timestamp
         lastEventByItem: {}, // { itemHrid: timestamp } - for deduplication
@@ -620,6 +624,7 @@ class CombatStatsDataCollector {
                 tracker.actualConsumed = saved.actualConsumed || {};
                 tracker.defaultConsumed = saved.defaultConsumed || {};
                 tracker.inventoryAmount = saved.inventoryAmount || {};
+                tracker.reconcileBaseline = { ...(saved.reconcileBaseline || saved.inventoryAmount || {}) };
                 tracker.lastUpdate = saved.lastUpdate || null;
                 tracker.snapshotCreditedAt = {};
 
@@ -769,6 +774,7 @@ class CombatStatsDataCollector {
                 actualConsumed: cappedActual,
                 defaultConsumed: cappedDefault,
                 inventoryAmount: this.consumableTracker.inventoryAmount,
+                reconcileBaseline: this.consumableTracker.reconcileBaseline,
                 lastUpdate: this.consumableTracker.lastUpdate,
                 // What older builds read; they ignore the fields below
                 elapsedMs: cappedElapsed,
@@ -928,11 +934,20 @@ class CombatStatsDataCollector {
             // here. Without a count the baseline also drops by one, or the next snapshot would
             // credit the same use a second time.
             const self = this.consumableTracker;
-            const known = typeof self.inventoryAmount[itemHrid] === 'number';
+            if (!self.reconcileBaseline) self.reconcileBaseline = {};
+            const baseline = self.reconcileBaseline;
+            const known = typeof baseline[itemHrid] === 'number';
             const silentSinceSnapshot = (self.silenceMs || 0) !== (self.silenceAtSnapshot || 0);
-            if (typeof data.consumable.count === 'number' && !(silentSinceSnapshot && known)) {
-                self.inventoryAmount[itemHrid] = data.consumable.count;
+            const hasCount = typeof data.consumable.count === 'number';
+            if (hasCount && !(silentSinceSnapshot && known)) {
+                baseline[itemHrid] = data.consumable.count;
             } else if (known) {
+                baseline[itemHrid] = Math.max(0, baseline[itemHrid] - 1);
+            }
+            // The count shown is the event's own whenever it carries one
+            if (hasCount) {
+                self.inventoryAmount[itemHrid] = data.consumable.count;
+            } else if (typeof self.inventoryAmount[itemHrid] === 'number') {
                 self.inventoryAmount[itemHrid] = Math.max(0, self.inventoryAmount[itemHrid] - 1);
             }
 
@@ -1008,20 +1023,31 @@ class CombatStatsDataCollector {
                 : undefined;
             if (selfPlayer) {
                 const self = this.consumableTracker;
-                const result = this.reconcileTracker(
-                    self,
-                    self.inventoryAmount,
-                    snapshotConsumables(selfPlayer),
-                    fightingSeconds,
-                    now
-                );
+                if (!self.reconcileBaseline) self.reconcileBaseline = {};
+                const baseline = self.reconcileBaseline;
+                // Read before the reconcile below moves the snapshot mark
+                const silentSinceSnapshot = (self.silenceMs || 0) !== (self.silenceAtSnapshot || 0);
+                const consumables = snapshotConsumables(selfPlayer);
+                const result = this.reconcileTracker(self, baseline, consumables, fightingSeconds, now);
                 if (!self.snapshotCreditedAt) self.snapshotCreditedAt = {};
                 for (const entry of result.items) {
                     if (entry.action === 'credit') {
-                        self.snapshotCreditedAt[entry.itemHrid] = self.inventoryAmount[entry.itemHrid] - entry.missed;
+                        self.snapshotCreditedAt[entry.itemHrid] = baseline[entry.itemHrid] - entry.missed;
                     } else {
                         delete self.snapshotCreditedAt[entry.itemHrid];
                     }
+                }
+                // The next baseline is this snapshot's count, except where the count went UP
+                // while the page watched throughout: that is a snapshot taken before a use an
+                // event already counted, and adopting it would let the next snapshot count the
+                // same use again. A real restock is told apart by a silence before it (it is
+                // bought out of combat or while the page is away), and then the count is taken.
+                // One bought while watched is picked up by the item's next event, whose count
+                // is taken as the baseline whenever the page has watched since the snapshot.
+                for (const { itemHrid, count } of consumables) {
+                    const stale =
+                        !silentSinceSnapshot && typeof baseline[itemHrid] === 'number' && count > baseline[itemHrid];
+                    if (!stale) baseline[itemHrid] = count;
                 }
                 this.updateRunPosition(data, now);
             }

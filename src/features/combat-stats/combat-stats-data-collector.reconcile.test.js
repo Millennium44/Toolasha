@@ -689,3 +689,49 @@ describe('an event resuming after a silence, before the next snapshot', () => {
         expect(self().actualConsumed[GUMMY]).toBe(2);
     });
 });
+
+describe('a snapshot that lags behind a counted event', () => {
+    test('does not raise the baseline, so the next snapshot does not count the use again', async () => {
+        await collector.onNewBattle(battle({ self: [slot(GUMMY, 100)] }));
+        vi.advanceTimersByTime(5 * SECOND);
+        await collector.onConsumableUsed(used(GUMMY, 99));
+        vi.advanceTimersByTime(5 * SECOND);
+        // Taken before that use
+        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 100)] }));
+        vi.advanceTimersByTime(15 * SECOND);
+        // No use in between
+        await collector.onNewBattle(battle({ battleId: 3, self: [slot(GUMMY, 99)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(1);
+        expect(self().excludedMs).toBe(0);
+    });
+
+    test('a real restock after a silence still raises the baseline and credits nothing', async () => {
+        await collector.onNewBattle(battle({ self: [slot(GUMMY, 100)] }));
+        await collector.onConsumableUsed(used(GUMMY, 99));
+        vi.advanceTimersByTime(HOUR);
+        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 2000)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(1);
+        expect(self().reconcileBaseline[GUMMY]).toBe(2000);
+        expect(self().inventoryAmount[GUMMY]).toBe(2000);
+
+        // Uses after it are found against the restocked count
+        vi.advanceTimersByTime(15 * SECOND);
+        await collector.onNewBattle(battle({ battleId: 3, self: [slot(GUMMY, 1999)] }));
+        expect(self().actualConsumed[GUMMY]).toBe(2);
+    });
+
+    test('a restock bought while watched is picked up by the next event', async () => {
+        await collector.onNewBattle(battle({ self: [slot(GUMMY, 100)] }));
+        vi.advanceTimersByTime(15 * SECOND);
+        await collector.onNewBattle(battle({ battleId: 2, self: [slot(GUMMY, 500)] }));
+        vi.advanceTimersByTime(30 * SECOND);
+        await collector.onConsumableUsed(used(GUMMY, 499));
+        vi.advanceTimersByTime(15 * SECOND);
+        await collector.onNewBattle(battle({ battleId: 3, self: [slot(GUMMY, 499)] }));
+
+        expect(self().actualConsumed[GUMMY]).toBe(1);
+        expect(self().inventoryAmount[GUMMY]).toBe(499);
+    });
+});
