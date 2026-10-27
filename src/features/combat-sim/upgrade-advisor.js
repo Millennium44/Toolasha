@@ -2155,15 +2155,16 @@ export function generateDrinkCandidates(playerDTO, gameData) {
 }
 
 /**
- * How many of a loadout's drink slots are empty.
- * @param {Object} dto - Player DTO
- * @returns {number}
+ * Whether a candidate can change anything inside the Labyrinth.
+ *
+ * Drink slots do not run there: coffee and tea buffs come only from the Labyrinth crates, and the sim worker
+ * empties every drink slot for a Labyrinth fight. So a drink is never a Lab upgrade, however it reached the
+ * analysis — a mode, a name handed in, or a pooled row. The Combat Sim keeps its drink candidates.
+ * @param {Object} candidate - Upgrade candidate
+ * @returns {boolean}
  */
-function freeDrinkSlotCount(dto) {
-    const drinks = Array.isArray(dto?.drinks) ? dto.drinks : [];
-    let free = 0;
-    for (let index = 0; index < DRINK_SLOTS; index++) if (!drinks[index]?.hrid) free++;
-    return free;
+function labCanUse(candidate) {
+    return candidate?.type !== 'drink';
 }
 
 /**
@@ -2174,31 +2175,6 @@ function freeDrinkSlotCount(dto) {
  */
 function isDrinkAddition(candidate) {
     return candidate?.type === 'drink' && (candidate.fillsFreeDrinkSlot === true || !candidate.currentHrid);
-}
-
-/**
- * Whether a drink candidate means anything on one loadout's drink bar.
- *
- * A tier up replaces one particular drink, so it applies only where that drink is worn. An addition needs a
- * free slot, and a bar already running its buff family has no use for it: applied there, it used to land on
- * the generated index and overwrite a coffee that loadout wears.
- * @param {Object} candidate - Candidate of type 'drink'
- * @param {Object} dto - The loadout's player DTO
- * @param {Object|null} [gameData] - Game data, for reading which family a worn drink belongs to
- * @returns {boolean}
- */
-function drinkAppliesToDTO(candidate, dto, gameData = null) {
-    const worn = (Array.isArray(dto.drinks) ? dto.drinks : [])
-        .slice(0, DRINK_SLOTS)
-        .map((drink) => drink?.hrid || null);
-    if (!isDrinkAddition(candidate)) return worn.includes(candidate.currentHrid);
-    if (worn.length >= DRINK_SLOTS && worn.every(Boolean)) return false;
-    if (worn.includes(candidate.upgradeHrid)) return false;
-    if (gameData && candidate.buffFamily) {
-        const pool = buildBuffDrinkPools(gameData).get(candidate.buffFamily) || [];
-        if (worn.some((hrid) => hrid && pool.some((entry) => entry.hrid === hrid))) return false;
-    }
-    return true;
 }
 
 /**
@@ -6089,7 +6065,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // Resale is taxed as the analysed character pays it (see `saleTaxRateOf`), as the combat analysis does
     const labSaleTaxRate = saleTaxRateOf(playerDTO, isSelf);
     const candidatesWithCost = candidates
-        .filter((c) => c.type !== 'community_buff')
+        // No drink slot runs in the Labyrinth, so a drink from any source has nothing to measure here
+        .filter((c) => c.type !== 'community_buff' && labCanUse(c))
         .map((generated) => {
             const c = labSaleTaxRate == null ? generated : { ...generated, saleTaxRate: labSaleTaxRate };
             return { ...c, cost: calculateUpgradeCost(c, gameData, isSelf) };
@@ -6776,37 +6753,6 @@ export function planWithinBudget(
     const bestBySlot = new Map();
     let spent = 0;
 
-    /**
-     * Free drink slots each fight has, when the result carries them for every fight (an all-fights row); null
-     * otherwise, which keeps the single capacity the candidate was generated with.
-     */
-    const roomsOf = (result) => {
-        if (!isDrinkAddition(result.candidate)) return null;
-        const fights = result.fights;
-        if (!Array.isArray(fights) || !fights.length) return null;
-        return fights.every((fight) => Number.isFinite(fight?.freeDrinkSlots))
-            ? fights.map((fight) => fight.freeDrinkSlots)
-            : null;
-    };
-    /**
-     * Whether a drink addition is installed in fight `i`: every fight it was simulated in, whatever it saved there
-     * (a fight it was not simulated in takes no slot). Savings only score it; the combination check installs it
-     * in each room it applies to.
-     */
-    const addedIn = (result, i) => result.fights?.[i]?.applied !== false;
-    /** Additions already picked that take a slot in fight `i`, leaving out the picks `except` indexes */
-    const slotsUsedIn = (i, except = []) =>
-        picks.filter((pick, index) => !except.includes(index) && isDrinkAddition(pick.candidate) && addedIn(pick, i))
-            .length;
-    /**
-     * What a candidate saves in each fight once the fights that have no free drink slot left are zeroed: an
-     * addition pooled from a bar with three free slots is no use in a room whose bar the earlier picks have filled.
-     */
-    const effectiveSavings = (entry, displaced = []) => {
-        const rooms = roomsOf(entry.result);
-        if (!rooms) return entry.savings;
-        return entry.savings.map((saving, i) => (slotsUsedIn(i, displaced) < (rooms[i] ?? 0) ? saving : 0));
-    };
     // The savings each pick was credited with when it went in, so its group can be rebuilt from them
     const creditedOf = new Map();
 
@@ -6836,8 +6782,7 @@ export function planWithinBudget(
         return { next, share };
     };
 
-    const marginalOf = (entry, displaced = []) =>
-        foldStanding(bestBySlot.get(entry.key), effectiveSavings(entry, displaced), entry.pinned === true).share;
+    const marginalOf = (entry) => foldStanding(bestBySlot.get(entry.key), entry.savings, entry.pinned === true).share;
 
     /**
      * The earlier picks a candidate would replace: same group, and beaten by it
@@ -6868,9 +6813,6 @@ export function planWithinBudget(
     const noDrinkSlotFor = (entry) => {
         const candidate = entry.result.candidate;
         if (!isDrinkAddition(candidate)) return false;
-        const rooms = roomsOf(entry.result);
-        // Per-fight capacities: blocked only when every fight it would be installed in is already full
-        if (rooms) return !entry.savings.some((saving, i) => saving > 0 && slotsUsedIn(i) < (rooms[i] ?? 0));
         const room = Number.isFinite(candidate.freeDrinkSlots) ? candidate.freeDrinkSlots : 1;
         return picks.filter((pick) => isDrinkAddition(pick.candidate)).length >= room;
     };
@@ -6882,14 +6824,13 @@ export function planWithinBudget(
 
     /** Take `entry` into the basket: its keys, its cost, its share of the standing best per slot */
     const acceptPin = (entry) => {
-        const { next, share: marginal } = foldStanding(bestBySlot.get(entry.key), effectiveSavings(entry), true);
+        const { next, share: marginal } = foldStanding(bestBySlot.get(entry.key), entry.savings, true);
         for (const key of entry.keys) {
             taken.add(key);
             pinnedKeys.add(key);
         }
         spent += entry.result.cost;
-        // Credited like a free pick: a drink saves nothing in a room whose free slots earlier pins already took
-        const credited = effectiveSavings(entry);
+        const credited = entry.savings;
         const pick = {
             ...entry.result,
             pinned: true,
@@ -6944,29 +6885,11 @@ export function planWithinBudget(
                 ),
             Infinity
         );
-        // With per-fight capacities: a pinned drink with no fight it is installed in that still has room for it
-        // (after the pins before it) cannot be installed anywhere. Installed, not saving: a pin needs no gain
-        const perFight = pinnedDrinks.length > 0 && pinnedDrinks.every((entry) => roomsOf(entry.result));
-        const usedIn = [];
-        const unplaceable = perFight
-            ? pinnedDrinks.filter((entry) => {
-                  const rooms = roomsOf(entry.result);
-                  const fits = entry.savings.some(
-                      (_, i) => addedIn(entry.result, i) && (usedIn[i] || 0) < (rooms[i] ?? 0)
-                  );
-                  entry.savings.forEach((_, i) => {
-                      if (addedIn(entry.result, i)) usedIn[i] = (usedIn[i] || 0) + 1;
-                  });
-                  return !fits;
-              }).length
-            : 0;
-        if (perFight ? unplaceable > 0 : pinnedDrinks.length > drinkRoom) {
+        if (pinnedDrinks.length > drinkRoom) {
             blocked.push({
                 kind: 'drink-slots',
                 ids: pinnedDrinks.map((entry) => entry.id),
-                reason: perFight
-                    ? `${pinnedDrinks.length} pinned drinks, but no fight has a free drink slot left for ${unplaceable === 1 ? 'one of them' : `${unplaceable} of them`}.`
-                    : `${pinnedDrinks.length} pinned drinks but only ${drinkRoom} free drink slot${drinkRoom === 1 ? '' : 's'}.`,
+                reason: `${pinnedDrinks.length} pinned drinks but only ${drinkRoom} free drink slot${drinkRoom === 1 ? '' : 's'}.`,
             });
         }
         const pinCost = pinnedEntries.reduce((sum, entry) => sum + entry.result.cost, 0);
@@ -7005,7 +6928,7 @@ export function planWithinBudget(
             const displacedNow = displacedBy(entry);
             const cost = costWithReplacements(entry, displacedNow);
             if (spent + cost > budget) continue;
-            const marginal = marginalOf(entry, displacedNow);
+            const marginal = marginalOf(entry);
             if (marginal <= 0) continue;
             // Gain per coin is meaningless at or below zero cost — everything
             // free ties at infinity and a refund divided by a small gain is
@@ -7044,8 +6967,7 @@ export function planWithinBudget(
             skipped.push({ result: older, reason: 'a later pick covers every room it did' });
         }
         spent += entry.result.cost;
-        // What it saves in the fights that still had room for it (all of them, but for a drink addition)
-        const credited = effectiveSavings(entry);
+        const credited = entry.savings;
         const pick = {
             ...entry.result,
             marginalAttemptsSaved: marginal,
@@ -7690,6 +7612,8 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     const prePricedAgainstClaims = (candidate) =>
         Boolean(loadoutClaims) && candidate.checkedSwap === true && !candidate.noPurchase && candidate.cost != null;
     const candidates = [...candidatesByKey.values()]
+        // No drink slot runs in the Labyrinth: dropped before pricing, not only by `appliesTo` below
+        .filter(labCanUse)
         .map((pooled) => {
             const candidate = withLoadoutClaims(pooled, loadoutClaims);
             return {
@@ -7894,13 +7818,6 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             };
         });
         if (aborted) break;
-        // A pooled addition was generated from one loadout's bar; each room has its own number of free slots,
-        // which the plan needs to know how many additions a room can really take (see `planWithinBudget`)
-        if (isDrinkAddition(candidate)) {
-            fightResults.forEach((fightResult, i) => {
-                fightResult.freeDrinkSlots = freeDrinkSlotCount(fights[i].dto);
-            });
-        }
 
         const applied = fightResults.filter((f) => f.applied);
         const runClearChance = fightResults.reduce((product, f) => product * f.winRate, 1);
@@ -8618,8 +8535,8 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
         return true;
     }
 
-    // Drinks are on the loadout: each one has its own bar
-    if (candidate.type === 'drink') return drinkAppliesToDTO(candidate, dto, gameData);
+    // Only the Lab asks this, and a Labyrinth fight runs no drink slot (see `labCanUse`)
+    if (!labCanUse(candidate)) return false;
 
     if (candidate.checkedAbility) return checkedAbilityAppliesToDTO(candidate, dto, gameData);
 
