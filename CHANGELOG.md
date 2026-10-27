@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, seventh): alchemy
+
+- Alchemy History, Best Items, action protection and the item pins now work on translated clients, and a run split by a reload keeps its unpriced mark.
+- The alchemy gold summary counts only the selected enhancement level and the exact queued item.
+
 ### Audit round (2026-10-26, third): market
 
 - Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.
