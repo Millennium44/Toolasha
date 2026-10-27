@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, seventh): XP and character select
+
+- Character select no longer shows an online character as past its offline limit, and the leaderboard XP tracker no longer reads the previous board view's ranks after being turned off and on.
+
 ### Pricing: estimated crate values and partial material bills
 
 - Crate and chest values that rest on the game's value map rather than real listings now show "~" in the tooltip, and an enhancing material priced from a recipe with an unpriced input now counts as unpriced in the enhancing panel, planner, score and savings card, not as a complete bill.
