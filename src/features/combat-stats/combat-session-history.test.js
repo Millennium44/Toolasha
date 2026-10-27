@@ -183,6 +183,39 @@ describe('several runs as one', () => {
         expect(combined.players[0].experience).toEqual({ '/skills/attack': 1500, '/skills/defense': 200 });
     });
 
+    test('consumables add up across sessions like the loot they were spent on', () => {
+        // The first session's consumable lines used to ride along unchanged
+        // while loot summed over every session, so a combined view charged one
+        // session's food against all the income
+        const withFood = (start, consumed) => ({
+            ...session(start),
+            players: [
+                {
+                    name: 'Millennium44',
+                    loot: {},
+                    experience: {},
+                    consumables: [
+                        {
+                            itemHrid: '/items/super_attack_coffee',
+                            consumed,
+                            actualConsumed: consumed,
+                            elapsedSeconds: 600,
+                            consumedPerDay: 1,
+                        },
+                    ],
+                },
+            ],
+        });
+        const combined = combineSessions([withFood('2026-08-03T02:00:00Z', 30), withFood('2026-08-03T01:00:00Z', 20)]);
+
+        const [line] = combined.players[0].consumables;
+        expect(combined.players[0].consumables).toHaveLength(1);
+        expect(line.consumed).toBe(50);
+        expect(line.actualConsumed).toBe(50);
+        expect(line.elapsedSeconds).toBe(1200);
+        expect(line.consumedPerDay).toBe(Math.ceil((50 / 1200) * 86400));
+    });
+
     test('nothing to combine is null rather than an empty run', () => {
         expect(combineSessions([])).toBeNull();
         expect(combineSessions([{ players: [] }])).toBeNull();
