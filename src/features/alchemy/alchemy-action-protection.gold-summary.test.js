@@ -160,3 +160,82 @@ describe('the gold summary reads the action actually running, not the array-firs
         expect(summary.textContent).toBe('Gold for 5: 50 / 0');
     });
 });
+
+describe('the gold summary counts the selected enhancement level, not every copy of the item', () => {
+    beforeEach(() => {
+        alchemyActionProtection._inventoryTotals = null;
+    });
+
+    /**
+     * @param {string} itemName - The item's HRID tail
+     * @param {number} level - The enhancement badge to show; 0 shows none
+     * @returns {HTMLElement} The alchemy panel component
+     */
+    function buildEnhancedComponent(itemName, level) {
+        const component = buildAlchemyComponent(itemName);
+        if (level > 0) {
+            const badge = document.createElement('div');
+            badge.className = 'Item_enhancementLevel_x';
+            badge.textContent = `+${level}`;
+            component.querySelector('.Item_itemContainer').appendChild(badge);
+        }
+        return component;
+    }
+
+    test('one +5 piece sustains one action however many +0 copies are held', () => {
+        dm.itemDetails = { '/items/thing': { alchemyDetail: { bulkMultiplier: 1 } } };
+        dm.inventory = [
+            { itemLocationHrid: '/item_locations/inventory', itemHrid: '/items/thing', count: 30, enhancementLevel: 0 },
+            { itemLocationHrid: '/item_locations/inventory', itemHrid: '/items/thing', count: 1, enhancementLevel: 5 },
+        ];
+        dm.actions = [];
+
+        const component = buildEnhancedComponent('thing', 5);
+        alchemyActionProtection._doUpdateGoldSummary(component);
+
+        expect(component.querySelector('.mwi-alchemy-gold-summary').textContent).toBe('Gold for all: 10 / 0');
+    });
+
+    test('a +0 selection does not count the enhanced copies', () => {
+        dm.itemDetails = { '/items/thing': { alchemyDetail: { bulkMultiplier: 1 } } };
+        dm.inventory = [
+            { itemLocationHrid: '/item_locations/inventory', itemHrid: '/items/thing', count: 3, enhancementLevel: 0 },
+            { itemLocationHrid: '/item_locations/inventory', itemHrid: '/items/thing', count: 9, enhancementLevel: 5 },
+        ];
+        dm.actions = [];
+
+        const component = buildEnhancedComponent('thing', 0);
+        alchemyActionProtection._doUpdateGoldSummary(component);
+
+        expect(component.querySelector('.mwi-alchemy-gold-summary').textContent).toBe('Gold for all: 30 / 0');
+    });
+
+    test('a queued action on an item whose name contains this one belongs to the other item', () => {
+        dm.itemDetails = { '/items/thing': { alchemyDetail: { bulkMultiplier: 1 } } };
+        dm.inventory = [
+            {
+                itemLocationHrid: '/item_locations/inventory',
+                itemHrid: '/items/thing',
+                count: 1000,
+                enhancementLevel: 0,
+            },
+        ];
+        dm.actions = [
+            {
+                actionHrid: '/actions/alchemy/decompose',
+                primaryItemHash: 'char-1::/item_locations/inventory::/items/thing_boots::0',
+                isDone: false,
+                ordinal: 1,
+                hasMaxCount: true,
+                maxCount: 100,
+                currentCount: 0,
+            },
+        ];
+
+        const component = buildEnhancedComponent('thing', 0);
+        alchemyActionProtection._doUpdateGoldSummary(component);
+
+        // No action for this item is queued, so the summary covers what the stock can sustain
+        expect(component.querySelector('.mwi-alchemy-gold-summary').textContent).toBe('Gold for all: 10000 / 0');
+    });
+});
