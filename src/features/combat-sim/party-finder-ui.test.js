@@ -959,4 +959,29 @@ describe('teammates of the other game mode', () => {
         await tab._onCopySelf();
         expect(tab._roster.entries[0].gameMode).toBe('ironcow');
     });
+
+    test('a teammate taken to the editor and saved back as a new one keeps their mode', async () => {
+        // Saved with the mode on the entry only: a copy of your own build, whose DTO does not say
+        state.gameMode = 'ironcow';
+        seedRoster([['a', 'Ann', build(80), 'ironcow']]);
+        host._editor.players = [{ hrid: 'player1', name: 'Milkman', dto: build(90), self: true }];
+        await mountTab();
+        member('a')
+            .querySelectorAll('button')
+            .forEach((b) => b.textContent === 'Edit' && b.click());
+        const [[imported]] = host._editor.importPlayers.mock.calls[0];
+        expect(imported.gameMode).toBe('ironcow');
+
+        // Edited there, then saved as a second teammate; later searched for from a market character
+        host._editor.players.push({ hrid: 'player2', name: 'Ann', dto: { ...imported, magicLevel: 95 } });
+        tab._renderAddFromEditor();
+        el('editor-player').value = 'player2';
+        el('editor-target').value = '';
+        el('add-editor').click();
+        await flush();
+        expect(state.db.entries.map((e) => e.gameMode)).toEqual(['ironcow', 'ironcow']);
+        state.gameMode = 'standard';
+        tab._renderRoster();
+        expect(planText()).toContain("No teammates of this character's mode");
+    });
 });

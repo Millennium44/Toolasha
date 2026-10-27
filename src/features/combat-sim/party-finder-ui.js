@@ -851,7 +851,11 @@ export class PartyFinderTab {
             return;
         }
         if (!editor.isInitialized?.()) editor.resetToSelf?.();
-        editor.importPlayers([structuredClone(entry.dto)], [entry.name]);
+        const dto = structuredClone(entry.dto);
+        // A mode saved on the entry alone (a copy of your own build) rides with the build, so saving it back as a new
+        // teammate, or simming it as "you", still knows which characters it can party with
+        if (!dto.gameMode && entry.gameMode) dto.gameMode = entry.gameMode;
+        editor.importPlayers([dto], [entry.name]);
         this._rosterNote(`${entry.name} is in the editor. Change them there, then save back here with "replacing".`);
         this.host._switchTab?.('configure');
     }
