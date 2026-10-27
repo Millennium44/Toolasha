@@ -2112,6 +2112,96 @@ describe('settings change stamps, for the sync merge', () => {
         expect(stored.get('json:settings_changedAt_script_settingsMap_shared').sync_auto.at).toBe(NOW);
     });
 
+    describe('two tabs saving at once', () => {
+        /** A second tab: the same code over its own in-tab write queue, sharing the one stored database */
+        const otherTab = () => Object.assign(Object.create(settingsStorage), { _writeQueue: Promise.resolve() });
+
+        /** Web Locks with one holder at a time, like the browser's */
+        const installLocks = () => {
+            let tail = Promise.resolve();
+            vi.stubGlobal('navigator', {
+                locks: {
+                    request: vi.fn((_name, _options, callback) => {
+                        const run = tail.then(() => callback());
+                        tail = run.catch(() => {});
+                        return run;
+                    }),
+                },
+            });
+        };
+
+        /** Every read and write takes a macrotask, so two tabs' reads really do overlap */
+        const slowStorage = () => {
+            const wait = () => new Promise((resolve) => setTimeout(resolve, 5));
+            const { tryGet, getJSON, setMany } = storage;
+            const originals = [tryGet, getJSON, setMany].map((fn) => fn.getMockImplementation());
+            for (const fn of [tryGet, getJSON, setMany]) {
+                const real = fn.getMockImplementation();
+                fn.mockImplementation(async (...args) => {
+                    await wait();
+                    return real(...args);
+                });
+            }
+            return () => [tryGet, getJSON, setMany].forEach((fn, i) => fn.mockImplementation(originals[i]));
+        };
+
+        afterEach(() => {
+            vi.unstubAllGlobals();
+            vi.useFakeTimers({ toFake: ['Date'] });
+        });
+
+        test('both tabs’ settings and both change stamps survive', async () => {
+            vi.useRealTimers();
+            installLocks();
+            stored.set('json:script_settingsMap_alice', {
+                chatCommands: { isTrue: true },
+                whatsNew_showPopup: { isTrue: true },
+            });
+            const restore = slowStorage();
+            try {
+                await Promise.all([
+                    settingsStorage.saveSettings(
+                        { chatCommands: { isTrue: false }, whatsNew_showPopup: { isTrue: true } },
+                        new Set(['chatCommands'])
+                    ),
+                    otherTab().saveSettings(
+                        { chatCommands: { isTrue: true }, whatsNew_showPopup: { isTrue: false } },
+                        new Set(['whatsNew_showPopup'])
+                    ),
+                ]);
+            } finally {
+                restore();
+            }
+
+            const map = stored.get('json:script_settingsMap_alice');
+            expect(map.chatCommands.isTrue).toBe(false);
+            expect(map.whatsNew_showPopup.isTrue).toBe(false);
+            const stamps = stored.get(STAMPS);
+            expect(stamps.chatCommands.at).toBeGreaterThan(0);
+            expect(stamps.whatsNew_showPopup.at).toBeGreaterThan(0);
+        });
+
+        test('a lock that never grants does not lose the save', async () => {
+            vi.useRealTimers();
+            vi.stubGlobal('navigator', {
+                locks: {
+                    request: (_name, options) =>
+                        new Promise((_resolve, reject) => {
+                            options.signal.addEventListener('abort', () =>
+                                reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+                            );
+                        }),
+                },
+            });
+            stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
+            vi.useFakeTimers();
+            const saved = settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, new Set(['chatCommands']));
+            await vi.advanceTimersByTimeAsync(10001);
+            expect(await saved).toBe(true);
+            expect(stored.get('json:script_settingsMap_alice').chatCommands.isTrue).toBe(false);
+        });
+    });
+
     test('a save that did not land stamps nothing', async () => {
         outage.on = true;
         await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, new Set(['chatCommands']));

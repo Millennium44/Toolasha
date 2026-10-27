@@ -448,6 +448,12 @@ const SHARED_SETTINGS_KEY = 'script_settingsMap_shared';
  */
 const SETTING_STAMPS_PREFIX = 'settings_changedAt_';
 
+/** Web Lock a settings read-modify-write holds, across every tab of the origin */
+const SETTINGS_WRITE_LOCK = 'toolasha-settings-write';
+
+/** Longest a save waits for that lock before writing without it */
+const SETTINGS_WRITE_LOCK_WAIT_MS = 10000;
+
 /** The sync's own record of how far this device has got, read for `seq` above */
 const SYNC_SEQ_KEY = 'toolasha_sync_lastSyncedSeq';
 
@@ -1387,9 +1393,44 @@ class SettingsStorage {
      * @private
      */
     _serializeWrite(write) {
-        const run = this._writeQueue.then(() => write());
+        const run = this._writeQueue.then(() => this._withCrossTabLock(write));
         this._writeQueue = run.catch(() => {});
         return run;
+    }
+
+    /**
+     * Run a settings read-modify-write under an origin-wide lock, so two tabs saving at once cannot both read
+     * the same stored map and stamps and each write over the other's change.
+     *
+     * The in-tab queue above cannot see another tab, and IndexedDB only orders single transactions: the read
+     * (map and stamps) and the write that follows are separate ones. Without the lock the second tab's write
+     * puts back the first tab's setting, or drops its change stamp, which the sync merge then reads as "never
+     * changed". Best effort: no Web Locks, a page already closing (a lock request would queue behind the
+     * teardown) or a lock that never grants runs the write unlocked, as it always did.
+     * @param {function(): Promise<*>} write - The whole read-modify-write
+     * @returns {Promise<*>} What the write resolves to
+     * @private
+     */
+    async _withCrossTabLock(write) {
+        const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
+        if (!locks || typeof locks.request !== 'function' || storage._closingForTeardown) return write();
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), SETTINGS_WRITE_LOCK_WAIT_MS) : null;
+        let granted = false;
+        try {
+            return await locks.request(SETTINGS_WRITE_LOCK, controller ? { signal: controller.signal } : {}, () => {
+                granted = true;
+                if (timer) clearTimeout(timer);
+                return write();
+            });
+        } catch (error) {
+            // A write that ran and threw is the caller's to see; only a request that never granted retries
+            if (granted || error?.name !== 'AbortError') throw error;
+            // Another tab is stuck holding it: go ahead unlocked rather than lose the save
+            return write();
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
     }
 
     /**
