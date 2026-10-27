@@ -975,6 +975,26 @@ describe('teammates of the other game mode', () => {
         expect(tab._roster.entries[0].gameMode).toBe('ironcow');
     });
 
+    test('a party loaded into the editor carries each teammate mode with their build', async () => {
+        state.gameMode = 'ironcow';
+        seedRoster([
+            ['a', 'Ann', build(80), 'ironcow'],
+            ['b', 'Bob', { ...build(81), gameMode: 'legacy_ironcow' }, 'ironcow'],
+        ]);
+        await mountTab();
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        await finishPass((_z, index) => sim(1000 + index, 100));
+        const both = tab.sortedRows().find((r) => r.comp.members.length === 2);
+        tab.root.querySelector(`[data-pf-load="${both.id}"]`).click();
+        const [party] = host._editor.loadParty.mock.calls[0];
+        // Ann's mode was on her entry alone; Bob's build already said his own
+        expect(party.slice(1).map((p) => p.gameMode)).toEqual(['ironcow', 'legacy_ironcow']);
+        // You are the live character, whose mode the live sync knows; nothing is stamped on you
+        expect(party[0].gameMode).toBeUndefined();
+    });
+
     test('a teammate taken to the editor and saved back as a new one keeps their mode', async () => {
         // Saved with the mode on the entry only: a copy of your own build, whose DTO does not say
         state.gameMode = 'ironcow';

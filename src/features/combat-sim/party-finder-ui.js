@@ -1151,7 +1151,10 @@ export class PartyFinderTab {
                 skipped.push(`${names.get(entry.id)} (unknown ${unknown.slice(0, 2).join(', ')})`);
                 continue;
             }
-            roster.push({ ...entry, name: names.get(entry.id) });
+            // A mode saved on the entry alone rides with the build, so a party loaded into the editor (and saved
+            // back from there) still knows who each teammate can party with
+            const dto = !entry.dto?.gameMode && entry.gameMode ? { ...entry.dto, gameMode: entry.gameMode } : entry.dto;
+            roster.push({ ...entry, name: names.get(entry.id), dto });
         }
         return { roster, skipped };
     }
