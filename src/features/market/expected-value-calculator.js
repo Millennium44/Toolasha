@@ -961,6 +961,7 @@ class ExpectedValueCalculator {
 
         this.containerCache.clear();
         this.containerMissingCounts.clear();
+        this.containerEstimatedCounts.clear();
         this.isInitialized = false;
 
         // The pool recreates itself on the next batch; idle workers should not

@@ -1244,3 +1244,17 @@ describe('calculateContainerValueAtTaxRate', () => {
         );
     });
 });
+
+describe('cleanup', () => {
+    test('cleanup empties every per-container count, the estimated one included', () => {
+        expectedValueCalculator.containerCache.set(CHEST_HRID, 5);
+        expectedValueCalculator.containerMissingCounts.set(CHEST_HRID, 1);
+        expectedValueCalculator.containerEstimatedCounts.set(CHEST_HRID, 2);
+
+        expectedValueCalculator.cleanup();
+
+        expect(expectedValueCalculator.containerCache.size).toBe(0);
+        expect(expectedValueCalculator.containerMissingCounts.size).toBe(0);
+        expect(expectedValueCalculator.containerEstimatedCounts.size).toBe(0);
+    });
+});
