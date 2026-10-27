@@ -7411,6 +7411,76 @@ describe('the skilling escalation walk only climbs items the clear-rate model ca
     });
 });
 
+describe('the skilling analysis prices another player at their own sale tax', () => {
+    const NECK = '/equipment_types/neck';
+
+    beforeEach(() => {
+        clearRate.impl = {
+            getSkillingMetricsFromOverrides: (skillId) => ({ skillId }),
+            computeSkillingClearWithParams: () => ({ clearChance: 0.5, xpPerRoom: 1000 }),
+            computeEnhancingClearWithParams: () => ({ clearChance: 0.5, xpPerRoom: 1000 }),
+        };
+        // Every piece sells and buys for the same 1,000,000, so the trade-in is the only thing tax touches
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue(null);
+        buildGameDataPayload.mockReturnValue({
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/necklace_of_speed': {
+                    name: 'Necklace Of Speed',
+                    itemLevel: 60,
+                    equipmentDetail: { type: NECK, noncombatStats: { skillingSpeed: 0.05 } },
+                },
+                '/items/philosophers_necklace': {
+                    name: "Philosopher's Necklace",
+                    itemLevel: 90,
+                    equipmentDetail: {
+                        type: NECK,
+                        combatStats: { stabDamage: 0.05 },
+                        noncombatStats: { skillingExperience: 0.05 },
+                    },
+                },
+            },
+        });
+    });
+
+    const costOfPhilo = async (editorDTO, extra = {}) => {
+        const { results } = await runSkillingUpgradeAnalysis({
+            editorDTO: {
+                equipment: { [NECK]: { hrid: '/items/necklace_of_speed', enhancementLevel: 0 } },
+                houseRooms: {},
+                tokenUpgrades: {},
+                communityBuffLevels: {},
+                ...editorDTO,
+            },
+            roomLevel: 100,
+            crateHrids: [],
+            ...extra,
+        });
+        const philo = results.find((r) => r.candidate.upgradeHrid === '/items/philosophers_necklace');
+        expect(philo).toBeDefined();
+        return philo;
+    };
+
+    test('an imported Iron Cow trades the worn piece in untaxed; the same DTO as the live character does not', async () => {
+        const imported = await costOfPhilo({ gameMode: '/game_mode/ironcow' }, { isSelf: false });
+        const self = await costOfPhilo({ gameMode: '/game_mode/ironcow' }, { isSelf: true });
+        const omitted = await costOfPhilo({ gameMode: '/game_mode/ironcow' });
+        // Selling the worn necklace brings in all of its price when nothing is taxed
+        expect(imported.costDetail.credit).toBe(1_000_000);
+        expect(imported.candidate.saleTaxRate).toBe(0);
+        expect(self.costDetail.credit).toBeLessThan(1_000_000);
+        expect(self.candidate).not.toHaveProperty('saleTaxRate');
+        // Omitting isSelf is the live character, as before
+        expect(omitted.costDetail.credit).toBe(self.costDetail.credit);
+    });
+
+    test('an imported market player is taxed at the market rate, the same as the combat analysis', async () => {
+        const imported = await costOfPhilo({}, { isSelf: false });
+        expect(imported.candidate.saleTaxRate).toBe(MARKET_TAX);
+    });
+});
+
 describe('runLabyrinthUpgradeAnalysis ranked by room levels', () => {
     /**
      * A labyrinth analysis over a handful of named candidates, with every

@@ -15,6 +15,7 @@
 
 import config from '../../core/config.js';
 import { calculateSimRevenue } from './combat-sim-adapter.js';
+import { saleTaxRateOf } from './upgrade-advisor.js';
 import { runSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { getGameData, setGameData } from './engine/game-data.js';
 import Monster from './engine/monster.js';
@@ -115,6 +116,24 @@ export function monsterMaxHpReader(gameData) {
 }
 
 /**
+ * Each simulated player's sale tax for the trigger objective's profit figure: the live character's own (null) for
+ * them, the player's own for anyone else, an imported profile or a teammate of the other game mode (an Iron Cow
+ * pays none). Without a `selfHrid` (undefined) there is nothing to tell them apart by, and nobody gets a rate:
+ * every player is priced at the live character's tax, as before.
+ * @param {Array<Object>} playerDTOs - Every player in the sim
+ * @param {string|null|undefined} selfHrid - The live character's hrid; null when none of them is
+ * @returns {Object<string, number|null>|undefined} hrid → rate or null (the live tax); undefined for no self marker
+ */
+export function triggerSaleTaxRates(playerDTOs, selfHrid) {
+    if (selfHrid === undefined) return undefined;
+    const rates = {};
+    for (const dto of playerDTOs || []) {
+        rates[dto.hrid] = saleTaxRateOf(dto, Boolean(selfHrid) && dto.hrid === selfHrid);
+    }
+    return rates;
+}
+
+/**
  * Reduce one sim result to the figures the objective reads, per player.
  * @param {Object} simResult - Merged SimResult
  * @param {Object} gameData - Game data payload
@@ -122,12 +141,15 @@ export function monsterMaxHpReader(gameData) {
  * @param {number} fallbackHours - Hours asked for, when the result carries no clock
  * @param {Object} [options]
  * @param {Map} [options.priceCache] - The run's held prices (see `calculateSimRevenue`)
+ * @param {Object<string, number|null>} [options.saleTaxRates] - hrid → the sale tax that player's drops are
+ *   taxed at when they are not the live character (see {@link triggerSaleTaxRates}); a missing hrid is priced
+ *   at the live character's tax
  * @returns {{perPlayer: Object, encounters: number, pools: Object}} perPlayer: hrid →
  *   `{ xp, profit, revenue, cost, unpriced, profitFailed, deaths, dps }`, rates per hour (dps per
  *   second); `unpriced` names the drops, consumables and keys nothing priced, `profitFailed` a
  *   valuation that threw
  */
-export function sampleFromResult(simResult, gameData, hrids, fallbackHours, { priceCache } = {}) {
+export function sampleFromResult(simResult, gameData, hrids, fallbackHours, { priceCache, saleTaxRates } = {}) {
     const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || fallbackHours;
     const perPlayer = {};
     const pools = {};
@@ -140,7 +162,11 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours, { pr
         // A valuation that threw is unknown, not zero: the search leaves profit out of any comparison it is in
         let profitFailed = false;
         try {
-            const value = calculateSimRevenue(simResult, gameData, hrid, simHours, { priceCache });
+            const saleTaxRate = saleTaxRates?.[hrid];
+            const value = calculateSimRevenue(simResult, gameData, hrid, simHours, {
+                priceCache,
+                ...(Number.isFinite(saleTaxRate) ? { saleTaxRate } : {}),
+            });
             profit = value?.netPerHour || 0;
             // Gross loot value and spend set the scale a profit change is judged against (profitScale)
             revenue = value?.revenuePerHour || 0;
@@ -264,6 +290,8 @@ export function estimateConditionRun({
  * @param {Object} params.gameData - Game data payload
  * @param {Array<Object>} params.playerDTOs - Every player in the sim
  * @param {number} params.playerIndex - The selected player
+ * @param {string|null} [params.selfHrid] - The live character's hrid among `playerDTOs` (null when none is: an
+ *   imported profile). The others' profit is taxed as they pay it; omitted, everyone is taxed at the live rate
  * @param {string} params.zoneHrid - Zone
  * @param {number} params.difficultyTier - Tier
  * @param {Object} params.communityBuffs - Community buffs
@@ -289,6 +317,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         gameData,
         playerDTOs,
         playerIndex,
+        selfHrid,
         zoneHrid,
         difficultyTier,
         communityBuffs,
@@ -323,6 +352,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     }
 
     const allHrids = playerDTOs.map((d) => d.hrid);
+    const saleTaxRates = triggerSaleTaxRates(playerDTOs, selfHrid);
     const scopeHrids = wholeParty ? allHrids : [playerDTOs[playerIndex].hrid];
     const baseSeed = randomSeed();
     const limit = createLimiter(concurrency());
@@ -389,7 +419,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
                     );
                     simCount++;
                     onProgress?.({ current: Math.min(simCount, total), total });
-                    return sampleFromResult(simResult, gameData, allHrids, hours, { priceCache });
+                    return sampleFromResult(simResult, gameData, allHrids, hours, { priceCache, saleTaxRates });
                 } catch (error) {
                     // A stopped run cancels the sims in flight; that is not a failure
                     if (stopped()) return null;
@@ -461,6 +491,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
             communityBuffs,
             scopeHrids,
             allHrids,
+            saleTaxRates,
             tunables,
         },
     };

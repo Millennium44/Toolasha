@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const mocks = vi.hoisted(() => ({ prices: {}, respond: null }));
 
@@ -220,6 +221,54 @@ describe('prices that move during a run', () => {
         // Without the run's cache it is the live price, as everywhere else
         const live = sampleFromResult(simResult, params.gameData, ['player1'], 1);
         expect(live.perPlayer.player1.profit).toBeGreaterThan(first.perPlayer.player1.profit);
+    });
+});
+
+describe('the sale tax of a player other than the live character', () => {
+    // 100 cheese an hour at 100 each, 10,000 gold/h gross; taxed at MARKET_TAX
+    const cheese = (gameMode) => {
+        mocks.prices['/items/cheese'] = { ask: 100 };
+        const params = scenario({
+            dropHrid: '/items/cheese',
+            dropCount: 1,
+            counters: () => ({ kills: 100, xp: 1000, dps: 100, food: 0 }),
+        });
+        if (gameMode) params.playerDTOs[0].gameMode = gameMode;
+        return params;
+    };
+
+    test('an imported Iron Cow profile is valued untaxed, whatever the live character pays', async () => {
+        const result = await runTriggerOptimization({ ...cheese('/game_mode/ironcow'), selfHrid: null });
+        expect(result.baseline.profit).toBeCloseTo(10000, 6);
+        expect(result.verifyContext.saleTaxRates).toEqual({ player1: 0 });
+    });
+
+    test('the live character keeps the live tax, as does a run with no self marker', async () => {
+        const self = await runTriggerOptimization({ ...cheese('/game_mode/ironcow'), selfHrid: 'player1' });
+        expect(self.baseline.profit).toBeCloseTo(10000 * (1 - MARKET_TAX), 6);
+        expect(self.verifyContext.saleTaxRates).toEqual({ player1: null });
+        const unmarked = await runTriggerOptimization(cheese());
+        expect(unmarked.baseline.profit).toBeCloseTo(10000 * (1 - MARKET_TAX), 6);
+        expect(unmarked.verifyContext.saleTaxRates).toBeUndefined();
+    });
+
+    test('a market-mode imported profile is taxed at the market rate', async () => {
+        const result = await runTriggerOptimization({ ...cheese(), selfHrid: null });
+        expect(result.baseline.profit).toBeCloseTo(10000 * (1 - MARKET_TAX), 6);
+    });
+
+    test('each hrid is taxed on its own: an Iron Cow teammate untaxed beside a taxed self', () => {
+        mocks.prices['/items/cheese'] = { ask: 100 };
+        const params = scenario({
+            dropHrid: '/items/cheese',
+            dropCount: 1,
+            counters: () => ({ kills: 100, xp: 1000, dps: 100, food: 0 }),
+        });
+        const simResult = mocks.respond({ ...params, hours: 1 });
+        const sample = sampleFromResult(simResult, params.gameData, ['player1'], 1, {
+            saleTaxRates: { player1: 0 },
+        });
+        expect(sample.perPlayer.player1.profit).toBeCloseTo(10000, 6);
     });
 });
 
