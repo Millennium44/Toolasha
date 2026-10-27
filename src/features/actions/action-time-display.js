@@ -2590,6 +2590,10 @@ class ActionTimeDisplay {
         this.displayElement = null;
         this.profitElement = null;
         this.runElement = null;
+        // The run row's last action is the departing character's; a recorder notification
+        // arriving before the first redraw for the new one would repaint it into the new row
+        this._lastRunAction = null;
+        this._lastRunActionDetails = null;
 
         // Re-initialize action panel display for new character
         if (this.barActive) this.waitForActionPanel();
