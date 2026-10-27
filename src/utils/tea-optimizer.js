@@ -2031,6 +2031,7 @@ export function calculateSkillPerformance(
     let totalGold = 0,
         goldCount = 0;
     let hasMissingPrices = false;
+    let blockedActionCount = 0;
 
     for (const action of actions) {
         // These are the character's actual current teas, not a hypothetical combo — but the
@@ -2043,7 +2044,10 @@ export function calculateSkillPerformance(
             teaSkillLevelBonus: buffs.skillLevels[normalizedSkill] || 0,
             actionLevelBonus: buffs.actionLevel,
         });
-        if (!canStart) continue;
+        if (!canStart) {
+            blockedActionCount++;
+            continue;
+        }
 
         const xp = calculateXpPerHour(action, buffs, playerLevel, otherEfficiency, calcContext);
         if (xp > 0) {
@@ -2073,6 +2077,10 @@ export function calculateSkillPerformance(
         // See actionHasUnpricedMaterials: true when goldPerHour counts an action whose score
         // depends on an item with no price data, treated as free rather than excluded.
         hasMissingPrices,
+        // Actions the drinks' Action Level buff stops from starting: they count as 0 in the XP
+        // average above and are left out of the gold one, so a caller can say why a figure is low
+        blockedActionCount,
+        actionsOffered: actions.length,
     };
 }
 

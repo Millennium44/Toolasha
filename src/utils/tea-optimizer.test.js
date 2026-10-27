@@ -1719,6 +1719,29 @@ describe('Artisan Tea can block the very action it is being scored on', () => {
         expect(result.goldPerHour).toBe(0);
     });
 
+    test('calculateSkillPerformance reports how many actions the current tea blocks, and averages XP over all', () => {
+        state.gameData.actionDetailMap['/actions/cheesesmithing/easy'] = {
+            type: '/action_types/cheesesmithing',
+            name: 'Easy',
+            baseTimeCost: 10e9,
+            levelRequirement: { level: 1 },
+            experienceGain: { value: 10, skillHrid: '/skills/cheesesmithing' },
+            outputItems: [{ itemHrid: '/items/verdant_output', count: 1 }],
+        };
+        state.gameData.actionDetailMap['/actions/cheesesmithing/verdant'].experienceGain = {
+            value: 10,
+            skillHrid: '/skills/cheesesmithing',
+        };
+        const free = calculateSkillPerformance('cheesesmithing', new Map(), [], 65);
+        const blocked = calculateSkillPerformance('cheesesmithing', new Map(), ['/items/artisan_tea'], 65);
+
+        expect(free.blockedActionCount).toBe(0);
+        expect(blocked.blockedActionCount).toBe(1);
+        expect(blocked.actionsOffered).toBe(2);
+        expect(blocked.xpPerHour).toBeGreaterThan(0);
+        expect(blocked.xpPerHour).toBeLessThan(free.xpPerHour);
+    });
+
     test('findOptimalTeas does not credit a combo with gold from an action it would block', () => {
         const result = findOptimalTeas(
             'cheesesmithing',
