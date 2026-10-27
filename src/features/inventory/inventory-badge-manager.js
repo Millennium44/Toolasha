@@ -14,6 +14,7 @@ import networthCache from '../networth/networth-cache.js';
 import { validateNetworthCache } from '../networth/networth-cache-validation.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { itemHridFromIcon } from '../../utils/item-icon.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
@@ -864,12 +865,7 @@ class InventoryBadgeManager {
      * @returns {string|null} Item HRID or null
      */
     getItemHridFromContainer(itemContainer, gameData) {
-        const useElement = itemContainer.querySelector('svg use');
-        const href = useElement?.getAttribute('href');
-        const match = href?.match(/#(.+)$/);
-        if (!match) return null;
-        const itemHrid = `/items/${match[1]}`;
-        return gameData?.itemDetailMap?.[itemHrid] ? itemHrid : null;
+        return itemHridFromIcon(itemContainer, gameData?.itemDetailMap || {});
     }
 
     /**

@@ -60,6 +60,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Twenty features (Bulk Sell, the listing price display, the pinned actions page and others) now start when you switch them on, without a reload.
 - Two tabs saving settings at the same moment no longer undo each other, and the guild credit valuation switch stays usable with net worth off.
 
+### Audit round (2026-10-26, sixth): inventory
+
+- The net-of-tax inventory setting stays usable with value badges off, since it still shapes totals and sort.
+- Inventory badges, totals and the watchlist dot recognise items on any client language.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.

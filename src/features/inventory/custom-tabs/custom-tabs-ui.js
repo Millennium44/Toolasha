@@ -1379,7 +1379,8 @@ export default class CustomTabsUI {
      * @returns {string}
      */
     _nativeInventoryTabKey(tab, index) {
-        const href = tab.querySelector('use')?.getAttribute('href') || '';
+        const use = tab.querySelector('use');
+        const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
         const icon = href.includes('#') ? href.slice(href.lastIndexOf('#') + 1) : '';
         return icon || `index:${index}`;
     }

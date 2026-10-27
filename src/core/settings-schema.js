@@ -2283,7 +2283,10 @@ export const settingsGroups = {
                 label: 'Show badge values net of market tax',
                 type: 'checkbox',
                 default: false,
-                requires: 'inv_valueBadges',
+                // No `requires`: the value badges are only one reader. The inventory category totals,
+                // the custom-tab section totals and the sort order read the same tax-adjusted values
+                // with badges set to None.
+                help: 'Takes the market sales tax off every value the inventory shows: the stack badges, the category and custom-tab totals, and the sort order. Applies even when value badges are set to None',
             },
             invSort_sortEquipment: {
                 id: 'invSort_sortEquipment',
