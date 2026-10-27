@@ -1026,6 +1026,77 @@ describe('a house room level reaches the character the simulation is handed', ()
         expect(storage.written['labSimUpgradeResults-fullkit_alt']).toBeUndefined();
     });
 
+    test('an analysis torn down mid-run leaves the guard of the run started since alone', async () => {
+        // A teardown bumps the run token and the rebuilt panel's next run takes the guard; the departing
+        // run's ending used to clear it unconditionally, letting a third press start a concurrent run
+        checkOnlyHouse();
+        sim.onCall = (n) => {
+            if (n === 1) {
+                ui._runStartToken++;
+                ui._upgradeRunning = true;
+            }
+        };
+        try {
+            await ui._onUpgradeAnalyze();
+            expect(ui._upgradeRunning).toBe(true);
+        } finally {
+            sim.onCall = null;
+            ui._upgradeRunning = false;
+        }
+    });
+
+    test('an analysis torn down mid-run for the same character neither draws nor remembers its result', async () => {
+        // The feature turned off and on (or the panel rebuilt) for the same character: the character check
+        // alone passed, so the aborted run's rows were saved over the remembered set
+        game.rememberUpgradeResults = true;
+        checkOnlyHouse();
+        sim.onCall = (n) => {
+            if (n === 1) ui._runStartToken++;
+        };
+        try {
+            await ui._onUpgradeAnalyze();
+        } finally {
+            sim.onCall = null;
+            game.rememberUpgradeResults = false;
+        }
+
+        expect(storage.written['labSimUpgradeResults-fullkit_me']).toBeUndefined();
+        expect(ui.panel.querySelector('#mwi-labsim-upgrade-results').querySelector('table')).toBeNull();
+    });
+
+    test('an all-fights analysis torn down mid-run draws nothing and leaves the newer run’s guard alone', async () => {
+        checkOnlyHouse();
+        const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        scope.value = 'all';
+        scope.dispatchEvent(new window.Event('change', { bubbles: true }));
+        sim.onCall = (n) => {
+            if (n === 1) {
+                ui._runStartToken++;
+                ui._upgradeRunning = true;
+            }
+        };
+        try {
+            await ui._onUpgradeAnalyze();
+            expect(ui._upgradeRunning).toBe(true);
+            expect(ui._allFightsResult ?? null).toBeNull();
+        } finally {
+            sim.onCall = null;
+            ui._upgradeRunning = false;
+        }
+    });
+
+    test('a press with nothing to run does not stop a remembered result from being drawn', async () => {
+        for (const b of ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')) {
+            b.checked = false;
+            b.dispatchEvent(new window.Event('change', { bubbles: true }));
+        }
+
+        await ui._onUpgradeAnalyze();
+
+        expect(ui._upgradeRunning).toBe(false);
+        expect(ui._upgradeRunStarted).toBe(false);
+    });
+
     test('an analysis that stays on one character still remembers its run', async () => {
         // The other half of the guard: it must refuse the switch and nothing else
         game.rememberUpgradeResults = true;

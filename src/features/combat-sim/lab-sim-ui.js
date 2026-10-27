@@ -4725,12 +4725,19 @@ class LabSimUI {
         // the first run's results.
         if (this._upgradeRunning || this._skillingRunning || this._runStarting || this.isRunning) return;
         this._upgradeRunning = true;
-        // A remembered result a sync pull brings is no longer drawn over this panel's own runs
-        this._upgradeRunStarted = true;
         const startToken = ++this._runStartToken;
 
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
+        // Whether this invocation is still the one the panel is running: a teardown bumps the token (a
+        // character switch, or the feature turned off and on for the same character), and after that the
+        // run's results, its status line and the `_upgradeRunning` guard belong to the panel built since
+        const isCurrent = () =>
+            startToken === this._runStartToken && Boolean(this.panel) && this._stillSameCharacter(ownerId);
+        // Released only by the run that holds it, so a stale run cannot unlock a newer run's guard
+        const release = () => {
+            if (startToken === this._runStartToken) this._upgradeRunning = false;
+        };
 
         const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
         const monsterHrid = this.panel.querySelector('#mwi-labsim-monster')?.value;
@@ -4775,6 +4782,9 @@ class LabSimUI {
             this._upgradeRunning = false;
             return;
         }
+        // A remembered result a sync pull brings is no longer drawn over this panel's own runs. Set once the
+        // run is really starting: a press that ran nothing must not stop a pull from repainting the table
+        this._upgradeRunStarted = true;
 
         let playerDTOs;
         let selfHrid = null;
@@ -4893,6 +4903,10 @@ class LabSimUI {
                 communityBuffs,
                 labyrinthCombatBuffs,
             });
+            if (!isCurrent()) {
+                release();
+                return;
+            }
             if (!roomLevel || this._upgradeAborted) {
                 if (!this._upgradeAborted) {
                     this._setStatus(
@@ -4903,7 +4917,7 @@ class LabSimUI {
                 progressEl.style.display = 'none';
                 runBtn.style.display = '';
                 stopBtn.style.display = 'none';
-                this._upgradeRunning = false;
+                release();
                 return;
             }
         }
@@ -4968,6 +4982,8 @@ class LabSimUI {
                         { abortSignal: () => this._upgradeAborted }
                     );
 
+                    // A run torn down mid-analysis draws nothing on the panel built since
+                    if (!isCurrent()) return;
                     this._registerVerifyLive('all', analysisResult, ownerId);
                     this._renderAllFightsResults(analysisResult, resultsEl);
                     // Marked, so a reload draws it with the all-fights renderer rather than the single-fight one
@@ -4992,7 +5008,7 @@ class LabSimUI {
                 }
                 await this._autoVerifyCloseCalls({ startToken, ownerId });
             } catch (error) {
-                if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
+                if (isCurrent() && error.message !== 'Cancelled' && error.message !== 'Aborted') {
                     console.error('[LabSimUI] All-fights analysis failed:', error);
                     this._setStatus('All-fights analysis failed: ' + error.message);
                 }
@@ -5000,7 +5016,7 @@ class LabSimUI {
                 progressEl.style.display = 'none';
                 runBtn.style.display = '';
                 stopBtn.style.display = 'none';
-                this._upgradeRunning = false;
+                release();
             }
             return;
         }
@@ -5080,6 +5096,9 @@ class LabSimUI {
                     { abortSignal: () => this._upgradeAborted }
                 );
 
+                // A run torn down mid-analysis draws and saves nothing: its result may be a stopped partial one,
+                // and the panel and remembered set now belong to whoever the panel was rebuilt for
+                if (!isCurrent()) return;
                 // A fresh run supersedes any restored set — drop the "from a previous
                 // run" note before drawing, and remember the new results (opt-in).
                 this._restoredUpgradeAt = null;
@@ -5132,7 +5151,7 @@ class LabSimUI {
             }
             await this._autoVerifyCloseCalls({ startToken, ownerId });
         } catch (error) {
-            if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
+            if (isCurrent() && error.message !== 'Cancelled' && error.message !== 'Aborted') {
                 console.error('[LabSimUI] Upgrade analysis failed:', error);
                 this._setStatus('Upgrade analysis failed: ' + error.message);
             }
@@ -5140,7 +5159,7 @@ class LabSimUI {
             progressEl.style.display = 'none';
             runBtn.style.display = '';
             stopBtn.style.display = 'none';
-            this._upgradeRunning = false;
+            release();
         }
     }
 
