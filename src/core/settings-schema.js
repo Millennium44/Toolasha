@@ -1959,6 +1959,14 @@ export const settingsGroups = {
                 ],
                 help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from \u2014 and, since you feed the pool you read, the one your opened order books are contributed back to. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\’s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above.',
             },
+            market_historyBaseValue: {
+                id: 'market_historyBaseValue',
+                label: "Price history: show the game's base value in the chart tooltip",
+                type: 'checkbox',
+                default: true,
+                help: "Adds a “Base value” line to the price history chart tooltip: the game's base market value for that day (the median of the day's readings on the longer ranges). Shown only when the history server sends it; older data shows nothing. Needs the price history panel.",
+                requires: 'market_pooledHistory',
+            },
             market_listingAgeFormat: {
                 id: 'market_listingAgeFormat',
                 label: 'Market: Listing age display format',
