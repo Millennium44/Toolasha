@@ -925,6 +925,43 @@ describe('a setting switched on mid-session', () => {
             await settle();
         });
 
+        test('a re-enable during a slow live-stop disable starts only after that disable has finished', async () => {
+            const fresh = await freshRegistry();
+            const order = [];
+            let finishDisable;
+            const initialize = vi.fn(() => {
+                order.push('initialize');
+            });
+            const disable = vi.fn(
+                () =>
+                    new Promise((resolve) => {
+                        order.push('disable:begin');
+                        finishDisable = () => {
+                            order.push('disable:end');
+                            resolve();
+                        };
+                    })
+            );
+            state.enabledFeatures = new Set(['slowStop']);
+            fresh.replaceFeatures([{ key: 'slowStop', name: 'SlowStop', initialize, disable, liveStop: true }]);
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+
+            changeSetting('slowStop', false);
+            await settle();
+            expect(order).toEqual(['initialize', 'disable:begin']);
+
+            // Switched straight back on while the disable is still tearing the old instance down
+            changeSetting('slowStop', true);
+            await settle();
+            expect(initialize).toHaveBeenCalledTimes(1);
+
+            finishDisable();
+            await settle();
+            await settle();
+            expect(order).toEqual(['initialize', 'disable:begin', 'disable:end', 'initialize']);
+        });
+
         test('a failing disable is reported through noteDisableFailure and does not stop the pass', async () => {
             vi.spyOn(console, 'error').mockImplementation(() => {});
             const fresh = await freshRegistry();
