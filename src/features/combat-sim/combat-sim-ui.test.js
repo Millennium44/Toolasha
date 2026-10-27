@@ -3946,6 +3946,39 @@ describe('the all-zones table', () => {
                 await ui._loadZonesScorePref();
                 expect(ui._allZonesScoreScale).toBe(ZONES_SCORE_LADDER);
             });
+
+            test('a scale picked while the stored one is being read is kept', async () => {
+                mocks.store.set('settings:combatSimAllZonesScoreScale', ZONES_SCORE_LADDER);
+                ui._allZonesScoreScale = ZONES_SCORE_LADDER;
+                const load = ui._loadZonesScorePref();
+                ui._allZonesScoreScale = SCORE_PERCENT;
+                await ui._persistZonesScorePref();
+                await load;
+
+                expect(ui._allZonesScoreScale).toBe(SCORE_PERCENT);
+                expect(mocks.store.get('settings:combatSimAllZonesScoreScale')).toBe(SCORE_PERCENT);
+            });
+
+            test('the max-tier food toggle flipped during a read is neither reverted nor unchecked', async () => {
+                mocks.store.set('settings:combatSimAllZonesMaxTierFood', false);
+                ui._maxTierFoodEnabled = false;
+                const load = ui._loadMaxTierFoodPref();
+                ui._maxTierFoodEnabled = true;
+                const input = ui.panel.querySelector('#mwi-csim-maxfood');
+                input.checked = true;
+                await ui._persistMaxTierFoodPref();
+                await load;
+
+                expect(ui._maxTierFoodEnabled).toBe(true);
+                expect(input.checked).toBe(true);
+            });
+
+            test('with no edit in flight a read still adopts the stored max-tier food value', async () => {
+                mocks.store.set('settings:combatSimAllZonesMaxTierFood', true);
+                await ui._loadMaxTierFoodPref();
+                expect(ui._maxTierFoodEnabled).toBe(true);
+                expect(ui.panel.querySelector('#mwi-csim-maxfood').checked).toBe(true);
+            });
         });
 
         test('an ordinary run carries no food note and exports under the plain name', async () => {

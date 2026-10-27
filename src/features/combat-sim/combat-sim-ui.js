@@ -4464,6 +4464,7 @@ class CombatSimUI {
 
     /** @private */
     async _persistZonesScorePref() {
+        this._zonesScoreEdits = (this._zonesScoreEdits || 0) + 1;
         try {
             await storage.set(ALL_ZONES_SCORE_SCALE_KEY, this._allZonesScoreScale, 'settings');
         } catch (error) {
@@ -4473,8 +4474,12 @@ class CombatSimUI {
 
     /** @private */
     async _loadZonesScorePref() {
+        // Bumped by every user change: a scale picked while this read was out is saved and on screen, and
+        // the read holds the older value
+        const editsBefore = this._zonesScoreEdits || 0;
         try {
             const saved = await storage.get(ALL_ZONES_SCORE_SCALE_KEY, 'settings', null);
+            if ((this._zonesScoreEdits || 0) !== editsBefore) return;
             // A key from a build that offered other scales is ignored, not trusted
             if (isZonesScoreScale(saved)) this._allZonesScoreScale = saved;
         } catch (error) {
@@ -4484,6 +4489,7 @@ class CombatSimUI {
 
     /** @private */
     async _persistMaxTierFoodPref() {
+        this._maxTierFoodEdits = (this._maxTierFoodEdits || 0) + 1;
         try {
             await storage.set(ALL_ZONES_MAX_FOOD_KEY, this._maxTierFoodEnabled, 'settings');
         } catch (error) {
@@ -4493,8 +4499,11 @@ class CombatSimUI {
 
     /** @private */
     async _loadMaxTierFoodPref() {
+        // Same guard as the Score scale: a toggle flipped while this read was out is not reverted by it
+        const editsBefore = this._maxTierFoodEdits || 0;
         try {
             const saved = await storage.get(ALL_ZONES_MAX_FOOD_KEY, 'settings', false);
+            if ((this._maxTierFoodEdits || 0) !== editsBefore) return;
             this._maxTierFoodEnabled = Boolean(saved);
             const input = this.panel?.querySelector('#mwi-csim-maxfood');
             if (input) input.checked = this._maxTierFoodEnabled;
