@@ -217,6 +217,19 @@ describe('market undercut alerts', () => {
             expect(game.notified[0].message).toContain('ask now 75');
         });
 
+        test('a fresh raw Mooket ask at the band edge is a rival, not your own listing read back', async () => {
+            bands.byKey['/items/cheese:0'] = { min: 40, max: 80 };
+            game.settings.market_pooledHistory = true;
+            game.listings = [listing({ id: 9, price: 100 })];
+            // The game snapshot is too old to count; the pooled sighting is minutes old
+            setPrice('/items/cheese', 0, 80, 50, 60 * 60 * 1000);
+            game.mooketRows['/items/cheese:0'] = [{ a: 80, b: 50, time: (NOW - 2 * 60 * 1000) / 1000 }];
+            await marketUndercutAlerts.refreshMooketObservations();
+            check();
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('ask now 80');
+        });
+
         test('a buy order below the band read back at the band bottom is not outbid', () => {
             bands.byKey['/items/cheese:0'] = { min: 40, max: 80 };
             game.listings = [listing({ id: 8, isSell: false, price: 10 })];

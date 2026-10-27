@@ -153,11 +153,18 @@ describe('the live table reads your own listings through the band', () => {
             listing({ id: 4, enhancementLevel: 3, isSell: false, price: 300 }),
         ];
         hoisted.observations = {
-            [`${CHEESE}:0:sell`]: { price: 80, ...recent },
-            [`${CHEESE}:3:sell`]: { price: 650, ...recent },
-            [`${CHEESE}:3:buy`]: { price: 400, ...recent },
+            [`${CHEESE}:0:sell`]: { price: 80, clamped: true, ...recent },
+            [`${CHEESE}:3:sell`]: { price: 650, clamped: true, ...recent },
+            [`${CHEESE}:3:buy`]: { price: 400, clamped: true, ...recent },
         };
         expect(currentBeatenListings().map((row) => row.id)).toEqual([3]);
+    });
+
+    it('a raw pooled sighting at the band edge is a rival, not your own listing read back', () => {
+        bands.byKey[`${CHEESE}:0`] = { min: 40, max: 80 };
+        hoisted.listings = [listing({ id: 1, price: 100 })];
+        hoisted.observations = { [`${CHEESE}:0:sell`]: { price: 80, clamped: false, timestamp: Date.now() - 1000 } };
+        expect(currentBeatenListings().map((row) => row.id)).toEqual([1]);
     });
 });
 

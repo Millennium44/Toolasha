@@ -250,7 +250,8 @@ class MarketUndercutAlerts {
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level
      * @param {boolean} isSell - Sell listing (best ask) rather than buy order (best bid)
-     * @returns {{price: number, timestamp: number}|null} The figure and when it was true
+     * @returns {{price: number, timestamp: number, clamped: boolean}|null} The figure, when it was true, and
+     *   whether it went through the band clamp (the game's figures do; a pooled Mooket sighting is raw)
      */
     sideObservation(itemHrid, enhancementLevel, isSell) {
         const candidates = [];
@@ -263,7 +264,7 @@ class MarketUndercutAlerts {
             const timestamp = usedPatch ? patch.timestamp : marketAPI.lastFetchTimestamp;
             const sidePrice = isSell ? price.ask : price.bid;
             if (Number.isFinite(timestamp) && Number.isFinite(sidePrice)) {
-                candidates.push({ price: sidePrice, timestamp });
+                candidates.push({ price: sidePrice, timestamp, clamped: true });
             }
         }
 
@@ -271,7 +272,7 @@ class MarketUndercutAlerts {
         if (mooket) {
             const sidePrice = isSell ? mooket.ask : mooket.bid;
             if (Number.isFinite(mooket.timestamp) && Number.isFinite(sidePrice)) {
-                candidates.push({ price: sidePrice, timestamp: mooket.timestamp });
+                candidates.push({ price: sidePrice, timestamp: mooket.timestamp, clamped: false });
             }
         }
 
@@ -335,7 +336,10 @@ class MarketUndercutAlerts {
 
         // The figure is your own order (another listing of yours, or this one read back at the band's edge):
         // nobody has undercut you, so it is a competitive reading, the way the overbid table settles it
-        if (bestPrice !== null && beatenByOwnListing(listing, active, bestPrice, bandClamp)) {
+        // Clamped matching only for a figure that went through the clamp: a raw sighting at the band's edge is a
+        // real rival's price, not your own listing read back
+        const clamp = observation?.clamped === true ? bandClamp : undefined;
+        if (bestPrice !== null && beatenByOwnListing(listing, active, bestPrice, clamp)) {
             state.armed = true;
             return;
         }

@@ -125,7 +125,8 @@ export function findBeatenListings(listings, observe, now, maxAgeMs) {
  * @param {number} now - Current time in ms
  * @param {number} maxAgeMs - How old a figure may be and still count
  * @param {(price: number, itemHrid: string, level: number) => number|null} [clamp] - The band clamp the
- *   figures went through, so a listing's raw price can be matched against them; identity when omitted
+ *   figures went through, so a listing's raw price can be matched against them; applied only to an
+ *   observation marked `clamped: true`, identity otherwise
  * @returns {{beaten: ReturnType<typeof findBeatenListings>, settled: Set<*>, activeIds: Set<*>,
  *   unknown: number}} `unknown` counts active listings with no usable figure
  */
@@ -163,7 +164,8 @@ export function classifyListings(listings, observe, now, maxAgeMs, clamp = (pric
 
         // The price in front of you is another listing of yours, or this one read back at the band's edge:
         // not a rival
-        if (beatenByOwnListing(listing, active, observation.price, clamp)) {
+        // The band clamp only applies to a figure that went through it; a raw pooled sighting matches exactly
+        if (beatenByOwnListing(listing, active, observation.price, observation.clamped === true ? clamp : undefined)) {
             settled.add(listing.id);
             continue;
         }
