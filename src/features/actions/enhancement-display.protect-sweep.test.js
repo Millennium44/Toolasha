@@ -22,7 +22,8 @@ vi.mock('../../utils/enhancement-input-pricing.js', async () => {
             if (hrid === '/items/coin') return answer(1);
             if (hrid?.startsWith('/items/trainee_')) return answer(250_000);
             const quoted = via(hrid);
-            return quoted.unpriced ? answer(state.craftPrices[hrid]) : quoted;
+            const priced = quoted.unpriced ? answer(state.craftPrices[hrid]) : quoted;
+            return state.partialMaterials.has(hrid) ? { ...priced, partial: true } : priced;
         },
         // A one-sided book fills the other side, as the real resolver's reconciled book does
         priceGuarded: (hrid) => {
@@ -45,6 +46,8 @@ const state = vi.hoisted(() => ({
     sellPrices: {},
     // Craft cost of materials with no market listing
     craftPrices: {},
+    // Materials whose craft cost skipped an unpriced input
+    partialMaterials: new Set(),
     // Bids for items whose ask is missing (a one-sided book)
     bids: {},
     // Copies claimed by other plans in the reservation ledger
@@ -277,6 +280,20 @@ describe('protect-from sweep in the enhancing panel', () => {
         expect(spreadCell(protectedRow).title).toContain('Approximate');
 
         expect(stats.textContent).toContain('exact on the "none" row');
+    });
+
+    test('a material priced by a partial craft bill is unpriced, not a cheap material', async () => {
+        state.partialMaterials = new Set(['/items/cheese']);
+        try {
+            const panel = buildPanel();
+            await displayEnhancementStats(panel, '/items/cheese_sword');
+            const table = panel.querySelector('#mwi-enhancement-table-scroll');
+            const rows = Array.from(table.querySelectorAll('tr')).slice(1);
+            expect(rows.length).toBeGreaterThan(0);
+            expect(rows.every((row) => row.lastElementChild.textContent === 'no price')).toBe(true);
+        } finally {
+            state.partialMaterials = new Set();
+        }
     });
 
     describe('a slot protection with no market quote', () => {

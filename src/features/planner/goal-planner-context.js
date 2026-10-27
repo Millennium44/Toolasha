@@ -796,7 +796,9 @@ function measureEnhancingRates() {
             let materialPerAttempt = 0;
             let materialUnpriced = false;
             for (const cost of details.enhancementCosts || []) {
-                const price = priceMaterial(cost.itemHrid).price || 0;
+                const priced = priceMaterial(cost.itemHrid);
+                // A craft cost that skipped an unpriced input is a partial bill: unpriced, not cheap
+                const price = priced.partial ? 0 : priced.price || 0;
                 if (!(price > 0) && cost.count > 0) materialUnpriced = true;
                 materialPerAttempt += (price || 0) * cost.count;
             }

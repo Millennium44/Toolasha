@@ -885,12 +885,14 @@ const SPREAD_EXACT_NOTE = 'Exact: no protection is used, so every attempt costs 
 /**
  * Unit price of one enhancing material, through the shared enhancement input rule: trainee charms
  * and coins first, then the profit resolver (custom price, Iron Cow, the book on the profit mode's
- * side, shop floor, craft cost). Never the vendor price; 0 is unpriced.
+ * side, shop floor, craft cost). Never the vendor price; 0 is unpriced (so is a partial craft cost).
  * @param {string} itemHrid - Material hrid
  * @returns {number} Coins per unit, 0 when nothing prices it
  */
 function materialUnitPrice(itemHrid) {
-    return priceMaterial(itemHrid).price || 0;
+    const priced = priceMaterial(itemHrid);
+    // A craft cost that skipped an unpriced input is a partial bill: unpriced here, not a cheap material
+    return priced.partial ? 0 : priced.price || 0;
 }
 
 /**

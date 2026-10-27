@@ -24,6 +24,9 @@ const game = vi.hoisted(() => ({
     levelExperienceTable: null,
 }));
 
+/** The enhancing run the mocked calculator hands back, and the material prices; null run = no run */
+const enh = vi.hoisted(() => ({ run: null, xp: 0, materials: {} }));
+
 const loadout = vi.hoisted(() => ({ drinks: null, equipment: null }));
 
 const rates = vi.hoisted(() => ({
@@ -96,9 +99,16 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getCheapestProtectionPrice: () => null,
     getEnhancementMaterialPrice: () => 0,
 }));
-vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateSuccessXP: () => 0, calculateFailureXP: () => 0 }));
+vi.mock('../enhancement/enhancement-xp.js', () => ({
+    calculateSuccessXP: () => enh.xp,
+    calculateFailureXP: () => enh.xp,
+}));
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({
+    priceMaterial: (hrid) => enh.materials[hrid] ?? { price: null, unpriced: true, estimated: false, partial: false },
+}));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({
     getTooltipEnhancementParams: () => ({ enhancingLevel: 1, houseLevel: 0 }),
+    enhancementParamsFor: () => ({ enhancingLevel: 1, houseLevel: 0 }),
     describeEnhancementSource: () => ({ kind: 'own', detail: '' }),
 }));
 vi.mock('../../utils/house-cost-calculator.js', () => ({
@@ -107,7 +117,7 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
     getItemName: () => '',
 }));
 vi.mock('../../utils/enhancement-calculator.js', () => ({
-    calculateEnhancement: () => null,
+    calculateEnhancement: () => enh.run,
     blessedMirrorChance: () => 0,
     mirrorLandingOdds: (usedMirror) => usedMirror.map(() => 1),
 }));
@@ -207,6 +217,9 @@ beforeEach(() => {
     rates.alchemy = [];
     rates.combat = { rates: [], best: null, status: { note: null } };
     rates.alchemyCalls = [];
+    enh.run = null;
+    enh.xp = 0;
+    enh.materials = {};
 });
 
 describe('gatheringSells', () => {
@@ -895,5 +908,44 @@ describe('training margins are held to what the market absorbs', () => {
         const context = await buildPlannerContext();
         // 150 milk (15k) sells; 50 cheese (20k) is half unsold
         expect(context.xpRates('/skills/milking')[0].goldPerHour).toBe(25_000);
+    });
+});
+
+describe('enhancing xp rates and the material bill', () => {
+    const SWORD = '/items/cheese_sword';
+    const CHEESE = '/items/cheese';
+    beforeEach(() => {
+        game.itemDetailMap = {
+            [SWORD]: { name: 'Cheese Sword', itemLevel: 10, enhancementCosts: [{ itemHrid: CHEESE, count: 2 }] },
+        };
+        game.inventory = [
+            { itemHrid: SWORD, itemLocationHrid: '/item_locations/inventory', enhancementLevel: 0, count: 1 },
+        ];
+        enh.run = {
+            visitCounts: [10, 10, 10, 10, 10],
+            successRates: [
+                { actualRate: 50 },
+                { actualRate: 50 },
+                { actualRate: 50 },
+                { actualRate: 50 },
+                { actualRate: 50 },
+            ],
+            totalTime: 100,
+            attempts: 50,
+            perActionTime: 2,
+        };
+        enh.xp = 10;
+    });
+
+    test('a fully priced material bill rates the item', async () => {
+        enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: false, partial: false };
+        const context = await buildPlannerContext();
+        expect(context.xpRates('/skills/enhancing')).toHaveLength(1);
+    });
+
+    test('a material priced by a partial craft bill leaves the candidate out, like an unpriced one', async () => {
+        enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: true, partial: true };
+        const context = await buildPlannerContext();
+        expect(context.xpRates('/skills/enhancing')).toEqual([]);
     });
 });

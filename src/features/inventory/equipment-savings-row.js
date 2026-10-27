@@ -1253,6 +1253,8 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
     // run unpriced (see the plan check below).
     const materials = perAttemptMaterialCost(details);
     if (!materials.hasCost) return null;
+    // A craft-priced material with an unpriced input is a partial bill: the same as a missing price
+    const unpricedMaterials = Boolean(materials.hasMissingPrices || materials.hasPartialPrices);
 
     // Without `includeSelf` this would offer a second copy of the piece as
     // protection. This card exists for untradable gear, where there is no second
@@ -1281,7 +1283,7 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
         params.guzzlingBonus || 1,
         params.blessedTeaBonus ?? '',
         materials.cost,
-        materials.hasMissingPrices ? 1 : 0,
+        unpricedMaterials ? 1 : 0,
         protection.itemHrid || '',
         protection.price,
     ].join('|');
@@ -1317,7 +1319,7 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
             startLevel,
             materialCostPerAttempt: materials.cost,
             protectionOptions: protection.price > 0 ? [{ itemHrid: protection.itemHrid, price: protection.price }] : [],
-            hasMissingPrices: materials.hasMissingPrices,
+            hasMissingPrices: unpricedMaterials,
             // The namespace's calculator rather than the engine's own import.
             // In the built script they are the same module — enhancement-calculator
             // is shared, so the market bundle's import resolves to exactly this

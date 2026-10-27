@@ -790,8 +790,8 @@ function buildMirrorOptimizedResult(
  * @returns {{cost: number, hasCost: boolean, costPartial: boolean}}
  */
 export function calculatePerAttemptMaterialCost(itemDetails) {
-    const { cost, hasCost, hasMissingPrices } = perAttemptMaterialCost(itemDetails);
-    return { cost, hasCost, costPartial: hasMissingPrices };
+    const { cost, hasCost, hasMissingPrices, hasPartialPrices } = perAttemptMaterialCost(itemDetails);
+    return { cost, hasCost, costPartial: Boolean(hasMissingPrices || hasPartialPrices) };
 }
 
 /**

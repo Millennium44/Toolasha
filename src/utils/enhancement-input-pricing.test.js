@@ -40,6 +40,7 @@ vi.mock('../core/config.js', () => ({
 }));
 vi.mock('../api/marketplace.js', () => ({ default: { on: () => {} } }));
 vi.mock('./action-context.js', () => ({ resolveActionContext: () => ({ equipment: new Map(), drinks: [] }) }));
+vi.mock('./tester-shop.js', () => ({ testerShopEnabled: () => game.testerShop === true }));
 vi.mock('./ironcow-valuation.js', () => ({ isIronCowCharacter: () => false }));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({
     getCustomPrice: (hrid, _level, side) => game.custom[`${hrid}:${side}`] ?? null,
@@ -77,7 +78,13 @@ vi.mock('./market-data.js', () => ({
     },
     // The raw sides: a missing one stays null, which is what the inflation guard reads as one-sided
     getItemPrices: (hrid) =>
-        game.books[hrid] ? { ask: game.books[hrid].ask ?? null, bid: game.books[hrid].bid ?? null } : null,
+        game.books[hrid]
+            ? {
+                  ask: game.books[hrid].ask ?? null,
+                  bid: game.books[hrid].bid ?? null,
+                  bidEstimated: game.books[hrid].bidEstimated === true,
+              }
+            : null,
     getItemPrice: (hrid, { mode = 'ask' } = {}) => reconciled(hrid)?.[mode] || 0,
 }));
 
@@ -196,6 +203,11 @@ describe('the inflation guard on protection, the mirror and the base', () => {
         };
         game.items['/items/stone'] = { name: 'Stone' };
         expect(priceGuarded(PROTECT_ITEM).price).toBe(400);
+    });
+
+    test('an estimated bid is not a quote: a live ask far above it is not cut to it', () => {
+        game.books[PROTECTION] = { ask: 200, bid: 100, bidEstimated: true };
+        expect(priceGuarded(PROTECTION)).toMatchObject({ price: 200, estimated: false });
     });
 
     test('a normal book is the ask', () => {
@@ -342,7 +354,25 @@ describe('perAttemptMaterialCost with the shared rule', () => {
             cost: 3000 + TRAINEE_SHOP_PRICE + 10,
             hasCost: true,
             hasMissingPrices: true,
+            hasPartialPrices: false,
         });
+    });
+
+    test('a craft-priced material with an unpriced input flags the bill partial', () => {
+        game.books['/items/ore'] = { ask: 100, bid: 100 };
+        game.items['/items/ore'] = { name: 'Ore' };
+        game.items['/items/dust'] = { name: 'Dust' };
+        game.actions['/actions/make'] = {
+            type: '/action_types/crafting',
+            inputItems: [
+                { itemHrid: '/items/ore', count: 1 },
+                { itemHrid: '/items/dust', count: 1 },
+            ],
+            outputItems: [{ itemHrid: SHARD, count: 1 }],
+        };
+        const bill = perAttemptMaterialCost({ enhancementCosts: [{ itemHrid: SHARD, count: 2 }] });
+        expect(bill.hasPartialPrices).toBe(true);
+        expect(bill.hasMissingPrices).toBe(false);
     });
 });
 
@@ -495,6 +525,14 @@ describe('pricingStamp', () => {
         expect(afterCustom).not.toBe(base);
         game.craftingSetting = true;
         expect(pricingStamp()).not.toBe(afterCustom);
+    });
+
+    test('moves with the Tester-shop setting, which swaps shop-vs-market results', async () => {
+        const { pricingStamp } = await import('./enhancement-input-pricing.js');
+        const off = pricingStamp();
+        game.testerShop = true;
+        expect(pricingStamp()).not.toBe(off);
+        game.testerShop = false;
     });
 
     test('moves when the patient-buy tick is switched, which reprices bid-side inputs', async () => {
