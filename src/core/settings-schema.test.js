@@ -327,3 +327,46 @@ describe('takeover auto-reload defaults', () => {
         expect(setting.help).toMatch(/never reloads while you are using the page/);
     });
 });
+
+describe('modules that gate themselves on a setting their registry key does not name', () => {
+    /**
+     * Registry key -> the setting its module's initialize() returns early on. The key is not a setting, so
+     * with no customCheck the registry marked the feature started at boot even when initialize() did nothing,
+     * and switching the setting on later never started it: the panel promises every untagged setting applies
+     * at once, and these waited for a reload.
+     */
+    const SELF_GATED = {
+        itemCountDisplay: 'market_visibleItemCount',
+        listingPriceDisplay: 'market_showListingPrices',
+        collectableListingsSort: 'market_collectableListingsToTop',
+        marketHistoryPanel: 'market_pooledHistory',
+        myListingsPriceRefresh: 'market_pooledHistory',
+        marketDepthCap: 'market_depthCapEnabled',
+        marketOrderTotals: 'market_showOrderTotals',
+        marketHistoryViewer: 'market_showHistoryViewer',
+        listingRefreshNavigator: 'market_listingRefreshNavigator',
+        listingNextNavigator: 'market_listingRefreshNavigator',
+        bulkSellAssistant: 'market_bulkSellAssistant',
+        philoCalculator: 'market_showPhiloCalculator',
+        budgetCalculator: 'actions_budgetCalculator',
+        pinnedActionsPage: 'actions_pinnedPage',
+        abilityDictionaryButton: 'abilities_dictionaryButton',
+        chatProfileLink: 'chat_profileLink',
+        alchemy_transmuteHistoryViewer: 'alchemy_transmuteHistory',
+        alchemy_coinifyHistoryViewer: 'alchemy_coinifyHistory',
+        alchemy_decomposeHistoryViewer: 'alchemy_decomposeHistory',
+        labyrinthBestLevel: 'labyrinthTracker',
+    };
+
+    test('each registry entry gates on the setting its module reads, and that setting exists', () => {
+        const entrypoint = readFileSync(resolve(process.cwd(), 'src/entrypoint.js'), 'utf8');
+        for (const [key, setting] of Object.entries(SELF_GATED)) {
+            expect(getSettingDefinition(setting), setting).toBeTruthy();
+            const start = entrypoint.indexOf(`key: '${key}',`);
+            expect(start, key).toBeGreaterThan(-1);
+            const nextKey = entrypoint.indexOf("key: '", start + 1);
+            const entry = entrypoint.slice(start, nextKey === -1 ? undefined : nextKey);
+            expect(entry, key).toContain(`customCheck: () => config.getSetting('${setting}')`);
+        }
+    });
+});

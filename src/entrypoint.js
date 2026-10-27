@@ -819,6 +819,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.itemCountDisplay,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_visibleItemCount'),
             healthCheck: () =>
                 whenSetting('market_visibleItemCount', () =>
                     injectedInto('[class*="MarketplacePanel_marketItems"] use', '.mwi-item-count')
@@ -837,6 +839,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.listingPriceDisplay,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_showListingPrices'),
         },
         {
             key: 'market_listingDragOrder',
@@ -851,6 +855,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.collectableListingsSort,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_collectableListingsToTop'),
         },
         {
             key: 'marketplaceBadgeFilter',
@@ -865,6 +871,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.marketHistoryPanel,
             async: true,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_pooledHistory'),
         },
         {
             key: 'myListingsPriceRefresh',
@@ -872,6 +880,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.myListingsPriceRefresh,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_pooledHistory'),
         },
         {
             key: 'queueLengthEstimator',
@@ -886,6 +896,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.marketDepthCap,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_depthCapEnabled'),
         },
         {
             key: 'market_enhanceProfitPerHour',
@@ -907,6 +919,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.marketOrderTotals,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_showOrderTotals'),
             healthCheck: () =>
                 whenSetting('market_showOrderTotals', () =>
                     injectedInto('[class*="Header_totalLevel"]', '.mwi-market-order-totals')
@@ -918,6 +932,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.marketHistoryViewer,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_showHistoryViewer'),
         },
         {
             key: 'listingRefreshNavigator',
@@ -925,6 +941,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.listingRefreshNavigator,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_listingRefreshNavigator'),
         },
         {
             key: 'listingNextNavigator',
@@ -932,6 +950,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.listingNextNavigator,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_listingRefreshNavigator'),
         },
         {
             key: 'marketItemHop',
@@ -955,6 +975,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.bulkSellAssistant,
             async: true,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_bulkSellAssistant'),
         },
         {
             key: 'philoCalculator',
@@ -962,6 +984,8 @@ function registerFeatures() {
             category: 'Market',
             module: Market.philoCalculator,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('market_showPhiloCalculator'),
         },
         { key: 'tradeHistory', name: 'Trade History', category: 'Market', module: Market.tradeHistory, async: false },
         {
@@ -1240,6 +1264,8 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.budgetCalculator,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('actions_budgetCalculator'),
         },
         {
             key: 'costSummary',
@@ -1354,6 +1380,8 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.pinnedActionsPage,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('actions_pinnedPage'),
         },
         {
             key: 'skillingOptimizer',
@@ -1455,6 +1483,8 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.abilityDictionaryButton,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('abilities_dictionaryButton'),
         },
         {
             key: 'chestKeyMarketButton',
@@ -1700,6 +1730,8 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.labyrinthBestLevel,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('labyrinthTracker'),
         },
         {
             key: 'labyrinthShopPrices',
@@ -2053,6 +2085,8 @@ function registerFeatures() {
             category: 'Chat',
             module: UI.chatProfileLink,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('chat_profileLink'),
         },
         { key: 'mentionTracker', name: 'Mention Tracker', category: 'Chat', module: UI.mentionTracker, async: true },
         { key: 'popOutChat', name: 'Pop-Out Chat', category: 'Chat', module: UI.popOutChat, async: true },
@@ -2312,6 +2346,8 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.transmuteHistoryViewer,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('alchemy_transmuteHistory'),
         },
         {
             key: 'alchemy_coinifyHistory',
@@ -2326,6 +2362,8 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.coinifyHistoryViewer,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('alchemy_coinifyHistory'),
         },
         {
             key: 'alchemy_decomposeHistory',
@@ -2340,6 +2378,8 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.decomposeHistoryViewer,
             async: false,
+            // Its module only does anything while this is on; the gate lets a live switch-on start it
+            customCheck: () => config.getSetting('alchemy_decomposeHistory'),
         },
         {
             key: 'alchemy_actionProtection',
