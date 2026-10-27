@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, fifth): tasks
+
+- A combat task estimate no longer shows rewards as profit when the sim killed none of the monster, and Net Task Income is withheld when the reroll history can't be read.
+- The task statistics popup can no longer leave an overlay you can't close, Claim Reward and the reroll reminder appear without reopening the Tasks panel, and weekly windows stay right across daylight saving.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
