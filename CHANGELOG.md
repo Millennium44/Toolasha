@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The loot-log enhancing summary no longer counts unpriced protection or an unlisted base item as free, and the "worth it" line needs a real bid rather than an estimate.
 - The enhancing panel finds its protection slot and Repeat box on any client language, and the marketplace enhance column refreshes when your pricing mode changes.
 
+### Combat Stats counts consumables used while the page was closed
+
+- Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
+
 ### Audit round (2026-10-26, fourth): action bar
 
 - The action bar's time for a counted run stops at what your materials can pay for, matching the queue panel, and a character switch no longer paints the previous character's run into the new one's row.
