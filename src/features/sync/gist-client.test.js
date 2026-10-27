@@ -9,6 +9,7 @@ import {
     findSyncGist,
     httpRequest,
     readSyncGist,
+    readSyncGistRevision,
     resetTransportForTests,
     writeSyncGist,
 } from './gist-client.js';
@@ -610,6 +611,74 @@ describe('readSyncGist', () => {
         });
         responses.push({ status: 401, body: {} });
         await expect(readSyncGist('tok', 'abc')).rejects.toMatchObject({ kind: 'auth' });
+    });
+
+    test('a chunk cut short on download is an incomplete download, not a wrong passphrase', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) },
+                    [chunkFileName(0)]: { truncated: true, raw_url: 'https://gist.example/raw', size: 20, content: '' },
+                },
+            },
+        });
+        responses.push({ status: 200, body: 'only-part' });
+
+        const error = await readSyncGist('tok', 'abc').catch((caught) => caught);
+        expect(error.kind).not.toBe('passphrase');
+        expect(error.kind).toBe('offline');
+        expect(error.message).toContain(chunkFileName(0));
+        expect(error.message).toContain('incomplete');
+        expect(error.message).not.toMatch(/passphrase|push/i);
+    });
+
+    test('a chunk whose downloaded size matches the listed size still reads', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) },
+                    [chunkFileName(0)]: {
+                        truncated: true,
+                        raw_url: 'https://gist.example/raw',
+                        size: 15,
+                        content: 'x',
+                    },
+                },
+            },
+        });
+        responses.push({ status: 200, body: 'the-whole-thing' });
+        expect((await readSyncGist('tok', 'abc')).payload).toBe('the-whole-thing');
+    });
+
+    test('size is compared in UTF-8 bytes, so a non-ASCII plaintext chunk passes', async () => {
+        const text = '{"name":"héllo ✓"}';
+        const bytes = new TextEncoder().encode(text).length;
+        expect(bytes).toBeGreaterThan(text.length);
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) },
+                    [chunkFileName(0)]: { size: bytes, content: text },
+                },
+            },
+        });
+        expect((await readSyncGist('tok', 'abc')).payload).toBe(text);
+    });
+
+    test('a revision read checks chunk sizes too', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) },
+                    [chunkFileName(0)]: { size: 99, content: 'short' },
+                },
+            },
+        });
+        await expect(readSyncGistRevision('tok', 'abc', 'v1')).rejects.toMatchObject({ kind: 'offline' });
     });
 
     test('a missing chunk fails loudly rather than returning half a backup', async () => {
