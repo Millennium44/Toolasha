@@ -211,6 +211,13 @@ const ALLOWLIST = new Map([
         'stateless running-action selectors; no module state to share',
     ],
     [
+        'src/utils/calendar-days.js',
+        // Pure date arithmetic (calendar-day windows that step across DST);
+        // no module state. Imported by the task statistics (ui) and the task
+        // completion tracker (market); every copy computes the same window.
+        'stateless calendar-day window helper; no module state to share',
+    ],
+    [
         'src/utils/artisan-bonus.js',
         // One function that reads the current drinks and equipment from
         // dataManager (shared core) at call time; nothing is cached here.
