@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync: incomplete downloads
+
+- A sync pull whose gist file arrives short now says the download was incomplete and retries on the next run, instead of blaming the sync passphrase.
+
 ### Audit round (2026-10-26, seventh): XP and character select
 
 - Character select no longer shows an online character as past its offline limit, and the leaderboard XP tracker no longer reads the previous board view's ranks after being turned off and on.
