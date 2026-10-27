@@ -302,6 +302,26 @@ describe('the two lines a slot shows', () => {
     });
 });
 
+describe('a character that is online', () => {
+    const queue = () => record({ endsInMs: 20 * HOUR, offline: { hourCap: 8, mooPassExpireTime: null } });
+
+    test('is not shown as past its offline cap on the strength of an earlier offline interval', () => {
+        const wentOffline = NOW - 30 * HOUR;
+        const state = computeSlotDisplayState(queue(), { id: '1', lastOfflineTime: wentOffline }, PREFS, NOW);
+        expect(state.limiterText).toContain('Offline progress stopped');
+
+        const online = computeSlotDisplayState(
+            queue(),
+            { id: '1', lastOfflineTime: wentOffline, isOnline: true },
+            PREFS,
+            NOW
+        );
+        expect(online.limiterText).not.toContain('Offline');
+        expect(online.limiterText).toContain('Queue ends');
+        expect(online.limiterColor).toBe('green');
+    });
+});
+
 describe('segment helpers', () => {
     test('the covering segment is the first that has not ended', () => {
         const segments = [{ endAt: 10 }, { endAt: 20 }, { endAt: null }];
