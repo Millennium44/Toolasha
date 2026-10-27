@@ -203,7 +203,8 @@ class GuildTrialAlerts {
                 if (this.lastStartLineAt !== null && when <= this.lastStartLineAt) return;
             }
             const result = this.noteChatLine(message?.m || message?.message || '');
-            if (result && Number.isFinite(when)) this.lastStartLineAt = when;
+            // Only a delivered line counts as told, so a replay can retry one that reached no channel
+            if (result?.fired && Number.isFinite(when)) this.lastStartLineAt = when;
         };
         webSocketHook.on('chat_message_received', this.onChat);
     }

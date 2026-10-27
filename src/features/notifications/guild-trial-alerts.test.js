@@ -278,6 +278,19 @@ describe('the guild chat line', () => {
         expect(game.sent).toHaveLength(2);
     });
 
+    test('a line that reached no channel is delivered when it is replayed', () => {
+        const line = { m: 'The guild trials have begun!', isSystemMessage: true, t: new Date().toISOString() };
+        notifyImpl = () => ({ fired: false, channels: [], reason: 'no channel available' });
+        game.wsHandlers.chat_message_received({ message: line });
+
+        notifyImpl = (eventKey, message, options) => {
+            game.sent.push({ eventKey, message, options });
+            return { fired: true, channels: ['toast'] };
+        };
+        game.wsHandlers.chat_message_received({ message: { ...line } });
+        expect(game.sent).toHaveLength(1);
+    });
+
     test('switched off, the line passes quietly', () => {
         game.settings = { [START_SETTING]: false };
         guildTrialAlerts.noteChatLine('The guild trials have begun!');
