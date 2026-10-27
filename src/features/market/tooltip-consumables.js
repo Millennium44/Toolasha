@@ -7,7 +7,7 @@ import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { numberFormatter } from '../../utils/formatters.js';
-import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { getItemPrices } from '../../utils/market-data.js';
 import dom from '../../utils/dom.js';
 import tooltipObserver from '../../core/tooltip-observer.js';
 
@@ -186,6 +186,12 @@ class TooltipConsumables {
             return null;
         }
 
+        // The sprite or item link first: a translated client's displayed name does not match the
+        // item data's English name. The name is the fallback for tooltips that carry neither
+        if (info.itemHrid && initData.itemDetailMap[info.itemHrid]) {
+            return info.itemHrid;
+        }
+
         // Return cached map if source data hasn't changed (handles character switch)
         if (this.itemNameToHridCache && this.itemNameToHridCacheSource === initData.itemDetailMap) {
             return this.itemNameToHridCache.get(itemName) || null;
@@ -247,8 +253,11 @@ class TooltipConsumables {
         const restorePerSecond = recoveryDuration > 0 ? restoreAmount / recoveryDuration : 0;
 
         // Get market price for cost calculations
-        const price = ironCowBook(itemHrid) ?? marketAPI.getPrice(itemHrid, 0);
+        // The reconciled book (an Iron Cow character's own valuation included), which also says
+        // when the ask is a value-map stand-in rather than a listing
+        const price = getItemPrices(itemHrid, 0);
         const askPrice = price?.ask || 0;
+        const askEstimated = Boolean(price?.askEstimated);
 
         // Cost per HP or MP
         const costPerPoint = askPrice > 0 ? askPrice / restoreAmount : 0;
@@ -264,6 +273,7 @@ class TooltipConsumables {
             recoveryDuration, // How long healing takes
             cooldownDuration, // How often you can use it
             askPrice,
+            askEstimated,
             costPerPoint,
             dailyMax,
             usesPerDay,
@@ -309,7 +319,9 @@ class TooltipConsumables {
 
         // Cost efficiency line
         if (stats.costPerPoint > 0) {
-            html += `<div>Cost: ${numberFormatter(stats.costPerPoint, 1)} per ${stats.restoreType}</div>`;
+            const mark = stats.askEstimated ? '~' : '';
+            const title = stats.askEstimated ? ' title="Estimated from the game value map, not a live listing"' : '';
+            html += `<div${title}>Cost: ${mark}${numberFormatter(stats.costPerPoint, 1)} per ${stats.restoreType} (ask)</div>`;
         } else if (stats.askPrice === 0) {
             html += `<div style="color: gray; font-style: italic;">Cost: No market data</div>`;
         }
