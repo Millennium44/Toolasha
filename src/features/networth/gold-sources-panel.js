@@ -757,7 +757,8 @@ export function buildPanelBody(attribution, { series = null, now = undefined, on
     // price is not an opening that paid nothing
     const unpricedChests = attribution?.unpricedChests || 0;
     const unpricedChestItems = attribution?.unpricedChestItems || 0;
-    if (unpricedChests > 0 || unpricedChestItems > 0) {
+    const unpricedChestKeys = attribution?.unpricedChestKeys || 0;
+    if (unpricedChests > 0 || unpricedChestItems > 0 || unpricedChestKeys > 0) {
         const warning = document.createElement('div');
         warning.className = 'mwi-gold-sources-unpriced-chests';
         warning.style.cssText = 'font-size: 10px; color: #fbbf24; margin-top: 6px;';
@@ -770,6 +771,9 @@ export function buildPanelBody(attribution, { series = null, now = undefined, on
         }
         if (unpricedChestItems > 0) {
             pieces.push(`${plural(unpricedChestItems, 'item')} that came out of a chest could not be priced`);
+        }
+        if (unpricedChestKeys > 0) {
+            pieces.push(`${plural(unpricedChestKeys, 'chest key')} spent opening chests could not be priced`);
         }
         warning.textContent = `${pieces.join(', and ')} — the chest row is short by that much, and it sits in the residual.`;
         body.appendChild(warning);
