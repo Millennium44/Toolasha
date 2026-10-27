@@ -520,6 +520,9 @@ class InventoryBadgeManager {
             const svg = itemElem.querySelector('svg');
             if (!svg) continue;
 
+            // Set again below only for a tile whose 0 would mean "no price" (see inventory-unpriced.js)
+            delete itemElem.dataset.expectPrice;
+
             const itemHrid =
                 this.getItemHridFromContainer(itemElem, gameData) ||
                 this.findItemHrid(svg.getAttribute('aria-label'), gameData);
@@ -555,6 +558,7 @@ class InventoryBadgeManager {
                 itemElem.dataset.bidPrice = perToken;
                 itemElem.dataset.askValue = perToken * itemCount;
                 itemElem.dataset.bidValue = perToken * itemCount;
+                if (itemCount > 0) itemElem.dataset.expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
                 continue;
             }
 
@@ -574,6 +578,7 @@ class InventoryBadgeManager {
                 itemElem.dataset.bidPrice = bidPerCredit;
                 itemElem.dataset.askValue = askPerCredit * itemCount;
                 itemElem.dataset.bidValue = bidPerCredit * itemCount;
+                if (itemCount > 0) itemElem.dataset.expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
                 continue;
             }
 
@@ -806,6 +811,7 @@ class InventoryBadgeManager {
             // Store stack totals (for sorting and stack value badges)
             itemElem.dataset.askValue = askPrice * itemCount;
             itemElem.dataset.bidValue = bidPrice * itemCount;
+            if (itemCount > 0) itemElem.dataset.expectPrice = itemDetails?.name || itemHrid;
         }
     }
 

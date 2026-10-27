@@ -57,7 +57,7 @@ function tile(askValue, bidValue) {
 /** Sum a tab's tiles via the real prototype method, keyed by the current mode/sort */
 function rollup(tileMap, tab, sortMode) {
     const valueKey = totalValueKey(sortMode);
-    return CustomTabsUI.prototype._peekTileValue.call({}, tab, tileMap, valueKey);
+    return CustomTabsUI.prototype._peekTileValue.call({}, tab, tileMap, valueKey).total;
 }
 
 describe('collapsed section rollup across every badge mode and sort', () => {

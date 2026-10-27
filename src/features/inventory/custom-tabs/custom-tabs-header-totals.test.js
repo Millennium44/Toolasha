@@ -207,3 +207,47 @@ describe('section header totals after the prices arrive', () => {
         expect(layout).not.toHaveBeenCalled();
     });
 });
+
+describe('section totals mark unpriced items', () => {
+    test('an expanded section with an unpriced item shows the mark and names it; priced-only shows none', async () => {
+        const { tiles, total, container } = await setup();
+        tiles[0].dataset.askValue = '1000';
+        tiles[1].dataset.askValue = '0';
+        tiles[1].dataset.expectPrice = 'Rare Thing';
+        await ui._applyLayout();
+        expect(total()).toBe('≥1.00K');
+        expect(container.querySelector('.toolasha-ct-section-value').title).toContain('Rare Thing');
+
+        container.querySelector('.toolasha-ct-section-value').remove();
+        tiles[1].dataset.askValue = '500';
+        await ui._applyLayout();
+        expect(total()).toBe('1.50K');
+        expect(container.querySelector('.toolasha-ct-section-value').title).not.toContain('Not included');
+    });
+
+    test('a deliberate 0 (no flag) does not mark the section', async () => {
+        const { tiles, total } = await setup();
+        tiles[0].dataset.askValue = '1000';
+        tiles[1].dataset.askValue = '0';
+        await ui._applyLayout();
+        expect(total()).toBe('1.00K');
+    });
+
+    test('the collapsed rollup marks and names unpriced items across descendants', () => {
+        const priced = makeTile('/items/cheese');
+        priced.dataset.askValue = '2000';
+        const unpriced = makeTile('/items/rare');
+        unpriced.dataset.askValue = '0';
+        unpriced.dataset.expectPrice = 'Rare Thing';
+        const tab = {
+            items: ['/items/cheese'],
+            children: [{ items: ['/items/rare'], children: [] }],
+        };
+        const map = new Map([
+            ['/items/cheese', [priced]],
+            ['/items/rare', [unpriced]],
+        ]);
+        const result = CustomTabsUI.prototype._peekTileValue.call({}, tab, map, 'askValue');
+        expect(result).toEqual({ total: 2000, unpriced: ['Rare Thing'] });
+    });
+});

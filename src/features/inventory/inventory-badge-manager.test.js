@@ -914,3 +914,60 @@ describe('icon-first identity on a translated, xlink-only tile', () => {
         expect([el.dataset.askValue, el.dataset.bidValue]).toEqual(['500', '400']);
     });
 });
+
+describe('items expected to carry a price (unpriced mark)', () => {
+    function itemEl(name, count) {
+        const el = document.createElement('div');
+        el.className = 'Item_itemContainer';
+        const svg = document.createElement('svg');
+        svg.setAttribute('aria-label', name);
+        el.appendChild(svg);
+        const countEl = document.createElement('div');
+        countEl.className = 'Item_count';
+        countEl.textContent = String(count);
+        el.appendChild(countEl);
+        return el;
+    }
+
+    beforeEach(() => {
+        mocks.initData = {
+            itemDetailMap: {
+                '/items/cheese': { name: 'Cheese' },
+                '/items/rare_thing': { name: 'Rare Thing' },
+                '/items/trainee_sword': {
+                    name: 'Trainee Sword',
+                    equipmentDetail: { type: '/equipment_types/main_hand' },
+                },
+                '/items/gold_coin': { name: 'Coin' },
+            },
+        };
+        mocks.priceBatch = new Map([['/items/cheese:0', { ask: 100, bid: 90 }]]);
+    });
+
+    test('an item with no price at all is flagged by name, a priced one has a value', async () => {
+        const unpriced = itemEl('Rare Thing', 3);
+        const priced = itemEl('Cheese', 5);
+        await inventoryBadgeManager.calculateItemPrices([unpriced, priced], [], new Map());
+
+        expect(unpriced.dataset.askValue).toBe('0');
+        expect(unpriced.dataset.expectPrice).toBe('Rare Thing');
+        expect(priced.dataset.askValue).toBe('500');
+    });
+
+    test('trainee gear and coins are deliberately 0 and carry no flag', async () => {
+        const trainee = itemEl('Trainee Sword', 1);
+        const coin = itemEl('Coin', 100);
+        await inventoryBadgeManager.calculateItemPrices([trainee, coin], [], new Map());
+
+        expect(trainee.dataset.askValue).toBe('0');
+        expect(trainee.dataset.expectPrice).toBeUndefined();
+        expect(coin.dataset.expectPrice).toBeUndefined();
+    });
+
+    test('a flag left by an earlier pass is cleared when the tile becomes deliberately 0', async () => {
+        const el = itemEl('Trainee Sword', 1);
+        el.dataset.expectPrice = 'Stale';
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.expectPrice).toBeUndefined();
+    });
+});
