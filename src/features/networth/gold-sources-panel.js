@@ -35,14 +35,20 @@ import config from '../../core/config.js';
 import { networthFormatter } from '../../utils/formatters.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
 import { registerCommand } from '../../utils/command-registry.js';
-import { attributeGoldSources, SOURCE_KEYS, SOURCE_META, CATEGORY_KEYS, dayStart, localDayId } from './gold-sources.js';
+import {
+    attributeGoldSources,
+    SOURCE_KEYS,
+    SOURCE_META,
+    CATEGORY_KEYS,
+    dayEnd,
+    windowStart,
+    localDayId,
+} from './gold-sources.js';
 import { collectGoldSourceInputs } from './gold-sources-collect.js';
 import { buildNetworthCalendar, CALENDAR_WEEKS } from './networth-calendar.js';
 
 export const MODAL_ID = 'toolasha-goldSources-panel';
 export const BUTTON_ID = 'mwi-gold-sources-btn';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The windows the panel offers */
 export const WINDOWS = [
@@ -1068,7 +1074,7 @@ function ensureLoaded() {
             // localDayId, not toISOString(): the ISO slice is the UTC date, and
             // feeding a UTC id to a LOCAL dayStart put the window's start in the
             // future for any evening west of Greenwich — an empty Day view
-            const from = dayStart(localDayId(to - (days - 1) * DAY_MS));
+            const from = windowStart(to, days);
             const inputs = await collectGoldSourceInputs();
             // Superseded by a newer window/day/character while this was in
             // flight — its answer is about a question nobody is asking anymore
@@ -1111,7 +1117,7 @@ function onSelectDay(dayId) {
     activeWindow = 'day';
     // The end of that local day, so the "Day" window's own now-minus-(days-1)
     // arithmetic lands on exactly that day
-    anchorTo = dayStart(dayId) + DAY_MS - 1;
+    anchorTo = dayEnd(dayId);
     invalidate();
     goldSourcesPanel.render();
 }
