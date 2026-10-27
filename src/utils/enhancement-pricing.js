@@ -30,9 +30,8 @@
 import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
 import { getItemPrice, getItemPrices } from './market-data.js';
-import { parseArtisanBonus, getDrinkConcentration } from './tea-parser.js';
+import { getArtisanBonus } from './artisan-bonus.js';
 import { findProducingAction } from './production-index.js';
-import { resolveActionContext } from './action-context.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 
 /**
@@ -307,15 +306,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     // Compute artisan tea reduction dynamically (same approach as material-calculator.js).
     // resolveActionContext drops a drink that is slotted but out of stock and no longer
     // buffed, matching the Missing Materials panel.
-    let artisanBonus = 0;
-    try {
-        const itemDetailMap = gameData.itemDetailMap || {};
-        const { equipment, drinks: activeDrinks } = resolveActionContext(action.type);
-        const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-        artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
-    } catch {
-        // Fall back to no reduction if data unavailable
-    }
+    const artisanBonus = getArtisanBonus(action.type);
 
     // Sum up input material costs (artisan tea reduces material quantities, not upgrade items)
     if (action.inputItems) {
