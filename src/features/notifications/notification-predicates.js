@@ -171,6 +171,36 @@ export function listingBeaten({ armed, isSell, listingPrice, bestPrice, priceAge
 }
 
 /**
+ * Whether the price in front of a beaten listing is one of your own orders rather than a rival's.
+ *
+ * The market figures both readers compare against include your own resting orders, and the game's ones are
+ * clamped into the tradable band while a listing keeps its raw price. So two readings are your own: another
+ * listing of yours on the same item, level and side at or better than the figure, and any listing of yours,
+ * this one included, whose band-clamped price is exactly the figure (a lone ask parked above the band's top
+ * reads back as the band's top, which is no rival at all).
+ *
+ * @param {Object} listing - The listing being judged (`itemHrid`, `enhancementLevel`, `isSell`, `price`)
+ * @param {Object[]} active - Every active listing of yours
+ * @param {number} bestPrice - The figure that beats it
+ * @param {(price: number, itemHrid: string, enhancementLevel: number) => number|null} [clamp] - The same
+ *   band clamp the figure went through; identity when omitted
+ * @returns {boolean}
+ */
+export function beatenByOwnListing(listing, active, bestPrice, clamp = (price) => price) {
+    if (!listing || !Number.isFinite(bestPrice)) return false;
+    const level = listing.enhancementLevel || 0;
+    const isSell = listing.isSell === true;
+    return (active || []).some((other) => {
+        if (!other || other.itemHrid !== listing.itemHrid) return false;
+        if ((other.enhancementLevel || 0) !== level || (other.isSell === true) !== isSell) return false;
+        if (!Number.isFinite(other.price)) return false;
+        if (clamp(other.price, other.itemHrid, level) === bestPrice) return true;
+        if (other === listing || (other.id !== undefined && other.id === listing.id)) return false;
+        return isSell ? other.price <= bestPrice : other.price >= bestPrice;
+    });
+}
+
+/**
  * Whether a savings goal has just become affordable.
  *
  * The same one-bit state machine as `thresholdCrossing` and `listingBeaten`,

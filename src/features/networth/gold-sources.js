@@ -1006,13 +1006,26 @@ export function marketMovement(snapshots) {
  * item with no price is counted too, and the day's figure is short by it.
  *
  * @param {Object} row - A recorder row `{d, openings: {chestHrid: {count, gained}}}`
+ * Opening a dungeon chest also consumes its chest key. Net worth carries a
+ * chest it can only value by expected value at that value less the key (so the
+ * key is already spent in the carrying figure and charging it again would count
+ * it twice), but a chest carried at a market price has no such deduction, and
+ * the key leaving the inventory is a real loss on top of it. So the key is
+ * charged exactly when the chest is priced by the market. A key nothing can
+ * price is counted, and the opening is kept without it.
+ *
  * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
- * @returns {{value: number, unpricedItems: number, unpricedChests: number}} The day
+ * @param {Function} [basisPrice] - Cost-basis pricer, defaults to `price`
+ * @param {Function} [chestKeyOf] - `(chestHrid) => keyHrid|null`, the key a chest takes to open
+ * @param {Function} [marketPrice] - The raw market quote, with no holding fallback: `price` may fall back to net
+ *   worth's own valuation, which would make every chest look market-priced
+ * @returns {{value: number, unpricedItems: number, unpricedChests: number, unpricedKeys: number}} The day
  */
-export function chestOpeningDayValue(row, price, basisPrice = price) {
+export function chestOpeningDayValue(row, price, basisPrice = price, chestKeyOf = () => null, marketPrice = price) {
     let value = 0;
     let unpricedItems = 0;
     let unpricedChests = 0;
+    let unpricedKeys = 0;
 
     for (const [chestHrid, entry] of Object.entries(row?.openings || {})) {
         const count = num(entry?.count);
@@ -1041,9 +1054,16 @@ export function chestOpeningDayValue(row, price, basisPrice = price) {
         }
 
         value += loot - chestPrice * count;
+
+        const keyHrid = chestKeyOf(chestHrid);
+        if (keyHrid && Number.isFinite(marketPrice(chestHrid, 0))) {
+            const keyPrice = basisPrice(keyHrid, 0);
+            if (Number.isFinite(keyPrice)) value -= keyPrice * count;
+            else unpricedKeys += count;
+        }
     }
 
-    return { value, unpricedItems, unpricedChests };
+    return { value, unpricedItems, unpricedChests, unpricedKeys };
 }
 
 /**
@@ -1672,6 +1692,8 @@ export function attributeGoldSources(input) {
         // What net worth carries an item at, for gains the market cannot price
         // — see `createHoldingPricer`. Defaults to the plain pricer.
         holdingPrice = price,
+        // Which chest key a chest takes to open: `(chestHrid) => keyHrid|null`
+        chestKeyOf = () => null,
         marketTax = MARKET_TAX,
     } = input || {};
 
@@ -1795,13 +1817,15 @@ export function attributeGoldSources(input) {
     // themselves worth
     let unpricedChestItems = 0;
     let unpricedChests = 0;
+    let unpricedChestKeys = 0;
     for (const row of chestDays || []) {
         if (!row?.d) continue;
-        const day = chestOpeningDayValue(row, dropPrice, basisPrice);
+        const day = chestOpeningDayValue(row, dropPrice, basisPrice, chestKeyOf, price);
         add(row.d, 'chests', day.value);
         if (!inWindow.has(row.d)) continue;
         unpricedChestItems += day.unpricedItems;
         unpricedChests += day.unpricedChests;
+        unpricedChestKeys += day.unpricedKeys;
     }
 
     // Alchemy and enhancement runs are spread over the days they ran, for the
@@ -2074,6 +2098,7 @@ export function attributeGoldSources(input) {
         unpricedProductionActions,
         unpricedChestItems,
         unpricedChests,
+        unpricedChestKeys,
         unpricedMarketFills,
         // What actually fed the combat row, so the panel can say so rather than
         // calling a fallback and a gap alike "Measured"

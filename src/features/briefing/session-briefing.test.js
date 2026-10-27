@@ -900,6 +900,30 @@ describe('the away block', () => {
         expect(text()).toContain('1 task claimed');
     });
 
+    test('an arrival a character switch has overtaken draws nothing for the next character', async () => {
+        storeSnapshot({ tasksReady: 1 });
+        game.characterInfo = { unreadTaskCount: 4 };
+        let release;
+        game.snapshotLoad = new Promise((resolve) => {
+            release = resolve;
+        });
+
+        try {
+            const init = feature.initialize();
+            showWelcomeModal();
+            // The pointer moves while the first character's arrival is still gathering
+            game.characterId = 'char-2';
+            release();
+            await init;
+
+            expect(section()).toBeNull();
+            expect(game.stored.has('briefingAwayDiffSeen_char-2')).toBe(false);
+            expect(game.stored.has('briefingAwayDiffSeen_char-1')).toBe(false);
+        } finally {
+            game.snapshotLoad = null;
+        }
+    });
+
     test('no snapshot is silence — it never says nothing happened', async () => {
         game.characterInfo = { unreadTaskCount: 2 };
         await feature.initialize();

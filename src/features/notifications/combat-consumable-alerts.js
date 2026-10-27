@@ -161,11 +161,12 @@ class CombatConsumableAlerts {
             return;
         }
 
-        const result = notificationService.notify(
-            EVENT_KEY,
-            `${soonest.name} runs out in ${formatMinutes(soonest.secondsLeft)} — your fight stops when it does.`,
-            { title: 'Combat consumable running low' }
-        );
+        // Nothing left is not "runs out in 0s": that reads as a countdown about to start
+        const message =
+            soonest.secondsLeft < 1
+                ? `${soonest.name} has run out — your fight stops until it is restocked.`
+                : `${soonest.name} runs out in ${formatMinutes(soonest.secondsLeft)} — your fight stops when it does.`;
+        const result = notificationService.notify(EVENT_KEY, message, { title: 'Combat consumable running low' });
 
         // Disarmed only once the notice actually reached the player. Disarming
         // on every crossing regardless of delivery — no toast host mounted yet,

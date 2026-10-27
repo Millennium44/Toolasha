@@ -1012,8 +1012,9 @@ class BulkSellAssistant {
                     ? 'click Sell For in the item menu, or press Confirm here'
                     : 'confirm in the modal, or press Confirm here';
             const shown = d?.insta && d.avgPrice ? d.avgPrice : d?.price || 0;
-            const warn = d?.warning ? ` ⚠ ${d.warning}` : '';
-            const detail = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})${warn}`;
+            // Ahead of the price and the reason, which run past where the strip cuts the line off
+            const warn = d?.warning && !this.confirmNote.includes(d.warning) ? `⚠ ${d.warning} · ` : '';
+            const detail = `${warn}${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})`;
             // A refusal leads. It used to be appended after the price and the
             // reason, which is past where the strip truncates — so a Confirm
             // that had refused for a stated reason looked like a dead button.
@@ -1414,7 +1415,13 @@ class BulkSellAssistant {
             input.dispatchEvent(new Event('input', { bubbles: true }));
         }
         const shown = modal ? this._modalQuantity(modal) : null;
-        if (shown === live) return true;
+        if (shown === live) {
+            if (!refreshed.warning) return true;
+            // The modal now holds the new count and price, so the game's own button sells what the strip says
+            this.confirmNote = `${refreshed.warning}; press again to sell anyway`;
+            this._render();
+            return false;
+        }
         this.confirmNote =
             shown !== null && shown < live
                 ? `the stack is now ${live} but the modal only takes ${shown}; ${live - shown} would be left over`
@@ -1430,7 +1437,8 @@ class BulkSellAssistant {
      * listing, or a price the modal will not take, refuses rather than submit a stale decision.
      * @param {number} live - The stack as it stands now
      * @param {HTMLElement|null} modal - The open sell modal
-     * @returns {{why?: string}} A reason when the press must refuse; the decision is replaced otherwise
+     * @returns {{why?: string, warning?: string}} A reason when the press must refuse; the decision is replaced
+     *   otherwise, with `warning` when the new decision carries one the old did not
      */
     _refreshDecisionForCount(live, modal) {
         // Without the saved book (a vendor step, or a decision made some other way) there is nothing to walk
@@ -1460,8 +1468,11 @@ class BulkSellAssistant {
                 };
             }
         }
+        const newlyWarned = Boolean(next.decision.warning) && !this.decision.warning;
         this.decision = next.decision;
-        return {};
+        // A warning the press would act on without the strip ever having shown it: the caller applies the new
+        // count, then says it and holds the sale for the next press
+        return newlyWarned ? { warning: next.decision.warning } : {};
     }
 
     /**
@@ -2289,9 +2300,10 @@ class BulkSellAssistant {
                   `${depthShort ? ' (book still short)' : ''}`
                 : '';
         // Selling into a bid above the band maximum is still done; the game may refuse it, which is unverified,
-        // so the strip says so before anything is pressed
-        const aboveBand =
-            insta && clampToBand(instaPrice, this.current.itemHrid, this.current.enhancementLevel) < instaPrice;
+        // so the strip says so before anything is pressed. Judged on the top bid, not the walked price: the fill
+        // is best-first, so the top bid is always sold into, even when the walk ends inside the band
+        const topBid = bids[0]?.price ?? 0;
+        const aboveBand = insta && clampToBand(topBid, this.current.itemHrid, this.current.enhancementLevel) < topBid;
         return {
             insta,
             askPrice,
@@ -2320,7 +2332,9 @@ class BulkSellAssistant {
         const tiles = document.querySelectorAll('[class*="Inventory_items"] [class*="Item_itemContainer"]');
         let tile = null;
         for (const container of tiles) {
-            const href = container.querySelector('svg use')?.getAttribute('href') || '';
+            // Both spellings: many item icons carry only `xlink:href`
+            const use = container.querySelector('svg use');
+            const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
             if (!href.endsWith(`#${iconName}`)) continue;
             // Vendor path only runs for +0 items — skip enhanced variants
             if (shownEnhancementLevel(container) > 0) continue;

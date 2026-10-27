@@ -81,6 +81,13 @@ const RESULTS_KEY = 'guild-trial-results';
 const STARTED_PATTERN = /guild\s+trials?\b.*\bbegun|\bhave\s+begun\b.*\btrials?\b|trials?\s+have\s+started/i;
 
 /**
+ * How far before this alert came up a chat line may be stamped and still count as live. The client
+ * replays channel history on load and again on a reconnect; a live line carries a current time, the
+ * slack only has to swallow clock skew.
+ */
+const CHAT_REPLAY_GRACE_MS = 60 * 1000;
+
+/**
  * The lead time, clamped to what the setting offers.
  * @param {Function} [read] - Settings reader, injectable for tests
  * @returns {number} Minutes
@@ -167,6 +174,10 @@ class GuildTrialAlerts {
         /** The pending start-timer id, so it can be cleared and not double-armed */
         this.startTimerId = null;
         this.timers = createTimerRegistry();
+        /** When the chat listener came up, so replayed history can be told from a live line */
+        this.startedAt = 0;
+        /** The stamp of the last chat line announced, so a replay of it after a reconnect is not a second start */
+        this.lastStartLineAt = null;
     }
 
     /**
@@ -178,7 +189,23 @@ class GuildTrialAlerts {
     initialize() {
         if (this.initialized) return;
         this.initialized = true;
-        this.onChat = (data) => this.noteChatLine(data?.message?.m || data?.message?.message || '');
+        this.startedAt = Date.now();
+        this.onChat = (data) => {
+            const message = data?.message;
+            // A player typing "the guild trials have begun" is not the game saying so: the game's own
+            // line has no sender
+            if (message?.sName && !message?.isSystemMessage) return;
+            if (message?.isDeleted) return;
+            const when = Date.parse(message?.t ?? '');
+            if (Number.isFinite(when)) {
+                // History replayed on load or on a reconnect is old; so is a line already announced
+                if (when < this.startedAt - CHAT_REPLAY_GRACE_MS) return;
+                if (this.lastStartLineAt !== null && when <= this.lastStartLineAt) return;
+            }
+            const result = this.noteChatLine(message?.m || message?.message || '');
+            // Only a delivered line counts as told, so a replay can retry one that reached no channel
+            if (result?.fired && Number.isFinite(when)) this.lastStartLineAt = when;
+        };
         webSocketHook.on('chat_message_received', this.onChat);
     }
 
@@ -215,6 +242,7 @@ class GuildTrialAlerts {
         this.lastPayout = null;
         this.lastPayoutAt = null;
         this.resultsAnnouncedAt = null;
+        this.lastStartLineAt = null;
         this._clearStartTimer();
     }
 
