@@ -1429,6 +1429,26 @@ describe('confirming from the strip', () => {
             band.value = null;
         });
 
+        test('a refused warning press still leaves the modal holding the new count and price', () => {
+            // Grows 5 to 10: the walk now needs the 50 level. Band max 90 puts the 100 top bid above it
+            const modal = runDecided();
+            band.value = { min: 40, max: 90 };
+            game.items = [inventory('/items/cheese', 10), inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('above the tradable range');
+            // The game's own button, pressed now, sells what the strip describes
+            expect(priceOf(modal)).toBe('50');
+            expect(modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input').value).toBe('10');
+            expect(bulkSell.current.count).toBe(10);
+            expect(bulkSell.decision.price).toBe(50);
+            // Said once on the line, not twice
+            expect(statusText().split('above the tradable range')).toHaveLength(2);
+            confirmBtn().click();
+            expect(gameClicks).toBe(1);
+            band.value = null;
+        });
+
         test('an unchanged count leaves the decision and the price alone', () => {
             const modal = runDecided();
             const before = bulkSell.decision;

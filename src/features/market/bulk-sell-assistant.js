@@ -1013,7 +1013,7 @@ class BulkSellAssistant {
                     : 'confirm in the modal, or press Confirm here';
             const shown = d?.insta && d.avgPrice ? d.avgPrice : d?.price || 0;
             // Ahead of the price and the reason, which run past where the strip cuts the line off
-            const warn = d?.warning ? `⚠ ${d.warning} · ` : '';
+            const warn = d?.warning && !this.confirmNote.includes(d.warning) ? `⚠ ${d.warning} · ` : '';
             const detail = `${warn}${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})`;
             // A refusal leads. It used to be appended after the price and the
             // reason, which is past where the strip truncates — so a Confirm
@@ -1415,7 +1415,13 @@ class BulkSellAssistant {
             input.dispatchEvent(new Event('input', { bubbles: true }));
         }
         const shown = modal ? this._modalQuantity(modal) : null;
-        if (shown === live) return true;
+        if (shown === live) {
+            if (!refreshed.warning) return true;
+            // The modal now holds the new count and price, so the game's own button sells what the strip says
+            this.confirmNote = `${refreshed.warning}; press again to sell anyway`;
+            this._render();
+            return false;
+        }
         this.confirmNote =
             shown !== null && shown < live
                 ? `the stack is now ${live} but the modal only takes ${shown}; ${live - shown} would be left over`
@@ -1431,7 +1437,8 @@ class BulkSellAssistant {
      * listing, or a price the modal will not take, refuses rather than submit a stale decision.
      * @param {number} live - The stack as it stands now
      * @param {HTMLElement|null} modal - The open sell modal
-     * @returns {{why?: string}} A reason when the press must refuse; the decision is replaced otherwise
+     * @returns {{why?: string, warning?: string}} A reason when the press must refuse; the decision is replaced
+     *   otherwise, with `warning` when the new decision carries one the old did not
      */
     _refreshDecisionForCount(live, modal) {
         // Without the saved book (a vendor step, or a decision made some other way) there is nothing to walk
@@ -1463,9 +1470,9 @@ class BulkSellAssistant {
         }
         const newlyWarned = Boolean(next.decision.warning) && !this.decision.warning;
         this.decision = next.decision;
-        // A warning the press would act on without the strip ever having shown it: said first, sold on the next press
-        if (newlyWarned) return { why: `${next.decision.warning}; press again to sell anyway` };
-        return {};
+        // A warning the press would act on without the strip ever having shown it: the caller applies the new
+        // count, then says it and holds the sale for the next press
+        return newlyWarned ? { warning: next.decision.warning } : {};
     }
 
     /**
