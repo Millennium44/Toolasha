@@ -55,6 +55,7 @@ const PROTECT_ASSUMED_NOTE =
 
 /** Costs are understated when a per-attempt material has no price at all. */
 const UNPRICED_NOTE = 'a material has no price; costs are understated';
+const PROTECTION_UNPRICED_NOTE = 'the protection item has no price; its cost is left out';
 
 /** The loot log export, one row per item per logged session */
 export const LOOT_LOG_CSV_COLUMNS = [
@@ -662,6 +663,9 @@ class LootLogStats {
         if (m.materialsUnpriced) {
             html += ` · <span style="color:rgba(232,236,245,0.6);">${UNPRICED_NOTE}</span>`;
         }
+        if (m.protectionUnpriced) {
+            html += ` · <span style="color:rgba(232,236,245,0.6);">${PROTECTION_UNPRICED_NOTE}</span>`;
+        }
         return html;
     }
 
@@ -711,6 +715,7 @@ class LootLogStats {
             html += ` · <span style="color:${DIM};">Profit: no +${s.targetLevel} price</span>`;
         }
         if (s.materialsUnpriced) html += ` · <span style="color:${DIM};">${UNPRICED_NOTE}</span>`;
+        if (s.protectionUnpriced) html += ` · <span style="color:${DIM};">${PROTECTION_UNPRICED_NOTE}</span>`;
         return html;
     }
 
