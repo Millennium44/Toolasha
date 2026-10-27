@@ -848,6 +848,28 @@ describe('training margins are held to what the market absorbs', () => {
         expect(context.xpRates('/skills/milking')[0].goldPerHour).toBe(50_000);
     });
 
+    test('the hourly cap the planner charges covers only the outputs the book limits', async () => {
+        rates.gathering = {
+            '/actions/milking/cow': {
+                baseOutputs: [
+                    { itemHrid: '/items/milk', itemsPerHour: 200, priceEach: 100 },
+                    { itemHrid: '/items/log', itemsPerHour: 100, priceEach: 100 },
+                ],
+                revenuePerHour: 30_000,
+                excludeSellTax: true,
+                marketTax: 0,
+                profitPerHour: 30_000,
+            },
+        };
+        liquidity.throttle['/items/milk'] = 0.5;
+
+        const [milking] = (await buildPlannerContext()).xpRates('/skills/milking');
+        // Logs sell freely, so a climb that speeds up sells all of them: they carry no hourly cap. Counting their
+        // 10k in both figures capped them at the starting pace
+        expect(milking.saleProceedsPerHour).toBe(20_000);
+        expect(milking.saleCapPerHour).toBe(10_000);
+    });
+
     test('Processing: the thin processed item loses its own proceeds, not the raw milk', async () => {
         rates.gathering = {
             '/actions/milking/cow': {
