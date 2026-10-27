@@ -86,6 +86,19 @@ const CHAIN_TOOLTIP =
  * @param {string} value - Mode id
  * @returns {string} Tooltip text
  */
+/**
+ * The item a market tile shows, from its icon. Both attribute spellings: many item icons carry only
+ * `xlink:href`, and a tile read as no item was left unranked and lost its place on reset.
+ * @param {Element} tile - Market item tile
+ * @returns {string|null} Item hrid, or null when the icon cannot be read
+ */
+function tileItemHrid(tile) {
+    const use = tile.querySelector('use');
+    const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
+    const name = href.split('#')[1];
+    return name ? `/items/${name}` : null;
+}
+
 function modeTooltipText(value) {
     return getSortMode(value).chain ? CHAIN_TOOLTIP : ALCHEMY_TOOLTIP;
 }
@@ -464,12 +477,7 @@ class MarketSort {
 
         // Store original order on first sort
         if (!this.hasCapturedOrder) {
-            this.originalOrder = visibleItems.map((div) => {
-                const useElement = div.querySelector('use');
-                const href = useElement?.getAttribute('href') || '';
-                const hrefName = href.split('#')[1] || '';
-                return `/items/${hrefName}`;
-            });
+            this.originalOrder = visibleItems.map((div) => tileItemHrid(div) || '/items/');
             this.hasCapturedOrder = true;
         }
         this.hasSorted = true;
@@ -478,25 +486,11 @@ class MarketSort {
         const itemsWithProfit = [];
 
         for (const itemDiv of visibleItems) {
-            const useElement = itemDiv.querySelector('use');
-            if (!useElement) {
+            const itemHrid = tileItemHrid(itemDiv);
+            if (!itemHrid) {
                 itemsWithProfit.push({ element: itemDiv, profit: null, itemHrid: null });
                 continue;
             }
-
-            const href = useElement.getAttribute('href');
-            if (!href) {
-                itemsWithProfit.push({ element: itemDiv, profit: null, itemHrid: null });
-                continue;
-            }
-
-            const hrefName = href.split('#')[1];
-            if (!hrefName) {
-                itemsWithProfit.push({ element: itemDiv, profit: null, itemHrid: null });
-                continue;
-            }
-
-            const itemHrid = `/items/${hrefName}`;
 
             // Check cache first. Keyed by mode as well as item: the modes quote
             // different things about the same tile.
@@ -809,11 +803,7 @@ class MarketSort {
             // Create a map of itemHrid -> element
             const elementMap = new Map();
             for (const div of itemDivs) {
-                const useElement = div.querySelector('use');
-                const href = useElement?.getAttribute('href') || '';
-                const hrefName = href.split('#')[1] || '';
-                const itemHrid = `/items/${hrefName}`;
-                elementMap.set(itemHrid, div);
+                elementMap.set(tileItemHrid(div) || '/items/', div);
             }
 
             // Reorder based on original order
