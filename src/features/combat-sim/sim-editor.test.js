@@ -2511,6 +2511,54 @@ describe('loadParty (the Party Finder hands a whole party over)', () => {
         expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(5);
     });
 
+    test('the baseline is the game, not an outgoing original a hand edit held back', () => {
+        const FORCE = '/guild_buffs/force_combat';
+        guild.detailMap = { [FORCE]: { hrid: FORCE, isCombat: true, sortIndex: 1 } };
+        guild.levels = { [FORCE]: 3 };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        game.selfDTO.houseRooms = { '/house_rooms/dojo': 2 };
+        game.selfDTO.guildShrineLevels = { [FORCE]: 3 };
+        game.houseRooms = new Map([['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 2 }]]);
+        editor.resetToSelf();
+        // Hand-edited to 5 and 9, so the sync stops moving the outgoing original for them
+        editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo'] = 5;
+        editor.getEditedDTOs().player1.guildShrineLevels[FORCE] = 9;
+        // The real room and shrine are upgraded meanwhile
+        game.houseRooms.set('/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 3 });
+        guild.levels = { [FORCE]: 4 };
+        editor.getEditedDTOs();
+
+        // "My current build": the live levels, loaded as player1
+        const current = {
+            ...emptyDTO('player1'),
+            houseRooms: { '/house_rooms/dojo': 3 },
+            guildShrineLevels: { [FORCE]: 4 },
+            guildCombatBuffs: [{ from: FORCE, level: 4 }],
+        };
+        editor.loadParty([current], ['Milkman'], { selfIsLive: true });
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(3);
+
+        // Unedited, so it follows the next upgrade
+        game.houseRooms.set('/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 4 });
+        guild.levels = { [FORCE]: 5 };
+        const after = editor.getEditedDTOs().player1;
+        expect(after.houseRooms['/house_rooms/dojo']).toBe(4);
+        expect(after.guildShrineLevels[FORCE]).toBe(5);
+        expect(after.guildCombatBuffs).toContainEqual({ from: FORCE, level: 5 });
+
+        // A what-if loaded the same way stays put
+        editor.loadParty(
+            [{ ...current, houseRooms: { '/house_rooms/dojo': 7 }, guildShrineLevels: { [FORCE]: 9 } }],
+            ['Milkman'],
+            { selfIsLive: true }
+        );
+        game.houseRooms.set('/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 5 });
+        guild.levels = { [FORCE]: 6 };
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(7);
+        expect(editor.getEditedDTOs().player1.guildShrineLevels[FORCE]).toBe(9);
+    });
+
     test('a self that is not the live character is not synced from the game', () => {
         const { editor } = editorWithStrangers();
         const imported = emptyDTO('player1');
