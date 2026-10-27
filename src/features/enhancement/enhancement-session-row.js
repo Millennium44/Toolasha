@@ -27,7 +27,7 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import enhancementTracker from './enhancement-tracker.js';
-import { SessionState, getOverallSuccessRate } from './enhancement-session.js';
+import { SessionState, getOverallSuccessRate, getGapAttempts } from './enhancement-session.js';
 import { hasUnpricedInput } from './enhancement-profit.js';
 import enhancementUI from './enhancement-ui.js';
 
@@ -101,6 +101,9 @@ registerRow({
             `(${getOverallSuccessRate(session).toFixed(1)}%).\n` +
             `${Math.round(spent).toLocaleString()} spent so far.` +
             (partial ? '\nAn input had no price, so this leaves it out.' : '') +
+            (getGapAttempts(session) > 0
+                ? `\n${getGapAttempts(session)} attempts missed during a gap are not counted or costed.`
+                : '') +
             (done ? '\nThis session has finished; the figures are its totals.' : '') +
             '\nDouble-click for the enhancement panel.';
     },

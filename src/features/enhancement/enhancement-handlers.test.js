@@ -740,6 +740,77 @@ describe('a page reload in the middle of a session', () => {
         expect(results).toEqual([['success', 0, 1, false]]);
     });
 
+    test('a snapshot four attempts on counts all four, once, and does not charge them', async () => {
+        // Count 10 at +5; the snapshot says count 14, so 11, 12, 13 and 14 were never delivered
+        state.current = storedSession(5, 10);
+        state.actions = [row(2, 14)];
+        setupEnhancementHandlers();
+        await vi.waitFor(() => expect(state.current.gapAttempts).toBe(4));
+
+        // Nothing scored or costed for the gap, and the next live attempt (15) does not count it again
+        expect(state.calls.filter(([kind]) => kind === 'success' || kind === 'failure')).toEqual([]);
+        await state.handlers.action_completed({ endCharacterAction: row(3, 15) });
+        expect(state.current.gapAttempts).toBe(4);
+        expect(state.calls).toContainEqual(['success', 2, 3, false]);
+    });
+
+    test('a second reload at the same snapshot does not count the gap twice', async () => {
+        state.current = storedSession(5, 10);
+        state.actions = [row(2, 13)];
+        setupEnhancementHandlers();
+        await vi.waitFor(() => expect(state.current.gapAttempts).toBe(3));
+
+        cleanupEnhancementHandlers();
+        setupEnhancementHandlers();
+        await Promise.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(state.current.gapAttempts).toBe(3);
+
+        // An attempt that completed between the two reloads is added on its own
+        state.actions = [row(3, 14)];
+        cleanupEnhancementHandlers();
+        setupEnhancementHandlers();
+        await vi.waitFor(() => expect(state.current.gapAttempts).toBe(4));
+    });
+
+    test('a reload, a live result, then another reload counts each gap once', async () => {
+        state.current = storedSession(5, 10);
+        state.actions = [row(2, 13)];
+        setupEnhancementHandlers();
+        await vi.waitFor(() => expect(state.current.gapAttempts).toBe(3));
+
+        // Live result 14 is applied, which replaces the watermark with its own count
+        await state.handlers.action_completed({ endCharacterAction: row(3, 14) });
+        expect(state.current.gapAttempts).toBe(3);
+        expect(state.current.lastAttempt.currentCount).toBe(14);
+
+        // Reload again at 14: nothing new. Then a snapshot at 17: 15, 16 and 17 are new.
+        cleanupEnhancementHandlers();
+        state.actions = [row(3, 14)];
+        setupEnhancementHandlers();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(state.current.gapAttempts).toBe(3);
+
+        cleanupEnhancementHandlers();
+        state.actions = [row(4, 17)];
+        setupEnhancementHandlers();
+        await vi.waitFor(() => expect(state.current.gapAttempts).toBe(6));
+    });
+
+    test('a gap of one attempt is still scored, with no flag', async () => {
+        state.current = storedSession(5, 10);
+        state.actions = [row(6, 11)];
+        setupEnhancementHandlers();
+        await vi.waitFor(() => expect(state.calls).toContainEqual(['success', 5, 6, false]));
+        expect(state.current.gapAttempts ?? 0).toBe(0);
+    });
+
+    test('attempts that completed unseen in a live session are flagged', async () => {
+        state.current = storedSession(5, 10);
+        await state.handlers.action_completed({ endCharacterAction: row(1, 13) });
+        expect(state.current.gapAttempts).toBe(2);
+    });
+
     test('a count that skipped ahead with no snapshot seen is not scored from the stale level', async () => {
         state.current = storedSession(5, 10);
         await state.handlers.action_completed({ endCharacterAction: row(1, 13) });
