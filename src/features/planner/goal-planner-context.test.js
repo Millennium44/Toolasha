@@ -780,4 +780,37 @@ describe('training margins are held to what the market absorbs', () => {
         expect(goldOf(thin)).toBeLessThan(goldOf(open));
         expect(thin.totals.netGold).toBeLessThan(open.totals.netGold);
     });
+
+    test('a taxable bonus drop does not shrink the main output proceeds that get cut', async () => {
+        // revenuePerHour is the main item only; marketTax also taxes 50k of bonus drops (4% of 150k)
+        rates.production = {
+            '/actions/cooking/stew': { ...stew, marketTax: 6_000, profitPerHour: 144_000 },
+        };
+        liquidity.throttle['/items/stew'] = 0.25;
+
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        // main proceeds 100k - 4k tax = 96k, a quarter sells: 144k - 72k
+        expect(cooking.goldPerHour).toBe(72_000);
+    });
+
+    test('bonus tax above the main revenue still bounds the main output', async () => {
+        rates.production = {
+            '/actions/cooking/stew': { ...stew, revenuePerHour: 1_000, marketTax: 5_000, profitPerHour: 90_000 },
+        };
+        liquidity.throttle['/items/stew'] = 0.5;
+
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        // 1k - 40 tax = 960 net, half unsold
+        expect(cooking.goldPerHour).toBe(89_520);
+    });
+
+    test('a production result that excluded the sell tax has untaxed main proceeds', async () => {
+        rates.production = {
+            '/actions/cooking/stew': { ...stew, marketTax: 0, excludeSellTax: true, profitPerHour: 100_000 },
+        };
+        liquidity.throttle['/items/stew'] = 0.5;
+
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBe(50_000);
+    });
 });

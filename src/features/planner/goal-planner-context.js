@@ -55,7 +55,8 @@ import { enhancementParamsFor, describeEnhancementSource } from '../enhancement/
 import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
-import { GATHERING_TYPES, PRODUCTION_TYPES } from '../../utils/profit-constants.js';
+import { GATHERING_TYPES, PRODUCTION_TYPES, MARKET_TAX } from '../../utils/profit-constants.js';
+import { outputTaxRate } from '../../utils/profit-helpers.js';
 import { getPriceAgeString } from '../../utils/market-data.js';
 import { priceMaterial } from '../../utils/enhancement-input-pricing.js';
 import { effectiveInventory, shortfallNote } from '../../utils/inventory-reservations.js';
@@ -317,11 +318,21 @@ function trainingMarginOf(profit) {
  * @param {Object|null} profit - Its profit calculator result
  * @param {Array<Object>} sells - What one hour puts on the market
  */
-function noteTrainingSales(sales, actionHrid, profit, sells) {
+function noteTrainingSales(sales, actionHrid, profit, sells, { primaryOnly = false } = {}) {
     const margin = trainingMarginOf(profit);
     if (margin === null || !sells.length) return;
     // Net of tax, because the margin already is: this is the coin the unsold part never brings in
-    const proceeds = (Number(profit.revenuePerHour) || 0) - (Number(profit.marketTax) || 0);
+    // A production result's revenuePerHour is the main item alone while its marketTax also covers the
+    // taxable bonus drops, which the earning path does not throttle (`sells` is the main item). So tax
+    // the main item by itself, by the calculator's own rule: untaxed when it excluded the sell tax
+    // (which also covers Iron Cow), otherwise the market rate.
+    const revenue = Number(profit.revenuePerHour) || 0;
+    const tax = primaryOnly
+        ? profit.excludeSellTax
+            ? 0
+            : revenue * outputTaxRate(MARKET_TAX)
+        : Number(profit.marketTax) || 0;
+    const proceeds = revenue - tax;
     if (!(proceeds > 0)) return;
     sales.push({ actionHrid, sells, proceeds });
 }
@@ -494,7 +505,8 @@ async function measureGoldRates() {
                               unitsPerHour: Number(profit.totalItemsPerHour) || 0,
                           },
                       ]
-                    : []
+                    : [],
+                { primaryOnly: true }
             );
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
