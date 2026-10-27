@@ -12,7 +12,7 @@ import { calculateSuccessXP, calculateFailureXP, calculateAdjustedAttemptCount }
 import { parseItemHash } from '../../utils/item-hash.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { priceAtLevel, priceGuarded, priceMirror } from '../../utils/enhancement-input-pricing.js';
-import { SessionState, getCurrentLegCounters } from './enhancement-session.js';
+import { SessionState, getCurrentLegCounters, addGapAttempts } from './enhancement-session.js';
 
 // Id of the queue action the tracker last saw running as the enhance row. Read against
 // dataManager's merged queue in handleActionsUpdated so a second enhance queued behind the
@@ -213,8 +213,10 @@ function isSameRun(session, active) {
  * action_completed — the login snapshot already includes it. When the snapshot is exactly one
  * attempt on from the last one recorded, on the same queue action, that attempt is known in
  * full (its start level is the one recorded, its end level the snapshot's) and is scored now.
- * A longer gap cannot be told apart attempt by attempt; the snapshot baseline still keeps the
- * next live attempt from being scored against the stale level.
+ * A longer gap cannot be told apart attempt by attempt, so it is not charged: the session's
+ * counts stay as measured and the attempts missed are recorded on it (gapAttempts), which the
+ * panel states. The snapshot baseline still keeps the next live attempt from being scored
+ * against the stale level.
  * @param {Object} session - The tracker's current session
  * @param {Object} active - The running enhance row from the snapshot
  * @returns {Promise<void>}
@@ -225,7 +227,21 @@ async function reconcileReloadGap(session, active) {
     if (!itemHrid || session.itemHrid !== itemHrid || !last) return;
     if (last.actionId == null || last.actionId !== active.id) return;
     if (!Number.isFinite(last.currentCount) || !Number.isFinite(active.currentCount)) return;
-    if (active.currentCount - last.currentCount !== 1) return;
+    const delta = active.currentCount - last.currentCount;
+    if (delta > 1) {
+        try {
+            // Remember how far the gap has been counted, so the next live attempt does not
+            // count the same attempts again
+            session.lastAttempt = { ...last, gapThrough: active.currentCount };
+            addGapAttempts(session, delta - 1);
+            await enhancementTracker.saveSessions();
+            enhancementUI.scheduleUpdate();
+        } catch (error) {
+            console.error('[EnhancementHandlers] Recording the reload gap failed:', error);
+        }
+        return;
+    }
+    if (delta !== 1) return;
 
     try {
         await applyAttempt({
@@ -707,6 +723,22 @@ async function handleEnhancementResult(action, _data) {
         // one, else the level the session's previous attempt ended at — provided that attempt
         // was the one just before this on the same queue action. A count that skipped ahead
         // means attempts completed unseen (a dropped connection), and the stored level is stale.
+        if (!isNewSession) {
+            // Attempts that completed unseen since the last one recorded (counted already up to
+            // gapThrough when a reload snapshot found them): flagged, not charged
+            const last = currentSession.lastAttempt;
+            const seenTo = Math.max(last?.currentCount ?? -Infinity, last?.gapThrough ?? -Infinity);
+            if (
+                last?.actionId != null &&
+                action.id != null &&
+                last.actionId === action.id &&
+                Number.isFinite(seenTo) &&
+                Number.isFinite(action.currentCount) &&
+                action.currentCount - seenTo > 1
+            ) {
+                addGapAttempts(currentSession, action.currentCount - seenTo - 1);
+            }
+        }
         let previousLevel = baselineLevel;
         if (previousLevel == null && !isNewSession) {
             const last = currentSession.lastAttempt;

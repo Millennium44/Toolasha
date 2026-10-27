@@ -740,6 +740,34 @@ describe('a page reload in the middle of a session', () => {
         expect(results).toEqual([['success', 0, 1, false]]);
     });
 
+    test('a 3-attempt gap is recorded on the session, once, and not charged', async () => {
+        // Count 10 at +5; the snapshot says count 14, so 11, 12 and 13 were never seen
+        state.current = storedSession(5, 10);
+        state.actions = [row(2, 14)];
+        setupEnhancementHandlers();
+        await vi.waitFor(() => expect(state.current.gapAttempts).toBe(3));
+
+        // Nothing scored or costed for the gap, and the next live attempt does not count it again
+        expect(state.calls.filter(([kind]) => kind === 'success' || kind === 'failure')).toEqual([]);
+        await state.handlers.action_completed({ endCharacterAction: row(3, 15) });
+        expect(state.current.gapAttempts).toBe(3);
+        expect(state.calls).toContainEqual(['success', 2, 3, false]);
+    });
+
+    test('a gap of one attempt is still scored, with no flag', async () => {
+        state.current = storedSession(5, 10);
+        state.actions = [row(6, 11)];
+        setupEnhancementHandlers();
+        await vi.waitFor(() => expect(state.calls).toContainEqual(['success', 5, 6, false]));
+        expect(state.current.gapAttempts ?? 0).toBe(0);
+    });
+
+    test('attempts that completed unseen in a live session are flagged', async () => {
+        state.current = storedSession(5, 10);
+        await state.handlers.action_completed({ endCharacterAction: row(1, 13) });
+        expect(state.current.gapAttempts).toBe(2);
+    });
+
     test('a count that skipped ahead with no snapshot seen is not scored from the stale level', async () => {
         state.current = storedSession(5, 10);
         await state.handlers.action_completed({ endCharacterAction: row(1, 13) });

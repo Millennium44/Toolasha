@@ -140,6 +140,12 @@ function noteRemovals(sessions) {
     if (removed) tombstoneRecord.save();
 }
 
+/** Attempts a stored session missed in gaps; 0 for one saved before the field */
+function gapOf(session) {
+    const n = session?.gapAttempts;
+    return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /**
  * Replace a held session's contents with the stored copy, keeping the object:
  * the tracker compares the current session by identity across its awaits.
@@ -172,8 +178,11 @@ function foldSessions(stored, held, graves) {
             if (mine == null) {
                 merged.set(id, session);
             } else {
-                if (mine !== session && typeof mine === 'object' && storedIsNewer(session, mine)) {
-                    adoptInPlace(mine, session);
+                if (mine !== session && typeof mine === 'object') {
+                    // A gap one tab recorded is not lost to the other tab's newer copy
+                    const gap = Math.max(gapOf(mine), gapOf(session));
+                    if (storedIsNewer(session, mine)) adoptInPlace(mine, session);
+                    if (gap > 0) mine.gapAttempts = gap;
                 }
                 merged.set(id, mine);
             }

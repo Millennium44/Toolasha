@@ -208,6 +208,26 @@ describe('two tabs saving the same sessions', () => {
         expect(stored().s1).toMatchObject({ lastUpdateTime: 400, totalAttempts: 6 });
     });
 
+    test('a gap one tab recorded survives the other tab’s newer copy, and a legacy session reads none', async () => {
+        settings().set(SESSIONS, { s1: session('s1', 100, 1), s2: session('s2', 100, 1) });
+        const a = await openTab();
+        const b = await openTab();
+
+        // A records a gap; B, with more attempts and a later stamp, never saw it
+        a.sessions.s1.gapAttempts = 3;
+        a.sessions.s1.lastUpdateTime = 150;
+        await a.saveSessions(a.sessions);
+        await a.flushSessionWrites();
+        b.sessions.s1.lastUpdateTime = 300;
+        b.sessions.s1.totalAttempts = 5;
+        await b.saveSessions(b.sessions);
+        await b.flushSessionWrites();
+
+        expect(stored().s1).toMatchObject({ totalAttempts: 5, gapAttempts: 3 });
+        expect(b.sessions.s1.gapAttempts).toBe(3);
+        expect(stored().s2.gapAttempts).toBeUndefined();
+    });
+
     test('a tab that removes nothing keeps its own unsaved changes over a stale stored copy', async () => {
         settings().set(SESSIONS, { s1: session('s1', 100, 1) });
         const a = await openTab();
