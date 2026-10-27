@@ -63,6 +63,8 @@ class TaskStatistics {
         this.isInitialized = false;
         this.overlay = null;
         this.zoneRun = null;
+        /** Bumped by every close, so a popup build that awaited across one knows it was superseded */
+        this._popupGeneration = 0;
         this.unregisterHandlers = [];
     }
 
@@ -153,15 +155,26 @@ class TaskStatistics {
      * Show statistics popup
      */
     async showPopup() {
-        // Close any existing popup
+        // Close any existing popup. This also bumps the popup generation, which stands down a build
+        // still in flight: two presses of the button (or the tile's double-click) used to each finish
+        // and draw an overlay, and only the later one was ever tracked, so the other could not be closed
         this.closePopup();
+        const generation = this._popupGeneration;
+        const characterId = dataManager.getCurrentCharacterId?.();
+        // Closed, switched off or handed to another character while the build awaited: nothing to draw
+        const superseded = () =>
+            generation !== this._popupGeneration ||
+            Boolean(dataManager.getIsCharacterSwitching?.()) ||
+            dataManager.getCurrentCharacterId?.() !== characterId;
 
         // Ensure market data is loaded for token valuation
         if (!marketAPI.isLoaded()) {
             await marketAPI.fetch();
+            if (superseded()) return;
         }
 
         const statsData = await this.calculateAllStatistics();
+        if (superseded()) return;
         this.createPopup(statsData);
     }
 
@@ -1378,6 +1391,7 @@ class TaskStatistics {
      * Close the statistics popup
      */
     closePopup() {
+        this._popupGeneration += 1;
         this.cancelZoneProgress();
         if (this.overlay) {
             this.overlay.remove();

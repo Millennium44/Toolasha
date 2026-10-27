@@ -629,3 +629,60 @@ describe('the realized-payout-by-type card', () => {
         expect(cardText(stats)).toContain('Not enough claims yet');
     });
 });
+
+describe('opening the popup while a build is still in flight', () => {
+    /**
+     * Holds `calculateAllStatistics` open until released, the way the awaits across the market fetch and the
+     * per-task profit calculation hold it in the game.
+     * @returns {{release: Function}} Releases every build held so far
+     */
+    function holdBuilds() {
+        const waiting = [];
+        vi.spyOn(taskStatistics, 'calculateAllStatistics').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    waiting.push(() =>
+                        resolve({ overflow: { error: 'x' }, slots: {}, rewards: {}, completions: null })
+                    );
+                })
+        );
+        vi.spyOn(taskStatistics, 'createPopup').mockImplementation(function () {
+            const overlay = document.createElement('div');
+            overlay.className = 'toolasha-task-stats-overlay';
+            document.body.appendChild(overlay);
+            this.overlay = overlay;
+        });
+        return { release: () => waiting.forEach((resolve) => resolve()) };
+    }
+
+    beforeEach(async () => {
+        const { default: marketAPI } = await import('../../api/marketplace.js');
+        marketAPI.isLoaded = () => true;
+        document.body.innerHTML = '';
+        taskStatistics.closePopup();
+    });
+
+    test('two presses leave one popup, which closes', async () => {
+        const held = holdBuilds();
+
+        const first = taskStatistics.showPopup();
+        const second = taskStatistics.showPopup();
+        held.release();
+        await Promise.all([first, second]);
+
+        expect(document.querySelectorAll('.toolasha-task-stats-overlay')).toHaveLength(1);
+        taskStatistics.closePopup();
+        expect(document.querySelectorAll('.toolasha-task-stats-overlay')).toHaveLength(0);
+    });
+
+    test('a popup closed or switched off during the build is not drawn afterwards', async () => {
+        const held = holdBuilds();
+
+        const opening = taskStatistics.showPopup();
+        taskStatistics.disable();
+        held.release();
+        await opening;
+
+        expect(document.querySelectorAll('.toolasha-task-stats-overlay')).toHaveLength(0);
+    });
+});
