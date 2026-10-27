@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-27): Combat Stats
+
+- Switching characters while the last combat run was still loading no longer shows the previous character's run as the new one's, and no longer counts its loot in Gold Sources or files it into the new character's history.
+
 ### Audit round (2026-10-26, sixth): dungeons and Party Loot
 
 - Party Loot's combined view adds up every session's consumables instead of charging only the newest one, and a finished run keeps its own duration.
