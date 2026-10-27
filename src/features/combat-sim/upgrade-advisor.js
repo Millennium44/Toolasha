@@ -9422,15 +9422,29 @@ export function priceMergedAcquisition(members, gameData, pricing = {}) {
  * @param {number} params.roomLevel - Room level
  * @param {string[]} params.crateHrids - Selected crate HRIDs
  * @param {Object} [params.skillEquipmentMap] - Per-skill equipment overrides
+ * @param {boolean} [params.isSelf=true] - Whether `editorDTO` is the live character. Anyone else (an imported
+ *   profile, a teammate) is priced at their own sale tax (`saleTaxRateOf`) and without the live character's held
+ *   copies
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results }
  */
 export async function runSkillingUpgradeAnalysis(params, onProgress, options = {}) {
-    const { editorDTO, roomLevel, crateHrids, skillEquipmentMap = {}, targetSkill = null } = params;
+    const { editorDTO, roomLevel, crateHrids, skillEquipmentMap = {}, targetSkill = null, isSelf = true } = params;
     const { abortSignal } = options;
     const gameData = buildGameDataPayload();
     if (!gameData) throw new Error('No game data available');
+    // Resale is taxed as the analysed player pays it, not as the live character would (null: the live character's)
+    const saleTaxRate = saleTaxRateOf(editorDTO, isSelf);
+    // The live character's candidates were priced by their generators; anyone else's are priced again here, at their
+    // tax and without the live character's held copies
+    const priceForPlayer = (generated) => {
+        if (isSelf && saleTaxRate == null) return generated;
+        const c = saleTaxRate == null ? { ...generated } : { ...generated, saleTaxRate };
+        if ('cost' in generated) c.cost = calculateUpgradeCost(c, gameData, isSelf);
+        if (generated.costDetail) c.costDetail = explainLabCandidateCost(c, gameData, isSelf);
+        return c;
+    };
 
     const tokenUpgrades = editorDTO.tokenUpgrades || {};
     const buffCandidates = generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades);
@@ -9438,12 +9452,12 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
     // per worn copy) is one entry from here on, so its level is searched once
     // for every kit it serves
     const equipCandidates = groupSkillingAcquisitions(
-        generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap, targetSkill)
+        generateSkillingEquipmentCandidates(editorDTO, gameData, skillEquipmentMap, targetSkill).map(priceForPlayer)
     );
-    const guildCandidates = generateGuildShrineCandidates(editorDTO, { combat: false }).map((candidate) => ({
-        ...candidate,
-        cost: calculateUpgradeCost(candidate, gameData),
-    }));
+    const guildCandidates = generateGuildShrineCandidates(editorDTO, { combat: false }).map((candidate) => {
+        const c = saleTaxRate == null ? candidate : { ...candidate, saleTaxRate };
+        return { ...c, cost: calculateUpgradeCost(c, gameData, isSelf) };
+    });
     const clearRateOpts = { skillEquipmentMap, targetSkill };
 
     // Yield so Stop clicks and progress paints can land between the heavy sync chunks
@@ -9568,7 +9582,7 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
             costType: 'guild',
             cost: candidate.cost,
             tokenCost: candidate.guildTokenCost,
-            costDetail: explainUpgradeCost(candidate, gameData),
+            costDetail: explainUpgradeCost(candidate, gameData, isSelf),
             clearRate: modifiedClearRate,
             clearRateDelta,
             goldPerClearRate:
@@ -9655,17 +9669,26 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
         if (group) {
             const parts = evalCandidate.members.map((member) => ({
                 candidate: member,
-                cost: member.type === 'enhancement' ? calculateUpgradeCost(member, gameData) : null,
-                costDetail: member.type === 'enhancement' ? explainLabCandidateCost(member, gameData) : null,
+                cost: member.type === 'enhancement' ? calculateUpgradeCost(member, gameData, isSelf) : null,
+                costDetail: member.type === 'enhancement' ? explainLabCandidateCost(member, gameData, isSelf) : null,
             }));
-            const priced = priceMergedAcquisition(parts, gameData);
+            const priced = priceMergedAcquisition(
+                parts,
+                gameData,
+                isSelf
+                    ? {}
+                    : {
+                          price: (c, data) => calculateUpgradeCost(c, data, false),
+                          explain: (c, data) => explainUpgradeCost(c, data, false),
+                      }
+            );
             evalCandidate.cost = priced.cost;
             evalCandidate.costDetail = priced.costDetail;
         } else if (evalCandidate !== entry) {
-            evalCandidate.cost = calculateUpgradeCost(evalCandidate, gameData);
+            evalCandidate.cost = calculateUpgradeCost(evalCandidate, gameData, isSelf);
             // Re-explained at the level it was raised to, or the expansion would
             // itemise a purchase the row is no longer quoting
-            evalCandidate.costDetail = explainLabCandidateCost(evalCandidate, gameData);
+            evalCandidate.costDetail = explainLabCandidateCost(evalCandidate, gameData, isSelf);
         }
 
         results.push({
