@@ -12,6 +12,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - "No sale price" credit lines now also show on merged skilling rows and in the Combat Sim breakdown, and a budget of 0 still shows free and refunding picks.
 - Guild credit rows in the net worth hover read gold per credit, and an early price read before game data loads no longer errors.
 
+### Audit round (2026-10-26, fourth): action bar
+
+- The action bar's time for a counted run stops at what your materials can pay for, matching the queue panel, and a character switch no longer paints the previous character's run into the new one's row.
+
 ### Audit round (2026-10-26, third): treasure and Gold Sources
 
 - Replacing the chest history from a file now survives a sync instead of being undone by another device, and appending keeps a reset in place.
