@@ -173,6 +173,71 @@ describe('computeEnhancingSummary', () => {
     });
 });
 
+describe('computeEnhancingSummary: inputs nothing prices', () => {
+    const itemDetails = {
+        itemLevel: 10,
+        enhancementCosts: [{ itemHrid: '/items/prime_catalyst', count: 1 }],
+    };
+    const materialPrice = (hrid) => (hrid === '/items/prime_catalyst' ? 1000 : 0);
+    const base = '/items/advanced_intelligence_charm';
+    const itemValue = (hrid, level) => (hrid === base ? (level >= 3 ? 100000 : 500) : null);
+    // Two expected protections whichever protect-from is tried
+    const calculateEnhancement = () => ({ attempts: 10, protectionCount: 2 });
+    const run = {
+        baseHrid: base,
+        levelCounts: { 0: 13, 1: 5, 3: 1 },
+        maxLevel: 3,
+        targetLevel: 3,
+        success: true,
+        attempts: 19,
+    };
+    const summarize = (over = {}, runOver = {}) =>
+        computeEnhancingSummary(
+            { ...run, ...runOver },
+            {
+                calculateEnhancement,
+                params: {},
+                materialPrice,
+                protectionPrice: () => 5000,
+                itemValue,
+                itemDetails,
+                ...over,
+            }
+        );
+
+    test('a protection item nobody prices is flagged, not booked as free', () => {
+        const s = summarize({ protectionPrice: () => 0 });
+        expect(s.protectionUnpriced).toBe(true);
+        expect(s.protectExpected).toBe(0);
+    });
+
+    test('a priced protection item carries no marker', () => {
+        expect(summarize().protectionUnpriced).toBe(false);
+    });
+
+    test('an unpriced protection item that the run never needs is not a gap', () => {
+        const s = summarize({
+            protectionPrice: () => 0,
+            calculateEnhancement: () => ({ attempts: 10, protectionCount: 0 }),
+        });
+        expect(s.protectionUnpriced).toBe(false);
+    });
+
+    test('a successful run whose base item has no bid has no profit, not the whole +N value', () => {
+        const unlistedBase = (hrid, level) => (hrid === base && level >= 3 ? 100000 : null);
+        const s = summarize({ itemValue: unlistedBase });
+        expect(s.profit).toBeNull();
+    });
+
+    test('a failed run whose base item has no bid still lost what it spent', () => {
+        const s = summarize(
+            { itemValue: () => null },
+            { success: false, targetLevel: 4, maxLevel: 3, levelCounts: { 0: 15, 3: 4 } }
+        );
+        expect(s.profit).toBe(-s.totalActual);
+    });
+});
+
 describe('mergeEnhancingSummaries', () => {
     const s = (over = {}) => ({
         materialActual: 1000,
@@ -209,6 +274,11 @@ describe('mergeEnhancingSummaries', () => {
     test('one understated run understates the merged total, and says so', () => {
         expect(mergeEnhancingSummaries([s(), s()]).materialsUnpriced).toBe(false);
         expect(mergeEnhancingSummaries([s(), s({ materialsUnpriced: true })]).materialsUnpriced).toBe(true);
+    });
+
+    test('one run with an unpriced protection item marks the merged total', () => {
+        expect(mergeEnhancingSummaries([s(), s()]).protectionUnpriced).toBe(false);
+        expect(mergeEnhancingSummaries([s(), s({ protectionUnpriced: true })]).protectionUnpriced).toBe(true);
     });
 
     test('returns null for an empty list', () => {

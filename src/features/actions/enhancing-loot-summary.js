@@ -208,11 +208,24 @@ export function computeEnhancingSummary(run, deps) {
     const protectActual = protUnit * actualProtects;
     const totalActual = materialActual + protectActual;
 
-    // Worth it: +N resale (after fee) minus base given up (after fee) minus spent.
+    // Protections were counted but nothing prices the item: their cost is left out, not free
+    const protectionUnpriced = !(protUnit > 0) && (best.expProtects > 0 || actualProtects > 0);
+
+    // Worth it: +N resale (after fee) minus base given up (after fee) minus spent. A base item
+    // with no bid is unknown, not worth 0: a successful run would then book the whole +N value as
+    // profit. (A failed run ends where it began, so its base cancels and the loss is the spend.)
     const keep = 1 - marketTax;
-    const baseValue = itemValue(run.baseHrid, 0) || 0;
-    const finalValue = run.success ? (itemValue(run.baseHrid, run.targetLevel) ?? null) : baseValue;
-    const profit = finalValue == null ? null : finalValue * keep - baseValue * keep - totalActual;
+    const baseQuote = itemValue(run.baseHrid, 0);
+    const baseValue = baseQuote > 0 ? baseQuote : null;
+    let finalValue;
+    let profit;
+    if (run.success) {
+        finalValue = itemValue(run.baseHrid, run.targetLevel) ?? null;
+        profit = finalValue == null || baseValue == null ? null : finalValue * keep - baseValue * keep - totalActual;
+    } else {
+        finalValue = baseValue;
+        profit = -totalActual;
+    }
 
     return {
         protectFrom: best.protectFrom,
@@ -233,6 +246,7 @@ export function computeEnhancingSummary(run, deps) {
         success: run.success,
         targetLevel: run.targetLevel,
         materialsUnpriced,
+        protectionUnpriced,
     };
 }
 
@@ -245,7 +259,7 @@ export function computeEnhancingSummary(run, deps) {
  *   materialExpected:number, protectActual:number, protectExpected:number,
  *   totalActual:number, totalExpected:number, actualAttempts:number,
  *   expectedAttempts:number, actualProtects:number, expectedProtects:number,
- *   diff:number, profit:number|null, materialsUnpriced:boolean}|null}
+ *   diff:number, profit:number|null, materialsUnpriced:boolean, protectionUnpriced:boolean}|null}
  */
 export function mergeEnhancingSummaries(summaries) {
     if (!Array.isArray(summaries) || summaries.length === 0) return null;
@@ -265,6 +279,7 @@ export function mergeEnhancingSummaries(summaries) {
         expectedProtects: 0,
         profit: 0,
         materialsUnpriced: false,
+        protectionUnpriced: false,
     };
     let profitKnown = true;
 
@@ -284,6 +299,7 @@ export function mergeEnhancingSummaries(summaries) {
         merged.expectedProtects += s.expectedProtects || 0;
         // One understated run understates the total, so the marker carries over.
         if (s.materialsUnpriced) merged.materialsUnpriced = true;
+        if (s.protectionUnpriced) merged.protectionUnpriced = true;
         // One un-priced run makes the merged profit unknowable rather than wrong.
         if (s.profit == null) profitKnown = false;
         else merged.profit += s.profit;
