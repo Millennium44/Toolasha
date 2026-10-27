@@ -167,6 +167,21 @@ describe('Storage.putAll', () => {
         expect(dataByStore.get('xpHistory').size).toBe(0);
     });
 
+    test('a key with a fold is read and folded in the same transaction', async () => {
+        // How a sync pull's import keeps a save that landed after the pull read its base
+        const { db, dataByStore } = createFakeDb(['xpHistory'], { xpHistory: { a: ['saved meanwhile'] } });
+        storage.db = db;
+
+        const count = await storage.putAll(
+            'xpHistory',
+            { a: ['pulled'], b: 2 },
+            { folds: { a: (stored, value) => [...(stored || []), ...value] } }
+        );
+
+        expect(count).toBe(2);
+        expect(Object.fromEntries(dataByStore.get('xpHistory'))).toEqual({ a: ['saved meanwhile', 'pulled'], b: 2 });
+    });
+
     test('returns 0 when the database is unavailable', async () => {
         storage.db = null;
 

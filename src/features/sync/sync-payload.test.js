@@ -70,6 +70,8 @@ vi.mock('../../core/settings-storage.js', () => ({
 }));
 
 const importedPayloads = vi.hoisted(() => []);
+/** The options each import was handed, in call order */
+const importedOptions = vi.hoisted(() => []);
 const importOutcome = vi.hoisted(() => ({ failed: [], complete: true }));
 /** What `beginRestore()` landed, in call order, so a test can see when it ran */
 const flushLog = vi.hoisted(() => []);
@@ -85,7 +87,8 @@ vi.mock('../../utils/full-backup.js', () => ({
         if (key === 'enhancementTracker_sessions') return 'enhancementTracker_sessionTombstones';
         return key === 'enhancementTracker_sessionTombstones' && !recordOnly ? 'enhancementTracker_sessions' : null;
     },
-    importEverything: async (payload) => {
+    importEverything: async (payload, options = {}) => {
+        importedOptions.push(options);
         if (importOutcome.throws) throw importOutcome.throws;
         // The real `importEverything` quiesces live writers first
         flushLog.push('importEverything.beginRestore');
@@ -154,6 +157,7 @@ const {
 beforeEach(() => {
     resetLeftOutLogForTests();
     importedPayloads.length = 0;
+    importedOptions.length = 0;
     importOutcome.failed = [];
     importOutcome.complete = true;
     importOutcome.writtenKeys = undefined;
@@ -911,6 +915,69 @@ describe('applyPayload merges additive records', () => {
             // before that flush is stale — and the import then puts the stale union
             // straight back on top of the entry that just landed
             expect(importedPayloads[0].stores.dungeonRuns.run_char).toEqual(['old', 'just-recorded', 'remote']);
+        } finally {
+            off();
+        }
+    });
+
+    test('a save landing after the merge read its base is folded in, not written over', async () => {
+        // The fold is computed from a read made long before the import writes. A save that
+        // lands in between (another tab's, or a `storage.update` writer such as the self-use
+        // marks, which the restore hold does not stop) must not be replaced by the fold of the
+        // copy before it: the import redoes the fold in its own transaction
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => [...new Set([...(local || []), ...(incoming || [])])],
+            label: 'fake',
+        });
+        storeState.stores.dungeonRuns = { run_char: ['local'] };
+
+        try {
+            await applyPayload(payloadWith('dungeonRuns', 'run_char', ['remote']));
+
+            const written = importedPayloads[0].stores.dungeonRuns.run_char;
+            expect(written).toEqual(['local', 'remote']);
+            const fold = importedOptions[0]?.folds?.dungeonRuns?.run_char;
+            expect(typeof fold).toBe('function');
+            // Nothing landed in between: the fold as computed
+            expect(fold(['local'], written)).toBe(written);
+            // A save landed in between: kept, with the download folded onto it
+            expect(fold(['local', 'saved meanwhile'], written)).toEqual(['local', 'saved meanwhile', 'remote']);
+            // The key was removed in between: the download, as onto a device holding nothing
+            expect(fold(undefined, written)).toEqual(['remote']);
+        } finally {
+            off();
+        }
+    });
+
+    test('the redone fold keeps the side that wins ties', async () => {
+        // A baseline that says only this device moved: its copy wins ties, at the redo too
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            key: 'tie_rec',
+            merge: (local, incoming) => ({ ...local, ...incoming }),
+            label: 'fake',
+        });
+        const gistCopy = { a: 'gist', b: 'gist only' };
+        storeState.stores.dungeonRuns = { tie_rec: { a: 'mine' } };
+        // Single-key objects: their canonical text is plain JSON
+        const hashOf = (value) => hashPayload(JSON.stringify(value));
+        const baseline = {
+            ['dungeonRuns tie_rec']: { gist: hashOf(gistCopy), local: hashOf({ a: 'exchanged' }) },
+        };
+
+        try {
+            await applyPayload(payloadWith('dungeonRuns', 'tie_rec', gistCopy), { mode: 'merge', baseline });
+
+            const written = importedPayloads[0].stores.dungeonRuns.tie_rec;
+            expect(written).toEqual({ a: 'mine', b: 'gist only' });
+            const fold = importedOptions[0]?.folds?.dungeonRuns?.tie_rec;
+            expect(fold({ a: 'mine', c: 'saved meanwhile' }, written)).toEqual({
+                a: 'mine',
+                b: 'gist only',
+                c: 'saved meanwhile',
+            });
         } finally {
             off();
         }

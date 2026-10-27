@@ -304,12 +304,16 @@ export async function exportEverything() {
  * through the debounced path would mean hundreds of pending per-key timers.
  * @param {{formatVersion: number, stores: Record<string, Record<string, *>>}} payload - Backup payload,
  *   as produced by `exportEverything()`
- * @param {{storeNames?: Array<string>, liveSafeMerge?: boolean}} [options] - Restore options
+ * @param {{storeNames?: Array<string>, liveSafeMerge?: boolean,
+ *   folds?: Record<string, Record<string, Function>>}} [options] - Restore options
  * @param {Array<string>} [options.storeNames] - Restrict restore to these store names.
  *   Defaults to every store present in the payload.
  * @param {boolean} [options.liveSafeMerge] - The payload is a sync pull's merge, so records
  *   registered live-safe are written without being latched. A backup restore leaves this off
  *   and latches everything it wrote.
+ * @param {Record<string, Record<string, Function>>} [options.folds] - Per store, keys whose write reads the
+ *   stored copy in its own transaction and writes `fold(stored, value)` (see `storage.set`'s `fold`): a sync
+ *   pull's folds, redone against a save that landed after the pull read its base
  * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
  *   failed: Array<{store: string, expected: number, written: number}>, complete: boolean}>}
  *   What landed, what was meant to, and whether every store wrote its full count
@@ -382,7 +386,11 @@ export async function importEverything(payload, options = {}) {
             // The restore is the one writer the latch is not protecting against
             // — it is what the latch is protecting. A second pull in the same
             // session would otherwise be refused by the first one's latch.
-            const count = await storage.putAll(storeName, entries, { bypassRestoreLatch: true });
+            const folds = options.folds?.[storeName];
+            const count = await storage.putAll(storeName, entries, {
+                bypassRestoreLatch: true,
+                ...(folds ? { folds } : {}),
+            });
             restored[storeName] = count;
             expected[storeName] = want;
             writtenKeys[storeName] = Object.keys(entries);
