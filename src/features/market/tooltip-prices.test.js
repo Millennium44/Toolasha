@@ -2198,3 +2198,32 @@ describe('buildDetailedProfitDisplay Best plan row', () => {
         }
     });
 });
+
+describe('injectPriceDisplay estimated sides', () => {
+    const priceLine = (price, amount = 1) => {
+        const el = itemTooltip('Cheese');
+        tooltipPrices.injectPriceDisplay(el, price, amount);
+        return el.querySelector('.market-price-injected');
+    };
+
+    test('a value-map bid is marked ~ and explained, the live ask is not', () => {
+        const line = priceLine({ ask: 100, bid: 90, askEstimated: false, bidEstimated: true });
+
+        expect(line.textContent).toContain('Price: 100 / ~90');
+        expect(line.title).toContain('estimated');
+    });
+
+    test('the marked side carries into the stack total', () => {
+        const line = priceLine({ ask: 100, bid: 90, askEstimated: false, bidEstimated: true }, 3);
+
+        expect(line.textContent).toContain('Price: 100 / ~90 (300 / ~270 ×3)');
+    });
+
+    test('live quotes on both sides carry no mark and no title', () => {
+        const line = priceLine({ ask: 100, bid: 90 });
+
+        expect(line.textContent).toContain('Price: 100 / 90');
+        expect(line.textContent).not.toContain('~');
+        expect(line.title).toBe('');
+    });
+});

@@ -1440,18 +1440,25 @@ class TooltipPrices {
             return;
         }
 
+        // A side filled in from the game's value map is an estimate, not a listing: a leading ~ says so
+        const askMark = price.askEstimated ? '~' : '';
+        const bidMark = price.bidEstimated ? '~' : '';
+        if (price.askEstimated || price.bidEstimated) {
+            priceDiv.title = '~ marks a price estimated from the game value map, not read off a live listing';
+        }
+
         // Format prices, using "-" for missing values
-        const askDisplay = price.ask > 0 ? formatTooltipPrice(price.ask) : '-';
-        const bidDisplay = price.bid > 0 ? formatTooltipPrice(price.bid) : '-';
+        const askDisplay = price.ask > 0 ? askMark + formatTooltipPrice(price.ask) : '-';
+        const bidDisplay = price.bid > 0 ? bidMark + formatTooltipPrice(price.bid) : '-';
 
         // Calculate totals when at least ask exists and amount > 1
         const effectiveAmount = artisanAmount || amount;
         let totalDisplay = '';
         if (effectiveAmount > 1 && price.ask > 0) {
             const amountLabel = ` ×${numberFormatter(effectiveAmount)}`;
-            const totalAsk = formatTooltipPrice(price.ask * effectiveAmount);
+            const totalAsk = askMark + formatTooltipPrice(price.ask * effectiveAmount);
             if (price.bid > 0) {
-                const totalBid = formatTooltipPrice(price.bid * effectiveAmount);
+                const totalBid = bidMark + formatTooltipPrice(price.bid * effectiveAmount);
                 totalDisplay = ` (${totalAsk} / ${totalBid}${amountLabel})`;
             } else {
                 totalDisplay = ` (${totalAsk}${amountLabel})`;
@@ -1463,8 +1470,10 @@ class TooltipPrices {
 
         if (config.getSetting('itemTooltip_effectivePrices') && (price.ask > 0 || price.bid > 0)) {
             const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
-            const effAsk = price.ask > 0 ? formatTooltipPrice(calculatePriceAfterTax(price.ask, taxRate)) : '-';
-            const effBid = price.bid > 0 ? formatTooltipPrice(calculatePriceAfterTax(price.bid, taxRate)) : '-';
+            const effAsk =
+                price.ask > 0 ? askMark + formatTooltipPrice(calculatePriceAfterTax(price.ask, taxRate)) : '-';
+            const effBid =
+                price.bid > 0 ? bidMark + formatTooltipPrice(calculatePriceAfterTax(price.bid, taxRate)) : '-';
             priceDiv.innerHTML += `<br><span style="color: ${config.COLOR_TEXT_SECONDARY};">Eff: ${effAsk} / ${effBid}</span>`;
         }
 
