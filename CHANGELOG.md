@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, fifth): skilling optimizer and tea popups
+
+- Tea popups keep your pins and bans when you click an action or go back, and closing one no longer makes the next popup close on its first click.
+- The Simulator says when your teas leave some actions unable to start, instead of just showing a lower XP/hr.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
