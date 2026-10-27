@@ -96,3 +96,20 @@ describe('action bar profit across a character switch', () => {
         expect(document.querySelectorAll('[data-mwi-action-bar-widget="profit"]')).toHaveLength(1);
     });
 });
+
+describe('the "so far this run" row across a character switch', () => {
+    test('a recorder notification after the switch does not repaint the departing character run', () => {
+        actionTimeDisplay.createDisplayPanel();
+        const oldAction = { id: 1, actionHrid: '/actions/milking/cow', currentCount: 5 };
+        actionTimeDisplay._lastRunAction = oldAction;
+        actionTimeDisplay._lastRunActionDetails = { type: '/action_types/milking' };
+
+        actionTimeDisplay.handleCharacterSwitch();
+        actionTimeDisplay.createDisplayPanel();
+        const spy = vi.spyOn(actionTimeDisplay, 'updateRunSoFar');
+        actionTimeDisplay.redrawRunSoFar();
+
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
+    });
+});
