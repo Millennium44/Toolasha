@@ -8733,6 +8733,27 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
         expect(outcome.reason).toMatch(/cannot fit on the drink bar/);
         expect(runSimulation).not.toHaveBeenCalled();
     });
+
+    test('a second coffee of one family takes no slot and is not bought', () => {
+        const addition = (name) => ({
+            candidate: {
+                type: 'drink',
+                slot: 'drink_0',
+                drinkIndex: 0,
+                currentHrid: null,
+                upgradeHrid: `/items/${name}`,
+                buffFamily: '/buff_uniques/same_family',
+                fillsFreeDrinkSlot: true,
+                freeDrinkSlots: 3,
+                description: `Add ${name}`,
+            },
+            cost: 0,
+            attemptsDelta: -1,
+            significant: true,
+        });
+        const plan = planWithinBudget([addition('a'), addition('a2')], 1000);
+        expect(plan.picks.map((pick) => pick.candidate.description)).toEqual(['Add a']);
+    });
 });
 
 describe('a production-cost fallback is not a sale, so it is not taxed', () => {
