@@ -252,6 +252,19 @@ export function loadoutsChecked() {
 }
 
 /**
+ * Whether items marked Favorite in the game are held back from selling.
+ * Read at sell time, not at init, so the setting applies without a reload.
+ * @returns {boolean}
+ */
+export function favoritesHeld() {
+    try {
+        return Boolean(config.getSetting('market_bulkSellHoldFavorites'));
+    } catch {
+        return true;
+    }
+}
+
+/**
  * Every piece of gear saved into a loadout, as hold keys.
  *
  * A loadout is a claim on an item: you are still using it, just not right now.
@@ -1953,6 +1966,8 @@ class BulkSellAssistant {
         let enhanced = 0;
         let locked = 0;
         let favorite = 0;
+        // Read now, per queue build, so a settings change applies to the next run without a reload
+        const holdFavorites = favoritesHeld();
         const heldLoadouts = new Set();
         const items = (dataManager.characterItems || []).filter((item) => {
             if (item.itemLocationHrid !== '/item_locations/inventory') return false;
@@ -2003,7 +2018,7 @@ class BulkSellAssistant {
             }
             // Favorite is the game's own mark, read the way Lock is, at this stack's level (a mark's
             // range covers levels, so a +3 can be favorited while the +0 is not). Held, never sold.
-            if (dataManager.isItemFavorite?.(item.itemHrid, item.enhancementLevel || 0)) {
+            if (holdFavorites && dataManager.isItemFavorite?.(item.itemHrid, item.enhancementLevel || 0)) {
                 favorite += item.count || 0;
                 return false;
             }
@@ -2069,7 +2084,7 @@ class BulkSellAssistant {
 
     /** Whether the current queue entry has been marked Favorite since the queue was built. */
     _isCurrentFavorite() {
-        if (!this.current) return false;
+        if (!this.current || !favoritesHeld()) return false;
         return !!dataManager.isItemFavorite?.(this.current.itemHrid, this.current.enhancementLevel || 0);
     }
 

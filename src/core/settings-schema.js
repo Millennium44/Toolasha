@@ -1858,6 +1858,13 @@ export const settingsGroups = {
                 min: 0,
                 help: 'Stacks worth less than this (count × ask price) are insta-sold to the best bid instead of using up a sell listing slot. 0 turns this rule off. Default: 1,500,000.',
             },
+            market_bulkSellHoldFavorites: {
+                id: 'market_bulkSellHoldFavorites',
+                label: 'Market: Bulk sell holds back items marked Favorite',
+                type: 'checkbox',
+                default: true,
+                help: 'The Bulk Sell Assistant never sells items you have marked Favorite in the game. Off: Favorite items are sold like any other item. Food and drinks used by your saved loadouts are always held back.',
+            },
             market_tradeHistory: {
                 id: 'market_tradeHistory',
                 label: 'Market: Show personal trade history',

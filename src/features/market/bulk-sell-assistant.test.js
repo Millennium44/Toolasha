@@ -142,6 +142,7 @@ beforeEach(() => {
     // The Loadout Snapshot feature is what fills the store the hold list reads;
     // on is the case every test but the "switched off" one is about
     settings['loadoutSnapshot'] = true;
+    settings['market_bulkSellHoldFavorites'] = true;
     game.details = {
         '/items/cheese': { isTradable: true },
         '/items/milk': { isTradable: true },
@@ -413,6 +414,7 @@ describe('the watchlist is only offered when it has something in it', () => {
 
 describe('consumables saved into a loadout, and Favorite items', () => {
     beforeEach(() => {
+        settings['market_bulkSellHoldFavorites'] = true;
         game.details['/items/bread'] = { isTradable: true };
         game.details['/items/coffee'] = { isTradable: true };
         game.details['/items/trinket'] = { isTradable: true };
@@ -444,6 +446,22 @@ describe('consumables saved into a loadout, and Favorite items', () => {
         expect(queued()).not.toContain('/items/milk');
         expect(bulkSell.favoriteSkipped).toBe(5);
         expect(bulkSell._skipNote()).toContain('Favorite');
+    });
+
+    test('with the setting off a Favorite item sells and nothing is counted as Favorite', async () => {
+        settings['market_bulkSellHoldFavorites'] = false;
+        game.favorite = new Set(['/items/milk:0']);
+        await bulkSell._start();
+        expect(queued()).toContain('/items/milk');
+        expect(bulkSell.favoriteSkipped).toBe(0);
+        expect(bulkSell._skipNote()).not.toContain('Favorite');
+    });
+
+    test('with the setting off a loadout food is still held', async () => {
+        settings['market_bulkSellHoldFavorites'] = false;
+        game.loadouts = [{ name: 'Mage', food: [{ itemHrid: '/items/bread' }], drinks: [] }];
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/bread');
     });
 
     test('an unrelated item still sells', async () => {
@@ -1947,6 +1965,20 @@ describe('confirming from the strip', () => {
             await vi.advanceTimersByTimeAsync(1200);
             expect(gameClicks).toBe(0);
             expect(bulkSell.favoriteSkipped).toBeGreaterThan(0);
+        });
+
+        test('with the setting off, a Favorite marked during the vendor settle still sells', async () => {
+            settings['market_bulkSellHoldFavorites'] = false;
+            bulkSell.favoriteSkipped = 0;
+            openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            favoriteCurrent();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(1);
+            expect(bulkSell.favoriteSkipped).toBe(0);
         });
 
         test('an item marked Favorite while an already-armed button settles is not sold', async () => {
