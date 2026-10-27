@@ -424,6 +424,34 @@ describe('a character swap mid-gap', () => {
         });
         expect(self().actualConsumed[GUMMY]).toBeUndefined();
     });
+
+    test("a run read parked when the switch lands is not restored as the arriving character's", async () => {
+        await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000)] }));
+        collector.latestCombatData = null;
+        collector.sessionKey = null;
+
+        // The departing character's last run is being read back when the switch arrives;
+        // the arriving character has never fought, so nothing of theirs replaces it
+        world.onGet = (key) => {
+            if (!key.startsWith('latestCombatRun_char-self')) return;
+            world.onGet = null;
+            collector.onCharacterSwitching();
+            world.characterId = 'char-alt';
+        };
+        await collector.loadLatestData();
+
+        expect(collector.getLastRun()).toBeNull();
+        expect(collector.sessionKey).toBeNull();
+
+        // So the arriving character's first battle archives nothing into their history
+        const { archiveSession } = await import('./combat-session-history.js');
+        archiveSession.mockClear();
+        await collector.onNewBattle({
+            ...battle({ battleId: 1, runStart: new Date(T0).toISOString() }),
+            players: [player('char-alt', 'Alt', [slot(GUMMY, 400)])],
+        });
+        expect(archiveSession).not.toHaveBeenCalled();
+    });
 });
 
 describe('a party', () => {

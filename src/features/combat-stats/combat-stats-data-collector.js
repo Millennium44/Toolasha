@@ -1431,7 +1431,12 @@ class CombatStatsDataCollector {
      * @returns {Promise<Object|null>} Latest combat data
      */
     async loadLatestData() {
+        // Whose run this is, as `loadConsumableTracking` checks: a switch landing inside the read has
+        // already blanked memory for the arriving character, and a character with no run of their own
+        // would be handed the departing one's, then archive it into their history on their first battle
+        const owner = dataManager.getCurrentCharacterId();
         const data = await readScoped(LATEST_RUN_KEY, COMBAT_STORE, null, DISCARD_LEGACY);
+        if (dataManager.getCurrentCharacterId() !== owner) return this.latestCombatData;
         if (data) {
             // Marked so `getLatestData` knows this came out of storage rather
             // than off the wire, and can stop offering it once it stops being
