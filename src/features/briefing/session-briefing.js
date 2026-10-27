@@ -1004,6 +1004,10 @@ export default {
         queueSnapshotUsable = !playedSince && !(queueAtArrival?.queued > 0);
 
         await loadListingDelta(characterId);
+        // Everything below reads the live game, which is whoever is current now. An arrival that a
+        // switch has overtaken would diff its own snapshot against the next character's facts and
+        // draw the result for them; the next character's own arrival is the one that speaks
+        if (characterId !== currentCharacterId()) return;
         // After the listing delta, because `collectFacts()` reads it — and this
         // whole initialize is itself the arrival hook: feature-registry runs it
         // on `character_switched` once the switch has settled, which is the only
@@ -1013,6 +1017,10 @@ export default {
             attempt('the live facts', () => collectFacts())
         );
         awayDiffMarked = false;
+        if (characterId !== currentCharacterId()) {
+            awayDiff = null;
+            return;
+        }
 
         // This arrival's own stamp, so a switch back within the window (or the
         // next reload) finds this instant rather than whatever the last tick
