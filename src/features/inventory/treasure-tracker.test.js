@@ -152,10 +152,18 @@ vi.mock('../../api/marketplace.js', () => ({ default: { on: () => {} } }));
 // The shop-line summing is the real implementation, because that is what the
 // two-cost test below is about.
 const tokenValue = vi.hoisted(() => ({ of: () => 0 }));
-vi.mock('../../utils/token-valuation.js', async (importOriginal) => ({
-    ...(await importOriginal()),
-    calculateDungeonTokenValue: (hrid) => tokenValue.of(hrid),
-}));
+// shopPurchasePriceByMode calls the module's own calculateDungeonTokenValue, which a module mock cannot
+// reach, so it is rebuilt here over the real line-summing with the test's token valuation (market fallback 1,
+// as the market-data mock above answers).
+vi.mock('../../utils/token-valuation.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        calculateDungeonTokenValue: (hrid) => tokenValue.of(hrid),
+        shopPurchasePriceByMode: (itemHrid, shopMaps) =>
+            actual.shopPurchasePrice(itemHrid, shopMaps, (hrid) => (hrid ? (tokenValue.of(hrid) ?? 1) : null)),
+    };
+});
 vi.mock('../../utils/panel-z-index.js', () => ({
     registerFloatingPanel: () => {},
     unregisterFloatingPanel: () => {},
