@@ -1677,7 +1677,13 @@ export class PartyFinderTab {
                     (row.isBaseline
                         ? td('baseline', 'color:#666;') + td('', '')
                         : signed(delta.xpPct, `${delta.xpPct?.toFixed(1)}%`) +
-                          signed(delta.profitDelta, esc(formatKMB(delta.profitDelta))));
+                          signed(
+                              delta.profitDelta,
+                              esc(formatKMB(delta.profitDelta)) +
+                                  (delta.unpriced?.length
+                                      ? `<span data-pf-delta-unpriced title="No price for ${esc(delta.unpriced.join(', '))} (this party or solo); counted as 0 on that side" style="color:#ff9800;">~</span>`
+                                      : '')
+                          ));
             }
             html += td(
                 `<button data-pf-load="${esc(row.id)}" style="${SMALL_BTN_STYLE}" title="Load this party into the editor">Load</button>`

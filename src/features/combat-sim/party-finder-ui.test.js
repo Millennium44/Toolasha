@@ -460,6 +460,10 @@ describe('every way a search can end', () => {
         expect(bobDelta.getAttribute('style')).toMatch(/#f44336/);
         // Bob's loot had an unpriced drop
         expect(rows[3].querySelectorAll('td')[3].textContent).toMatch(/^≥/);
+        // ...so his profit against solo is built on a zero too, and says so; Ann's is not
+        const marker = rows[3].querySelectorAll('td')[6].querySelector('[data-pf-delta-unpriced]');
+        expect(marker?.getAttribute('title')).toContain('/items/x');
+        expect(rows[1].querySelector('[data-pf-delta-unpriced]')).toBeNull();
     });
 
     test('sort by profit vs solo, export CSV and load a party into the editor', async () => {
