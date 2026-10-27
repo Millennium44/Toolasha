@@ -16,6 +16,7 @@ import { runningAction } from '../../utils/combat-actions.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { readAlchemyTabType } from './alchemy-tabs.js';
 
 const STORAGE_KEY_PREFIX = 'alchemyProtectedCategories';
 const LOCKDOWN_MS = 3000;
@@ -366,7 +367,8 @@ class AlchemyActionProtection {
         if (tabText.includes('transmute')) return 'transmute';
         if (tabText.includes('decompose')) return 'decompose';
         if (tabText.includes('coinify')) return 'coinify';
-        return null;
+        // A translated client has no English label to match; the selected tab's position says which it is
+        return readAlchemyTabType();
     }
 
     _getSelectedItemHrid() {
