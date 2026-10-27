@@ -204,6 +204,40 @@ describe('a merge cannot launder an untrustworthy part', () => {
     });
 });
 
+describe('an output the market could not price stays unpriced in the merged run', () => {
+    const unpricedResults = (unpriced) => ({
+        [SHARD]: { count: 8, totalValue: unpriced ? 300 : 800, priceEach: 100, isSelfReturn: false, unpriced },
+    });
+
+    test('an unpriced earlier part is not cleared by a priced later one', () => {
+        const merged = mergeReloadSplitSessions([
+            session({ results: unpricedResults(true) }),
+            session({ startTime: 105_000, results: unpricedResults(false) }),
+        ]);
+
+        expect(merged).toHaveLength(1);
+        expect(merged[0].results[SHARD].unpriced).toBe(true);
+    });
+
+    test('an unpriced later part marks the merged run too', () => {
+        const merged = mergeReloadSplitSessions([
+            session({ results: unpricedResults(false) }),
+            session({ startTime: 105_000, results: unpricedResults(true) }),
+        ]);
+
+        expect(merged[0].results[SHARD].unpriced).toBe(true);
+    });
+
+    test('two priced parts stay priced', () => {
+        const merged = mergeReloadSplitSessions([
+            session({ results: unpricedResults(false) }),
+            session({ startTime: 105_000, results: unpricedResults(false) }),
+        ]);
+
+        expect(merged[0].results[SHARD].unpriced).toBe(false);
+    });
+});
+
 describe('mapping a reader’s kept rows back onto storage', () => {
     test('keeping a merged row keeps every part behind it', () => {
         const stored = [session(), session({ startTime: 105_000 }), session({ startTime: 10 * MINUTE })];

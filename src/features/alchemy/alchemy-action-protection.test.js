@@ -236,6 +236,32 @@ describe('the Unrefine tab is protectable like the others', () => {
         expect(instance._getAlchemyType()).toBe('unrefine');
     });
 
+    test('a translated client is read by the position of the selected tab', async () => {
+        const { alchemyActionProtection: instance } = await import('./alchemy-action-protection.js');
+        const mount = (selected) => {
+            document.body.innerHTML = `<div class="AlchemyPanel_tabsComponentContainer__x">${[
+                '点金',
+                '分解',
+                '转化',
+                '精炼还原',
+                '当前行动',
+            ]
+                .map((label, i) => `<div role="tab" aria-selected="${i === selected}">${label}</div>`)
+                .join('')}</div>`;
+        };
+
+        mount(0);
+        expect(instance._getAlchemyType()).toBe('coinify');
+        mount(1);
+        expect(instance._getAlchemyType()).toBe('decompose');
+        mount(2);
+        expect(instance._getAlchemyType()).toBe('transmute');
+        mount(3);
+        expect(instance._getAlchemyType()).toBe('unrefine');
+        mount(4);
+        expect(instance._getAlchemyType()).toBeNull();
+    });
+
     test('refined items are offered as an unrefine category in the config popup', async () => {
         const { alchemyActionProtection: instance } = await import('./alchemy-action-protection.js');
         const { default: dataManager } = await import('../../core/data-manager.js');

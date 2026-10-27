@@ -42,6 +42,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Lab upgrade analysis no longer offers combat scrolls (they don't work in the Labyrinth), chooses the right loadout when two share a name, and prices a party member's book swaps at their own level.
 - A Lab run interrupted by a switch or rebuild can't draw into the new panel, Find Max no longer survives a rebuild unticked, and remembered all-target runs are saved, bannered and flag a pricing-mode change.
 
+### Audit round (2026-10-26, seventh): alchemy
+
+- Alchemy History, Best Items, action protection and the item pins now work on translated clients, and a run split by a reload keeps its unpriced mark.
+- The alchemy gold summary counts only the selected enhancement level and the exact queued item.
+
 ### Audit round (2026-10-26, third): market
 
 - Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.

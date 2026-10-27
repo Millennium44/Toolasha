@@ -14,6 +14,7 @@
 import storage from '../../core/storage.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { findAlchemyTablist, getAlchemyTabElements } from './alchemy-tabs.js';
 
 /** Switcher order, and the order panes sit in the window. */
 export const ALCHEMY_HISTORY_TYPES = ['transmute', 'coinify', 'decompose'];
@@ -150,17 +151,24 @@ class AlchemyHistoryViewer {
     addAlchemyTab() {
         const ensureTabExists = () => {
             if (this.viewers.size === 0) return;
-            const tablist = document.querySelector('[role="tablist"]');
+            // The panel's own strip first, so a translated client finds it too; the first tablist on the
+            // page is the fallback for a strip whose container cannot be found
+            const alchemyStrip = findAlchemyTablist();
+            const tablist = alchemyStrip || document.querySelector('[role="tablist"]');
             if (!tablist) return;
 
             // Already injected?
             if (tablist.querySelector('[data-mwi-alchemy-history-tab="true"]')) return;
 
             const labels = this.enabledTypes.map((type) => TYPE_LABELS[type]);
-            const referenceTab = Array.from(tablist.children).find(
-                (btn) => !btn.dataset.mwiAlchemyHistoryTab && labels.some((label) => btn.textContent.includes(label))
-            );
-            if (!referenceTab) return;
+            const referenceTab =
+                Array.from(tablist.children).find(
+                    (btn) =>
+                        !btn.dataset.mwiAlchemyHistoryTab && labels.some((label) => btn.textContent.includes(label))
+                ) ||
+                // Labels are translated in other clients; the game's first tab is always one of its own
+                (alchemyStrip ? getAlchemyTabElements()[0] : null);
+            if (!referenceTab || referenceTab.dataset.mwiAlchemyHistoryTab) return;
 
             const tab = referenceTab.cloneNode(true);
             tab.setAttribute('data-mwi-alchemy-history-tab', 'true');

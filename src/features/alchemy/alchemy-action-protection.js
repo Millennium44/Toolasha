@@ -13,9 +13,11 @@ import bundledActionPanelSort from '../actions/action-panel-sort.js';
 import { actionPanelSort } from '../../utils/bundle-bridge.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { runningAction } from '../../utils/combat-actions.js';
+import { parseItemHash } from '../../utils/item-hash.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { readAlchemyTabType } from './alchemy-tabs.js';
 
 const STORAGE_KEY_PREFIX = 'alchemyProtectedCategories';
 const LOCKDOWN_MS = 3000;
@@ -366,7 +368,8 @@ class AlchemyActionProtection {
         if (tabText.includes('transmute')) return 'transmute';
         if (tabText.includes('decompose')) return 'decompose';
         if (tabText.includes('coinify')) return 'coinify';
-        return null;
+        // A translated client has no English label to match; the selected tab's position says which it is
+        return readAlchemyTabType();
     }
 
     _getSelectedItemHrid() {
@@ -386,8 +389,22 @@ class AlchemyActionProtection {
     }
 
     /**
-     * Inventory-location counts by item hrid, plus the coin balance, tallied
-     * once and kept until the next `items_updated`.
+     * The enhancement level of the item the panel is set to work on (0 with no badge).
+     * @returns {number}
+     */
+    _getSelectedEnhancementLevel() {
+        const container = document.querySelector(
+            '[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]'
+        );
+        const text = container?.querySelector('[class*="Item_enhancementLevel"]')?.textContent || '';
+        const match = text.match(/\+(\d+)/);
+        return match ? parseInt(match[1], 10) : 0;
+    }
+
+    /**
+     * Inventory-location counts by stack (`hrid|enhancementLevel`), plus the coin balance, tallied
+     * once and kept until the next `items_updated`. A stack is one level of one item: the panel's
+     * action consumes the selected level only, so the other levels held are not its stock.
      * @returns {{counts: Map<string, number>, coins: number}}
      */
     _getInventoryTotals() {
@@ -400,7 +417,8 @@ class AlchemyActionProtection {
                 if (item.itemLocationHrid !== '/item_locations/inventory') continue;
                 const count = item.count || 0;
                 if (item.itemHrid === '/items/coin') coins += count;
-                counts.set(item.itemHrid, (counts.get(item.itemHrid) || 0) + count);
+                const stackKey = `${item.itemHrid}|${Number(item.enhancementLevel) || 0}`;
+                counts.set(stackKey, (counts.get(stackKey) || 0) + count);
             }
         }
         this._inventoryTotals = { counts, coins };
@@ -444,7 +462,8 @@ class AlchemyActionProtection {
         const coinCost = getAlchemyCoinCost(itemDetails, alchemyType);
 
         const totals = this._getInventoryTotals();
-        const itemCount = totals.counts.get(itemHrid) || 0;
+        const enhancementLevel = this._getSelectedEnhancementLevel();
+        const itemCount = totals.counts.get(`${itemHrid}|${enhancementLevel}`) || 0;
         const goldBalance = totals.coins;
 
         const actions = dataManager.getCurrentActions();
@@ -452,10 +471,13 @@ class AlchemyActionProtection {
         // requeued to the front carries a HIGHER ordinal, so `.find` can return an
         // action queued behind the one actually running. `runningAction` picks the
         // lowest-ordinal unfinished match instead.
-        const activeAction = runningAction(
-            actions,
-            (a) => a.actionHrid === actionHrid && a.primaryItemHash?.includes(itemHrid)
-        );
+        // The hash names the item and its level exactly: a substring test would take '/items/cheese' for
+        // '/items/cheese_boots', and a +0 stack for a +5 one
+        const activeAction = runningAction(actions, (a) => {
+            if (a.actionHrid !== actionHrid) return false;
+            const queued = parseItemHash(a.primaryItemHash);
+            return queued.itemHrid === itemHrid && queued.level === enhancementLevel;
+        });
 
         let totalActions;
         let label = 'all';
