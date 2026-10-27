@@ -16,6 +16,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A combat task estimate no longer shows rewards as profit when the sim killed none of the monster, and Net Task Income is withheld when the reroll history can't be read.
 - The task statistics popup can no longer leave an overlay you can't close, Claim Reward and the reroll reminder appear without reopening the Tasks panel, and weekly windows stay right across daylight saving.
 
+### Audit round (2026-10-26, sixth): item tooltips
+
+- Tooltips mark an estimated price with ~, show an unpriced material or chest key as missing instead of free, and warn when an enhancement input is only partly priced.
+- The consumable tooltip works on any client language, and a slow profit section no longer lands under the next item's tooltip.
+
 ### Audit round (2026-10-26, third): market
 
 - Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.

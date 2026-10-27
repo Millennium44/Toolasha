@@ -475,19 +475,27 @@ function craftPlanPerAction(profitData, mode) {
         const outputAmount = profitData.outputAmount > 0 ? profitData.outputAmount : 1;
         if (Number.isFinite(plan.unitCost)) return { cost: plan.unitCost * outputAmount, partial: false };
 
-        // Sum the priced legs; an unpriced buy leg adds nothing and marks the bill partial. A crafted
-        // node's children are sized for whole actions, so its share of the bill is scaled back to the
-        // units wanted from it (quantity over actions x yield) - the same per-unit cost `unitCost` is
-        // built from. Left unscaled, a multi-yield intermediate would charge the full craft for each
-        // unit, and the floor could exceed the complete cost.
+        // Sum the priced legs; an unpriced buy leg adds nothing and marks the bill partial. The sum is
+        // built the way the planner builds `unitCost`: a crafted node's cost per unit is its inputs'
+        // per-unit costs times the average (Artisan-reduced, unrounded) count one craft uses, over the
+        // units one craft yields. A priced node contributes its own `unitCost`. Reading a priced leg's
+        // `totalCost` instead would bill it at the whole-unit quantity the plan buys, which the
+        // complete bill never does, so the floor could exceed the cost it is a floor of.
         const walk = (node) => {
-            if (Number.isFinite(node.totalCost)) return node.totalCost;
+            if (Number.isFinite(node.unitCost)) return node.unitCost;
             if (node.strategy !== 'craft') return 0;
-            const quantity = node.quantity > 0 ? node.quantity : 1;
             const yieldPerAction = node.outputCount > 0 ? node.outputCount : 1;
+            const quantity = node.quantity > 0 ? node.quantity : 1;
             const actions = node.actionsNeeded > 0 ? node.actionsNeeded : Math.ceil(quantity / yieldPerAction);
-            const inputs = (node.children || []).reduce((sum, child) => sum + walk(child), 0);
-            return (inputs * quantity) / (actions * yieldPerAction);
+            const perAction = (node.children || []).reduce((sum, child) => {
+                const meta = child.craftInputMeta;
+                let used;
+                if (meta && meta.countPerAction > 0) used = meta.countPerAction * (1 - (meta.artisanBonus || 0));
+                else if (child.isUpgradeItem) used = 1;
+                else used = child.quantity > 0 ? child.quantity / actions : 1;
+                return sum + walk(child) * used;
+            }, 0);
+            return perAction / yieldPerAction;
         };
         return { cost: walk(plan) * outputAmount, partial: true };
     } catch (error) {
@@ -819,7 +827,8 @@ class TooltipPrices {
                 const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
                 if (chestKeyHrid) {
                     const keyDetails = dataManager.getItemDetails(chestKeyHrid);
-                    keyPrice = getKeyUnitCost(chestKeyHrid) ?? 0;
+                    // null stays null: a key nobody can price is not a free one, and the display says so
+                    keyPrice = getKeyUnitCost(chestKeyHrid);
                     this.injectExpectedValueDisplay(
                         tooltipElement,
                         evData,
@@ -843,6 +852,10 @@ class TooltipPrices {
             enhancementLevel = info.enhancementLevel;
         }
 
+        // The pointer may move to another item while an await below is pending: a reused popper is then
+        // reprocessed for that item, and this pass must not draw its figures into the new item's tooltip
+        const isStale = () => tooltipElement.dataset.pricesProcessedItem !== itemName;
+
         // Get market price for the specific enhancement level (0 for base items, 1-20 for enhanced)
         const price = getItemPrices(itemHrid, enhancementLevel);
 
@@ -863,6 +876,7 @@ class TooltipPrices {
             // Enhanced items show their cost in the enhancement path section instead
             const profitData = await profitCalculator.calculateProfit(itemHrid, { keepSellTax: true });
             craftProfitData = profitData ?? null;
+            if (isStale()) return;
             if (profitData) {
                 this.injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip);
             }
@@ -875,7 +889,9 @@ class TooltipPrices {
             // Multi-action profit display (alchemy actions only - craft shown above)
             await this.injectMultiActionProfitDisplay(tooltipElement, itemHrid, enhancementLevel, isCollectionTooltip, {
                 craftProfitData,
+                isStale,
             });
+            if (isStale()) return;
         }
 
         // The cheapest alchemy route to this item, when one beats buying it
@@ -891,6 +907,7 @@ class TooltipPrices {
         // Check for gathering sources (Foraging, Woodcutting, Milking)
         if (config.getSetting('itemTooltip_gathering') && enhancementLevel === 0) {
             const gatheringData = await this.findGatheringSources(itemHrid);
+            if (isStale()) return;
             if (gatheringData && (gatheringData.soloActions.length > 0 || gatheringData.zoneActions.length > 0)) {
                 this.injectGatheringDisplay(tooltipElement, gatheringData, isCollectionTooltip);
             }
@@ -1432,18 +1449,25 @@ class TooltipPrices {
             return;
         }
 
+        // A side filled in from the game's value map is an estimate, not a listing: a leading ~ says so
+        const askMark = price.askEstimated ? '~' : '';
+        const bidMark = price.bidEstimated ? '~' : '';
+        if (price.askEstimated || price.bidEstimated) {
+            priceDiv.title = '~ marks a price estimated from the game value map, not read off a live listing';
+        }
+
         // Format prices, using "-" for missing values
-        const askDisplay = price.ask > 0 ? formatTooltipPrice(price.ask) : '-';
-        const bidDisplay = price.bid > 0 ? formatTooltipPrice(price.bid) : '-';
+        const askDisplay = price.ask > 0 ? askMark + formatTooltipPrice(price.ask) : '-';
+        const bidDisplay = price.bid > 0 ? bidMark + formatTooltipPrice(price.bid) : '-';
 
         // Calculate totals when at least ask exists and amount > 1
         const effectiveAmount = artisanAmount || amount;
         let totalDisplay = '';
         if (effectiveAmount > 1 && price.ask > 0) {
             const amountLabel = ` ×${numberFormatter(effectiveAmount)}`;
-            const totalAsk = formatTooltipPrice(price.ask * effectiveAmount);
+            const totalAsk = askMark + formatTooltipPrice(price.ask * effectiveAmount);
             if (price.bid > 0) {
-                const totalBid = formatTooltipPrice(price.bid * effectiveAmount);
+                const totalBid = bidMark + formatTooltipPrice(price.bid * effectiveAmount);
                 totalDisplay = ` (${totalAsk} / ${totalBid}${amountLabel})`;
             } else {
                 totalDisplay = ` (${totalAsk}${amountLabel})`;
@@ -1455,8 +1479,10 @@ class TooltipPrices {
 
         if (config.getSetting('itemTooltip_effectivePrices') && (price.ask > 0 || price.bid > 0)) {
             const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
-            const effAsk = price.ask > 0 ? formatTooltipPrice(calculatePriceAfterTax(price.ask, taxRate)) : '-';
-            const effBid = price.bid > 0 ? formatTooltipPrice(calculatePriceAfterTax(price.bid, taxRate)) : '-';
+            const effAsk =
+                price.ask > 0 ? askMark + formatTooltipPrice(calculatePriceAfterTax(price.ask, taxRate)) : '-';
+            const effBid =
+                price.bid > 0 ? bidMark + formatTooltipPrice(calculatePriceAfterTax(price.bid, taxRate)) : '-';
             priceDiv.innerHTML += `<br><span style="color: ${config.COLOR_TEXT_SECONDARY};">Eff: ${effAsk} / ${effBid}</span>`;
         }
 
@@ -1642,8 +1668,14 @@ class TooltipPrices {
                     return { ...material, askPrice: 1, bidPrice: 1 };
                 }
 
-                let askPrice = resolveItemPrice(material.itemHrid, { mode: 'ask', side: 'buy' }).price ?? 0;
-                let bidPrice = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' }).price ?? 0;
+                // A material with no quote on a side adds nothing to that side's Total: the row says "-"
+                // and the Total becomes a floor, instead of a 0 that reads like a free input
+                const askResolved = resolveItemPrice(material.itemHrid, { mode: 'ask', side: 'buy' });
+                const bidResolved = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' });
+                const askQuote = askResolved.price;
+                const bidQuote = bidResolved.price;
+                let askPrice = askQuote ?? 0;
+                let bidPrice = bidQuote ?? 0;
 
                 if (material.isUpgradeItem) {
                     const craftEnabled = config.getSetting('profitCalc_craftUpgradeItems');
@@ -1668,7 +1700,15 @@ class TooltipPrices {
                     return { ...material, itemName: `Buy ${material.itemName}`, askPrice, bidPrice };
                 }
 
-                return { ...material, askPrice, bidPrice };
+                return {
+                    ...material,
+                    askPrice,
+                    bidPrice,
+                    askUnpriced: askQuote == null,
+                    bidUnpriced: bidQuote == null,
+                    askEstimated: Boolean(askResolved.estimated),
+                    bidEstimated: Boolean(bidResolved.estimated),
+                };
             });
 
             // Calculate totals (include sub-rows for correct additive sum)
@@ -1689,11 +1729,20 @@ class TooltipPrices {
             }
 
             // Total row
+            // A floor when a material has no quote; an estimate (~) when one is a value-map stand-in
+            const boundMark = (unpricedKey, estimatedKey) =>
+                materialsWithPrices.some((m) => m[unpricedKey])
+                    ? '≥ '
+                    : materialsWithPrices.some((m) => m[estimatedKey])
+                      ? '~'
+                      : '';
+            const askFloor = boundMark('askUnpriced', 'askEstimated');
+            const bidFloor = boundMark('bidUnpriced', 'bidEstimated');
             html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
             html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
             html += `<td style="padding: 2px 4px; text-align: center;">${totalCount.toFixed(1)}</td>`;
-            html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(totalAsk)}</td>`;
-            html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(totalBid)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right;">${askFloor}${formatKMB(totalAsk)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right;">${bidFloor}${formatKMB(totalBid)}</td>`;
             html += '</tr>';
 
             html += this._buildBestPlanRows(profitData, totalAsk, totalBid);
@@ -1703,8 +1752,8 @@ class TooltipPrices {
                 html += '<tr>';
                 html += `<td style="padding: 2px 4px;">${material.itemName}</td>`;
                 html += `<td style="padding: 2px 4px; text-align: center;">${material.amount.toFixed(1)}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(material.askPrice)}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatKMB(material.bidPrice)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${material.askUnpriced ? '-' : (material.askEstimated ? '~' : '') + formatKMB(material.askPrice)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${material.bidUnpriced ? '-' : (material.bidEstimated ? '~' : '') + formatKMB(material.bidPrice)}</td>`;
                 html += '</tr>';
                 if (material.subRows) {
                     for (const sub of material.subRows) {
@@ -1779,6 +1828,8 @@ class TooltipPrices {
      * @param {Element} tooltipElement - Tooltip element
      * @param {Object} evData - Expected value calculation data
      * @param {boolean} isCollectionTooltip - True if this is a collection tooltip
+     * @param {number|null} [keyPrice=0] - Gold per key to take off; 0 for a chest with no key, null for a key that cannot be priced
+     * @param {string|null} [keyName] - The key's name, for its line
      */
     injectExpectedValueDisplay(tooltipElement, evData, isCollectionTooltip = false, keyPrice = 0, keyName = null) {
         const tooltipText = isCollectionTooltip
@@ -1814,10 +1865,13 @@ class TooltipPrices {
             ? ` <span style="color: ${config.COLOR_TEXT_SECONDARY}; font-weight: normal;">(${evData.missingCount} drop${evData.missingCount === 1 ? '' : 's'} unpriced)</span>`
             : '';
         html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Expected Return: ${evPrefix}${formatTooltipPrice(evData.expectedValue)}${evSuffix}</div>`;
-        if (keyPrice > 0) {
-            const keyLabel = keyName ? `Key Cost (${keyName})` : 'Key Cost';
+        const keyLabel = keyName ? `Key Cost (${keyName})` : 'Key Cost';
+        if (keyPrice === null) {
+            // The chest takes a key but neither the market nor the recipe can price it, so no net is shown
+            html += `<div style="color: ${config.COLOR_TEXT_SECONDARY};">- ${keyLabel}: no price, net value not shown</div>`;
+        } else if (keyPrice > 0) {
             html += `<div style="color: ${config.COLOR_TOOLTIP_LOSS};">- ${keyLabel}: ${formatTooltipPrice(keyPrice)}</div>`;
-            html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Net Value: ${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
+            html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Net Value: ${evPrefix}${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
         }
 
         html += '</div>'; // Close summary section
@@ -1861,9 +1915,9 @@ class TooltipPrices {
 
             // Show total
             html += '<div style="border-top: 1px solid rgba(255,255,255,0.2); margin: 4px 0;"></div>';
-            html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Total from ${evData.drops.length} drops: ${formatTooltipPrice(evData.expectedValue)}</div>`;
+            html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Total from ${evData.drops.length} drops: ${evPrefix}${formatTooltipPrice(evData.expectedValue)}</div>`;
             if (keyPrice > 0) {
-                html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Net after key: ${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
+                html += `<div style="font-size: 0.9em; margin-left: 8px; font-weight: bold;">Net after key: ${evPrefix}${formatTooltipPrice(evData.expectedValue - keyPrice)}</div>`;
             }
         }
 
@@ -2087,13 +2141,14 @@ class TooltipPrices {
      * @param {Object} [options]
      * @param {Object|null} [options.craftProfitData] - The craft profit already computed for
      *   this tooltip (undefined when it was not), reused for the self-use own-use cost
+     * @param {Function} [options.isStale] - True once the tooltip has moved to another item
      */
     async injectMultiActionProfitDisplay(
         tooltipElement,
         itemHrid,
         enhancementLevel,
         isCollectionTooltip = false,
-        { craftProfitData } = {}
+        { craftProfitData, isStale = () => false } = {}
     ) {
         const tooltipText = isCollectionTooltip
             ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
@@ -2130,6 +2185,7 @@ class TooltipPrices {
             config.getSetting('itemTooltip_selfUseAlchemy') && enhancementLevel === 0
                 ? await this.buildSelfUseAlchemyLines(itemHrid, alchemyProfits, craftProfitData)
                 : [];
+        if (isStale()) return;
 
         // If no profitable actions found, return
         if (allProfits.length === 0 && selfUseLines.length === 0) {

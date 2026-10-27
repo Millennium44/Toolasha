@@ -829,8 +829,12 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         totalExpectedXP,
         paramsNote,
         enhancementParams,
-        pricesPartial,
+        pricesPartial: someInputUnpriced,
+        inputsPartial,
     } = enhancementData;
+    // An input nobody prices, or a chosen input that is itself a partial crafting bill: either way the
+    // total is an under-quote (the same two flags net worth and the inventory badges read together)
+    const pricesPartial = someInputUnpriced === true || inputsPartial === true;
 
     // Validate required fields
     if (

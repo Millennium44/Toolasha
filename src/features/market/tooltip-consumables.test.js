@@ -118,3 +118,23 @@ describe('consumable stats through the tooltip observer', () => {
         expect(tooltipConsumables.extractItemHrid(itemTooltip('Nothing'))).toBeNull();
     });
 });
+
+describe('consumable tooltips in a translated client', () => {
+    test('the sprite names the item when the displayed name is not the English one', async () => {
+        const el = itemTooltip('Fromage');
+        el.querySelector('.ItemTooltipText_itemTooltipText__x').insertAdjacentHTML(
+            'beforeend',
+            '<svg><use href="/static/media/items_sprite.abc.svg#cheese"></use></svg>'
+        );
+        observerState.handler(el);
+        await Promise.resolve();
+        expect(el.querySelector('.consumable-stats-injected')).not.toBeNull();
+    });
+
+    test('the cost line names the side it prices', async () => {
+        const el = itemTooltip('Cheese');
+        observerState.handler(el);
+        await Promise.resolve();
+        expect(el.querySelector('.consumable-stats-injected').textContent).toContain('per HP (ask)');
+    });
+});

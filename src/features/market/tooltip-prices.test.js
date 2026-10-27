@@ -2133,6 +2133,41 @@ describe('buildDetailedProfitDisplay Best plan row', () => {
         expect(render()).toContain(`≥ ${formatKMB(60)}`);
     });
 
+    test('a priced leg is billed at the average Artisan count, so the floor never exceeds the complete cost', () => {
+        // 4 per craft at 10% Artisan: the plan buys 4 whole units (400) but the complete bill uses 3.6 (360)
+        const artisanLeaf = {
+            strategy: 'buy',
+            quantity: 4,
+            unitCost: 100,
+            totalCost: 400,
+            children: [],
+            craftInputMeta: { countPerAction: 4, artisanBonus: 0.1 },
+        };
+        const unpriced = {
+            strategy: 'buy',
+            quantity: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [],
+            craftInputMeta: { countPerAction: 1, artisanBonus: 0.1 },
+        };
+        const root = {
+            strategy: 'craft',
+            quantity: 1,
+            outputCount: 1,
+            actionsNeeded: 1,
+            unitCost: Infinity,
+            totalCost: Infinity,
+            children: [artisanLeaf, unpriced],
+        };
+        planState.planner = vi.fn(() => root);
+
+        const html = render();
+
+        expect(html).toContain(`≥ ${formatKMB(360)}`);
+        expect(html).not.toContain(`≥ ${formatKMB(400)}`);
+    });
+
     test('a plan with nothing priced at all shows no row rather than a zero', () => {
         const unpriced = { strategy: 'buy', unitCost: Infinity, totalCost: Infinity, children: [] };
         planState.planner = vi.fn(() => rootOf(Infinity, [unpriced]));
@@ -2161,5 +2196,149 @@ describe('buildDetailedProfitDisplay Best plan row', () => {
         } finally {
             profitData.outputAmount = 1;
         }
+    });
+});
+
+describe('injectPriceDisplay estimated sides', () => {
+    const priceLine = (price, amount = 1) => {
+        const el = itemTooltip('Cheese');
+        tooltipPrices.injectPriceDisplay(el, price, amount);
+        return el.querySelector('.market-price-injected');
+    };
+
+    test('a value-map bid is marked ~ and explained, the live ask is not', () => {
+        const line = priceLine({ ask: 100, bid: 90, askEstimated: false, bidEstimated: true });
+
+        expect(line.textContent).toContain('Price: 100 / ~90');
+        expect(line.title).toContain('estimated');
+    });
+
+    test('the marked side carries into the stack total', () => {
+        const line = priceLine({ ask: 100, bid: 90, askEstimated: false, bidEstimated: true }, 3);
+
+        expect(line.textContent).toContain('Price: 100 / ~90 (300 / ~270 ×3)');
+    });
+
+    test('live quotes on both sides carry no mark and no title', () => {
+        const line = priceLine({ ask: 100, bid: 90 });
+
+        expect(line.textContent).toContain('Price: 100 / 90');
+        expect(line.textContent).not.toContain('~');
+        expect(line.title).toBe('');
+    });
+});
+
+describe('injectExpectedValueDisplay key deduction', () => {
+    const drop = { itemName: 'Coin', dropRate: 1, avgCount: 1, expectedValue: 1000, hasPriceData: true };
+    const evOf = (extra = {}) => ({ expectedValue: 1000, isPartial: false, missingCount: 0, drops: [drop], ...extra });
+    const text = (ev, keyPrice) => {
+        const el = itemTooltip('Chimerical Chest');
+        tooltipPrices.injectExpectedValueDisplay(el, ev, false, keyPrice, 'Chimerical Chest Key');
+        return el.querySelector('.market-ev-injected').textContent;
+    };
+
+    test('a priced key is taken off and a complete figure carries no bound mark', () => {
+        const out = text(evOf(), 300);
+
+        expect(out).toContain('Net Value: 700');
+        expect(out).toContain('Net after key: 700');
+        expect(out).not.toContain('≥');
+    });
+
+    test('a partial EV makes every net figure a floor too', () => {
+        const out = text(evOf({ isPartial: true, missingCount: 1 }), 300);
+
+        expect(out).toContain('Net Value: ≥ 700');
+        expect(out).toContain('Total from 1 drops: ≥ 1');
+        expect(out).toContain('Net after key: ≥ 700');
+    });
+
+    test('a key nobody can price says so instead of silently dropping the deduction', () => {
+        const out = text(evOf(), null);
+
+        expect(out).toContain('Key Cost (Chimerical Chest Key): no price, net value not shown');
+        expect(out).not.toContain('Net Value');
+    });
+
+    test('a chest with no key (0) shows no key line', () => {
+        const out = text(evOf(), 0);
+
+        expect(out).not.toContain('Key Cost');
+    });
+});
+
+const { default: profitCalculator } = await import('./profit-calculator.js');
+
+describe('a reused popper that moved to another item during an await', () => {
+    const profitFor = () => ({
+        itemPrice: { ask: 0, bid: 0 },
+        totalMaterialCost: 5,
+        materialCosts: [],
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('the finished craft profit is drawn when the tooltip is still on its item', async () => {
+        vi.spyOn(profitCalculator, 'calculateProfit').mockResolvedValue(profitFor());
+        const el = itemTooltip('Cheese');
+        await tooltipPrices.handleTooltip(el);
+
+        expect(el.querySelector('.market-profit-injected')).not.toBeNull();
+    });
+
+    test('a profit that resolves after the tooltip moved on is dropped, not drawn under the new item', async () => {
+        let resolveProfit;
+        vi.spyOn(profitCalculator, 'calculateProfit').mockImplementation(
+            () => new Promise((resolve) => (resolveProfit = resolve))
+        );
+        const el = itemTooltip('Cheese');
+        const pending = tooltipPrices.handleTooltip(el);
+        // The popper is reused for Apple: the next pass marks it and clears what the old one drew
+        el.dataset.pricesProcessedItem = 'Apple';
+        resolveProfit(profitFor());
+        await pending;
+
+        expect(el.querySelector('.market-profit-injected')).toBeNull();
+    });
+});
+
+describe('buildDetailedProfitDisplay materials table quotes', () => {
+    const profitData = {
+        itemHrid: '/items/gadget',
+        outputAmount: 1,
+        materialCosts: [
+            { itemHrid: '/items/alloy', itemName: 'Alloy', amount: 1 },
+            { itemHrid: '/items/ore', itemName: 'Ore', amount: 1 },
+        ],
+    };
+    const render = () => tooltipPrices.buildDetailedProfitDisplay(profitData, false);
+    const totalRow = (html) => html.match(/Total<\/td>.*?<\/tr>/s)[0];
+
+    beforeEach(() => {
+        settings.subMaterials = false;
+    });
+    afterEach(() => {
+        planState.prices = {};
+    });
+
+    test('a material nobody prices reads "-" and makes the Total a floor, not a free input', () => {
+        planState.prices = { '/items/alloy': { ask: 100, bid: 90 } };
+
+        const html = render();
+
+        expect(totalRow(html)).toContain('≥ 100');
+        expect(totalRow(html)).toContain('≥ 90');
+        expect(html).toMatch(/Ore<\/td>.*?>-<\/td>.*?>-<\/td>/s);
+    });
+
+    test('fully quoted materials carry no mark', () => {
+        planState.prices = { '/items/alloy': { ask: 100, bid: 90 }, '/items/ore': { ask: 100, bid: 90 } };
+
+        const html = render();
+
+        expect(totalRow(html)).not.toContain('≥');
+        expect(totalRow(html)).toContain('200');
     });
 });
