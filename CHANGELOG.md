@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Price history shows the game base value
+
+- The price history chart's tooltip now shows that day's base market value, taken from the history the price service sends (adapted from mooket II); a new setting turns it off, and nothing shows for days without one.
+
 ### Audit round (2026-10-26, sixth): dungeons and Party Loot
 
 - Party Loot's combined view adds up every session's consumables instead of charging only the newest one, and a finished run keeps its own duration.
