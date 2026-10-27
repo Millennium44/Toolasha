@@ -6675,6 +6675,35 @@ describe('the Ability order Include option', () => {
             expect(results.querySelector('[data-clear-remembered-upgrade]')).toBeTruthy();
         });
 
+        test('a remembered read that resolves after a teardown does not land on the rebuilt panel', async () => {
+            game.rememberUpgradeResults = true;
+            tick('ability_order');
+            await ui._onUpgradeAnalyze();
+            const saved = storage.written[KEY];
+            expect(saved.orderSection.groups.length).toBeGreaterThan(0);
+
+            let resolveRead;
+            storage.pending[KEY] = new Promise((resolve) => {
+                resolveRead = resolve;
+            });
+            const restore = ui._restoreUpgradeResults();
+            // The character switch: the panel is torn down and built for the arriving character
+            ui.destroy();
+            game.characterId = 'alt';
+            ui.buildPanel();
+            await settle();
+            resolveRead(saved);
+            try {
+                await restore;
+                expect(ui._upgradeOrderSection).toBeNull();
+                expect(ui._restoredUpgradeAt).toBeNull();
+                expect(section().style.display).not.toBe('block');
+            } finally {
+                delete storage.pending[KEY];
+                game.characterId = 'me';
+            }
+        });
+
         test('a fresh all-targets run drops the banner a restored set drew', async () => {
             allSpy.mockImplementation(async (params) => (params.modes?.length ? allFightsTable() : rawOrders(params)));
             ui._restoredUpgradeAt = Date.now();

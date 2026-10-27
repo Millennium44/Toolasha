@@ -8092,9 +8092,15 @@ class LabSimUI {
      */
     async _restoreUpgradeResults({ replace = false } = {}) {
         try {
-            const container = this.panel?.querySelector('#mwi-labsim-upgrade-results');
+            const panel = this.panel;
+            const container = panel?.querySelector('#mwi-labsim-upgrade-results');
             if (!container || (container.querySelector('table') && !replace)) return;
+            // The read is scoped to whoever is current now; captured so a switch while it is out is noticed
+            const ownerId = dataManager.getCurrentCharacterId();
             const payload = await loadUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
+            // A teardown while the read was out (a character switch) rebuilt the panel: this payload is the
+            // departing panel's, and its banner state and order section must not land on the new one
+            if (this.panel !== panel || !this._stillSameCharacter(ownerId)) return;
             // Whatever the read's kind: an analysis (an order-only one draws no table to notice) that started
             // or finished while it was out owns the panel, and the older saved payload must not paint over it
             if (this._upgradeRunning || this._upgradeRunStarted) return;
