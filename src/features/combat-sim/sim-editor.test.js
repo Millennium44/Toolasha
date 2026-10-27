@@ -84,7 +84,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
     // what the remembered-selection restore leans on
     applyLoadoutSnapshotToDTO: (dto, name) => {
         bridge.applied.push(name);
-        const found = bridge.snapshots.some((snap) => snap.name === name);
+        // The real one takes a snapshot object as given, without a name lookup
+        const found = name && typeof name === 'object' ? true : bridge.snapshots.some((snap) => snap.name === name);
         // The real function mutates the DTO to match the snapshot; a test that
         // cares whether a legitimate loadout/current-gear difference gets
         // mistaken for a hand edit needs that mutation to actually happen.
@@ -1328,6 +1329,26 @@ describe('the loadout target can be a non-self tab, even with self loaded', () =
         editor.replacePlayer('player1', emptyDTO('ignored'), 'Fresh A');
 
         expect(editor.getSelectedLoadoutName()).toBe('Bruteforce');
+    });
+});
+
+describe('a loadout handed over as a snapshot', () => {
+    test('is applied as given, not looked up by a name another loadout shares', () => {
+        // The Lab resolves each monster's loadout by the server's id; sent back by name, the editor applied
+        // the first of two loadouts called the same thing
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('player1')], ['A']);
+        const first = { id: 3, name: 'Lab', actionTypeHrid: '/action_types/combat' };
+        const assigned = { id: 7, name: 'Lab', actionTypeHrid: '/action_types/combat' };
+        bridge.snapshots = [first, assigned];
+        bridge.applied = [];
+
+        expect(editor.applyLoadoutByName(assigned)).toBe(true);
+
+        expect(bridge.applied[0]).toBe(assigned);
+        expect(editor.getSelectedLoadoutName()).toBe('Lab');
+        expect(editor.getLoadoutNameFor('player1')).toBe('Lab');
     });
 });
 

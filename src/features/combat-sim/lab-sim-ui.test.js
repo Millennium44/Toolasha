@@ -387,7 +387,7 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     default: {
         get: () => null,
         get snapshots() {
-            return Object.fromEntries(Object.entries(game.loadoutNames).map(([id, name]) => [id, { name }]));
+            return Object.fromEntries(Object.entries(game.loadoutNames).map(([id, name]) => [id, { id, name }]));
         },
         // Every named loadout, tagged with the action type the Skilling tab
         // filters them by — the shape the loadout table reads
@@ -1722,6 +1722,23 @@ describe('a labyrinth run waiting for the live profile', () => {
         releaseCurrent(profileResult());
         await currentRun;
         expect(sim.calls).toHaveLength(1);
+    });
+
+    test('choosing a monster applies its assigned loadout itself, not the first loadout sharing its name', () => {
+        game.characterSetting = { labyrinthLoadoutMimic: 7 };
+        game.loadoutNames = { 3: 'Lab', 7: 'Lab' };
+        const applied = [];
+        ui._editor.applyLoadoutByName = (loadout) => applied.push(loadout);
+        try {
+            ui._onMonsterChange('/monsters/mimic');
+        } finally {
+            delete ui._editor.applyLoadoutByName;
+            game.characterSetting = null;
+            game.loadoutNames = {};
+        }
+
+        expect(applied).toHaveLength(1);
+        expect(applied[0]).toMatchObject({ id: '7', name: 'Lab' });
     });
 
     test('a rebuilt panel runs the fixed-level fight its unticked Find Max box shows', async () => {

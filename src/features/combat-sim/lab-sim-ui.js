@@ -1975,7 +1975,8 @@ class LabSimUI {
         if (!loadoutId) return;
         const snapshot = (loadoutSnapshot() || bundledLoadoutSnapshot).snapshots[loadoutId];
         if (!snapshot?.name) return;
-        this._editor.applyLoadoutByName(snapshot.name);
+        // The snapshot itself, not its name: two loadouts can share a name, and a name lookup applies the first
+        this._editor.applyLoadoutByName(snapshot);
     }
 
     /** @private */
