@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab upgrade analysis ignores coffee and tea
+
+- Lab upgrade analyses never rank a coffee or tea, since drink slots do not run in the Labyrinth (crates provide those buffs); the Lab simulation already left them out.
+
 ### From upstream: Combat Stats pricing, guild credits and smaller fixes
 
 - Combat Stats income and profit follow your profit pricing mode; the key pricing setting now prices only keys.
