@@ -3060,8 +3060,16 @@ class ActionTimeDisplay {
         // For infinite actions, use material limit if available, then inventory count
         let remainingQueuedActions;
         if (action.hasMaxCount) {
-            // Finite action: maxCount is the target, currentCount is progress toward that target
-            remainingQueuedActions = action.maxCount - action.currentCount;
+            // Finite action: maxCount is the target, currentCount is progress toward that target.
+            // Shown for what its materials can actually buy, the rule every queue row follows,
+            // so the bar cannot promise a count the inputs stop short of while the queue panel's
+            // line for the same running action says otherwise.
+            remainingQueuedActions = this.capCountedRequestByMaterials(
+                action.maxCount - action.currentCount,
+                actionDetails,
+                this.buildInventoryLookup(dataManager.getInventory()),
+                action
+            ).count;
         } else if (materialLimit !== null) {
             // Infinite action limited by materials (materialLimit is queued actions)
             remainingQueuedActions = materialLimit;
