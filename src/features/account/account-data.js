@@ -23,7 +23,7 @@
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import { SNAPSHOT_PREFIX as BRIEFING_PREFIX, readSnapshotsFromKeys } from '../briefing/briefing-snapshot-store.js';
-import { remainingQueueSeconds } from '../queue-monitor/queue-projection.js';
+import { queueTimeLeft } from '../queue-monitor/queue-projection.js';
 import { normalizeLegacySnapshot } from '../queue-monitor/queue-snapshot-legacy.js';
 import { showToast } from '../../utils/toast.js';
 import { idsFromRecordKeys, recordKeysFor } from '../../utils/chunked-history.js';
@@ -272,24 +272,14 @@ export function queueState(snapshot, now = Date.now()) {
 
     const ageMs = now - snapshot.timestamp;
     const stale = ageMs > STALE_SNAPSHOT_MS;
-    const remaining = remainingQueueSeconds(snapshot, ageMs / 1000);
+    const { seconds: remaining, isLowerBound } = queueTimeLeft(snapshot, ageMs / 1000);
 
-    // An untimed row is running and the time behind it is unknown: no estimate, never idle
-    if (remaining === null) return { state: 'untimed', remainingSeconds: null, stale, ageMs };
-
-    // Untimed counted work (a counted fight) makes the timed total a lower bound: `atLeast`
+    // Untimed work (a counted fight) makes the timed total a lower bound: `atLeast`
     if (remaining > 0) {
-        return {
-            state: 'busy',
-            remainingSeconds: remaining,
-            stale,
-            ageMs,
-            atLeast: Boolean(snapshot.hasUnknownAction),
-        };
+        return { state: 'busy', remainingSeconds: remaining, stale, ageMs, atLeast: isLowerBound };
     }
-    // Untimed work ahead of an endless action may still be running, so the endless action has not started
-    // The timed part has elapsed but counted work with no time estimate (a counted fight) may not
-    if (snapshot.hasUnknownAction) return { state: 'untimed', remainingSeconds: null, stale, ageMs };
+    // A lower bound that has run to zero says nothing known is left, not that the queue ended
+    if (isLowerBound) return { state: 'untimed', remainingSeconds: null, stale, ageMs };
     if (snapshot.hasInfiniteAction) return { state: 'endless', remainingSeconds: null, stale, ageMs };
     return { state: 'idle', remainingSeconds: 0, stale, ageMs };
 }

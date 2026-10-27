@@ -252,14 +252,26 @@ describe('snapshot freshness', () => {
     const fight = { actionName: 'Fight', estimatedSeconds: null, isInfinite: false, hasMaxCount: true };
     const gather = (s) => ({ actionName: 'Gather', estimatedSeconds: s, isInfinite: false, hasMaxCount: true });
 
-    test('once an untimed fight is running, the timed work behind it has no estimate', async () => {
+    test('once an untimed fight is running, the timed work behind it is a shrinking lower bound', async () => {
         vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
         game.snapshots = [mixedSnapshot([fight, gather(3600)], 3600)];
 
         await queueMonitorUI.initialize();
 
+        // 30 min elapsed of 1 h of known work behind the fight
+        expect(document.body.textContent).toContain('≥ 0h 30m 00s');
+        expect(document.body.textContent).not.toContain('Done');
+        expect(document.body.textContent).not.toContain('Idle');
+    });
+
+    test('a lower bound that has shrunk to zero reads ?, grey, never Done or Idle', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [mixedSnapshot([fight, gather(600)], 600)];
+
+        await queueMonitorUI.initialize();
+
         expect(document.body.textContent).toContain('?');
-        expect(document.body.textContent).not.toContain('≥ 1h');
+        expect(document.body.textContent).not.toContain('≥');
         expect(document.body.textContent).not.toContain('Done');
         expect(document.body.textContent).not.toContain('Idle');
         expect(document.querySelector('[data-char-id="other"] span').style.background).toBe('#666');
@@ -275,15 +287,15 @@ describe('snapshot freshness', () => {
         expect(document.body.textContent).toContain('≥ 1h 30m');
     });
 
-    test('past the timed prefix before the untimed row, the countdown ends in a question mark', async () => {
+    test('past the timed prefix before the untimed row, the countdown continues as a lower bound', async () => {
         vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
         // 30 min elapsed: the 20 min of timed work before the fight is gone and the fight is running
         game.snapshots = [mixedSnapshot([gather(1200), fight, gather(3600)], 4800)];
 
         await queueMonitorUI.initialize();
 
-        expect(document.body.textContent).toContain('?');
-        expect(document.body.textContent).not.toContain('≥');
+        // 4800 s of known work minus 30 min elapsed
+        expect(document.body.textContent).toContain('≥ 0h 50m 00s');
         expect(document.body.textContent).not.toContain('Done');
     });
 
