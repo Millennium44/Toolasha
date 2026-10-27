@@ -1246,14 +1246,24 @@ function planSkillGoal(goal, context, stepId = 'train') {
     // The hourly margin has a per-hour drink bill folded in. Drinks are charged by the clock, so
     // they follow the (shorter) duration; everything else follows the completions.
     const drinkPerHour = best ? Math.max(0, num(best.drinkCostPerHour)) : 0;
+    // goldPerHour already has the market's absorption cap taken out at the starting pace. A climb that
+    // speeds up completes more actions per hour, but the market does not absorb more per hour. So the
+    // per-completion margin is rebuilt uncapped, and the cap is charged against the real elapsed time.
+    const saleCap = Math.max(0, num(best?.saleProceedsPerHour) - num(best?.saleCapPerHour));
     const perCompletion =
         best && !best.flatRate && num(best.actionsPerHour) > 0 && Number.isFinite(actionsNeeded) && timeHours !== null
-            ? (num(best.goldPerHour) + drinkPerHour) / num(best.actionsPerHour)
+            ? (num(best.goldPerHour) + saleCap + drinkPerHour) / num(best.actionsPerHour)
             : null;
     let goldDelta = 0;
     if (best && rateKnown) {
-        if (perCompletion !== null) goldDelta = perCompletion * num(actionsNeeded) - drinkPerHour * timeHours;
-        else if (timeHours !== null) goldDelta = num(best.goldPerHour) * timeHours;
+        if (perCompletion !== null) {
+            goldDelta = perCompletion * num(actionsNeeded) - drinkPerHour * timeHours;
+            if (saleCap > 0) {
+                // proceeds credited = min(per-completion proceeds x completions, cap per hour x hours)
+                const proceeds = (num(best.saleProceedsPerHour) / num(best.actionsPerHour)) * num(actionsNeeded);
+                goldDelta -= Math.max(0, proceeds - num(best.saleCapPerHour) * timeHours);
+            }
+        } else if (timeHours !== null) goldDelta = num(best.goldPerHour) * timeHours;
     }
 
     // The gold on a training step is a rate multiplied by a duration, and both

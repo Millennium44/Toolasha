@@ -21,6 +21,7 @@ const game = vi.hoisted(() => ({
     inventory: [],
     itemDetailMap: {},
     drinkSlots: {},
+    levelExperienceTable: null,
 }));
 
 const loadout = vi.hoisted(() => ({ drinks: null, equipment: null }));
@@ -39,7 +40,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({
             actionDetailMap: game.actionDetailMap,
             itemDetailMap: game.itemDetailMap,
-            levelExperienceTable: [0, 1, 2],
+            levelExperienceTable: game.levelExperienceTable || [0, 1, 2],
         }),
         getItemDetails: () => null,
         getActionDetails: (hrid) => game.actionDetailMap[hrid] || null,
@@ -73,13 +74,20 @@ vi.mock('../alchemy/alchemy-rankings.js', () => ({
     },
 }));
 vi.mock('./combat-rates.js', () => ({ loadCombatRates: async () => rates.combat }));
-const liquidity = vi.hoisted(() => ({ measured: true }));
+const liquidity = vi.hoisted(() => ({ measured: true, throttle: {} }));
 // Bounding rates by market volume reaches a third-party history server, and what
 // this file is about is which rates get ranked, not how fast they sell. The
 // liquidity bound has its own tests; here it passes everything through and says
 // it measured, so the "not being checked" note stays out of the note assertions.
 vi.mock('./market-liquidity.js', () => ({
-    applyLiquidityLimits: async (rates) => ({ rates, measured: liquidity.measured }),
+    // A test can thin an item's book with `liquidity.throttle[itemHrid] = share`; absent = unmeasured
+    applyLiquidityLimits: async (rates) => ({
+        rates: rates.map((rate) => {
+            const share = Math.min(1, ...(rate.sells || []).map((sold) => liquidity.throttle[sold.itemHrid] ?? 1));
+            return share < 1 ? { ...rate, goldPerHour: rate.goldPerHour * share } : rate;
+        }),
+        measured: liquidity.measured,
+    }),
 }));
 vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({ computeBestCraftingPlan: () => null }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
@@ -111,6 +119,8 @@ vi.mock('../../utils/experience-calculator.js', () => ({
         totalEfficiency: 0,
         actionsPerHour: 360,
     }),
+    // A flat climb: 100 completions of 10 s each, whatever the levels
+    calculateMultiLevelProgress: () => ({ actionsNeeded: 360, timeNeeded: 3600 }),
 }));
 vi.mock('../../utils/market-data.js', () => ({ getPriceAgeString: () => 'a moment ago' }));
 
@@ -137,6 +147,7 @@ vi.mock('../../utils/inventory-reservations.js', () => ({
 }));
 
 const { buildPlannerContext, gatheringSells } = await import('./goal-planner-context.js');
+const { planGoal } = await import('./goal-planner.js');
 
 /**
  * A combat provider result with one zone.
@@ -159,6 +170,7 @@ beforeEach(() => {
     reservations.claims = {};
     reservations.calls = [];
     liquidity.measured = true;
+    liquidity.throttle = {};
     game.actionDetailMap = {
         '/actions/milking/cow': {
             type: '/action_types/milking',
@@ -186,6 +198,7 @@ beforeEach(() => {
     game.inventory = [];
     game.itemDetailMap = {};
     game.drinkSlots = {};
+    game.levelExperienceTable = null;
     loadout.drinks = null;
     loadout.equipment = null;
 
@@ -690,5 +703,175 @@ describe('which drinks count toward starting an action', () => {
         expect(await ranked()).not.toContain('/actions/cooking/stew');
         const context = await buildPlannerContext();
         expect(context.xpRates('/skills/cooking')[0].actionLevelBonus).toBe(6);
+    });
+});
+
+describe('training margins are held to what the market absorbs', () => {
+    const stew = {
+        itemHrid: '/items/stew',
+        totalItemsPerHour: 100,
+        revenuePerHour: 100_000,
+        marketTax: 4_000,
+        profitPerHour: 56_000,
+    };
+
+    test('a thin-market output loses the proceeds of the units that cannot be sold', async () => {
+        rates.production = { '/actions/cooking/stew': stew };
+        liquidity.throttle['/items/stew'] = 0.25;
+
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        // 96k net proceeds, a quarter sells: 56k - 72k
+        expect(cooking.goldPerHour).toBe(-16_000);
+        expect(cooking.upfrontCost).toBe(0);
+    });
+
+    test('a loss-making craft does not improve when the book is thin', async () => {
+        rates.production = { '/actions/cooking/stew': { ...stew, profitPerHour: -10_000 } };
+        liquidity.throttle['/items/stew'] = 0.5;
+
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBe(-58_000);
+    });
+
+    test('a liquid output is unchanged', async () => {
+        rates.production = { '/actions/cooking/stew': stew };
+
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBe(56_000);
+    });
+
+    test('missing volume data leaves the margin as the earning path leaves its rate', async () => {
+        rates.production = { '/actions/cooking/stew': stew };
+        liquidity.measured = false;
+
+        const context = await buildPlannerContext();
+        expect(context.xpRates('/skills/cooking')[0].goldPerHour).toBe(56_000);
+        expect(context.goldRates()[0].goldPerHour).toBe(100_000);
+    });
+
+    test('a gathering drop table is held the same way', async () => {
+        rates.gathering = {
+            '/actions/milking/cow': {
+                baseOutputs: [{ itemHrid: '/items/milk', itemsPerHour: 200, priceEach: 500 }],
+                revenuePerHour: 100_000,
+                excludeSellTax: true,
+                marketTax: 0,
+                profitPerHour: 100_000,
+            },
+        };
+        liquidity.throttle['/items/milk'] = 0.1;
+
+        const context = await buildPlannerContext();
+        expect(context.xpRates('/skills/milking')[0].goldPerHour).toBe(10_000);
+    });
+
+    test('a capped rate carries its uncapped proceeds and hourly cap for the planner', async () => {
+        rates.production = { '/actions/cooking/stew': stew };
+        liquidity.throttle['/items/stew'] = 0.25;
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        expect(cooking.saleProceedsPerHour).toBe(96_000);
+        expect(cooking.saleCapPerHour).toBe(24_000);
+
+        liquidity.throttle = {};
+        const [open] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        expect(open.saleCapPerHour).toBeUndefined();
+    });
+
+    test('the training step and its funding follow the capped margin', async () => {
+        rates.production = { '/actions/cooking/stew': stew };
+        game.skills = game.skills.map((skill) =>
+            skill.skillHrid === '/skills/cooking' ? { ...skill, level: 1, experience: 0 } : skill
+        );
+        game.levelExperienceTable = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 100_000_000];
+        const goal = { type: 'skill', skillHrid: '/skills/cooking', targetLevel: 11 };
+
+        const open = planGoal(goal, await buildPlannerContext());
+        liquidity.throttle['/items/stew'] = 0.25;
+        const thin = planGoal(goal, await buildPlannerContext());
+
+        const goldOf = (plan) => plan.steps.find((step) => step.kind === 'train').goldDelta;
+        expect(goldOf(thin)).toBeLessThan(goldOf(open));
+        expect(thin.totals.netGold).toBeLessThan(open.totals.netGold);
+    });
+
+    test('a taxable bonus drop does not shrink the main output proceeds that get cut', async () => {
+        // revenuePerHour is the main item only; marketTax also taxes 50k of bonus drops (4% of 150k)
+        rates.production = {
+            '/actions/cooking/stew': { ...stew, marketTax: 6_000, profitPerHour: 144_000 },
+        };
+        liquidity.throttle['/items/stew'] = 0.25;
+
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        // main proceeds 100k - 4k tax = 96k, a quarter sells: 144k - 72k
+        expect(cooking.goldPerHour).toBe(72_000);
+    });
+
+    test('bonus tax above the main revenue still bounds the main output', async () => {
+        rates.production = {
+            '/actions/cooking/stew': { ...stew, revenuePerHour: 1_000, marketTax: 5_000, profitPerHour: 90_000 },
+        };
+        liquidity.throttle['/items/stew'] = 0.5;
+
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        // 1k - 40 tax = 960 net, half unsold
+        expect(cooking.goldPerHour).toBe(89_520);
+    });
+
+    test('a production result that excluded the sell tax has untaxed main proceeds', async () => {
+        rates.production = {
+            '/actions/cooking/stew': { ...stew, marketTax: 0, excludeSellTax: true, profitPerHour: 100_000 },
+        };
+        liquidity.throttle['/items/stew'] = 0.5;
+
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        expect(cooking.goldPerHour).toBe(50_000);
+    });
+
+    test('a thin milk book does not cut the logs that still sell, and bonus drops survive', async () => {
+        rates.gathering = {
+            '/actions/milking/cow': {
+                baseOutputs: [
+                    { itemHrid: '/items/milk', itemsPerHour: 200, priceEach: 100 },
+                    { itemHrid: '/items/log', itemsPerHour: 100, priceEach: 100 },
+                ],
+                // 30k of bonus drops sit in revenue but in no sold output
+                revenuePerHour: 60_000,
+                excludeSellTax: true,
+                marketTax: 0,
+                profitPerHour: 60_000,
+            },
+        };
+        liquidity.throttle['/items/milk'] = 0.5;
+
+        const context = await buildPlannerContext();
+        // Only milk's 20k is halved; logs and the 30k of bonus stay: 60k - 10k
+        expect(context.xpRates('/skills/milking')[0].goldPerHour).toBe(50_000);
+    });
+
+    test('Processing: the thin processed item loses its own proceeds, not the raw milk', async () => {
+        rates.gathering = {
+            '/actions/milking/cow': {
+                baseOutputs: [{ itemHrid: '/items/milk', itemsPerHour: 200, priceEach: 100 }],
+                processingConversions: [
+                    {
+                        rawItemHrid: '/items/milk',
+                        processedItemHrid: '/items/cheese',
+                        rawConsumedPerHour: 50,
+                        rawPriceEach: 100,
+                        conversionsPerHour: 50,
+                        processedPriceEach: 400,
+                    },
+                ],
+                revenuePerHour: 35_000,
+                excludeSellTax: true,
+                marketTax: 0,
+                profitPerHour: 35_000,
+            },
+        };
+        liquidity.throttle['/items/cheese'] = 0.5;
+
+        const context = await buildPlannerContext();
+        // 150 milk (15k) sells; 50 cheese (20k) is half unsold
+        expect(context.xpRates('/skills/milking')[0].goldPerHour).toBe(25_000);
     });
 });

@@ -29,11 +29,13 @@ const game = vi.hoisted(() => ({
     customVersion: 0,
     // Per-side custom prices by hrid: { buy, sell }
     customSides: {},
+    // When true the game data has not loaded: getInitClientData() answers null
+    noInit: false,
 }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ itemDetailMap: game.items, actionDetailMap: game.actions }),
+        getInitClientData: () => (game.noInit ? null : { itemDetailMap: game.items, actionDetailMap: game.actions }),
         getEquipment: () => new Map(game.equipment),
         getActionDrinkSlots: () => game.drinks,
         getBuffStateVersion: () => game.buffVersion,
@@ -80,6 +82,7 @@ beforeEach(() => {
     game.equipment = new Map();
     game.drinks = [];
     game.resolvedDrinks = undefined;
+    game.noInit = false;
     // Monotonic across tests, never reset: the memo maps are module state and
     // survive between tests, so rewinding the version would revive their entries
     game.buffVersion++;
@@ -348,5 +351,25 @@ describe('getCheapestProtectionPrice', () => {
         // Zero read as a price makes protection free, and a free protection wins
         // every strategy comparison on a quote nobody has a basis for
         expect(getCheapestProtectionPrice('/items/fine_sword')).toEqual({ price: null, itemHrid: null });
+    });
+});
+
+describe('getProductionCostDetailed before game data loads', () => {
+    test('a null init is unpriced and flagged partial, not a throw, and is not cached', () => {
+        game.items['/items/late_mat'] = { name: 'Late' };
+        game.noInit = true;
+
+        expect(getProductionCostDetailed('/items/late_mat')).toEqual({ cost: 0, partial: true });
+        expect(getProductionCost('/items/late_mat')).toBe(0);
+
+        // Once the data arrives the earlier answer must not stick
+        game.noInit = false;
+        game.prices['/items/enhance_mat:0'] = { ask: 100, bid: 100 };
+        game.actions['/actions/make_late'] = {
+            type: '/action_types/cheesesmithing',
+            inputItems: [{ itemHrid: '/items/enhance_mat', count: 2 }],
+            outputItems: [{ itemHrid: '/items/late_mat', count: 1 }],
+        };
+        expect(getProductionCostDetailed('/items/late_mat').cost).toBe(200);
     });
 });

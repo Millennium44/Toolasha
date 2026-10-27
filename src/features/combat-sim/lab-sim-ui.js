@@ -6238,7 +6238,9 @@ class LabSimUI {
             'padding:2px 8px; font-size:11px; cursor:pointer;';
 
         let body = '';
-        if (budget > 0) {
+        // A typed 0 is a budget: free and refunding picks cost nothing. An empty or unreadable box
+        // is not one (parseKMB answers NaN for it) and shows nothing.
+        if (budget > 0 || Number.isFinite(parseKMB(this._allFightsBudgetText))) {
             const plan = planWithinBudget(results, budget, { baselineFights });
             if (!plan.picks.length) {
                 // "Costs more" is true only of an upgrade skipped for being over budget; a row dropped as

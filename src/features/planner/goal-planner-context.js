@@ -55,7 +55,8 @@ import { enhancementParamsFor, describeEnhancementSource } from '../enhancement/
 import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
-import { GATHERING_TYPES, PRODUCTION_TYPES } from '../../utils/profit-constants.js';
+import { GATHERING_TYPES, PRODUCTION_TYPES, MARKET_TAX } from '../../utils/profit-constants.js';
+import { outputTaxRate } from '../../utils/profit-helpers.js';
 import { getPriceAgeString } from '../../utils/market-data.js';
 import { priceMaterial } from '../../utils/enhancement-input-pricing.js';
 import { effectiveInventory, shortfallNote } from '../../utils/inventory-reservations.js';
@@ -310,6 +311,123 @@ function trainingMarginOf(profit) {
 }
 
 /**
+ * What a gathering method sells each hour, with what each line is worth before tax: the drop table
+ * less the raw items Processing turns into their processed item, plus that processed item. The same
+ * lines (and units) as {@link gatheringSells}, with the price the calculator valued them at.
+ *
+ * @param {Object|null} profit - A result from `calculateGatheringProfit`
+ * @returns {Array<{itemHrid: string, name: string|null, unitsPerHour: number, grossPerHour: number}>}
+ */
+function gatheringSaleLines(profit) {
+    const byItem = new Map();
+    const add = (itemHrid, name, units, price) => {
+        const value = units * price;
+        if (!itemHrid || !Number.isFinite(units) || !Number.isFinite(value)) return;
+        const line = byItem.get(itemHrid) || { itemHrid, name: name || null, unitsPerHour: 0, grossPerHour: 0 };
+        line.unitsPerHour += units;
+        line.grossPerHour += value;
+        byItem.set(itemHrid, line);
+    };
+    for (const output of profit?.baseOutputs || []) {
+        add(output?.itemHrid, output?.name, output?.itemsPerHour, Number(output?.priceEach) || 0);
+    }
+    for (const conversion of profit?.processingConversions || []) {
+        const consumed = -(conversion?.rawConsumedPerHour || 0);
+        add(conversion?.rawItemHrid, conversion?.rawItem, consumed, Number(conversion?.rawPriceEach) || 0);
+        add(
+            conversion?.processedItemHrid,
+            conversion?.processedItem,
+            conversion?.conversionsPerHour || 0,
+            Number(conversion?.processedPriceEach) || 0
+        );
+    }
+    return [...byItem.values()].filter((line) => line.unitsPerHour > 0);
+}
+
+/**
+ * Remember what a trained action sells, output by output, for {@link boundTrainingMargins}.
+ *
+ * Each output carries its own net proceeds: units per hour times the price the calculator used,
+ * less the market tax by the calculator's rule (untaxed when it excluded the sell tax, which also
+ * covers Iron Cow). Revenue outside these outputs (bonus drops, Gourmet extras) is not listed, so
+ * the earning path's `sells` and this one throttle the same things.
+ *
+ * @param {Array<Object>} sales - Accumulator
+ * @param {string} actionHrid - The action
+ * @param {Object|null} profit - Its profit calculator result
+ * @param {Array<{itemHrid: string, name: string|null, unitsPerHour: number, grossPerHour: number}>} lines - What
+ *   one hour puts on the market, with its pre-tax value
+ */
+function noteTrainingSales(sales, actionHrid, profit, lines) {
+    if (trainingMarginOf(profit) === null) return;
+    const keep = profit.excludeSellTax ? 1 : 1 - outputTaxRate(MARKET_TAX);
+    const outputs = lines
+        .map((line) => ({
+            itemHrid: line.itemHrid,
+            name: line.name,
+            unitsPerHour: line.unitsPerHour,
+            proceeds: line.grossPerHour * keep,
+        }))
+        .filter((output) => output.proceeds > 0 && output.unitsPerHour > 0);
+    if (outputs.length) sales.push({ actionHrid, outputs });
+}
+
+/**
+ * Hold each training margin to what the market can absorb.
+ *
+ * Each output is bounded on its own, through `applyLiquidityLimits` (the bound an earning rate
+ * gets), and its unsold share comes out of the margin. This differs from the earning path on
+ * purpose. Earning applies the slowest-selling output's throttle to the whole rate, because
+ * steady income is limited by its worst product. Training runs at full speed whatever sells, so a
+ * thin cheese book does not stop the milk from selling; cutting milk with it would understate
+ * the margin. Not `margin * throttle` either: a loss-making craft would shrink toward zero and
+ * read better. Costs stay (the action still runs); only the proceeds of units the book cannot
+ * absorb go. An output with no volume measurement is not throttled, as for an earning rate.
+ *
+ * @param {Array<{actionHrid: string, outputs: Array<Object>}>} sales - From {@link noteTrainingSales}
+ * @param {Map<string, number|null>} trainingMargin - Edited in place
+ * @param {Map<string, {proceedsPerHour: number, capPerHour: number}>} trainingSaleCap - Filled for each
+ *   action the book limits: its uncapped proceeds and what the market absorbs, both per hour
+ * @returns {Promise<void>}
+ */
+async function boundTrainingMargins(sales, trainingMargin, trainingSaleCap) {
+    if (!sales.length) return;
+    try {
+        const pseudo = [];
+        for (const sale of sales) {
+            for (const output of sale.outputs) {
+                pseudo.push({
+                    actionHrid: `${sale.actionHrid}|${output.itemHrid}`,
+                    goldPerHour: output.proceeds,
+                    sells: [{ itemHrid: output.itemHrid, name: output.name, unitsPerHour: output.unitsPerHour }],
+                });
+            }
+        }
+        const bounded = await applyLiquidityLimits(pseudo);
+        const byKey = new Map((bounded?.rates || []).map((rate) => [rate.actionHrid, rate]));
+        for (const sale of sales) {
+            let unsold = 0;
+            let proceeds = 0;
+            for (const output of sale.outputs) {
+                proceeds += output.proceeds;
+                const kept = Number(byKey.get(`${sale.actionHrid}|${output.itemHrid}`)?.goldPerHour);
+                if (!Number.isFinite(kept) || kept >= output.proceeds) continue;
+                unsold += output.proceeds - Math.max(0, kept);
+            }
+            const margin = trainingMargin.get(sale.actionHrid);
+            if (unsold > 0 && typeof margin === 'number') {
+                trainingMargin.set(sale.actionHrid, margin - unsold);
+                // The hourly cap does not grow when efficiency shortens a climb, so the planner needs it
+                // apart from the per-completion margin: see planSkillGoal
+                trainingSaleCap.set(sale.actionHrid, { proceedsPerHour: proceeds, capPerHour: proceeds - unsold });
+            }
+        }
+    } catch (error) {
+        console.error('[GoalPlanner] Bounding training margins by market volume failed:', error);
+    }
+}
+
+/**
  * Every action the character's levels allow, of a set of types.
  *
  * "Allow" means what the game itself would let you start right now: the base
@@ -392,6 +510,10 @@ async function measureGoldRates() {
     const trainingMargin = new Map();
     const trainingDrinkCost = new Map();
     const trainingUpfront = new Map();
+    const trainingSaleCap = new Map();
+    // What each trained action sells and takes in, so its margin can be held to what the market
+    // absorbs the way an earning rate is. Built beside the margin maps, applied after the sweep.
+    const trainingSales = [];
     const notes = [];
     let unpriceable = 0;
 
@@ -401,6 +523,7 @@ async function measureGoldRates() {
             trainingMargin.set(hrid, trainingMarginOf(profit));
             trainingDrinkCost.set(hrid, trainingDrinkCostOf(profit));
             trainingUpfront.set(hrid, 0);
+            noteTrainingSales(trainingSales, hrid, profit, gatheringSaleLines(profit));
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -429,6 +552,22 @@ async function measureGoldRates() {
             trainingMargin.set(hrid, trainingMarginOf(profit));
             trainingDrinkCost.set(hrid, trainingDrinkCostOf(profit));
             trainingUpfront.set(hrid, productionUpfrontCost(profit));
+            noteTrainingSales(
+                trainingSales,
+                hrid,
+                profit,
+                profit?.itemHrid
+                    ? [
+                          {
+                              itemHrid: profit.itemHrid,
+                              name: profit.itemName || null,
+                              unitsPerHour: Number(profit.totalItemsPerHour) || 0,
+                              // The main item alone: bonus drops are in marketTax but not here
+                              grossPerHour: Number(profit.revenuePerHour) || 0,
+                          },
+                      ]
+                    : []
+            );
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -502,6 +641,10 @@ async function measureGoldRates() {
         );
     }
 
+    // Training sells its output through the same book, so its margin gets the same bound. Without
+    // it a thin-market craft trained for XP counted every unit sold at the quoted price.
+    await boundTrainingMargins(trainingSales, trainingMargin, trainingSaleCap);
+
     liquidity.rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
     return {
         rates: liquidity.rates,
@@ -509,6 +652,7 @@ async function measureGoldRates() {
         trainingMargin,
         trainingDrinkCost,
         trainingUpfront,
+        trainingSaleCap,
         notes,
         combatStatus,
     };
@@ -525,7 +669,13 @@ async function measureGoldRates() {
  * @param {Map<string, number>} goldByAction - Gold per hour, by action
  * @returns {Array<Object>} Rates, best first
  */
-function measureXpRates(skillHrid, goldByAction, drinkCostByAction = new Map(), upfrontByAction = new Map()) {
+function measureXpRates(
+    skillHrid,
+    goldByAction,
+    drinkCostByAction = new Map(),
+    upfrontByAction = new Map(),
+    saleCapByAction = new Map()
+) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return [];
 
@@ -559,6 +709,14 @@ function measureXpRates(skillHrid, goldByAction, drinkCostByAction = new Map(), 
                 drinkCostPerHour: measuredType ? (drinkCostByAction.get(hrid) ?? 0) : 0,
                 // One completion's inputs: the working capital needed to start, as the ranking carries it
                 upfrontCost: measuredType ? (upfrontByAction.get(hrid) ?? 0) : 0,
+                // Set only when the book limits the sales: goldPerHour already has the cap applied (at the
+                // starting pace), these let a climb that speeds up keep the cap at its hourly figure
+                ...(measuredType && saleCapByAction.get(hrid)
+                    ? {
+                          saleProceedsPerHour: saleCapByAction.get(hrid).proceedsPerHour,
+                          saleCapPerHour: saleCapByAction.get(hrid).capPerHour,
+                      }
+                    : {}),
                 goldKnown: !measuredType || Number.isFinite(goldByAction.get(hrid)),
             });
         } catch (error) {
@@ -847,6 +1005,7 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
               trainingMargin: new Map(),
               trainingDrinkCost: new Map(),
               trainingUpfront: new Map(),
+              trainingSaleCap: new Map(),
               notes: [],
               combatStatus: null,
           };
@@ -854,6 +1013,7 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
     const goldByAction = measured.trainingMargin;
     const drinkCostByAction = measured.trainingDrinkCost;
     const upfrontByAction = measured.trainingUpfront;
+    const saleCapByAction = measured.trainingSaleCap;
 
     const acquisitions = new Map();
     const runs = new Map();
@@ -897,7 +1057,7 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
             const measured =
                 skillHrid === ENHANCING_SKILL
                     ? measureEnhancingRates()
-                    : measureXpRates(skillHrid, goldByAction, drinkCostByAction, upfrontByAction);
+                    : measureXpRates(skillHrid, goldByAction, drinkCostByAction, upfrontByAction, saleCapByAction);
             xpCache.set(skillHrid, measured);
             return measured;
         },

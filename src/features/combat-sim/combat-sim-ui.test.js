@@ -7390,6 +7390,20 @@ describe('the budget box', () => {
         ui.destroy();
     });
 
+    test('a typed budget of 0 still plans a refunding pick; an empty box shows nothing', () => {
+        const refund = row('Ring', { slot: '/equipment_types/ring', cost: -40, profitGain: 50 });
+        ui._upgradeBudget = 0;
+
+        ui._upgradeBudgetText = '0';
+        expect(ui._renderUpgradeBudget([refund], BASELINE)).toContain('Ring');
+
+        ui._upgradeBudgetText = '';
+        const empty = ui._renderUpgradeBudget([refund], BASELINE);
+        expect(empty).not.toContain('Ring');
+        expect(empty).not.toContain('Nothing in the list');
+        ui._upgradeBudgetText = '';
+    });
+
     test('a plan made of unproven gains says so on its face', () => {
         const html = ui._renderUpgradeBudget([abilityRow('Berserk', { hrid: '/abilities/berserk' })], BASELINE);
 
@@ -9769,6 +9783,23 @@ describe('the cost basis detail', () => {
             candidate: {},
         });
         expect(html).toContain('Enhance rates: Yours.');
+    });
+
+    test('a piece with no sale price says nothing is credited back for it', () => {
+        const html = ui._renderUpgradeCostBasis({
+            costSource: 'market',
+            costDetail: {
+                gross: 5_000_000,
+                credit: 0,
+                credits: [
+                    { name: 'Nature Top', enhancementLevel: 0, price: 0, noSalePrice: true },
+                    { name: 'Wooden Sword', enhancementLevel: 0, price: 100 },
+                ],
+            },
+            candidate: {},
+        });
+        expect(html).toContain('No sale price for Nature Top, so nothing is credited back for it.');
+        expect(html).not.toContain('Wooden Sword');
     });
 
     test('a row with no sweep behind it says nothing about benches', () => {

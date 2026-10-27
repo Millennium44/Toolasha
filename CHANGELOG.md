@@ -39,6 +39,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A sync pull no longer overwrites a self-use mark or party roster edit you saved while it was merging, and a pruned snapshot can't come back because a delete was reported done too early.
 - Guild loadouts pulled from another device show in the roster and trial panels straight away.
 
+### Leftovers (2026-10-26, second): planner and pricing fixes
+
+- The goal planner counts training income only for output the market can absorb, so thin-market skills no longer look cheap to train.
+- "No sale price" credit lines now also show on merged skilling rows and in the Combat Sim breakdown, and a budget of 0 still shows free and refunding picks.
+- Guild credit rows in the net worth hover read gold per credit, and an early price read before game data loads no longer errors.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.

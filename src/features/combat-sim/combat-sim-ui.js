@@ -11666,6 +11666,17 @@ class CombatSimUI {
             );
         }
 
+        // A replaced or freed piece with no sale price adds nothing to the credit; "resale credit 0" alone would
+        // read as a sale that happened to fetch nothing
+        const unsellable = (detail?.credits || []).filter((credit) => credit.noSalePrice);
+        if (unsellable.length) {
+            parts.push(
+                `<span style="color:#ff9800;">No sale price for ${unsellable
+                    .map((credit) => escapeAttribute(credit.name))
+                    .join(', ')}, so nothing is credited back for it.</span>`
+            );
+        }
+
         // A bid on the level being left that beats the ask for the level being
         // bought is an outlier order, not a price; the credit was capped at the
         // purchase so the row reads as free rather than as a windfall
@@ -12746,7 +12757,9 @@ class CombatSimUI {
             'padding:2px 4px; font-size:11px; font-family:inherit;';
 
         let body = '';
-        if (budget > 0) {
+        // A typed 0 is a budget: free and refunding picks cost nothing. An empty or unreadable box
+        // is not one (parseKMB answers NaN for it) and shows nothing.
+        if (budget > 0 || Number.isFinite(parseKMB(this._upgradeBudgetText))) {
             const { pins, excludes } = this._budgetConstraints();
             const plan = planUpgradeBudget(rows, budget, {
                 baseline,

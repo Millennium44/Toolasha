@@ -62,7 +62,7 @@ import {
     findEdibleToolsData,
     mergeTally,
 } from '../../utils/chest-import.js';
-import { calculateDungeonTokenValue, labyrinthRewardValue, shopPurchasePrice } from '../../utils/token-valuation.js';
+import { labyrinthRewardValue, shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createPersistedRecord } from '../../utils/persisted-record.js';
@@ -1027,14 +1027,11 @@ class TreasureTracker {
         // used to have `/items/coin` handed to the dungeon-token valuer, which
         // produced a plausible-looking number for a currency that is worth exactly
         // 1, and a line paid for in two currencies was charged for one of them.
-        // `shopPurchasePrice` already sums a line properly and divides by
-        // `outputCount`; the currency valuation is this feature's own, so it goes
-        // in as the price lookup.
+        // `shopPurchasePriceByMode` sums a line properly and divides by
+        // `outputCount`, valuing each currency as a dungeon token or at its sell price.
         const data = dataManager.getInitClientData();
         const shop = data?.shopItemDetailMap || {};
-        const shopPrice = shopPurchasePrice(itemHrid, [shop], (hrid) =>
-            hrid ? (calculateDungeonTokenValue(hrid) ?? getItemPrice(hrid, { context: 'profit', side: 'sell' })) : null
-        );
+        const shopPrice = shopPurchasePriceByMode(itemHrid, [shop]);
         if (shopPrice > 0) return shopPrice;
 
         // The labyrinth keeps its own shop under its own map, and the scrolls a
