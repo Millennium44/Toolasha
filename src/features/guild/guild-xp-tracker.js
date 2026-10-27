@@ -1058,6 +1058,9 @@ class GuildXPTracker {
     async _onGuildUpdated(data) {
         const guild = data.guild;
         if (!guild) return;
+        // A character switch (or the feature turning off) tears the tracker down while a history load this message is
+        // waiting on is in flight; resuming afterwards would put the departed character's guild into the next one
+        const epoch = this._epoch;
 
         // Mark the incoming identity before waiting for history, so readers can reject mixed guild/member data.
         if (guild.id != null) this.guildSnapshotID = String(guild.id);
@@ -1068,6 +1071,7 @@ class GuildXPTracker {
             this.memberMeta = {};
         }
         if (this._loadsPending > 0) await this.whenReady();
+        if (epoch !== this._epoch) return;
 
         const name = guild.name;
         const previous = this.ownGuildName;
@@ -1090,7 +1094,7 @@ class GuildXPTracker {
         if (previous && previous !== name) {
             const loaded = await this._loadMap(`guildXP_${name}`, {});
             // Another change may have landed while the read was in flight
-            if (this.ownGuildName !== name) return;
+            if (epoch !== this._epoch || this.ownGuildName !== name) return;
             this.guildXPHistory = loaded;
         }
         this.guildType = guild.guildType || this.guildType;
@@ -1111,6 +1115,8 @@ class GuildXPTracker {
      * @param {Object} data - guild_characters_updated message
      */
     async _onMembersUpdated(data) {
+        // See `_onGuildUpdated`: a teardown during the awaits below must not be undone by this message
+        const epoch = this._epoch;
         const guildCharacterMap = data.guildCharacterMap || {};
         const sharableMap = data.guildSharableCharacterMap || {};
 
@@ -1121,6 +1127,7 @@ class GuildXPTracker {
         // An initial history load may still be pending. Invalidate outgoing signups immediately on receipt.
         if (newGuildID && this.ownGuildID && String(newGuildID) !== String(this.ownGuildID)) this.memberMeta = {};
         if (this._loadsPending > 0) await this.whenReady();
+        if (epoch !== this._epoch) return;
         this.rawSharableMap = sharableMap;
 
         if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
@@ -1142,7 +1149,7 @@ class GuildXPTracker {
             if (this._recordsHistory()) {
                 const loaded = await this._loadMap(`memberXP_${newGuildID}`, {});
                 // Another switch may have landed while this read was in flight
-                if (this.ownGuildID !== newGuildID) return;
+                if (epoch !== this._epoch || this.ownGuildID !== newGuildID) return;
                 this.memberXPHistory = loaded;
             } else {
                 this.memberXPHistory = {};
@@ -1226,8 +1233,9 @@ class GuildXPTracker {
      * @param {Object} data - leaderboard_updated message
      */
     async _onLeaderboardUpdated(data) {
+        const epoch = this._epoch;
         if (this._loadsPending > 0) await this.whenReady();
-        if (!this._recordsHistory()) return;
+        if (epoch !== this._epoch || !this._recordsHistory()) return;
         if (data.leaderboardCategory !== 'guild') return;
 
         const rows = data.leaderboard?.rows;
