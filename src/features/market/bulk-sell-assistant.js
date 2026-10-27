@@ -1595,6 +1595,12 @@ class BulkSellAssistant {
                 this._render();
                 return;
             }
+            // Favorite is not enforced by the game the way Lock is: a mark landing during the settle
+            // wait would otherwise still sell, so it is checked again right before the press
+            if (this._isCurrentFavorite()) {
+                this._skipFavoriteCurrent();
+                return;
+            }
             this._pressConfirm(settled.button);
         } finally {
             this._endVendorWait(wait);
@@ -1778,6 +1784,12 @@ class BulkSellAssistant {
             if (settled.why || !settled.armed) {
                 this.confirmNote = settled.why || 'the Sell For button was no longer armed, so it pressed nothing';
                 this._render();
+                return;
+            }
+            // Favorite is not enforced by the game the way Lock is: a mark landing during the settle
+            // wait would otherwise still sell, so it is checked again right before the press
+            if (this._isCurrentFavorite()) {
+                this._skipFavoriteCurrent();
                 return;
             }
             this._pressConfirm(settled.button);

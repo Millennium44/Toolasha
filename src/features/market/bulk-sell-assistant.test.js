@@ -1933,6 +1933,34 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(1);
         });
 
+        const favoriteCurrent = () =>
+            game.favorite.add(`${bulkSell.current.itemHrid}:${bulkSell.current.enhancementLevel || 0}`);
+
+        test('an item marked Favorite while the unarmed button settles is not sold', async () => {
+            openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            expect(armClicks).toBe(1);
+            favoriteCurrent();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.favoriteSkipped).toBeGreaterThan(0);
+        });
+
+        test('an item marked Favorite while an already-armed button settles is not sold', async () => {
+            openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(100);
+            favoriteCurrent();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.favoriteSkipped).toBeGreaterThan(0);
+        });
+
         test("the sale is pressed through the game's handler, since it ignores an untrusted click", async () => {
             reactClicks.calls = [];
             openMenu({ label: 'Confirm Sell For 400K Coins' });
