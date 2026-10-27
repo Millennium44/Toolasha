@@ -2158,13 +2158,14 @@ export function generateDrinkCandidates(playerDTO, gameData) {
  * Whether a candidate can change anything inside the Labyrinth.
  *
  * Drink slots do not run there: coffee and tea buffs come only from the Labyrinth crates, and the sim worker
- * empties every drink slot for a Labyrinth fight. So a drink is never a Lab upgrade, however it reached the
- * analysis — a mode, a name handed in, or a pooled row. The Combat Sim keeps its drink candidates.
+ * empties every drink slot for a Labyrinth fight. Combat scrolls are not effective there either, and the worker
+ * clears `scrollBuffs` the same way. So a drink or a scroll is never a Lab upgrade, however it reached the
+ * analysis — a mode, a name handed in, or a pooled row. The Combat Sim keeps both.
  * @param {Object} candidate - Upgrade candidate
  * @returns {boolean}
  */
 function labCanUse(candidate) {
-    return candidate?.type !== 'drink';
+    return candidate?.type !== 'drink' && candidate?.type !== 'scroll';
 }
 
 /**
@@ -6065,7 +6066,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // Resale is taxed as the analysed character pays it (see `saleTaxRateOf`), as the combat analysis does
     const labSaleTaxRate = saleTaxRateOf(playerDTO, isSelf);
     const candidatesWithCost = candidates
-        // No drink slot runs in the Labyrinth, so a drink from any source has nothing to measure here
+        // No drink slot or combat scroll runs in the Labyrinth, so either from any source has nothing to measure
         .filter((c) => c.type !== 'community_buff' && labCanUse(c))
         .map((generated) => {
             const c = labSaleTaxRate == null ? generated : { ...generated, saleTaxRate: labSaleTaxRate };
@@ -7612,7 +7613,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     const prePricedAgainstClaims = (candidate) =>
         Boolean(loadoutClaims) && candidate.checkedSwap === true && !candidate.noPurchase && candidate.cost != null;
     const candidates = [...candidatesByKey.values()]
-        // No drink slot runs in the Labyrinth: dropped before pricing, not only by `appliesTo` below
+        // No drink slot or combat scroll runs in the Labyrinth: dropped before pricing, not only by `appliesTo`
         .filter(labCanUse)
         .map((pooled) => {
             const candidate = withLoadoutClaims(pooled, loadoutClaims);
@@ -8520,6 +8521,9 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
 export function candidateAppliesToDTO(candidate, dto, gameData = null) {
     if (!candidate || !dto) return false;
 
+    // Only the Lab asks this, and a Labyrinth fight runs no drink slot and no combat scroll (see `labCanUse`)
+    if (!labCanUse(candidate)) return false;
+
     // The character's own, wherever they are worn: skills, rooms, shrine levels
     // and community buffs are not held in a loadout and change every fight at
     // once. A community buff is not on the loadout at all — it is an argument to
@@ -8529,14 +8533,10 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
         candidate.type === 'combat_level' ||
         candidate.type === 'house' ||
         candidate.type === 'guild_shrine' ||
-        candidate.type === 'community_buff' ||
-        candidate.type === 'scroll'
+        candidate.type === 'community_buff'
     ) {
         return true;
     }
-
-    // Only the Lab asks this, and a Labyrinth fight runs no drink slot (see `labCanUse`)
-    if (!labCanUse(candidate)) return false;
 
     if (candidate.checkedAbility) return checkedAbilityAppliesToDTO(candidate, dto, gameData);
 

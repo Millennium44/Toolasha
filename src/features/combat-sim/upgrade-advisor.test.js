@@ -6338,9 +6338,10 @@ describe('scroll candidates', () => {
         expect(dto.scrollBuffs).toEqual(['/buff_types/rare_find']);
     });
 
-    test('a scroll applies to every fight, not a slot a loadout might leave empty', () => {
+    test('a scroll applies to no Labyrinth fight, the only caller of candidateAppliesToDTO', () => {
+        // The worker clears scrollBuffs in every Labyrinth sim, so a Lab row for one could only report noise
         expect(candidateAppliesToDTO({ type: 'scroll', buffTypeHrid: '/buff_types/wisdom' }, { equipment: {} })).toBe(
-            true
+            false
         );
     });
 
@@ -9505,5 +9506,67 @@ describe('drinks are never a Labyrinth upgrade, since drink slots do not run the
 
     test('a drink applies to no Lab loadout, even one with a free drink slot', () => {
         expect(candidateAppliesToDTO(addCoffee(), { drinks: [null, null, null] }, gameDataWithCoffees())).toBe(false);
+    });
+
+    // Combat scrolls are cleared from every Labyrinth sim by the worker, like the drink slots
+    const addScroll = () => ({
+        type: 'scroll',
+        slot: 'scroll|/buff_types/damage',
+        buffTypeHrid: '/buff_types/damage',
+        enable: true,
+        measuresLoss: false,
+        description: 'Add Damage scroll',
+    });
+    const simmedAScroll = () =>
+        runLabyrinthSimulation.mock.calls.some(([params]) =>
+            (params.playerDTOs || []).some((dto) => (dto.scrollBuffs || []).length > 0)
+        );
+
+    test('a combat scroll applies to no Lab loadout', () => {
+        expect(candidateAppliesToDTO(addScroll(), { drinks: [null, null, null] }, gameDataWithCoffees())).toBe(false);
+    });
+
+    test('the Lab single-fight analysis ranks no scroll handed in by name', async () => {
+        const result = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [{ equipment: {}, abilities: [], drinks: [null, null, null], ...levels }],
+                playerIndex: 0,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'combat_level',
+                extraCandidates: [addScroll()],
+            },
+            null,
+            {}
+        );
+        expect(result.results.filter((row) => row.candidate.type === 'scroll')).toEqual([]);
+        expect(simmedAScroll()).toBe(false);
+    });
+
+    test('the Lab all-fights analysis pools no scroll handed in by name', async () => {
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [0, 1].map((i) => ({
+                    monsterHrid: `/monsters/m${i}`,
+                    monsterName: `M${i}`,
+                    roomLevel: 100,
+                    dto: { equipment: {}, drinks: [null, null, null], ...levels },
+                })),
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['combat_level'],
+                extraCandidates: [addScroll()],
+            },
+            null,
+            {}
+        );
+        expect(result.results.filter((row) => row.candidate.type === 'scroll')).toEqual([]);
+        expect(simmedAScroll()).toBe(false);
     });
 });

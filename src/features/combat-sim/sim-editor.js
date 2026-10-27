@@ -442,13 +442,17 @@ export class SimEditor {
      * user has since deleted must fall back to current gear rather than half-
      * applying anything.
      *
-     * @param {string} loadoutName - Snapshot name to apply
+     * A snapshot object is applied as given rather than looked up by its name: a caller that resolved a
+     * loadout by the server's id (the Lab's per-monster assignment) must not get the first of two loadouts
+     * that share a name.
+     *
+     * @param {string|Object} loadoutName - Snapshot name to apply, or the snapshot itself
      * @returns {boolean} True when a snapshot of that name was applied
      */
     applyLoadoutByName(loadoutName) {
         if (!loadoutName || !this._editedDTOs) return false;
         if (!this._applyLoadoutToDTO(loadoutName)) return false;
-        this._selectedLoadoutName = loadoutName;
+        this._selectedLoadoutName = typeof loadoutName === 'object' ? loadoutName.name || '' : loadoutName;
         this._saveLoadoutMemory();
         this.renderEditor();
         return true;
@@ -3707,7 +3711,7 @@ export class SimEditor {
     }
 
     /**
-     * @param {string} loadoutName - Snapshot name
+     * @param {string|Object} loadoutName - Snapshot name, or the snapshot itself (applied as given)
      * @returns {boolean} True when a snapshot of that name was found and applied
      * @private
      */
@@ -3731,7 +3735,8 @@ export class SimEditor {
             if (!this._loadoutBaselineDTOs) this._loadoutBaselineDTOs = {};
             this._loadoutBaselineDTOs[this._activeEditPlayer] = baseline;
             if (!this._loadoutAppliedNames) this._loadoutAppliedNames = {};
-            this._loadoutAppliedNames[this._activeEditPlayer] = loadoutName;
+            this._loadoutAppliedNames[this._activeEditPlayer] =
+                typeof loadoutName === 'object' ? loadoutName.name || '' : loadoutName;
         }
         return applied;
     }
