@@ -2131,3 +2131,97 @@ describe('window edges across a daylight-saving change', () => {
         expect(daysBetween(windowStart(to, 7), to)).toHaveLength(7);
     });
 });
+
+describe('chest openings spend their chest key', () => {
+    const market = {
+        '/items/pirate_chest': 1000,
+        '/items/pirate_refinement_chest': 500,
+        '/items/pirate_chest_key': 300,
+        '/items/purple_chest': 1000,
+        '/items/cheese': 100,
+    };
+    const price = (hrid) => market[hrid] ?? null;
+    const keyOf = (hrid) =>
+        ({
+            '/items/pirate_chest': '/items/pirate_chest_key',
+            '/items/pirate_refinement_chest': '/items/pirate_chest_key',
+        })[hrid] ?? null;
+    const open = (chest, count = 2) => ({
+        d: '2026-08-20',
+        openings: { [chest]: { count, gained: { '/items/cheese': 40 } } },
+    });
+
+    test('a dungeon chest opening subtracts the value of its key', () => {
+        const day = chestOpeningDayValue(open('/items/pirate_chest'), price, price, keyOf);
+        expect(day.value).toBe(4000 - 2000 - 2 * 300);
+        expect(day.unpricedKeys).toBe(0);
+    });
+
+    test('a refinement chest is charged a chest key too', () => {
+        const day = chestOpeningDayValue(open('/items/pirate_refinement_chest'), price, price, keyOf);
+        expect(day.value).toBe(4000 - 1000 - 2 * 300);
+    });
+
+    test('a treasure chest with no key is unchanged', () => {
+        const day = chestOpeningDayValue(open('/items/purple_chest'), price, price, keyOf);
+        expect(day.value).toBe(4000 - 2000);
+        expect(day.unpricedKeys).toBe(0);
+    });
+
+    test('an unpriced key is counted, never booked as free', () => {
+        const noKey = (hrid) => (hrid === '/items/pirate_chest_key' ? null : price(hrid));
+        const day = chestOpeningDayValue(open('/items/pirate_chest', 3), noKey, noKey, keyOf);
+        expect(day.unpricedKeys).toBe(3);
+        expect(day.value).toBe(4000 - 3000);
+    });
+
+    test('a chest carried at expected value already has its key netted, so it is not charged twice', () => {
+        const noChest = (hrid) => (hrid === '/items/pirate_chest' ? null : price(hrid));
+        const basis = (hrid) => (hrid === '/items/pirate_chest' ? 900 : price(hrid));
+        const day = chestOpeningDayValue(open('/items/pirate_chest'), noChest, basis, keyOf);
+        expect(day.value).toBe(4000 - 2 * 900);
+        expect(day.unpricedKeys).toBe(0);
+    });
+});
+
+describe('chest key charge through the attribution', () => {
+    test('a chest priced only by the holding fallback is not charged its key again', () => {
+        const chest = '/items/pirate_chest';
+        const market = (hrid) => ({ '/items/cheese': 100, '/items/pirate_chest_key': 150 })[hrid] ?? null;
+        const result = attributeGoldSources({
+            from: D19,
+            to: D20 + 3600_000,
+            price: market,
+            // Net worth carries the chest at EV less its key; the cost basis is the gross EV
+            holdingPrice: (hrid) => (hrid === chest ? 300 : market(hrid)),
+            basisPrice: (hrid) => (hrid === chest ? 450 : market(hrid)),
+            chestKeyOf: (hrid) => (hrid === chest ? '/items/pirate_chest_key' : null),
+            series: [
+                { t: D18, total: 0 },
+                { t: D20, total: 100000 },
+            ],
+            chestDays: [{ d: localDayId(D19), openings: { [chest]: { count: 2, gained: { '/items/cheese': 40 } } } }],
+        });
+
+        expect(result.totals.sources.chests).toBe(4000 - 2 * 450);
+        expect(result.unpricedChestKeys).toBe(0);
+    });
+
+    test('a chest with a real market quote is charged its key', () => {
+        const chest = '/items/pirate_chest';
+        const market = (hrid) => ({ '/items/cheese': 100, [chest]: 450, '/items/pirate_chest_key': 150 })[hrid] ?? null;
+        const result = attributeGoldSources({
+            from: D19,
+            to: D20 + 3600_000,
+            price: market,
+            chestKeyOf: (hrid) => (hrid === chest ? '/items/pirate_chest_key' : null),
+            series: [
+                { t: D18, total: 0 },
+                { t: D20, total: 100000 },
+            ],
+            chestDays: [{ d: localDayId(D19), openings: { [chest]: { count: 2, gained: { '/items/cheese': 40 } } } }],
+        });
+
+        expect(result.totals.sources.chests).toBe(4000 - 2 * 450 - 2 * 150);
+    });
+});
