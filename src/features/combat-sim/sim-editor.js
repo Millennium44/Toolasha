@@ -621,6 +621,17 @@ export class SimEditor {
      * @param {string} [options.note] - A line shown above the editor about where the party came from
      */
     loadParty(players, names, { selfIsLive = false, note = '' } = {}) {
+        // The live self's house rooms and shrines as the game has them, which is what the live sync measures a
+        // hand edit against. Taken from the outgoing self (brought up to the game first), not from the build
+        // handed over: that build may carry a what-if room or shrine, and recorded as the original it would read
+        // as unedited and be put back to the game's level on the next read
+        let liveBaseline = null;
+        if (selfIsLive && this._selfHrid && this._originalDTOs?.[this._selfHrid]) {
+            this._syncHouseRoomsFromGame();
+            this._syncGuildShrinesFromGame();
+            const { houseRooms, guildShrineLevels, guildCombatBuffs } = this._originalDTOs[this._selfHrid];
+            liveBaseline = structuredClone({ houseRooms, guildShrineLevels, guildCombatBuffs });
+        }
         const dtoMap = {};
         const info = [];
         players.forEach((dto, index) => {
@@ -629,6 +640,11 @@ export class SimEditor {
             info.push({ hrid, name: names[index] || `Player ${index + 1}` });
         });
         this._originalDTOs = structuredClone(dtoMap);
+        if (liveBaseline && this._originalDTOs.player1) {
+            for (const [field, value] of Object.entries(liveBaseline)) {
+                if (value !== undefined) this._originalDTOs.player1[field] = value;
+            }
+        }
         this._editedDTOs = dtoMap;
         this._editedPlayerInfo = info;
         this._selfHrid = selfIsLive ? 'player1' : null;
