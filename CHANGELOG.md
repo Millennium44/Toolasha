@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Bulk Sell holds back loadout consumables and Favorites
 
-- Bulk Sell no longer sells food or drinks used by any of your saved loadouts, or anything you've marked Favorite; the held-back note names the loadouts.
+- Bulk Sell no longer sells food or drinks used by any of your saved loadouts, or (by default) anything you've marked Favorite; a new setting lets Favorites sell, and the held-back note names the loadouts.
 
 ### Audit round (2026-10-26, third): market
 
