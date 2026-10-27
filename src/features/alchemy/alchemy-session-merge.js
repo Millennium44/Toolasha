@@ -207,6 +207,11 @@ function mergeResults(a, b) {
             priceEach: result.priceEach ?? current.priceEach,
             isSelfReturn: Boolean(current.isSelfReturn || result.isSelfReturn),
         };
+        // Sticky, as the trackers keep it within one run: a part that could not price this output left its
+        // totalValue short, and the spread above would let a later priced part clear the flag
+        if (current.unpriced !== undefined || result.unpriced !== undefined) {
+            merged.unpriced = Boolean(current.unpriced || result.unpriced);
+        }
         if (current.countBasis === 'derived' || result.countBasis === 'derived') merged.countBasis = 'derived';
         if (current.recordedCount !== undefined || result.recordedCount !== undefined) {
             merged.recordedCount =
