@@ -2253,6 +2253,26 @@ describe('injectExpectedValueDisplay key deduction', () => {
         expect(out).toContain('Net after key: ≥ 700');
     });
 
+    test('a figure resting on value-map prices is marked ~ with its estimated-drop count', () => {
+        const out = text(evOf({ estimatedCount: 2 }), 300);
+
+        expect(out).toContain('Expected Return: ~1.00K');
+        expect(out).toContain('(2 drops estimated)');
+        expect(out).not.toContain('\u2265');
+    });
+
+    test('one estimated drop reads singular', () => {
+        expect(text(evOf({ estimatedCount: 1 }), 0)).toContain('(1 drop estimated)');
+    });
+
+    test('a figure both partial and estimated carries both marks, like formatExpectedValue', () => {
+        const out = text(evOf({ isPartial: true, missingCount: 1, estimatedCount: 1 }), 300);
+
+        expect(out).toContain('Expected Return: ≥ ~1.00K');
+        expect(out).toContain('(1 drop unpriced)');
+        expect(out).toContain('Net Value: ≥ ~700');
+    });
+
     test('a key nobody can price says so instead of silently dropping the deduction', () => {
         const out = text(evOf(), null);
 

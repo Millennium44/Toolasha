@@ -1861,7 +1861,7 @@ class TooltipPrices {
         // Expected value. Drops nobody can price contributed nothing to the total, so it is a
         // lower bound rather than an estimate — the display says which of the two it is.
         // A figure resting on value-map prices is marked ~, like the price rows (the number is unchanged)
-        const evPrefix = evData.isPartial ? '\u2265 ' : evData.estimatedCount > 0 ? '~' : '';
+        const evPrefix = `${evData.isPartial ? '\u2265 ' : ''}${evData.estimatedCount > 0 ? '~' : ''}`;
         const evSuffix = evData.isPartial
             ? ` <span style="color: ${config.COLOR_TEXT_SECONDARY}; font-weight: normal;">(${evData.missingCount} drop${evData.missingCount === 1 ? '' : 's'} unpriced)</span>`
             : evData.estimatedCount > 0
