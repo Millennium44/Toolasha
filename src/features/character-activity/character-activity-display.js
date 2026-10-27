@@ -193,7 +193,11 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
         };
     }
 
-    const { segments, terminalCause, terminalAt } = resolveDisplayProjection(record, lastOfflineTime);
+    // A character that is online right now has not gone offline: its `lastOfflineTime` is the end of an
+    // earlier interval, and overlaying the offline cap on it reads a running character as "Offline progress
+    // stopped". No offline evidence, so only the queue's own deadline stands.
+    const offlineEvidence = character?.isOnline === true ? null : lastOfflineTime;
+    const { segments, terminalCause, terminalAt } = resolveDisplayProjection(record, offlineEvidence);
 
     if (terminalCause === 'idle') {
         return {
