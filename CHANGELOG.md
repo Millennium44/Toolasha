@@ -11,6 +11,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.
 - Undercut alerts and the overbid table no longer count your own listing as a rival, and market filters show the filter actually in force after the marketplace reopens.
 
+### Combat Stats counts consumables used while the page was closed
+
+- Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
+
+### Audit round (2026-10-26, fourth): action bar
+
+- The action bar's time for a counted run stops at what your materials can pay for, matching the queue panel, and a character switch no longer paints the previous character's run into the new one's row.
+
+### Audit round (2026-10-26, third): treasure and Gold Sources
+
+- Replacing the chest history from a file now survives a sync instead of being undone by another device, and appending keeps a reset in place.
+- Gold Sources' Day and Week views cover the right dates around daylight-saving changes.
+
 ### Lab upgrade analysis ignores coffee and tea
 
 - Lab upgrade analyses never rank a coffee or tea, since drink slots do not run in the Labyrinth (crates provide those buffs); the Lab simulation already left them out.

@@ -280,6 +280,35 @@ export function dayStart(dayId) {
 }
 
 /**
+ * The last millisecond of a local day, stepping by calendar date.
+ *
+ * `dayStart + 24h - 1` is a different day on a daylight-saving change: a 23-hour day ends an hour into the
+ * next one, which then reads as the day picked.
+ * @param {string} dayId - `YYYY-MM-DD`
+ * @returns {number} Milliseconds since the epoch
+ */
+export function dayEnd(dayId) {
+    const next = new Date(dayStart(dayId));
+    next.setDate(next.getDate() + 1);
+    return next.getTime() - 1;
+}
+
+/**
+ * Local midnight of the first day of a window of `days` local days ending on the day of `to`.
+ *
+ * Stepped by calendar date: subtracting `(days - 1) * 24h` lands an hour into the wrong day across a
+ * daylight-saving change, so a week read as six days or eight.
+ * @param {number} to - The window's end, epoch ms
+ * @param {number} days - How many local days the window covers
+ * @returns {number} Milliseconds since the epoch
+ */
+export function windowStart(to, days) {
+    const first = new Date(dayStart(localDayId(to)));
+    first.setDate(first.getDate() - (Math.max(1, days) - 1));
+    return first.getTime();
+}
+
+/**
  * How much of a time span falls in each local day it touches.
  *
  * A zero-length span (a session with no recorded duration) is its start day,
