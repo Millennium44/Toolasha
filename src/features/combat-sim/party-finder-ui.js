@@ -133,13 +133,15 @@ function formatElapsed(seconds) {
 }
 
 /**
- * Display names that tell same-named teammates apart: "Bob", "Bob #2".
+ * Display names that tell same-named teammates apart: "Bob", "Bob #2". A number another teammate already goes by
+ * ("Bob #2" saved under that name) is skipped, so no two rows, and no two "replacing" targets, read the same.
  * @param {Array<{id: string, name: string}>} entries
  * @returns {Map<string, string>} id → display name
  */
 export function displayNames(entries) {
     const counts = new Map();
     for (const entry of entries) counts.set(entry.name, (counts.get(entry.name) || 0) + 1);
+    const taken = new Set(entries.map((entry) => entry.name));
     const seen = new Map();
     const names = new Map();
     for (const entry of entries) {
@@ -147,9 +149,17 @@ export function displayNames(entries) {
             names.set(entry.id, entry.name);
             continue;
         }
-        const n = (seen.get(entry.name) || 0) + 1;
+        let n = seen.get(entry.name) || 0;
+        if (n === 0) {
+            n = 1;
+            names.set(entry.id, entry.name);
+        } else {
+            do n += 1;
+            while (taken.has(`${entry.name} #${n}`));
+            taken.add(`${entry.name} #${n}`);
+            names.set(entry.id, `${entry.name} #${n}`);
+        }
         seen.set(entry.name, n);
-        names.set(entry.id, n === 1 ? entry.name : `${entry.name} #${n}`);
     }
     return names;
 }
@@ -851,7 +861,11 @@ export class PartyFinderTab {
             return;
         }
         if (!editor.isInitialized?.()) editor.resetToSelf?.();
-        editor.importPlayers([structuredClone(entry.dto)], [entry.name]);
+        const dto = structuredClone(entry.dto);
+        // A mode saved on the entry alone (a copy of your own build) rides with the build, so saving it back as a new
+        // teammate, or simming it as "you", still knows which characters it can party with
+        if (!dto.gameMode && entry.gameMode) dto.gameMode = entry.gameMode;
+        editor.importPlayers([dto], [entry.name]);
         this._rosterNote(`${entry.name} is in the editor. Change them there, then save back here with "replacing".`);
         this.host._switchTab?.('configure');
     }
@@ -1137,7 +1151,10 @@ export class PartyFinderTab {
                 skipped.push(`${names.get(entry.id)} (unknown ${unknown.slice(0, 2).join(', ')})`);
                 continue;
             }
-            roster.push({ ...entry, name: names.get(entry.id) });
+            // A mode saved on the entry alone rides with the build, so a party loaded into the editor (and saved
+            // back from there) still knows who each teammate can party with
+            const dto = !entry.dto?.gameMode && entry.gameMode ? { ...entry.dto, gameMode: entry.gameMode } : entry.dto;
+            roster.push({ ...entry, name: names.get(entry.id), dto });
         }
         return { roster, skipped };
     }
@@ -1673,7 +1690,13 @@ export class PartyFinderTab {
                     (row.isBaseline
                         ? td('baseline', 'color:#666;') + td('', '')
                         : signed(delta.xpPct, `${delta.xpPct?.toFixed(1)}%`) +
-                          signed(delta.profitDelta, esc(formatKMB(delta.profitDelta))));
+                          signed(
+                              delta.profitDelta,
+                              esc(formatKMB(delta.profitDelta)) +
+                                  (delta.unpriced?.length
+                                      ? `<span data-pf-delta-unpriced title="No price for ${esc(delta.unpriced.join(', '))} (this party or solo); counted as 0 on that side" style="color:#ff9800;">~</span>`
+                                      : '')
+                          ));
             }
             html += td(
                 `<button data-pf-load="${esc(row.id)}" style="${SMALL_BTN_STYLE}" title="Load this party into the editor">Load</button>`

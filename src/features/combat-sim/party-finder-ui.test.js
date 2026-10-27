@@ -272,6 +272,17 @@ describe('setting up', () => {
         expect([...names.values()]).toEqual(['Bob', 'Bob #2', 'Cy']);
     });
 
+    test('a numbered name never repeats a teammate literally called that', () => {
+        const names = displayNames([
+            { id: 'a', name: 'Bob' },
+            { id: 'b', name: 'Bob' },
+            { id: 'c', name: 'Bob #2' },
+            { id: 'd', name: 'Bob' },
+        ]);
+        expect([...names.values()]).toEqual(['Bob', 'Bob #3', 'Bob #2', 'Bob #4']);
+        expect(new Set(names.values()).size).toBe(4);
+    });
+
     test('save a player from the editor, then replace their build from the editor', async () => {
         host._editor.players = [
             { hrid: 'player1', name: 'Milkman', dto: build(90), self: true },
@@ -460,6 +471,10 @@ describe('every way a search can end', () => {
         expect(bobDelta.getAttribute('style')).toMatch(/#f44336/);
         // Bob's loot had an unpriced drop
         expect(rows[3].querySelectorAll('td')[3].textContent).toMatch(/^≥/);
+        // ...so his profit against solo is built on a zero too, and says so; Ann's is not
+        const marker = rows[3].querySelectorAll('td')[6].querySelector('[data-pf-delta-unpriced]');
+        expect(marker?.getAttribute('title')).toContain('/items/x');
+        expect(rows[1].querySelector('[data-pf-delta-unpriced]')).toBeNull();
     });
 
     test('sort by profit vs solo, export CSV and load a party into the editor', async () => {
@@ -958,5 +973,50 @@ describe('teammates of the other game mode', () => {
         await mountTab();
         await tab._onCopySelf();
         expect(tab._roster.entries[0].gameMode).toBe('ironcow');
+    });
+
+    test('a party loaded into the editor carries each teammate mode with their build', async () => {
+        state.gameMode = 'ironcow';
+        seedRoster([
+            ['a', 'Ann', build(80), 'ironcow'],
+            ['b', 'Bob', { ...build(81), gameMode: 'legacy_ironcow' }, 'ironcow'],
+        ]);
+        await mountTab();
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        await finishPass((_z, index) => sim(1000 + index, 100));
+        const both = tab.sortedRows().find((r) => r.comp.members.length === 2);
+        tab.root.querySelector(`[data-pf-load="${both.id}"]`).click();
+        const [party] = host._editor.loadParty.mock.calls[0];
+        // Ann's mode was on her entry alone; Bob's build already said his own
+        expect(party.slice(1).map((p) => p.gameMode)).toEqual(['ironcow', 'legacy_ironcow']);
+        // You are the live character, whose mode the live sync knows; nothing is stamped on you
+        expect(party[0].gameMode).toBeUndefined();
+    });
+
+    test('a teammate taken to the editor and saved back as a new one keeps their mode', async () => {
+        // Saved with the mode on the entry only: a copy of your own build, whose DTO does not say
+        state.gameMode = 'ironcow';
+        seedRoster([['a', 'Ann', build(80), 'ironcow']]);
+        host._editor.players = [{ hrid: 'player1', name: 'Milkman', dto: build(90), self: true }];
+        await mountTab();
+        member('a')
+            .querySelectorAll('button')
+            .forEach((b) => b.textContent === 'Edit' && b.click());
+        const [[imported]] = host._editor.importPlayers.mock.calls[0];
+        expect(imported.gameMode).toBe('ironcow');
+
+        // Edited there, then saved as a second teammate; later searched for from a market character
+        host._editor.players.push({ hrid: 'player2', name: 'Ann', dto: { ...imported, magicLevel: 95 } });
+        tab._renderAddFromEditor();
+        el('editor-player').value = 'player2';
+        el('editor-target').value = '';
+        el('add-editor').click();
+        await flush();
+        expect(state.db.entries.map((e) => e.gameMode)).toEqual(['ironcow', 'ironcow']);
+        state.gameMode = 'standard';
+        tab._renderRoster();
+        expect(planText()).toContain("No teammates of this character's mode");
     });
 });

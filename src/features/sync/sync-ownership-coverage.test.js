@@ -970,7 +970,7 @@ function scanWrites(files, sinks = SINKS, meta = {}) {
     for (const file of files) {
         const mod = loadModule(file);
         const rel = file.slice(srcRoot.length + 1).replace(/\\/g, '/');
-        const callRe = /storage\s*\.\s*(set|setJSON|update|putAll)\s*\(/g;
+        const callRe = /storage\s*\.\s*(set|setJSON|setMany|update|putAll)\s*\(/g;
         let m;
         while ((m = callRe.exec(mod.text))) {
             const open = m.index + m[0].length - 1;
@@ -986,6 +986,18 @@ function scanWrites(files, sinks = SINKS, meta = {}) {
                     via: null,
                     stores: resolve(args[0], ctx()),
                     keys: objectKeyNames(args[1], mod),
+                    bulk: true,
+                });
+                continue;
+            }
+            if (m[1] === 'setMany') {
+                // The same object-of-keys shape as `putAll`, with the store second and `settings` by default
+                rows.push({
+                    file: rel,
+                    line,
+                    via: null,
+                    stores: args[1] ? resolve(args[1], ctx()) : [{ kind: 'literal', value: 'settings' }],
+                    keys: objectKeyNames(args[0], mod),
                     bulk: true,
                 });
                 continue;
@@ -1353,6 +1365,30 @@ describe('registry coverage', () => {
         expect(direct.writes.flatMap((row) => row.keys.map((key) => key.value))).not.toContain(
             'zzControlKeyNobodyRegistered'
         );
+    });
+
+    test('it reads the keys of a setMany write', () => {
+        // `setMany` writes several keys in one transaction; a scan that only knows `set` and
+        // `putAll` would let a key arriving that way stop syncing without this test noticing
+        const dir = join(srcRoot, '__set_many_control__');
+        const file = join(dir, 'writer.js');
+        seedModule(
+            file,
+            [
+                "import storage from '../core/storage.js';",
+                "const CONTROL_KEY = 'zzSetManyKeyNobodyRegistered';",
+                'export async function recordControlPair(value) {',
+                "    await storage.setMany({ [CONTROL_KEY]: value, zzSetManyLiteralKey: 1 }, 'settings');",
+                '}',
+            ].join('\n')
+        );
+
+        const { writes: found } = analyze([file]);
+        const rows = rowsNeedingCoverage(found);
+        expect(rows.some((row) => row.bulk)).toBe(true);
+        const keys = rows.flatMap((row) => row.keys.map((key) => key.value));
+        expect(keys).toEqual(expect.arrayContaining(['zzSetManyKeyNobodyRegistered', 'zzSetManyLiteralKey']));
+        expect(keys.filter((value) => !ownsKey('settings', value))).toContain('zzSetManyKeyNobodyRegistered');
     });
 
     test('the prefixes nothing writes are the ones deliberately kept', () => {

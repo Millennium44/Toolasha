@@ -25,6 +25,7 @@ import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
+import { pricingStamp } from '../../utils/enhancement-input-pricing.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
@@ -251,6 +252,9 @@ class EnhanceProfitColumn {
             params?.blessedTeaBonus,
             params?.teas,
             config.getSetting('enhanceSim_baseItemCraftingCost'),
+            // The pricing modes, Iron Cow valuation, patient-buy tick and custom prices move every input
+            // price without a market message to clear the held quotes
+            pricingStamp(),
         ]);
     }
 

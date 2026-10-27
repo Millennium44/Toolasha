@@ -1110,3 +1110,71 @@ describe('the sync folds of the guild XP records', () => {
         });
     });
 });
+
+describe('a message waiting on the history load when the tracker is torn down', () => {
+    /** A history load that stays pending until the test lets it settle */
+    const pendingLoad = () => {
+        let release;
+        guildXPTracker.ready = new Promise((resolve) => {
+            release = resolve;
+        });
+        guildXPTracker._loadsPending = 1;
+        return () => {
+            guildXPTracker._loadsPending = 0;
+            release();
+        };
+    };
+
+    beforeEach(() => {
+        storageMock.store.clear();
+        storageMock.unavailable = false;
+        storageMock.set.mockClear();
+        settings.guildXPTracker = true;
+        guildXPTracker.disable();
+        guildXPTracker.ready = null;
+    });
+
+    afterEach(() => {
+        guildXPTracker._loadsPending = 0;
+        guildXPTracker.ready = null;
+        guildXPTracker.disable();
+    });
+
+    test('a guild_updated does not put the departed character guild into the next one', async () => {
+        const settle = pendingLoad();
+        const update = guildXPTracker._onGuildUpdated({ guild: { id: 1, name: 'Old Guild', experience: 500 } });
+        guildXPTracker.disable();
+        settle();
+        await update;
+
+        expect(guildXPTracker.ownGuildName).toBeNull();
+        expect(guildXPTracker.guildXPHistory).toEqual({});
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('a guild_characters_updated does not revive the departed guild id or its member history', async () => {
+        const settle = pendingLoad();
+        const update = guildXPTracker._onMembersUpdated({
+            guildCharacterMap: { 101: { guildID: 'g1', guildExperience: 5 } },
+            guildSharableCharacterMap: { 101: { name: 'Ada' } },
+        });
+        guildXPTracker.disable();
+        settle();
+        await update;
+
+        expect(guildXPTracker.ownGuildID).toBeNull();
+        expect(guildXPTracker.memberMeta).toEqual({});
+        expect(guildXPTracker.memberXPHistory).toEqual({});
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('a message that was not torn down still lands', async () => {
+        const settle = pendingLoad();
+        const update = guildXPTracker._onGuildUpdated({ guild: { id: 1, name: 'Milky', experience: 500 } });
+        settle();
+        await update;
+
+        expect(guildXPTracker.ownGuildName).toBe('Milky');
+        expect(guildXPTracker.guildXPHistory.Milky).toHaveLength(1);
+    });
+});
