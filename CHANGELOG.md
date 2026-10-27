@@ -30,6 +30,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The loot-log enhancing summary no longer counts unpriced protection or an unlisted base item as free, and the "worth it" line needs a real bid rather than an estimate.
 - The enhancing panel finds its protection slot and Repeat box on any client language, and the marketplace enhance column refreshes when your pricing mode changes.
 
+### Audit round (2026-10-26, fourth): guild
+
+- The guild XP tracker no longer brings back the previous character's guild after a switch, and the net worth Guild Shrines total says when an unpriced credit is left out.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
