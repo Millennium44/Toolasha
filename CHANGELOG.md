@@ -11,6 +11,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.
 - Undercut alerts and the overbid table no longer count your own listing as a rival, and market filters show the filter actually in force after the marketplace reopens.
 
+### Audit round (2026-10-26, fourth): alerts and briefing
+
+- The guild trial start alert ignores player chat and replayed history, and the enhancement target alert fires for every copy of an item.
+- The away briefing dates older events, reports changes from zero, no longer claims fewer undercut listings when it can't tell, and never draws for the wrong character; an empty supply alert says it ran out.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.

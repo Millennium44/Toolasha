@@ -136,6 +136,16 @@ describe('the crossing', () => {
         };
     };
 
+    test('a supply already at zero says it has run out, not that it runs out in 0s', async () => {
+        await alerts.initialize();
+        withSeconds(0);
+        battleTick();
+
+        expect(game.notified).toHaveLength(1);
+        expect(game.notified[0].message).toContain('has run out');
+        expect(game.notified[0].message).not.toMatch(/in 0s/);
+    });
+
     test('fires once when the soonest falls under the configured hours, and re-arms above', async () => {
         await alerts.initialize();
         withSeconds(3600);

@@ -79,8 +79,10 @@ class EnhancementTargetAlerts {
 
     /** Listen for finished enhancing attempts */
     registerWebSocketListeners() {
-        const handler = (data) => {
+        const handler = (data, context) => {
             try {
+                // After a switch the departing character's socket can still deliver: its attempt is not ours
+                if (dataManager.isFromActiveSocket?.(context) === false) return;
                 this.check(data?.endCharacterAction);
             } catch (error) {
                 console.error('[EnhancementTargetAlerts] Reading an enhancing attempt failed:', error);
@@ -136,7 +138,12 @@ class EnhancementTargetAlerts {
         const result = notificationService.notify(
             `${EVENT_KEY_PREFIX}:${pair}`,
             `${name} has reached your enhancement target${overshot}.`,
-            { title: 'Enhancement target reached' }
+            {
+                title: 'Enhancement target reached',
+                // `announced` is what stops a repeat. The service's ten-minute window on this item/target key
+                // would also swallow the next copy of the same item reaching the same target
+                cooldownMs: 0,
+            }
         );
 
         // Only a delivered alert counts as told; an undelivered one is left

@@ -99,9 +99,17 @@ describe('gatherSnapshotFacts', () => {
         expect(gatherSnapshotFacts('leaving', NOW)).toEqual({});
     });
 
-    test('zero is not a fact — an empty board and no beaten listings are absent', () => {
+    test('a measured zero is a fact — the away diff needs "none when I left" to say "more now"', () => {
         stores.characterInfo = boardInfo({ unreadTaskCount: 0 });
         stores.undercut = 0;
+        const facts = gatherSnapshotFacts('leaving', NOW, { labyrinth: () => null });
+        expect(facts.tasksReady).toBe(0);
+        expect(facts.listings).toEqual({ filled: 0, undercut: 0 });
+    });
+
+    test('an unreadable task count and an uncompared watcher stay absent', () => {
+        stores.characterInfo = boardInfo({ unreadTaskCount: undefined });
+        stores.undercut = null;
         const facts = gatherSnapshotFacts('leaving', NOW, { labyrinth: () => null });
         expect(facts.tasksReady).toBeUndefined();
         expect(facts.listings).toBeUndefined();

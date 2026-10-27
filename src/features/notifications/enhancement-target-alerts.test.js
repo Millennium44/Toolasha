@@ -17,6 +17,7 @@ const game = vi.hoisted(() => ({
     dmHandlers: {},
     notified: [],
     notifyResult: { fired: true, channels: ['toast'] },
+    activeSocket: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -27,6 +28,7 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.initClientData,
+        isFromActiveSocket: (context) => !game.activeSocket || context?.socket === game.activeSocket,
         on: (event, handler) => {
             game.dmHandlers[event] = handler;
         },
@@ -73,7 +75,7 @@ function attempt({ item = DAGGER, level = 0, target = 10, hrid = ENHANCE_ACTION_
     };
 }
 
-const send = (payload) => game.wsHandlers.action_completed(payload);
+const send = (payload, context) => game.wsHandlers.action_completed(payload, context);
 
 // The hash itself is `utils/item-hash.js`'s to test — this feature only has to
 // keep asking it the right question, which the cases below do through the
@@ -87,6 +89,7 @@ describe('enhancement target alerts', () => {
         game.dmHandlers = {};
         game.notified = [];
         game.notifyResult = { fired: true, channels: ['toast'] };
+        game.activeSocket = null;
         enhancementTargetAlerts.disable();
         await enhancementTargetAlerts.initialize();
     });
@@ -102,6 +105,25 @@ describe('enhancement target alerts', () => {
 
         expect(game.wsHandlers.action_completed).toBeUndefined();
         expect(game.dmHandlers.character_switching).toBeUndefined();
+    });
+
+    test('an attempt from a socket that is no longer the active character’s is ignored', () => {
+        game.activeSocket = 'new';
+        send(attempt({ level: 10, target: 10 }), { socket: 'old' });
+        expect(game.notified).toEqual([]);
+
+        send(attempt({ level: 10, target: 10 }), { socket: 'new' });
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a second copy of the same item reaching the same target is not held back by the service’s cooldown', () => {
+        send(attempt({ level: 10, target: 10 }));
+        send(attempt({ level: 3, target: 10 }));
+        send(attempt({ level: 10, target: 10 }));
+
+        // Two announcements, each opting out of the per-key window; `announced` alone governs repeats
+        expect(game.notified).toHaveLength(2);
+        expect(game.notified.every((entry) => entry.options.cooldownMs === 0)).toBe(true);
     });
 
     test('reaching the target is announced, by the item’s real name', () => {

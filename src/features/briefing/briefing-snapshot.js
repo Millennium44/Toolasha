@@ -132,8 +132,11 @@ export function gatherSnapshotFacts(characterId, now, sources = {}) {
     const info = attempt('the character info', characterInfo);
     const facts = {};
 
-    const ready = Math.max(0, Math.floor(Number(info?.unreadTaskCount) || 0));
-    if (ready > 0) facts.tasksReady = ready;
+    // A measured zero is a fact, and the away diff needs it: "none waiting when you left" is what makes
+    // "3 more waiting" sayable on return. Only a character whose count was not readable leaves it out
+    if (typeof info?.unreadTaskCount === 'number' && Number.isFinite(info.unreadTaskCount)) {
+        facts.tasksReady = Math.max(0, Math.floor(info.unreadTaskCount));
+    }
 
     const board = attempt('the task board', () =>
         taskSlots({ characterInfo: info, activeTaskCount: countActiveTasks(attempt('the quests', quests)), now })
@@ -157,8 +160,10 @@ export function gatherSnapshotFacts(characterId, now, sources = {}) {
     // shows is a delta against the *previous session*, which is a sentence
     // about the reader's history rather than about this character, and storing
     // one would have it read back as a state.
+    // Zero included, once the watcher has compared something (`undercutCount()` is null until it has):
+    // "nothing beaten when you left" is what lets the diff say "2 more listings undercut" on return
     const beaten = attempt('the undercut listings', undercut);
-    if (Number.isFinite(beaten) && beaten > 0) facts.listings = { filled: 0, undercut: beaten };
+    if (Number.isFinite(beaten) && beaten >= 0) facts.listings = { filled: 0, undercut: beaten };
 
     const run = attempt('the enhancement session', () => enhancementFact(enhancement(), now));
     if (run?.itemName) facts.enhancement = { ...run, itemName: shortName(run.itemName) };
