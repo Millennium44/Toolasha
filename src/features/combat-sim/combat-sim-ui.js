@@ -3142,6 +3142,9 @@ class CombatSimUI {
         this._lastSimHours = null;
         this._lastGameData = null;
         this._lastPartyWarnings = [];
+        // Each single-zone result's players' sale tax (hrid -> rate, null for the live character), keyed by the
+        // SimResult so the live view and every history entry built from it read the rates it was run with
+        this._saleTaxRatesBySim = new WeakMap();
         // Which of _lastSimResult / _allZonesResults a pricing change should
         // redraw — see `_redisplayLastResults`. Set by whichever of
         // _displayResults / _displayAllZonesResults last actually drew.
@@ -7013,6 +7016,15 @@ class CombatSimUI {
             this._lastSimResult = simResult;
             this._lastSimHours = hours;
             this._lastGameData = gameData;
+            // Another player's drops are taxed as they pay it (an imported Iron Cow pays none), not at the live rate
+            this._saleTaxRatesBySim.set(
+                simResult,
+                Object.fromEntries(
+                    (playerDTOs || [])
+                        .filter((dto) => dto?.hrid)
+                        .map((dto) => [dto.hrid, analyzedSaleTaxRate(playerDTOs, dto.hrid, trueSelfHrid)])
+                )
+            );
             this._persistConsumableRates(simResult, trueSelfHrid, ownerId);
 
             // Generate label before displaying (display may re-render)
@@ -7878,6 +7890,8 @@ class CombatSimUI {
         const activeTab = entryPlayer?.hrid || this._activePlayerTab;
         const playerInfo = entryPlayer?.playerInfo || entryRoster || this._playerInfo;
         const numberOfPlayers = simResult.numberOfPlayers || 1;
+        // The shown player's sale tax when they are not the live character (null: the live rate)
+        const saleTaxRate = this._saleTaxRateFor(simResult, activeTab);
 
         const sectionStyle = 'margin-bottom:12px;';
         const headingStyle = `color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; border-bottom:1px solid #222; padding-bottom:4px;`;
@@ -8217,15 +8231,19 @@ class CombatSimUI {
             const dropData = [...dropMap.entries()]
                 .filter(([, total]) => total > 0)
                 .map(([itemHrid, total]) => {
-                    // Revenue: sell price for the pricing mode, net of the sale tax
-                    let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid));
+                    // Revenue: sell price for the pricing mode, net of the shown player's sale tax
+                    let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid), saleTaxRate);
                     if (unitValue === 0 && itemHrid === '/items/coin') {
                         unitValue = 1;
                     }
                     if (unitValue === 0) {
-                        // Use cached EV or calculate directly (matches combat stats approach)
+                        // Use cached EV or calculate directly (matches combat stats approach); another player's
+                        // tax is not what the shared cache holds, so their contents are valued at it
                         const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
-                        const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
+                        const ev =
+                            saleTaxRate != null
+                                ? evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate)
+                                : evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
                         if (ev !== null && ev > 0) unitValue = ev;
                     }
                     return { itemHrid, total, unitValue, totalGold: total * unitValue };
@@ -9031,7 +9049,13 @@ class CombatSimUI {
         for (const entry of this._simHistory) {
             const tab = historyEntryPlayer(entry)?.hrid || activeTab;
             if (!entry.metrics || entry.metricsTab !== tab || entry.metricsPricing !== pricing) {
-                entry.metrics = this._computeMetrics(entry.simResult, entry.hours, entry.gameData, tab);
+                entry.metrics = this._computeMetrics(
+                    entry.simResult,
+                    entry.hours,
+                    entry.gameData,
+                    tab,
+                    this._saleTaxRateFor(entry.simResult, tab)
+                );
                 entry.metricsTab = tab;
                 entry.metricsPricing = pricing;
             }
@@ -9039,10 +9063,25 @@ class CombatSimUI {
     }
 
     /**
-     * Compute metrics for a sim result.
+     * The sale tax a single-zone result's player is priced at: their own when they are not the live character
+     * (`analyzedSaleTaxRate`, stamped when the run finished), null for the live character or a result with no
+     * stamp, which keeps the live character's rate.
+     * @param {Object} simResult - The result shown
+     * @param {string} playerHrid - Whose drops
+     * @returns {number|null}
      * @private
      */
-    _computeMetrics(simResult, hours, gameData, activeTab) {
+    _saleTaxRateFor(simResult, playerHrid) {
+        const rate = this._saleTaxRatesBySim?.get(simResult)?.[playerHrid];
+        return Number.isFinite(rate) ? rate : null;
+    }
+
+    /**
+     * Compute metrics for a sim result.
+     * @param {number|null} [saleTaxRate] - The player's sale tax when not the live character (see `_saleTaxRateFor`)
+     * @private
+     */
+    _computeMetrics(simResult, hours, gameData, activeTab, saleTaxRate = null) {
         // Encounters
         const encountersPerHr = simResult.encounters / hours;
 
@@ -9068,13 +9107,17 @@ class CombatSimUI {
             const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
             for (const [itemHrid, total] of dropMap.entries()) {
                 if (total <= 0) continue;
-                let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid));
+                let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid), saleTaxRate);
                 if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
                 if (unitValue === 0) {
-                    const evData = (expectedValueCalculator() || bundledExpectedValueCalculator).calculateExpectedValue(
-                        itemHrid
-                    );
-                    if (evData?.expectedValue > 0) unitValue = evData.expectedValue;
+                    const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
+                    if (saleTaxRate != null) {
+                        const ev = evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate);
+                        if (ev > 0) unitValue = ev;
+                    } else {
+                        const evData = evc.calculateExpectedValue(itemHrid);
+                        if (evData?.expectedValue > 0) unitValue = evData.expectedValue;
+                    }
                 }
                 revenuePerHr += (total / hours) * unitValue;
             }

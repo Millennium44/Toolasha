@@ -100,6 +100,8 @@ const mocks = vi.hoisted(() => ({
     revenueCalls: [],
     /** The options object each calculateSimRevenue() call was made with, in order */
     revenueOptions: [],
+    /** The sale tax rate argument of each taxedDropValue() call, in order (null: the live rate) */
+    taxedDropRates: [],
     /** How many upgrade-advisor runs and worker cancellations were requested */
     upgradeRuns: 0,
     cancelActiveCalls: 0,
@@ -362,6 +364,7 @@ vi.mock('../market/expected-value-calculator.js', () => ({
         calculateExpectedValue: () => null,
         getCachedValue: () => null,
         calculateSingleContainer: () => null,
+        calculateContainerValueAtTaxRate: () => null,
     },
 }));
 
@@ -409,9 +412,15 @@ vi.mock('./combat-sim-adapter.js', () => ({
         return mocks.revenueFor?.(simResult, playerHrid) || { netPerHour: 0, costPerHour: 0, revenuePerHour: 0 };
     },
     // Faithful to the real one: coin untaxed, cowbell 18%, everything else the
-    // 5% patch-live market rate the suite runs under
-    taxedDropValue: (hrid, v) =>
-        v > 0 && hrid !== '/items/coin' ? v * (1 - (hrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.05)) : v,
+    // 5% patch-live market rate the suite runs under; another player's explicit
+    // rate (0 for an Iron Cow, bags included) when one is passed
+    taxedDropValue: (hrid, v, rate = null) => {
+        mocks.taxedDropRates.push(rate);
+        if (!(v > 0) || hrid === '/items/coin') return v;
+        if (Number.isFinite(rate))
+            return rate === 0 ? v : v * (1 - (hrid === '/items/bag_of_10_cowbells' ? 0.18 : rate));
+        return v * (1 - (hrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.05));
+    },
     getZonesThatDropItem: () => [],
     getGuildBuffDetailMap: () => mocks.guildBuffDetailMap || {},
     guildBuffMaxLevel: (detail) => detail?.maxLevel ?? 20,
@@ -7068,6 +7077,61 @@ describe('the sale tax of a player other than the live character', () => {
         mocks.drops = new Map();
         expect(mocks.revenueOptions.length).toBeGreaterThan(0);
         expect(mocks.revenueOptions.every((options) => !('saleTaxRate' in options))).toBe(true);
+    });
+});
+
+describe('the single-zone Results of a player other than the live character', () => {
+    const IRON_COW = '/game_mode/ironcow';
+    const run = async (selfHrid) => {
+        mocks.editedDTOs = {
+            player1: { hrid: 'player1', gameMode: IRON_COW, equipment: {}, food: [null, null, null] },
+        };
+        mocks.editorSelfHrid = selfHrid;
+        mocks.taxedDropRates = [];
+        await ui._onSimulate();
+        return ui._simHistory[ui._simHistory.length - 1];
+    };
+
+    beforeEach(() => {
+        mocks.characterId = 'char1';
+        mocks.onRun = null;
+        mocks.buildPlayerDTOs = null;
+        mocks.editorSoloMode = false;
+        mocks.editorActivePlayer = null;
+        mocks.pricingMode = 'hybrid';
+        mocks.patientTick = false;
+        // The panel is a singleton: an All Zones mode an earlier test turned on would route Simulate to a sweep
+        ui._allZonesMode = null;
+        mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+        mocks.simResult = oneHourFight({ zoneName: '/actions/combat/fly', difficultyTier: 0 });
+        mocks.drops = new Map([['/items/cheese', 100]]);
+        mocks.prices['/items/cheese'] = { bid: 8, ask: 10 };
+        ui.buildPanel();
+        selectZone();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.simResult = null;
+        mocks.zones = [];
+        mocks.drops = new Map();
+        mocks.prices = {};
+        mocks.taxedDropRates = [];
+    });
+
+    test('an imported Iron Cow profile is shown and compared at no sale tax', async () => {
+        const entry = await run(null);
+        expect(mocks.taxedDropRates.length).toBeGreaterThan(0);
+        expect(mocks.taxedDropRates.every((rate) => rate === 0)).toBe(true);
+        expect(entry.metrics.revenuePerHr).toBeGreaterThan(0);
+        const untaxed = entry.metrics.revenuePerHr;
+
+        // The live character keeps the live rate, whatever their DTO says
+        const live = await run('player1');
+        expect(mocks.taxedDropRates.every((rate) => rate === null)).toBe(true);
+        expect(live.metrics.revenuePerHr).toBeCloseTo(untaxed * 0.95, 6);
     });
 });
 
