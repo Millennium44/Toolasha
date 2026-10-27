@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers (2026-10-26, second): planner and pricing fixes
+
+- The goal planner counts training income only for output the market can absorb, so thin-market skills no longer look cheap to train.
+- "No sale price" credit lines now also show on merged skilling rows and in the Combat Sim breakdown, and a budget of 0 still shows free and refunding picks.
+- Guild credit rows in the net worth hover read gold per credit, and an early price read before game data loads no longer errors.
+
 ### From upstream: Combat Stats pricing, guild credits and smaller fixes
 
 - Combat Stats income and profit follow your profit pricing mode; the key pricing setting now prices only keys.
