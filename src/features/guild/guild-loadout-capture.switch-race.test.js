@@ -54,7 +54,15 @@ vi.mock('./guild-loadouts.js', () => ({
     extractLoadout: () => null,
     extractPartyLoadouts: () => [],
     foldLoadout: (record) => record,
+    guildLoadoutsStorageKey: (characterId, guildName = null) =>
+        `guildLoadouts_${characterId ?? 'default'}${guildName ? `_${guildName}` : ''}`,
     isMonsterUnit: () => false,
+    LOADOUT_STORE: 'guildHistory',
+    mergeLoadoutRecords: (local, incoming) => ({
+        ...local,
+        ...incoming,
+        players: { ...(local?.players || {}), ...(incoming?.players || {}) },
+    }),
     isItemName: () => false,
     loadLoadouts: async () => {
         // The one read initialize() parks on

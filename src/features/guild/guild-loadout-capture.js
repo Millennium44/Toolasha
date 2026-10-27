@@ -35,17 +35,21 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { textLines } from './guild-trials-scrape.js';
 import { gameDigitsSource } from '../../utils/number-parser.js';
 import {
     extractLoadout,
     extractPartyLoadouts,
     foldLoadout,
+    guildLoadoutsStorageKey,
     isMonsterUnit,
     isItemName,
     loadLoadouts,
     loadoutKey,
     loadoutList,
+    LOADOUT_STORE,
+    mergeLoadoutRecords,
     pruneCharacterOnlyLoadouts,
     purgeMonsterLoadouts,
     saveLoadouts,
@@ -287,6 +291,31 @@ class GuildLoadoutCapture {
                 this._onModal(node)
             )
         );
+        // The record is live-safe: a pull writes it under this page without a reload, and memory
+        // otherwise took the pulled sightings only at this tab's next capture save
+        this.unregister.push(onSyncPullApplied((written) => this._adoptPulled(written)));
+    }
+
+    /**
+     * A sync pull wrote this character's record: take the sightings it brought into memory, this
+     * tab's own winning a tie as they do at a save. No capture event is raised — nothing was
+     * captured here, and the trial panels read an event as a sheet that just arrived.
+     * @param {Record<string, Array<string>>} written - The pull's keys, by store
+     * @returns {Promise<void>}
+     */
+    async _adoptPulled(written) {
+        try {
+            const keys = written?.[LOADOUT_STORE];
+            if (!Array.isArray(keys) || !this.record) return;
+            const { characterId, guildName } = this;
+            if (!keys.includes(guildLoadoutsStorageKey(characterId, guildName))) return;
+            const stored = await loadLoadouts(characterId, guildName);
+            // A switch, or a guild arriving, may have remade the record while the read was out
+            if (this.characterId !== characterId || this.guildName !== guildName || !this.record) return;
+            this.record = purgeMonsterLoadouts(mergeLoadoutRecords(stored, this.record)).record;
+        } catch (error) {
+            console.error('[GuildLoadoutCapture] Taking in a sync pull failed:', error);
+        }
     }
 
     /** Stop listening, once nothing is relying on it any more */
