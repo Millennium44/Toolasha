@@ -281,7 +281,7 @@ describe('ranking against solo', () => {
     test('a party worse than solo has a negative delta', () => {
         const base = row('solo', metrics(1000, 100), null, true);
         const worse = row('Bob', metrics(800, 50));
-        expect(soloDelta(worse, base)).toEqual({ xpPct: -20, profitDelta: -50, stage: 'quick' });
+        expect(soloDelta(worse, base)).toEqual({ xpPct: -20, profitDelta: -50, stage: 'quick', unpriced: [] });
     });
 
     test('like against like: full re-runs compare with the full baseline, else both quick', () => {
@@ -291,7 +291,23 @@ describe('ranking against solo', () => {
         expect(soloDelta(party, base).xpPct).toBeCloseTo(10);
 
         const baseQuickOnly = row('solo', metrics(1000, 100), null, true);
-        expect(soloDelta(party, baseQuickOnly)).toEqual({ xpPct: 10, profitDelta: 20, stage: 'quick' });
+        expect(soloDelta(party, baseQuickOnly)).toEqual({ xpPct: 10, profitDelta: 20, stage: 'quick', unpriced: [] });
+    });
+
+    test('a delta with an unpriced item on either side says which, for the stage it compared', () => {
+        const priced = (xp, profit, unpriced, hours = 2) => ({ ...metrics(xp, profit, hours), unpriced });
+        // The baseline rolled a drop nothing prices; the party did not, and also has one of its own
+        const base = row('solo', priced(1000, 100, ['/items/x']), priced(900, 90, ['/items/z'], 10), true);
+        const party = row('Bob', priced(1200, 150, ['/items/x', '/items/y']));
+        expect(soloDelta(party, base)).toMatchObject({ stage: 'quick', unpriced: ['/items/x', '/items/y'] });
+        expect(csvRow(party, base).note).toBe('profit vs solo counts unpriced items as 0');
+        // Only the baseline's: still a delta built on a zero
+        expect(soloDelta(row('Cy', priced(1100, 120, [])), base).unpriced).toEqual(['/items/x']);
+        // Both full: the full passes' items, not the quick ones
+        const fullParty = row('Di', priced(1, 1, []), priced(950, 95, [], 10));
+        expect(soloDelta(fullParty, base)).toMatchObject({ stage: 'full', unpriced: ['/items/z'] });
+        // Nothing unpriced: no note
+        expect(csvRow(row('Ed', priced(1100, 120, [])), row('solo', priced(1000, 100, []), null, true)).note).toBe('');
     });
 
     test('unpriced profit sinks to the bottom of a profit sort either way round', () => {

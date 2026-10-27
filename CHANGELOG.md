@@ -20,6 +20,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Opening a chest that carries a market price now subtracts the chest key it spends in the Gold Sources Chests row, with a note when the key has no price; chests valued from their contents already net the key out.
 
+### Audit round (2026-10-26, second): party finder
+
+- Loading a party keeps the what-if house rooms and shrines it was simmed with, and teammates keep their game mode through Edit and Load.
+- Profit vs solo is marked when an unpriced item is counted as 0, and two teammates never show under the same numbered name.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
