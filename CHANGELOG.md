@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, sixth): dungeons and Party Loot
+
+- Party Loot's combined view adds up every session's consumables instead of charging only the newest one, and a finished run keeps its own duration.
+- The dungeon key runway counts the entry keys a clear actually spends, so a solo runway no longer reads about five times too long.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
