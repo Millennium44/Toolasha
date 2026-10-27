@@ -252,6 +252,19 @@ export function loadoutsChecked() {
 }
 
 /**
+ * Whether items marked Favorite in the game are held back from selling.
+ * Read at sell time, not at init, so the setting applies without a reload.
+ * @returns {boolean}
+ */
+export function favoritesHeld() {
+    try {
+        return Boolean(config.getSetting('market_bulkSellHoldFavorites'));
+    } catch {
+        return true;
+    }
+}
+
+/**
  * Every piece of gear saved into a loadout, as hold keys.
  *
  * A loadout is a claim on an item: you are still using it, just not right now.
@@ -264,22 +277,40 @@ export function loadoutsChecked() {
  * @returns {Array<string>} Hold keys
  */
 export function loadoutHoldKeys() {
-    const keys = [];
-    if (!loadoutsChecked()) return keys;
+    return loadoutHolds().map((hold) => hold.key);
+}
+
+/**
+ * Everything saved into a loadout that must not be sold, with the loadout it came from.
+ *
+ * Gear is held at the level the loadout names. Food and drinks are held by hrid (they carry no
+ * enhancement level). Hrids in the loadout's food and drink slots are full hrids; empty slots are skipped.
+ *
+ * @returns {Array<{key: string, loadout: string}>} Hold key and loadout name (empty when unnamed)
+ */
+export function loadoutHolds() {
+    const holds = [];
+    if (!loadoutsChecked()) return holds;
     const store = loadoutSnapshot() || bundledLoadoutSnapshot;
     for (const snapshot of store.getAllSnapshots?.() || []) {
+        const loadout = typeof snapshot?.name === 'string' ? snapshot.name : '';
+        const add = (hrid, level) => holds.push({ key: holdKey(hrid, level), loadout });
         // Both the stored level and the resolved one are protected: a "highest
         // owned" loadout will wear the best copy owned now (the resolved key),
         // but the copy the snapshot was saved with may still be in the bags —
         // and a hold list that guards the wrong one lets the equipped copy sell
         for (const piece of snapshot.equipment || []) {
-            if (piece?.itemHrid) keys.push(holdKey(piece.itemHrid, piece.enhancementLevel));
+            if (piece?.itemHrid) add(piece.itemHrid, piece.enhancementLevel);
+        }
+        // Food and drinks the loadout brings into a fight: the next switch to it needs them in the bags
+        for (const slot of [...(snapshot.food || []), ...(snapshot.drinks || [])]) {
+            if (slot?.itemHrid) add(slot.itemHrid, 0);
         }
         for (const piece of store.resolveEquipment?.(snapshot) || []) {
-            if (piece?.itemHrid) keys.push(holdKey(piece.itemHrid, piece.enhancementLevel));
+            if (piece?.itemHrid) add(piece.itemHrid, piece.enhancementLevel);
         }
     }
-    return keys;
+    return holds;
 }
 
 /**
@@ -331,6 +362,10 @@ class BulkSellAssistant {
         this.loadoutsChecked = true;
         /** Enhanced gear quantity the watchlist source declined to sweep up (item count, not stack count) */
         this.enhancedSkipped = 0;
+        /** Loadout names (up to a few) behind the stacks held back by the last queue build */
+        this.heldLoadouts = [];
+        /** Favorite item quantity left out of the queue — marked Favorite in the game (item count, not stack count) */
+        this.favoriteSkipped = 0;
         /** Locked item quantity left out of the queue — the game refuses to sell these (item count, not stack count) */
         this.lockedSkipped = 0;
         this._hasTabs = false;
@@ -386,9 +421,10 @@ class BulkSellAssistant {
         if (this.heldCount > 0) {
             // "in a loadout" is only one of the reasons when loadouts were among
             // the things looked at
+            const names = this.heldLoadouts.length ? `: ${this.heldLoadouts.join(', ')}` : '';
             parts.push(
                 this.loadoutsChecked
-                    ? `${this.heldCount} held back (in a loadout, or claimed elsewhere)`
+                    ? `${this.heldCount} held back (used by a loadout${names}, or claimed elsewhere)`
                     : `${this.heldCount} held back (claimed elsewhere)`
             );
         }
@@ -399,6 +435,9 @@ class BulkSellAssistant {
         if (!this.loadoutsChecked) parts.push('loadouts not checked (Loadout Snapshot is off)');
         if (this.enhancedSkipped > 0) {
             parts.push(`${this.enhancedSkipped} enhanced item${this.enhancedSkipped === 1 ? '' : 's'} skipped`);
+        }
+        if (this.favoriteSkipped > 0) {
+            parts.push(`${this.favoriteSkipped} held: Favorite`);
         }
         if (this.lockedSkipped > 0) {
             parts.push(`${this.lockedSkipped} locked item${this.lockedSkipped === 1 ? '' : 's'} skipped`);
@@ -1512,6 +1551,10 @@ class BulkSellAssistant {
             this._skipLockedCurrent();
             return;
         }
+        if (this._isCurrentFavorite()) {
+            this._skipFavoriteCurrent();
+            return;
+        }
         if (!this._syncLiveCountForConfirm()) return;
         const target = this._confirmTarget();
         if (target.why) {
@@ -1563,6 +1606,12 @@ class BulkSellAssistant {
             if (settled.why || !settled.armed) {
                 this.confirmNote = settled.why || 'the Sell For button was no longer armed, so it pressed nothing';
                 this._render();
+                return;
+            }
+            // Favorite is not enforced by the game the way Lock is: a mark landing during the settle
+            // wait would otherwise still sell, so it is checked again right before the press
+            if (this._isCurrentFavorite()) {
+                this._skipFavoriteCurrent();
                 return;
             }
             this._pressConfirm(settled.button);
@@ -1750,6 +1799,12 @@ class BulkSellAssistant {
                 this._render();
                 return;
             }
+            // Favorite is not enforced by the game the way Lock is: a mark landing during the settle
+            // wait would otherwise still sell, so it is checked again right before the press
+            if (this._isCurrentFavorite()) {
+                this._skipFavoriteCurrent();
+                return;
+            }
             this._pressConfirm(settled.button);
         } finally {
             this._endVendorWait(wait);
@@ -1893,7 +1948,14 @@ class BulkSellAssistant {
         // now. Through the hold mechanism rather than a filter of its own, so it
         // is counted and reported like every other claim on the inventory.
         const providers = new Map(this.holdProviders);
-        providers.set('loadouts', () => loadoutHoldKeys());
+        // Read once so the names behind each key can be reported alongside the keys
+        const loadoutClaims = loadoutHolds();
+        const loadoutsByKey = new Map();
+        for (const { key, loadout } of loadoutClaims) {
+            if (!loadoutsByKey.has(key)) loadoutsByKey.set(key, new Set());
+            if (loadout) loadoutsByKey.get(key).add(loadout);
+        }
+        providers.set('loadouts', () => loadoutClaims.map((claim) => claim.key));
         // Recorded per build rather than read at render time, so the strip
         // reports the run it is describing and not the setting as it stands now
         this.loadoutsChecked = loadoutsChecked();
@@ -1903,6 +1965,10 @@ class BulkSellAssistant {
         let held = 0;
         let enhanced = 0;
         let locked = 0;
+        let favorite = 0;
+        // Read now, per queue build, so a settings change applies to the next run without a reload
+        const holdFavorites = favoritesHeld();
+        const heldLoadouts = new Set();
         const items = (dataManager.characterItems || []).filter((item) => {
             if (item.itemLocationHrid !== '/item_locations/inventory') return false;
             if ((item.count || 0) <= 0) return false;
@@ -1916,6 +1982,7 @@ class BulkSellAssistant {
             // 900 and one of 100 needs to read "1,000 held back", not "2".
             if (heldKeys.has(key)) {
                 held += item.count || 0;
+                for (const name of loadoutsByKey.get(key) || []) heldLoadouts.add(name);
                 return false;
             }
             if (tabItems) {
@@ -1949,11 +2016,19 @@ class BulkSellAssistant {
                 locked += item.count || 0;
                 return false;
             }
+            // Favorite is the game's own mark, read the way Lock is, at this stack's level (a mark's
+            // range covers levels, so a +3 can be favorited while the +0 is not). Held, never sold.
+            if (holdFavorites && dataManager.isItemFavorite?.(item.itemHrid, item.enhancementLevel || 0)) {
+                favorite += item.count || 0;
+                return false;
+            }
             return true;
         });
         this.heldCount = held;
         this.enhancedSkipped = enhanced;
         this.lockedSkipped = locked;
+        this.favoriteSkipped = favorite;
+        this.heldLoadouts = [...heldLoadouts].slice(0, 3);
         // Most expensive stack first: cached market unit price (ask, else bid) × count
         this.queue = items
             .map((item) => {
@@ -2007,6 +2082,18 @@ class BulkSellAssistant {
         return dataManager.isItemLocked(this.current.itemHrid, this.current.enhancementLevel || 0);
     }
 
+    /** Whether the current queue entry has been marked Favorite since the queue was built. */
+    _isCurrentFavorite() {
+        if (!this.current || !favoritesHeld()) return false;
+        return !!dataManager.isItemFavorite?.(this.current.itemHrid, this.current.enhancementLevel || 0);
+    }
+
+    /** Skip the current entry because it was found to be Favorite. */
+    _skipFavoriteCurrent() {
+        this.favoriteSkipped += this.current?.count || 0;
+        this._skip('favorite');
+    }
+
     /**
      * Skip the current entry because it was found to be locked, counted the same
      * way the queue-build filter counts one it finds locked up front.
@@ -2054,6 +2141,10 @@ class BulkSellAssistant {
         // ever catch it.
         if (this._isCurrentLocked()) {
             this._skipLockedCurrent();
+            return;
+        }
+        if (this._isCurrentFavorite()) {
+            this._skipFavoriteCurrent();
             return;
         }
 

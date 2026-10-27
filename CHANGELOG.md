@@ -47,6 +47,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Alchemy History, Best Items, action protection and the item pins now work on translated clients, and a run split by a reload keeps its unpriced mark.
 - The alchemy gold summary counts only the selected enhancement level and the exact queued item.
 
+### Bulk Sell holds back loadout consumables and Favorites
+
+- Bulk Sell no longer sells food or drinks used by any of your saved loadouts, or (by default) anything you've marked Favorite; a new setting lets Favorites sell, and the held-back note names the loadouts.
+
 ### Audit round (2026-10-26, third): market
 
 - Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.

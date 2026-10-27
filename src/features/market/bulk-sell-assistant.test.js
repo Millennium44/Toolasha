@@ -22,6 +22,8 @@ const game = vi.hoisted(() => ({
     // `itemHrid:enhancementLevel` keys the Locked-item tests mark; empty by default,
     // which matches a server that has not shipped item marks
     locked: new Set(),
+    // Same keys, for items marked Favorite
+    favorite: new Set(),
 }));
 /** The settings store, so a per-character key can be proved to be per character */
 const store = vi.hoisted(() => ({ data: {} }));
@@ -44,6 +46,7 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.items;
         },
         isItemLocked: (itemHrid, enhancementLevel = 0) => game.locked.has(`${itemHrid}:${enhancementLevel}`),
+        isItemFavorite: (itemHrid, enhancementLevel = 0) => game.favorite.has(`${itemHrid}:${enhancementLevel}`),
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, register: () => () => {} } }));
@@ -139,6 +142,7 @@ beforeEach(() => {
     // The Loadout Snapshot feature is what fills the store the hold list reads;
     // on is the case every test but the "switched off" one is about
     settings['loadoutSnapshot'] = true;
+    settings['market_bulkSellHoldFavorites'] = true;
     game.details = {
         '/items/cheese': { isTradable: true },
         '/items/milk': { isTradable: true },
@@ -154,6 +158,7 @@ beforeEach(() => {
     bulkSell.holdProviders = new Map();
     bulkSell.selectedTabId = 'all';
     game.loadouts = [];
+    game.favorite = new Set();
     game.loadoutsReady = true;
     game.readyWaiters = [];
     game.characterId = 'char';
@@ -404,6 +409,83 @@ describe('the watchlist is only offered when it has something in it', () => {
     test('and not when the list is empty, since it would build an empty run', async () => {
         game.watched = [];
         expect(await optionValues()).not.toContain('watchlist');
+    });
+});
+
+describe('consumables saved into a loadout, and Favorite items', () => {
+    beforeEach(() => {
+        settings['market_bulkSellHoldFavorites'] = true;
+        game.details['/items/bread'] = { isTradable: true };
+        game.details['/items/coffee'] = { isTradable: true };
+        game.details['/items/trinket'] = { isTradable: true };
+        game.items = [
+            inventory('/items/bread'),
+            inventory('/items/coffee'),
+            inventory('/items/trinket', 1, 3),
+            inventory('/items/milk'),
+        ];
+        bulkSell.selectedTabId = 'all';
+    });
+
+    test('a loadout food is held', async () => {
+        game.loadouts = [{ name: 'Mage', food: [{ itemHrid: '/items/bread' }, { itemHrid: '' }], drinks: [] }];
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/bread');
+        expect(bulkSell._skipNote()).toContain('Mage');
+    });
+
+    test('a loadout drink is held', async () => {
+        game.loadouts = [{ name: 'Mage', food: [], drinks: [{ itemHrid: '/items/coffee' }] }];
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/coffee');
+    });
+
+    test('a Favorite item is held and said so', async () => {
+        game.favorite = new Set(['/items/milk:0']);
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/milk');
+        expect(bulkSell.favoriteSkipped).toBe(5);
+        expect(bulkSell._skipNote()).toContain('Favorite');
+    });
+
+    test('with the setting off a Favorite item sells and nothing is counted as Favorite', async () => {
+        settings['market_bulkSellHoldFavorites'] = false;
+        game.favorite = new Set(['/items/milk:0']);
+        await bulkSell._start();
+        expect(queued()).toContain('/items/milk');
+        expect(bulkSell.favoriteSkipped).toBe(0);
+        expect(bulkSell._skipNote()).not.toContain('Favorite');
+    });
+
+    test('with the setting off a loadout food is still held', async () => {
+        settings['market_bulkSellHoldFavorites'] = false;
+        game.loadouts = [{ name: 'Mage', food: [{ itemHrid: '/items/bread' }], drinks: [] }];
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/bread');
+    });
+
+    test('an unrelated item still sells', async () => {
+        game.loadouts = [{ name: 'Mage', food: [{ itemHrid: '/items/bread' }], drinks: [] }];
+        game.favorite = new Set(['/items/milk:0']);
+        await bulkSell._start();
+        expect(queued()).toContain('/items/coffee');
+    });
+
+    test('three loadouts sharing a consumable hold it once, naming each', async () => {
+        game.loadouts = ['A', 'B', 'C'].map((name) => ({ name, food: [{ itemHrid: '/items/bread' }], drinks: [] }));
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/bread');
+        expect(bulkSell.heldCount).toBe(5);
+        expect(bulkSell._skipNote()).toContain('A, B, C');
+    });
+
+    test('a Favorite at a nonzero level holds that level only', async () => {
+        game.favorite = new Set(['/items/trinket:3']);
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/trinket');
+        game.items = [inventory('/items/trinket', 1, 0)];
+        await bulkSell._start();
+        expect(queued()).toContain('/items/trinket');
     });
 });
 
@@ -1867,6 +1949,48 @@ describe('confirming from the strip', () => {
             await pressAndSettle();
             expect(armClicks).toBe(1);
             expect(gameClicks).toBe(1);
+        });
+
+        const favoriteCurrent = () =>
+            game.favorite.add(`${bulkSell.current.itemHrid}:${bulkSell.current.enhancementLevel || 0}`);
+
+        test('an item marked Favorite while the unarmed button settles is not sold', async () => {
+            openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            expect(armClicks).toBe(1);
+            favoriteCurrent();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.favoriteSkipped).toBeGreaterThan(0);
+        });
+
+        test('with the setting off, a Favorite marked during the vendor settle still sells', async () => {
+            settings['market_bulkSellHoldFavorites'] = false;
+            bulkSell.favoriteSkipped = 0;
+            openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            favoriteCurrent();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(1);
+            expect(bulkSell.favoriteSkipped).toBe(0);
+        });
+
+        test('an item marked Favorite while an already-armed button settles is not sold', async () => {
+            openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(100);
+            favoriteCurrent();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.favoriteSkipped).toBeGreaterThan(0);
         });
 
         test("the sale is pressed through the game's handler, since it ignores an untrusted click", async () => {
