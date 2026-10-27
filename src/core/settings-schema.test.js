@@ -327,3 +327,9 @@ describe('takeover auto-reload defaults', () => {
         expect(setting.help).toMatch(/never reloads while you are using the page/);
     });
 });
+
+describe('net-of-tax inventory setting', () => {
+    test('is not gated on the value badges: category totals and sort read it with badges off', () => {
+        expect(getSettingDefinition('invSort_netOfTax').requires).toBeUndefined();
+    });
+});
