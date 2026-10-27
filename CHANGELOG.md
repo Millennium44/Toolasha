@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, sixth): dungeons and Party Loot
+
+- Party Loot's combined view adds up every session's consumables instead of charging only the newest one, and a finished run keeps its own duration.
+- The dungeon key runway counts the entry keys a clear actually spends, so a solo runway no longer reads about five times too long.
+
 ### Audit round (2026-10-26, third): market
 
 - Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.

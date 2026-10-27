@@ -72,6 +72,11 @@ vi.mock('./dungeon-tracker-ui-chart.js', stubModule);
 vi.mock('./dungeon-tracker-ui-history.js', stubModule);
 vi.mock('./dungeon-tracker-ui-interactions.js', stubModule);
 vi.mock('./dungeon-roi-board-ui.js', stubModule);
+// The chests a clear pays come from the game's reward table, which this suite has no data for
+vi.mock('./dungeon-key-runway.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    entryKeysPerClear: () => world.keysPerClear,
+}));
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
@@ -152,6 +157,7 @@ const titleOf = (id) => ui.container.querySelector(id)?.title;
 beforeEach(async () => {
     document.body.innerHTML = '';
     world.currentRun = null;
+    world.keysPerClear = 1;
     world.pending = null;
     world.runs = [];
     world.baselines = {};
@@ -813,6 +819,21 @@ describe('the key runway beside the Keys figure', () => {
         await draw();
         expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
         expect(titleOf('#mwi-dt-header-keys-runway')).toContain('last 3 clears');
+    });
+
+    test('a clear that spends several keys shortens the runway to match', async () => {
+        // Solo, a clear pays five chest shares and takes five entry keys
+        world.keysPerClear = 5;
+        world.runs = [clear(), clear(), clear()];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 08m 00s)');
+    });
+
+    test('an unknown reward table shows no runway rather than assuming one key a clear', async () => {
+        world.keysPerClear = null;
+        world.runs = [clear(), clear(), clear()];
+        await draw();
+        expect(text('#mwi-dt-header-keys-runway')).toBe('');
     });
 
     test('other dungeons, tiers, teams, failures and client-timed runs are not averaged in', async () => {
