@@ -371,6 +371,8 @@ export function createRowLevelMeasure({ baseSetup, targetSkill = null, ...search
  * @param {number|Object} params.roomLevel - What the table was measured at
  * @param {string|null} [params.targetSkill]
  * @param {Object} [params.gameData] - From `buildGameDataPayload`, for pricing the single acquisition
+ * @param {boolean} [params.isSelf=true] - Whether the analysed player is the live character. Anyone else's
+ *   single acquisition is priced without the live character's held copies, as their parts were
  * @returns {number} How many merged rows were added
  */
 export function mergeMultiSkillGearRows({
@@ -380,6 +382,7 @@ export function mergeMultiSkillGearRows({
     roomLevel,
     targetSkill = null,
     gameData = null,
+    isSelf = true,
 }) {
     const results = analysisResult?.results || [];
     const groups = new Map();
@@ -424,7 +427,10 @@ export function mergeMultiSkillGearRows({
         const after = evaluate(applySkillingCandidate(baseSetup, candidate, targetSkill), roomLevel);
         const clearRateDelta = after.clearRate - baseline.clearRate;
         const { cost, costDetail } = gameData
-            ? priceMergedAcquisition(members, gameData, { price: calculateUpgradeCost, explain: explainUpgradeCost })
+            ? priceMergedAcquisition(members, gameData, {
+                  price: (c, data) => calculateUpgradeCost(c, data, isSelf),
+                  explain: (c, data) => explainUpgradeCost(c, data, isSelf),
+              })
             : {
                   cost: members.some((r) => r.cost === null || r.cost === undefined) ? null : pricey.cost,
                   costDetail: pricey.costDetail ?? null,
