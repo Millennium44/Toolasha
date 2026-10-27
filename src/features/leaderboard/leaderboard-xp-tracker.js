@@ -623,6 +623,7 @@ class LeaderboardXPTracker {
         this.unregisterHandlers = [];
         this.history.reset();
         this.lastLeaderboardCategory = null;
+        this.lastFilterKey = 'all';
         this.lastTrialFilter = null;
         this.initialized = false;
     }
