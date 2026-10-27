@@ -669,6 +669,26 @@ describe('the insta-vs-listing decision', () => {
             expect(bulkSell.decision.insta).toBe(false);
             expect(bulkSell.decision.warning).toBeUndefined();
         });
+
+        test('an above-band top bid is warned about even when the walk ends inside the band', () => {
+            // 3 at 80 (above the band's 55) fill first, then the walk reaches 50 for the rest of the 12
+            band.value = { min: 45, max: 55 };
+            settings['market_bulkSellMaxSpreadPct'] = 99;
+            bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 2, count: 12 };
+            bulkSell._decideAndOpen({
+                asks: [
+                    { price: 200, orderQuantity: 10, filledQuantity: 0, createdTimestamp: new Date().toISOString() },
+                ],
+                bids: [
+                    { price: 80, orderQuantity: 5, filledQuantity: 2 },
+                    { price: 52, orderQuantity: 4, filledQuantity: 0 },
+                    { price: 50, orderQuantity: 10, filledQuantity: 0 },
+                ],
+            });
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.price).toBe(50);
+            expect(bulkSell.decision.warning).toMatch(/above the tradable range/);
+        });
     });
 
     describe('the tradable band prices the patient side', () => {
@@ -1064,6 +1084,23 @@ describe('confirming from the strip', () => {
         expect(bulkSell.state).toBe('awaiting_next');
     });
 
+    test('an above-band warning leads the strip line, ahead of the reason the strip cuts off', () => {
+        const modal = openModal();
+        runAtStep0();
+        bulkSell.decision = {
+            insta: true,
+            price: 796000,
+            avgPrice: 796000,
+            reason: 'supply 1K > demand 500; fills best-first to 796K so the depth covers the stack',
+            warning: 'bid above the tradable range: the game may refuse it',
+        };
+        bulkSell._render();
+        const line = statusText();
+        expect(line.indexOf('above the tradable range')).toBeGreaterThan(-1);
+        expect(line.indexOf('above the tradable range')).toBeLessThan(line.indexOf('Cheese'));
+        closeModalAndSettle(modal);
+    });
+
     test("a market modal confirm keeps the plain click, not the game's handler", () => {
         reactClicks.calls = [];
         const modal = openModal();
@@ -1369,6 +1406,47 @@ describe('confirming from the strip', () => {
             expect(priceOf(modal)).toBe('100');
             expect(bulkSell.current.count).toBe(5);
             expect(bulkSell.decision.insta).toBe(true);
+        });
+
+        test('a re-walk at the press that newly sells into an above-band bid shows the warning before pressing', () => {
+            // Decided with no band known; by the press the band (max 90) puts the 100 top bid above it
+            band.value = { min: 40, max: 90 };
+            const modal = runDecided();
+            band.value = null;
+            bulkSell._decideAndOpen(bookOf());
+            bulkSell.state = 'awaiting_confirm';
+            band.value = { min: 40, max: 90 };
+            expect(bulkSell.decision.warning).toBeUndefined();
+            game.items = [inventory('/items/cheese', 3), inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('above the tradable range');
+            expect(statusText()).toContain('above the tradable range');
+            // Seen now: the next press sells the three
+            confirmBtn().click();
+            expect(gameClicks).toBe(1);
+            expect(modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input').value).toBe('3');
+            band.value = null;
+        });
+
+        test('a refused warning press still leaves the modal holding the new count and price', () => {
+            // Grows 5 to 10: the walk now needs the 50 level. Band max 90 puts the 100 top bid above it
+            const modal = runDecided();
+            band.value = { min: 40, max: 90 };
+            game.items = [inventory('/items/cheese', 10), inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('above the tradable range');
+            // The game's own button, pressed now, sells what the strip describes
+            expect(priceOf(modal)).toBe('50');
+            expect(modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input').value).toBe('10');
+            expect(bulkSell.current.count).toBe(10);
+            expect(bulkSell.decision.price).toBe(50);
+            // Said once on the line, not twice
+            expect(statusText().split('above the tradable range')).toHaveLength(2);
+            confirmBtn().click();
+            expect(gameClicks).toBe(1);
+            band.value = null;
         });
 
         test('an unchanged count leaves the decision and the price alone', () => {
@@ -1884,6 +1962,25 @@ describe('confirming from the strip', () => {
             expect(confirmBtn().disabled).toBe(false);
             sell.click();
             expect(gameClicks).toBe(2);
+        });
+
+        test('an inventory tile whose icon carries only xlink:href is still found for the vendor sale', () => {
+            runAtStep0();
+            bulkSell.state = 'preparing';
+            const inventory = document.createElement('div');
+            inventory.className = 'Inventory_items__x';
+            // A +2 milk ahead of it, then a +3 cheese, then the +0 cheese with the legacy attribute only
+            inventory.innerHTML =
+                '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use xlink:href="#milk"></use></svg></div></div>' +
+                '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use xlink:href="#cheese"></use></svg>' +
+                '<div class="Item_enhancementLevel__x">+3</div></div></div>' +
+                '<div class="Item_itemContainer__x"><div class="Item_item__x plain"><svg><use xlink:href="#cheese"></use></svg></div></div>';
+            document.body.appendChild(inventory);
+            const clicked = [];
+            inventory.addEventListener('click', (event) => clicked.push(event.target.className));
+            expect(bulkSell._openVendorSell(PRICE, 1)).toBe(true);
+            expect(clicked).toEqual(['Item_item__x plain']);
+            inventory.remove();
         });
 
         test('an arming while the run waits for the menu to open still counts as recent', async () => {

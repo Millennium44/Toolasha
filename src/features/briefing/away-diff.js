@@ -161,8 +161,11 @@ function consumableDiff({ wasLine, now }) {
  * @returns {Object|null} A line body, or null
  */
 function listingsDiff({ was, is }) {
-    const before = Number(was?.undercut);
-    const after = Number(is?.undercut);
+    // Null is "the watcher has not compared anything yet" (`undercutCount()`), which `Number()` would
+    // read as zero and turn into "N fewer listings undercut" on every arrival that beats the watcher
+    if (was?.undercut == null || is?.undercut == null) return null;
+    const before = Number(was.undercut);
+    const after = Number(is.undercut);
     if (!Number.isFinite(before) || !Number.isFinite(after)) return null;
 
     const delta = after - before;

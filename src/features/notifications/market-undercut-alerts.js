@@ -41,8 +41,9 @@ import marketAPI from '../../api/marketplace.js';
 import marketHistoryAPI from '../market/mooket/market-history-api.js';
 import { freshestSighting } from '../market/mooket/market-history-data.js';
 import notificationService from './notification-service.js';
-import { listingBeaten } from './notification-predicates.js';
+import { beatenByOwnListing, listingBeaten } from './notification-predicates.js';
 import { formatKMB3Digits, formatRelativeTime } from '../../utils/formatters.js';
+import { clampToBand } from '../../utils/market-values.js';
 import { runPool } from '../../utils/async-pool.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -69,6 +70,18 @@ const ACTIVE_STATUS = '/market_listing_status/active';
 
 /** Kept low so refreshing a long listing list does not burst the third-party server */
 const MOOKET_CONCURRENCY = 4;
+
+/**
+ * The band clamp `marketAPI.getPrice` puts the game's figures through, so a listing's raw price can be compared
+ * with them.
+ * @param {number} price - A raw listing price
+ * @param {string} itemHrid - Item
+ * @param {number} enhancementLevel - Enhancement level
+ * @returns {number|null}
+ */
+function bandClamp(price, itemHrid, enhancementLevel) {
+    return clampToBand(price, itemHrid, enhancementLevel, { foreign: marketAPI.liveSourced });
+}
 
 class MarketUndercutAlerts {
     constructor() {
@@ -237,7 +250,8 @@ class MarketUndercutAlerts {
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level
      * @param {boolean} isSell - Sell listing (best ask) rather than buy order (best bid)
-     * @returns {{price: number, timestamp: number}|null} The figure and when it was true
+     * @returns {{price: number, timestamp: number, clamped: boolean}|null} The figure, when it was true, and
+     *   whether it went through the band clamp (the game's figures do; a pooled Mooket sighting is raw)
      */
     sideObservation(itemHrid, enhancementLevel, isSell) {
         const candidates = [];
@@ -250,7 +264,7 @@ class MarketUndercutAlerts {
             const timestamp = usedPatch ? patch.timestamp : marketAPI.lastFetchTimestamp;
             const sidePrice = isSell ? price.ask : price.bid;
             if (Number.isFinite(timestamp) && Number.isFinite(sidePrice)) {
-                candidates.push({ price: sidePrice, timestamp });
+                candidates.push({ price: sidePrice, timestamp, clamped: true });
             }
         }
 
@@ -258,7 +272,7 @@ class MarketUndercutAlerts {
         if (mooket) {
             const sidePrice = isSell ? mooket.ask : mooket.bid;
             if (Number.isFinite(mooket.timestamp) && Number.isFinite(sidePrice)) {
-                candidates.push({ price: sidePrice, timestamp: mooket.timestamp });
+                candidates.push({ price: sidePrice, timestamp: mooket.timestamp, clamped: false });
             }
         }
 
@@ -280,7 +294,7 @@ class MarketUndercutAlerts {
         for (const listing of listings) {
             if (listing.id === undefined || listing.id === null) continue;
             seen.add(listing.id);
-            this.evaluateListing(listing);
+            this.evaluateListing(listing, listings);
         }
 
         // A listing that left the board — filled, cancelled, expired — takes
@@ -293,8 +307,9 @@ class MarketUndercutAlerts {
     /**
      * Run one listing through the predicate and announce a firing.
      * @param {Object} listing - An active listing from `myMarketListings`
+     * @param {Object[]} [active] - Every active listing, so a price that is your own order is not news
      */
-    evaluateListing(listing) {
+    evaluateListing(listing, active = [listing]) {
         let state = this.listingStates.get(listing.id);
         if (!state || state.price !== listing.price) {
             // New to us, or repriced — either way the player has acted since
@@ -318,6 +333,16 @@ class MarketUndercutAlerts {
         );
         const bestPrice = observation ? observation.price : null;
         const priceAgeMs = observation ? Date.now() - observation.timestamp : null;
+
+        // The figure is your own order (another listing of yours, or this one read back at the band's edge):
+        // nobody has undercut you, so it is a competitive reading, the way the overbid table settles it
+        // Clamped matching only for a figure that went through the clamp: a raw sighting at the band's edge is a
+        // real rival's price, not your own listing read back
+        const clamp = observation?.clamped === true ? bandClamp : undefined;
+        if (bestPrice !== null && beatenByOwnListing(listing, active, bestPrice, clamp)) {
+            state.armed = true;
+            return;
+        }
 
         const { fire, armed } = listingBeaten({
             armed: state.armed,

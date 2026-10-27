@@ -48,8 +48,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * An instant, worded absolutely.
  *
  * The point of it is to be the one thing a stale line can still say truthfully,
- * so it must not be a duration in any form. A day out or more it takes the
- * weekday too, because a bare clock time then means the wrong day.
+ * so it must not be a duration in any form. A day out or more — ahead of now or
+ * behind it — it takes the weekday too, because a bare clock time then means the
+ * wrong day.
  *
  * @param {number} at - Epoch ms
  * @param {number} now - Epoch ms
@@ -58,7 +59,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export function absoluteTime(at, now) {
     const date = new Date(at);
     const clock = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-    if (at - now < DAY_MS) return clock;
+    // Either side of now: the away diff words an instant that has already passed
+    if (Math.abs(at - now) < DAY_MS) return clock;
     return `${date.toLocaleDateString(undefined, { weekday: 'short' })} ${clock}`;
 }
 

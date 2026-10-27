@@ -11,6 +11,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Party Loot's combined view adds up every session's consumables instead of charging only the newest one, and a finished run keeps its own duration.
 - The dungeon key runway counts the entry keys a clear actually spends, so a solo runway no longer reads about five times too long.
 
+### Audit round (2026-10-26, third): market
+
+- Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.
+- Undercut alerts and the overbid table no longer count your own listing as a rival, and market filters show the filter actually in force after the marketplace reopens.
+
+### Audit round (2026-10-26, fourth): alerts and briefing
+
+- The guild trial start alert ignores player chat and replayed history, and the enhancement target alert fires for every copy of an item.
+- The away briefing dates older events, reports changes from zero, no longer claims fewer undercut listings when it can't tell, and never draws for the wrong character; an empty supply alert says it ran out.
+
+### Gold Sources charges the chest key for market-priced chests
+
+- Opening a chest that carries a market price now subtracts the chest key it spends in the Gold Sources Chests row, with a note when the key has no price; chests valued from their contents already net the key out.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.

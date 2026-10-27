@@ -149,11 +149,11 @@ class MarketFilter {
             const option = document.createElement('option');
             option.value = level;
             option.textContent = level === 1000 ? 'All' : level;
-            if ((type === 'min' && level === 1) || (type === 'max' && level === 1000)) {
-                option.selected = true;
-            }
             select.appendChild(option);
         });
+        // The game rebuilds the filter row each time the marketplace opens, and the filter carries on
+        // applying what was chosen before, so the new dropdown shows that rather than a default it is not using
+        select.value = String(type === 'min' ? this.minLevel : this.maxLevel);
 
         // Event listener
         select.addEventListener('change', () => {
@@ -204,6 +204,7 @@ class MarketFilter {
             option.textContent = cls.label;
             select.appendChild(option);
         });
+        select.value = this.skillRequirement;
 
         select.addEventListener('change', () => {
             this.skillRequirement = select.value;
@@ -256,6 +257,7 @@ class MarketFilter {
             option.textContent = slot.label;
             select.appendChild(option);
         });
+        select.value = this.equipmentSlot;
 
         select.addEventListener('change', () => {
             this.equipmentSlot = select.value;
@@ -292,7 +294,8 @@ class MarketFilter {
                 return;
             }
 
-            const href = useElement.getAttribute('href');
+            // Both spellings: many item icons carry only `xlink:href`
+            const href = useElement.getAttribute('href') || useElement.getAttribute('xlink:href');
             if (!href) {
                 return;
             }
@@ -307,7 +310,7 @@ class MarketFilter {
             const itemData = gameData.itemDetailMap[itemHrid];
 
             if (!itemData) {
-                itemDiv.style.display = '';
+                this._setHidden(itemDiv, false);
                 return;
             }
 
@@ -319,17 +322,28 @@ class MarketFilter {
                     this.skillRequirement !== 'all' ||
                     this.equipmentSlot !== 'all'
                 ) {
-                    itemDiv.style.display = 'none';
+                    this._setHidden(itemDiv, true);
                 } else {
-                    itemDiv.style.display = '';
+                    this._setHidden(itemDiv, false);
                 }
                 return;
             }
 
             // Check if item passes all filters
             const passesFilters = this.checkItemFilters(itemData);
-            itemDiv.style.display = passesFilters ? '' : 'none';
+            this._setHidden(itemDiv, !passesFilters);
         });
+    }
+
+    /**
+     * Hide or show one market tile, marking the ones this filter hid so turning it off shows exactly those.
+     * @param {HTMLElement} itemDiv - Item tile
+     * @param {boolean} hidden - Whether to hide it
+     */
+    _setHidden(itemDiv, hidden) {
+        itemDiv.style.display = hidden ? 'none' : '';
+        if (hidden) itemDiv.dataset.toolashaMarketFiltered = 'true';
+        else delete itemDiv.dataset.toolashaMarketFiltered;
     }
 
     /**
@@ -392,6 +406,16 @@ class MarketFilter {
                 this.filterContainer.remove();
                 this.filterContainer = null;
             }
+
+            // Show what the filter hid: with its row gone there is nothing left to clear it from, and the
+            // next enable starts from the defaults its dropdowns show
+            document.querySelectorAll('[data-toolasha-market-filtered]').forEach((itemDiv) => {
+                this._setHidden(itemDiv, false);
+            });
+            this.minLevel = 1;
+            this.maxLevel = 1000;
+            this.skillRequirement = 'all';
+            this.equipmentSlot = 'all';
 
             this.isActive = false;
             this.isInitialized = false;
