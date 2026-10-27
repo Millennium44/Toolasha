@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Queue time left past an untimed action
+
+- Queue time left keeps counting down as "≥ X" once an action with no known duration is running, rather than switching to "?" (it shows "?" only when that bound reaches zero), and a Combat Sim max-tier food or zones score change made during a sync pull is no longer reverted.
+
 ### Audit round (2026-10-26, sixth): dungeons and Party Loot
 
 - Party Loot's combined view adds up every session's consumables instead of charging only the newest one, and a finished run keeps its own duration.
