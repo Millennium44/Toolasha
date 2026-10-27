@@ -310,6 +310,55 @@ function trainingMarginOf(profit) {
 }
 
 /**
+ * Remember what a trained action sells, for {@link boundTrainingMargins}.
+ *
+ * @param {Array<Object>} sales - Accumulator
+ * @param {string} actionHrid - The action
+ * @param {Object|null} profit - Its profit calculator result
+ * @param {Array<Object>} sells - What one hour puts on the market
+ */
+function noteTrainingSales(sales, actionHrid, profit, sells) {
+    const margin = trainingMarginOf(profit);
+    if (margin === null || !sells.length) return;
+    // Net of tax, because the margin already is: this is the coin the unsold part never brings in
+    const proceeds = (Number(profit.revenuePerHour) || 0) - (Number(profit.marketTax) || 0);
+    if (!(proceeds > 0)) return;
+    sales.push({ actionHrid, sells, proceeds });
+}
+
+/**
+ * Hold each training margin to what the market can absorb.
+ *
+ * Runs the sale proceeds through `applyLiquidityLimits`, the very bound an earning rate gets, and
+ * takes the unsold share out of the margin. Not `margin * throttle`: a loss-making craft would
+ * shrink toward zero and read better. The action still runs at full speed (the XP is the point), so
+ * costs stay; only the proceeds of the units the book cannot absorb go. An output with no volume
+ * measurement is not throttled, exactly as for an earning rate.
+ *
+ * @param {Array<{actionHrid: string, sells: Array<Object>, proceeds: number}>} sales - From {@link noteTrainingSales}
+ * @param {Map<string, number|null>} trainingMargin - Edited in place
+ * @returns {Promise<void>}
+ */
+async function boundTrainingMargins(sales, trainingMargin) {
+    if (!sales.length) return;
+    try {
+        const bounded = await applyLiquidityLimits(
+            sales.map((sale) => ({ actionHrid: sale.actionHrid, goldPerHour: sale.proceeds, sells: sale.sells }))
+        );
+        const byAction = new Map((bounded?.rates || []).map((rate) => [rate.actionHrid, rate]));
+        for (const sale of sales) {
+            const kept = Number(byAction.get(sale.actionHrid)?.goldPerHour);
+            if (!Number.isFinite(kept) || kept >= sale.proceeds) continue;
+            const margin = trainingMargin.get(sale.actionHrid);
+            if (typeof margin === 'number')
+                trainingMargin.set(sale.actionHrid, margin - (sale.proceeds - Math.max(0, kept)));
+        }
+    } catch (error) {
+        console.error('[GoalPlanner] Bounding training margins by market volume failed:', error);
+    }
+}
+
+/**
  * Every action the character's levels allow, of a set of types.
  *
  * "Allow" means what the game itself would let you start right now: the base
@@ -392,6 +441,9 @@ async function measureGoldRates() {
     const trainingMargin = new Map();
     const trainingDrinkCost = new Map();
     const trainingUpfront = new Map();
+    // What each trained action sells and takes in, so its margin can be held to what the market
+    // absorbs the way an earning rate is. Built beside the margin maps, applied after the sweep.
+    const trainingSales = [];
     const notes = [];
     let unpriceable = 0;
 
@@ -401,6 +453,7 @@ async function measureGoldRates() {
             trainingMargin.set(hrid, trainingMarginOf(profit));
             trainingDrinkCost.set(hrid, trainingDrinkCostOf(profit));
             trainingUpfront.set(hrid, 0);
+            noteTrainingSales(trainingSales, hrid, profit, gatheringSells(profit));
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -429,6 +482,20 @@ async function measureGoldRates() {
             trainingMargin.set(hrid, trainingMarginOf(profit));
             trainingDrinkCost.set(hrid, trainingDrinkCostOf(profit));
             trainingUpfront.set(hrid, productionUpfrontCost(profit));
+            noteTrainingSales(
+                trainingSales,
+                hrid,
+                profit,
+                profit?.itemHrid
+                    ? [
+                          {
+                              itemHrid: profit.itemHrid,
+                              name: profit.itemName || null,
+                              unitsPerHour: Number(profit.totalItemsPerHour) || 0,
+                          },
+                      ]
+                    : []
+            );
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -501,6 +568,10 @@ async function measureGoldRates() {
                 'you could sell. Turn on pooled market history to bound methods by how fast they actually trade.'
         );
     }
+
+    // Training sells its output through the same book, so its margin gets the same bound. Without
+    // it a thin-market craft trained for XP counted every unit sold at the quoted price.
+    await boundTrainingMargins(trainingSales, trainingMargin);
 
     liquidity.rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
     return {
