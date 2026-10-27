@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, sixth): inventory
+
+- The net-of-tax inventory setting stays usable with value badges off, since it still shapes totals and sort.
+- Inventory badges, totals and the watchlist dot recognise items on any client language.
+
 ### Combat Stats counts consumables used while the page was closed
 
 - Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
