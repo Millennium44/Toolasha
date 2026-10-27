@@ -553,6 +553,22 @@ describe('importEverything reports what did not land', () => {
         }
     });
 
+    test("a pull's folds reach the store's write, so they are redone against what is stored then", async () => {
+        const storage = (await import('../core/storage.js')).default;
+        const payload = await exportEverything();
+        payload.stores = { dungeonRuns: { run1: { boss: 'Y' }, run2: { boss: 'Z' } }, settings: { theme: 'light' } };
+        const fold = (stored, value) => value;
+
+        await importEverything(payload, { liveSafeMerge: true, folds: { dungeonRuns: { run1: fold } } });
+
+        const calls = storage.putAll.mock.calls;
+        const runs = calls.find(([storeName]) => storeName === 'dungeonRuns');
+        expect(runs[2]).toEqual({ bypassRestoreLatch: true, folds: { run1: fold } });
+        // A store with no folds is written as before
+        const settings = calls.find(([storeName]) => storeName === 'settings');
+        expect(settings[2]).toEqual({ bypassRestoreLatch: true });
+    });
+
     test('a backup restore latches a live-safe record too, so the rollback is not folded back', async () => {
         const { registerSyncMerge } = await import('./sync-merge-registry.js');
         const unregister = registerSyncMerge({
