@@ -1234,6 +1234,21 @@ describe('the Best Items tab', () => {
         document.body.innerHTML = '';
     });
 
+    test('an English client gets the tab inside the panel strip', () => {
+        document.body.innerHTML = `
+            <div role="tablist"><button role="tab">Other</button></div>
+            <div class="AlchemyPanel_tabsComponentContainer__x1">
+                <div role="tablist">
+                    ${['Coinify', 'Decompose', 'Transmute', 'Unrefine', 'Current Action'].map((l) => `<button role="tab">${l}</button>`).join('')}
+                </div>
+            </div>`;
+
+        bestItems.addAlchemyTab();
+
+        const strip = document.querySelector('.AlchemyPanel_tabsComponentContainer__x1 [role="tablist"]');
+        expect(strip.querySelectorAll('[data-mwi-best-items-tab="true"]')).toHaveLength(1);
+    });
+
     test('a translated client gets the tab, found through the panel strip', () => {
         document.body.innerHTML = `
             <div role="tablist"><button role="tab">Other</button></div>

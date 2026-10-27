@@ -142,7 +142,11 @@ function buildAlchemyTablist() {
         tab.textContent = label;
         tablist.appendChild(tab);
     }
-    document.body.appendChild(tablist);
+    // The real client keeps the strip inside the panel's tab container
+    const container = document.createElement('div');
+    container.className = 'AlchemyPanel_tabsComponentContainer__x1';
+    container.appendChild(tablist);
+    document.body.appendChild(container);
     return tablist;
 }
 
