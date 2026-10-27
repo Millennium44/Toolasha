@@ -148,11 +148,42 @@ export function freshestSighting(rows) {
 }
 
 /**
+ * The game's base market value for a point, as an optional `mv` field.
+ * Older rows, and servers that do not send `market_value`, give nothing, so a
+ * missing value is never drawn as 0.
+ * @param {*} value - A row's `market_value`, or a bucket's median of them
+ * @returns {{mv: number}|{}}
+ */
+function baseValueField(value) {
+    const mv = Number(value);
+    return mv > 0 ? { mv } : {};
+}
+
+/**
+ * Footer lines for a chart tooltip point.
+ *
+ * @param {Object|undefined} point - A point from buildHistorySeries
+ * @param {{hasVolume: boolean, showBaseValue: boolean}} options
+ * @param {(n: number) => string} format - Number formatter
+ * @returns {string} Newline-joined lines, '' when there is nothing to say
+ */
+export function tooltipFooterLines(point, { hasVolume, showBaseValue }, format) {
+    if (!point) return '';
+    const lines = [];
+    if (hasVolume) {
+        lines.push(`Est. bought at the ask: ${format(point.atAsk)}`);
+        lines.push(`Est. sold into the bid: ${format(point.atBid)}`);
+    }
+    if (showBaseValue && point.mv > 0) lines.push(`Base value: ${format(Math.round(point.mv))}`);
+    return lines.join('\n');
+}
+
+/**
  * Reduce history rows to the points a chart draws.
  *
  * @param {Array<Object>} rows - Rows from the history API
  * @param {number} days - The range being shown
- * @returns {Array<Object>} { time, ask, bid, avg, volume, atAsk, atBid }, oldest first
+ * @returns {Array<Object>} { time, ask, bid, avg, volume, atAsk, atBid, mv? }, oldest first
  */
 export function buildHistorySeries(rows, days) {
     if (!Array.isArray(rows)) return [];
@@ -169,6 +200,7 @@ export function buildHistorySeries(rows, days) {
                     volume: Math.max(0, Number(row.v) || 0),
                     atAsk: Math.round(atAsk),
                     atBid: Math.round(atBid),
+                    ...baseValueField(row.market_value),
                 };
             })
             .sort((a, b) => a.time - b.time);
@@ -182,7 +214,7 @@ export function buildHistorySeries(rows, days) {
 
         let day = byDay.get(key);
         if (!day) {
-            day = { time, asks: [], bids: [], avgs: [], volume: 0, atAsk: 0, atBid: 0 };
+            day = { time, asks: [], bids: [], avgs: [], mvs: [], volume: 0, atAsk: 0, atBid: 0 };
             byDay.set(key, day);
         }
 
@@ -193,6 +225,7 @@ export function buildHistorySeries(rows, days) {
         day.asks.push(row.a);
         day.bids.push(row.b);
         day.avgs.push(row.p);
+        day.mvs.push(row.market_value);
         // The day is stamped with its latest sighting, so a partial day sits
         // where it belongs on the axis rather than at midnight
         if (time > day.time) day.time = time;
@@ -207,6 +240,7 @@ export function buildHistorySeries(rows, days) {
             volume: day.volume,
             atAsk: Math.round(day.atAsk),
             atBid: Math.round(day.atBid),
+            ...baseValueField(median(day.mvs)),
         }))
         .sort((a, b) => a.time - b.time);
 }

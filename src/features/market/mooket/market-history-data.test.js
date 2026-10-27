@@ -7,7 +7,14 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { median, splitVolume, buildHistorySeries, historyLabels, freshestSighting } from './market-history-data.js';
+import {
+    median,
+    splitVolume,
+    buildHistorySeries,
+    historyLabels,
+    freshestSighting,
+    tooltipFooterLines,
+} from './market-history-data.js';
 
 const row = (over = {}) => ({ time: 1_700_000_000, a: 120, b: 100, p: 110, v: 100, ...over });
 
@@ -152,5 +159,63 @@ describe('HISTORY_RANGES', () => {
     test('offers a year, the longest range mooket II charts', async () => {
         const { HISTORY_RANGES } = await import('./market-history-data.js');
         expect(HISTORY_RANGES.at(-1)).toBe(365);
+    });
+});
+
+describe('base market value (mv)', () => {
+    const day = 24 * 60 * 60;
+
+    test('a daily bucket carries the median of the readings that have a value', () => {
+        const series = buildHistorySeries(
+            [
+                row({ time: day, market_value: 100 }),
+                row({ time: day + 60 }), // older row, no value
+                row({ time: day + 120, market_value: 300 }),
+                row({ time: day + 180, market_value: 0 }),
+            ],
+            30
+        );
+        expect(series[0].mv).toBe(200);
+    });
+
+    test('a bucket with no values has no field at all', () => {
+        const series = buildHistorySeries([row({ time: day }), row({ time: day + 60, market_value: null })], 30);
+        expect('mv' in series[0]).toBe(false);
+    });
+
+    test('a short range carries each reading, and omits absent ones', () => {
+        const series = buildHistorySeries([row({ time: 100, market_value: 50 }), row({ time: 200 })], 1);
+        expect(series[0].mv).toBe(50);
+        expect('mv' in series[1]).toBe(false);
+    });
+});
+
+describe('tooltipFooterLines', () => {
+    const fmt = (n) => `#${n}`;
+    const point = { atAsk: 3, atBid: 4, mv: 1500.4 };
+
+    test('shows the base value when present', () => {
+        expect(tooltipFooterLines(point, { hasVolume: false, showBaseValue: true }, fmt)).toBe('Base value: #1500');
+    });
+
+    test('shows nothing for a point without a value, never 0', () => {
+        const out = tooltipFooterLines({ atAsk: 3, atBid: 4 }, { hasVolume: false, showBaseValue: true }, fmt);
+        expect(out).toBe('');
+        expect(tooltipFooterLines({ mv: 0 }, { hasVolume: false, showBaseValue: true }, fmt)).toBe('');
+    });
+
+    test('the setting off drops the line', () => {
+        const out = tooltipFooterLines(point, { hasVolume: true, showBaseValue: false }, fmt);
+        expect(out).not.toContain('Base value');
+        expect(out).toContain('Est. bought at the ask: #3');
+    });
+
+    test('volume lines come first when the source has volume', () => {
+        const out = tooltipFooterLines(point, { hasVolume: true, showBaseValue: true }, fmt).split('\n');
+        expect(out).toEqual(['Est. bought at the ask: #3', 'Est. sold into the bid: #4', 'Base value: #1500']);
+    });
+
+    test('no point gives nothing', () => {
+        expect(tooltipFooterLines(undefined, { hasVolume: true, showBaseValue: true }, fmt)).toBe('');
     });
 });
