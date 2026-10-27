@@ -1,4 +1,5 @@
 /** @vitest-environment happy-dom */
+/* global process */
 
 /**
  * The task statistics panel's arithmetic.
@@ -684,5 +685,29 @@ describe('opening the popup while a build is still in flight', () => {
         await opening;
 
         expect(document.querySelectorAll('.toolasha-task-stats-overlay')).toHaveLength(0);
+    });
+});
+
+describe('the reroll spend window', () => {
+    test('covers the same seven calendar days as the claims, across a spring-forward', async () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'America/New_York';
+        try {
+            game.completions = { rates: { week: { completions: 0, tokens: 0, coins: 0 }, session: null }, recent: [] };
+            // 2026-03-08 is the spring-forward day, inside the week before the 12th
+            const now = new Date(2026, 2, 12, 12, 0, 0).getTime();
+            game.rerollHistory = [
+                // Half an hour more than seven days back
+                { taskId: 1, retiredAt: new Date(2026, 2, 5, 11, 30, 0).getTime(), goldSpent: 10000 },
+                { taskId: 2, retiredAt: new Date(2026, 2, 5, 12, 30, 0).getTime(), goldSpent: 20000 },
+            ];
+
+            const result = await taskStatistics.calculateCompletions(now);
+
+            expect(result.rerollSpend.gold).toBe(20000);
+        } finally {
+            if (originalTZ === undefined) delete process.env.TZ;
+            else process.env.TZ = originalTZ;
+        }
     });
 });

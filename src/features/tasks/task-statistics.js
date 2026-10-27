@@ -29,6 +29,7 @@ import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { padFightCount } from '../../utils/fight-confidence.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
+import { calendarDaysBefore } from '../../utils/calendar-days.js';
 import { TOOLASHA } from '../../utils/selectors.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
@@ -277,7 +278,7 @@ class TaskStatistics {
 
             // Only the rerolls paid on tasks retired inside the same window, so
             // the two halves of the net are measuring the same seven days
-            const windowStart = now - 7 * 24 * 60 * 60 * 1000;
+            const windowStart = calendarDaysBefore(now, 7);
             const history = await taskRerollTracker.loadHistory();
             let gold = 0;
             let cowbells = 0;
