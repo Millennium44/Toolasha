@@ -585,8 +585,8 @@ class NetworthInventoryDisplay {
                         showGuildShrines
                             ? `
                         <!-- Guild Shrines -->
-                        <div style="cursor: pointer; margin-top: 4px;" id="mwi-guild-shrines-toggle" title="Guild credits spent on every shrine level bought. ${formatKMB(guildShrines.tokens || 0)} guild tokens were also spent; tokens spent on shrines are not counted here (guild tokens you still hold are valued under Tokens).">
-                            + Guild Shrines: ${networthFormatter(Math.round(guildShrines.totalCost))}
+                        <div style="cursor: pointer; margin-top: 4px;" id="mwi-guild-shrines-toggle" title="Guild credits spent on every shrine level bought. ${formatKMB(guildShrines.tokens || 0)} guild tokens were also spent; tokens spent on shrines are not counted here (guild tokens you still hold are valued under Tokens).${guildShrines.unpriced?.length ? ` No item converts into ${guildShrines.unpriced.join(', ')} yet, so those credits count as 0 and the total is a floor.` : ''}">
+                            + Guild Shrines: ${guildShrines.unpriced?.length ? 'at least ' : ''}${networthFormatter(Math.round(guildShrines.totalCost))}
                         </div>
                         <div id="mwi-guild-shrines-breakdown" style="display: none; margin-left: 20px; font-size: 0.8rem; color: #bbb; white-space: pre-line;">${this.renderGuildShrinesBreakdown(guildShrines.breakdown)}</div>
                     `
@@ -723,7 +723,9 @@ class NetworthInventoryDisplay {
         return breakdown
             .map((shrine) => {
                 const tokens = shrine.tokens > 0 ? ` (+${formatKMB(shrine.tokens)} tokens)` : '';
-                return `${shrine.name}: ${networthFormatter(Math.round(shrine.cost))}${tokens}`;
+                // A credit no item converts into is left out of the cost, so the figure is a floor
+                const floor = shrine.unpriced?.length ? ` (at least; ${shrine.unpriced.join(', ')} unpriced)` : '';
+                return `${shrine.name}: ${networthFormatter(Math.round(shrine.cost))}${floor}${tokens}`;
             })
             .join('\n');
     }
@@ -1034,7 +1036,7 @@ class NetworthInventoryDisplay {
                 this.setupToggle(
                     'mwi-other-abilities-toggle',
                     'mwi-other-abilities-breakdown',
-                    `Other Abilities: ${networthFormatter(Math.round(fa.abilities.totalCost - fa.abilities.equippedCost))}`
+                    `Other (${fa.abilities.otherBreakdown.length}): ${networthFormatter(Math.round(fa.abilities.totalCost - fa.abilities.equippedCost))}`
                 );
             }
         }
@@ -1044,7 +1046,7 @@ class NetworthInventoryDisplay {
             this.setupToggle(
                 'mwi-ability-books-toggle',
                 'mwi-ability-books-breakdown',
-                `Ability Books: ${networthFormatter(Math.round(fa.abilityBooks.totalCost))}`
+                `Ability Books (${fa.abilityBooks.breakdown.length}): ${networthFormatter(Math.round(fa.abilityBooks.totalCost))}`
             );
         }
 
@@ -1053,7 +1055,7 @@ class NetworthInventoryDisplay {
             this.setupToggle(
                 'mwi-guild-shrines-toggle',
                 'mwi-guild-shrines-breakdown',
-                `Guild Shrines: ${networthFormatter(Math.round(fa.guildShrines.totalCost))}`
+                `Guild Shrines: ${fa.guildShrines.unpriced?.length ? 'at least ' : ''}${networthFormatter(Math.round(fa.guildShrines.totalCost))}`
             );
         }
 

@@ -536,10 +536,12 @@ export function shownMetrics(row) {
  * both have one, the quick passes otherwise.
  * @param {Object} row
  * @param {Object|null} baseline - The solo row of the same zone/tier
- * @returns {{xpPct: number|null, profitDelta: number|null, stage: 'full'|'quick'|null}}
+ * @returns {{xpPct: number|null, profitDelta: number|null, stage: 'full'|'quick'|null, unpriced: Array<string>}}
+ *   `unpriced` names the items nothing priced on either side of the compared stage: each counted at zero, so the
+ *   profit delta is built on a zero and says so
  */
 export function soloDelta(row, baseline) {
-    const none = { xpPct: null, profitDelta: null, stage: null };
+    const none = { xpPct: null, profitDelta: null, stage: null, unpriced: [] };
     if (!row || !baseline) return none;
     let mine = null;
     let theirs = null;
@@ -553,7 +555,8 @@ export function soloDelta(row, baseline) {
     const xpPct = theirs.xpPerHour > 0 ? ((mine.xpPerHour - theirs.xpPerHour) / theirs.xpPerHour) * 100 : null;
     const profitDelta =
         mine.profitPerHour != null && theirs.profitPerHour != null ? mine.profitPerHour - theirs.profitPerHour : null;
-    return { xpPct, profitDelta, stage };
+    const unpriced = [...new Set([...(mine.unpriced || []), ...(theirs.unpriced || [])])];
+    return { xpPct, profitDelta, stage, unpriced };
 }
 
 /**
@@ -724,6 +727,12 @@ export function csvRow(row, baseline) {
         profitVsSolo: round(delta.profitDelta, 0),
         comparedAt: delta.stage === 'full' ? 'full hours' : delta.stage === 'quick' ? 'quick pass' : '',
         unpriced: shown?.unpriced?.length ? shown.unpriced.join(' ') : '',
-        note: !shown ? 'sim failed' : shown.profitPerHour == null ? 'profit could not be priced' : '',
+        note: !shown
+            ? 'sim failed'
+            : shown.profitPerHour == null
+              ? 'profit could not be priced'
+              : delta.profitDelta != null && delta.unpriced.length
+                ? 'profit vs solo counts unpriced items as 0'
+                : '',
     };
 }

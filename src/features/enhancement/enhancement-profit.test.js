@@ -156,6 +156,18 @@ describe('valueVsCost', () => {
         expect(v.net).toBeNull();
     });
 
+    test('a bid filled in from the value map is no price: the net is unknown, not a sale', () => {
+        const estimatedN = (hrid, level) => (level === 0 ? { bid: 1000 } : { bid: 20000, bidEstimated: true });
+        const vN = valueVsCost(session({ totalCost: 2000 }), estimatedN);
+        expect(vN.valueN).toBeNull();
+        expect(vN.net).toBeNull();
+
+        const estimated0 = (hrid, level) => (level === 0 ? { bid: 1000, bidEstimated: true } : { bid: 20000 });
+        const v0 = valueVsCost(session({ totalCost: 2000 }), estimated0);
+        expect(v0.value0).toBeNull();
+        expect(v0.net).toBeNull();
+    });
+
     test('a session picked up at +5 nets against the +5 it started from, not a +0', () => {
         // The session only spent +5 → +8; the +0 → +5 path is inside the +5
         // piece, so subtracting a +0 would count that path as profit.

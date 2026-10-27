@@ -66,6 +66,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 
 const { guildLoadoutCapture, readUnitPopup, POPUP_SOCKET_WINDOW_MS } = await import('./guild-loadout-capture.js');
 const { guildLoadoutsStorageKey } = await import('./guild-loadouts.js');
+const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 
 /**
  * Build a modal out of runs of text, as the game renders one.
@@ -244,6 +245,44 @@ describe('the capture', () => {
                 .map((entry) => entry.name)
                 .sort()
         ).toEqual(['Moo', 'Tib']);
+    });
+
+    test('a sync pull of this character’s record joins its roster without a reload or a capture event', async () => {
+        game.wsHandlers.battle_unit_fetched({
+            unit: { character: { name: 'Tib' }, combatDetails: { maxHitpoints: 4120, combatStats: {} } },
+        });
+        const events = [];
+        const off = guildLoadoutCapture.onCaptured((event) => events.push(event));
+        // The pull merged another device's sighting into the stored record
+        const key = guildLoadoutsStorageKey('char-1');
+        game.store[key] = {
+            players: { moo: { name: 'Moo', at: Date.now() - 1000, rows: [] } },
+            updatedAt: Date.now() - 1000,
+        };
+
+        announceSyncPullApplied({ guildHistory: [key] });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(
+            guildLoadoutCapture
+                .seen()
+                .map((entry) => entry.name)
+                .sort()
+        ).toEqual(['Moo', 'Tib']);
+        expect(events).toEqual([]);
+        off();
+    });
+
+    test('a sync pull of another key leaves the roster alone', async () => {
+        game.store[guildLoadoutsStorageKey('char-2')] = {
+            players: { moo: { name: 'Moo', at: Date.now(), rows: [] } },
+            updatedAt: Date.now(),
+        };
+
+        announceSyncPullApplied({ guildHistory: [guildLoadoutsStorageKey('char-2')] });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(guildLoadoutCapture.seen()).toEqual([]);
     });
 
     test('the end-of-session message neither stores nor stands the scrape down', () => {
