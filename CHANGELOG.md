@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancing tracker notes attempts missed during a gap
+
+- When a reload or dropped connection skips more than one enhancing attempt, the session now says how many were missed instead of silently reading as complete; its costs and per-attempt averages still count only what was measured.
+
 ### Audit round (2026-10-26, third): market
 
 - Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.
