@@ -386,9 +386,11 @@ function noteTrainingSales(sales, actionHrid, profit, lines) {
  *
  * @param {Array<{actionHrid: string, outputs: Array<Object>}>} sales - From {@link noteTrainingSales}
  * @param {Map<string, number|null>} trainingMargin - Edited in place
+ * @param {Map<string, {proceedsPerHour: number, capPerHour: number}>} trainingSaleCap - Filled for each
+ *   action the book limits: its uncapped proceeds and what the market absorbs, both per hour
  * @returns {Promise<void>}
  */
-async function boundTrainingMargins(sales, trainingMargin) {
+async function boundTrainingMargins(sales, trainingMargin, trainingSaleCap) {
     if (!sales.length) return;
     try {
         const pseudo = [];
@@ -405,13 +407,20 @@ async function boundTrainingMargins(sales, trainingMargin) {
         const byKey = new Map((bounded?.rates || []).map((rate) => [rate.actionHrid, rate]));
         for (const sale of sales) {
             let unsold = 0;
+            let proceeds = 0;
             for (const output of sale.outputs) {
+                proceeds += output.proceeds;
                 const kept = Number(byKey.get(`${sale.actionHrid}|${output.itemHrid}`)?.goldPerHour);
                 if (!Number.isFinite(kept) || kept >= output.proceeds) continue;
                 unsold += output.proceeds - Math.max(0, kept);
             }
             const margin = trainingMargin.get(sale.actionHrid);
-            if (unsold > 0 && typeof margin === 'number') trainingMargin.set(sale.actionHrid, margin - unsold);
+            if (unsold > 0 && typeof margin === 'number') {
+                trainingMargin.set(sale.actionHrid, margin - unsold);
+                // The hourly cap does not grow when efficiency shortens a climb, so the planner needs it
+                // apart from the per-completion margin: see planSkillGoal
+                trainingSaleCap.set(sale.actionHrid, { proceedsPerHour: proceeds, capPerHour: proceeds - unsold });
+            }
         }
     } catch (error) {
         console.error('[GoalPlanner] Bounding training margins by market volume failed:', error);
@@ -501,6 +510,7 @@ async function measureGoldRates() {
     const trainingMargin = new Map();
     const trainingDrinkCost = new Map();
     const trainingUpfront = new Map();
+    const trainingSaleCap = new Map();
     // What each trained action sells and takes in, so its margin can be held to what the market
     // absorbs the way an earning rate is. Built beside the margin maps, applied after the sweep.
     const trainingSales = [];
@@ -633,7 +643,7 @@ async function measureGoldRates() {
 
     // Training sells its output through the same book, so its margin gets the same bound. Without
     // it a thin-market craft trained for XP counted every unit sold at the quoted price.
-    await boundTrainingMargins(trainingSales, trainingMargin);
+    await boundTrainingMargins(trainingSales, trainingMargin, trainingSaleCap);
 
     liquidity.rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
     return {
@@ -642,6 +652,7 @@ async function measureGoldRates() {
         trainingMargin,
         trainingDrinkCost,
         trainingUpfront,
+        trainingSaleCap,
         notes,
         combatStatus,
     };
@@ -658,7 +669,13 @@ async function measureGoldRates() {
  * @param {Map<string, number>} goldByAction - Gold per hour, by action
  * @returns {Array<Object>} Rates, best first
  */
-function measureXpRates(skillHrid, goldByAction, drinkCostByAction = new Map(), upfrontByAction = new Map()) {
+function measureXpRates(
+    skillHrid,
+    goldByAction,
+    drinkCostByAction = new Map(),
+    upfrontByAction = new Map(),
+    saleCapByAction = new Map()
+) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return [];
 
@@ -692,6 +709,14 @@ function measureXpRates(skillHrid, goldByAction, drinkCostByAction = new Map(), 
                 drinkCostPerHour: measuredType ? (drinkCostByAction.get(hrid) ?? 0) : 0,
                 // One completion's inputs: the working capital needed to start, as the ranking carries it
                 upfrontCost: measuredType ? (upfrontByAction.get(hrid) ?? 0) : 0,
+                // Set only when the book limits the sales: goldPerHour already has the cap applied (at the
+                // starting pace), these let a climb that speeds up keep the cap at its hourly figure
+                ...(measuredType && saleCapByAction.get(hrid)
+                    ? {
+                          saleProceedsPerHour: saleCapByAction.get(hrid).proceedsPerHour,
+                          saleCapPerHour: saleCapByAction.get(hrid).capPerHour,
+                      }
+                    : {}),
                 goldKnown: !measuredType || Number.isFinite(goldByAction.get(hrid)),
             });
         } catch (error) {
@@ -980,6 +1005,7 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
               trainingMargin: new Map(),
               trainingDrinkCost: new Map(),
               trainingUpfront: new Map(),
+              trainingSaleCap: new Map(),
               notes: [],
               combatStatus: null,
           };
@@ -987,6 +1013,7 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
     const goldByAction = measured.trainingMargin;
     const drinkCostByAction = measured.trainingDrinkCost;
     const upfrontByAction = measured.trainingUpfront;
+    const saleCapByAction = measured.trainingSaleCap;
 
     const acquisitions = new Map();
     const runs = new Map();
@@ -1030,7 +1057,7 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
             const measured =
                 skillHrid === ENHANCING_SKILL
                     ? measureEnhancingRates()
-                    : measureXpRates(skillHrid, goldByAction, drinkCostByAction, upfrontByAction);
+                    : measureXpRates(skillHrid, goldByAction, drinkCostByAction, upfrontByAction, saleCapByAction);
             xpCache.set(skillHrid, measured);
             return measured;
         },

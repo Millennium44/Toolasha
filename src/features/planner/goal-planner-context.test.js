@@ -765,6 +765,18 @@ describe('training margins are held to what the market absorbs', () => {
         expect(context.xpRates('/skills/milking')[0].goldPerHour).toBe(10_000);
     });
 
+    test('a capped rate carries its uncapped proceeds and hourly cap for the planner', async () => {
+        rates.production = { '/actions/cooking/stew': stew };
+        liquidity.throttle['/items/stew'] = 0.25;
+        const [cooking] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        expect(cooking.saleProceedsPerHour).toBe(96_000);
+        expect(cooking.saleCapPerHour).toBe(24_000);
+
+        liquidity.throttle = {};
+        const [open] = (await buildPlannerContext()).xpRates('/skills/cooking');
+        expect(open.saleCapPerHour).toBeUndefined();
+    });
+
     test('the training step and its funding follow the capped margin', async () => {
         rates.production = { '/actions/cooking/stew': stew };
         game.skills = game.skills.map((skill) =>

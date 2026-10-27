@@ -1253,6 +1253,31 @@ describe('a skill target - costing a climb that spans levels', () => {
         expect(Math.abs(train.goldDelta - -54_000 * train.timeHours)).toBeLessThanOrEqual(oneCycle);
     });
 
+    test('a market cap on the sales is an hourly limit, not a per-completion one', () => {
+        // 54k/hr of sales at the starting pace, of which the market absorbs 5.4k/hr; costs are nil
+        const capped = rate({ goldPerHour: 5_400, saleProceedsPerHour: 54_000, saleCapPerHour: 5_400 });
+        const train = step(plan(10, [capped]), 'train');
+        const n = train.details.actionsNeeded;
+        // Efficiency shortens the climb, so n completions would sell more than the market takes in the time
+        expect((54_000 / 540) * n).toBeGreaterThan(5_400 * train.timeHours);
+        expect(train.goldDelta).toBeCloseTo(5_400 * train.timeHours, 6);
+        // The per-completion figure would have credited this
+        expect(train.goldDelta).toBeLessThan((5_400 / 540) * n);
+    });
+
+    test('a cap that does not bind leaves the per-completion figure alone', () => {
+        const loose = rate({ goldPerHour: 54_000, saleProceedsPerHour: 54_000, saleCapPerHour: 54_000 });
+        const train = step(plan(10, [loose]), 'train');
+        expect(train.goldDelta).toBeCloseTo(100 * train.details.actionsNeeded, 6);
+    });
+
+    test('a single level with a cap agrees with the hourly limit to within one cycle', () => {
+        const capped = rate({ goldPerHour: 5_400, saleProceedsPerHour: 54_000, saleCapPerHour: 5_400 });
+        const train = step(plan(2, [capped]), 'train');
+        const oneCycle = (5_400 * 10) / 3600;
+        expect(Math.abs(train.goldDelta - 5_400 * train.timeHours)).toBeLessThanOrEqual(oneCycle + 1e-6);
+    });
+
     test('an unknown margin stays unknown, never zero', () => {
         const result = plan(10, [rate({ goldPerHour: null, goldKnown: false })]);
         expect(step(result, 'train').goldDelta).toBe(0);
