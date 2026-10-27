@@ -7,7 +7,7 @@ import marketAPI from '../../api/marketplace.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
-import { getItemPrice } from '../../utils/market-data.js';
+import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { getCustomPrice } from '../settings/custom-price-overrides.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { calculateEVBatch, terminateEVWorkerPool } from '../../utils/ev-worker-manager.js';
@@ -29,6 +29,9 @@ class ExpectedValueCalculator {
         // How many drops of each cached container could not be priced, so a nested
         // lookup can report the parent as partial rather than silently confident
         this.containerMissingCounts = new Map();
+        // How many of each cached container's drops are priced only by the game's value map (an
+        // estimate, not a listing); the EV figure is unchanged, the count lets a display say "~"
+        this.containerEstimatedCounts = new Map();
 
         // Special item HRIDs
         this.COIN_HRID = '/items/coin';
@@ -264,6 +267,10 @@ class ExpectedValueCalculator {
                             result.containerHrid,
                             this.countUnpricedDrops(initData.openableLootDropMap[result.containerHrid], priceMap)
                         );
+                        this.containerEstimatedCounts.set(
+                            result.containerHrid,
+                            this.countEstimatedDrops(initData.openableLootDropMap[result.containerHrid], priceMap)
+                        );
                     }
                 }
             } catch (error) {
@@ -313,6 +320,31 @@ class ExpectedValueCalculator {
     }
 
     /**
+     * How many of a container's priced drops rest on the game's value map instead of a listing,
+     * counting a nested container's own estimated drops too. Same walk as countUnpricedDrops.
+     * @param {Array} dropTable - The container's drop table
+     * @param {Object} priceMap - Map of itemHrid to {price, canBeSold, estimated, estimatedCount}
+     * @returns {number} Number of priced drops that are estimates
+     */
+    countEstimatedDrops(dropTable, priceMap) {
+        if (!dropTable) return 0;
+
+        let estimated = 0;
+        for (const drop of dropTable) {
+            const dropRate = drop.dropRate || 0;
+            const minCount = drop.minCount || 0;
+            const maxCount = drop.maxCount || 0;
+            if (dropRate <= 0 || (minCount === 0 && maxCount === 0)) continue;
+
+            const priceData = priceMap[drop.itemHrid];
+            if ((priceData?.price ?? null) === null) continue;
+            if (priceData.estimated) estimated++;
+            estimated += priceData.estimatedCount ?? this.containerEstimatedCounts.get(drop.itemHrid) ?? 0;
+        }
+        return estimated;
+    }
+
+    /**
      * Build price map for all items needed for container calculations
      * @param {Array} containerHrids - Array of container HRIDs
      * @param {Object} initData - Game data
@@ -347,6 +379,8 @@ class ExpectedValueCalculator {
                     // cache entry, so its missing count may not be available in
                     // containerMissingCounts when the worker batch is recorded.
                     missingCount: resolved?.missingCount || 0,
+                    estimated: Boolean(resolved?.estimated),
+                    estimatedCount: resolved?.estimatedCount || 0,
                 };
             }
         }
@@ -405,10 +439,10 @@ class ExpectedValueCalculator {
      * @param {string} containerHrid - Container item HRID
      * @param {Object} [initData] - Cached game data (optional, will fetch if not provided)
      * @param {{path: Set<string>, truncated: boolean}} [context] - Recursion state for nested containers
-     * @returns {{expectedValue: number|null, missingCount: number, isPartial: boolean}}
+     * @returns {{expectedValue: number|null, missingCount: number, isPartial: boolean, estimatedCount: number}}
      */
     calculateContainerValue(containerHrid, initData = null, context = null) {
-        const unavailable = { expectedValue: null, missingCount: 0, isPartial: false };
+        const unavailable = { expectedValue: null, missingCount: 0, isPartial: false, estimatedCount: 0 };
         const ctx = context || { path: new Set(), truncated: false };
 
         // Use cached data if provided, otherwise fetch
@@ -427,6 +461,7 @@ class ExpectedValueCalculator {
 
         let totalExpectedValue = 0;
         let missingCount = 0;
+        let estimatedCount = 0;
         // Gross pass: contents are not market-taxed and the shared cache is neither read nor written
         const gross = Boolean(ctx.gross);
         // Explicit-rate pass: contents are netted at that rate and, like the gross pass, never cached
@@ -469,6 +504,9 @@ class ExpectedValueCalculator {
             // A nested container carries its own unpriceable drops up: a chest holding a
             // crate with an unpriceable drop is itself a lower bound, not a firm figure
             missingCount += resolved.missingCount || 0;
+            // A drop priced only by the value map, or a nested container holding one, is an estimate
+            if (resolved.estimated) estimatedCount++;
+            estimatedCount += resolved.estimatedCount || 0;
 
             // Check if item is tradeable (for tax calculation)
             const itemDetails = dataManager.getItemDetails(itemHrid);
@@ -498,9 +536,10 @@ class ExpectedValueCalculator {
                 this.containerCache.set(containerHrid, totalExpectedValue);
             }
             this.containerMissingCounts.set(containerHrid, missingCount);
+            this.containerEstimatedCounts.set(containerHrid, estimatedCount);
         }
 
-        return { expectedValue: totalExpectedValue, missingCount, isPartial: missingCount > 0 };
+        return { expectedValue: totalExpectedValue, missingCount, isPartial: missingCount > 0, estimatedCount };
     }
 
     /**
@@ -512,7 +551,8 @@ class ExpectedValueCalculator {
      * @param {string} itemHrid - Item HRID
      * @param {number} [enhancementLevel=0] - Enhancement level (ignored for special currencies)
      * @param {{path: Set<string>, truncated: boolean}} [context] - Recursion state for nested containers
-     * @returns {{value: number, source: string, needsTax: boolean, missingCount?: number}|null} Resolved value or null
+     * @returns {{value: number, source: string, needsTax: boolean, missingCount?: number, estimated?: boolean,
+     *   estimatedCount?: number}|null} Resolved value or null; `estimated` marks a price read from the value map
      */
     resolveSellSideValue(itemHrid, enhancementLevel = 0, context = null) {
         // Special case: Coin (face value = 1, never taxed)
@@ -565,6 +605,7 @@ class ExpectedValueCalculator {
                 source: 'expectedValue',
                 needsTax: false,
                 missingCount: nested.missingCount,
+                estimatedCount: nested.estimatedCount,
             };
         }
 
@@ -572,12 +613,14 @@ class ExpectedValueCalculator {
         // getItemPrice already returns an Iron Cow character's own valuation transparently
         // here (vendor, coinify, or its market-price fallback) — none of which that
         // character can realize through an actual market sale, so it needs no tax either.
-        const dropPrice = getItemPrice(itemHrid, { enhancementLevel, context: 'profit', side: 'sell' });
+        const priceInfo = getItemPriceInfo(itemHrid, { enhancementLevel, context: 'profit', side: 'sell' });
+        const dropPrice = priceInfo.price;
         if (!(dropPrice > 0)) return null;
         const hasOverride = getCustomPrice(itemHrid, enhancementLevel, 'sell') !== null;
         return {
             value: dropPrice,
             source: hasOverride ? 'custom' : 'market',
+            estimated: Boolean(priceInfo.estimated),
             needsTax: Number.isFinite(context?.saleTaxRate) || !isIronCowCharacter(),
         };
     }
@@ -663,13 +706,15 @@ class ExpectedValueCalculator {
      *
      * @param {string} itemHrid - Possibly a container
      * @param {{path: Set<string>, truncated: boolean}|null} context - Recursion state
-     * @returns {{value: number, missingCount: number}|null} Value and unpriced-drop count, or null when this is not a container
+     * @returns {{value: number, missingCount: number, estimatedCount: number}|null} Value and unpriced- and
+     *   estimated-drop counts, or null when this is not a container
      */
     resolveContainerValue(itemHrid, context = null) {
         if (!context?.gross && !Number.isFinite(context?.saleTaxRate) && this.containerCache.has(itemHrid)) {
             return {
                 value: this.containerCache.get(itemHrid),
                 missingCount: this.containerMissingCounts.get(itemHrid) || 0,
+                estimatedCount: this.containerEstimatedCounts.get(itemHrid) || 0,
             };
         }
 
@@ -688,7 +733,11 @@ class ExpectedValueCalculator {
         try {
             const result = this.calculateContainerValue(itemHrid, initData, ctx);
             if (result.expectedValue === null) return null;
-            return { value: result.expectedValue, missingCount: result.missingCount };
+            return {
+                value: result.expectedValue,
+                missingCount: result.missingCount,
+                estimatedCount: result.estimatedCount,
+            };
         } finally {
             ctx.path.delete(itemHrid);
         }
@@ -727,12 +776,18 @@ class ExpectedValueCalculator {
         // Unpriced drops here, plus anything unpriceable inside a nested container
         const missingCount = drops.reduce((n, drop) => n + (drop.hasPriceData ? 0 : 1) + (drop.missingCount || 0), 0);
 
+        // Drops priced only by the value map (or inside a nested container that is): the figure stands,
+        // but it is an estimate, not a listing
+        const estimatedCount = drops.reduce((n, drop) => n + (drop.estimated ? 1 : 0) + (drop.estimatedCount || 0), 0);
+
         return {
             itemName: itemDetails.name,
             itemHrid,
             expectedValue: expectedReturn,
             missingCount,
             isPartial: missingCount > 0,
+            estimatedCount,
+            isEstimated: estimatedCount > 0,
             drops,
         };
     }
@@ -795,6 +850,7 @@ class ExpectedValueCalculator {
             const resolved = this.resolveSellSideValue(itemHrid, 0);
             const price = resolved?.value ?? null;
             const nestedMissing = resolved?.missingCount || 0;
+            const nestedEstimated = resolved?.estimatedCount || 0;
 
             // Calculate expected value for this drop
             const itemCanBeSold = itemDetails.isTradable !== false;
@@ -815,6 +871,8 @@ class ExpectedValueCalculator {
                 expectedValue: dropValue,
                 hasPriceData: price !== null,
                 missingCount: nestedMissing,
+                estimated: Boolean(resolved?.estimated),
+                estimatedCount: nestedEstimated,
             });
         }
 
@@ -839,7 +897,8 @@ class ExpectedValueCalculator {
             return '--';
         }
 
-        const figure = format(evData.expectedValue);
+        // A leading ~ marks a figure resting on value-map estimates, the same mark the price rows use
+        const figure = `${evData.estimatedCount > 0 ? '~' : ''}${format(evData.expectedValue)}`;
         if (!evData.isPartial) {
             return figure;
         }
@@ -859,6 +918,7 @@ class ExpectedValueCalculator {
         this.generation++;
         this.containerCache.clear();
         this.containerMissingCounts.clear();
+        this.containerEstimatedCounts.clear();
         this.isInitialized = false;
         // The running pass is superseded; the fresh one below must not join it
         this._initPromise = null;

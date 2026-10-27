@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
     initData: null,
     itemDetails: {},
     prices: {},
+    /** hrids whose price in `prices` is a value-map estimate, not a listing */
+    estimatedPrices: new Set(),
     priceCalls: [],
     customPrices: {},
     dungeonTokenValues: {},
@@ -80,6 +82,11 @@ vi.mock('../../utils/market-data.js', () => ({
         mocks.priceCalls.push([hrid, options]);
         return hrid in mocks.prices ? mocks.prices[hrid] : null;
     },
+    getItemPriceInfo: (hrid, options) => {
+        mocks.priceCalls.push([hrid, options]);
+        const price = hrid in mocks.prices ? mocks.prices[hrid] : null;
+        return { price, source: price === null ? null : 'book', estimated: mocks.estimatedPrices.has(hrid) };
+    },
 }));
 
 vi.mock('../settings/custom-price-overrides.js', () => ({
@@ -119,6 +126,7 @@ beforeEach(() => {
         [JUNK_HRID]: 50,
     };
     mocks.priceCalls = [];
+    mocks.estimatedPrices = new Set();
     mocks.customPrices = {};
     mocks.dungeonTokenValues = {};
     mocks.initData = {
@@ -132,6 +140,7 @@ beforeEach(() => {
     };
     expectedValueCalculator.containerCache.clear();
     expectedValueCalculator.containerMissingCounts.clear();
+    expectedValueCalculator.containerEstimatedCounts.clear();
     expectedValueCalculator.isInitialized = false;
     expectedValueCalculator._initPromise = null;
     mocks.emitted = [];
@@ -184,6 +193,7 @@ describe('resolveSellSideValue', () => {
             value: 1000,
             source: 'market',
             needsTax: true,
+            estimated: false,
         });
     });
 
@@ -214,6 +224,7 @@ describe('resolveSellSideValue', () => {
             source: 'expectedValue',
             needsTax: false,
             missingCount: 0,
+            estimatedCount: 0,
         });
     });
 
@@ -453,10 +464,34 @@ describe('nested containers', () => {
         mocks.itemDetails[INNER].isTradable = true;
         const priceMap = expectedValueCalculator.buildPriceMap([OUTER, INNER, CHEST_HRID], mocks.initData);
 
-        expect(priceMap[INNER]).toEqual({ price: 1000 * (1 - MARKET_TAX), canBeSold: false, missingCount: 0 });
-        expect(priceMap[GEM_HRID]).toEqual({ price: 1000, canBeSold: true, missingCount: 0 });
-        expect(priceMap[JUNK_HRID]).toEqual({ price: 50, canBeSold: false, missingCount: 0 });
-        expect(priceMap['/items/coin']).toEqual({ price: 1, canBeSold: false, missingCount: 0 });
+        expect(priceMap[INNER]).toEqual({
+            price: 1000 * (1 - MARKET_TAX),
+            canBeSold: false,
+            missingCount: 0,
+            estimated: false,
+            estimatedCount: 0,
+        });
+        expect(priceMap[GEM_HRID]).toEqual({
+            price: 1000,
+            canBeSold: true,
+            missingCount: 0,
+            estimated: false,
+            estimatedCount: 0,
+        });
+        expect(priceMap[JUNK_HRID]).toEqual({
+            price: 50,
+            canBeSold: false,
+            missingCount: 0,
+            estimated: false,
+            estimatedCount: 0,
+        });
+        expect(priceMap['/items/coin']).toEqual({
+            price: 1,
+            canBeSold: false,
+            missingCount: 0,
+            estimated: false,
+            estimatedCount: 0,
+        });
     });
 
     test('a container that contains itself terminates instead of recursing forever', () => {
@@ -740,6 +775,62 @@ describe('truncation is per branch, not per traversal', () => {
         // ...while the two that genuinely had a branch cut off stay uncached
         expect(expectedValueCalculator.containerCache.has(CYCLIC)).toBe(false);
         expect(expectedValueCalculator.containerCache.has(PARENT)).toBe(false);
+    });
+});
+
+describe('drops priced only by the value map', () => {
+    const OUTER = '/items/outer_chest';
+    const INNER = '/items/inner_crate';
+
+    beforeEach(() => {
+        mocks.itemDetails[OUTER] = { name: 'Outer Chest', isOpenable: true };
+        mocks.itemDetails[INNER] = { name: 'Inner Crate', isOpenable: true };
+        mocks.initData.openableLootDropMap[OUTER] = [{ itemHrid: INNER, dropRate: 1, minCount: 1, maxCount: 1 }];
+        mocks.initData.openableLootDropMap[INNER] = [
+            { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: JUNK_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+        mocks.estimatedPrices.add(JUNK_HRID);
+        expectedValueCalculator.isInitialized = true;
+    });
+
+    test('a crate priced partly by the value map counts the estimate and keeps the same figure', () => {
+        const estimated = expectedValueCalculator.calculateExpectedValue(INNER);
+        mocks.estimatedPrices.clear();
+        const firm = expectedValueCalculator.calculateExpectedValue(INNER);
+
+        expect(estimated).toMatchObject({ estimatedCount: 1, isEstimated: true, isPartial: false });
+        expect(firm).toMatchObject({ estimatedCount: 0, isEstimated: false });
+        expect(estimated.expectedValue).toBe(firm.expectedValue);
+    });
+
+    test('a chest around it inherits the count, on the direct path and from the cache', () => {
+        expect(expectedValueCalculator.calculateExpectedValue(OUTER).estimatedCount).toBe(1);
+        expect(expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData).estimatedCount).toBe(1);
+        // Now served from the container cache
+        expect(expectedValueCalculator.resolveContainerValue(OUTER)).toMatchObject({ estimatedCount: 1 });
+    });
+
+    test('the worker recount agrees with the main path', () => {
+        const priceMap = {
+            [GEM_HRID]: { price: 1000, canBeSold: true, estimated: false, estimatedCount: 0 },
+            [JUNK_HRID]: { price: 50, canBeSold: true, estimated: true, estimatedCount: 0 },
+        };
+        expect(expectedValueCalculator.countEstimatedDrops(mocks.initData.openableLootDropMap[INNER], priceMap)).toBe(
+            1
+        );
+        // An unpriced drop is missing, not estimated
+        priceMap[JUNK_HRID] = { price: null, canBeSold: false, estimated: false, estimatedCount: 0 };
+        expect(expectedValueCalculator.countEstimatedDrops(mocks.initData.openableLootDropMap[INNER], priceMap)).toBe(
+            0
+        );
+    });
+
+    test('a ~ marks the formatted figure, and a partial one keeps its floor mark', () => {
+        const ev = expectedValueCalculator.calculateExpectedValue(INNER);
+        expect(expectedValueCalculator.formatExpectedValue(ev)).toBe(`~${Math.round(ev.expectedValue)}`);
+        const partial = { ...ev, isPartial: true, missingCount: 2 };
+        expect(expectedValueCalculator.formatExpectedValue(partial)).toContain('≥ ~');
     });
 });
 

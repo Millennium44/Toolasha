@@ -1860,10 +1860,13 @@ class TooltipPrices {
 
         // Expected value. Drops nobody can price contributed nothing to the total, so it is a
         // lower bound rather than an estimate — the display says which of the two it is.
-        const evPrefix = evData.isPartial ? '\u2265 ' : '';
+        // A figure resting on value-map prices is marked ~, like the price rows (the number is unchanged)
+        const evPrefix = evData.isPartial ? '\u2265 ' : evData.estimatedCount > 0 ? '~' : '';
         const evSuffix = evData.isPartial
             ? ` <span style="color: ${config.COLOR_TEXT_SECONDARY}; font-weight: normal;">(${evData.missingCount} drop${evData.missingCount === 1 ? '' : 's'} unpriced)</span>`
-            : '';
+            : evData.estimatedCount > 0
+              ? ` <span title="~ marks a price estimated from the game value map, not read off a live listing" style="color: ${config.COLOR_TEXT_SECONDARY}; font-weight: normal;">(${evData.estimatedCount} drop${evData.estimatedCount === 1 ? '' : 's'} estimated)</span>`
+              : '';
         html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Expected Return: ${evPrefix}${formatTooltipPrice(evData.expectedValue)}${evSuffix}</div>`;
         const keyLabel = keyName ? `Key Cost (${keyName})` : 'Key Cost';
         if (keyPrice === null) {
