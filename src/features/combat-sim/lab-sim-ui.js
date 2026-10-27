@@ -5092,6 +5092,8 @@ class LabSimUI {
                                 guildShrineCapToGuild,
                                 communityBuffs,
                                 communityBuffTargetLevel: this._getCommunityTargetLevel(),
+                                // The rule `runLabyrinthUpgradeAnalysis` reads `isSelf` by
+                                isSelf: selfHrid != null && playerDTOs[playerIndex]?.hrid === selfHrid,
                             }
                         ),
                     },
@@ -5191,7 +5193,7 @@ class LabSimUI {
      * @param {Object} gameData - From `buildGameDataPayload`
      * @param {Object} options - `{ abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets,
      *   auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
-     *   guildShrineCapToGuild }`
+     *   guildShrineCapToGuild, isSelf }`
      * @returns {Array<Object>} Candidates, deduplicated by the analysis itself
      * @private
      */
@@ -5210,6 +5212,7 @@ class LabSimUI {
             guildShrineCapToGuild = false,
             communityBuffs = null,
             communityBuffTargetLevel = 0,
+            isSelf = true,
         } = options;
         try {
             return modes.flatMap((mode) =>
@@ -5232,6 +5235,9 @@ class LabSimUI {
                         communityBuffTargetLevel,
                         guildShrineTargets,
                         guildShrineCapToGuild,
+                        // As the analysis's own mode is generated: a party member's swaps are not levelled from
+                        // the live character's ability books
+                        isSelf,
                     }
                 )
             );

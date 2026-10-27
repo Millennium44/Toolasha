@@ -3290,6 +3290,27 @@ describe('the guild shrine guild-allowed cap', () => {
         }
     });
 
+    test('a party member’s extra sets are generated as theirs, not the live character’s', () => {
+        // The analysis's own mode reads isSelf; the extra sets went without it, so a party member's ability
+        // swaps were levelled from the live character's books
+        const generateSpy = vi.spyOn(upgradeAdvisor, 'generateCandidates');
+        try {
+            ui._extraDimensionCandidates(
+                ['ability_swap'],
+                { equipment: {}, abilities: [] },
+                { itemDetailMap: {} },
+                {
+                    isSelf: false,
+                }
+            );
+            expect(generateSpy.mock.calls[0][12].isSelf).toBe(false);
+            ui._extraDimensionCandidates(['ability_swap'], { equipment: {}, abilities: [] }, { itemDetailMap: {} });
+            expect(generateSpy.mock.calls[1][12].isSelf).toBe(true);
+        } finally {
+            generateSpy.mockRestore();
+        }
+    });
+
     test('unchecking it persists, and a fresh panel restores it unchecked', async () => {
         capBox().checked = false;
         capBox().dispatchEvent(new window.Event('change', { bubbles: true }));
