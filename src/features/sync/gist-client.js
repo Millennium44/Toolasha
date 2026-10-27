@@ -798,7 +798,7 @@ async function parseSyncGist(token, gistId, exchange) {
     // Fetched outside the parse try/catch: a transport failure here (offline,
     // auth, rate limit) must keep its own classification — swallowing it into
     // "corrupt manifest" sends the reader to repair a gist that is fine.
-    const manifestText = await readFileContent(token, manifestFile);
+    const manifestText = await readFileContent(token, manifestFile, MANIFEST_FILE);
 
     let manifest;
     try {
@@ -830,7 +830,7 @@ async function parseSyncGist(token, gistId, exchange) {
         if (!file) {
             throw new GistError('parse', `The sync gist is missing ${name}. Push again to replace it.`);
         }
-        parts.push(await readFileContent(token, file));
+        parts.push(await readFileContent(token, file, name));
     }
 
     const history = historyVersions(gist);
@@ -847,21 +847,43 @@ async function parseSyncGist(token, gistId, exchange) {
 
 /**
  * A gist file's contents, following `raw_url` when the API truncated it.
+ *
+ * When the API lists a numeric `size`, the text read must match it in UTF-8
+ * bytes. A download cut short (a phone losing signal mid-chunk) would otherwise
+ * reach the decryptor as damaged ciphertext and be reported as a wrong
+ * passphrase, or reach the JSON parser and be reported as a corrupt gist.
+ *
  * @param {string} token - GitHub personal access token
  * @param {Object} file - A file entry from the gist API
+ * @param {string} [name] - The file's name, for the error message
  * @returns {Promise<string>} File contents
  */
-async function readFileContent(token, file) {
-    if (!file.truncated && typeof file.content === 'string') return file.content;
-    if (!file.raw_url) return file.content ?? '';
-
-    const response = await httpRequest({
-        method: 'GET',
-        url: file.raw_url,
-        headers: { Authorization: `Bearer ${token}` },
-    });
-    if (response.status < 200 || response.status >= 300) throw classify(response);
-    return response.text;
+async function readFileContent(token, file, name = 'a gist file') {
+    let text;
+    if (!file.truncated && typeof file.content === 'string') {
+        text = file.content;
+    } else if (!file.raw_url) {
+        text = file.content ?? '';
+    } else {
+        const response = await httpRequest({
+            method: 'GET',
+            url: file.raw_url,
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        if (response.status < 200 || response.status >= 300) throw classify(response);
+        text = response.text;
+    }
+    if (typeof file.size === 'number' && Number.isFinite(file.size)) {
+        const received = new TextEncoder().encode(typeof text === 'string' ? text : '').length;
+        if (received !== file.size) {
+            // 'offline' is the transport kind: a toast, no remedy, nothing held, retried on the next run
+            throw new GistError(
+                'offline',
+                `The download of ${name} from GitHub was incomplete (${received} of ${file.size} bytes). Try again.`
+            );
+        }
+    }
+    return text;
 }
 
 /**
