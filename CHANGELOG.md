@@ -12,6 +12,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - "No sale price" credit lines now also show on merged skilling rows and in the Combat Sim breakdown, and a budget of 0 still shows free and refunding picks.
 - Guild credit rows in the net worth hover read gold per credit, and an early price read before game data loads no longer errors.
 
+### Lab upgrade analysis ignores coffee and tea
+
+- Lab upgrade analyses never rank a coffee or tea, since drink slots do not run in the Labyrinth (crates provide those buffs); the Lab simulation already left them out.
+
+### Imported players' profit at their own tax rate everywhere
+
+- All Zones, Seek, Reprice, trigger tuning and the skilling upgrade analysis now price an imported or other-mode player's drops and trade-ins at that player's own sale tax, as upgrade analysis already did.
+
 ### From upstream: Combat Stats pricing, guild credits and smaller fixes
 
 - Combat Stats income and profit follow your profit pricing mode; the key pricing setting now prices only keys.

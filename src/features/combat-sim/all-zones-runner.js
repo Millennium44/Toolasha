@@ -32,6 +32,8 @@ let activeCleanup = null;
  * @param {string} [params.playerHrid] - Which player the early-exit decision reads XP and profit
  *   for. Must be the same player the ranked table shows (the caller's self), or the skip decision
  *   prunes tiers by a figure the user never sees. Defaults to 'player1' for the solo path.
+ * @param {number|null} [params.saleTaxRate] - The analyzed player's sale tax when they are not the live
+ *   character (`saleTaxRateOf`); omitted for the live character. The early-exit profit/hr is taxed at it.
  * @param {Function} [params.onResult] - Called with (index, simResult|null) as each zone finishes, so a caller
  *   that cancels the run keeps the results that had already landed. With it, results are delivered only there:
  *   the coordinator keeps no copy, and the run resolves with an empty array
@@ -39,7 +41,16 @@ let activeCleanup = null;
  * @returns {Promise<Array<Object>>} Array of SimResults, one per zone (same order as input)
  */
 export async function runAllZonesSimulation(params, onProgress) {
-    const { gameData, playerDTOs, zones, hours, communityBuffs, playerHrid = 'player1', onResult } = params;
+    const {
+        gameData,
+        playerDTOs,
+        zones,
+        hours,
+        communityBuffs,
+        playerHrid = 'player1',
+        onResult,
+        saleTaxRate,
+    } = params;
     const perZoneParties = zones.some((zone) => Array.isArray(zone?.playerDTOs));
     const useEarlyExit = Boolean(params.useEarlyExit) && !perZoneParties;
 
@@ -141,7 +152,9 @@ export async function runAllZonesSimulation(params, onProgress) {
 
                 let profitPerHour = 0;
                 try {
-                    const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours);
+                    const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours, {
+                        ...(Number.isFinite(saleTaxRate) ? { saleTaxRate } : {}),
+                    });
                     profitPerHour = revenue.netPerHour;
                 } catch {
                     // Revenue calculation may fail if market data is unavailable

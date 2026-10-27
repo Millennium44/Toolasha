@@ -9386,7 +9386,14 @@ class LabSimUI {
 
         try {
             const analysisResult = await runSkillingUpgradeAnalysis(
-                { editorDTO: dto, roomLevel, crateHrids, skillEquipmentMap, targetSkill },
+                {
+                    editorDTO: dto,
+                    roomLevel,
+                    crateHrids,
+                    skillEquipmentMap,
+                    targetSkill,
+                    isSelf: Boolean(selfHrid) && dto.hrid === selfHrid,
+                },
                 ({ current, total, description }) => {
                     if (isAborted()) return;
                     const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');

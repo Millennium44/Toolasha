@@ -98,6 +98,8 @@ const mocks = vi.hoisted(() => ({
     allZonesRuns: 0,
     /** playerHrid each calculateSimRevenue() call was made with, in order */
     revenueCalls: [],
+    /** The options object each calculateSimRevenue() call was made with, in order */
+    revenueOptions: [],
     /** How many upgrade-advisor runs and worker cancellations were requested */
     upgradeRuns: 0,
     cancelActiveCalls: 0,
@@ -401,8 +403,9 @@ vi.mock('./combat-sim-adapter.js', () => ({
     getCommunityBuffs: () => ({}),
     calculateExpectedDrops: () => mocks.drops,
     calculateDungeonKeyCosts: () => [],
-    calculateSimRevenue: (simResult, gameData, playerHrid) => {
+    calculateSimRevenue: (simResult, gameData, playerHrid, _hours, options) => {
         mocks.revenueCalls.push(playerHrid);
+        mocks.revenueOptions.push(options);
         return mocks.revenueFor?.(simResult, playerHrid) || { netPerHour: 0, costPerHour: 0, revenuePerHour: 0 };
     },
     // Faithful to the real one: coin untaxed, cowbell 18%, everything else the
@@ -6950,6 +6953,124 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
     });
 });
 
+describe('the sale tax of a player other than the live character', () => {
+    const IRON_COW = '/game_mode/ironcow';
+    const sweepResult = [
+        {
+            simulatedTime: 3600 * 1e9,
+            encounters: 10,
+            deaths: { player1: 0 },
+            experienceGained: { player1: { defense: 100 } },
+        },
+    ];
+    // An imported Iron Cow profile: one player, and nobody in the run is the live character
+    const importedIronCow = () => {
+        mocks.editedDTOs = {
+            player1: { hrid: 'player1', gameMode: IRON_COW, equipment: {}, food: [null, null, null] },
+        };
+        mocks.editorSelfHrid = null;
+    };
+
+    beforeEach(() => {
+        mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+        mocks.allZonesResult = sweepResult;
+        mocks.revenueOptions = [];
+        mocks.editorSoloMode = false;
+        ui.buildPanel();
+        ui._allZonesMode = 'group';
+        ui._updateAllZonesUI();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.editorActivePlayer = null;
+        mocks.allZonesArgs = null;
+        mocks.allZonesResult = [];
+        mocks.zones = [];
+        mocks.revenueOptions = [];
+    });
+
+    test('All Zones taxes an imported Iron Cow profile at nothing: early exit, the rows and the later Reprice', async () => {
+        importedIronCow();
+
+        await ui._onSimulateAllZones();
+
+        expect(mocks.allZonesArgs.saleTaxRate).toBe(0);
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => options?.saleTaxRate === 0)).toBe(true);
+
+        mocks.revenueOptions = [];
+        ui._repriceAllZonesResults();
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => options?.saleTaxRate === 0)).toBe(true);
+        // A redraw alone (a sort click) keeps the run's tax for the Reprice after it
+        await ui._displayAllZonesResults(ui._allZonesResults, 1, {}, 'player1');
+        expect(ui._allZonesRedrawArgs.saleTaxRate).toBe(0);
+    });
+
+    test('All Zones leaves the live character exactly as before: no rate passed anywhere', async () => {
+        // Their DTO even says Iron Cow: for the live character the live status is what counts
+        mocks.editedDTOs = {
+            player1: { hrid: 'player1', gameMode: IRON_COW, equipment: {}, food: [null, null, null] },
+        };
+        mocks.editorSelfHrid = 'player1';
+
+        await ui._onSimulateAllZones();
+
+        expect('saleTaxRate' in mocks.allZonesArgs).toBe(false);
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => !('saleTaxRate' in options))).toBe(true);
+        mocks.revenueOptions = [];
+        ui._repriceAllZonesResults();
+        expect(mocks.revenueOptions.every((options) => !('saleTaxRate' in options))).toBe(true);
+    });
+
+    test('All Zones on a teammate beside the live character taxes them as they pay it', async () => {
+        mocks.editedDTOs = {
+            player1: { hrid: 'player1', equipment: {}, food: [null, null, null] },
+            player2: { hrid: 'player2', gameMode: IRON_COW, equipment: {}, food: [null, null, null] },
+        };
+        mocks.editorSelfHrid = 'player1';
+        mocks.editorActivePlayer = 'player2';
+        mocks.editorSoloMode = true;
+        mocks.allZonesResult = [{ ...sweepResult[0], deaths: { player2: 0 }, experienceGained: { player2: {} } }];
+
+        await ui._onSimulateAllZones();
+
+        expect(mocks.allZonesArgs.saleTaxRate).toBe(0);
+        expect(mocks.revenueOptions.every((options) => options?.saleTaxRate === 0)).toBe(true);
+    });
+
+    test('Seek taxes an imported Iron Cow profile at nothing, and the live character at the live rate', async () => {
+        const adapter = await import('./combat-sim-adapter.js');
+        const dropSpy = vi
+            .spyOn(adapter, 'getZonesThatDropItem')
+            .mockReturnValue([{ hrid: '/actions/combat/fly', name: 'Fly', difficultyTier: 0 }]);
+        mocks.drops = new Map([['/items/cheese', 5]]);
+        const seek = async () => {
+            ui.panel.querySelector('#mwi-csim-seek-input').value = 'Cheese';
+            ui._seekItems = [{ itemHrid: '/items/cheese', name: 'Cheese' }];
+            ui._seekSelectedItem = { itemHrid: '/items/cheese', name: 'Cheese' };
+            mocks.revenueOptions = [];
+            await ui._onSeek();
+        };
+
+        importedIronCow();
+        await seek();
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => options?.saleTaxRate === 0)).toBe(true);
+
+        mocks.editorSelfHrid = 'player1';
+        await seek();
+        dropSpy.mockRestore();
+        mocks.drops = new Map();
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => !('saleTaxRate' in options))).toBe(true);
+    });
+});
+
 describe('a dungeon run with no wave figure', () => {
     beforeEach(() => {
         mocks.drops = new Map();
@@ -10995,6 +11116,22 @@ describe('the Triggers option', () => {
         expect(mocks.triggerRuns[0].include).toBe('abilities');
         expect(mocks.triggerRuns[0].objective).toBe('profit');
         expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
+    });
+
+    test('tells the optimizer who the live character is, so anyone else is taxed as they pay it', async () => {
+        const run = async () => {
+            ui.buildPanel();
+            selectZone();
+            onlyTriggers();
+            mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
+            await ui._onUpgradeAnalyze();
+            return mocks.triggerRuns.at(-1).selfHrid;
+        };
+        mocks.editorSelfHrid = 'player1';
+        expect(await run()).toBe('player1');
+        // An imported profile: nobody in the run is the live character
+        mocks.editorSelfHrid = null;
+        expect(await run()).toBeNull();
     });
 
     test('the result box minimizes to its headline and stays minimized on the next run', async () => {

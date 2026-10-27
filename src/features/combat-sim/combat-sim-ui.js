@@ -132,6 +132,7 @@ import {
     generateAbilityOrderCandidates,
     conflictKeys,
     candidateAssignmentKey,
+    saleTaxRateOf,
 } from './upgrade-advisor.js';
 import {
     VERIFY_DEFAULTS,
@@ -1345,6 +1346,24 @@ export function resolveSimParty(editor, editedDTOs, { solo } = {}) {
         profileStatus,
         soloApplied: false,
     };
+}
+
+/**
+ * The sale tax rate to price the analyzed player's drops at, for `calculateSimRevenue` and `seedSimPriceCache`.
+ *
+ * Null (no rate passed, so the live character's own tax and the unchanged `drop|` cache keys) when the analyzed
+ * player is the live character; otherwise their own (`saleTaxRateOf`: an Iron Cow pays none), looked up on the
+ * DTO that was simulated.
+ * @param {Array<Object>} playerDTOs - The simulated party
+ * @param {string} playerHrid - The analyzed player
+ * @param {string|null} trueSelfHrid - The live character's hrid in this party, or null when none of them is
+ * @returns {number|null}
+ */
+export function analyzedSaleTaxRate(playerDTOs, playerHrid, trueSelfHrid) {
+    const isSelf = Boolean(trueSelfHrid) && trueSelfHrid === playerHrid;
+    if (isSelf) return null;
+    const dto = (playerDTOs || []).find((candidate) => candidate?.hrid === playerHrid);
+    return saleTaxRateOf(dto, false);
 }
 
 /**
@@ -4761,7 +4780,7 @@ class CombatSimUI {
         hours,
         gameData,
         playerHrid = this._activePlayerTab || 'player1',
-        { newRun = false } = {}
+        { newRun = false, saleTaxRate } = {}
     ) {
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (!container) return;
@@ -4794,7 +4813,11 @@ class CombatSimUI {
         const bestiaryCounts = bestiaryRows ? countsByMonster(bestiaryRows) : null;
         // Not loaded yet: ask the game for it the way the Bestiary tab does,
         // and redraw when it lands so the column fills in by itself
-        this._allZonesRedrawArgs = { hours, gameData, playerHrid };
+        // The sale tax the rows were priced at (null: the live character's), kept for Reprice. A redraw passes none
+        // and keeps the run's; a new run states its own
+        const sweepSaleTaxRate =
+            saleTaxRate !== undefined ? saleTaxRate : newRun ? null : (this._allZonesRedrawArgs?.saleTaxRate ?? null);
+        this._allZonesRedrawArgs = { hours, gameData, playerHrid, saleTaxRate: sweepSaleTaxRate };
         if (bestiaryOn && !bestiaryRows) this._requestBestiary();
         // Phases, so a slow run on a real account says WHICH part was slow rather
         // than leaving it to be guessed at: building rows, warming the volume
@@ -6375,12 +6398,15 @@ class CombatSimUI {
         this._runStarting = true;
         const startToken = ++this._runStartToken;
         let playerDTOs;
+        // The live character's hrid in this party, null when the analyzed player is somebody else's profile
+        let seekTrueSelfHrid = null;
         try {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
                 // Same Solo narrowing as Simulate and All Zones — see resolveSimParty()
                 const resolved = resolveSimParty(this._editor, editedDTOs);
                 playerDTOs = resolved.playerDTOs;
+                seekTrueSelfHrid = resolved.trueSelfHrid;
                 // Revenue/drops below are computed for whichever player
                 // `_activePlayerTab` names, and that field doubles as "which
                 // player's tab is open in a previous single-zone result" — left
@@ -6392,6 +6418,7 @@ class CombatSimUI {
                 playerDTOs = result.players;
                 this._playerInfo = result.playerInfo;
                 this._activePlayerTab = result.selfHrid;
+                seekTrueSelfHrid = result.selfHrid;
             }
         } catch (error) {
             if (startToken !== this._runStartToken) return;
@@ -6464,6 +6491,8 @@ class CombatSimUI {
             const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
 
             const playerHrid = this._activePlayerTab || 'player1';
+            // Another player's drops are taxed as they pay it, not at the live character's rate
+            const saleTaxRate = analyzedSaleTaxRate(playerDTOs, playerHrid, seekTrueSelfHrid);
 
             const seekRows = simResults
                 .map((simResult, i) => {
@@ -6479,7 +6508,9 @@ class CombatSimUI {
                     let profitPerHour = 0;
                     let costPerHour = 0;
                     try {
-                        const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours);
+                        const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours, {
+                            ...(saleTaxRate != null ? { saleTaxRate } : {}),
+                        });
                         profitPerHour = revenue.netPerHour;
                         costPerHour = revenue.costPerHour;
                     } catch {
@@ -7176,6 +7207,9 @@ class CombatSimUI {
         let editedDTOs;
         // Solo on a party member other than yourself: their sweep, not yours
         let soloOtherMember = false;
+        // The live character's hrid in this party (null with only imported profiles): whether the analyzed
+        // player pays the live tax or their own
+        let allZonesTrueSelfHrid = null;
         this._runStarting = true;
         const startToken = ++this._runStartToken;
         try {
@@ -7189,6 +7223,7 @@ class CombatSimUI {
                 const selectedHrid = soloVsParty ? this._soloPartySimulatedHrid(editedDTOs) : resolved.selfHrid;
                 playerDTOs = resolved.playerDTOs;
                 soloOtherMember = resolved.soloApplied && resolved.trueSelfHrid === null;
+                allZonesTrueSelfHrid = resolved.trueSelfHrid;
                 // The roster the bestiary pace matches recorded runs against (`runMatchesSimParty`);
                 // the single-zone path copies it the same way, this one used to leave it empty
                 // A copy: the editor mutates its own array in place when a player is imported later
@@ -7204,6 +7239,7 @@ class CombatSimUI {
                 playerDTOs = result.players;
                 this._playerInfo = result.playerInfo;
                 this._activePlayerTab = result.selfHrid;
+                allZonesTrueSelfHrid = result.selfHrid;
             }
         } catch (error) {
             if (startToken !== this._runStartToken) return;
@@ -7312,6 +7348,9 @@ class CombatSimUI {
         this._allZonesFoodSwaps = foodSwaps;
 
         const communityBuffs = getCommunityBuffs();
+        // The analyzed player's own sale tax when they are not the live character (null for self): read by the
+        // early-exit decision, every row's revenue and a later Reprice
+        const saleTaxRate = analyzedSaleTaxRate(playerDTOs, this._activePlayerTab || 'player1', allZonesTrueSelfHrid);
 
         // UI: disable Simulate button, show progress
         this.isRunning = true;
@@ -7366,6 +7405,7 @@ class CombatSimUI {
                         // The early-exit decision must read the same player the ranked
                         // table shows, or it prunes tiers by a figure the user never sees
                         playerHrid: this._activePlayerTab || 'player1',
+                        ...(saleTaxRate != null ? { saleTaxRate } : {}),
                     },
                     (sweepPercent) => {
                         if (!this._isCurrentRun(ownerId, startToken)) return;
@@ -7407,7 +7447,9 @@ class CombatSimUI {
 
                         let revenue = null;
                         try {
-                            revenue = calculateSimRevenue(simResult, gameData, playerHrid, hours);
+                            revenue = calculateSimRevenue(simResult, gameData, playerHrid, hours, {
+                                ...(saleTaxRate != null ? { saleTaxRate } : {}),
+                            });
                         } catch {
                             // Revenue calculation may not be available
                         }
@@ -7428,7 +7470,7 @@ class CombatSimUI {
 
             this._allZonesSortCol = 'score';
             this._allZonesSortAsc = false;
-            await this._displayAllZonesResults(zoneResults, hours, gameData, playerHrid, { newRun: true });
+            await this._displayAllZonesResults(zoneResults, hours, gameData, playerHrid, { newRun: true, saleTaxRate });
             if (!this._isCurrentRun(ownerId, startToken)) return;
 
             // Outlives the panel: the ranked action list reads this to put combat
@@ -7450,7 +7492,7 @@ class CombatSimUI {
                 // A pricing change during the run is replayed on screen after it ends,
                 // but the snapshot is written here, so it is priced now as well
                 const snapshotRows = this._repricePending
-                    ? this._repriceZoneEntries(zoneResults, gameData, playerHrid, hours)
+                    ? this._repriceZoneEntries(zoneResults, gameData, playerHrid, hours, saleTaxRate)
                     : zoneResults;
                 // Kept so a later re-price (the pending replay, or any pricing change
                 // while this sweep is shown) rewrites the snapshot with the table
@@ -7710,7 +7752,13 @@ class CombatSimUI {
         // The player the displayed sweep was measured for, not whoever's tab
         // is open now: the snapshot re-saved below was built for that player too
         const playerHrid = args.playerHrid || this._activePlayerTab || 'player1';
-        const repriced = this._repriceZoneEntries(this._allZonesResults, args.gameData, playerHrid, args.hours);
+        const repriced = this._repriceZoneEntries(
+            this._allZonesResults,
+            args.gameData,
+            playerHrid,
+            args.hours,
+            args.saleTaxRate ?? null
+        );
         this._displayAllZonesResults(repriced, args.hours, args.gameData, playerHrid);
         this._resaveAllZonesSnapshot(repriced);
     }
@@ -7747,15 +7795,18 @@ class CombatSimUI {
      * @param {Object} gameData - The sweep's game data
      * @param {string} playerHrid - Whose revenue
      * @param {number} hours - Simulated hours
+     * @param {number|null} [saleTaxRate] - The analyzed player's sale tax when they are not the live character
      * @returns {Array<Object>} New rows; the input is left alone
      * @private
      */
-    _repriceZoneEntries(entries, gameData, playerHrid, hours) {
+    _repriceZoneEntries(entries, gameData, playerHrid, hours, saleTaxRate = null) {
         return entries.map((entry) => {
             if (!entry?.simResult) return entry;
             let revenue = entry.revenue;
             try {
-                revenue = calculateSimRevenue(entry.simResult, gameData, playerHrid, hours);
+                revenue = calculateSimRevenue(entry.simResult, gameData, playerHrid, hours, {
+                    ...(Number.isFinite(saleTaxRate) ? { saleTaxRate } : {}),
+                });
             } catch {
                 // Keep the stale revenue rather than drop the row over a pricing quirk
             }
@@ -10902,8 +10953,9 @@ class CombatSimUI {
     async _loadTriggerParty(playerIndex) {
         const editedDTOs = this._editor?.getEditedDTOs();
         if (!editedDTOs) {
-            const players = (await buildAllPlayerDTOs()).players;
-            return { simDTOs: players, liveDTOs: players, playerIndex, soloApplied: false };
+            const built = await buildAllPlayerDTOs();
+            const players = built.players;
+            return { simDTOs: players, liveDTOs: players, playerIndex, soloApplied: false, selfHrid: built.selfHrid };
         }
         return this._resolveEditorTriggerParty(editedDTOs, playerIndex);
     }
@@ -10923,7 +10975,14 @@ class CombatSimUI {
         let index = simDTOs.findIndex((dto) => dto.hrid === selectedHrid);
         // Solo simulates one player whatever the selector says; otherwise an unknown player stays unknown
         if (index < 0) index = resolved.soloApplied ? 0 : playerIndex;
-        return { simDTOs, liveDTOs, playerIndex: index, soloApplied: resolved.soloApplied };
+        return {
+            simDTOs,
+            liveDTOs,
+            playerIndex: index,
+            soloApplied: resolved.soloApplied,
+            // The live character among them, or null: the profit objective taxes everyone else as they pay it
+            selfHrid: resolved.trueSelfHrid,
+        };
     }
 
     /**
@@ -11102,6 +11161,7 @@ class CombatSimUI {
                     gameData,
                     playerDTOs,
                     playerIndex,
+                    selfHrid: party.selfHrid ?? null,
                     zoneHrid,
                     difficultyTier,
                     communityBuffs,
