@@ -1722,6 +1722,27 @@ describe('a labyrinth run waiting for the live profile', () => {
         expect(sim.calls).toHaveLength(1);
     });
 
+    test('a rebuilt panel runs the fixed-level fight its unticked Find Max box shows', async () => {
+        // Ticking Find Max set a flag on the singleton that destroy() left standing, so after a character
+        // switch the fresh panel showed the box unticked and the Level box enabled, yet Simulate searched
+        const box = ui.panel.querySelector('#mwi-labsim-findmax');
+        box.checked = true;
+        box.dispatchEvent(new window.Event('change'));
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        selectFight();
+        ui.panel.querySelector('#mwi-labsim-level').value = '140';
+
+        expect(ui.panel.querySelector('#mwi-labsim-findmax').checked).toBe(false);
+        const run = ui._onSimulate();
+        releaseProfile(profileResult());
+        await run;
+
+        expect(sim.calls).toHaveLength(1);
+        expect(sim.calls[0].roomLevel).toBe(140);
+    });
+
     test('a single fight cannot preempt an upgrade analysis', async () => {
         ui._upgradeRunning = true;
         await ui._onSimulate();

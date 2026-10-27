@@ -10395,6 +10395,8 @@ class LabSimUI {
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;
+        // The Find Max box is rebuilt unticked, so the mode it set goes with the panel it belonged to
+        this._labyFindMaxMode = false;
         this._labyResults = null;
         this._upgradeTargetHrids = null;
         // "I picked a crate by hand" is a choice about the panel that is being
