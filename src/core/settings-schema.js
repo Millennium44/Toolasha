@@ -2379,7 +2379,6 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Guild Credits cannot be sold, so each is valued at the cheapest tradeable item that converts into it. Disable to leave them out of net worth and inventory totals.',
-                requires: 'networth',
             },
             networth_abilityBooksAsInventory: {
                 id: 'networth_abilityBooksAsInventory',
