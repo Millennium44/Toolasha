@@ -133,13 +133,15 @@ function formatElapsed(seconds) {
 }
 
 /**
- * Display names that tell same-named teammates apart: "Bob", "Bob #2".
+ * Display names that tell same-named teammates apart: "Bob", "Bob #2". A number another teammate already goes by
+ * ("Bob #2" saved under that name) is skipped, so no two rows, and no two "replacing" targets, read the same.
  * @param {Array<{id: string, name: string}>} entries
  * @returns {Map<string, string>} id → display name
  */
 export function displayNames(entries) {
     const counts = new Map();
     for (const entry of entries) counts.set(entry.name, (counts.get(entry.name) || 0) + 1);
+    const taken = new Set(entries.map((entry) => entry.name));
     const seen = new Map();
     const names = new Map();
     for (const entry of entries) {
@@ -147,9 +149,17 @@ export function displayNames(entries) {
             names.set(entry.id, entry.name);
             continue;
         }
-        const n = (seen.get(entry.name) || 0) + 1;
+        let n = seen.get(entry.name) || 0;
+        if (n === 0) {
+            n = 1;
+            names.set(entry.id, entry.name);
+        } else {
+            do n += 1;
+            while (taken.has(`${entry.name} #${n}`));
+            taken.add(`${entry.name} #${n}`);
+            names.set(entry.id, `${entry.name} #${n}`);
+        }
         seen.set(entry.name, n);
-        names.set(entry.id, n === 1 ? entry.name : `${entry.name} #${n}`);
     }
     return names;
 }

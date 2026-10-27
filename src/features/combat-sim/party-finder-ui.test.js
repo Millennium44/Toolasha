@@ -272,6 +272,17 @@ describe('setting up', () => {
         expect([...names.values()]).toEqual(['Bob', 'Bob #2', 'Cy']);
     });
 
+    test('a numbered name never repeats a teammate literally called that', () => {
+        const names = displayNames([
+            { id: 'a', name: 'Bob' },
+            { id: 'b', name: 'Bob' },
+            { id: 'c', name: 'Bob #2' },
+            { id: 'd', name: 'Bob' },
+        ]);
+        expect([...names.values()]).toEqual(['Bob', 'Bob #3', 'Bob #2', 'Bob #4']);
+        expect(new Set(names.values()).size).toBe(4);
+    });
+
     test('save a player from the editor, then replace their build from the editor', async () => {
         host._editor.players = [
             { hrid: 'player1', name: 'Milkman', dto: build(90), self: true },
