@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round (2026-10-26, fourth): guild
+
+- The guild XP tracker no longer brings back the previous character's guild after a switch, and the net worth Guild Shrines total says when an unpriced credit is left out.
+
 ### Audit round (2026-10-26, third): treasure and Gold Sources
 
 - Replacing the chest history from a file now survives a sync instead of being undone by another device, and appending keeps a reset in place.
