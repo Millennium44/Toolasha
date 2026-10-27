@@ -790,6 +790,7 @@ async function measureCombatTriggers({
         communityBuffs,
         scopeHrids,
         allHrids,
+        saleTaxRates,
         tunables,
     } = ctx;
     const tunedDtos = (() => {
@@ -826,7 +827,7 @@ async function measureCombatTriggers({
             }
             tally.done++;
             report('Verify: triggers');
-            return sampleFromResult(simResult, gameData, allHrids, hoursPerSeed, { priceCache });
+            return sampleFromResult(simResult, gameData, allHrids, hoursPerSeed, { priceCache, saleTaxRates });
         });
 
     const pairs = await Promise.all(

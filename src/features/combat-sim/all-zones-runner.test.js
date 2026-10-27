@@ -9,10 +9,14 @@ vi.mock('./multi-worker-entry.js?worker', () => ({ default: '// coordinator' }))
 vi.mock('./combat-sim-worker.js?worker', () => ({ default: '// sim' }));
 // Revenue keyed off the requested player, read from a test-only `__profit` map on
 // the sim result, so a test can prove the early-exit decision reads the right one.
+const revenueCalls = vi.hoisted(() => []);
 vi.mock('./combat-sim-adapter.js', () => ({
     seedSimPriceCache: (cache) => cache,
 
-    calculateSimRevenue: (simResult, _gameData, playerHrid) => ({ netPerHour: simResult?.__profit?.[playerHrid] ?? 0 }),
+    calculateSimRevenue: (simResult, _gameData, playerHrid, _hours, options) => {
+        revenueCalls.push(options);
+        return { netPerHour: simResult?.__profit?.[playerHrid] ?? 0 };
+    },
 }));
 
 const { runAllZonesSimulation, cancelAllZonesSimulation } = await import('./all-zones-runner.js');
@@ -136,6 +140,41 @@ describe('early-exit decision keys on the reported player', () => {
 
         cancelAllZonesSimulation();
         await expect(run).rejects.toThrow();
+    });
+
+    test('the early-exit profit is taxed at the analyzed rate; self passes none', async () => {
+        revenueCalls.length = 0;
+        const other = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [{ zoneHrid: '/actions/combat/a', difficultyTier: 0 }],
+            hours: 1,
+            useEarlyExit: true,
+            saleTaxRate: 0,
+        });
+        other.catch(() => {});
+        workers[0].postMessage = () => {};
+        workers[0].onmessage({
+            data: { type: 'zone_tier_result', zoneHrid: '/actions/combat/a', simResult: { simulatedTime: HOUR } },
+        });
+        cancelAllZonesSimulation();
+        expect(revenueCalls).toEqual([{ saleTaxRate: 0 }]);
+
+        revenueCalls.length = 0;
+        const self = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [{ zoneHrid: '/actions/combat/a', difficultyTier: 0 }],
+            hours: 1,
+            useEarlyExit: true,
+        });
+        self.catch(() => {});
+        workers[1].postMessage = () => {};
+        workers[1].onmessage({
+            data: { type: 'zone_tier_result', zoneHrid: '/actions/combat/a', simResult: { simulatedTime: HOUR } },
+        });
+        cancelAllZonesSimulation();
+        expect(revenueCalls).toEqual([{}]);
     });
 
     test('the solo path still defaults to player1', async () => {

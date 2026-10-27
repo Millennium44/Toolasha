@@ -145,6 +145,33 @@ describe('combat scrolls in a labyrinth sim', () => {
     });
 });
 
+describe('drinks and food in a labyrinth sim', () => {
+    // Drink slots do not run in the Labyrinth: only its crates supply coffee and tea buffs
+    const COFFEE = { hrid: '/items/wisdom_coffee', triggers: null };
+    const FOOD = { hrid: '/items/donut', triggers: null };
+    const withConsumables = (labyrinth) => {
+        const message = startMessage(labyrinth);
+        message.data.playerDTOs[0].drinks = [COFFEE, { hrid: '/items/power_coffee', triggers: null }, null];
+        message.data.playerDTOs[0].food = [FOOD, null, null];
+        return message;
+    };
+
+    test('are emptied from every slot inside the labyrinth', () => {
+        globalThis.onmessage(withConsumables({ roomLevel: 10, crates: ['/items/expert_coffee_crate'] }));
+        expect(harness.players[0].drinks).toEqual([null, null, null]);
+        expect(harness.players[0].food).toEqual([null, null, null]);
+    });
+
+    test('stay worn for an ordinary combat sim and an isolated zone fight', () => {
+        globalThis.onmessage(withConsumables(null));
+        globalThis.onmessage(withConsumables({ roomLevel: 10, crates: [], zoneFight: true }));
+        for (const player of harness.players) {
+            expect(player.drinks[0]).toEqual(COFFEE);
+            expect(player.food[0]).toEqual(FOOD);
+        }
+    });
+});
+
 describe('the labyrinth monster the worker builds', () => {
     test.each(['combat', 'skilling'])('returns individual %s attempts only when explicitly requested', (kind) => {
         for (const returnAttempts of [undefined, false, true]) {
