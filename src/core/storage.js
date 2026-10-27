@@ -2276,11 +2276,12 @@ class Storage {
                 const store = transaction.objectStore(storeName);
                 const request = store.delete(key);
 
+                // Settled at commit, as a save is: a delete request that succeeds
+                // can still be rolled back by a transaction that aborts, and a
+                // caller told "deleted" (a sync pull retiring a displaced snapshot)
+                // would stop retrying a key that is still there
                 transaction.oncomplete = () => {
                     this._announceCommit(storeName, [key]);
-                };
-
-                request.onsuccess = () => {
                     // Deleting is the one operation that makes "storage is full"
                     // untrue, so it is where standing-down recorders are let up
                     this.clearQuotaState();

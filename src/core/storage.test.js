@@ -687,10 +687,13 @@ function createFullDb(error) {
         transaction() {
             const txn = { oncomplete: null, onerror: null, onabort: null, error };
             const requests = [];
+            // A put is refused and aborts its transaction; a delete frees room and commits
+            let refused = false;
 
             const store = {
                 put() {
                     const request = { onsuccess: null, onerror: null, error };
+                    refused = true;
                     requests.push(() => request.onerror?.());
                     return request;
                 },
@@ -703,7 +706,7 @@ function createFullDb(error) {
 
             queueMicrotask(() => {
                 for (const run of requests) run();
-                queueMicrotask(() => txn.onabort?.());
+                queueMicrotask(() => (refused ? txn.onabort?.() : txn.oncomplete?.()));
             });
 
             return {
@@ -2295,6 +2298,44 @@ describe('Storage.set with a fold: read, fold and write in the one transaction t
 
         await expect(storage.set('lines', ['mine'], 'settings', true)).resolves.toBe(false);
         error.mockRestore();
+    });
+
+    test('a delete whose request succeeds but whose transaction aborts is reported as not deleted', async () => {
+        // A sync pull retries a displaced delete only when it was told false; "deleted" for a
+        // key the abort put back leaves it to be pushed back up as this device's own copy
+        const db = {
+            transaction() {
+                const transaction = {
+                    objectStore: () => ({
+                        delete() {
+                            const request = { onsuccess: null, onerror: null };
+                            queueMicrotask(() => {
+                                request.onsuccess?.();
+                                queueMicrotask(() => transaction.onabort?.());
+                            });
+                            return request;
+                        },
+                    }),
+                    oncomplete: null,
+                    onabort: null,
+                    onerror: null,
+                };
+                return transaction;
+            },
+        };
+        storage.db = db;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await expect(storage.delete('lines', 'settings')).resolves.toBe(false);
+        warn.mockRestore();
+    });
+
+    test('a delete answers true once its transaction commits', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: ['gone'] } });
+        storage.db = db;
+
+        await expect(storage.delete('lines', 'settings')).resolves.toBe(true);
+        expect(dataByStore.get('settings').has('lines')).toBe(false);
     });
 
     test('a fold that throws writes the value as given rather than nothing', async () => {
