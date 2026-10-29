@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync gists keep their server through older builds
+
+- A sync gist now also records its game server in a small marker file that older Toolasha versions leave alone, so a push from an un-updated device can no longer strip the tag and let the other server claim the gist.
+
 ### Leftover number fixes
 
 - The Dungeon ROI board reads drop quantity from the live battle, so chest value and ROI no longer read low with Combat Stats off; refined-item craft costs now apply Artisan Tea to the coin fee, as the game does.
