@@ -119,7 +119,7 @@ import {
     decideAutoSwitch,
     pauseForManualChoice,
 } from './overlay-layouts.js';
-import { hasCoarsePointer } from '../../utils/mobile.js';
+import { hasCoarsePointer, isMobileMode } from '../../utils/mobile.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import {
     columnsForLayout,
@@ -1212,6 +1212,12 @@ class OverlayPanel {
                 hasClassPrefix(characterTabs, 'CharacterManagement_tabsComponentContainer') &&
                 hasClassPrefix(characterManagement, 'CharacterManagement_characterManagement')
             ) {
+                // A phone hides the character column: docked there the panel would open at 0×0 and the
+                // switch would look broken, so it floats instead until the column is on screen
+                if (isMobileMode()) {
+                    const rect = characterManagement.getBoundingClientRect();
+                    if (!(rect.width > 0 && rect.height > 0)) return null;
+                }
                 return component;
             }
         }

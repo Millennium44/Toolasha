@@ -14,6 +14,7 @@ import estimatedListingAge from './estimated-listing-age.js';
 import { formatRelativeTime, formatWithSeparator } from '../../utils/formatters.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { isMobileMode } from '../../utils/mobile.js';
 
 /** Native input value setter for triggering React state updates */
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -545,8 +546,8 @@ class MarketplaceShortcuts {
     }
 
     /**
-     * Auto-focus the quantity input when a marketplace modal opens.
-     * Runs after autofill to avoid interfering with value setting.
+     * Auto-focus desktop buy quantities without opening a mobile keyboard.
+     * Runs after autofill; never steals an editor the player already chose.
      * @param {HTMLElement} modal - Modal container element
      */
     focusQuantityInput(modal) {
@@ -565,7 +566,15 @@ class MarketplaceShortcuts {
 
         // Delay to run after autofill (100ms) and quick input injection
         this.timerRegistry.scheduleTimeout(() => {
+            if (!modal.isConnected || isMobileMode()) return;
             const quantityInput = this.findQuantityInput(modal);
+            const active = document.activeElement;
+            if (
+                active !== quantityInput &&
+                active?.matches('input, textarea, [contenteditable]:not([contenteditable="false"])')
+            ) {
+                return;
+            }
             if (quantityInput) {
                 quantityInput.focus();
                 quantityInput.select();

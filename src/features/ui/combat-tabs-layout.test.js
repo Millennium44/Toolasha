@@ -1,0 +1,245 @@
+/** @vitest-environment happy-dom */
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const handlers = vi.hoisted(() => ({ classes: [], ready: [], added: [] }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: Object.fromEntries(
+        [
+            ['onClass', 'classes'],
+            ['onReady', 'ready'],
+            ['register', 'added'],
+        ].map(([method, key]) => [
+            method,
+            (...args) => {
+                const callback = args.find((value) => typeof value === 'function');
+                handlers[key].push(callback);
+                if (key === 'ready') callback();
+                return () => {
+                    handlers[key] = handlers[key].filter((entry) => entry !== callback);
+                };
+            },
+        ])
+    ),
+}));
+import feature from './combat-tabs-layout.js';
+
+let observers;
+beforeEach(() => {
+    observers = [];
+    vi.stubGlobal(
+        'ResizeObserver',
+        class {
+            disconnect = vi.fn();
+            observe = vi.fn();
+            constructor(callback) {
+                this.callback = callback;
+                observers.push(this);
+            }
+        }
+    );
+});
+afterEach(() => {
+    feature.cleanup();
+    document.body.replaceChildren();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+});
+
+function fixture(width = 360) {
+    const host = document.createElement('div');
+    host.className = 'GamePage_gamePanel__fixture';
+    host.innerHTML = `<div class="CombatPanel_combatPanel__fixture">
+        <div class="CombatPanel_tabsComponentContainer__fixture">
+            <div class="TabsComponent_tabsContainer__fixture">
+                <div class="MuiTabs-root"><div class="MuiTabs-scroller MuiTabs-fixed" style="overflow:hidden">
+                    <div class="MuiTabs-flexContainer" role="tablist">
+                        <button class="MuiTab-root" role="tab">Combat Zones</button>
+                        <button class="MuiTab-root" role="tab">Find Party</button>
+                        <button class="MuiTab-root" role="tab">Battle #104</button>
+                        <div class="MuiTab-root toolasha-combat-sim-btn">Combat Sim</div>
+                    </div>
+                </div></div>
+            </div>
+            <div class="TabsComponent_tabPanelsContainer__fixture">
+                <div class="MuiTabs-root MuiTabs-vertical"><div class="MuiTabs-scroller"><div class="MuiTabs-flexContainer" role="tablist"></div></div></div>
+            </div>
+        </div>
+    </div>`;
+    document.body.append(host);
+    const rect = vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ width });
+    return {
+        host,
+        rect,
+        panel: host.firstElementChild,
+        list: host.querySelector('[role="tablist"]'),
+        scroller: host.querySelector('.MuiTabs-scroller'),
+    };
+}
+
+test('the layout fix is registered independently of optional Combat Sim and Statistics', () => {
+    const entry = readFileSync(resolve('src/entrypoint.js'), 'utf8');
+    const ui = readFileSync(resolve('src/libraries/ui.js'), 'utf8');
+    expect(entry).toMatch(
+        /key: 'combatTabsLayout',[\s\S]*?module: UI\.combatTabsLayout,[\s\S]*?customCheck: \(\) => true/
+    );
+    expect(ui).toContain("import combatTabsLayout from '../features/ui/combat-tabs-layout.js'");
+});
+
+test('narrow layout styles only the horizontal Combat strip, including tabs inserted later', () => {
+    const { panel, list, scroller } = fixture();
+    feature.initialize();
+    feature.initialize();
+    expect(panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(true);
+    expect(getComputedStyle(scroller).overflowX).toBe('auto');
+    expect(getComputedStyle(scroller).maxWidth).toBe('100%');
+    const statistics = document.createElement('div');
+    statistics.className = 'MuiTab-root toolasha-combat-stats-btn';
+    statistics.textContent = 'Statistics';
+    const clicked = vi.fn();
+    statistics.addEventListener('click', clicked);
+    list.append(statistics);
+    expect(getComputedStyle(statistics).flexShrink).toBe('0');
+    expect(getComputedStyle(statistics).whiteSpace).toBe('nowrap');
+    statistics.click();
+    expect(clicked).toHaveBeenCalledOnce();
+    const gesture = new Event('touchmove', { bubbles: true, cancelable: true });
+    statistics.dispatchEvent(gesture);
+    expect(gesture.defaultPrevented).toBe(false);
+    expect(panel.querySelector('.MuiTabs-vertical [data-toolasha-combat-tabs-layer]')).toBeNull();
+    expect(document.querySelectorAll('#toolasha-combat-tabs-layout')).toHaveLength(1);
+});
+
+test('content width drives resize and widening restores the native inline overflow', () => {
+    const { panel, rect, scroller } = fixture(1000);
+    feature.initialize();
+    expect(panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(false);
+    rect.mockReturnValue({ width: 360 });
+    observers[0].callback();
+    expect(getComputedStyle(scroller).overflowX).toBe('auto');
+    rect.mockReturnValue({ width: 1000 });
+    window.dispatchEvent(new Event('resize'));
+    expect(panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(false);
+    expect(scroller.style.overflow).toBe('hidden');
+    expect(scroller.style.overflowX).not.toBe('auto');
+});
+
+test('finds the existing Combat Sim injection chain without assuming a combat-tabs wrapper', () => {
+    const { panel, scroller } = fixture();
+    const optionalWrapper = panel.firstElementChild;
+    optionalWrapper.replaceWith(...optionalWrapper.childNodes);
+    feature.initialize();
+    expect(panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(true);
+    expect(getComputedStyle(scroller).overflowX).toBe('auto');
+});
+
+test('navigation and cleanup disconnect observers, remove markers, and leave no duplicate listeners', () => {
+    const first = fixture();
+    feature.initialize();
+    first.host.remove();
+    handlers.added.forEach((callback) => callback());
+    expect(observers[0].disconnect).toHaveBeenCalledOnce();
+    expect(first.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(false);
+    const second = fixture();
+    handlers.classes.forEach((callback) => callback(second.panel));
+    expect(second.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(true);
+    feature.cleanup();
+    expect(observers[1].disconnect).toHaveBeenCalledOnce();
+    expect(second.panel.querySelector('[data-toolasha-combat-tabs-layer]')).toBeNull();
+    expect(handlers.classes).toHaveLength(0);
+    expect(handlers.ready).toHaveLength(0);
+    expect(handlers.added).toHaveLength(0);
+    window.dispatchEvent(new Event('resize'));
+    expect(second.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(false);
+});
+
+test('on a phone whose game panel overhangs the screen, the strip is capped at the edge so its last tab scrolls in', () => {
+    // Pixel-sized screen: the game's middle panel starts at 132px and keeps 315px, overhanging to 447px
+    vi.stubGlobal('innerWidth', 412);
+    vi.stubGlobal('visualViewport', { width: 412 });
+    const { host, rect, scroller } = fixture(315);
+    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue({ left: 132, width: 315, right: 447 });
+    feature.initialize();
+    expect(scroller.style.getPropertyValue('max-width')).toBe('280px');
+    expect(scroller.style.getPropertyPriority('max-width')).toBe('important');
+
+    // Wide again (rotation, a desktop pane): the cap goes
+    rect.mockReturnValue({ width: 900 });
+    window.dispatchEvent(new Event('resize'));
+    expect(scroller.style.getPropertyValue('max-width')).toBe('');
+
+    // Narrow, then released when the panel leaves
+    rect.mockReturnValue({ width: 315 });
+    window.dispatchEvent(new Event('resize'));
+    expect(scroller.style.getPropertyValue('max-width')).toBe('280px');
+    feature.disable();
+    expect(scroller.style.getPropertyValue('max-width')).toBe('');
+    expect(host.isConnected).toBe(true);
+});
+
+test('a strip that already fits the screen is not capped', () => {
+    vi.stubGlobal('innerWidth', 412);
+    vi.stubGlobal('visualViewport', { width: 412 });
+    const { scroller } = fixture(315);
+    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue({ left: 60, width: 315, right: 375 });
+    feature.initialize();
+    expect(scroller.style.getPropertyValue('max-width')).toBe('');
+});
+
+function labyrinthFixture(width = 315) {
+    const host = document.createElement('div');
+    host.className = 'GamePage_gamePanel__fixture';
+    host.innerHTML = `<div class="LabyrinthPanel_labyrinthPanel__fixture">
+        <div class="LabyrinthPanel_tabsComponentContainer__fixture"><div class="TabsComponent_tabsComponent__fixture">
+            <div class="TabsComponent_tabsContainer__fixture">
+                <div class="MuiTabs-root"><div class="MuiTabs-scroller MuiTabs-fixed" style="overflow:hidden">
+                    <div class="MuiTabs-flexContainer" role="tablist">
+                        <button class="MuiTab-root" role="tab">Labyrinth</button>
+                        <button class="MuiTab-root" role="tab">Room</button>
+                        <div class="MuiTab-root">Lab Sim</div>
+                    </div>
+                </div></div>
+            </div>
+        </div></div>
+    </div>`;
+    document.body.append(host);
+    vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ width });
+    return {
+        host,
+        panel: host.firstElementChild,
+        scroller: host.querySelector('.MuiTabs-scroller'),
+        list: host.querySelector('[role="tablist"]'),
+    };
+}
+
+test('the Labyrinth strip scrolls and is capped at the screen edge, alongside a Combat strip', () => {
+    vi.stubGlobal('innerWidth', 412);
+    vi.stubGlobal('visualViewport', { width: 412 });
+    const lab = labyrinthFixture();
+    vi.spyOn(lab.scroller, 'getBoundingClientRect').mockReturnValue({ left: 132, width: 315, right: 447 });
+    const combat = fixture(315);
+    vi.spyOn(combat.scroller, 'getBoundingClientRect').mockReturnValue({ left: 132, width: 315, right: 447 });
+    feature.initialize();
+    expect(lab.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(true);
+    expect(getComputedStyle(lab.scroller).overflowX).toBe('auto');
+    expect(lab.scroller.style.getPropertyValue('max-width')).toBe('280px');
+    expect(combat.scroller.style.getPropertyValue('max-width')).toBe('280px');
+    expect(lab.list.getAttribute('data-toolasha-combat-tabs-layer')).toBe('list');
+
+    lab.host.remove();
+    handlers.added.forEach((callback) => callback());
+    expect(lab.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(false);
+    expect(combat.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(true);
+
+    feature.disable();
+    expect(combat.scroller.style.getPropertyValue('max-width')).toBe('');
+    expect(combat.panel.querySelector('[data-toolasha-combat-tabs-layer]')).toBeNull();
+});
+
+test('a wide Labyrinth pane keeps its native strip', () => {
+    const lab = labyrinthFixture(1000);
+    feature.initialize();
+    expect(lab.panel.hasAttribute('data-toolasha-combat-tabs-narrow')).toBe(false);
+    expect(lab.scroller.style.overflow).toBe('hidden');
+});

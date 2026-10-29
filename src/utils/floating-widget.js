@@ -51,6 +51,7 @@ function shieldFromDrag(element) {
  */
 function makeWidgetDraggable(element, { positionKey, position, onMove }) {
     const applyPosition = (left, top) => {
+        if (element.dataset.toolashaDocked === 'true') return;
         const maxLeft = Math.max(0, window.innerWidth - element.offsetWidth);
         const maxTop = Math.max(0, window.innerHeight - element.offsetHeight);
         element.style.left = `${Math.min(Math.max(0, left), maxLeft)}px`;
@@ -69,7 +70,7 @@ function makeWidgetDraggable(element, { positionKey, position, onMove }) {
     // touchscreen, and touch-action:none stops the browser claiming the gesture
     element.style.touchAction = 'none';
     element.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0) return;
+        if (event.button !== 0 || element.dataset.toolashaDocked === 'true') return;
         if (event.target.closest?.('button, select, input, label')) return;
         event.preventDefault();
 
@@ -82,6 +83,7 @@ function makeWidgetDraggable(element, { positionKey, position, onMove }) {
             document.removeEventListener('pointermove', onPointerMove);
             document.removeEventListener('pointerup', onPointerUp);
             document.removeEventListener('pointercancel', onPointerUp);
+            if (element.dataset.toolashaDocked === 'true') return;
             const final = element.getBoundingClientRect();
             const left = final.left;
             const top = final.top;
