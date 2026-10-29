@@ -2391,13 +2391,137 @@ export function gridColumnCount(template) {
  * @returns {{row: number, column: string, wrapped: boolean}} Where to put the block
  */
 export function fightSidecarPlacement(grid) {
+    refreshStaleFit(grid);
     const column = fightSidecarColumn(grid);
-    const computed = grid && typeof getComputedStyle === 'function' ? getComputedStyle(grid) : null;
-    const columns = gridColumnCount(grid?.style?.gridTemplateColumns || computed?.gridTemplateColumns || '');
+    const original = originalTemplate(grid);
+    const columns = gridColumnCount(original);
+    const wrapped = { row: 2, column: '1 / -1', wrapped: true };
+    const beside = { row: 1, column: String(column), wrapped: false };
+
+    // Size the sidecar's own track, so the wave and the readout sit as one
+    // centred group: a track list measured for the cards alone (five 120px
+    // tracks live) puts the 220px readout in a 120px cell, overflowing the
+    // panel into a horizontal scrollbar, with a blank gutter left of the cards
+    const fitted = fitTemplate(grid, original, column);
+    if (fitted) {
+        applyFit(grid, original, fitted);
+        return beside;
+    }
+    restoreFightGrid(grid);
+    // Measured, and the group does not fit the panel: under the wave, as ever
+    if (fitted === null) return wrapped;
     // `1 / -1` spans to the end of the *explicit* grid, which is exactly the
     // track list counted above — the wave's own columns and no implicit sixth
-    if (columns > 0 && column > columns) return { row: 2, column: '1 / -1', wrapped: true };
-    return { row: 1, column: String(column), wrapped: false };
+    if (columns > 0 && column > columns) return wrapped;
+    return beside;
+}
+
+/** The sidecar's width in the fight grid; matches {@link fightSidecarStyle} */
+const SIDECAR_TRACK_PX = 220;
+
+/**
+ * The grid's track list as the game laid it out, ignoring our own override.
+ * @param {Element} grid - The fight grid
+ * @returns {string} A `grid-template-columns` value, or '' when unreadable
+ */
+function originalTemplate(grid) {
+    if (grid?.dataset?.mwiFitOriginal) return grid.dataset.mwiFitOriginal;
+    const computed = grid && typeof getComputedStyle === 'function' ? getComputedStyle(grid) : null;
+    return grid?.style?.gridTemplateColumns || computed?.gridTemplateColumns || '';
+}
+
+/**
+ * The game's own cards in the grid (ours carry an `mwi-` class).
+ * @param {Element} grid - The fight grid
+ * @returns {number} Count
+ */
+function gameCardCount(grid) {
+    let count = 0;
+    for (const child of grid?.children || []) {
+        if (!String(child.className || '').includes('mwi-')) count += 1;
+    }
+    return count;
+}
+
+/**
+ * Drop a fit made for a different wave. The game's track list can change with
+ * the monster count, and the measurement we stored belongs to the old one.
+ * @param {Element} grid - The fight grid
+ */
+function refreshStaleFit(grid) {
+    if (grid?.dataset?.mwiFitCards === undefined) return;
+    if (Number(grid.dataset.mwiFitCards) !== gameCardCount(grid)) restoreFightGrid(grid);
+}
+
+/**
+ * The track list with the sidecar's column sized to the sidecar, when that
+ * group fits the panel. `undefined` when it cannot be measured (the old
+ * placement rule applies); `null` when measured and it does not fit.
+ * @param {Element} grid - The fight grid
+ * @param {string} original - The game's track list
+ * @param {number} column - 1-based sidecar column
+ * @returns {string|null|undefined} New `grid-template-columns`
+ */
+function fitTemplate(grid, original, column) {
+    const tracks = String(original || '')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+    // Only a plain pixel list is measurable; repeat()/fr/auto stay as authored
+    if (!tracks.length || !tracks.every((t) => /^\d+(\.\d+)?px$/.test(t))) return undefined;
+    const area = grid.closest?.('[class*="BattlePanel_monstersArea"]');
+    const width = grid.clientWidth || area?.clientWidth || 0;
+    if (!(width > 0)) return undefined;
+    const computed = typeof getComputedStyle === 'function' ? getComputedStyle(grid) : null;
+    const gap = parseFloat(grid.style?.columnGap || computed?.columnGap) || 0;
+    // Every card ends before the sidecar's column, so tracks past it hold
+    // nothing and would only widen the centred group
+    const sized = tracks.slice(0, column);
+    while (sized.length < column) sized.push('0px');
+    sized[column - 1] = `${SIDECAR_TRACK_PX}px`;
+    // A column past the end appends a track (any gap columns between are 0px)
+    const total = sized.reduce((sum, t) => sum + parseFloat(t), 0) + gap * (sized.length - 1);
+    if (total > width) return null;
+    return sized.join(' ');
+}
+
+/**
+ * Write the fitted template inline, remembering what to put back.
+ * @param {Element} grid - The fight grid
+ * @param {string} original - The game's track list
+ * @param {string} fitted - New track list
+ */
+function applyFit(grid, original, fitted) {
+    if (grid.dataset.mwiFitCards === undefined) {
+        grid.dataset.mwiFitInline = grid.style.gridTemplateColumns || '';
+        grid.dataset.mwiFitOriginal = original;
+    }
+    grid.dataset.mwiFitCards = String(gameCardCount(grid));
+    if (grid.style.gridTemplateColumns !== fitted) grid.style.gridTemplateColumns = fitted;
+}
+
+/**
+ * Put the fight grid's inline `grid-template-columns` back as the game had it.
+ * @param {Element} grid - The fight grid
+ */
+export function restoreFightGrid(grid) {
+    if (!grid?.dataset || grid.dataset.mwiFitCards === undefined) return;
+    grid.style.gridTemplateColumns = grid.dataset.mwiFitInline || '';
+    if (!grid.getAttribute('style')) grid.removeAttribute('style');
+    delete grid.dataset.mwiFitInline;
+    delete grid.dataset.mwiFitOriginal;
+    delete grid.dataset.mwiFitCards;
+}
+
+/**
+ * Restore every fitted fight grid that no longer holds a trial readout. Called
+ * after any path that takes blocks down.
+ * @param {ParentNode} [scope] - Where to look (the document by default)
+ */
+export function restoreFightGrids(scope = typeof document === 'undefined' ? null : document) {
+    for (const grid of scope?.querySelectorAll?.('[data-mwi-fit-cards]') || []) {
+        if (!grid.querySelector(`.${CSS_CLASS}[data-mwi-block^="tile:"]`)) restoreFightGrid(grid);
+    }
 }
 
 /**
@@ -2914,6 +3038,7 @@ class GuildTrials {
             }
             try {
                 document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
+                restoreFightGrids();
                 document.querySelectorAll(`.${BOX_ROW_CLASS}`).forEach((row) => {
                     if (!row.querySelector(`.${CSS_CLASS}`)) row.remove();
                 });
@@ -3001,6 +3126,7 @@ class GuildTrials {
             // comes off first: a later step failing must not leave the previous
             // guild's figures on a page that has already changed hands
             document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
+            restoreFightGrids();
             this.blockHtml.clear();
             guildTrialScoreboard.close?.();
             // A fight identity is only unique within one guild's battles; the
@@ -4478,6 +4604,7 @@ class GuildTrials {
             if (key) this.blockHtml.delete(key);
             block.remove();
         }
+        restoreFightGrids(scope);
 
         // A section's shared box row that lost its last box is an empty
         // full-width cell left in the tile grid; drop it so it stops reserving
@@ -5892,6 +6019,7 @@ class GuildTrials {
         guildLoadoutCapture.cleanup();
         this.blockHtml.clear();
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
+        restoreFightGrids();
         this._scoreboardTabButton?.remove();
         document.querySelectorAll(`[${SCOREBOARD_TAB_ATTR}]`).forEach((el) => el.remove());
         this._scoreboardTabButton = null;
