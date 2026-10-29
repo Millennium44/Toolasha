@@ -302,8 +302,9 @@ function levelCheck(skillLevels, skillHrid, level, combatLevel) {
  * @param {Array|null} ctx.inventory - `characterItems`; null when not loaded
  * @param {(itemHrid: string) => number|null} ctx.buyPrice - Buy price, null when unpriced
  * @param {boolean} ctx.ironCow - The character cannot buy from the market
+ * @param {(itemHrid: string) => boolean} [ctx.isEstimated] - The price came from the value map, not a book
  * @returns {{levelMet: boolean|null, level: Object|null, owned: boolean|null, shortfall: Array,
- *   cost: number|null, unpriced: string[], buyHrid: string|null, ownedHrid: string|null}}
+ *   cost: number|null, unpriced: string[], buyHrid: string|null, ownedHrid: string|null, estimated: boolean}}
  */
 export function readiness(res, ctx) {
     const out = {
@@ -315,7 +316,9 @@ export function readiness(res, ctx) {
         unpriced: [],
         buyHrid: null,
         ownedHrid: null,
+        estimated: false,
     };
+    const isEstimated = (hrid) => ctx.isEstimated?.(hrid) === true;
     if (res.kind === 'combat') {
         out.level = res.requirement
             ? levelCheck(ctx.skillLevels, res.requirement.skillHrid, res.requirement.level, ctx.combatLevel)
@@ -357,7 +360,13 @@ export function readiness(res, ctx) {
         }
         priced.sort((a, b) => a.price - b.price || a.hrid.localeCompare(b.hrid));
         const lv = levelsFor(priced[0].hrid);
-        Object.assign(out, { buyHrid: priced[0].hrid, cost: priced[0].price, levelMet: lv.met, level: lv.check });
+        Object.assign(out, {
+            buyHrid: priced[0].hrid,
+            cost: priced[0].price,
+            estimated: isEstimated(priced[0].hrid),
+            levelMet: lv.met,
+            level: lv.check,
+        });
         return out;
     }
 
@@ -377,7 +386,10 @@ export function readiness(res, ctx) {
         // Coins are paid, not bought
         const price = short.itemHrid === COIN_HRID ? 1 : ctx.buyPrice(short.itemHrid);
         if (!Number.isFinite(price)) out.unpriced.push(short.itemHrid);
-        else cost += missing * price;
+        else {
+            cost += missing * price;
+            if (short.itemHrid !== COIN_HRID && isEstimated(short.itemHrid)) out.estimated = true;
+        }
     }
     out.cost = out.unpriced.length > 0 ? null : cost;
     out.partialCost = out.unpriced.length > 0 ? cost : null;

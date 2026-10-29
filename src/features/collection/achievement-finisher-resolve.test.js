@@ -161,6 +161,14 @@ describe('readiness', () => {
         expect(ready.owned).toBe(false);
         expect(ready.shortfall).toEqual([{ itemHrid: '/items/peach', need: 3, have: 1 }]);
         expect(ready.cost).toBe(200);
+        expect(ready.estimated).toBe(false);
+    });
+
+    test('an estimated price is flagged only when it is part of the cost', () => {
+        const res = resolve('cook_peach_yogurt');
+        expect(readiness(res, context({ isEstimated: (h) => h === '/items/peach' })).estimated).toBe(true);
+        // Milk is owned, so its estimated price is not in the figure
+        expect(readiness(res, context({ isEstimated: (h) => h === '/items/milk' })).estimated).toBe(false);
     });
 
     test('an unpriced input leaves the cost unknown and names it, never treats it as 0', () => {

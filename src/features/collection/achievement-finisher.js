@@ -107,14 +107,16 @@ const PLANNER_HINT = {
     bestiary: 'Combat simulator: Bestiary plan',
 };
 
-/** Events that change readiness (stock, levels, prices, pricing mode) but not the checklist itself */
+/** Game events that change readiness (stock, levels, prices) but not the checklist itself */
 const READINESS_EVENTS = [
     'items_updated',
     'skills_updated',
     'market_item_order_books_updated',
     'market_item_values_updated',
-    'setting_updated',
 ];
+
+/** Toolasha settings that change a buy cost */
+const READINESS_SETTINGS = ['profitCalc_pricingMode'];
 
 /** Readiness redraws are coalesced: an inventory update lands with every finished action */
 const READINESS_REDRAW_MS = 1000;
@@ -153,7 +155,9 @@ export function readinessText(res, ready, clientData, ownCombatLevel) {
         if (ready.owned === true) parts.push(`in inventory: ${itemName(clientData, ready.ownedHrid)}`);
         else if (ready.owned === null) parts.push('inventory not loaded');
         else if (ready.buyHrid)
-            parts.push(`cheapest: ${itemName(clientData, ready.buyHrid)} ~${formatKMB(ready.cost)}`);
+            parts.push(
+                `cheapest: ${itemName(clientData, ready.buyHrid)} ~${formatKMB(ready.cost)}${ready.estimated ? ' (est.)' : ''}`
+            );
         else if (ready.unpriced.length > 0) parts.push('not owned, no price for any');
         else parts.push('not owned');
         return parts.join(' · ');
@@ -161,7 +165,8 @@ export function readinessText(res, ready, clientData, ownCombatLevel) {
 
     if (ready.owned === true) parts.push('materials owned');
     else if (ready.owned === null) parts.push('inventory not loaded');
-    else if (Number.isFinite(ready.cost)) parts.push(`buy ~${formatKMB(ready.cost)}`);
+    else if (Number.isFinite(ready.cost))
+        parts.push(`buy ~${formatKMB(ready.cost)}${ready.estimated ? ' (est.)' : ''}`);
     else if (ready.unpriced.length > 0) {
         const names = ready.unpriced.map((hrid) => itemName(clientData, hrid)).join(', ');
         parts.push(
@@ -233,6 +238,10 @@ class AchievementFinisher {
         for (const event of READINESS_EVENTS) {
             dataManager.on(event, stale);
             this.handlers.push([event, stale]);
+        }
+        for (const key of READINESS_SETTINGS) {
+            const off = config.onSettingChange?.(key, stale);
+            if (typeof off === 'function') this.unregisterHandlers.push(off);
         }
         this.marketListener = stale;
         marketAPI.on?.(stale);
@@ -307,15 +316,20 @@ class AchievementFinisher {
             for (const skill of skills) byName[String(skill.skillHrid).split('/').pop()] = skill.level;
             ownCombat = combatLevel(byName).level;
         }
+        // Prices read off the game's value map rather than a live book, so the hint can say so
+        const estimated = new Set();
         return {
             skillLevels,
             combatLevel: ownCombat,
             inventory: dataManager.getInventory?.() ?? null,
             ironCow: isIronCowCharacter(),
             buyPrice: (itemHrid) => {
-                const price = getItemPriceInfo(itemHrid, { context: 'profit', side: 'buy', marketQuote: true }).price;
-                return Number.isFinite(price) ? price : null;
+                const info = getItemPriceInfo(itemHrid, { context: 'profit', side: 'buy', marketQuote: true });
+                if (!Number.isFinite(info.price)) return null;
+                if (info.estimated) estimated.add(itemHrid);
+                return info.price;
             },
+            isEstimated: (itemHrid) => estimated.has(itemHrid),
         };
     }
 

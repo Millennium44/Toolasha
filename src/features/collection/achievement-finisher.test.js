@@ -21,6 +21,8 @@ const game = vi.hoisted(() => ({
     ironCow: false,
     prices: {},
     gameObject: null,
+    estimated: new Set(),
+    settingHandlers: [],
     handlers: {},
     observers: [],
 }));
@@ -29,13 +31,26 @@ const nav = vi.hoisted(() => ({
     navigateToAction: vi.fn(() => true),
     navigateToMarketplace: vi.fn(),
     openCombatZoneAtTier: vi.fn(async () => ({ opened: true, tierConfirmed: true, filled: false })),
-    getItemPriceInfo: vi.fn((hrid) => ({ price: hrid in game.prices ? game.prices[hrid] : null })),
+    getItemPriceInfo: vi.fn((hrid) => ({
+        price: hrid in game.prices ? game.prices[hrid] : null,
+        estimated: game.estimated.has(hrid),
+    })),
     marketOn: vi.fn(),
     marketOff: vi.fn(),
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => game.setting, getSettingValue: () => undefined },
+    default: {
+        getSetting: () => game.setting,
+        getSettingValue: () => undefined,
+        onSettingChange: (key, fn) => {
+            const entry = { key, fn };
+            game.settingHandlers.push(entry);
+            return () => {
+                game.settingHandlers = game.settingHandlers.filter((e) => e !== entry);
+            };
+        },
+    },
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({
@@ -393,6 +408,8 @@ describe('one-off rows: description, readiness, Go', () => {
         game.prices = PRICES;
         game.characterId = 7;
         game.ironCow = false;
+        game.estimated = new Set();
+        game.settingHandlers = [];
         game.handlers = {};
         game.observers = [];
         gameCalls = [];
@@ -556,6 +573,19 @@ describe('one-off rows: description, readiness, Go', () => {
         expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(second);
     });
 
+    test('a value-map price is marked as an estimate; a pricing-mode change recomputes the cost', async () => {
+        game.estimated = new Set(['/items/peach']);
+        openVeteran();
+        expect(rowOf('Dairy Chef').textContent).toContain('buy ~200 (est.)');
+        expect(rowOf('Ginkgo Wielder').textContent).not.toContain('(est.)');
+
+        expect(game.settingHandlers.map((e) => e.key)).toEqual(['profitCalc_pricingMode']);
+        game.prices = { ...PRICES, '/items/peach': 300 };
+        game.settingHandlers.forEach((e) => e.fn('optimistic'));
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(rowOf('Dairy Chef').textContent).toContain('buy ~600 (est.)');
+    });
+
     test('disable removes the buttons, every listener and a pending redraw', async () => {
         openVeteran();
         expect(document.querySelectorAll(`.${PANEL_CLASS}-go`).length).toBeGreaterThan(0);
@@ -565,6 +595,7 @@ describe('one-off rows: description, readiness, Go', () => {
         expect(document.querySelectorAll(`.${PANEL_CLASS}-go`)).toHaveLength(0);
         expect(nav.marketOff).toHaveBeenCalledWith(listener);
         expect(Object.values(game.handlers).every((list) => list.length === 0)).toBe(true);
+        expect(game.settingHandlers).toHaveLength(0);
         const calls = nav.getItemPriceInfo.mock.calls.length;
         await vi.advanceTimersByTimeAsync(5000);
         expect(document.querySelector(`.${PANEL_CLASS}`)).toBeNull();
