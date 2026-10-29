@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat task Go opens the Zone estimate's zone
+
+- When a combat task's estimate is in Zone mode and the game's Go lands on the monster's own zone, Toolasha now opens the zone the estimate picked, at its tier, and fills the fight count. Solo mode keeps the game's landing.
+
 ### Sync: one gist per game server
 
 - The live game and the test server no longer adopt each other's sync gist. Discovery only picks a gist tagged for the same server, and automatic syncs refuse the other server's gist instead of failing on its passphrase.
