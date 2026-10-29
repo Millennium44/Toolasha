@@ -14,6 +14,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const state = vi.hoisted(() => ({
     settings: { tickPeriodWatch: true },
     stored: new Map(),
+    sets: [],
+    teardown: new Set(),
     handlers: new Map(),
 }));
 
@@ -36,9 +38,14 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => (state.stored.has(key) ? state.stored.get(key) : fallback),
-        set: async (key, value) => {
+        set: async (key, value, _store, immediate) => {
+            state.sets.push({ key, immediate: immediate === true });
             state.stored.set(key, value);
             return true;
+        },
+        onBeforeTeardown: (listener) => {
+            state.teardown.add(listener);
+            return () => state.teardown.delete(listener);
         },
         isQuotaExceeded: () => false,
     },
@@ -75,6 +82,8 @@ const text = () => tickPeriodPanel.panel?.textContent || '';
 beforeEach(() => {
     state.settings = { tickPeriodWatch: true };
     state.stored.clear();
+    state.sets.length = 0;
+    state.teardown.clear();
     state.handlers.clear();
     vi.useRealTimers();
 });
@@ -196,6 +205,54 @@ describe('the durable tally', () => {
         vi.useRealTimers();
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(state.stored.get('tickPeriodTally')?.effects[EFFECTS.regen].n).toBe(1);
+    });
+
+    test('a run of intervals is written once a minute, not every few seconds', async () => {
+        await tickPeriod.initialize();
+        const tick = state.handlers.get('battle_updated');
+        vi.useFakeTimers();
+        const unit = (hp, mp) => ({ pMap: { 0: { cHP: hp, cMP: mp, mHP: 1000, mMP: 500 } } });
+        let now = 1_700_000_000_000;
+        for (let i = 0; i < 6; i += 1) {
+            vi.setSystemTime(now);
+            tick(unit(500 + i * 20, 200 + i * 15));
+            now += 10_000;
+            vi.advanceTimersByTime(10_000);
+        }
+        expect(tickPeriod.tally().effects[EFFECTS.regen].n).toBeGreaterThan(1);
+        expect(state.sets).toEqual([]);
+
+        vi.advanceTimersByTime(60_000);
+        expect(state.sets).toHaveLength(1);
+        vi.useRealTimers();
+    });
+
+    test('a page close writes the waiting tally at once, and only once', async () => {
+        await tickPeriod.initialize();
+        const tick = state.handlers.get('battle_updated');
+        vi.useFakeTimers();
+        const unit = (hp, mp) => ({ pMap: { 0: { cHP: hp, cMP: mp, mHP: 1000, mMP: 500 } } });
+        vi.setSystemTime(1_700_000_000_000);
+        tick(unit(500, 200));
+        vi.setSystemTime(1_700_000_010_000);
+        tick(unit(520, 215));
+        vi.setSystemTime(1_700_000_020_000);
+        tick(unit(540, 230));
+        expect(state.sets).toEqual([]);
+
+        for (const listener of state.teardown) listener('pagehide');
+        expect(state.sets).toEqual([{ key: 'tickPeriodTally', immediate: true }]);
+
+        for (const listener of state.teardown) listener('pagehide');
+        expect(state.sets).toHaveLength(1);
+        vi.useRealTimers();
+    });
+
+    test('stops listening for the page close when it is torn down', async () => {
+        await tickPeriod.initialize();
+        expect(state.teardown.size).toBe(1);
+        tickPeriod.cleanup();
+        expect(state.teardown.size).toBe(0);
     });
 
     test('ignores a stored tally from a schema it does not know', async () => {

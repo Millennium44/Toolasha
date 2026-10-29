@@ -185,6 +185,20 @@ describe('the writer', () => {
         persister.stop();
     });
 
+    test('a continuously changing session is written at most six times a minute', () => {
+        const { held, persister } = tracker();
+        persister.start();
+        for (let i = 0; i < 600; i++) {
+            held.count += 1;
+            persister.note();
+            vi.advanceTimersByTime(100);
+        }
+        // Sixty seconds of ticks at ten per second
+        expect(disk.sets.length).toBeLessThanOrEqual(6);
+        expect(disk.sets.length).toBeGreaterThanOrEqual(5);
+        persister.stop({ flush: false });
+    });
+
     test('no change waits longer than one interval to be written', () => {
         const { held, persister } = tracker();
         persister.start();
