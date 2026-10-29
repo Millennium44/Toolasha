@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Scroll Planner
+
+- A "Plan scrolls" button on Labyrinth scroll menus lets you set how many of each to open, then steps you through them: it opens each scroll's menu, fills the quantity and highlights Open, which you press yourself (from upstream).
+
 ### Guild trial readout fits beside the swarm
 
 - On a four-monster trial the readout no longer spills past the monster grid, so the In Progress tab has no side scroll and the monsters sit without a blank gap to their left.
