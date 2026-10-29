@@ -169,7 +169,8 @@ describe('getDropPrice', () => {
 
     test('dungeon tokens delegate to the token valuation helper', () => {
         mocks.dungeonTokenValues['/items/chimerical_token'] = 4200;
-        expect(expectedValueCalculator.getDropPrice('/items/chimerical_token')).toBe(4200);
+        // Valued net of the market sale tax (like the loot log and ROI board): you'd sell what the tokens buy
+        expect(expectedValueCalculator.getDropPrice('/items/chimerical_token')).toBeCloseTo(4200 * (1 - MARKET_TAX), 6);
     });
 
     test('a nested container already in the cache is read from the cache, not the market', () => {
@@ -207,6 +208,8 @@ describe('resolveSellSideValue', () => {
         expect(expectedValueCalculator.resolveSellSideValue(GEM_HRID).source).toBe('custom');
     });
 
+    // Dungeon tokens are netted inside the resolver (shop-item quote x (1 - MARKET_TAX)) and flagged needsTax:false
+    // so callers don't tax them a second time; tokens are untradable so a caller's own tax step would skip them anyway.
     test('the special cases are already net figures, so none of them asks for tax', () => {
         mocks.prices['/items/bag_of_10_cowbells'] = 1000;
         mocks.dungeonTokenValues['/items/chimerical_token'] = 4200;
@@ -1193,6 +1196,29 @@ describe('calculateGrossContainerValue', () => {
             (1000 * (1 - COWBELL_BAG_TAX)) / 10,
             6
         );
+    });
+});
+
+describe('dungeon token tax', () => {
+    const TOKEN = '/items/chimerical_token';
+    const TOKEN_CHEST = '/items/token_chest';
+
+    test('crate EV counts a token net of the sell tax, not the raw shop-item price', () => {
+        mocks.dungeonTokenValues[TOKEN] = 1000;
+        mocks.initData.openableLootDropMap[TOKEN_CHEST] = [{ itemHrid: TOKEN, dropRate: 1, minCount: 3, maxCount: 3 }];
+        mocks.itemDetails[TOKEN_CHEST] = { name: 'Token Chest', isOpenable: true };
+        expect(expectedValueCalculator.calculateSingleContainer(TOKEN_CHEST, mocks.initData)).toBeCloseTo(
+            3 * 1000 * (1 - MARKET_TAX),
+            6
+        );
+    });
+
+    test('the gross and zero-rate passes leave tokens untaxed; an explicit rate nets at that rate', () => {
+        mocks.dungeonTokenValues[TOKEN] = 1000;
+        const gross = { path: new Set(), truncated: false, gross: true };
+        expect(expectedValueCalculator.resolveSellSideValue(TOKEN, 0, gross).value).toBe(1000);
+        expect(expectedValueCalculator.resolveSellSideValue(TOKEN, 0, { saleTaxRate: 0 }).value).toBe(1000);
+        expect(expectedValueCalculator.resolveSellSideValue(TOKEN, 0, { saleTaxRate: 0.1 }).value).toBeCloseTo(900, 6);
     });
 });
 
