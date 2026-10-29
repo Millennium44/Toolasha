@@ -527,7 +527,17 @@ class SyncManager {
             // database and the gist; writing now would stomp whatever it just
             // wrote. Stand down instead of overwriting a newer sync.
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
-            if (answer === 'merge') return this._mergeIntoUpload(localPayload, opToken, silent, null, false);
+            if (answer === 'merge') {
+                // Merging keeps only what this device's scope syncs: a Settings-only device merging into a
+                // gist that holds histories removes them from it. Said before, not found after
+                const remote = await this._readRemote(token, gistId, null, null, null, { refuseOtherServer: true });
+                if (!(await this._confirmScopeDrop(remote, scope, opToken))) {
+                    return this._stillOwns(opToken)
+                        ? { ok: true, skipped: true, reason: 'cancelled' }
+                        : this._supersededResult(silent, 'push', opToken);
+                }
+                return this._mergeIntoUpload(localPayload, opToken, silent, remote, false);
+            }
         }
 
         // A pressed Push overwrites by design, so a device keeping fewer entries
@@ -1400,6 +1410,50 @@ class SyncManager {
             ],
         });
         return answer === 'push' && this._stillOwns(opToken);
+    }
+
+    /**
+     * Before a pressed merge whose scope is narrower than the gist's: name the
+     * stores the merged upload would remove from the gist, and ask.
+     *
+     * The upload carries what this device's scope syncs (see `mergeForUpload`),
+     * so "Settings only" over a gist holding histories takes them out of it —
+     * not what "merge" sounds like.
+     *
+     * @param {{payload?: string}} remote - The gist's download
+     * @param {string} scope - This device's sync scope
+     * @param {number} opToken - The push's ownership token; a takeover during the dialog stands it down
+     * @returns {Promise<boolean>} True to merge; also true when nothing would be removed
+     * @private
+     */
+    async _confirmScopeDrop(remote, scope, opToken) {
+        if (scope === 'everything') return true;
+        let stores = {};
+        try {
+            stores = JSON.parse(remote?.payload ?? '{}')?.stores || {};
+        } catch {
+            // An unreadable payload is the merge's own refusal to make
+            return true;
+        }
+        const dropped = Object.entries(stores)
+            .filter(([name, entries]) => name !== STORE && entries && Object.keys(entries).length > 0)
+            .map(([name]) => name);
+        if (!dropped.length) return true;
+        const named = dropped.slice(0, 6).join(', ') + (dropped.length > 6 ? `, and ${dropped.length - 6} more` : '');
+        const answer = await askChoice({
+            title: 'Remove the gist’s history?',
+            message:
+                `The gist holds history this device does not sync: ${named}.
+
+` +
+                'Sync scope here is "Settings only", so merging keeps only settings and removes that history ' +
+                'from the gist. To keep it, cancel, set Sync scope to "Everything", and merge again.',
+            choices: [
+                { value: null, label: 'Cancel', tone: 'primary' },
+                { value: 'merge', label: 'Merge settings and remove the history', tone: 'danger' },
+            ],
+        });
+        return answer === 'merge' && this._stillOwns(opToken);
     }
 
     /**

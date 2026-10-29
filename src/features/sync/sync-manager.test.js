@@ -3050,3 +3050,50 @@ describe('a push whose write replaced the other server’s', () => {
         expect(gist.writes.at(-1).chunks.join('')).toBe('{"live":1}');
     });
 });
+
+describe('the first-push Merge against a gist holding more than this device syncs', () => {
+    const everythingGist = () => {
+        const text = JSON.stringify({
+            syncScope: 'everything',
+            stores: { settings: { a: 1 }, xpHistory: { k: [1, 2] }, marketHistory: { m: 1 } },
+        });
+        return { manifest: { exportedAt: '2027-02-01T00:00:00.000Z', chunks: 1, hash: `h:${text}` }, payload: text };
+    };
+
+    beforeEach(() => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = everythingGist();
+    });
+
+    test('says which stores a Settings-only merge would remove, and cancelling changes nothing', async () => {
+        const answers = ['merge', null];
+        dialog.answer = null;
+        const asked = [];
+        const realAnswer = Object.getOwnPropertyDescriptor(dialog, 'answer');
+        Object.defineProperty(dialog, 'answer', {
+            configurable: true,
+            get: () => answers.shift() ?? null,
+            set: () => {},
+        });
+        try {
+            expect(await syncManager.push()).toMatchObject({ reason: 'cancelled' });
+            asked.push(dialog.last);
+        } finally {
+            Object.defineProperty(dialog, 'answer', realAnswer);
+        }
+        expect(dialog.calls).toBe(2);
+        expect(asked[0].message).toContain('xpHistory');
+        expect(asked[0].message).toContain('marketHistory');
+        expect(asked[0].message).toContain('Everything');
+        expect(payload.uploadMerges).toBe(0);
+        expect(gist.writes).toHaveLength(0);
+    });
+
+    test('a device syncing Everything is not asked again', async () => {
+        settings.values.sync_scope = 'everything';
+        dialog.answer = 'merge';
+        expect(await syncManager.push()).toMatchObject({ ok: true });
+        expect(dialog.calls).toBe(1);
+        expect(payload.uploadMerges).toBe(1);
+    });
+});
