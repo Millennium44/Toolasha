@@ -727,9 +727,13 @@ export async function openCombatZoneAtTier(zoneHrid, tier, options = {}) {
  * @param {number|string} [options.count]
  * @param {string|null} characterId - Captured by {@link openCombatZoneAtTier}
  *   before this was queued, not re-read here
+ *
+ * Exported for a caller that is ALREADY inside {@link runZoneOpenExclusive}
+ * (the combat-task Go path): calling {@link openCombatZoneAtTier} from there
+ * would queue behind itself and never run. Anyone else uses the queued form.
  * @returns {Promise<{opened: boolean, tierConfirmed: boolean, filled: boolean}>}
  */
-async function openCombatZoneAtTierSequence(zoneHrid, tier, options, characterId) {
+export async function openCombatZoneAtTierSequence(zoneHrid, tier, options, characterId) {
     const { count } = options;
     const result = { opened: false, tierConfirmed: false, filled: false };
 

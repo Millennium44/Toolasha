@@ -17,6 +17,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Narrow layouts give the Labyrinth controls their own row above the map and keep task reroll tools in the page flow instead of covering game controls. Task estimate controls wrap below the title, while wider layouts restore their original placement.
 - Marketplace pricing options collapse into an expandable strip and history statistics stay within the content area on narrow screens. Order-book and My Listings tables keep the game's single row and Toolasha's columns, and scroll sideways on a phone so every column is reachable; header order totals wrap within the native header width.
 
+### Combat task Go opens the Zone estimate's zone
+
+- When a combat task's estimate is in Zone mode and the game's Go lands on the monster's own zone, Toolasha now opens the zone the estimate picked, at its tier, and fills the fight count. Solo mode keeps the game's landing.
+
 ### Lighter storage traffic in combat
 
 - The Party Loot panel no longer re-reads the whole session archive every 5 seconds while open, slow storage checks no longer pile up, and unchanged party consumable records are no longer rewritten after every wave; on a phone these were thousands of database calls per session.
