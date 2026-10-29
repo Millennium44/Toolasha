@@ -567,9 +567,14 @@ class MarketplaceShortcuts {
         // Delay to run after autofill (100ms) and quick input injection
         this.timerRegistry.scheduleTimeout(() => {
             if (!modal.isConnected || isMobileMode()) return;
-            const active = document.activeElement;
-            if (active?.matches('input, textarea, [contenteditable]:not([contenteditable="false"])')) return;
             const quantityInput = this.findQuantityInput(modal);
+            const active = document.activeElement;
+            if (
+                active !== quantityInput &&
+                active?.matches('input, textarea, [contenteditable]:not([contenteditable="false"])')
+            ) {
+                return;
+            }
             if (quantityInput) {
                 quantityInput.focus();
                 quantityInput.select();

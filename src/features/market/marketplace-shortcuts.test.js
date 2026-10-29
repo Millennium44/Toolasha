@@ -509,6 +509,18 @@ describe('buy autofocus respects mobile and deliberate editing', () => {
         expect(fields[field].selectionEnd).toBe(2);
     });
 
+    test('desktop still selects the quantity when it already holds focus', () => {
+        matchMedia.mockReturnValue({ matches: false });
+        const { element, quantity } = modal();
+        quantity.focus();
+        quantity.setSelectionRange(1, 1);
+        marketplaceShortcuts.focusQuantityInput(element);
+        vi.advanceTimersByTime(150);
+        expect(document.activeElement).toBe(quantity);
+        expect(quantity.selectionStart).toBe(0);
+        expect(quantity.selectionEnd).toBe(quantity.value.length);
+    });
+
     test('desktop also respects an editor chosen during the delay', () => {
         matchMedia.mockReturnValue({ matches: false });
         const { element, price } = modal();
