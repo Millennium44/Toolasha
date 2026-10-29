@@ -1026,9 +1026,21 @@ class SyncManager {
         let remoteAdds = Boolean(merged?.remoteAdds);
         for (const version of written.intervening) {
             try {
-                const replaced = await this._readRemote(token, gistId, null, null, version);
+                // A replaced write from the other game server (a confirmed pressed Push there) is never
+                // folded in: that would upload the other world's data as this server's
+                const replaced = await this._readRemote(token, gistId, null, null, version, {
+                    refuseOtherServer: true,
+                });
                 text = mergeForUpload(text, replaced.payload, baseline).text;
             } catch (error) {
+                // The gist goes back to the newest replaced write as it was, which for the usual race is
+                // the other server's own; this device records no success, and `_run` says so once.
+                // Automatic pushes then find the gist tagged for the other server and are held there
+                if (error instanceof GistError && error.kind === 'wrong-server') {
+                    console.warn(`[Sync] This push replaced the other game server's write (${version}); undid it.`);
+                    await this._restoreReplaced(token, gistId, written.intervening.at(-1));
+                    throw error;
+                }
                 // A revision this device cannot read (no passphrase, a corrupt
                 // one) or cannot merge (a newer build's format) cannot be folded
                 // in, and this write has just replaced it. Left that way, the
@@ -1124,13 +1136,21 @@ class SyncManager {
     async _restoreFolded(token, gistId, version, older) {
         try {
             const newest = await this._readRemote(token, gistId, null, null, version);
+            const newestServer = gistServerOf(newest);
             // Oldest first, each later revision as the incoming side: a value the merges cannot combine goes
             // to the newest revision, not the oldest. A revision fold, so this device's baseline cannot turn
             // that round, and the result carries the newest revision's scope whatever the older ones synced
             const scope = JSON.parse(newest.payload)?.syncScope ?? 'settings';
             const payloads = [];
             for (const olderVersion of older) {
-                payloads.push((await this._readRemote(token, gistId, null, null, olderVersion)).payload);
+                const revision = await this._readRemote(token, gistId, null, null, olderVersion);
+                // Two game servers' writes are never folded together: the newest goes back as it was
+                const revisionServer = gistServerOf(revision);
+                if (revisionServer && newestServer && revisionServer !== newestServer) {
+                    console.warn('[Sync] The replaced pushes came from both game servers; not folding them.');
+                    return false;
+                }
+                payloads.push(revision.payload);
             }
             payloads.push(newest.payload);
             let text = payloads[0];
