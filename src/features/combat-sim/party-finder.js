@@ -91,12 +91,34 @@ export function maxAbilityLevel(gameData) {
  * @param {Object|null} gameData - Without it nothing can be judged, and the option is taken as given
  * @returns {{ok: boolean, reason?: string, name: string}}
  */
+/**
+ * Whether an ability can fill a player's special slot: a special ability a player can learn, i.e.
+ * one with an ability book. The five party auras plus Insanity, Invincible and Revive qualify;
+ * Promote is a monster-only special with no book (measured on the test server, 2026-10-29).
+ * @param {string} hrid
+ * @param {Object|null} gameData
+ * @returns {boolean}
+ */
+export function isPlayerSpecialAbility(hrid, gameData) {
+    const detail = gameData?.abilityDetailMap?.[hrid];
+    if (detail?.isSpecialAbility !== true) return false;
+    // Without ability books in the item data there is no way to tell a monster-only special
+    // (Promote) apart; allow it
+    const books = Object.values(gameData?.itemDetailMap || {}).filter((item) => item?.abilityBookDetail);
+    if (books.length === 0) return true;
+    return books.some((item) => item.abilityBookDetail.abilityHrid === hrid);
+}
+
 export function checkAuraOption(option, gameData) {
     if (!gameData?.abilityDetailMap) return { ok: true, name: option.hrid.split('/').pop() };
     const detail = gameData.abilityDetailMap[option.hrid];
     if (!detail) return { ok: false, name: option.hrid, reason: `${option.hrid} is not in the game data` };
     const name = detail.name || option.hrid;
-    if (!isAuraAbility(detail)) return { ok: false, name, reason: `${name} is not an aura` };
+    // Any special-slot ability a player can learn: the five party auras, and Insanity, Invincible
+    // and Revive, which take the same slot
+    if (!isPlayerSpecialAbility(option.hrid, gameData)) {
+        return { ok: false, name, reason: `${name} is not a special-slot ability a player can use` };
+    }
     const max = maxAbilityLevel(gameData);
     if (!(option.level >= 1 && option.level <= max)) {
         return { ok: false, name, reason: `${name} level ${option.level} is outside 1-${max}` };

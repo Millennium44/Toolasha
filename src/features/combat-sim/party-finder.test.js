@@ -51,6 +51,7 @@ const {
     sharedAuras,
     maxAbilityLevel,
     checkAuraOption,
+    isPlayerSpecialAbility,
     MAX_QUICK_RUNS,
 } = await import('./party-finder.js');
 
@@ -442,11 +443,11 @@ describe('aura options', () => {
         expect(planSweep({ zones: [ZONE], roster, gameData }).total).toBe(2);
     });
 
-    test('options the game data cannot run are skipped with a note: gone, not an aura, level too high', () => {
+    test('options the game data cannot run are skipped with a note: gone, not a special-slot ability, level too high', () => {
         const roster = [
             entry('a', 'Ann', dto(90), [
                 { hrid: '/abilities/retired_aura', level: 10 },
-                { hrid: '/abilities/invincible', level: 10 },
+                { hrid: '/abilities/water_strike', level: 10 },
                 { hrid: '/abilities/fierce_aura', level: 999 },
             ]),
         ];
@@ -454,8 +455,27 @@ describe('aura options', () => {
         expect(plan.total).toBe(2);
         const notes = plan.notes.join(' | ');
         expect(notes).toMatch(/retired_aura is not in the game data/);
-        expect(notes).toMatch(/Invincible is not an aura/);
+        expect(notes).toMatch(/Water Strike is not a special-slot ability/);
         expect(notes).toMatch(/Fierce Aura level 999 is outside 1-200/);
+    });
+
+    test('Invincible and the other learnable specials are options like the party auras; Promote is not', () => {
+        const roster = [entry('a', 'Ann', dto(90), [{ hrid: '/abilities/invincible', level: 10 }], false)];
+        const plan = planSweep({ zones: [ZONE], roster, gameData });
+        expect(plan.notes.join(' | ')).not.toMatch(/Invincible/);
+        const withBooks = {
+            ...gameData,
+            abilityDetailMap: {
+                ...gameData.abilityDetailMap,
+                '/abilities/promote': { name: 'Promote', isSpecialAbility: true, abilityEffects: [] },
+            },
+            itemDetailMap: {
+                '/items/invincible': { abilityBookDetail: { abilityHrid: '/abilities/invincible' } },
+            },
+        };
+        expect(isPlayerSpecialAbility('/abilities/invincible', withBooks)).toBe(true);
+        expect(isPlayerSpecialAbility('/abilities/promote', withBooks)).toBe(false);
+        expect(isPlayerSpecialAbility('/abilities/water_strike', withBooks)).toBe(false);
     });
 
     test('every option unusable and as built off: the teammate is left out and says so', () => {

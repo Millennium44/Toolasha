@@ -25,7 +25,6 @@ import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
-import { isAuraAbility } from '../../utils/party-lint.js';
 import {
     buildGameDataPayload,
     buildPlayerDTO,
@@ -69,6 +68,7 @@ import {
     partyLabel,
     sharedAuras,
     checkAuraOption,
+    isPlayerSpecialAbility,
     maxAbilityLevel,
     csvRow,
     stoppedSweepText,
@@ -780,17 +780,20 @@ export class PartyFinderTab {
     }
 
     /**
-     * Every aura the game data knows, by name — classified by `isAuraAbility`, the same test the panel's
-     * party warnings use, never a list kept here.
+     * Every special-slot ability the game data knows, by name (the party auras plus Insanity, Invincible,
+     * Revive; not monster-only Promote), read from `isPlayerSpecialAbility`, never a list kept here.
      * @param {Object|null} gameData
      * @returns {Array<{hrid: string, name: string}>}
      * @private
      */
     _auraAbilities(gameData) {
-        return Object.entries(gameData?.abilityDetailMap || {})
-            .filter(([, detail]) => isAuraAbility(detail))
-            .map(([hrid, detail]) => ({ hrid, name: detail.name || hrid }))
-            .sort((a, b) => a.name.localeCompare(b.name));
+        return (
+            Object.entries(gameData?.abilityDetailMap || {})
+                // Every special-slot ability a player can learn, not only the party auras
+                .filter(([hrid]) => isPlayerSpecialAbility(hrid, gameData))
+                .map(([hrid, detail]) => ({ hrid, name: detail.name || hrid }))
+                .sort((a, b) => a.name.localeCompare(b.name))
+        );
     }
 
     /**
@@ -1182,7 +1185,7 @@ export class PartyFinderTab {
         if (self.isLive) {
             const details = gameData?.abilityDetailMap || {};
             const auras = (dataManager.characterData?.characterAbilities || [])
-                .filter((a) => a?.abilityHrid && isAuraAbility(details[a.abilityHrid]))
+                .filter((a) => a?.abilityHrid && details[a.abilityHrid]?.isSpecialAbility === true)
                 .map((a) => ({ hrid: a.abilityHrid, level: Math.max(1, Math.floor(Number(a.level)) || 1) }));
             return { ...none, auras, dto: self.dto, self };
         }
