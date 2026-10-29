@@ -50,7 +50,7 @@ export function estimateKeyRunway(clears, keys, keysPerClear = 1) {
  *
  * @returns {number|null} A fraction, or null when it cannot be read
  */
-function ownDropQuantity() {
+export function ownDropQuantity() {
     const characterId = dataManager.getCurrentCharacterId?.();
     const fromBattle = dataManager.battleData?.players?.find((player) => player?.character?.id === characterId);
     const live = Number(fromBattle?.combatDetails?.combatStats?.combatDropQuantity);
