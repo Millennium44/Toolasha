@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Zone mode simulates the real zone
+
+- A combat task's Zone estimate now picks the multi-monster zone (Planet Of The Eyes, Bear With It) instead of the monster's own single-monster fight, unless another task shares a different zone.
+
 ### Combat task Go opens the Zone estimate's zone, for real this time
 
 - The earlier fix never ran: Go looked up the card's estimate on the wrong element and found none. Go now opens the zone a Zone-mode estimate picked, with enough fights to finish the task; checked live on the test server (a Panda task opens Bear With It).
