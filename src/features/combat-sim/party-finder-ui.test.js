@@ -1154,3 +1154,128 @@ describe('also try my auras', () => {
         expect(el('plan').textContent).toMatch(/^4 quick sims/);
     });
 });
+
+describe('saved builds', () => {
+    const buildRows = () => [...tab.root.querySelectorAll('[data-pf-build]')];
+    const buildNames = () => buildRows().map((r) => r.querySelector('[data-pf-build-name]').textContent);
+    const rowButton = (id, label) =>
+        [...tab.root.querySelectorAll(`[data-pf-build="${id}"] button`)].find((b) => b.textContent === label);
+
+    const saveAs = async (source, name) => {
+        el('save-build-open').click();
+        el('build-source').value = source;
+        el('build-source').dispatchEvent(new Event('change'));
+        if (name != null) {
+            el('build-name').value = name;
+            el('build-name').dispatchEvent(new Event('input'));
+        }
+        el('save-build').click();
+        await flush();
+    };
+
+    test('save my current build; the name defaults to the character, and the form closes', async () => {
+        await mountTab();
+        expect(buildNames()).toEqual([]);
+        el('save-build-open').click();
+        expect(el('save-build-form').style.display).toBe('flex');
+        expect(el('build-name').value).toBe('Milkman');
+        el('save-build').click();
+        await flush();
+        expect(state.db.builds.map((b) => b.name)).toEqual(['Milkman']);
+        expect(state.db.builds[0].dto.magicLevel).toBe(90);
+        expect(buildNames()).toEqual(['Milkman']);
+        expect(el('build-count').textContent).toBe('(1/40)');
+        expect(el('save-build-form').style.display).toBe('none');
+        expect(el('build-note').textContent).toBe('Saved "Milkman".');
+        // A teammate is not made by saving
+        expect(state.db.entries).toEqual([]);
+    });
+
+    test('save any editor player, with the mode their build carries', async () => {
+        host._editor.players = [
+            { hrid: 'player1', name: 'Milkman', dto: build(90), self: true },
+            { hrid: 'player2', name: 'Venaam', dto: { ...build(110), gameMode: 'ironcow' } },
+        ];
+        await mountTab();
+        await saveAs('editor:player2', null);
+        expect(state.db.builds).toHaveLength(1);
+        expect(state.db.builds[0]).toMatchObject({ name: 'Venaam', gameMode: 'ironcow' });
+        expect(state.db.builds[0].dto.magicLevel).toBe(110);
+    });
+
+    test('duplicate names get (2), (3) and the note says the name was taken', async () => {
+        await mountTab();
+        await saveAs('live', 'Tank');
+        await saveAs('live', 'Tank');
+        expect(el('build-note').textContent).toBe('Saved as "Tank (2)" (that name was taken).');
+        await saveAs('live', 'Tank');
+        expect(buildNames()).toEqual(['Tank', 'Tank (2)', 'Tank (3)']);
+    });
+
+    test('a failed write says so and saves nothing', async () => {
+        await mountTab();
+        state.failWrite = true;
+        await saveAs('live', 'Tank');
+        expect(el('build-note').textContent).toMatch(/could not be written/);
+        expect(buildNames()).toEqual([]);
+        expect(state.db).toBeUndefined();
+    });
+
+    test('add as teammate creates a roster teammate from the build, who can be tried, auras and all', async () => {
+        await mountTab();
+        await saveAs('live', 'Tank');
+        const id = state.db.builds[0].id;
+        rowButton(id, 'Add as teammate').click();
+        await flush();
+        expect(state.db.entries).toHaveLength(1);
+        expect(state.db.entries[0]).toMatchObject({ name: 'Tank', source: 'saved build', includeAsBuilt: true });
+        expect(tab.root.querySelectorAll('[data-pf-member]')).toHaveLength(1);
+        // Try/Always/Never and Auras are there, and the build stays saved
+        const member = tab.root.querySelector('[data-pf-member]');
+        expect(member.querySelector('[data-pf-choice]')).not.toBeNull();
+        expect([...member.querySelectorAll('button')].some((b) => b.textContent.startsWith('Auras'))).toBe(true);
+        expect(buildNames()).toEqual(['Tank']);
+        // Again: a second teammate from the same build
+        rowButton(id, 'Add as teammate').click();
+        await flush();
+        expect(state.db.entries).toHaveLength(2);
+    });
+
+    test('rename keeps names unique; delete takes two clicks and survives a re-read', async () => {
+        await mountTab();
+        await saveAs('live', 'Tank');
+        await saveAs('live', 'Healer');
+        const [tank, healer] = state.db.builds.map((b) => b.id);
+        rowButton(healer, 'Rename').click();
+        const input = tab.root.querySelector(`[data-pf-build="${healer}"] input`);
+        input.value = 'Tank';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+        await flush();
+        expect(buildNames()).toEqual(['Tank', 'Tank (2)']);
+
+        rowButton(tank, '×').click();
+        expect(buildNames()).toHaveLength(2);
+        rowButton(tank, 'Delete?').click();
+        await flush();
+        expect(buildNames()).toEqual(['Tank (2)']);
+        expect(state.db.builds.map((b) => b.id)).toEqual([healer]);
+        expect(state.db.removed[tank]).toBeGreaterThan(0);
+
+        // The list persists: a fresh tab reads it back
+        tab.detach();
+        await mountTab();
+        expect(buildNames()).toEqual(['Tank (2)']);
+    });
+
+    test('a pull that writes the roster brings in builds saved elsewhere', async () => {
+        await mountTab();
+        state.db = {
+            savedAt: 5,
+            entries: [],
+            builds: [{ id: 'sb-x', name: 'From phone', dto: build(70), addedAt: 1, updatedAt: 1 }],
+        };
+        announceSyncPullApplied({ settings: ['combatSimPartyRoster'] });
+        await flush();
+        expect(buildNames()).toEqual(['From phone']);
+    });
+});

@@ -39,7 +39,11 @@ import { saleTaxRateOf } from './upgrade-advisor.js';
 import {
     PARTY_ROSTER_KEY,
     MAX_ROSTER_SIZE,
+    MAX_SAVED_BUILDS,
     loadRoster,
+    saveBuild,
+    renameBuild,
+    removeBuild,
     addTeammates,
     renameTeammate,
     removeTeammate,
@@ -194,7 +198,7 @@ export class PartyFinderTab {
     constructor(host) {
         this.host = host;
         this.root = null;
-        this._roster = { savedAt: 0, entries: [] };
+        this._roster = { savedAt: 0, entries: [], builds: [] };
         /** Teammate id → 'try' | 'always' | 'never' */
         this._choices = {};
         /** Selected zone/tiers: [{zoneHrid, difficultyTier, isDungeon, name}] */
@@ -278,7 +282,7 @@ export class PartyFinderTab {
         this.root = null;
         this._rows = new Map();
         this._baselines = new Map();
-        this._roster = { savedAt: 0, entries: [] };
+        this._roster = { savedAt: 0, entries: [], builds: [] };
         this._choices = {};
         this._zones = [];
         this._zonesSeeded = false;
@@ -370,6 +374,20 @@ export class PartyFinderTab {
                 <div data-pf="roster-note" style="color:#888; font-size:11px; margin-top:4px;"></div>`
             ),
             section(
+                'Saved builds <span data-pf="build-count" style="color:#666; font-weight:400;"></span>',
+                `<div data-pf="builds" style="display:flex; flex-direction:column; gap:3px;"></div>
+                <div style="margin-top:6px;">
+                    <button data-pf="save-build-open" style="${SMALL_BTN_STYLE}" title="Keep a build under a name, to add as a teammate later">Save build…</button>
+                </div>
+                <div data-pf="save-build-form" style="display:none; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">
+                    <select class="toolasha-select" data-pf="build-source" style="${INPUT_STYLE}"></select>
+                    <input data-pf="build-name" type="text" maxlength="40" placeholder="Name" style="${INPUT_STYLE} width:140px;">
+                    <button data-pf="save-build" style="${BTN_STYLE}">Save</button>
+                    <button data-pf="save-build-cancel" style="${SMALL_BTN_STYLE}">Cancel</button>
+                </div>
+                <div data-pf="build-note" style="color:#888; font-size:11px; margin-top:4px;"></div>`
+            ),
+            section(
                 'Zones',
                 `<div data-pf="zone-chips" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:6px;"></div>
                 <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
@@ -427,6 +445,15 @@ export class PartyFinderTab {
     _wire() {
         this._el('add-editor').addEventListener('click', () => this._onAddFromEditor());
         this._el('add-self').addEventListener('click', () => this._onCopySelf());
+        this._el('save-build-open').addEventListener('click', () => this._openSaveBuild());
+        this._el('save-build-cancel').addEventListener('click', () => {
+            this._el('save-build-form').style.display = 'none';
+        });
+        this._el('save-build').addEventListener('click', () => this._onSaveBuild());
+        this._el('build-source').addEventListener('change', () => this._defaultBuildName());
+        this._el('build-name').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this._onSaveBuild();
+        });
         this._el('self-auras').addEventListener('change', (e) => {
             this._trySelfAuras = e.target.checked;
             this._selfAuraOpen = false;
@@ -602,8 +629,153 @@ export class PartyFinderTab {
             list.appendChild(row);
             if (this._auraOpen === entry.id) list.appendChild(this._auraEditor(entry));
         }
+        this._renderBuilds();
         this._renderAddFromEditor();
         this._renderPlan();
+    }
+
+    /**
+     * @param {string} text
+     * @param {boolean} [warn]
+     * @private
+     */
+    _buildNote(text, warn = false) {
+        const note = this._el('build-note');
+        if (!note) return;
+        note.textContent = text || '';
+        note.style.color = warn ? '#ff9800' : '#888';
+    }
+
+    /** The saved builds list. @private */
+    _renderBuilds() {
+        const list = this._el('builds');
+        if (!list) return;
+        const builds = this._roster.builds || [];
+        this._el('build-count').textContent = `(${builds.length}/${MAX_SAVED_BUILDS})`;
+        list.textContent = '';
+        if (!builds.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'color:#666; font-size:11px;';
+            empty.textContent =
+                'No saved builds. "Save build…" keeps your current build, or any player in the editor, under a name.';
+            list.appendChild(empty);
+        }
+        for (const build of builds) {
+            const row = document.createElement('div');
+            row.dataset.pfBuild = build.id;
+            row.style.cssText = 'display:flex; gap:6px; align-items:center; font-size:12px;';
+            const name = document.createElement('span');
+            name.dataset.pfBuildName = '';
+            name.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            name.textContent = build.name;
+            const button = (label, title, onClick) => {
+                const b = document.createElement('button');
+                b.style.cssText = SMALL_BTN_STYLE;
+                b.textContent = label;
+                b.title = title;
+                b.addEventListener('click', onClick);
+                return b;
+            };
+            const deleting = this._pendingDelete === build.id;
+            row.append(
+                name,
+                button(
+                    'Add as teammate',
+                    'Add a copy of this build to the roster, then set Try/Always/Never and Auras',
+                    () => this._onAddBuildAsTeammate(build)
+                ),
+                button('Rename', 'Rename', () => this._onRename(build, row, name, renameBuild, '_buildNote')),
+                button(deleting ? 'Delete?' : '×', deleting ? 'Click again to delete' : 'Delete', () =>
+                    this._onDelete(build, removeBuild, '_buildNote')
+                )
+            );
+            if (deleting) row.lastChild.style.color = RED;
+            list.appendChild(row);
+        }
+    }
+
+    /** Show the save form, with the sources of a build to save. @private */
+    _openSaveBuild() {
+        const form = this._el('save-build-form');
+        if (!form) return;
+        this._renderBuildSources();
+        form.style.display = 'flex';
+        this._el('build-name').focus();
+    }
+
+    /** @private */
+    _renderBuildSources() {
+        const select = this._el('build-source');
+        if (!select) return;
+        const prior = select.value;
+        const options = this._selfOptions();
+        select.innerHTML = options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+        select.value = options.some((o) => o.value === prior) ? prior : options[0]?.value || '';
+        this._defaultBuildName();
+    }
+
+    /** Name the build after its player until the user types a name of their own. @private */
+    _defaultBuildName() {
+        const input = this._el('build-name');
+        const select = this._el('build-source');
+        if (!input || !select) return;
+        const option = this._selfOptions().find((o) => o.value === select.value);
+        if (!input.value || input.dataset.pfAuto === '1') {
+            input.value = option?.name || '';
+            input.dataset.pfAuto = '1';
+        }
+        if (!input.dataset.pfBound) {
+            input.dataset.pfBound = '1';
+            input.addEventListener('input', () => {
+                input.dataset.pfAuto = '0';
+            });
+        }
+    }
+
+    /** @private */
+    async _onSaveBuild() {
+        const choice = this._el('build-source')?.value || 'live';
+        const who = this._resolveChoice(choice);
+        if (!who) {
+            this._buildNote('No character data available.', true);
+            return;
+        }
+        const typed = this._el('build-name')?.value || '';
+        const result = await saveBuild(typed || who.name, who.dto, who.gameMode);
+        this._adoptRoster(result);
+        if (!result.ok) {
+            this._buildNote(
+                result.reason
+                    ? `Not saved: ${result.reason}.`
+                    : 'Could not save the build: the roster could not be written.',
+                true
+            );
+            return;
+        }
+        this._buildNote(
+            result.name === typed.trim() || !typed.trim()
+                ? `Saved "${result.name}".`
+                : `Saved as "${result.name}" (that name was taken).`
+        );
+        const input = this._el('build-name');
+        if (input) {
+            input.value = '';
+            input.dataset.pfAuto = '1';
+        }
+        const form = this._el('save-build-form');
+        if (form) form.style.display = 'none';
+    }
+
+    /**
+     * @param {Object} build - A saved build
+     * @private
+     */
+    async _onAddBuildAsTeammate(build) {
+        const result = await addTeammates([
+            { name: build.name, dto: build.dto, source: 'saved build', gameMode: build.gameMode || undefined },
+        ]);
+        this._adoptRoster(result);
+        this._reportAdd(result);
     }
 
     /**
@@ -906,12 +1078,14 @@ export class PartyFinderTab {
     }
 
     /**
-     * @param {Object} entry
+     * @param {Object} entry - A teammate, or a saved build
      * @param {HTMLElement} row
      * @param {HTMLElement} nameEl
+     * @param {Function} [rename] - `renameTeammate`, or `renameBuild` for a saved build
+     * @param {string} [note] - The note method that reports a failure
      * @private
      */
-    _onRename(entry, row, nameEl) {
+    _onRename(entry, row, nameEl, rename = renameTeammate, note = '_rosterNote') {
         const input = document.createElement('input');
         input.type = 'text';
         input.value = entry.name;
@@ -926,9 +1100,9 @@ export class PartyFinderTab {
                 this._renderRoster();
                 return;
             }
-            const result = await renameTeammate(entry.id, input.value);
+            const result = await rename(entry.id, input.value);
             this._adoptRoster(result);
-            if (!result.ok) this._rosterNote('Could not save the new name.', true);
+            if (!result.ok) this[note]('Could not save the new name.', true);
         };
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') commit(true);
@@ -938,10 +1112,12 @@ export class PartyFinderTab {
     }
 
     /**
-     * @param {Object} entry
+     * @param {Object} entry - A teammate, or a saved build
+     * @param {Function} [remove] - `removeTeammate`, or `removeBuild` for a saved build
+     * @param {string} [note] - The note method that reports a failure
      * @private
      */
-    async _onDelete(entry) {
+    async _onDelete(entry, remove = removeTeammate, note = '_rosterNote') {
         if (this._pendingDelete !== entry.id) {
             this._pendingDelete = entry.id;
             clearTimeout(this._pendingDeleteTimer);
@@ -954,9 +1130,9 @@ export class PartyFinderTab {
         }
         this._pendingDelete = null;
         clearTimeout(this._pendingDeleteTimer);
-        const result = await removeTeammate(entry.id);
+        const result = await remove(entry.id);
         this._adoptRoster(result);
-        if (!result.ok) this._rosterNote('Could not delete: the roster could not be written.', true);
+        if (!result.ok) this[note]('Could not delete: the roster could not be written.', true);
     }
 
     // ---------------------------------------------------------------- you
@@ -972,10 +1148,17 @@ export class PartyFinderTab {
         const options = [];
         const players = this._editorPlayers();
         const self = players.find((p) => p.hrid === selfHrid);
-        if (self) options.push({ value: `editor:${self.hrid}`, label: `${self.name} (as in the editor)` });
-        options.push({ value: 'live', label: 'My current build' });
+        if (self)
+            options.push({ value: `editor:${self.hrid}`, label: `${self.name} (as in the editor)`, name: self.name });
+        options.push({
+            value: 'live',
+            label: 'My current build',
+            name: dataManager.characterData?.character?.name || 'Me',
+        });
         for (const p of players) {
-            if (p.hrid !== selfHrid) options.push({ value: `editor:${p.hrid}`, label: `${p.name} (from the editor)` });
+            if (p.hrid !== selfHrid) {
+                options.push({ value: `editor:${p.hrid}`, label: `${p.name} (from the editor)`, name: p.name });
+            }
         }
         return options;
     }
@@ -1058,6 +1241,7 @@ export class PartyFinderTab {
         const options = this._selfOptions();
         select.innerHTML = options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
         if (options.some((o) => o.value === prior)) select.value = prior;
+        if (this._el('save-build-form')?.style.display !== 'none') this._renderBuildSources();
         if (!select.dataset.pfModeBound) {
             select.dataset.pfModeBound = '1';
             // Who "you" are decides which teammates can party with you
@@ -1106,18 +1290,38 @@ export class PartyFinderTab {
      * @private
      */
     _resolveSelf() {
-        const choice = this._el('self')?.value || 'live';
+        return this._resolveChoice(this._el('self')?.value || 'live');
+    }
+
+    /**
+     * A build named by a picker value (`live`, or `editor:<hrid>`), read now; a player gone from the editor reads
+     * as the live build.
+     * @param {string} choice
+     * @returns {{dto: Object, name: string, isLive: boolean, gameMode: string|undefined}|null}
+     * @private
+     */
+    _resolveChoice(choice) {
         if (choice.startsWith('editor:')) {
             const hrid = choice.slice('editor:'.length);
             const player = this._editorPlayers().find((p) => p.hrid === hrid);
             if (player) {
                 const isLive = hrid === this.host?._editor?.getSelfHrid?.();
-                return { dto: structuredClone(player.dto), name: player.name, isLive };
+                return {
+                    dto: structuredClone(player.dto),
+                    name: player.name,
+                    isLive,
+                    gameMode: this._editorPlayerMode(player),
+                };
             }
         }
         const dto = buildPlayerDTO();
         if (!dto) return null;
-        return { dto, name: dataManager.characterData?.character?.name || 'You', isLive: true };
+        return {
+            dto,
+            name: dataManager.characterData?.character?.name || 'You',
+            isLive: true,
+            gameMode: dto.gameMode || dataManager.getCurrentCharacterGameMode?.() || undefined,
+        };
     }
 
     // ---------------------------------------------------------------- zones
