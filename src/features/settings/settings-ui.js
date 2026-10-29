@@ -2177,8 +2177,9 @@ class SettingsUI {
         const help = document.createElement('div');
         help.style.cssText = 'font-size:11px; color:#888; line-height:1.4;';
         help.textContent =
-            'The gist this device syncs with. The live game and the test server keep separate gists, and a gist ' +
-            'marked for the other server is refused. Paste a gist id or link to switch: this device forgets what ' +
+            'The gist this device syncs with. The live game and the test server keep separate gists: a gist ' +
+            'marked for the other server is refused here, and by every sync except a pressed Push, which asks ' +
+            'first. Paste a gist id or link to switch: this device forgets what ' +
             'it last synced, then Pull takes the new gist’s data, and Push asks before replacing it and offers ' +
             'to merge. "Start a new gist" makes the next Push create a fresh one for this server.';
 
