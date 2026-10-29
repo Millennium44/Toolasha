@@ -27,6 +27,7 @@ import {
 } from './labyrinth-uptime-harness.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import { abilitiesPart } from './labyrinth-fingerprint.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import { setSimConfigSource } from './labyrinth-accuracy-export.js';
 import { predictedFromSim, compareLab, MIN_LAB_FIGHTS } from './labyrinth-replay-check.js';
@@ -488,7 +489,29 @@ export const simCacheMethods = {
                 parts.push(`${location}=${item.itemHrid}+${item.enhancementLevel || 0}`);
             }
         }
-        return `:worn=${parts.sort().join(',')}`;
+        return `:worn=${parts.sort().join(',')}${this._fallbackAbilitiesPart()}`;
+    },
+
+    /**
+     * The equipped abilities and their combat triggers, for a room that fights
+     * with the worn kit.
+     *
+     * Read off `buildPlayerDTO` — the same builder `buildLabyrinthPlayerDTO`
+     * starts from, and which a no-loadout room's sim keeps untouched — so the
+     * key hashes exactly what the sim reads: hrid, level, trigger list, in slot
+     * order (the first slot whose triggers pass fires). Food and drink are left
+     * out on purpose: the labyrinth allows neither.
+     * @returns {string} '' when the build cannot be read yet, else ':ab=<hash>'
+     */
+    _fallbackAbilitiesPart() {
+        try {
+            if (!dataManager.characterData || !dataManager.getInitClientData?.()) return '';
+            const dto = buildPlayerDTO();
+            if (!dto || !Array.isArray(dto.abilities)) return '';
+            return `:ab=${this._hashString(abilitiesPart({ equipped: dto.abilities }))}`;
+        } catch {
+            return '';
+        }
     },
 
     /**
