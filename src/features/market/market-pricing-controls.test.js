@@ -270,3 +270,28 @@ describe('cleanup', () => {
         expect(buyOf(title)).not.toBeNull();
     });
 });
+
+describe('mobile pricing disclosure', () => {
+    test('starts collapsed, toggles access without writing settings, and tracks live labels', () => {
+        controls.initialize();
+        const title = mountTitle();
+        live.titleCallback(title);
+        const wrapper = title.querySelector('#mwi-market-pricing-controls');
+        const button = wrapper.querySelector('.mwi-market-pricing-disclosure');
+        expect(button.getAttribute('aria-expanded')).toBe('false');
+        expect(button.textContent).toContain('Craft: Off');
+        expect(wrapper.hasAttribute('data-expanded')).toBe(false);
+        button.click();
+        expect(button.getAttribute('aria-expanded')).toBe('true');
+        expect(wrapper.hasAttribute('data-expanded')).toBe(true);
+        expect(live.writes).toHaveLength(0);
+        craftOf(title).click();
+        expect(button.textContent).toContain('Craft: On');
+        button.click();
+        expect(wrapper.hasAttribute('data-expanded')).toBe(false);
+        controls.disable();
+        expect(document.getElementById('mwi-market-pricing-controls')).toBeNull();
+        expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
+        expect(title.style.flexWrap).toBe('');
+    });
+});

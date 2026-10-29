@@ -7,6 +7,7 @@
  * Ported from Ranged Way Idle's showListingInfo feature
  */
 
+import { syncListingScroll, releaseListingScroll } from './market-mobile-layout.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
@@ -1081,6 +1082,7 @@ class ListingPriceDisplay {
                 }
             }
         }
+        syncListingScroll(tbody.closest('table'));
     }
 
     /**
@@ -1535,6 +1537,7 @@ class ListingPriceDisplay {
         document.querySelectorAll('.mwi-listing-price-cell').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-listing-marker-header').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-listing-marker-cell').forEach((el) => el.remove());
+        releaseListingScroll(document.documentElement);
         for (const colKey of this.sortHeaders.keys()) {
             this._updateHeaderIndicator(colKey, null);
         }

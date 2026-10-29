@@ -15,8 +15,16 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const geometry = vi.hoisted(() => ({ deferNextRestore: false, pending: [] }));
 
+const mobile = vi.hoisted(() => ({ mode: 'off' }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, Z_HUD: 50, Z_FLOATING_PANEL: 1100, Z_POPUP: 9000 },
+    default: {
+        getSetting: () => true,
+        // Only Mobile mode is read through this; 'off' keeps every desktop docking test on desktop
+        getSettingValue: (key, fallback) => (key === 'mobileMode' ? mobile.mode : fallback),
+        Z_HUD: 50,
+        Z_FLOATING_PANEL: 1100,
+        Z_POPUP: 9000,
+    },
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -144,6 +152,31 @@ describe('docked into the character column', () => {
 
         expect(overlayPanel.panel.parentElement).toBe(column);
         expect(overlayPanel.panel.dataset.docked).toBe('true');
+    });
+
+    test('on a phone the hidden character column is not a dock: the panel opens floating instead', () => {
+        mobile.mode = 'on';
+        try {
+            const host = buildColumn();
+            const management = document.getElementById('management-root');
+            vi.spyOn(management, 'getBoundingClientRect').mockReturnValue({ width: 0, height: 0 });
+            expect(overlayPanel._findDockHost()).toBeNull();
+
+            // The column on screen (a tablet, a rotated phone) docks as before
+            management.getBoundingClientRect.mockReturnValue({ width: 320, height: 600 });
+            expect(overlayPanel._findDockHost()).toBe(host);
+        } finally {
+            mobile.mode = 'off';
+        }
+    });
+
+    test('on desktop a column that has not laid out yet is still the dock', () => {
+        const host = buildColumn();
+        vi.spyOn(document.getElementById('management-root'), 'getBoundingClientRect').mockReturnValue({
+            width: 0,
+            height: 0,
+        });
+        expect(overlayPanel._findDockHost()).toBe(host);
     });
 
     test('the direct character tab strip is found when its labels are translated', () => {

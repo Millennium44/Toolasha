@@ -25,6 +25,8 @@ import combatPanelScale from '../features/ui/combat-panel-scale.js';
 import textAppearance from '../features/ui/text-appearance.js';
 import updateCheck from '../features/ui/update-check.js';
 import modalScrollCaps from '../features/ui/modal-scroll-caps.js';
+import combatTabsLayout from '../features/ui/combat-tabs-layout.js';
+import tasksPanelLayout from '../features/ui/tasks-panel-layout.js';
 import dragSizeRestore from '../features/ui/drag-size-restore.js';
 import combatText from '../features/ui/combat-text.js';
 import { dpsPanel, deathsPanel, profitPanel, combatProfitView } from '../features/ui/combat-panels.js';
@@ -216,6 +218,8 @@ toolashaRoot.UI = {
     textAppearance,
     updateCheck,
     modalScrollCaps,
+    combatTabsLayout,
+    tasksPanelLayout,
     dragSizeRestore,
     altClickNavigation,
     tokenShopShortcuts,
