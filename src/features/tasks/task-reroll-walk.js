@@ -1887,19 +1887,34 @@ class TaskRerollWalk {
         if (list?.parentElement) {
             // Keep the walk below the tabs and in the board's scroll flow, not
             // fixed over the page heading. Desktop keeps its saved position.
+            let wideInline = null;
             const detach = dockWhenNarrow(widget.element, {
                 host: list.parentElement,
                 before: list,
                 measure: list.closest(GAME.GAME_PANEL) || list.parentElement,
+                // Nothing re-injects the walk, so a lost wide position falls back to the body it opened in
+                onHomeLost: (element) => document.body.appendChild(element),
                 onChange: (narrow) => {
                     widget.element.style.touchAction = narrow ? 'auto' : 'none';
                     widget.element.style.cursor = narrow ? 'default' : 'move';
-                    widget.main.style.whiteSpace = narrow ? 'normal' : 'nowrap';
-                    widget.status.style.minWidth = narrow ? '0' : '';
-                    widget.status.style.maxWidth = narrow ? '100%' : '340px';
-                    widget.main.style.minWidth = '0';
-                    widget.main.style.maxWidth = '100%';
-                    widget.main.style.overflowWrap = 'anywhere';
+                    const touched = [
+                        [widget.main, 'whiteSpace', 'normal'],
+                        [widget.main, 'minWidth', '0'],
+                        [widget.main, 'maxWidth', '100%'],
+                        [widget.main, 'overflowWrap', 'anywhere'],
+                        [widget.status, 'minWidth', '0'],
+                        [widget.status, 'maxWidth', '100%'],
+                    ];
+                    if (narrow) {
+                        // What the wide layout had, so leaving the narrow one puts back exactly that
+                        wideInline = touched.map(([node, property]) => node.style[property]);
+                        for (const [node, property, value] of touched) node.style[property] = value;
+                    } else if (wideInline) {
+                        touched.forEach(([node, property], index) => {
+                            node.style[property] = wideInline[index];
+                        });
+                        wideInline = null;
+                    }
                 },
             });
             const remove = widget.remove;

@@ -2342,4 +2342,58 @@ describe('narrow board widget placement', () => {
         walk._removeWidget();
         rect.mockRestore();
     });
+
+    test('returning to wide restores the inline values captured at narrow time, not hardcoded ones', () => {
+        const panel = document.createElement('div');
+        panel.className = 'GamePage_gamePanel__fixture';
+        const list = document.createElement('div');
+        list.className = 'TasksPanel_taskList__fixture';
+        panel.append(list);
+        document.body.appendChild(panel);
+        const rect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 1000 });
+        const widget = walk._ensureWidget();
+        expect(widget.element.parentElement).toBe(document.body);
+        const wide = (node) => ({
+            ws: node.main.style.whiteSpace,
+            mmin: node.main.style.minWidth,
+            mmax: node.main.style.maxWidth,
+            wrap: node.main.style.overflowWrap,
+            smin: node.status.style.minWidth,
+            smax: node.status.style.maxWidth,
+        });
+        // Distinctive values a hardcoded restore could never reproduce
+        widget.main.style.minWidth = '11px';
+        widget.main.style.maxWidth = '222px';
+        widget.main.style.overflowWrap = 'break-word';
+        widget.status.style.maxWidth = '333px';
+        const before = wide(widget);
+        rect.mockReturnValue({ width: 350 });
+        window.dispatchEvent(new Event('resize'));
+        expect(widget.element.parentElement).toBe(panel);
+        expect(widget.main.style.overflowWrap).toBe('anywhere');
+        rect.mockReturnValue({ width: 1000 });
+        window.dispatchEvent(new Event('resize'));
+        expect(widget.element.parentElement).toBe(document.body);
+        expect(wide(widget)).toEqual(before);
+        walk._removeWidget();
+        rect.mockRestore();
+    });
+
+    test('a wide position lost to a re-render falls back to the body', () => {
+        const panel = document.createElement('div');
+        panel.className = 'GamePage_gamePanel__fixture';
+        const list = document.createElement('div');
+        list.className = 'TasksPanel_taskList__fixture';
+        panel.append(list);
+        document.body.appendChild(panel);
+        const rect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 350 });
+        const widget = walk._ensureWidget();
+        expect(widget.element.parentElement).toBe(panel);
+        [...document.body.childNodes].filter((node) => node.nodeType === 8).forEach((node) => node.remove());
+        rect.mockReturnValue({ width: 1000 });
+        window.dispatchEvent(new Event('resize'));
+        expect(widget.element.parentElement).toBe(document.body);
+        walk._removeWidget();
+        rect.mockRestore();
+    });
 });

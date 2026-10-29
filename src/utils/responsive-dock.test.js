@@ -88,3 +88,39 @@ test('moving the native content out from under a toolbar makes later resize harm
     expect(toolbar.isConnected).toBe(false);
     detach = null;
 });
+
+test('a wide position lost to a re-render removes the element so its owner re-injects it', () => {
+    const { host, toolbar, rect, resize } = fixture(360);
+    expect(toolbar.parentElement).toBe(host);
+    [...document.body.childNodes].filter((node) => node.nodeType === 8).forEach((node) => node.remove());
+    rect.mockReturnValue({ width: 1000 });
+    resize();
+    expect(toolbar.isConnected).toBe(false);
+    expect(toolbar.dataset.toolashaDocked).toBeUndefined();
+});
+
+test('onHomeLost can place the element itself instead', () => {
+    const host = document.createElement('div');
+    const toolbar = document.createElement('div');
+    document.body.append(host, toolbar);
+    const rect = vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ width: 360 });
+    let resize;
+    vi.stubGlobal(
+        'ResizeObserver',
+        class {
+            constructor(callback) {
+                resize = callback;
+            }
+            observe() {}
+            disconnect() {}
+        }
+    );
+    const onHomeLost = vi.fn((element) => document.body.appendChild(element));
+    detach = dockWhenNarrow(toolbar, { host, onHomeLost });
+    expect(toolbar.parentElement).toBe(host);
+    [...document.body.childNodes].filter((node) => node.nodeType === 8).forEach((node) => node.remove());
+    rect.mockReturnValue({ width: 1000 });
+    resize();
+    expect(onHomeLost).toHaveBeenCalledWith(toolbar);
+    expect(toolbar.parentElement).toBe(document.body);
+});

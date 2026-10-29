@@ -10,11 +10,14 @@
  * @param {HTMLElement} [options.measure] - Content panel whose width decides
  * @param {number} [options.breakpoint] - Maximum narrow content width
  * @param {Function} [options.onChange] - Called with the narrow state
+ * @param {Function} [options.onHomeLost] - Called with the element when the game re-rendered away its
+ *   wide-layout position while it sat in the narrow slot. Place it again there. Without it the element
+ *   is removed, so the owning feature re-injects it on its next pass.
  * @returns {Function} Disconnect observers and restore the wide placement
  */
 export function dockWhenNarrow(
     element,
-    { host, before = null, measure = host, breakpoint = 640, onChange = () => {} }
+    { host, before = null, measure = host, breakpoint = 640, onChange = () => {}, onHomeLost = null }
 ) {
     if (!host || !measure || !element.parentNode) return () => {};
     const home = document.createComment('Toolasha toolbar position');
@@ -40,7 +43,14 @@ export function dockWhenNarrow(
         for (const property of properties) element.style[property] = original[property];
         original = null;
         delete element.dataset.toolashaDocked;
-        if (element.isConnected && home.parentNode) home.after(element);
+        if (element.isConnected && home.parentNode) {
+            home.after(element);
+        } else if (element.isConnected && !stopped) {
+            // The marker went with a re-render; leaving the element in the narrow slot at wide width
+            // would strand it there with its docked state cleared
+            if (onHomeLost) onHomeLost(element);
+            else element.remove();
+        }
         onChange(false);
     };
     const update = () => {
