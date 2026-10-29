@@ -6,8 +6,8 @@
  * `{hrid?, name?, tierHrid, target?, sortIndex?}`) and the list is
  * `characterAchievements` (`{achievementHrid, isCompleted}` rows, as the server
  * sends and `achievements_updated` merges them). The list carries no
- * per-achievement progress that has been observed, so a remaining achievement's
- * progress is "unavailable" — never 0 — except the two point-total
+ * per-achievement progress that has been observed, so a remaining achievement
+ * carries the game's own description instead of a figure — never 0 — except the two point-total
  * achievements (`collection_points_N`, `bestiary_points_N`), whose progress is
  * the Collections / Bestiary total the caller passes in.
  */
@@ -119,6 +119,7 @@ export function buildTierChecklists({ detailMap, tierDetailMap = null, achieveme
             continue;
         }
         const link = plannerFor(hrid);
+        entry.description = typeof detail.description === 'string' && detail.description ? detail.description : null;
         entry.planner = link ? link.planner : null;
         entry.target = link ? link.target : null;
         const current = link ? points[link.planner] : null;

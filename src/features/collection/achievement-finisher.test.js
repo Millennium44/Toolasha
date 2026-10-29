@@ -11,15 +11,31 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     setting: true,
     detail: null,
+    clientData: null,
     achievements: null,
     collections: null,
     monsters: null,
+    skills: null,
+    inventory: null,
+    characterId: 7,
+    ironCow: false,
+    prices: {},
+    gameObject: null,
     handlers: {},
     observers: [],
 }));
 
+const nav = vi.hoisted(() => ({
+    navigateToAction: vi.fn(() => true),
+    navigateToMarketplace: vi.fn(),
+    openCombatZoneAtTier: vi.fn(async () => ({ opened: true, tierConfirmed: true, filled: false })),
+    getItemPriceInfo: vi.fn((hrid) => ({ price: hrid in game.prices ? game.prices[hrid] : null })),
+    marketOn: vi.fn(),
+    marketOff: vi.fn(),
+}));
+
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => game.setting },
+    default: { getSetting: () => game.setting, getSettingValue: () => undefined },
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({
@@ -36,10 +52,13 @@ vi.mock('../../core/dom-observer.js', () => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ achievementDetailMap: game.detail }),
+        getInitClientData: () => game.clientData ?? { achievementDetailMap: game.detail },
         getCharacterAchievements: () => game.achievements,
         getCharacterCollections: () => game.collections,
         getCharacterMonsters: () => game.monsters,
+        getSkills: () => game.skills,
+        getInventory: () => game.inventory,
+        getCurrentCharacterId: () => game.characterId,
         on: (event, fn) => {
             (game.handlers[event] ||= []).push(fn);
         },
@@ -49,13 +68,37 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+vi.mock('../../api/marketplace.js', () => ({ default: { on: nav.marketOn, off: nav.marketOff } }));
+vi.mock('../../utils/item-navigation.js', () => ({
+    getGameObject: () => game.gameObject,
+    navigateToAction: nav.navigateToAction,
+}));
+vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: nav.navigateToMarketplace }));
+vi.mock('../../utils/combat-zone-open.js', () => ({ openCombatZoneAtTier: nav.openCombatZoneAtTier }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPriceInfo: nav.getItemPriceInfo }));
+vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
+
 import finisher, { findAchievementsHost, rewardText, PANEL_CLASS } from './achievement-finisher.js';
 import { buildTierChecklists } from './achievement-finisher-model.js';
+import {
+    ACHIEVEMENTS,
+    ACTIONS,
+    ITEMS,
+    MONSTERS,
+    INVENTORY,
+    PRICES,
+    SKILLS,
+} from './__fixtures__/achievement-finisher-game.js';
 
 const DETAIL = {
     '/achievements/a1': { hrid: '/achievements/a1', name: 'A1', tierHrid: '/achievement_tiers/beginner' },
     '/achievements/a2': { hrid: '/achievements/a2', name: 'A2', tierHrid: '/achievement_tiers/beginner' },
-    '/achievements/n1': { hrid: '/achievements/n1', name: 'N1', tierHrid: '/achievement_tiers/novice' },
+    '/achievements/n1': {
+        hrid: '/achievements/n1',
+        name: 'N1',
+        description: 'Do the N1 thing',
+        tierHrid: '/achievement_tiers/novice',
+    },
     '/achievements/n2': { hrid: '/achievements/n2', name: 'N2', tierHrid: '/achievement_tiers/novice' },
     '/achievements/e1': { hrid: '/achievements/e1', name: 'E1', tierHrid: '/achievement_tiers/elite' },
     '/achievements/collection_points_100': {
@@ -180,6 +223,7 @@ describe('the panel', () => {
         game.achievements = [done('/achievements/a1'), done('/achievements/a2'), notDone('/achievements/n1')];
         game.collections = null;
         game.monsters = null;
+        game.clientData = null;
         game.handlers = {};
         game.observers = [];
         document.body.replaceChildren();
@@ -211,8 +255,10 @@ describe('the panel', () => {
         // Novice is the second tier block
         document.querySelectorAll(`.${PANEL_CLASS}-tier`)[1].firstChild.dispatchEvent(new Event('click'));
         expect(document.querySelectorAll(`.${PANEL_CLASS}-item`).length).toBeGreaterThan(0);
-        expect(panelText()).toContain('N1 — progress unavailable');
-        expect(panelText()).toContain('does not give progress inside one');
+        expect(panelText()).toContain('N1 — Do the N1 thing');
+        expect(panelText()).not.toContain('progress unavailable');
+        expect(panelText()).toContain('not progress inside one');
+        expect(panelText()).toContain('nothing is started or bought');
     });
 
     test('an expanded tier lists done and remaining entries with distinct markers', () => {
@@ -324,5 +370,204 @@ describe('the panel', () => {
         game.setting = false;
         finisher.initialize();
         expect(panelText()).toBeNull();
+    });
+});
+
+describe('one-off rows: description, readiness, Go', () => {
+    /** Every function the game object is asked for, by name */
+    let gameCalls;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        game.setting = true;
+        game.detail = ACHIEVEMENTS;
+        game.clientData = {
+            achievementDetailMap: ACHIEVEMENTS,
+            actionDetailMap: ACTIONS,
+            itemDetailMap: ITEMS,
+            combatMonsterDetailMap: MONSTERS,
+        };
+        game.achievements = [];
+        game.skills = SKILLS;
+        game.inventory = INVENTORY;
+        game.prices = PRICES;
+        game.characterId = 7;
+        game.ironCow = false;
+        game.handlers = {};
+        game.observers = [];
+        gameCalls = [];
+        game.gameObject = new Proxy(
+            {},
+            {
+                get:
+                    (_target, name) =>
+                    (...args) =>
+                        gameCalls.push([String(name), ...args]),
+            }
+        );
+        Object.values(nav).forEach((fn) => fn.mockClear());
+        document.body.replaceChildren();
+    });
+
+    afterEach(() => {
+        finisher.disable();
+        vi.useRealTimers();
+        game.clientData = null;
+        game.skills = null;
+        game.inventory = null;
+        game.gameObject = null;
+    });
+
+    function openVeteran() {
+        achievementsPage();
+        finisher.initialize();
+        click(`.${PANEL_CLASS}-header`);
+        document.querySelector(`.${PANEL_CLASS}-tier`).firstChild.dispatchEvent(new Event('click'));
+    }
+
+    const rows = () => [...document.querySelectorAll(`.${PANEL_CLASS}-item`)];
+    const rowOf = (name) => rows().find((row) => row.textContent.startsWith(`○ ${name} `));
+    const goOf = (name) => rowOf(name).querySelector(`.${PANEL_CLASS}-go`);
+
+    test('rows are sorted ready, needs buying (cheapest first), level unknown, level not met, unresolved', () => {
+        openVeteran();
+        expect(rows().map((row) => row.textContent.split(' — ')[0].slice(2))).toEqual([
+            'Recycler',
+            'Arcane Lumberjack',
+            'Dairy Chef',
+            'Ginkgo Wielder',
+            'Chief Slayer',
+            'Jerry Hunter',
+            'Panda Tamer',
+            'Space Baker',
+            'Shadow Tailor',
+            'Mystery',
+        ]);
+    });
+
+    test('each row shows the game description and the readiness hint for its ending', () => {
+        openVeteran();
+        expect(rowOf('Dairy Chef').textContent).toContain('Make a Peach Yogurt with Cooking');
+        expect(rowOf('Dairy Chef').textContent).toContain('[level met · buy ~200]');
+        expect(rowOf('Recycler').textContent).toContain('[level met · materials owned]');
+        expect(rowOf('Space Baker').textContent).toContain('needs Cooking 70 (you 45)');
+        expect(rowOf('Space Baker').textContent).toContain('unpriced: Mystery Sugar');
+        expect(rowOf('Jerry Hunter').textContent).toContain('[T5 · your Combat Lv');
+        expect(rowOf('Jerry Hunter').textContent).toContain('monster Lv 60]');
+        expect(rowOf('Ginkgo Wielder').textContent).toContain('cheapest: Ginkgo Crossbow ~700');
+        // Unresolved: the description and nothing else
+        expect(rowOf('Mystery').textContent).toBe('○ Mystery — Enhance something to +10');
+        expect(goOf('Mystery')).toBeNull();
+    });
+
+    test('Go opens the resolved action, zone, alchemy item or market listing, and starts nothing', async () => {
+        openVeteran();
+        goOf('Dairy Chef').click();
+        expect(nav.navigateToAction).toHaveBeenCalledWith('/actions/cooking/peach_yogurt');
+
+        goOf('Jerry Hunter').click();
+        // Exactly the zone and tier: no count, so nothing is filled in and nothing queued
+        expect(nav.openCombatZoneAtTier.mock.calls).toEqual([['/actions/combat/jungle_planet', 5]]);
+
+        goOf('Ginkgo Wielder').click();
+        expect(nav.navigateToMarketplace).toHaveBeenCalledWith('/items/ginkgo_crossbow', 0);
+
+        goOf('Recycler').click();
+        expect(gameCalls).toEqual([['handleAlchemizeItem', '7::/item_locations/inventory::/items/bamboo_gloves::0']]);
+
+        goOf('Arcane Lumberjack').click();
+        expect(nav.navigateToAction.mock.calls).toEqual([
+            ['/actions/cooking/peach_yogurt'],
+            ['/actions/woodcutting/arcane_tree'],
+        ]);
+        await vi.runAllTimersAsync();
+        // The game object was only ever asked to select the alchemy item
+        expect(gameCalls.map(([name]) => name)).toEqual(['handleAlchemizeItem']);
+    });
+
+    test('alchemy with no stack opens the alchemy action and selects the tab by position', async () => {
+        game.inventory = INVENTORY.filter((row) => row.itemHrid !== '/items/bamboo_gloves');
+        openVeteran();
+        const strip = document.createElement('div');
+        strip.className = 'AlchemyPanel_tabsComponentContainer__x';
+        const tabClicks = [];
+        ['点金', '分解', '转化', '重铸'].forEach((label, i) => {
+            const tab = document.createElement('button');
+            tab.setAttribute('role', 'tab');
+            tab.setAttribute('aria-selected', String(i === 0));
+            tab.textContent = label;
+            tab.addEventListener('click', () => tabClicks.push(i));
+            strip.appendChild(tab);
+        });
+        document.body.appendChild(strip);
+
+        goOf('Recycler').click();
+        await vi.runAllTimersAsync();
+        expect(gameCalls).toEqual([['handleGoToAction', '/actions/alchemy/decompose']]);
+        expect(tabClicks).toEqual([1]);
+    });
+
+    test('an owned weapon reads "in inventory" with no Go; an Iron Cow gets no buy cost or market button', () => {
+        game.inventory = [
+            ...INVENTORY,
+            {
+                itemHrid: '/items/ginkgo_bow',
+                count: 1,
+                itemLocationHrid: '/item_locations/inventory',
+                enhancementLevel: 2,
+            },
+        ];
+        openVeteran();
+        expect(rowOf('Ginkgo Wielder').textContent).toContain('in inventory: Ginkgo Bow');
+        expect(goOf('Ginkgo Wielder')).toBeNull();
+        finisher.disable();
+
+        game.inventory = INVENTORY;
+        game.ironCow = true;
+        document.body.replaceChildren();
+        openVeteran();
+        expect(rowOf('Ginkgo Wielder').textContent).toContain('not owned');
+        expect(goOf('Ginkgo Wielder')).toBeNull();
+        expect(rowOf('Dairy Chef').textContent).toContain('missing 1 input');
+        expect(rowOf('Dairy Chef').textContent).not.toContain('buy ~');
+    });
+
+    test('a redraw reuses cached readiness; stock moving, or another character, recomputes it', async () => {
+        openVeteran();
+        const first = nav.getItemPriceInfo.mock.calls.length;
+        expect(first).toBeGreaterThan(0);
+
+        game.handlers.achievements_updated.forEach((fn) => fn({}));
+        expect(nav.getItemPriceInfo.mock.calls.length).toBe(first);
+
+        // An inventory update: one coalesced redraw shortly after, with fresh readiness
+        game.inventory = [
+            ...INVENTORY,
+            { itemHrid: '/items/peach', count: 2, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        game.handlers.items_updated.forEach((fn) => fn({}));
+        game.handlers.items_updated.forEach((fn) => fn({}));
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(rowOf('Dairy Chef').textContent).toContain('materials owned');
+        const second = nav.getItemPriceInfo.mock.calls.length;
+
+        game.characterId = 8;
+        game.handlers.achievements_updated.forEach((fn) => fn({}));
+        expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(second);
+    });
+
+    test('disable removes the buttons, every listener and a pending redraw', async () => {
+        openVeteran();
+        expect(document.querySelectorAll(`.${PANEL_CLASS}-go`).length).toBeGreaterThan(0);
+        const listener = nav.marketOn.mock.calls[0][0];
+        game.handlers.items_updated.forEach((fn) => fn({}));
+        finisher.disable();
+        expect(document.querySelectorAll(`.${PANEL_CLASS}-go`)).toHaveLength(0);
+        expect(nav.marketOff).toHaveBeenCalledWith(listener);
+        expect(Object.values(game.handlers).every((list) => list.length === 0)).toBe(true);
+        const calls = nav.getItemPriceInfo.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(document.querySelector(`.${PANEL_CLASS}`)).toBeNull();
+        expect(nav.getItemPriceInfo.mock.calls.length).toBe(calls);
     });
 });

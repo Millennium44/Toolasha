@@ -14,16 +14,31 @@
  *
  * Remaining work is a checklist. The only progress figures are the Collection
  * and Bestiary point totals for the two point-total achievements, which point
- * at the existing planners; nothing else is estimated, and nothing is summed
- * across a tier.
+ * at the existing planners. Every other row shows the game's own description,
+ * and — when the achievement resolves to a game action, zone or item (see
+ * achievement-finisher-resolve.js) — a readiness hint and a Go button. Go only
+ * navigates: it opens the action, the alchemy tab, the combat zone at its tier,
+ * or the marketplace, and never starts, queues or buys anything. Nothing is
+ * summed across a tier.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import marketAPI from '../../api/marketplace.js';
 import { countsByMonster, totalBestiaryPoints } from '../../utils/bestiary.js';
 import { collectionCounts, totalCollectionPoints } from './collection-optimizer-plan.js';
-import { buildTierChecklists } from './achievement-finisher-model.js';
+import { buildTierChecklists, nameFromHrid } from './achievement-finisher-model.js';
+import { readiness, resolveAchievement, sortRemaining } from './achievement-finisher-resolve.js';
+import { getGameObject, navigateToAction } from '../../utils/item-navigation.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
+import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigation.js';
+import { getItemPriceInfo } from '../../utils/market-data.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import { combatLevel } from '../../utils/combat-level.js';
+import { formatKMB } from '../../utils/formatters.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 /** The setting that turns the panel on */
 export const SETTING_KEY = 'achievementFinisher';
@@ -92,6 +107,82 @@ const PLANNER_HINT = {
     bestiary: 'Combat simulator: Bestiary plan',
 };
 
+/** Events that change readiness (stock, levels, prices, pricing mode) but not the checklist itself */
+const READINESS_EVENTS = [
+    'items_updated',
+    'skills_updated',
+    'market_item_order_books_updated',
+    'market_item_values_updated',
+    'setting_updated',
+];
+
+/** Readiness redraws are coalesced: an inventory update lands with every finished action */
+const READINESS_REDRAW_MS = 1000;
+
+const skillName = (clientData, skillHrid) => clientData?.skillDetailMap?.[skillHrid]?.name || nameFromHrid(skillHrid);
+const itemName = (clientData, itemHrid) => clientData?.itemDetailMap?.[itemHrid]?.name || nameFromHrid(itemHrid);
+
+/**
+ * The readiness hint for a resolved row.
+ * @param {Object} res - Resolution
+ * @param {Object} ready - From `readiness`
+ * @param {Object|null} clientData
+ * @param {number|null} ownCombatLevel
+ * @returns {string}
+ */
+export function readinessText(res, ready, clientData, ownCombatLevel) {
+    const parts = [];
+    const lv = ready.level;
+    if (res.kind === 'combat') {
+        if (res.tier > 0) parts.push(`T${res.tier}`);
+        if (lv && lv.met === true) parts.push('level met');
+        else if (lv && lv.met === false) parts.push(`needs Lv ${lv.need} (you ${lv.have})`);
+        else {
+            if (Number.isFinite(ownCombatLevel)) parts.push(`your Combat Lv ${ownCombatLevel}`);
+            if (res.monsterLevel) parts.push(`monster Lv ${res.monsterLevel}`);
+            if (!Number.isFinite(ownCombatLevel) && !res.monsterLevel) parts.push('level unknown');
+        }
+        return parts.join(' · ');
+    }
+
+    if (lv?.met === true) parts.push('level met');
+    else if (lv?.met === false) parts.push(`needs ${skillName(clientData, lv.skillHrid)} ${lv.need} (you ${lv.have})`);
+    else parts.push('level unknown');
+
+    if (res.kind === 'equip') {
+        if (ready.owned === true) parts.push(`in inventory: ${itemName(clientData, ready.ownedHrid)}`);
+        else if (ready.owned === null) parts.push('inventory not loaded');
+        else if (ready.buyHrid)
+            parts.push(`cheapest: ${itemName(clientData, ready.buyHrid)} ~${formatKMB(ready.cost)}`);
+        else if (ready.unpriced.length > 0) parts.push('not owned, no price for any');
+        else parts.push('not owned');
+        return parts.join(' · ');
+    }
+
+    if (ready.owned === true) parts.push('materials owned');
+    else if (ready.owned === null) parts.push('inventory not loaded');
+    else if (Number.isFinite(ready.cost)) parts.push(`buy ~${formatKMB(ready.cost)}`);
+    else if (ready.unpriced.length > 0) {
+        const names = ready.unpriced.map((hrid) => itemName(clientData, hrid)).join(', ');
+        parts.push(
+            ready.partialCost > 0 ? `buy ≥ ~${formatKMB(ready.partialCost)}, unpriced: ${names}` : `unpriced: ${names}`
+        );
+    } else parts.push(`missing ${ready.shortfall.length} input${ready.shortfall.length === 1 ? '' : 's'}`);
+    return parts.join(' · ');
+}
+
+/**
+ * Whether a resolved row gets a Go button: every kind does, except an equip row with nothing to buy
+ * (already owned, unpriced everywhere, or an Iron Cow character).
+ * @param {Object} res
+ * @param {Object|null} ready
+ * @returns {boolean}
+ */
+export function hasGoButton(res, ready) {
+    if (res.kind !== 'equip') return true;
+    return Boolean(ready?.buyHrid);
+}
+
 class AchievementFinisher {
     constructor() {
         this.isInitialized = false;
@@ -99,6 +190,15 @@ class AchievementFinisher {
         this.handlers = [];
         this.collapsed = true;
         this.openTiers = new Set();
+        this.timers = createTimerRegistry();
+        /** achievement hrid → resolution (or null), for the client data in `resolutionSource` */
+        this.resolutions = new Map();
+        this.resolutionSource = null;
+        /** `${characterId}|${achievement hrid}` → {version, value} */
+        this.readinessCache = new Map();
+        this.readinessVersion = 0;
+        this.readinessRedrawPending = false;
+        this.marketListener = null;
     }
 
     initialize() {
@@ -121,9 +221,21 @@ class AchievementFinisher {
             this.handlers.push([event, redraw]);
         }
         // A character leaving: its checklist must not stay on screen for the next one
-        const clear = () => this.removePanel();
+        const clear = () => {
+            this.readinessCache.clear();
+            this.readinessVersion += 1;
+            this.removePanel();
+        };
         dataManager.on('character_switching', clear);
         this.handlers.push(['character_switching', clear]);
+
+        const stale = () => this.readinessChanged();
+        for (const event of READINESS_EVENTS) {
+            dataManager.on(event, stale);
+            this.handlers.push([event, stale]);
+        }
+        this.marketListener = stale;
+        marketAPI.on?.(stale);
 
         this.mount();
     }
@@ -133,10 +245,141 @@ class AchievementFinisher {
         this.unregisterHandlers = [];
         for (const [event, fn] of this.handlers) dataManager.off(event, fn);
         this.handlers = [];
+        if (this.marketListener) marketAPI.off?.(this.marketListener);
+        this.marketListener = null;
+        this.timers.clearAll();
+        this.readinessRedrawPending = false;
         this.removePanel();
         this.collapsed = true;
         this.openTiers = new Set();
+        this.resolutions = new Map();
+        this.resolutionSource = null;
+        this.readinessCache = new Map();
         this.isInitialized = false;
+    }
+
+    /** Stock, levels or prices moved: readiness is stale, and an open tier redraws once shortly after */
+    readinessChanged() {
+        if (!this.isInitialized) return;
+        this.readinessVersion += 1;
+        if (this.collapsed || this.openTiers.size === 0 || this.readinessRedrawPending) return;
+        this.readinessRedrawPending = true;
+        this.timers.scheduleTimeout(() => {
+            this.readinessRedrawPending = false;
+            this.refresh();
+        }, READINESS_REDRAW_MS);
+    }
+
+    /**
+     * The resolution of one achievement, cached for as long as the client data is the same object.
+     * @param {string} hrid
+     * @param {Object|null} clientData
+     * @returns {Object|null}
+     */
+    resolutionFor(hrid, clientData) {
+        if (clientData !== this.resolutionSource) {
+            this.resolutions = new Map();
+            this.resolutionSource = clientData;
+        }
+        if (!this.resolutions.has(hrid)) {
+            let res = null;
+            try {
+                res = resolveAchievement(clientData?.achievementDetailMap?.[hrid], {
+                    actionDetailMap: clientData?.actionDetailMap,
+                    itemDetailMap: clientData?.itemDetailMap,
+                    combatMonsterDetailMap: clientData?.combatMonsterDetailMap,
+                });
+            } catch (error) {
+                console.error('[AchievementFinisher] Resolving failed for', hrid, error);
+            }
+            this.resolutions.set(hrid, res);
+        }
+        return this.resolutions.get(hrid);
+    }
+
+    /** What readiness reads, gathered once per render */
+    readinessContext() {
+        const skills = dataManager.getSkills?.() ?? null;
+        const skillLevels = skills ? new Map(skills.map((skill) => [skill.skillHrid, skill.level])) : null;
+        let ownCombat = null;
+        if (skills) {
+            const byName = {};
+            for (const skill of skills) byName[String(skill.skillHrid).split('/').pop()] = skill.level;
+            ownCombat = combatLevel(byName).level;
+        }
+        return {
+            skillLevels,
+            combatLevel: ownCombat,
+            inventory: dataManager.getInventory?.() ?? null,
+            ironCow: isIronCowCharacter(),
+            buyPrice: (itemHrid) => {
+                const price = getItemPriceInfo(itemHrid, { context: 'profit', side: 'buy', marketQuote: true }).price;
+                return Number.isFinite(price) ? price : null;
+            },
+        };
+    }
+
+    /**
+     * Readiness of one resolved achievement, cached per character until stock, levels or prices move.
+     * @param {string} hrid
+     * @param {Object} res
+     * @param {() => Object} getContext
+     * @returns {Object|null}
+     */
+    readinessFor(hrid, res, getContext) {
+        const key = `${dataManager.getCurrentCharacterId?.() ?? ''}|${hrid}`;
+        const hit = this.readinessCache.get(key);
+        if (hit && hit.version === this.readinessVersion) return hit.value;
+        let value = null;
+        try {
+            value = readiness(res, getContext());
+        } catch (error) {
+            console.error('[AchievementFinisher] Readiness failed for', hrid, error);
+        }
+        this.readinessCache.set(key, { version: this.readinessVersion, value });
+        return value;
+    }
+
+    /**
+     * Open the game where the player can do a resolved achievement. Navigation only: the
+     * player presses the game's own Start, Add Queue or Buy.
+     * @param {Object} res
+     * @param {Object|null} ready
+     */
+    go(res, ready) {
+        try {
+            switch (res.kind) {
+                case 'production':
+                    navigateToAction(res.actionHrid);
+                    break;
+                case 'alchemy': {
+                    const characterId = dataManager.getCurrentCharacterId?.();
+                    const opened = openAlchemyOnItem(getGameObject(), {
+                        itemHrid: res.itemHrid,
+                        actionType: res.alchemyType,
+                    });
+                    if (!opened) break;
+                    selectAlchemyTab(
+                        res.alchemyType,
+                        this.timers.scheduleTimeout,
+                        () => this.isInitialized && dataManager.getCurrentCharacterId?.() === characterId
+                    ).catch((error) => console.error('[AchievementFinisher] Alchemy tab failed:', error));
+                    break;
+                }
+                case 'combat':
+                    openCombatZoneAtTier(res.actionHrid, res.tier).catch((error) =>
+                        console.error('[AchievementFinisher] Opening the zone failed:', error)
+                    );
+                    break;
+                case 'equip':
+                    if (ready?.buyHrid) navigateToMarketplace(ready.buyHrid, 0);
+                    break;
+                default:
+                    break;
+            }
+        } catch (error) {
+            console.error('[AchievementFinisher] Navigation failed:', error);
+        }
     }
 
     cleanup() {
@@ -212,17 +455,18 @@ class AchievementFinisher {
             return;
         }
 
-        for (const tier of result.tiers) root.appendChild(this.renderTier(root, tier));
+        const view = { clientData, context: null };
+        for (const tier of result.tiers) root.appendChild(this.renderTier(root, tier, view));
         root.appendChild(
             el(
                 'div',
                 'margin-top:6px;color:#888;',
-                'The game data lists each achievement as done or not done; it does not give progress inside one, so none is shown.'
+                'The game data lists each achievement as done or not done, not progress inside one. Go only opens the screen; nothing is started or bought.'
             )
         );
     }
 
-    renderTier(root, tier) {
+    renderTier(root, tier, view = { clientData: null, context: null }) {
         const block = el('div', 'margin-top:6px;');
         block.className = `${PANEL_CLASS}-tier`;
         const open = this.openTiers.has(tier.tierHrid);
@@ -248,16 +492,46 @@ class AchievementFinisher {
         if (tier.complete) {
             block.appendChild(el('div', 'margin-left:14px;color:#6c6;', 'Every achievement in this tier is done.'));
         }
-        for (const item of tier.remaining) {
+        // Readiness is read only for an open tier, from one context per render
+        const getContext = () => (view.context ||= this.readinessContext());
+        const rows = tier.remaining.map((item) => {
+            if (item.planner) return { item, res: null, readiness: null };
+            const res = this.resolutionFor(item.hrid, view.clientData);
+            return { item, res, readiness: res ? this.readinessFor(item.hrid, res, getContext) : null };
+        });
+        for (const { item, res, readiness: ready } of sortRemaining(rows)) {
             const row = el('div', 'margin-left:14px;');
             row.className = `${PANEL_CLASS}-item`;
             let text = `○ ${item.name}`;
             if (item.progress) text += ` — ${Math.floor(item.progress.current)} / ${item.progress.target} points`;
             else if (item.planner) text += ' — progress not loaded (open that tab once)';
-            else text += ' — progress unavailable';
+            else if (item.description) text += ` — ${item.description}`;
             row.appendChild(el('span', '', text));
             if (item.planner) {
                 row.appendChild(el('span', 'margin-left:6px;color:#8ab;', `[${PLANNER_HINT[item.planner]}]`));
+            }
+            if (res && ready) {
+                const hint = el(
+                    'span',
+                    'margin-left:6px;color:#aaa;',
+                    `[${readinessText(res, ready, view.clientData, getContext().combatLevel)}]`
+                );
+                hint.className = `${PANEL_CLASS}-ready`;
+                row.appendChild(hint);
+                if (hasGoButton(res, ready)) {
+                    const button = el(
+                        'button',
+                        'margin-left:6px;padding:0 6px;font-size:11px;cursor:pointer;background:#2a3a4a;color:#ddd;border:1px solid #567;border-radius:3px;',
+                        'Go'
+                    );
+                    button.type = 'button';
+                    button.className = `${PANEL_CLASS}-go`;
+                    button.addEventListener('click', (event) => {
+                        event.stopPropagation();
+                        this.go(res, ready);
+                    });
+                    row.appendChild(button);
+                }
             }
             block.appendChild(row);
         }
