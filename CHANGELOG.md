@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - One-off achievements now show the game's own description instead of "progress unavailable", with a readiness hint (level met, materials owned or a rough buy cost, unpriced inputs flagged) and the easiest ones sorted first.
 - A Go button opens the right screen for each one it can resolve — the cooking, crafting or gathering action, the alchemy tab for the item, the monster's combat zone at its tier, a dungeon, or the marketplace for the cheapest matching weapon. It only navigates; you press Start yourself.
 
+### Combat task Go opens the Zone estimate's zone
+
+- When a combat task's estimate is in Zone mode and the game's Go lands on the monster's own zone, Toolasha now opens the zone the estimate picked, at its tier, and fills the fight count. Solo mode keeps the game's landing.
+
 ### Lighter storage traffic in combat
 
 - Combat makes far fewer database calls, which matters most on phones: the Party Loot panel stops re-reading its history every 5 seconds, unchanged records are not rewritten, and live graphs save every 10 seconds.

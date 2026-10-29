@@ -10,9 +10,14 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
-import { findActionInput, PANEL_SELECTOR } from '../../utils/action-panel-helper.js';
+import { findActionInput, resolveDetailPanel, PANEL_SELECTOR } from '../../utils/action-panel-helper.js';
 import { padFightCount } from '../../utils/fight-confidence.js';
-import { ensureZoneAndTier, characterIdentityChanged, runZoneOpenExclusive } from '../../utils/combat-zone-open.js';
+import {
+    ensureZoneAndTier,
+    characterIdentityChanged,
+    runZoneOpenExclusive,
+    openCombatZoneAtTierSequence,
+} from '../../utils/combat-zone-open.js';
 import { calculateTaskProfit, calculateTaskRewardValue, formatTokenFigure } from './task-profit-calculator.js';
 import { computeZoneBottleneck, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
 import {
@@ -1085,12 +1090,6 @@ class TaskProfitDisplay {
 
         const panel = document.querySelector(PANEL_SELECTOR);
         const tier = Number.isFinite(estimate.tier) ? estimate.tier : GO_ESTIMATE_TIER;
-        const tierConfirmed = await ensureZoneAndTier(panel, estimate.zoneHrid, tier, characterId);
-        if (!tierConfirmed) return;
-        if (characterIdentityChanged(characterId)) return;
-
-        const inputEl = findActionInput(panel);
-        if (!inputEl) return;
 
         const bufferDefault = getSettingDefinition('taskCombatGoBuffer')?.default ?? 5;
         const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
@@ -1133,6 +1132,30 @@ class TaskProfitDisplay {
             // so nobody's existing padding shrinks.
             floorPercent: deterministic ? 0 : bufferPercent,
         });
+        // Zone mode can pick a zone the game's own Go did not open: Go opens
+        // the monster's own zone, while the estimate simulated the zone most
+        // of the active tasks share. When the panel Go landed on is a
+        // different zone, open the picked one at the estimate's tier and fill
+        // there. Solo mode keeps the landed zone's behavior below.
+        if (estimate.mode === 'zone' && panel && resolveDetailPanel(panel).actionHrid !== estimate.zoneHrid) {
+            // Already inside runZoneOpenExclusive, so the unqueued sequence.
+            const result = await openCombatZoneAtTierSequence(estimate.zoneHrid, tier, { count: fights }, characterId);
+            if (!result.filled && !characterIdentityChanged(characterId)) {
+                console.warn(
+                    '[TaskProfitDisplay] Go could not open the estimate zone; leaving the game landing as is:',
+                    estimate.zoneHrid,
+                    result
+                );
+            }
+            return;
+        }
+
+        const tierConfirmed = await ensureZoneAndTier(panel, estimate.zoneHrid, tier, characterId);
+        if (!tierConfirmed) return;
+        if (characterIdentityChanged(characterId)) return;
+
+        const inputEl = findActionInput(panel);
+        if (!inputEl) return;
         setReactInputValue(inputEl, String(fights), { focus: false });
     }
 
@@ -1846,7 +1869,7 @@ class TaskProfitDisplay {
             // on them.
             const liveTaskData = this._liveTaskData(cardTaskNode, taskData) || taskData;
             const figures = this._deriveCombatEstimateFigures(simResult, monsterHrid, SIM_HOURS, liveTaskData);
-            if (cardTaskNode) this._storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, estimateTier, figures);
+            if (cardTaskNode) this._storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, estimateTier, figures, mode);
 
             const playerHrid = players[0]?.hrid || 'player1';
             const { netPerHour, dropEntries, consumableEntries, unpricedDrops, unpricedConsumables } =
@@ -1958,9 +1981,10 @@ class TaskProfitDisplay {
      * this again, so Go never fills the count of a task that has since moved.
      * @private
      */
-    _storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, tier, figures) {
+    _storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, tier, figures, mode) {
         this._cardEstimates.set(cardTaskNode, {
             zoneHrid,
+            mode,
             predictedFights: figures.predictedFights,
             monsterHrid,
             tier,
@@ -2076,7 +2100,14 @@ class TaskProfitDisplay {
                 cached.simHours,
                 taskData
             );
-            this._storeCardEstimate(taskNode, cached.zoneHrid, cached.monsterHrid, cached.estimateTier, figures);
+            this._storeCardEstimate(
+                taskNode,
+                cached.zoneHrid,
+                cached.monsterHrid,
+                cached.estimateTier,
+                figures,
+                cached.mode
+            );
 
             const wasOpen = container.querySelector('.mwi-task-profit-breakdown')?.style.display === 'block' || false;
             this._drawCachedCombatEstimate(container, cached, taskData, figures);
