@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Each unfinished achievement card now shows whether you can do it (level met, materials owned, or a rough buy cost with the coin icon), with a Go button that opens the right screen and a Missing Mats button that opens the marketplace on what you lack. Go and Missing Mats only navigate.
 - A "Toolasha hints" checkbox beside "Show Incomplete Only" turns them on or off; the separate finisher panel is gone.
 
+### Sync gists keep their server through older builds
+
+- A sync gist now also records its game server in a small marker file that older Toolasha versions leave alone, so a push from an un-updated device can no longer strip the tag and let the other server claim the gist.
+
 ### Dungeon tokens in crates valued after tax
 
 - Crate and chest values now count dungeon tokens net of the market tax, matching the loot log and the Dungeon ROI board; the personal-use (no sell tax) view still counts them whole.

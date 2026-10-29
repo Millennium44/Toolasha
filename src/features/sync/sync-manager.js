@@ -1185,7 +1185,8 @@ class SyncManager {
                 chunks,
                 0,
                 null,
-                { unattended: true }
+                // The newest revision's resolved server (an old build's push keeps the marker but not the manifest's word)
+                { unattended: true, markerServer: newestServer }
             );
             console.warn("[Sync] Put back the other devices' pushes this device replaced, folded together.");
             return true;
@@ -1222,6 +1223,8 @@ class SyncManager {
             const { basedOn: _basedOn, ...manifest } = revision.manifest;
             await writeSyncGist(token, gistId, { ...manifest, chunks: chunks.length }, chunks, 0, null, {
                 unattended: true,
+                // The revision's resolved server (marker, manifest, description), not only its manifest's word
+                markerServer: gistServerOf(revision),
             });
             console.warn("[Sync] Put back another device's push that this device replaced and could not merge.");
         } catch (error) {
