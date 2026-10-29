@@ -735,4 +735,34 @@ describe('your own auras', () => {
             'Solo (you: Fierce Aura 20)'
         );
     });
+
+    test('with no teammate that can join, your aura solo rows are still planned beside the baseline', () => {
+        const ironCow = { ...mate('a', 'Ann', dto(81)), gameMode: 'ironcow' };
+        for (const [roster, selfMode] of [
+            [[], null],
+            [[ironCow], 'market'],
+        ]) {
+            const plan = planSweep({ zones: [ZONE], roster, gameData, selfMode, selfAuras: owned, selfDto: dto(90) });
+            expect(plan.tasks.map((t) => partyLabel(t.comp))).toEqual([
+                'Solo',
+                'Solo (you: Fierce Aura 20)',
+                'Solo (you: Mystic Aura 5)',
+            ]);
+            expect(plan.selfAuraCount).toBe(2);
+            expect(plan.perZone[0].count).toBe(3);
+        }
+        // Without auras the old behavior stays: nothing to run
+        expect(planSweep({ zones: [ZONE], roster: [], gameData }).tasks).toEqual([]);
+    });
+
+    test('a refused plan still reports how many aura variants it counted', () => {
+        const many = Array.from({ length: 12 }, (_, i) => mate(`t${i}`, `T${i}`, dto(60 + i)));
+        const auras = Array.from({ length: 400 }, (_, i) => ({
+            hrid: i < 200 ? '/abilities/fierce_aura' : '/abilities/mystic_aura',
+            level: (i % 200) + 1,
+        }));
+        const plan = planSweep({ zones: [ZONE], roster: many, gameData, selfAuras: auras, selfDto: dto(90) });
+        expect(plan.refused).toBeTruthy();
+        expect(plan.selfAuraCount).toBe(400);
+    });
 });

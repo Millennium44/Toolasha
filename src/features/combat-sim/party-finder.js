@@ -368,7 +368,15 @@ export function planSweep({
         perZone.push({ zone, zoneKey: zoneTierKey(zone), maxMembers, count: 0, note: null });
     }
     if (bound > MAX_QUICK_RUNS * 20) {
-        return { tasks: [], perZone, total: bound, refused: tooManyText(bound), notes, excluded };
+        return {
+            tasks: [],
+            perZone,
+            total: bound,
+            refused: tooManyText(bound),
+            selfAuraCount: selfVariants.length - 1,
+            notes,
+            excluded,
+        };
     }
 
     const baselines = [];
@@ -393,7 +401,8 @@ export function planSweep({
                 : excluded.length && excluded.length === (Array.isArray(roster) ? roster.length : 0)
                   ? "no teammates of this character's mode"
                   : 'no teammates to try';
-            continue;
+            // Your aura variants alone are still answers: whether an aura helps you solo
+            if (selfVariants.length === 1) continue;
         }
         entry.count = 0;
         for (const comp of comps) {
@@ -422,6 +431,7 @@ export function planSweep({
         perZone,
         total: tasks.length,
         refused: tasks.length > MAX_QUICK_RUNS ? tooManyText(tasks.length) : null,
+        selfAuraCount: selfVariants.length - 1,
         notes,
         excluded,
     };

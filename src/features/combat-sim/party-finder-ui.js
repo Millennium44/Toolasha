@@ -55,6 +55,7 @@ import {
     teammateModeOf,
     teammateModeFit,
     modeMismatchReason,
+    buildFingerprint,
 } from './party-roster.js';
 import {
     planSweep,
@@ -1185,7 +1186,17 @@ export class PartyFinderTab {
                 .map((a) => ({ hrid: a.abilityHrid, level: Math.max(1, Math.floor(Number(a.level)) || 1) }));
             return { ...none, auras, dto: self.dto, self };
         }
-        return { ...none, auras: this._selfAuraPicks.get(key) || [], dto: self.dto, manual: true, self };
+        // Picks belong to the build, not the picker slot: another build loaded into the same editor slot, or
+        // another character, starts from none
+        const pickKey = buildFingerprint(self.dto);
+        return {
+            ...none,
+            key: pickKey,
+            auras: this._selfAuraPicks.get(pickKey) || [],
+            dto: self.dto,
+            manual: true,
+            self,
+        };
     }
 
     /** The switch, what it will try, and for a player not the live character the by-hand aura list. @private */
@@ -1536,12 +1547,10 @@ export class PartyFinderTab {
         }
         if (plan.skipped.length) notes.push(`Left out, not runnable here: ${plan.skipped.join('; ')}.`);
         for (const note of plan.notes || []) notes.push(`${note}.`);
-        if (this._trySelfAuras) {
-            const aura = plan.tasks.find((t) => t.comp.selfAura)?.comp.selfAura;
-            const variants = new Set(plan.tasks.map((t) => t.comp.selfAura?.hrid + ':' + t.comp.selfAura?.level));
+        if (this._trySelfAuras && !plan.refused) {
             notes.push(
-                aura
-                    ? `Trying ${variants.size - 1} aura variant${variants.size === 2 ? '' : 's'} of you beside as worn.`
+                plan.selfAuraCount
+                    ? `Trying ${plan.selfAuraCount} aura variant${plan.selfAuraCount === 1 ? '' : 's'} of you beside as worn.`
                     : 'Also try my auras: no aura of yours to try here, so you are only tried as worn.'
             );
         }
