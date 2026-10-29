@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Achievement tier finisher: what to do, and a Go button
+
+- One-off achievements now show the game's own description instead of "progress unavailable", with a readiness hint (level met, materials owned or a rough buy cost, unpriced inputs flagged) and the easiest ones sorted first.
+- A Go button opens the right screen for each one it can resolve — the cooking, crafting or gathering action, the alchemy tab for the item, the monster's combat zone at its tier, a dungeon, or the marketplace for the cheapest matching weapon. It only navigates; you press Start yourself.
+
 ### Sync: one gist per game server
 
 - The live game and the test server no longer adopt each other's sync gist. Discovery only picks a gist tagged for the same server, and automatic syncs refuse the other server's gist instead of failing on its passphrase.
