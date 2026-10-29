@@ -99,13 +99,13 @@ function currentPoints() {
 
 /**
  * The reward line for a tier.
- * @param {{complete: boolean, reward: {label: string, inferred: boolean}|null}} tier
+ * @param {{complete: boolean, reward: {label: string}|null}} tier
  * @returns {string}
  */
 export function rewardText(tier) {
     if (!tier.reward) return 'Reward: unknown';
     const lead = tier.complete ? 'Reward earned' : 'Reward on completion';
-    return `${lead}: ${tier.reward.label}${tier.reward.inferred ? ' (inferred, not verified)' : ''}`;
+    return `${lead}: ${tier.reward.label}`;
 }
 
 const PLANNER_HINT = {

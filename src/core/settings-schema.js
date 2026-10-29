@@ -4990,7 +4990,7 @@ export const settingsGroups = {
                 label: 'Achievement tier finisher: per-tier checklist and reward on the Achievements page',
                 type: 'checkbox',
                 default: true,
-                help: 'A collapsible panel on your own Achievements page listing, for each tier, which achievements are done and which are left before the tier reward. Rewards other than the three combat tiers are marked as inferred. The game data gives done or not done only, so no progress inside an achievement is shown (except the Collection and Bestiary point totals). Each one-off achievement shows the game description; when it names an action, combat zone or item it also shows whether your level is met and what the inputs would cost to buy, sorts the easiest first, and gets a Go button that only opens the screen (it never starts, queues or buys anything).',
+                help: 'A collapsible panel on your own Achievements page listing, for each tier, which achievements are done and which are left before the tier reward. Tier rewards match the in-game Achievement Buffs popup. The game data gives done or not done only, so no progress inside an achievement is shown (except the Collection and Bestiary point totals). Each one-off achievement shows the game description; when it names an action, combat zone or item it also shows whether your level is met and what the inputs would cost to buy, sorts the easiest first, and gets a Go button that only opens the screen (it never starts, queues or buys anything).',
             },
             collectionOptimizer: {
                 id: 'collectionOptimizer',

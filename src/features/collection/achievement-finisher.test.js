@@ -196,12 +196,11 @@ describe('buildTierChecklists', () => {
         expect(buildTierChecklists({ detailMap: {}, achievements: [] }).state).toBe('unknown');
     });
 
-    test('inferred rewards are marked inferred, combat tiers are not', () => {
+    test('every tier reward is shown as fact, with no inferred mark', () => {
         const r = buildTierChecklists({ detailMap: DETAIL, achievements: [] });
-        expect(tierOf(r, 'beginner').reward.inferred).toBe(true);
-        expect(rewardText(tierOf(r, 'beginner'))).toContain('inferred, not verified');
-        expect(tierOf(r, 'elite').reward.inferred).toBe(false);
-        expect(rewardText(tierOf(r, 'elite'))).not.toContain('inferred');
+        expect(tierOf(r, 'beginner').reward).toEqual({ label: 'Gathering +2%' });
+        expect(rewardText(tierOf(r, 'beginner'))).toBe('Reward on completion: Gathering +2%');
+        expect(rewardText(tierOf(r, 'elite'))).toBe('Reward on completion: Damage +2%');
     });
 
     test('a point-total achievement carries its planner and progress; unloaded totals stay unknown', () => {
