@@ -49,6 +49,23 @@ const storageMock = vi.hoisted(() => {
             return true;
         }),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+        flushAll: vi.fn(async () => {}),
+        // One readwrite transaction: the read and the write with nothing between them
+        update: vi.fn(async (key, mutate, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            await Promise.resolve();
+            const map = storeFor(store);
+            const found = map.has(key) && map.get(key) != null;
+            const next = mutate(found ? structuredClone(map.get(key)) : undefined, found);
+            if (next === undefined) return { written: false, value: map.get(key) };
+            map.set(key, structuredClone(next));
+            return { written: true, value: next };
+        }),
+        teardownListeners: [],
+        onBeforeTeardown: vi.fn((listener) => {
+            storageMock.teardownListeners.push(listener);
+            return () => {};
+        }),
     };
 });
 
@@ -117,6 +134,83 @@ beforeEach(() => {
     xpTracker.characterId = null;
     game.skills = [{ skillHrid: '/skills/milking', experience: 12_000, level: 30 }];
     game.month = null;
+});
+
+describe('the XP history is written atomically and coalesced', () => {
+    const writes = () => storageMock.update.mock.calls.filter(([key]) => key === KEY).length;
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('many action_completed inside the delay make one storage write', async () => {
+        vi.useFakeTimers();
+        await xpTracker._onCharacterInit(init('char1', 2 * HOUR, 20));
+        await xpTracker.history.flushed();
+        storageMock.update.mockClear();
+
+        for (let i = 1; i <= 30; i++) xpTracker._onActionCompleted(action(2 * HOUR + i * 1000, 20 + i));
+        await vi.advanceTimersByTimeAsync(2500);
+        expect(writes()).toBe(0);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(writes()).toBe(1);
+        expect(stored().milking.at(-1).xp).toBe(50);
+    });
+
+    test('page close lands the samples still waiting', async () => {
+        vi.useFakeTimers();
+        await xpTracker._onCharacterInit(init('char1', 2 * HOUR, 20));
+        await xpTracker.history.flushed();
+        storageMock.update.mockClear();
+
+        xpTracker._onActionCompleted(action(3 * HOUR, 30));
+        expect(writes()).toBe(0);
+        for (const listener of storageMock.teardownListeners) listener('pagehide');
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(writes()).toBe(1);
+        expect(stored().milking.map((s) => s.xp)).toEqual([20, 30]);
+    });
+
+    test('a character switch lands the departing character’s waiting samples under its own key', async () => {
+        vi.useFakeTimers();
+        await xpTracker._onCharacterInit(init('char1', 2 * HOUR, 20));
+        await xpTracker.history.flushed();
+        xpTracker._onActionCompleted(action(3 * HOUR, 30));
+
+        game.characterId = 'char2';
+        await xpTracker._onCharacterInit(init('char2', 4 * HOUR, 9));
+        await vi.advanceTimersByTimeAsync(5000);
+
+        expect(stored().milking.map((s) => s.xp)).toEqual([20, 30]);
+        expect(
+            storageMock
+                .storeFor('xpHistory')
+                .get('xpHistory_char2')
+                .milking.map((s) => s.xp)
+        ).toEqual([9]);
+    });
+
+    test('a foreign write between the action and the delayed save is folded, not overwritten', async () => {
+        vi.useFakeTimers();
+        await xpTracker._onCharacterInit(init('char1', 2 * HOUR, 20));
+        await xpTracker.history.flushed();
+
+        xpTracker._onActionCompleted(action(4 * HOUR, 40));
+        // Another tab (or a sync pull) commits while this save is still waiting
+        storageMock.storeFor('xpHistory').set(KEY, {
+            milking: [
+                { t: 2 * HOUR, xp: 20 },
+                { t: 3 * HOUR, xp: 30 },
+            ],
+            foraging: [{ t: 3 * HOUR, xp: 5 }],
+        });
+        await vi.advanceTimersByTimeAsync(3000);
+
+        expect(stored().milking.map((s) => s.xp)).toEqual([20, 30, 40]);
+        expect(stored().foraging.map((s) => s.xp)).toEqual([5]);
+    });
 });
 
 describe('the XP history survives', () => {
