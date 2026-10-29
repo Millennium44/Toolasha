@@ -27,6 +27,7 @@ import {
 } from './labyrinth-uptime-harness.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import { abilitiesPart } from './labyrinth-fingerprint.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import { setSimConfigSource } from './labyrinth-accuracy-export.js';
 import { predictedFromSim, compareLab, MIN_LAB_FIGHTS } from './labyrinth-replay-check.js';
@@ -488,7 +489,29 @@ export const simCacheMethods = {
                 parts.push(`${location}=${item.itemHrid}+${item.enhancementLevel || 0}`);
             }
         }
-        return `:worn=${parts.sort().join(',')}`;
+        return `:worn=${parts.sort().join(',')}${this._fallbackAbilitiesPart()}`;
+    },
+
+    /**
+     * The equipped abilities and their combat triggers, for a room that fights
+     * with the worn kit.
+     *
+     * Read off `buildPlayerDTO` — the same builder `buildLabyrinthPlayerDTO`
+     * starts from, and which a no-loadout room's sim keeps untouched — so the
+     * key hashes exactly what the sim reads: hrid, level, trigger list, in slot
+     * order (the first slot whose triggers pass fires). Food and drink are left
+     * out on purpose: the labyrinth allows neither.
+     * @returns {string} '' when the build cannot be read yet, else ':ab=<hash>'
+     */
+    _fallbackAbilitiesPart() {
+        try {
+            if (!dataManager.characterData || !dataManager.getInitClientData?.()) return '';
+            const dto = buildPlayerDTO();
+            if (!dto || !Array.isArray(dto.abilities)) return '';
+            return `:ab=${this._hashString(abilitiesPart({ equipped: dto.abilities }))}`;
+        } catch {
+            return '';
+        }
     },
 
     /**
@@ -743,6 +766,7 @@ export const simCacheMethods = {
             clearTimeout(this._simRetryTimer);
             this._simRetryTimer = null;
         }
+        this._simRetryEntries = null;
         // The full teardown, not the warm-pool-preserving one: this is the path
         // a character switch takes (labyrinth-clear-rate's teardown calls it),
         // and a worker kept warm across a switch holds the departing
@@ -1525,9 +1549,16 @@ export const simCacheMethods = {
 
     async processSimQueue() {
         if (this.simRunning) return;
+        // A search owns the sim worker and the cancellation scope. Rows a table
+        // rerender queues meanwhile wait for its end (_resumePreemptedSims), and
+        // starting here would also reopen a Stop the player just pressed
+        if (this.recommendRunning) return;
         this.simRunning = true;
         this.beginSimBatch();
         const epoch = this.simEpoch();
+        // Show Stop estimates now, not only once the controls are next drawn:
+        // a queue resumed after a search starts after its last redraw
+        this.refreshAutomationRunningState?.();
         // The Automation tab's own precision and cap, not the floor map's —
         // this queue is what fills the per-room table's cached badges
         const simOptions = this.automationSimOptions();
@@ -1536,9 +1567,14 @@ export const simCacheMethods = {
         try {
             while (this.simQueue.length > 0) {
                 if (this.simCancelled() || this.simEpoch() !== epoch) break;
-                const { monsterHrid, roomLevel, badge, attempt = 0 } = this.simQueue.shift();
+                const entry = this.simQueue.shift();
+                const { monsterHrid, roomLevel, badge, attempt = 0 } = entry;
                 if (!badge.isConnected) continue;
+                // Remembered so a search that preempts the queue can put this
+                // room back: it is in neither the queue nor the retry list
+                this._simInFlight = entry;
                 const result = await this.computeCombatClear(monsterHrid, roomLevel, simOptions);
+                if (this._simInFlight === entry) this._simInFlight = null;
                 if (result?.cancelled || this.simEpoch() !== epoch) break;
                 if (!badge.isConnected) continue;
 
@@ -1566,11 +1602,17 @@ export const simCacheMethods = {
             // cancelled — a queue restarting itself seconds after teardown.
             if (this.simEpoch() === epoch) {
                 this.simRunning = false;
+                this._simInFlight = null;
                 // The queue draining is the end of a search; land its results now
                 // rather than a flush window later
                 this._flushCombatCache();
                 this.refreshAutomationRunningState?.();
-                if (retry.length > 0 && !this.simCancelled()) this._scheduleSimRetry(retry);
+                if (retry.length > 0 && !this.simCancelled() && !this.recommendRunning) {
+                    this._scheduleSimRetry(retry);
+                } else if (retry.length > 0 && this.recommendRunning && this._preemptedSims) {
+                    // A search took over mid-queue: these rooms wait for its end
+                    this._preemptedSims.push(...retry);
+                }
             }
         }
     },
@@ -1584,8 +1626,10 @@ export const simCacheMethods = {
      */
     _scheduleSimRetry(entries) {
         if (this._simRetryTimer) clearTimeout(this._simRetryTimer);
+        this._simRetryEntries = entries;
         this._simRetryTimer = setTimeout(() => {
             this._simRetryTimer = null;
+            this._simRetryEntries = null;
             let queued = 0;
             for (const entry of entries) {
                 // A badge the table's own rerender discarded needs no answer
