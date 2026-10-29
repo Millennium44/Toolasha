@@ -1154,6 +1154,22 @@ export function peakFunds(steps) {
 }
 
 /**
+ * How far the effective level sits below the effective requirement for a rate, at a given skill level.
+ * Level efficiency is `max(0, effectiveLevel - effectiveRequirement)`, so an Action Level tea that raises
+ * the requirement past the boosted level (the start check truncates it, the efficiency does not) leaves the
+ * first levels of a climb buying no efficiency. Same quantity the action panel hands the calculator.
+ *
+ * @param {Object} rate - A measured rate (requiredLevel, actionLevelBonus, teaSkillLevelBonus)
+ * @param {number} skillLevel - The skill level the climb starts from
+ * @returns {number} Levels owed before level efficiency starts (0 or more)
+ */
+function levelEfficiencyDeficit(rate, skillLevel) {
+    const effectiveRequirement = num(rate.requiredLevel, 1) + num(rate.actionLevelBonus);
+    const effectiveLevel = skillLevel + num(rate.teaSkillLevelBonus);
+    return Math.max(0, effectiveRequirement - effectiveLevel);
+}
+
+/**
  * Plan "get this skill to level N".
  *
  * The action is chosen on experience per hour among what the level already
@@ -1227,7 +1243,8 @@ function planSkillGoal(goal, context, stepId = 'train') {
                 num(best.totalEfficiency),
                 num(best.actionTime),
                 num(best.xpPerAction),
-                table
+                table,
+                levelEfficiencyDeficit(best, level)
             );
             timeHours = num(progress.timeNeeded) / 3600;
             actionsNeeded = num(progress.actionsNeeded);

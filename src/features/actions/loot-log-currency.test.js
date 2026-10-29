@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     labyrinth: vi.fn(),
     task: vi.fn(),
     getItemPrice: vi.fn(),
+    guild: vi.fn(),
     ev: { isInitialized: true, initialize: vi.fn() },
 }));
 
@@ -28,6 +29,10 @@ vi.mock('../tasks/task-profit-calculator.js', () => ({
         !data || data.error || !Number.isFinite(data.tokenValue)
             ? null
             : tokens * data.tokenValue + tokens * (Number.isFinite(data.giftPerTaskPoint) ? data.giftPerTaskPoint : 0),
+}));
+vi.mock('../guild/guild-token-value.js', () => ({
+    explainGuildTokenValue: mocks.guild,
+    isGuildTokenHrid: (hrid) => /(?:^|\/)guild_token$/.test(String(hrid || '')),
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: mocks.getItemPrice }));
 vi.mock('../../utils/profit-helpers.js', () => ({
@@ -106,5 +111,21 @@ describe('resolveCurrencyValue', () => {
         expect(resolveCurrencyValue('/items/cowbell')).toBeNull();
         expect(resolveCurrencyValue('/items/milk')).toBeNull();
         expect(isNonMarketCurrency('/items/milk')).toBe(false);
+    });
+});
+
+describe('resolveCurrencyValue for guild tokens', () => {
+    test('values a guild token at its best credit exchange, per side', () => {
+        mocks.guild.mockImplementation((side) => ({ gold: side === 'bid' ? 800 : 1_000, assumed: false }));
+        expect(isNonMarketCurrency('/items/guild_token')).toBe(true);
+        expect(resolveCurrencyValue('/items/guild_token', 'ask')).toBe(1_000);
+        expect(resolveCurrencyValue('/items/guild_token', 'bid')).toBe(800);
+    });
+
+    test('an assumed rate or no rate is unpriced (null), never 0', () => {
+        mocks.guild.mockReturnValue({ gold: 1_000, assumed: true });
+        expect(resolveCurrencyValue('/items/guild_token', 'ask')).toBeNull();
+        mocks.guild.mockReturnValue({ gold: null, assumed: false });
+        expect(resolveCurrencyValue('/items/guild_token', 'ask')).toBeNull();
     });
 });

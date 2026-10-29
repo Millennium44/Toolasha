@@ -94,8 +94,8 @@ function defaultPriceBase(itemHrid) {
  *
  * Artisan tea reduces the materials a craft consumes; the game's own requirement
  * line shows the reduced figure (88.9 shards, not 100), and a craft estimate
- * priced at the raw recipe overstates the cost by the whole bonus. Coins are not
- * materials and are not reduced.
+ * priced at the raw recipe overstates the cost by the whole bonus. The coin fee is
+ * reduced the same way, as the profit calculator reduces every input row.
  *
  * @param {string} itemHrid - Refined item HRID
  * @param {Object} [options] - Price injection
@@ -126,8 +126,10 @@ export function computeRefinementCraftCost(itemHrid, options = {}) {
     for (const input of action.inputItems || []) {
         const count = input.count || 0;
         if (input.itemHrid === '/items/coin') {
-            cost += count;
-            if (count > 0) lines.push(`${formatLargeNumber(count)} coins`);
+            // Artisan Tea reduces the coin fee too (measured live), the same as profit-calculator
+            const fee = count * (1 - artisanBonus);
+            cost += fee;
+            if (fee > 0) lines.push(`${formatLargeNumber(Math.round(fee))} coins`);
             continue;
         }
         const price = priceMaterial(input.itemHrid);

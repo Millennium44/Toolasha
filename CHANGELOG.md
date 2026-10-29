@@ -11,6 +11,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - One-off achievements now show the game's own description instead of "progress unavailable", with a readiness hint (level met, materials owned or a rough buy cost, unpriced inputs flagged) and the easiest ones sorted first.
 - A Go button opens the right screen for each one it can resolve — the cooking, crafting or gathering action, the alchemy tab for the item, the monster's combat zone at its tier, a dungeon, or the marketplace for the cheapest matching weapon. It only navigates; you press Start yourself.
 
+### Leftover number fixes
+
+- The Dungeon ROI board reads drop quantity from the live battle, so chest value and ROI no longer read low with Combat Stats off; refined-item craft costs now apply Artisan Tea to the coin fee, as the game does.
+- The loot log values guild tokens at their exchange rate instead of 0, Gold Sources no longer counts a crafting bill with unpriced inputs as a full cost, and the goal planner stops crediting level efficiency below a tea-raised requirement.
+- XP history saves are batched instead of written every action, a reconnect keeps task claims a full disk could not store, and the guild trial ledger trims old weekly records to the Last N cycles window.
+
 ### Mobile layout improvements
 
 - The Pinned sidebar entry hides its label when the native sidebar is collapsed, matching the other navigation icons.

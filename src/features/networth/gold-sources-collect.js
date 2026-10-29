@@ -44,7 +44,7 @@ import chestOpeningRecorder from './chest-opening-recorder.js';
 import combatLootRecorder from './combat-loot-recorder.js';
 import itemFlowRecorder from './item-flow-recorder.js';
 import { getItemPrice } from '../../utils/market-data.js';
-import { calculateCraftingCost, networthUnitValue } from './networth-calculator.js';
+import { calculateCraftingCostDetailed, networthUnitValue } from './networth-calculator.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { characterKey } from '../../utils/character-key.js';
@@ -102,7 +102,7 @@ export function createPricer() {
  * Market price first; failing that, an openable's expected value (the chest
  * you consumed was worth what it was expected to pay out); failing that, the
  * material cost of crafting one (the transmuted cape with no market of its own
- * still cost its materials). Still null when none of the three can say — that
+ * still cost its materials) when every input is priced. Still null when none of the three can say — that
  * session or opening stays in the residual, footnoted.
  *
  * @param {Function} price - The plain pricer to try first
@@ -134,8 +134,10 @@ export function createBasisPricer(price = createPricer()) {
                 if (ev?.expectedValue > 0) fallback = ev.expectedValue;
             }
             if (fallback === null) {
-                const crafting = calculateCraftingCost(itemHrid);
-                if (crafting > 0) fallback = crafting;
+                // A bill with an unpriced input is a lower bound, not a cost: it is left unvalued so the
+                // session or opening is counted and footnoted, never carried at a silent understatement
+                const crafting = calculateCraftingCostDetailed(itemHrid);
+                if (crafting.cost > 0 && !crafting.partial) fallback = crafting.cost;
             }
         } catch {
             fallback = null;
