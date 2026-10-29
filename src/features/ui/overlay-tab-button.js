@@ -84,6 +84,8 @@ class OverlayTabButton {
          * see `initialize` for why that read cannot gate the first paint.
          */
         this.launcherHidden = false;
+        /** Whether `launcherHidden` has been confirmed by a storage read (or a deliberate set) */
+        this._launcherHiddenKnown = false;
         /**
          * Bumped every time something newer than the initial load speaks for
          * `launcherHidden` (a settings-panel toggle, most likely), so that
@@ -118,6 +120,7 @@ class OverlayTabButton {
         this.loadLauncherHidden().then((hidden) => {
             if (!this.initialized || this._launcherHiddenLoadToken !== loadToken) return;
             this.launcherHidden = hidden;
+            this._launcherHiddenKnown = true;
             this.ensureNavItem();
         });
 
@@ -151,12 +154,9 @@ class OverlayTabButton {
         this.button?.remove();
         this.button = null;
         this.removeNavItem();
-        // Reset to the default rather than left stale: the next `initialize()`
-        // re-reads the real answer from storage (device-local, so it survives a
-        // character switch just fine) — there is no reason for the gap before
-        // that read lands to carry forward whatever this character's session
-        // happened to leave behind instead of the ordinary default
-        this.launcherHidden = false;
+        // `launcherHidden` is kept: it mirrors a device-local stored flag that a character switch does
+        // not change, and the settings control reads it to label itself while the module is off. The
+        // next `initialize()` still re-reads storage and corrects it.
         this.initialized = false;
     }
 
@@ -246,7 +246,9 @@ class OverlayTabButton {
      * so the observer that puts the tab switch back can call it too.
      */
     ensureNavItem() {
-        if (!isMobileMode() || this.launcherHidden) {
+        // Not initialized means the feature is off (or torn down): never create the entry then, even
+        // when the settings control clears the hidden flag
+        if (!this.initialized || !isMobileMode() || this.launcherHidden) {
             this.removeNavItem();
             return;
         }
@@ -326,6 +328,22 @@ class OverlayTabButton {
     }
 
     /**
+     * Whether the launcher is hidden, reading the stored flag when no read has landed yet.
+     * For a settings control that may draw before `initialize` (or while the feature is off).
+     * @returns {Promise<boolean>}
+     */
+    async readLauncherHidden() {
+        if (this._launcherHiddenKnown) return this.launcherHidden;
+        const token = this._launcherHiddenLoadToken;
+        const hidden = await this.loadLauncherHidden();
+        if (this._launcherHiddenLoadToken === token && !this._launcherHiddenKnown) {
+            this.launcherHidden = hidden;
+            this._launcherHiddenKnown = true;
+        }
+        return this.launcherHidden;
+    }
+
+    /**
      * Set whether the launcher is hidden, and make it so immediately.
      *
      * This is the whole of what a settings-panel "Show the overlay button"
@@ -343,6 +361,7 @@ class OverlayTabButton {
         // a moment later by the read it raced against.
         this._launcherHiddenLoadToken += 1;
         this.launcherHidden = Boolean(hidden);
+        this._launcherHiddenKnown = true;
         // Applied before the write settles — the player must see the launcher
         // go (or come back) at once, not three seconds later when the debounced
         // save happens to land.

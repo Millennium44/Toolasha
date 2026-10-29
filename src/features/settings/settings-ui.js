@@ -2307,12 +2307,22 @@ class SettingsUI {
         const launcherBtn = document.createElement('button');
         launcherBtn.className = 'toolasha-utility-button';
 
+        // The entry only exists while the overlay button and panel are both on; with either off there is
+        // nothing to show or hide, so say why instead of offering a switch that does nothing
+        if (!config.getSetting('overlayTabButton') || !config.getSetting('overlayPanel')) {
+            launcherBtn.textContent = 'Overlay sidebar entry unavailable';
+            launcherBtn.disabled = true;
+            launcherBtn.title = 'Turn on both the Overlay panel and the Overlay tab button settings to use this.';
+            buttonsDiv.appendChild(launcherBtn);
+            return;
+        }
+
         // A plain on/off switch: the sidebar entry is small, but a player who never uses the overlay
         // should be able to take it off their phone's navigation, and put it back the same way
         let hidden = false;
         const syncLabel = async () => {
             try {
-                hidden = await overlayTabButton.isLauncherHidden();
+                hidden = await overlayTabButton.readLauncherHidden();
             } catch (error) {
                 console.error('[SettingsUI] Checking the overlay launcher flag failed:', error);
                 hidden = false;

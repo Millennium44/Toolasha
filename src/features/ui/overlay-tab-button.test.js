@@ -113,6 +113,8 @@ beforeEach(() => {
     panel.toggles = 0;
     device.mobile = false;
     deviceStorage.data = {};
+    overlayTabButton.launcherHidden = false;
+    overlayTabButton._launcherHiddenKnown = false;
     window.innerWidth = 400;
     window.innerHeight = 800;
 });
@@ -494,6 +496,30 @@ describe('the settings-side control', () => {
         expect(theNavItem()).toBeTruthy();
         expect(overlayTabButton.isLauncherHidden()).toBe(false);
         expect(deviceStorage.data['toolasha_local_overlayLauncherHidden']).toBe(false);
+    });
+
+    test('setLauncherHidden(false) creates no entry while the module is not initialized', async () => {
+        device.mobile = true;
+        buildNav();
+        await overlayTabButton.setLauncherHidden(false);
+        expect(theNavItem()).toBeNull();
+        expect(document.getElementById('toolasha-overlay-nav-layout')).toBeNull();
+    });
+
+    test('cleanup keeps the stored flag so the label stays right', async () => {
+        device.mobile = true;
+        buildNav();
+        overlayTabButton.initialize();
+        await overlayTabButton.setLauncherHidden(true);
+        overlayTabButton.cleanup();
+        expect(overlayTabButton.isLauncherHidden()).toBe(true);
+    });
+
+    test('readLauncherHidden answers from storage before any load has landed', async () => {
+        deviceStorage.data['toolasha_local_overlayLauncherHidden'] = true;
+        expect(overlayTabButton.isLauncherHidden()).toBe(false);
+        expect(await overlayTabButton.readLauncherHidden()).toBe(true);
+        expect(overlayTabButton.isLauncherHidden()).toBe(true);
     });
 
     test('with the flag unset the entry opens as usual', async () => {

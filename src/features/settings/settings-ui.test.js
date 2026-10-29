@@ -488,6 +488,7 @@ vi.mock('../ui/command-palette.js', () => ({
 vi.mock('../ui/overlay-tab-button.js', () => ({
     default: {
         isLauncherHidden: () => mocks.launcherHidden,
+        readLauncherHidden: async () => mocks.launcherHidden,
         setLauncherHidden: async (hidden) => {
             // Like the real one: the flag changes at once, the save may take a while
             mocks.launcherHidden = Boolean(hidden);
@@ -1137,6 +1138,25 @@ describe('opening the command palette on a phone', () => {
 });
 
 describe('the Overlay sidebar entry switch', () => {
+    beforeEach(() => {
+        mocks.settingsMap.overlayTabButton = { id: 'overlayTabButton', isTrue: true, value: true };
+        mocks.settingsMap.overlayPanel = { id: 'overlayPanel', isTrue: true, value: true };
+    });
+
+    test.each(['overlayTabButton', 'overlayPanel'])('is disabled with a reason while %s is off', async (key) => {
+        mocks.coarsePointer = true;
+        mocks.settingsMap[key].isTrue = false;
+        drawPanel();
+        await settle();
+
+        expect(launcherButton()).toBeUndefined();
+        const btn = [...document.querySelectorAll('.toolasha-utility-button')].find((b) =>
+            /Overlay sidebar entry unavailable/.test(b.textContent)
+        );
+        expect(btn.disabled).toBe(true);
+        expect(btn.title).toMatch(/Turn on both/);
+    });
+
     /** @returns {HTMLElement|undefined} The recovery button, once drawn */
     function launcherButton() {
         return [...document.querySelectorAll('.toolasha-utility-button')].find((b) =>
