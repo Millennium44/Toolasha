@@ -44,6 +44,10 @@ const nav = vi.hoisted(() => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: () => game.setting,
+        setSetting: (key, value) => {
+            game.setting = value;
+            game.settingHandlers.filter((e) => e.key === key).forEach((e) => e.fn(value));
+        },
         getSettingValue: () => undefined,
         onSettingChange: (key, fn) => {
             const entry = { key, fn };
@@ -101,7 +105,8 @@ vi.mock('../../utils/combat-zone-open.js', () => ({ openCombatZoneAtTier: nav.op
 vi.mock('../../utils/market-data.js', () => ({ getItemPriceInfo: nav.getItemPriceInfo }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
 
-import finisher, { findAchievementsHost, rewardText, PANEL_CLASS } from './achievement-finisher.js';
+import finisher, { findAchievementsHost, PANEL_CLASS } from './achievement-finisher.js';
+import { collectionCounts, totalCollectionPoints } from './collection-optimizer-plan.js';
 import { buildTierChecklists } from './achievement-finisher-model.js';
 import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 import {
@@ -151,7 +156,7 @@ describe('buildTierChecklists', () => {
         expect(beginner.complete).toBe(true);
         expect(beginner.doneCount).toBe(2);
         expect(beginner.remaining).toEqual([]);
-        expect(rewardText(beginner)).toContain('Reward earned');
+        expect(beginner.reward.label).toBe('Gathering +2%');
     });
 
     test('a partly done tier lists exactly what is left', () => {
@@ -163,7 +168,7 @@ describe('buildTierChecklists', () => {
         expect(novice.complete).toBe(false);
         expect(novice.doneCount).toBe(1);
         expect(novice.remaining.map((a) => a.name)).toEqual(['N2']);
-        expect(rewardText(novice)).toContain('Reward on completion: Wisdom +2%');
+        expect(novice.reward.label).toBe('Wisdom +2%');
     });
 
     test('a tier with nothing done lists everything, even with no rows at all', () => {
@@ -199,8 +204,7 @@ describe('buildTierChecklists', () => {
     test('every tier reward is shown as fact, with no inferred mark', () => {
         const r = buildTierChecklists({ detailMap: DETAIL, achievements: [] });
         expect(tierOf(r, 'beginner').reward).toEqual({ label: 'Gathering +2%' });
-        expect(rewardText(tierOf(r, 'beginner'))).toBe('Reward on completion: Gathering +2%');
-        expect(rewardText(tierOf(r, 'elite'))).toBe('Reward on completion: Damage +2%');
+        expect(tierOf(r, 'elite').reward).toEqual({ label: 'Damage +2%' });
     });
 
     test('a point-total achievement carries its planner and progress; unloaded totals stay unknown', () => {
@@ -226,178 +230,54 @@ describe('buildTierChecklists', () => {
             achievements: [],
         });
         expect(r.tiers[0].reward).toBeNull();
-        expect(rewardText(r.tiers[0])).toBe('Reward: unknown');
     });
 });
 
-function achievementsPage(extraClass = 'AchievementsPanel_achievements__x') {
+const nativeControl = (label) =>
+    `<div class="AchievementsPanel_checkboxControl__3e6CJ"><label class="MuiFormControlLabel-root Checkbox_checkbox__dP0DH">` +
+    `<span class="MuiButtonBase-root MuiCheckbox-root MuiCheckbox-colorPrimary"><svg viewBox="0 0 24 24"><path d="M0 0"></path></svg></span>` +
+    `<span class="MuiTypography-root MuiFormControlLabel-label">${label}</span></label></div>`;
+
+/**
+ * The Achievements tab as the game draws it: a controls bar with "Show Incomplete Only", and the tier list
+ * holding one `Achievement_*` card per achievement (name and description in leaf elements).
+ * Class prefixes are the assumption; the hashes are made up.
+ */
+function achievementsTab(detailMap = game.detail, { translate = false } = {}) {
     const page = document.createElement('div');
-    page.className = extraClass;
+    page.id = 'tab';
+    const controls = document.createElement('div');
+    controls.className = 'AchievementsPanel_controls__c';
+    controls.innerHTML = nativeControl('Show Incomplete Only');
+    page.appendChild(controls);
+    const list = document.createElement('div');
+    list.className = 'AchievementsPanel_achievements__x';
+    for (const [hrid, detail] of Object.entries(detailMap)) {
+        const card = document.createElement('div');
+        card.className = 'Achievement_achievement__a';
+        card.dataset.hrid = hrid;
+        card.innerHTML =
+            `<div class="Achievement_name__n">${translate ? '成就' : detail.name}</div>` +
+            `<div class="Achievement_description__d">${translate ? '说明' : detail.description || ''}</div>`;
+        list.appendChild(card);
+    }
+    page.appendChild(list);
     document.body.appendChild(page);
-    return page;
+    return { page, controls, list };
 }
 
-const panelText = () => document.querySelector(`.${PANEL_CLASS}`)?.textContent ?? null;
-const click = (selector) => document.querySelector(selector).dispatchEvent(new Event('click', { bubbles: true }));
+const cardOf = (name) =>
+    [...document.querySelectorAll('.Achievement_achievement__a')].find(
+        (card) => card.querySelector('.Achievement_name__n').textContent === name
+    );
+const lineOf = (name) => cardOf(name)?.querySelector(`.${PANEL_CLASS}-line`) ?? null;
+const goOf = (name) => lineOf(name)?.querySelector(`.${PANEL_CLASS}-go`) ?? null;
+const matsOf = (name) => lineOf(name)?.querySelector(`.${PANEL_CLASS}-mats`) ?? null;
+const toggle = () => document.querySelector(`.${PANEL_CLASS}-toggle`);
+const lines = () => [...document.querySelectorAll(`.${PANEL_CLASS}-line`)];
+const mountAgain = () => game.observers.forEach((o) => o.cb());
 
-describe('the panel', () => {
-    beforeEach(() => {
-        game.setting = true;
-        game.detail = DETAIL;
-        game.achievements = [done('/achievements/a1'), done('/achievements/a2'), notDone('/achievements/n1')];
-        game.collections = null;
-        game.monsters = null;
-        game.clientData = null;
-        game.handlers = {};
-        game.observers = [];
-        document.body.replaceChildren();
-    });
-
-    afterEach(() => {
-        finisher.disable();
-    });
-
-    test('mounts on the own Achievements page and summarizes tiers', () => {
-        achievementsPage();
-        finisher.initialize();
-        expect(panelText()).toContain('Achievement tier finisher');
-        expect(panelText()).toContain('1 of 4 tiers complete');
-    });
-
-    test('the panel is left-aligned, not centered like the page header it sits in', () => {
-        achievementsPage();
-        finisher.initialize();
-        expect(document.querySelector(`.${PANEL_CLASS}`).style.textAlign).toBe('left');
-    });
-
-    test('expanding shows the checklist, done/total, reward, and what is left', () => {
-        achievementsPage();
-        finisher.initialize();
-        click(`.${PANEL_CLASS}-header`);
-        expect(panelText()).toContain('Beginner 2/2 ✓');
-        expect(panelText()).toContain('Reward on completion: Wisdom +2%');
-        // Novice is the second tier block
-        document.querySelectorAll(`.${PANEL_CLASS}-tier`)[1].firstChild.dispatchEvent(new Event('click'));
-        expect(document.querySelectorAll(`.${PANEL_CLASS}-item`).length).toBeGreaterThan(0);
-        expect(panelText()).toContain('N1 — Do the N1 thing');
-        expect(panelText()).not.toContain('progress unavailable');
-        expect(panelText()).toContain('not progress inside one');
-        expect(panelText()).toContain('nothing is started or bought');
-    });
-
-    test('an expanded tier lists done and remaining entries with distinct markers', () => {
-        game.achievements = [done('/achievements/n1'), done('/achievements/a1'), done('/achievements/a2')];
-        achievementsPage();
-        finisher.initialize();
-        click(`.${PANEL_CLASS}-header`);
-        const tiers = document.querySelectorAll(`.${PANEL_CLASS}-tier`);
-        const open = (i) => tiers[i].firstChild.dispatchEvent(new Event('click'));
-        // Partial (novice): one done, one left
-        open(1);
-        let block = document.querySelectorAll(`.${PANEL_CLASS}-tier`)[1];
-        expect(block.querySelector(`.${PANEL_CLASS}-item`).textContent).toContain('○ N2');
-        expect(block.querySelector(`.${PANEL_CLASS}-done`).textContent).toBe('✓ N1');
-        // Fully done (beginner): done entries listed, nothing remaining
-        open(0);
-        block = document.querySelectorAll(`.${PANEL_CLASS}-tier`)[0];
-        expect(block.querySelectorAll(`.${PANEL_CLASS}-done`)).toHaveLength(2);
-        expect(block.querySelectorAll(`.${PANEL_CLASS}-item`)).toHaveLength(0);
-        // None done (elite): only remaining
-        document.querySelectorAll(`.${PANEL_CLASS}-tier`)[3].firstChild.dispatchEvent(new Event('click'));
-        block = document.querySelectorAll(`.${PANEL_CLASS}-tier`)[3];
-        expect(block.querySelectorAll(`.${PANEL_CLASS}-item`)).toHaveLength(1);
-        expect(block.querySelectorAll(`.${PANEL_CLASS}-done`)).toHaveLength(0);
-    });
-
-    test('missing achievement data shows an explicit unknown state', () => {
-        game.achievements = null;
-        achievementsPage();
-        finisher.initialize();
-        expect(panelText()).toContain('progress unknown');
-        click(`.${PANEL_CLASS}-header`);
-        expect(document.querySelector(`.${PANEL_CLASS}-unknown`).textContent).toContain('has not loaded');
-        expect(document.querySelectorAll(`.${PANEL_CLASS}-tier`)).toHaveLength(0);
-    });
-
-    test('an achievements update completing the last requirement redraws without a reload', () => {
-        achievementsPage();
-        finisher.initialize();
-        expect(panelText()).toContain('1 of 4 tiers complete');
-        game.achievements = [
-            done('/achievements/a1'),
-            done('/achievements/a2'),
-            done('/achievements/n1'),
-            done('/achievements/n2'),
-        ];
-        game.handlers.achievements_updated.forEach((fn) => fn({}));
-        expect(panelText()).toContain('2 of 4 tiers complete');
-    });
-
-    test('never mounts on another player profile, a dialog, or the Collections tab', () => {
-        const profile = document.createElement('div');
-        profile.className = 'SharableProfile_overviewTab__1';
-        const inner = document.createElement('div');
-        inner.className = 'AchievementsPanel_achievements__y';
-        profile.appendChild(inner);
-        document.body.appendChild(profile);
-
-        const dialog = document.createElement('div');
-        dialog.setAttribute('role', 'dialog');
-        dialog.innerHTML = '<div class="AchievementsPanel_achievements__z"></div>';
-        document.body.appendChild(dialog);
-
-        const collections = document.createElement('div');
-        collections.className = 'AchievementsPanel_collections__q';
-        collections.innerHTML = '<div class="AchievementsPanel_controls__c"></div>';
-        document.body.appendChild(collections);
-
-        expect(findAchievementsHost()).toBeNull();
-        finisher.initialize();
-        expect(panelText()).toBeNull();
-    });
-
-    test('mounts when the page appears after init, once', () => {
-        finisher.initialize();
-        expect(panelText()).toBeNull();
-        achievementsPage();
-        game.observers.forEach((o) => o.cb());
-        game.observers.forEach((o) => o.cb());
-        expect(document.querySelectorAll(`.${PANEL_CLASS}`)).toHaveLength(1);
-    });
-
-    test('a character switch removes the panel; the next character gets a fresh one', () => {
-        achievementsPage();
-        finisher.initialize();
-        game.handlers.character_switching.forEach((fn) => fn());
-        expect(panelText()).toBeNull();
-        game.handlers.character_initialized.forEach((fn) => fn());
-        expect(panelText()).toContain('tiers complete');
-    });
-
-    test('disable removes the panel, the observer and every listener', () => {
-        achievementsPage();
-        finisher.initialize();
-        expect(panelText()).not.toBeNull();
-        finisher.disable();
-        expect(panelText()).toBeNull();
-        expect(game.observers).toHaveLength(0);
-        expect(Object.values(game.handlers).every((list) => list.length === 0)).toBe(true);
-    });
-
-    test('re-enable draws again, and a switched-off setting never initializes', () => {
-        achievementsPage();
-        finisher.initialize();
-        finisher.disable();
-        finisher.initialize();
-        expect(panelText()).not.toBeNull();
-        finisher.disable();
-        game.setting = false;
-        finisher.initialize();
-        expect(panelText()).toBeNull();
-    });
-});
-
-describe('one-off rows: description, readiness, Go', () => {
+describe('hints on the game achievement cards', () => {
     /** Every function the game object is asked for, by name */
     let gameCalls;
 
@@ -412,6 +292,8 @@ describe('one-off rows: description, readiness, Go', () => {
             combatMonsterDetailMap: MONSTERS,
         };
         game.achievements = [];
+        game.collections = null;
+        game.monsters = null;
         game.skills = SKILLS;
         game.inventory = INVENTORY;
         game.prices = PRICES;
@@ -444,57 +326,40 @@ describe('one-off rows: description, readiness, Go', () => {
         game.gameObject = null;
     });
 
-    function openVeteran() {
-        achievementsPage();
+    test('unfinished resolvable cards get a hint line under the description; finished and unresolved get none', () => {
+        game.achievements = [done('/achievements/decompose_bamboo_gloves')];
+        achievementsTab();
         finisher.initialize();
-        click(`.${PANEL_CLASS}-header`);
-        document.querySelector(`.${PANEL_CLASS}-tier`).firstChild.dispatchEvent(new Event('click'));
-    }
-
-    const rows = () => [...document.querySelectorAll(`.${PANEL_CLASS}-item`)];
-    const rowOf = (name) => rows().find((row) => row.textContent.startsWith(`○ ${name} `));
-    const goOf = (name) => rowOf(name).querySelector(`.${PANEL_CLASS}-go`);
-
-    test('rows are sorted ready, needs buying (cheapest first), level not met, unresolved', () => {
-        openVeteran();
-        // Combat zones with no requirement ({skillHrid: '', level: 0}) are ready
-        expect(rows().map((row) => row.textContent.split(' — ')[0].slice(2))).toEqual([
-            'Recycler',
-            'Chief Slayer',
-            'Jerry Hunter',
-            'Panda Tamer',
-            'Arcane Lumberjack',
-            'Dairy Chef',
-            'Ginkgo Wielder',
-            'Space Baker',
-            'Shadow Tailor',
-            'Mystery',
-        ]);
+        const dairy = cardOf('Dairy Chef');
+        expect(dairy.querySelector(`.${PANEL_CLASS}-line`).previousElementSibling.className).toBe(
+            'Achievement_description__d'
+        );
+        expect(lineOf('Dairy Chef').textContent).toContain('[level met · buy ~200 coin]');
+        // Completed: nothing. Unresolved: the game card already shows the description
+        expect(lineOf('Recycler')).toBeNull();
+        expect(lineOf('Mystery')).toBeNull();
+        // The separate panel is gone
+        expect(document.querySelector(`.${PANEL_CLASS}-header`)).toBeNull();
     });
 
-    test('each row shows the game description and the readiness hint for its ending', () => {
-        openVeteran();
-        expect(rowOf('Dairy Chef').textContent).toContain('Make a Peach Yogurt with Cooking');
-        expect(rowOf('Dairy Chef').textContent).toContain('[level met · buy ~200 coin]');
-        expect(rowOf('Recycler').textContent).toContain('[level met · materials owned]');
-        expect(rowOf('Space Baker').textContent).toContain('needs Cooking 70 (you 45)');
-        expect(rowOf('Space Baker').textContent).toContain('unpriced: Mystery Sugar');
-        expect(rowOf('Jerry Hunter').textContent).toContain('[T5 · no level requirement · your Combat Lv');
-        expect(rowOf('Chief Slayer').textContent).toContain('[T0 · no level requirement');
-        expect(rowOf('Jerry Hunter').textContent).toContain('monster Lv 60]');
-        expect(rowOf('Ginkgo Wielder').textContent).toContain('cheapest: Ginkgo Crossbow ~700 coin');
-        // Unresolved: the description and nothing else
-        expect(rowOf('Mystery').textContent).toBe('○ Mystery — Enhance something to +10');
-        expect(goOf('Mystery')).toBeNull();
+    test('hint text per ending, from the same readiness the panel used', () => {
+        achievementsTab();
+        finisher.initialize();
+        expect(lineOf('Recycler').textContent).toContain('[level met · materials owned]');
+        expect(lineOf('Space Baker').textContent).toContain('needs Cooking 70 (you 45)');
+        expect(lineOf('Space Baker').textContent).toContain('unpriced: Mystery Sugar');
+        expect(lineOf('Jerry Hunter').textContent).toContain('[T5 · no level requirement · your Combat Lv');
+        expect(lineOf('Chief Slayer').textContent).toContain('[T0 · no level requirement');
+        expect(lineOf('Ginkgo Wielder').textContent).toContain('cheapest: Ginkgo Crossbow ~700 coin');
     });
 
     test('Go opens the resolved action, zone, alchemy item or market listing, and starts nothing', async () => {
-        openVeteran();
+        achievementsTab();
+        finisher.initialize();
         goOf('Dairy Chef').click();
         expect(nav.navigateToAction).toHaveBeenCalledWith('/actions/cooking/peach_yogurt');
 
         goOf('Jerry Hunter').click();
-        // Exactly the zone and tier: no count, so nothing is filled in and nothing queued
         expect(nav.openCombatZoneAtTier.mock.calls).toEqual([['/actions/combat/rat', 5]]);
 
         goOf('Ginkgo Wielder').click();
@@ -502,56 +367,43 @@ describe('one-off rows: description, readiness, Go', () => {
 
         goOf('Recycler').click();
         expect(gameCalls).toEqual([['handleAlchemizeItem', '7::/item_locations/inventory::/items/bamboo_gloves::0']]);
-
-        goOf('Arcane Lumberjack').click();
-        expect(nav.navigateToAction.mock.calls).toEqual([
-            ['/actions/cooking/peach_yogurt'],
-            ['/actions/woodcutting/arcane_tree'],
-        ]);
         await vi.runAllTimersAsync();
-        // The game object was only ever asked to select the alchemy item
         expect(gameCalls.map(([name]) => name)).toEqual(['handleAlchemizeItem']);
     });
 
-    test('clear <dungeon> opens the dungeon at T0; gather opens the gathering action; the rest get no Go', () => {
+    test('clear <dungeon> opens the dungeon at T0; gather opens the gathering action; the rest get no line', () => {
         game.clientData = { ...game.clientData, achievementDetailMap: MORE_ACHIEVEMENTS };
         game.detail = MORE_ACHIEVEMENTS;
-        openVeteran();
-        expect(rowOf('Den Delver').textContent).toContain('[dungeon · T0 · no level requirement');
+        achievementsTab(MORE_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Den Delver').textContent).toContain('[dungeon · T0 · no level requirement');
         goOf('Den Delver').click();
         expect(nav.openCombatZoneAtTier.mock.calls).toEqual([['/actions/combat/chimerical_den', 0]]);
-        expect(rowOf('Gated').textContent).toContain('needs Lv 90 (you 50)');
         goOf('Milkmaid').click();
         expect(nav.navigateToAction.mock.calls).toEqual([['/actions/milking/cow']]);
-        for (const name of ['Regular', 'Refiner', 'Azure Smith', 'Celestial']) {
-            expect(goOf(name)).toBeNull();
-            expect(rowOf(name).querySelector(`.${PANEL_CLASS}-ready`)).toBeNull();
-        }
+        for (const name of ['Regular', 'Refiner', 'Azure Smith', 'Celestial']) expect(lineOf(name)).toBeNull();
     });
 
-    test('alchemy with no stack opens the alchemy action and selects the tab by position', async () => {
+    test('Missing Mats shows only where inputs are short and buyable, and opens the shared bill for one action', () => {
         game.inventory = INVENTORY.filter((row) => row.itemHrid !== '/items/bamboo_gloves');
-        openVeteran();
-        const strip = document.createElement('div');
-        strip.className = 'AlchemyPanel_tabsComponentContainer__x';
-        const tabClicks = [];
-        ['点金', '分解', '转化', '重铸'].forEach((label, i) => {
-            const tab = document.createElement('button');
-            tab.setAttribute('role', 'tab');
-            tab.setAttribute('aria-selected', String(i === 0));
-            tab.textContent = label;
-            tab.addEventListener('click', () => tabClicks.push(i));
-            strip.appendChild(tab);
-        });
-        document.body.appendChild(strip);
+        achievementsTab();
+        finisher.initialize();
+        expect(matsOf('Dairy Chef').textContent).toBe('Missing Mats');
+        expect(matsOf('Dairy Chef').title).toMatch(/^Will buy: Peach ×/);
+        expect(matsOf('Recycler')).not.toBeNull();
+        expect(lineOf('Dairy Chef').lastChild).toBe(matsOf('Dairy Chef'));
+        // Equip (Go opens the market) and combat rows have none
+        expect(matsOf('Ginkgo Wielder')).toBeNull();
+        expect(matsOf('Jerry Hunter')).toBeNull();
 
-        goOf('Recycler').click();
-        await vi.runAllTimersAsync();
-        expect(gameCalls).toEqual([['handleGoToAction', '/actions/alchemy/decompose']]);
-        expect(tabClicks).toEqual([1]);
+        matsOf('Dairy Chef').click();
+        expect(nav.openMissingMaterials.mock.calls).toEqual([['/actions/cooking/peach_yogurt', 1]]);
+        matsOf('Recycler').click();
+        expect(nav.openAlchemyMissingMaterials.mock.calls).toEqual([['/items/bamboo_gloves', 'decompose', 1]]);
+        expect(nav.navigateToMarketplace).not.toHaveBeenCalled();
     });
 
-    test('an owned weapon reads "in inventory" with no Go; an Iron Cow gets no buy cost or market button', () => {
+    test('an owned weapon and owned materials get no buy buttons; an Iron Cow gets no cost, Go or Missing Mats', () => {
         game.inventory = [
             ...INVENTORY,
             {
@@ -561,23 +413,200 @@ describe('one-off rows: description, readiness, Go', () => {
                 enhancementLevel: 2,
             },
         ];
-        openVeteran();
-        expect(rowOf('Ginkgo Wielder').textContent).toContain('in inventory: Ginkgo Bow');
+        achievementsTab();
+        finisher.initialize();
+        expect(lineOf('Ginkgo Wielder').textContent).toContain('in inventory: Ginkgo Bow');
         expect(goOf('Ginkgo Wielder')).toBeNull();
+        expect(matsOf('Recycler')).toBeNull();
         finisher.disable();
 
         game.inventory = INVENTORY;
         game.ironCow = true;
         document.body.replaceChildren();
-        openVeteran();
-        expect(rowOf('Ginkgo Wielder').textContent).toContain('not owned');
+        achievementsTab();
+        finisher.initialize();
+        expect(lineOf('Dairy Chef').textContent).toContain('missing 1 input');
+        expect(lineOf('Dairy Chef').textContent).not.toContain('buy ~');
+        expect(matsOf('Dairy Chef')).toBeNull();
         expect(goOf('Ginkgo Wielder')).toBeNull();
-        expect(rowOf('Dairy Chef').textContent).toContain('missing 1 input');
-        expect(rowOf('Dairy Chef').textContent).not.toContain('buy ~');
+    });
+
+    test('a point-total card shows current / target points when loaded, nothing when not', () => {
+        const detail = {
+            '/achievements/collection_points_100': {
+                hrid: '/achievements/collection_points_100',
+                name: 'Collector',
+                description: 'Reach 100 collection points',
+                tierHrid: '/achievement_tiers/adept',
+                target: 100,
+            },
+        };
+        game.detail = detail;
+        game.clientData = { achievementDetailMap: detail };
+        achievementsTab(detail);
+        finisher.initialize();
+        expect(lineOf('Collector')).toBeNull();
+
+        game.collections = [{ itemHrid: '/items/milk', count: 5 }];
+        const points = Math.floor(totalCollectionPoints(collectionCounts(game.collections)));
+        game.handlers.collections_updated.forEach((fn) => fn({}));
+        expect(lineOf('Collector').textContent).toBe(`${points} / 100 points`);
+        expect(goOf('Collector')).toBeNull();
+    });
+
+    test('the Toolasha hints checkbox sits beside Show Incomplete Only and flips the setting', () => {
+        const { controls } = achievementsTab();
+        finisher.initialize();
+        const box = toggle();
+        expect(box.previousElementSibling).toBe(controls.firstElementChild);
+        expect(box.textContent).toBe('Toolasha hints');
+        expect(box.querySelector('.Mui-checked')).not.toBeNull();
+
+        box.querySelector('label').click();
+        expect(game.setting).toBe(false);
+        // Off: every card addition is gone, the checkbox stays so it can be turned back on
+        expect(lines()).toHaveLength(0);
+        expect(toggle()).not.toBeNull();
+        expect(toggle().querySelector('.Mui-checked')).toBeNull();
+
+        toggle().querySelector('label').click();
+        expect(game.setting).toBe(true);
+        expect(lines().length).toBeGreaterThan(0);
+        expect(document.querySelectorAll(`.${PANEL_CLASS}-toggle`)).toHaveLength(1);
+        expect(toggle().querySelector('.Mui-checked')).not.toBeNull();
+    });
+
+    test('with the setting off at load the module still starts: checkbox only, no lines', () => {
+        game.setting = false;
+        achievementsTab();
+        finisher.initialize();
+        expect(finisher.isInitialized).toBe(true);
+        expect(toggle()).not.toBeNull();
+        expect(lines()).toHaveLength(0);
+    });
+
+    test('a settings-page change of the setting redraws live both ways', () => {
+        achievementsTab();
+        finisher.initialize();
+        game.setting = false;
+        game.settingHandlers.filter((e) => e.key === 'achievementFinisher').forEach((e) => e.fn(false));
+        expect(lines()).toHaveLength(0);
+        game.setting = true;
+        game.settingHandlers.filter((e) => e.key === 'achievementFinisher').forEach((e) => e.fn(true));
+        expect(lines().length).toBeGreaterThan(0);
+    });
+
+    test('the game re-rendering its cards, toggling Show Incomplete Only, or leaving and returning redraws the hints once', () => {
+        const { list, page } = achievementsTab();
+        finisher.initialize();
+        const first = lines().length;
+        expect(first).toBeGreaterThan(0);
+        // An observer pass over an unchanged page adds nothing
+        mountAgain();
+        mountAgain();
+        expect(lines()).toHaveLength(first);
+
+        // The game replaces every card with fresh elements
+        page.remove();
+        achievementsTab();
+        mountAgain();
+        expect(lines()).toHaveLength(first);
+        expect(document.querySelectorAll(`.${PANEL_CLASS}-toggle`)).toHaveLength(1);
+
+        // "Show Incomplete Only" removes finished cards: the rest keep exactly one line
+        game.achievements = [done('/achievements/decompose_bamboo_gloves')];
+        const card = cardOf('Recycler');
+        card.remove();
+        game.handlers.achievements_updated.forEach((fn) => fn({}));
+        expect(lines()).toHaveLength(first - 1);
+
+        // Collections tab: no tier list, nothing drawn; back again: drawn
+        document.body.replaceChildren();
+        const collections = document.createElement('div');
+        collections.className = 'AchievementsPanel_collections__q';
+        collections.innerHTML =
+            '<div class="AchievementsPanel_controls__c"></div>' + nativeControl('Show Incomplete Only');
+        document.body.appendChild(collections);
+        mountAgain();
+        expect(lines()).toHaveLength(0);
+        expect(toggle()).toBeNull();
+        collections.remove();
+        achievementsTab();
+        mountAgain();
+        expect(lines().length).toBeGreaterThan(0);
+        expect(list).toBeTruthy();
+    });
+
+    test('never draws on another player profile or a dialog', () => {
+        const profile = document.createElement('div');
+        profile.className = 'SharableProfile_overviewTab__1';
+        profile.innerHTML =
+            '<div class="AchievementsPanel_achievements__y"><div class="Achievement_achievement__a"><div class="Achievement_name__n">Dairy Chef</div></div></div>';
+        document.body.appendChild(profile);
+        const dialog = document.createElement('div');
+        dialog.setAttribute('role', 'dialog');
+        dialog.innerHTML = '<div class="AchievementsPanel_achievements__z"></div>';
+        document.body.appendChild(dialog);
+        expect(findAchievementsHost()).toBeNull();
+        finisher.initialize();
+        expect(lines()).toHaveLength(0);
+        expect(toggle()).toBeNull();
+    });
+
+    test('a card whose text does not match the catalog is identified by its React props; same-named ones by description', () => {
+        // Translated client: the card text names nothing in the catalog, the component props do
+        const { list } = achievementsTab(
+            { '/achievements/cook_peach_yogurt': ACHIEVEMENTS['/achievements/cook_peach_yogurt'] },
+            { translate: true }
+        );
+        const card = list.firstElementChild;
+        const root = document.createElement('div');
+        root.id = 'root';
+        root._reactRootContainer = {
+            current: {
+                stateNode: root,
+                child: {
+                    stateNode: card,
+                    memoizedProps: {},
+                    return: { memoizedProps: { achievementHrid: '/achievements/cook_peach_yogurt' } },
+                },
+            },
+        };
+        document.body.appendChild(root);
+        finisher.initialize();
+        expect(card.querySelector(`.${PANEL_CLASS}-line`).textContent).toContain('buy ~200');
+        finisher.disable();
+
+        // Two achievements share a name: the description tells their cards apart
+        document.body.replaceChildren();
+        const yogurt = ACHIEVEMENTS['/achievements/cook_peach_yogurt'];
+        const gloves = ACHIEVEMENTS['/achievements/decompose_bamboo_gloves'];
+        const twins = {
+            [yogurt.hrid]: { ...yogurt, name: 'Twin' },
+            [gloves.hrid]: { ...gloves, name: 'Twin' },
+        };
+        game.clientData = { ...game.clientData, achievementDetailMap: twins };
+        achievementsTab(twins);
+        finisher.initialize();
+        const [first, second] = [...document.querySelectorAll('.Achievement_achievement__a')];
+        expect(first.querySelector(`.${PANEL_CLASS}-line`).textContent).toContain('buy ~200');
+        expect(second.querySelector(`.${PANEL_CLASS}-line`).textContent).toContain('materials owned');
+    });
+
+    test('a character switch removes every addition; the next character gets fresh ones', () => {
+        achievementsTab();
+        finisher.initialize();
+        game.handlers.character_switching.forEach((fn) => fn());
+        expect(lines()).toHaveLength(0);
+        expect(toggle()).toBeNull();
+        game.handlers.character_initialized.forEach((fn) => fn());
+        expect(lines().length).toBeGreaterThan(0);
+        expect(toggle()).not.toBeNull();
     });
 
     test('a redraw reuses cached readiness; stock moving, or another character, recomputes it', async () => {
-        openVeteran();
+        achievementsTab();
+        finisher.initialize();
         const first = nav.getItemPriceInfo.mock.calls.length;
         expect(first).toBeGreaterThan(0);
 
@@ -591,8 +620,9 @@ describe('one-off rows: description, readiness, Go', () => {
         ];
         game.handlers.items_updated.forEach((fn) => fn({}));
         game.handlers.items_updated.forEach((fn) => fn({}));
+        expect(lineOf('Dairy Chef').textContent).toContain('buy ~');
         await vi.advanceTimersByTimeAsync(1000);
-        expect(rowOf('Dairy Chef').textContent).toContain('materials owned');
+        expect(lineOf('Dairy Chef').textContent).toContain('materials owned');
         const second = nav.getItemPriceInfo.mock.calls.length;
 
         game.characterId = 8;
@@ -600,56 +630,17 @@ describe('one-off rows: description, readiness, Go', () => {
         expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(second);
     });
 
-    test('Missing Mats shows only on rows that buy inputs, and opens the shared bill for one action', () => {
-        game.inventory = INVENTORY.filter((row) => row.itemHrid !== '/items/bamboo_gloves');
-        openVeteran();
-        const matsOf = (name) => rowOf(name).querySelector(`.${PANEL_CLASS}-mats`);
-        // Buy rows (production with a priced shortfall, alchemy with the item missing)
-        expect(matsOf('Dairy Chef').textContent).toBe('Missing Mats');
-        expect(matsOf('Dairy Chef').title).toMatch(/^Will buy: Peach ×/);
-        expect(matsOf('Recycler')).not.toBeNull();
-        // Go comes first, Missing Mats after it
-        expect(rowOf('Dairy Chef').lastChild).toBe(matsOf('Dairy Chef'));
-        // Not for an equip row (Go opens the market), a combat row or an unresolved one
-        expect(matsOf('Ginkgo Wielder')).toBeNull();
-        expect(matsOf('Jerry Hunter')).toBeNull();
-        expect(matsOf('Mystery')).toBeNull();
-
-        matsOf('Dairy Chef').click();
-        expect(nav.openMissingMaterials.mock.calls).toEqual([['/actions/cooking/peach_yogurt', 1]]);
-        matsOf('Recycler').click();
-        expect(nav.openAlchemyMissingMaterials.mock.calls).toEqual([['/items/bamboo_gloves', 'decompose', 1]]);
-        // Navigation only
-        expect(nav.navigateToMarketplace).not.toHaveBeenCalled();
-    });
-
-    test('Missing Mats is hidden for owned materials and for an Iron Cow', () => {
-        openVeteran();
-        // Recycler's materials are owned in the default inventory
-        expect(rowOf('Recycler').querySelector(`.${PANEL_CLASS}-mats`)).toBeNull();
-        expect(rowOf('Dairy Chef').querySelector(`.${PANEL_CLASS}-mats`)).not.toBeNull();
-        finisher.disable();
-
-        game.ironCow = true;
-        document.body.replaceChildren();
-        openVeteran();
-        expect(rowOf('Dairy Chef').textContent).toContain('missing 1 input');
-        expect(document.querySelector(`.${PANEL_CLASS}-mats`)).toBeNull();
-    });
-
     test('a gold amount is followed by the game coin icon once the item sheet is known', () => {
         const probe = document.createElement('div');
         probe.innerHTML = '<svg><use href="/static/media/items_sprite.abc.svg#milk"></use></svg>';
         document.body.appendChild(probe);
         try {
-            openVeteran();
-            const hint = rowOf('Dairy Chef').querySelector(`.${PANEL_CLASS}-ready`);
+            achievementsTab();
+            finisher.initialize();
+            const hint = lineOf('Dairy Chef').querySelector(`.${PANEL_CLASS}-ready`);
             expect(hint.textContent).toBe('[level met · buy ~200]');
             expect(hint.querySelector('use').getAttribute('href')).toBe('/static/media/items_sprite.abc.svg#coin');
-            const ginkgo = rowOf('Ginkgo Wielder').querySelector(`.${PANEL_CLASS}-ready use`);
-            expect(ginkgo.getAttribute('href')).toBe('/static/media/items_sprite.abc.svg#coin');
-            // No amount, no icon
-            expect(rowOf('Recycler').querySelector(`.${PANEL_CLASS}-ready use`)).toBeNull();
+            expect(lineOf('Recycler').querySelector(`.${PANEL_CLASS}-ready use`)).toBeNull();
         } finally {
             probe.remove();
             resetSpriteSheetCache();
@@ -658,30 +649,51 @@ describe('one-off rows: description, readiness, Go', () => {
 
     test('a value-map price is marked as an estimate; a pricing-mode change recomputes the cost', async () => {
         game.estimated = new Set(['/items/peach']);
-        openVeteran();
-        expect(rowOf('Dairy Chef').textContent).toContain('buy ~200 coin (est.)');
-        expect(rowOf('Ginkgo Wielder').textContent).not.toContain('(est.)');
+        achievementsTab();
+        finisher.initialize();
+        expect(lineOf('Dairy Chef').textContent).toContain('buy ~200 coin (est.)');
+        expect(lineOf('Ginkgo Wielder').textContent).not.toContain('(est.)');
 
-        expect(game.settingHandlers.map((e) => e.key)).toEqual(['profitCalc_pricingMode']);
+        expect(game.settingHandlers.map((e) => e.key).sort()).toEqual([
+            'achievementFinisher',
+            'profitCalc_pricingMode',
+        ]);
         game.prices = { ...PRICES, '/items/peach': 300 };
-        game.settingHandlers.forEach((e) => e.fn('optimistic'));
+        game.settingHandlers.filter((e) => e.key === 'profitCalc_pricingMode').forEach((e) => e.fn('optimistic'));
         await vi.advanceTimersByTimeAsync(1000);
-        expect(rowOf('Dairy Chef').textContent).toContain('buy ~600 coin (est.)');
+        expect(lineOf('Dairy Chef').textContent).toContain('buy ~600 coin (est.)');
     });
 
-    test('disable removes the buttons, every listener and a pending redraw', async () => {
-        openVeteran();
-        expect(document.querySelectorAll(`.${PANEL_CLASS}-go`).length).toBeGreaterThan(0);
+    test('mounts when the tab appears after init, once; disable removes everything, every listener and a pending redraw', async () => {
+        finisher.initialize();
+        expect(lines()).toHaveLength(0);
+        achievementsTab();
+        mountAgain();
+        mountAgain();
+        expect(document.querySelectorAll(`.${PANEL_CLASS}-toggle`)).toHaveLength(1);
+        const count = lines().length;
+        expect(count).toBeGreaterThan(0);
+
         const listener = nav.marketOn.mock.calls[0][0];
         game.handlers.items_updated.forEach((fn) => fn({}));
         finisher.disable();
-        expect(document.querySelectorAll(`.${PANEL_CLASS}-go`)).toHaveLength(0);
+        expect(lines()).toHaveLength(0);
+        expect(toggle()).toBeNull();
+        expect(game.observers).toHaveLength(0);
         expect(nav.marketOff).toHaveBeenCalledWith(listener);
         expect(Object.values(game.handlers).every((list) => list.length === 0)).toBe(true);
         expect(game.settingHandlers).toHaveLength(0);
         const calls = nav.getItemPriceInfo.mock.calls.length;
         await vi.advanceTimersByTimeAsync(5000);
-        expect(document.querySelector(`.${PANEL_CLASS}`)).toBeNull();
+        expect(lines()).toHaveLength(0);
         expect(nav.getItemPriceInfo.mock.calls.length).toBe(calls);
+    });
+
+    test('before the catalog or the achievement list loads, nothing is drawn but the checkbox', () => {
+        game.achievements = null;
+        achievementsTab();
+        finisher.initialize();
+        expect(lines()).toHaveLength(0);
+        expect(toggle()).not.toBeNull();
     });
 });

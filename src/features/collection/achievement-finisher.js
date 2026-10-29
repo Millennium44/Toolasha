@@ -1,25 +1,25 @@
 /**
- * Achievement-tier finisher.
+ * Achievement hints on the game's own achievement cards.
  *
- * A collapsible panel on the player's own Achievements page that lists, per
- * achievement tier, what is done, what is left, and the reward for finishing
- * the tier. Read-only and event-driven: it draws from the data manager's
- * catalog and the character's own achievement list, and redraws on
- * `achievements_updated` and on a character change. It stores nothing.
+ * Each unfinished card on the player's own Achievements tab gets one line under
+ * its description: a readiness hint (level, stock, cost to buy), a Go button
+ * and, where inputs are short, a Missing Mats button. Finished cards, and
+ * achievements that resolve to nothing the game can open (see
+ * achievement-finisher-resolve.js), get nothing. The two point-total
+ * achievements show "current / target points" instead.
  *
- * The page is found by the game's `AchievementsPanel_*` classes (never by
- * visible text), and only the outermost such element that is not the
- * Collections or Bestiary tab and not inside a profile or dialog is used, so
- * another player's shared profile never gets one.
+ * Go and Missing Mats only navigate: they open the action, the alchemy tab, the
+ * combat zone at its tier, or the marketplace, and never start, queue or buy.
  *
- * Remaining work is a checklist. The only progress figures are the Collection
- * and Bestiary point totals for the two point-total achievements, which point
- * at the existing planners. Every other row shows the game's own description,
- * and — when the achievement resolves to a game action, zone or item (see
- * achievement-finisher-resolve.js) — a readiness hint and a Go button. Go only
- * navigates: it opens the action, the alchemy tab, the combat zone at its tier,
- * or the marketplace, and never starts, queues or buys anything. Nothing is
- * summed across a tier.
+ * A "Toolasha hints" checkbox beside the game's "Show Incomplete Only" control
+ * flips the feature's own setting. The checkbox is drawn whenever the tier list
+ * is on screen, even with the setting off, so a player can turn the hints back
+ * on; the registry entry therefore always initializes this module and the module
+ * gates the card additions on the setting itself.
+ *
+ * Nothing is stored. Everything is drawn from the data manager's catalog and
+ * the character's own achievement list, redrawn on `achievements_updated`, on
+ * stock/price/level events (coalesced) and when the game re-renders its cards.
  */
 
 import config from '../../core/config.js';
@@ -28,14 +28,15 @@ import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { countsByMonster, totalBestiaryPoints } from '../../utils/bestiary.js';
 import { collectionCounts, totalCollectionPoints } from './collection-optimizer-plan.js';
-import { buildTierChecklists, nameFromHrid } from './achievement-finisher-model.js';
-import { readiness, resolveAchievement, sortRemaining } from './achievement-finisher-resolve.js';
+import { nameFromHrid, plannerFor } from './achievement-finisher-model.js';
+import { readiness, resolveAchievement } from './achievement-finisher-resolve.js';
 import {
     buyableMissing,
     openAlchemyMissingMaterials,
     openMissingMaterials,
 } from '../actions/missing-materials-button.js';
 import { getGameObject, navigateToAction } from '../../utils/item-navigation.js';
+import { fiberFor } from '../../utils/react-click.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigation.js';
@@ -49,7 +50,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 /** The setting that turns the panel on */
 export const SETTING_KEY = 'achievementFinisher';
 
-/** The panel's root class */
+/** Class prefix of everything this module adds to the page */
 export const PANEL_CLASS = 'toolasha-achfin';
 
 /** Classes of the Achievements page that are not the tier-list tab, or only parts of a tab */
@@ -96,22 +97,6 @@ function currentPoints() {
         bestiary: monsters ? totalBestiaryPoints(countsByMonster(monsters)) : null,
     };
 }
-
-/**
- * The reward line for a tier.
- * @param {{complete: boolean, reward: {label: string}|null}} tier
- * @returns {string}
- */
-export function rewardText(tier) {
-    if (!tier.reward) return 'Reward: unknown';
-    const lead = tier.complete ? 'Reward earned' : 'Reward on completion';
-    return `${lead}: ${tier.reward.label}`;
-}
-
-const PLANNER_HINT = {
-    collection: 'Collections tab: Collection Points Optimizer',
-    bestiary: 'Combat simulator: Bestiary plan',
-};
 
 /** Game events that change readiness (stock, levels, prices) but not the checklist itself */
 const READINESS_EVENTS = [
@@ -273,13 +258,49 @@ export function createMissingMatsButton(res, ready, clientData, ironCow, onPress
     return mats;
 }
 
+/** Selector assumptions about the game's markup (class prefixes, not hashes); check live */
+export const CARD_SELECTOR = '[class*="Achievement_"]';
+const CHECKBOX_CONTROL_SELECTOR = '[class*="AchievementsPanel_checkboxControl"]';
+const LINE_CLASS = `${PANEL_CLASS}-line`;
+const TOGGLE_CLASS = `${PANEL_CLASS}-toggle`;
+const TOGGLE_LABEL = 'Toolasha hints';
+const INCOMPLETE_LABEL = /incomplete/i;
+
+const CHECKED_SVG =
+    '<svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeSmall" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path></svg>';
+const UNCHECKED_SVG =
+    '<svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeSmall" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"></path></svg>';
+
+/** Whether the hints are switched on */
+const hintsOn = () => Boolean(config.getSetting(SETTING_KEY));
+
+/**
+ * The achievement cards inside the tier list: outermost `Achievement_*` elements only, never the
+ * game's own `AchievementsPanel_*` wrappers, and never our additions.
+ * @param {Element} host
+ * @returns {Element[]}
+ */
+export function findCards(host) {
+    const nodes = [...host.querySelectorAll(CARD_SELECTOR)].filter((node) => !node.closest(`.${LINE_CLASS}`));
+    return nodes.filter((node) => !nodes.some((other) => other !== node && other.contains(node)));
+}
+
+/** The visible text of every leaf element under a card, first element per text */
+function leafTexts(card) {
+    const texts = new Map();
+    for (const node of card.querySelectorAll('*')) {
+        if (node.childElementCount > 0 || node.closest(`.${LINE_CLASS}`)) continue;
+        const text = node.textContent.trim();
+        if (text && !texts.has(text)) texts.set(text, node);
+    }
+    return texts;
+}
+
 class AchievementFinisher {
     constructor() {
         this.isInitialized = false;
         this.unregisterHandlers = [];
         this.handlers = [];
-        this.collapsed = true;
-        this.openTiers = new Set();
         this.timers = createTimerRegistry();
         /** achievement hrid → resolution (or null), for the client data in `resolutionSource` */
         this.resolutions = new Map();
@@ -289,15 +310,19 @@ class AchievementFinisher {
         this.readinessVersion = 0;
         this.readinessRedrawPending = false;
         this.marketListener = null;
+        /** card element → achievement hrid or null, so the fiber fallback runs once per card */
+        this.cardHrids = new WeakMap();
+        this.catalogSource = null;
+        this.catalog = null;
     }
 
+    /** Always runs when the module is loaded: the checkbox must exist to turn the hints back on */
     initialize() {
         if (this.isInitialized) return;
-        if (!config.getSetting(SETTING_KEY)) return;
         this.isInitialized = true;
 
         this.unregisterHandlers.push(
-            domObserver.onClass('AchievementFinisher-panel', 'AchievementsPanel_', () => this.mount())
+            domObserver.onClass('AchievementFinisher-cards', ['AchievementsPanel_', 'Achievement_'], () => this.mount())
         );
 
         const redraw = () => this.refresh();
@@ -310,11 +335,11 @@ class AchievementFinisher {
             dataManager.on(event, redraw);
             this.handlers.push([event, redraw]);
         }
-        // A character leaving: its checklist must not stay on screen for the next one
+        // A character leaving: its hints must not stay on screen for the next one
         const clear = () => {
             this.readinessCache.clear();
             this.readinessVersion += 1;
-            this.removePanel();
+            this.removeAll();
         };
         dataManager.on('character_switching', clear);
         this.handlers.push(['character_switching', clear]);
@@ -328,6 +353,8 @@ class AchievementFinisher {
             const off = config.onSettingChange?.(key, stale);
             if (typeof off === 'function') this.unregisterHandlers.push(off);
         }
+        const offSetting = config.onSettingChange?.(SETTING_KEY, redraw);
+        if (typeof offSetting === 'function') this.unregisterHandlers.push(offSetting);
         this.marketListener = stale;
         marketAPI.on?.(stale);
 
@@ -343,20 +370,25 @@ class AchievementFinisher {
         this.marketListener = null;
         this.timers.clearAll();
         this.readinessRedrawPending = false;
-        this.removePanel();
-        this.collapsed = true;
-        this.openTiers = new Set();
+        this.removeAll();
         this.resolutions = new Map();
         this.resolutionSource = null;
         this.readinessCache = new Map();
+        this.cardHrids = new WeakMap();
+        this.catalogSource = null;
+        this.catalog = null;
         this.isInitialized = false;
     }
 
-    /** Stock, levels or prices moved: readiness is stale, and an open tier redraws once shortly after */
+    cleanup() {
+        this.disable();
+    }
+
+    /** Stock, levels or prices moved: readiness is stale, and the visible hints redraw once shortly after */
     readinessChanged() {
         if (!this.isInitialized) return;
         this.readinessVersion += 1;
-        if (this.collapsed || this.openTiers.size === 0 || this.readinessRedrawPending) return;
+        if (!hintsOn() || this.readinessRedrawPending || !document.querySelector(`.${LINE_CLASS}`)) return;
         this.readinessRedrawPending = true;
         this.timers.scheduleTimeout(() => {
             this.readinessRedrawPending = false;
@@ -500,139 +532,204 @@ class AchievementFinisher {
         }
     }
 
-    cleanup() {
-        this.disable();
+    /** Everything this module put on the page */
+    removeAll() {
+        document.querySelectorAll(`.${LINE_CLASS}, .${TOGGLE_CLASS}`).forEach((node) => node.remove());
     }
 
-    removePanel() {
-        document.querySelectorAll(`.${PANEL_CLASS}`).forEach((node) => node.remove());
+    removeLines() {
+        document.querySelectorAll(`.${LINE_CLASS}`).forEach((node) => node.remove());
     }
 
-    /** Put the panel onto the Achievements page if it is showing and has none. */
+    /** Draw the checkbox and, when the hints are on, the card lines, on the Achievements tab if it is showing. */
     mount() {
         if (!this.isInitialized) return;
         const host = findAchievementsHost();
         if (!host) return;
-        let root = host.querySelector(`:scope > .${PANEL_CLASS}`);
-        if (!root) {
-            this.removePanel();
-            root = el(
-                'div',
-                // The Achievements header centers its text; the checklist reads as a list
-                'margin:6px 0;padding:6px 8px;border:1px solid #444;border-radius:6px;background:rgba(0,0,0,0.25);font-size:12px;color:#ddd;text-align:left;'
-            );
-            root.className = PANEL_CLASS;
-            host.insertBefore(root, host.firstChild);
+        this.ensureToggle(host);
+        if (!hintsOn()) {
+            this.removeLines();
+            return;
         }
-        this.render(root);
+        this.decorateCards(host);
     }
 
     refresh() {
-        if (!this.isInitialized) return;
-        const root = document.querySelector(`.${PANEL_CLASS}`);
-        if (root) this.render(root);
-        else this.mount();
+        this.mount();
     }
 
-    render(root) {
-        root.replaceChildren();
-        const clientData = dataManager.getInitClientData?.();
-        const result = buildTierChecklists({
-            detailMap: clientData?.achievementDetailMap,
-            tierDetailMap: clientData?.achievementTierDetailMap ?? null,
-            achievements: dataManager.getCharacterAchievements?.() ?? null,
-            points: currentPoints(),
-        });
-
-        const header = el(
-            'div',
-            'display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:bold;flex-wrap:wrap;'
+    /**
+     * The checkbox beside "Show Incomplete Only" (the first native checkbox control on the tab when no
+     * label says incomplete). With no native control at all it sits at the top of the list.
+     * @param {Element} host
+     */
+    ensureToggle(host) {
+        const checked = hintsOn();
+        const scope = host.parentElement || host;
+        const natives = [...scope.querySelectorAll(CHECKBOX_CONTROL_SELECTOR)].filter(
+            (node) => !node.classList.contains(TOGGLE_CLASS) && !node.closest(`${OTHER_TABS}, ${EXCLUDED_ANCESTORS}`)
         );
-        header.className = `${PANEL_CLASS}-header`;
-        header.appendChild(el('span', '', `${this.collapsed ? '▸' : '▾'} Achievement tier finisher`));
-        const summary =
-            result.state === 'ok'
-                ? `${result.completeTiers} of ${result.tiers.length} tiers complete`
-                : 'progress unknown';
-        header.appendChild(el('span', 'font-weight:normal;color:#aaa;', summary));
-        header.addEventListener('click', () => {
-            this.collapsed = !this.collapsed;
-            this.render(root);
-        });
-        root.appendChild(header);
-        if (this.collapsed) return;
+        const native = natives.find((node) => INCOMPLETE_LABEL.test(node.textContent)) || natives[0] || null;
+        const existing = scope.querySelector(`.${TOGGLE_CLASS}`);
+        const anchored = native
+            ? Boolean(existing) && existing.previousElementSibling === native
+            : existing?.parentElement === host;
+        if (existing && anchored && existing.dataset.checked === String(checked)) return;
+        existing?.remove();
 
-        if (result.state === 'unknown') {
-            const why =
-                result.reason === 'catalog'
-                    ? 'The achievement list from the game has not loaded yet, so tier progress is unknown.'
-                    : 'Your achievement progress has not loaded yet, so tier progress is unknown.';
-            const note = el('div', 'margin-top:4px;color:#aaa;', why);
-            note.className = `${PANEL_CLASS}-unknown`;
-            root.appendChild(note);
+        const box = el('div', native ? '' : 'margin:6px 0;');
+        box.className = `${native ? native.className : ''} ${TOGGLE_CLASS}`.trim();
+        box.dataset.checked = String(checked);
+        const label = el('label', 'display:flex;align-items:center;gap:4px;cursor:pointer;');
+        const nativeLabel = native?.querySelector('label');
+        if (nativeLabel) label.className = nativeLabel.className;
+        const mark = el('span', 'display:inline-flex;');
+        const nativeMark = native?.querySelector('[class*="MuiCheckbox-root"]');
+        if (nativeMark) mark.className = nativeMark.className;
+        mark.classList.toggle('Mui-checked', checked);
+        mark.innerHTML = checked ? CHECKED_SVG : UNCHECKED_SVG;
+        label.appendChild(mark);
+        label.appendChild(el('span', '', TOGGLE_LABEL));
+        label.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            config.setSetting(SETTING_KEY, !hintsOn());
+        });
+        box.appendChild(label);
+        if (native) native.after(box);
+        else host.insertBefore(box, host.firstChild);
+    }
+
+    /** The catalog's names and descriptions, indexed once per client data object */
+    catalogFor(detailMap) {
+        if (detailMap === this.catalogSource && this.catalog) return this.catalog;
+        const byName = new Map();
+        for (const [key, detail] of Object.entries(detailMap || {})) {
+            const hrid = detail?.hrid || key;
+            const name = detail?.name || nameFromHrid(hrid);
+            if (!byName.has(name)) byName.set(name, []);
+            byName.get(name).push({ hrid, description: detail?.description || null });
+        }
+        this.catalogSource = detailMap;
+        this.catalog = byName;
+        return byName;
+    }
+
+    /**
+     * Which achievement a card shows: its name (and description, for same-named ones) first, as it is
+     * cheap; the React props of the card when the text does not settle it (a translated client).
+     * @param {Element} card
+     * @param {Object} detailMap
+     * @returns {string|null}
+     */
+    hridOfCard(card, detailMap) {
+        if (this.cardHrids.has(card)) return this.cardHrids.get(card);
+        const texts = leafTexts(card);
+        const byName = this.catalogFor(detailMap);
+        let hrid = null;
+        for (const text of texts.keys()) {
+            const hits = byName.get(text);
+            if (!hits) continue;
+            const exact =
+                hits.length === 1 ? hits : hits.filter((hit) => hit.description && texts.has(hit.description));
+            if (exact.length === 1) {
+                hrid = exact[0].hrid;
+                break;
+            }
+        }
+        if (!hrid) hrid = this.hridFromFiber(card, detailMap);
+        this.cardHrids.set(card, hrid);
+        return hrid;
+    }
+
+    hridFromFiber(card, detailMap) {
+        try {
+            let fiber = fiberFor(card);
+            for (let guard = 0; fiber && guard < 12; guard++, fiber = fiber.return) {
+                const props = fiber.memoizedProps;
+                const candidate =
+                    props?.achievementHrid ||
+                    props?.achievement?.hrid ||
+                    props?.achievementDetail?.hrid ||
+                    props?.achievement?.achievementHrid;
+                if (typeof candidate === 'string' && detailMap?.[candidate]) return candidate;
+            }
+        } catch (error) {
+            console.error('[AchievementFinisher] Reading the card failed:', error);
+        }
+        return null;
+    }
+
+    /** Add (or refresh) the hint line on every unfinished card */
+    decorateCards(host) {
+        const clientData = dataManager.getInitClientData?.();
+        const detailMap = clientData?.achievementDetailMap;
+        const achievements = dataManager.getCharacterAchievements?.() ?? null;
+        if (!detailMap || !Array.isArray(achievements)) {
+            this.removeLines();
             return;
         }
-
-        const view = { clientData, context: null };
-        for (const tier of result.tiers) root.appendChild(this.renderTier(root, tier, view));
-        root.appendChild(
-            el(
-                'div',
-                'margin-top:6px;color:#888;',
-                'The game data lists each achievement as done or not done, not progress inside one. Go only opens the screen; nothing is started or bought.'
-            )
+        const completed = new Set(
+            achievements.filter((row) => row?.isCompleted === true).map((row) => row.achievementHrid)
         );
+        const points = currentPoints();
+        let context = null;
+        const getContext = () => (context ||= this.readinessContext());
+
+        for (const card of findCards(host)) {
+            const own = card.querySelector(`.${LINE_CLASS}`);
+            const hrid = this.hridOfCard(card, detailMap);
+            const spec = hrid && !completed.has(hrid) ? this.lineFor(hrid, clientData, points, getContext) : null;
+            if (!spec) {
+                own?.remove();
+                continue;
+            }
+            if (own && own.dataset.key === spec.key) continue;
+            own?.remove();
+            const line = spec.build();
+            line.dataset.key = spec.key;
+            this.placeLine(card, line, detailMap[hrid]);
+        }
     }
 
-    renderTier(root, tier, view = { clientData: null, context: null }) {
-        const block = el('div', 'margin-top:6px;');
-        block.className = `${PANEL_CLASS}-tier`;
-        const open = this.openTiers.has(tier.tierHrid);
-        const title = el('div', 'cursor:pointer;display:flex;gap:8px;flex-wrap:wrap;');
-        title.appendChild(
-            el(
-                'span',
-                `font-weight:bold;color:${tier.complete ? '#6c6' : '#ddd'};`,
-                `${open ? '▾' : '▸'} ${tier.name} ${tier.doneCount}/${tier.total}${tier.complete ? ' ✓' : ''}`
-            )
-        );
-        const reward = el('span', 'color:#aaa;', rewardText(tier));
-        reward.className = `${PANEL_CLASS}-reward`;
-        title.appendChild(reward);
-        title.addEventListener('click', () => {
-            if (this.openTiers.has(tier.tierHrid)) this.openTiers.delete(tier.tierHrid);
-            else this.openTiers.add(tier.tierHrid);
-            this.render(root);
-        });
-        block.appendChild(title);
-        if (!open) return block;
+    /** Insert the line right under the card's description, else at the end of the card */
+    placeLine(card, line, detail) {
+        const description = detail?.description;
+        const anchor = description ? leafTexts(card).get(description) : null;
+        if (anchor && anchor !== card) anchor.after(line);
+        else card.appendChild(line);
+    }
 
-        if (tier.complete) {
-            block.appendChild(el('div', 'margin-left:14px;color:#6c6;', 'Every achievement in this tier is done.'));
+    /**
+     * What a card's line says and does, or null for nothing.
+     * @returns {{key: string, build: () => HTMLElement}|null}
+     */
+    lineFor(hrid, clientData, points, getContext) {
+        const link = plannerFor(hrid);
+        if (link) {
+            const current = points[link.planner];
+            if (!Number.isFinite(current)) return null;
+            const text = `${Math.floor(current)} / ${link.target} points`;
+            return {
+                key: JSON.stringify(['points', text]),
+                build: () => this.buildLine(el('span', 'color:#aaa;', text)),
+            };
         }
-        // Readiness is read only for an open tier, from one context per render
-        const getContext = () => (view.context ||= this.readinessContext());
-        const rows = tier.remaining.map((item) => {
-            if (item.planner) return { item, res: null, readiness: null };
-            const res = this.resolutionFor(item.hrid, view.clientData);
-            return { item, res, readiness: res ? this.readinessFor(item.hrid, res, getContext) : null };
-        });
-        for (const { item, res, readiness: ready } of sortRemaining(rows)) {
-            const row = el('div', 'margin-left:14px;');
-            row.className = `${PANEL_CLASS}-item`;
-            let text = `○ ${item.name}`;
-            if (item.progress) text += ` — ${Math.floor(item.progress.current)} / ${item.progress.target} points`;
-            else if (item.planner) text += ' — progress not loaded (open that tab once)';
-            else if (item.description) text += ` — ${item.description}`;
-            row.appendChild(el('span', '', text));
-            if (item.planner) {
-                row.appendChild(el('span', 'margin-left:6px;color:#8ab;', `[${PLANNER_HINT[item.planner]}]`));
-            }
-            if (res && ready) {
-                const hint = hintWithCoins(`[${readinessText(res, ready, view.clientData, getContext().combatLevel)}]`);
+        const res = this.resolutionFor(hrid, clientData);
+        if (!res) return null;
+        const ready = this.readinessFor(hrid, res, getContext);
+        if (!ready) return null;
+        const text = `[${readinessText(res, ready, clientData, getContext().combatLevel)}]`;
+        const go = hasGoButton(res, ready);
+        const ironCow = getContext().ironCow;
+        const mats = missingMatsLines(res, ready, clientData, ironCow).length > 0;
+        return {
+            key: JSON.stringify(['ready', text, go, mats, ready.buyHrid]),
+            build: () => {
+                const hint = hintWithCoins(text);
                 hint.className = `${PANEL_CLASS}-ready`;
-                row.appendChild(hint);
-                if (hasGoButton(res, ready)) {
+                const line = this.buildLine(hint);
+                if (go) {
                     const button = el(
                         'button',
                         'margin-left:6px;padding:0 6px;font-size:11px;cursor:pointer;background:#2a3a4a;color:#ddd;border:1px solid #567;border-radius:3px;',
@@ -644,21 +741,22 @@ class AchievementFinisher {
                         event.stopPropagation();
                         this.go(res, ready);
                     });
-                    row.appendChild(button);
+                    line.appendChild(button);
                 }
-                const mats = createMissingMatsButton(res, ready, view.clientData, getContext().ironCow, () =>
+                const matsButton = createMissingMatsButton(res, ready, clientData, ironCow, () =>
                     this.openMissingMats(res)
                 );
-                if (mats) row.appendChild(mats);
-            }
-            block.appendChild(row);
-        }
-        for (const item of tier.done) {
-            const row = el('div', 'margin-left:14px;color:#888;', `✓ ${item.name}`);
-            row.className = `${PANEL_CLASS}-done`;
-            block.appendChild(row);
-        }
-        return block;
+                if (matsButton) line.appendChild(matsButton);
+                return line;
+            },
+        };
+    }
+
+    buildLine(first) {
+        const line = el('div', 'margin-top:2px;font-size:12px;text-align:left;');
+        line.className = LINE_CLASS;
+        line.appendChild(first);
+        return line;
     }
 }
 
