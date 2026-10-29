@@ -1140,3 +1140,76 @@ describe('the ledger on disk', () => {
         expect(await loadLedgerCycles('Second')).toHaveLength(1);
     });
 });
+
+describe('a legacy week record on the test server is trimmed to the window', () => {
+    const HOUR = 3_600_000;
+    const DAY = 24 * HOUR;
+    const WEEK_MS = 7 * DAY;
+    const W0 = trialWeekStart(WEEK);
+
+    /**
+     * A week record as written before per-member figures: trials carry no `memberFigures`, and the
+     * members hold the whole week's tally.
+     * @param {number} weekStart - The week
+     * @param {Array<number>} days - Day offsets of the cycles that ran
+     * @returns {Object} The record
+     */
+    function legacyWeek(weekStart, days) {
+        return {
+            ...emptyLedgerCycle(weekStart, 'g'),
+            trials: days.map((day) => ({
+                trialId: `${weekStart}:${day}`,
+                encounter: 'badger',
+                at: weekStart + day * DAY + 18 * HOUR,
+                cycleAt: weekStart + day * DAY + 17 * HOUR,
+                seconds: 60,
+                memberKeys: ['alice'],
+            })),
+            members: { alice: { name: 'Alice', trials: days.length, damage: 100 * days.length } },
+        };
+    }
+
+    test('a record straddling the window keeps only the trials inside it, and no whole-week totals', async () => {
+        server.test = true;
+        disk.store[ledgerCycleKey('g', W0)] = legacyWeek(W0, [0, 1]); // fully outside
+        disk.store[ledgerCycleKey('g', W0 + WEEK_MS)] = legacyWeek(W0 + WEEK_MS, [4, 5, 6]); // straddles
+        disk.store[ledgerCycleKey('g', W0 + 2 * WEEK_MS)] = legacyWeek(W0 + 2 * WEEK_MS, [0, 1]); // fully inside
+        const now = W0 + 2 * WEEK_MS + 2 * DAY + 20 * HOUR;
+
+        // Four ran cycles back from Tuesday: Tuesday, Monday, Sunday, Saturday
+        const cycles = await loadLedgerCycles('g', null, { cycles: 4, now });
+        const anchors = cycles.flatMap((cycle) => cycle.trials.map((trial) => trial.cycleAt));
+        expect(anchors).toEqual([
+            W0 + WEEK_MS + 5 * DAY + 17 * HOUR,
+            W0 + WEEK_MS + 6 * DAY + 17 * HOUR,
+            W0 + 2 * WEEK_MS + 17 * HOUR,
+            W0 + 2 * WEEK_MS + DAY + 17 * HOUR,
+        ]);
+        // Nothing of the older trials is counted: the unsplittable record yields no member tallies
+        expect(cycles.every((cycle) => Object.keys(cycle.members).length === 0)).toBe(true);
+        const { rows, trialsRun } = foldLedgerCycles(cycles);
+        expect(trialsRun).toBe(4);
+        expect(rows).toEqual([]);
+    });
+
+    test('a record fully outside the window is absent and one fully inside is whole', async () => {
+        server.test = true;
+        disk.store[ledgerCycleKey('g', W0)] = legacyWeek(W0, [0, 1]);
+        disk.store[ledgerCycleKey('g', W0 + WEEK_MS)] = legacyWeek(W0 + WEEK_MS, [0, 1]);
+        const now = W0 + WEEK_MS + 1 * DAY + 20 * HOUR;
+
+        const cycles = await loadLedgerCycles('g', null, { cycles: 2, now });
+        expect(cycles.flatMap((cycle) => cycle.trials.map((trial) => trial.cycleAt))).toEqual([
+            W0 + WEEK_MS + 17 * HOUR,
+            W0 + WEEK_MS + DAY + 17 * HOUR,
+        ]);
+    });
+
+    test('a record whose trials carry per-member figures still splits into real tallies', () => {
+        server.test = true;
+        const week = legacyWeek(W0, [0, 3]);
+        for (const trial of week.trials) trial.memberFigures = [{ name: 'Alice', damage: 100 }];
+        const split = ledgerCyclesByAnchor([week], { perCycle: true });
+        expect(split.map((cycle) => cycle.members.alice.damage)).toEqual([100, 100]);
+    });
+});
