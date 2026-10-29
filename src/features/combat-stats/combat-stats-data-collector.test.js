@@ -20,6 +20,15 @@ const store = vi.hoisted(() => ({
     characterId: 'me',
     /** Fired once inside the next probe — lets a test land a switch inside it */
     onProbe: null,
+    /** How long the next probes take, on the (fake) clock */
+    probeDelayMs: 0,
+    /** What the next writes resolve with */
+    setResult: true,
+    /** `storage.onWrite` listeners; the collector subscribes once, so they outlive a test */
+    listeners: new Set(),
+    emit(write) {
+        for (const listener of store.listeners) listener(write);
+    },
     /** The game socket the hook last attached to */
     socket: null,
 }));
@@ -64,13 +73,20 @@ vi.mock('../../core/storage.js', () => ({
         tryGet: async (key) => {
             store.probes++;
             store.onProbe?.();
+            if (store.probeDelayMs) await new Promise((resolve) => setTimeout(resolve, store.probeDelayMs));
             if (store.unavailable) return null;
             const value = await read(key);
             return value == null ? { found: false, value: null } : { found: true, value };
         },
-        set: async (key, value) => {
+        set: async (key, value, storeName) => {
+            // Like the real one: announced synchronously, before the first await
+            store.emit({ storeName, keys: [key], origin: 'local' });
             store.writes.push([key, value]);
-            return true;
+            return store.setResult;
+        },
+        onWrite: (listener) => {
+            store.listeners.add(listener);
+            return () => store.listeners.delete(listener);
         },
         setJSON: async () => true,
         delete: async () => true,
@@ -111,6 +127,8 @@ beforeEach(() => {
     store.unavailable = false;
     store.characterId = 'me';
     store.onProbe = null;
+    store.probeDelayMs = 0;
+    store.setResult = true;
     store.socket = null;
     _resetReadProbe();
     collector.isInitialized = false;
@@ -176,7 +194,8 @@ describe('the trackers are not written over on the strength of a failed read', (
             await collector.saveConsumableTracking();
             await collector.saveConsumableTracking();
             expect(store.probes).toBe(1);
-            expect(store.writes).toHaveLength(6);
+            // The player's own tracker twice; the party records, unchanged the second time, once
+            expect(store.writes).toHaveLength(4);
 
             vi.setSystemTime(new Date('2026-08-03T01:00:06Z'));
             await collector.saveConsumableTracking();
@@ -205,6 +224,133 @@ describe('the trackers are not written over on the strength of a failed read', (
         const trackerWrites = store.writes.filter(([key]) => key.startsWith('consumableTracker_'));
         expect(trackerWrites).toHaveLength(1);
         expect(store.probes).toBe(1);
+    });
+
+    test('a probe slower than its own trust window still covers the saves that follow it', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+            store.probeDelayMs = 8000;
+            const first = collector.saveConsumableTracking();
+            await vi.advanceTimersByTimeAsync(8000);
+            await first;
+            expect(store.probes).toBe(1);
+
+            await collector.saveConsumableTracking();
+            expect(store.probes).toBe(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('saves that arrive while a probe is still reading share it', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+            store.probeDelayMs = 3000;
+            const saves = [collector.saveConsumableTracking(), collector.saveConsumableTracking()];
+            await vi.advanceTimersByTimeAsync(3000);
+            await Promise.all(saves);
+            expect(store.probes).toBe(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('the party records are written when they change', () => {
+    // The reset's own clearing writes (null) are not saves
+    const partyWrites = () =>
+        store.writes.filter(([key, value]) => key.startsWith('partyConsumable') && value !== null).map(([key]) => key);
+
+    test('a solo character writes the empty party records once, not on every save', async () => {
+        await collector.saveConsumableTracking();
+        await collector.saveConsumableTracking();
+        await collector.saveConsumableTracking();
+
+        expect(partyWrites()).toEqual(['partyConsumableTrackers_me', 'partyConsumableSnapshots_me']);
+    });
+
+    test('a changed snapshot is written, an unchanged one is not', async () => {
+        collector.partyConsumableSnapshots = { Ally: { '/items/tea': 5 } };
+        await collector.saveConsumableTracking();
+        await collector.saveConsumableTracking();
+        expect(partyWrites().filter((key) => key.startsWith('partyConsumableSnapshots'))).toHaveLength(1);
+
+        collector.partyConsumableSnapshots.Ally['/items/tea'] = 4;
+        await collector.saveConsumableTracking();
+        expect(partyWrites().filter((key) => key.startsWith('partyConsumableSnapshots'))).toHaveLength(2);
+    });
+
+    test('a value that goes back to an earlier one is written again', async () => {
+        collector.partyConsumableSnapshots = { Ally: { '/items/tea': 5 } };
+        await collector.saveConsumableTracking();
+        collector.partyConsumableSnapshots = { Ally: { '/items/tea': 4 } };
+        await collector.saveConsumableTracking();
+        collector.partyConsumableSnapshots = { Ally: { '/items/tea': 5 } };
+        await collector.saveConsumableTracking();
+
+        expect(partyWrites().filter((key) => key.startsWith('partyConsumableSnapshots'))).toHaveLength(3);
+    });
+
+    test('a write that did not land is tried again by the next save', async () => {
+        store.setResult = false;
+        await collector.saveConsumableTracking();
+        store.setResult = true;
+        await collector.saveConsumableTracking();
+
+        expect(partyWrites()).toEqual([
+            'partyConsumableTrackers_me',
+            'partyConsumableSnapshots_me',
+            'partyConsumableTrackers_me',
+            'partyConsumableSnapshots_me',
+        ]);
+    });
+
+    test('a sync pull or another tab writing the key makes the same local value be written again', async () => {
+        const snapshots = () => partyWrites().filter((key) => key.startsWith('partyConsumableSnapshots'));
+        collector.partyConsumableSnapshots = { Ally: { '/items/tea': 5 } };
+        await collector.saveConsumableTracking();
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(1);
+
+        // A pull (putAll announces 'local' outside the collector's own set) replaces the stored record
+        store.emit({ storeName: 'combatStats', keys: ['partyConsumableSnapshots_me'], origin: 'local' });
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(2);
+
+        // Another tab's write, once committed
+        store.emit({ storeName: 'combatStats', keys: ['partyConsumableSnapshots_me'], origin: 'remote' });
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(3);
+    });
+
+    test('its own writes, their commits and other keys do not forget anything', async () => {
+        const snapshots = () => partyWrites().filter((key) => key.startsWith('partyConsumableSnapshots'));
+        collector.partyConsumableSnapshots = { Ally: { '/items/tea': 5 } };
+        await collector.saveConsumableTracking();
+
+        store.emit({ storeName: 'combatStats', keys: ['partyConsumableSnapshots_me'], origin: 'commit' });
+        store.emit({ storeName: 'combatStats', keys: ['somethingElse_me'], origin: 'remote' });
+        store.emit({ storeName: 'settings', keys: ['partyConsumableSnapshots_me'], origin: 'remote' });
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(1);
+
+        // A write that lists no keys may have touched anything
+        store.emit({ storeName: 'combatStats', keys: null, origin: 'local' });
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(2);
+    });
+
+    test('a reset and a load both make the next save write again', async () => {
+        await collector.saveConsumableTracking();
+        await collector.resetConsumableTracking();
+        await collector.saveConsumableTracking();
+        expect(partyWrites().filter((key) => key.startsWith('partyConsumableSnapshots'))).toHaveLength(2);
+
+        await collector.loadConsumableTracking();
+        await collector.saveConsumableTracking();
+        expect(partyWrites().filter((key) => key.startsWith('partyConsumableSnapshots'))).toHaveLength(3);
     });
 });
 

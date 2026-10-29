@@ -195,8 +195,8 @@ describe('the damage tracker through a refresh', () => {
         expect(after.restored).toMatchObject({ savedAt: T0 + LIVE_SESSION_PERSIST_MS });
         // Measured seconds only: two before, one after, and the ninety shut are not among them
         expect(after.seconds).toBeCloseTo(3);
-        // Wall clock skips the shut stretch too
-        expect(after.logging).toBeLessThan(10);
+        // Wall clock skips the shut stretch too (90 s here), which the save interval is well inside
+        expect(after.logging).toBeLessThan(30);
         // The same run, so the same id — which is what the graph keys on
         expect(after.sessionId).toBe(before.sessionId);
     });

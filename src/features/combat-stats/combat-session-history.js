@@ -33,6 +33,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import { createPersistedRecord } from '../../utils/persisted-record.js';
 import { clearRecord, clearedAtOf, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
@@ -401,18 +402,64 @@ export function withSession(history, snapshot) {
     return [{ ...snapshot, key }, ...rest].slice(0, MAX_SESSIONS);
 }
 
+/** How often a reader that cannot hear writes is told the archive may have changed */
+const POLL_FALLBACK_MS = 60_000;
+/** Bumped by every write to the archive's records that this tab hears about */
+let writesHeard = 0;
+let watchingWrites = false;
+
+/** Listen, once, for writes to the archive: this tab's when asked for, other tabs' once committed. */
+function watchWrites() {
+    if (watchingWrites || typeof storage.onWrite !== 'function') return;
+    watchingWrites = true;
+    storage.onWrite((write) => {
+        const { storeName, keys } = write || {};
+        if (storeName !== null && storeName !== undefined && storeName !== STORE_NAME) return;
+        if (Array.isArray(keys) && !keys.some((key) => typeof key === 'string' && key.startsWith(STORE_KEY))) return;
+        writesHeard += 1;
+    });
+}
+
+/**
+ * A token that changes whenever the archive may differ from what a reader last saw.
+ *
+ * For a reader that redraws on a timer and would otherwise re-read the whole archive each tick: it
+ * compares tokens and calls {@link loadSessions} only when this one moved. The token moves with the
+ * character (the archive is per character), with every write to the archive (this tab's, another
+ * tab's, a sync pull's), and, where other tabs' writes cannot be heard, once a minute.
+ *
+ * @returns {string} Compare for equality only
+ */
+export function sessionsRevision() {
+    watchWrites();
+    const heard = storage.crossTabWritesVisible?.() === true;
+    const owner = dataManager.getCurrentCharacterId?.() ?? '';
+    return `${owner}:${writesHeard}:${heard ? 0 : Math.floor(Date.now() / POLL_FALLBACK_MS)}`;
+}
+
 /**
  * Every finished run, newest first.
  * @returns {Promise<Array<Object>>}
  */
 export async function loadSessions() {
+    return (await loadSessionsWithStatus()).sessions;
+}
+
+/**
+ * Every finished run, newest first, and whether storage could be read for it.
+ *
+ * `loadSessions` answers with whatever is held when a read fails (the in-memory list, or `[]`), which a
+ * reader that caches by revision cannot tell from a real answer.
+ * @returns {Promise<{sessions: Array<Object>, ok: boolean}>} `ok` is false when the read could not be made
+ */
+export async function loadSessionsWithStatus() {
     try {
         const sessions = record();
-        await sessions.load();
-        return entriesOf(sessions.get()).slice();
+        const ok = (await sessions.load()) === true;
+        return { sessions: entriesOf(sessions.get()).slice(), ok };
     } catch (error) {
         console.error('[CombatSessionHistory] Reading the session list failed:', error);
-        return [];
+        return { sessions: [], ok: false };
     }
 }
 

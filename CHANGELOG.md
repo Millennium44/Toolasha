@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lighter storage traffic in combat
+
+- The Party Loot panel no longer re-reads the whole session archive every 5 seconds while open, slow storage checks no longer pile up, and unchanged party consumable records are no longer rewritten after every wave; on a phone these were thousands of database calls per session.
+- Live damage graphs save every 10 seconds instead of 4 (a normal close still saves at once), and the two combat timing tallies save once a minute and on page hide or close.
+- The health dialog reads "Toolasha health" when nothing failed, and the guild history store's soft budget covers the guild trial diagnostic trace.
+
 ### Sync: one gist per game server
 
 - The live game and the test server no longer adopt each other's sync gist. Discovery only picks a gist tagged for the same server, and automatic syncs refuse the other server's gist instead of failing on its passphrase.

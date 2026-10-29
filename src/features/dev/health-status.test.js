@@ -461,6 +461,16 @@ describe('surfacing', () => {
         expect(writeText.mock.calls[0][0]).toContain('- Net Worth [networth]');
     });
 
+    test('opened with nothing failed, the title is neutral rather than an alarm', () => {
+        healthStatusPanel.show([]);
+        const panel = document.getElementById('toolasha-health-status');
+        const title = panel.querySelector('span');
+        expect(title.textContent).toBe('Toolasha health');
+        expect(panel.textContent).not.toContain('did not start');
+        expect(panel.textContent).toContain('Everything reported healthy.');
+        expect(title.style.color).not.toBe('rgb(255, 138, 138)');
+    });
+
     test('reopening replaces the panel rather than stacking a second one', () => {
         healthStatusPanel.show(FAILURES);
         healthStatusPanel.show(FAILURES.slice(0, 1));
