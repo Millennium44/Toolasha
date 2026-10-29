@@ -1037,6 +1037,9 @@ async function readFileContent(token, file, name = 'a gist file') {
  * @param {'live'|'test'|null} [options.server=null] - The game server this push is from. A gist whose
  *   listing names the other one is refused by an unattended push (`wrong-server`) and asked about by a
  *   pressed one. Null skips the check (the writes that put a gist's own revision back).
+ * @param {'live'|'test'|null} [options.markerServer=null] - For a write that puts a revision back (no `server`,
+ *   so no wrong-server check): the server that revision resolves to (marker, manifest, description), whose
+ *   marker is written in place of the other's. Falls back to the manifest's own `server`; none leaves markers alone.
  * @param {((gistServer: 'live'|'test') => Promise<boolean>)|null} [options.confirmServer=null] - For a pressed
  *   push: asked before writing over the other server's gist. False cancels the write.
  * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null,
@@ -1053,7 +1056,14 @@ export async function writeSyncGist(
     chunks,
     previousChunkCount = 0,
     known = null,
-    { unattended = false, confirmPlaintext = null, isAhead = null, server = null, confirmServer = null } = {}
+    {
+        unattended = false,
+        confirmPlaintext = null,
+        isAhead = null,
+        server = null,
+        confirmServer = null,
+        markerServer: restoredServer = null,
+    } = {}
 ) {
     let listing = known && gistId && known.gistId === gistId && known.etag && known.files ? known : null;
 
@@ -1212,6 +1222,7 @@ export async function writeSyncGist(
         // manifest's own, so the marker never contradicts the data put back. None leaves the markers alone
         let markerFor = null;
         if (isServerKind(server)) markerFor = server;
+        else if (isServerKind(restoredServer)) markerFor = restoredServer;
         else if (isServerKind(writtenManifest?.server)) markerFor = writtenManifest.server;
         const otherMarker = serverMarkerFile(markerFor === 'live' ? 'test' : 'live');
         const dropsOtherMarker =
@@ -1229,7 +1240,7 @@ export async function writeSyncGist(
             }
             const body = {
                 // Named for the server the push is from, so the gist list can tell live's from test's
-                description: syncGistDescription(isServerKind(server) ? server : writtenManifest?.server),
+                description: syncGistDescription(markerFor ?? writtenManifest?.server),
                 files: withOrphans,
                 ...(gistId ? {} : { public: false }),
             };

@@ -1778,6 +1778,21 @@ describe('the server marker file', () => {
         expect(files[serverMarkerFile('live')]).toBeNull();
     });
 
+    test('a restore of an old build revision (test marker, manifest without server) re-asserts test over a live override', async () => {
+        // A confirmed live override wrote the live marker and dropped the test one; the restore puts back the
+        // revision that resolves to test through its marker alone
+        responses.push(plainListing(['live']));
+        responses.push({ status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 0, null, {
+            unattended: true,
+            markerServer: 'test',
+        });
+        const body = JSON.parse(calls.at(-1).data);
+        expect(body.files[serverMarkerFile('test')].content).toMatch(/test server/);
+        expect(body.files[serverMarkerFile('live')]).toBeNull();
+        expect(body.description).toContain('test server');
+    });
+
     test('both markers present: a pressed push asks, and a no writes nothing', async () => {
         const confirmServer = vi.fn(async () => false);
         responses.push(plainListing(['live', 'test']));
