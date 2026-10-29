@@ -95,6 +95,7 @@ vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => g
 
 import finisher, { findAchievementsHost, rewardText, PANEL_CLASS } from './achievement-finisher.js';
 import { buildTierChecklists } from './achievement-finisher-model.js';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 import {
     ACHIEVEMENTS,
     MORE_ACHIEVEMENTS,
@@ -467,14 +468,14 @@ describe('one-off rows: description, readiness, Go', () => {
     test('each row shows the game description and the readiness hint for its ending', () => {
         openVeteran();
         expect(rowOf('Dairy Chef').textContent).toContain('Make a Peach Yogurt with Cooking');
-        expect(rowOf('Dairy Chef').textContent).toContain('[level met · buy ~200]');
+        expect(rowOf('Dairy Chef').textContent).toContain('[level met · buy ~200 coin]');
         expect(rowOf('Recycler').textContent).toContain('[level met · materials owned]');
         expect(rowOf('Space Baker').textContent).toContain('needs Cooking 70 (you 45)');
         expect(rowOf('Space Baker').textContent).toContain('unpriced: Mystery Sugar');
         expect(rowOf('Jerry Hunter').textContent).toContain('[T5 · no level requirement · your Combat Lv');
         expect(rowOf('Chief Slayer').textContent).toContain('[T0 · no level requirement');
         expect(rowOf('Jerry Hunter').textContent).toContain('monster Lv 60]');
-        expect(rowOf('Ginkgo Wielder').textContent).toContain('cheapest: Ginkgo Crossbow ~700');
+        expect(rowOf('Ginkgo Wielder').textContent).toContain('cheapest: Ginkgo Crossbow ~700 coin');
         // Unresolved: the description and nothing else
         expect(rowOf('Mystery').textContent).toBe('○ Mystery — Enhance something to +10');
         expect(goOf('Mystery')).toBeNull();
@@ -592,17 +593,36 @@ describe('one-off rows: description, readiness, Go', () => {
         expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(second);
     });
 
+    test('a gold amount is followed by the game coin icon once the item sheet is known', () => {
+        const probe = document.createElement('div');
+        probe.innerHTML = '<svg><use href="/static/media/items_sprite.abc.svg#milk"></use></svg>';
+        document.body.appendChild(probe);
+        try {
+            openVeteran();
+            const hint = rowOf('Dairy Chef').querySelector(`.${PANEL_CLASS}-ready`);
+            expect(hint.textContent).toBe('[level met · buy ~200]');
+            expect(hint.querySelector('use').getAttribute('href')).toBe('/static/media/items_sprite.abc.svg#coin');
+            const ginkgo = rowOf('Ginkgo Wielder').querySelector(`.${PANEL_CLASS}-ready use`);
+            expect(ginkgo.getAttribute('href')).toBe('/static/media/items_sprite.abc.svg#coin');
+            // No amount, no icon
+            expect(rowOf('Recycler').querySelector(`.${PANEL_CLASS}-ready use`)).toBeNull();
+        } finally {
+            probe.remove();
+            resetSpriteSheetCache();
+        }
+    });
+
     test('a value-map price is marked as an estimate; a pricing-mode change recomputes the cost', async () => {
         game.estimated = new Set(['/items/peach']);
         openVeteran();
-        expect(rowOf('Dairy Chef').textContent).toContain('buy ~200 (est.)');
+        expect(rowOf('Dairy Chef').textContent).toContain('buy ~200 coin (est.)');
         expect(rowOf('Ginkgo Wielder').textContent).not.toContain('(est.)');
 
         expect(game.settingHandlers.map((e) => e.key)).toEqual(['profitCalc_pricingMode']);
         game.prices = { ...PRICES, '/items/peach': 300 };
         game.settingHandlers.forEach((e) => e.fn('optimistic'));
         await vi.advanceTimersByTimeAsync(1000);
-        expect(rowOf('Dairy Chef').textContent).toContain('buy ~600 (est.)');
+        expect(rowOf('Dairy Chef').textContent).toContain('buy ~600 coin (est.)');
     });
 
     test('disable removes the buttons, every listener and a pending redraw', async () => {

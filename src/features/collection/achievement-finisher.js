@@ -38,6 +38,7 @@ import { getItemPriceInfo } from '../../utils/market-data.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { formatKMB } from '../../utils/formatters.js';
+import { spriteIcon, spriteUrl } from '../../utils/overlay-format.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 /** The setting that turns the panel on */
@@ -124,6 +125,9 @@ const READINESS_REDRAW_MS = 1000;
 const skillName = (clientData, skillHrid) => clientData?.skillDetailMap?.[skillHrid]?.name || nameFromHrid(skillHrid);
 const itemName = (clientData, itemHrid) => clientData?.itemDetailMap?.[itemHrid]?.name || nameFromHrid(itemHrid);
 
+/** Marks where a gold amount ends in a readiness hint; drawn as the game's coin icon */
+const COIN_MARK = '';
+
 /**
  * The readiness hint for a resolved row.
  * @param {Object} res - Resolution
@@ -157,7 +161,7 @@ export function readinessText(res, ready, clientData, ownCombatLevel) {
         else if (ready.owned === null) parts.push('inventory not loaded');
         else if (ready.buyHrid)
             parts.push(
-                `cheapest: ${itemName(clientData, ready.buyHrid)} ~${formatKMB(ready.cost)}${ready.estimated ? ' (est.)' : ''}`
+                `cheapest: ${itemName(clientData, ready.buyHrid)} ~${formatKMB(ready.cost)}${COIN_MARK}${ready.estimated ? ' (est.)' : ''}`
             );
         else if (ready.unpriced.length > 0) parts.push('not owned, no price for any');
         else parts.push('not owned');
@@ -167,14 +171,40 @@ export function readinessText(res, ready, clientData, ownCombatLevel) {
     if (ready.owned === true) parts.push('materials owned');
     else if (ready.owned === null) parts.push('inventory not loaded');
     else if (Number.isFinite(ready.cost))
-        parts.push(`buy ~${formatKMB(ready.cost)}${ready.estimated ? ' (est.)' : ''}`);
+        parts.push(`buy ~${formatKMB(ready.cost)}${COIN_MARK}${ready.estimated ? ' (est.)' : ''}`);
     else if (ready.unpriced.length > 0) {
         const names = ready.unpriced.map((hrid) => itemName(clientData, hrid)).join(', ');
         parts.push(
-            ready.partialCost > 0 ? `buy ≥ ~${formatKMB(ready.partialCost)}, unpriced: ${names}` : `unpriced: ${names}`
+            ready.partialCost > 0
+                ? `buy ≥ ~${formatKMB(ready.partialCost)}${COIN_MARK}, unpriced: ${names}`
+                : `unpriced: ${names}`
         );
     } else parts.push(`missing ${ready.shortfall.length} input${ready.shortfall.length === 1 ? '' : 's'}`);
     return parts.join(' · ');
+}
+
+/**
+ * A readiness hint as a span, with each gold amount followed by the game's coin icon
+ * (the word "coin" until the game has drawn from its item sheet).
+ * @param {string} text - From `readinessText`
+ * @returns {HTMLSpanElement}
+ */
+function hintWithCoins(text) {
+    const span = el('span', 'margin-left:6px;color:#aaa;');
+    const pieces = text.split(COIN_MARK);
+    pieces.forEach((piece, i) => {
+        if (piece) span.appendChild(document.createTextNode(piece));
+        if (i === pieces.length - 1) return;
+        if (!spriteUrl('items')) {
+            span.appendChild(document.createTextNode(' coin'));
+            return;
+        }
+        const icon = spriteIcon('coin', 12);
+        icon.style.verticalAlign = 'middle';
+        icon.style.marginLeft = '2px';
+        span.appendChild(icon);
+    });
+    return span;
 }
 
 /**
@@ -526,11 +556,7 @@ class AchievementFinisher {
                 row.appendChild(el('span', 'margin-left:6px;color:#8ab;', `[${PLANNER_HINT[item.planner]}]`));
             }
             if (res && ready) {
-                const hint = el(
-                    'span',
-                    'margin-left:6px;color:#aaa;',
-                    `[${readinessText(res, ready, view.clientData, getContext().combatLevel)}]`
-                );
+                const hint = hintWithCoins(`[${readinessText(res, ready, view.clientData, getContext().combatLevel)}]`);
                 hint.className = `${PANEL_CLASS}-ready`;
                 row.appendChild(hint);
                 if (hasGoButton(res, ready)) {
