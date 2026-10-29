@@ -28,16 +28,12 @@ import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { nameFromHrid, plannerFor } from './achievement-finisher-model.js';
 import { readiness, resolveAchievement } from './achievement-finisher-resolve.js';
-import {
-    buyableMissing,
-    openAlchemyMissingMaterials,
-    openMissingMaterials,
-} from '../actions/missing-materials-button.js';
 import { getGameObject, navigateToAction } from '../../utils/item-navigation.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigation.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
+import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { formatKMB } from '../../utils/formatters.js';
@@ -214,7 +210,9 @@ export function missingMatsLines(res, ready, clientData, ironCow) {
         missing: short.need - short.have,
         isTradeable: clientData?.itemDetailMap?.[short.itemHrid]?.isTradable === true,
     }));
-    return buyableMissing(lines);
+    // The action panel's own filter (missing-materials-button.js `buyableMissing`): coins never
+    // reach the bill and an untradeable line cannot be bought
+    return lines.filter((m) => m.isTradeable !== false && m.missing > 0 && m.itemHrid !== '/items/coin');
 }
 
 /**
@@ -228,6 +226,8 @@ export function missingMatsLines(res, ready, clientData, ironCow) {
  * @returns {HTMLButtonElement|null}
  */
 export function createMissingMatsButton(res, ready, clientData, ironCow, onPress) {
+    // No button when the actions bundle (which owns the opener) is not loaded
+    if (!missingMaterialsButton()) return null;
     const lines = missingMatsLines(res, ready, clientData, ironCow);
     if (lines.length === 0) return null;
     const mats = el(
@@ -525,10 +525,14 @@ class AchievementFinisher {
      */
     openMissingMats(res) {
         try {
+            // Read through the bridge: the opener lives in the actions bundle, and importing it
+            // here would copy its calculators into this one
+            const opener = missingMaterialsButton();
+            if (!opener) return;
             const pending =
                 res.kind === 'alchemy'
-                    ? openAlchemyMissingMaterials(res.itemHrid, res.alchemyType, 1)
-                    : openMissingMaterials(res.actionHrid, 1);
+                    ? opener.openAlchemyMissingMaterials(res.itemHrid, res.alchemyType, 1)
+                    : opener.openMissingMaterials(res.actionHrid, 1);
             Promise.resolve(pending).catch((error) =>
                 console.error('[AchievementFinisher] Missing Mats failed:', error)
             );

@@ -89,11 +89,12 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-vi.mock('../actions/missing-materials-button.js', () => ({
-    buyableMissing: (materials) =>
-        materials.filter((m) => m && m.isTradeable !== false && m.missing > 0 && m.itemHrid !== '/items/coin'),
-    openMissingMaterials: nav.openMissingMaterials,
-    openAlchemyMissingMaterials: nav.openAlchemyMissingMaterials,
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    missingMaterialsButton: () => ({
+        openMissingMaterials: nav.openMissingMaterials,
+        openAlchemyMissingMaterials: nav.openAlchemyMissingMaterials,
+    }),
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { on: nav.marketOn, off: nav.marketOff } }));
 vi.mock('../../utils/item-navigation.js', () => ({
