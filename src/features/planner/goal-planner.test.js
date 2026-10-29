@@ -14,6 +14,7 @@
 import { describe, test, expect, beforeAll } from 'vitest';
 import * as mathjs from 'mathjs';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
+import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
 import {
     planGoal,
     planGoals,
@@ -1724,5 +1725,48 @@ describe('funds needed - the peak running deficit in planned order', () => {
         test('a plan the character can already afford has no funding step', () => {
             expect(step(make(1_000_000, 100_000), 'fund')).toBeUndefined();
         });
+    });
+});
+
+describe('a skill target - level efficiency below the effective requirement', () => {
+    const cooking = '/skills/cooking';
+    // Level 82 with a +3 skill tea is effective level 85; requirement 80 + Artisan 5.5 is 85.5. The start
+    // check truncates the Action Level bonus (85 >= 85) but level efficiency does not, so the first half
+    // level of the climb buys no efficiency.
+    const rate = (extra = {}) => ({
+        label: 'Cook Stew',
+        requiredLevel: 80,
+        xpPerHour: 1000,
+        xpPerAction: 5,
+        actionTime: 10,
+        totalEfficiency: 50,
+        goldPerHour: 0,
+        goldKnown: true,
+        teaSkillLevelBonus: 3,
+        actionLevelBonus: 5.5,
+        ...extra,
+    });
+    const hoursFor = (rateFields) =>
+        step(
+            planGoal(
+                { type: 'skill', skillHrid: cooking, targetLevel: 90 },
+                context({ skill: () => ({ level: 82, experience: 82_000 }), xpRates: () => [rate(rateFields)] })
+            ),
+            'train'
+        ).timeHours;
+    const direct = (deficit) =>
+        calculateMultiLevelProgress(82, 82_000, 90, 50, 10, 5, LEVEL_TABLE, deficit).timeNeeded / 3600;
+
+    test('the climb owes the deficit before level efficiency starts', () => {
+        expect(hoursFor({})).toBeCloseTo(direct(0.5), 9);
+        expect(hoursFor({})).toBeGreaterThan(direct(0));
+    });
+
+    test('a skill-level tea that closes the gap owes nothing', () => {
+        expect(hoursFor({ teaSkillLevelBonus: 4 })).toBeCloseTo(direct(0), 9);
+    });
+
+    test('no tea bonuses is the plain climb', () => {
+        expect(hoursFor({ teaSkillLevelBonus: 0, actionLevelBonus: 0 })).toBeCloseTo(direct(0), 9);
     });
 });
