@@ -12,6 +12,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - If your gear changes during a Recommend run, the room levels found before the change are no longer shown or used by Lab Sim and skip autofill until that room is searched again.
 - A room with no loadout assigned re-estimates when you change your equipped abilities or their triggers, instead of keeping the old clear chance.
 
+### Leftover number fixes
+
+- The Dungeon ROI board reads drop quantity from the live battle, so chest value and ROI no longer read low with Combat Stats off; refined-item craft costs now apply Artisan Tea to the coin fee, as the game does.
+- The loot log values guild tokens at their exchange rate instead of 0, Gold Sources no longer counts a crafting bill with unpriced inputs as a full cost, and the goal planner stops crediting level efficiency below a tea-raised requirement.
+- XP history saves are batched instead of written every action, a reconnect keeps task claims a full disk could not store, and the guild trial ledger trims old weekly records to the Last N cycles window.
+
 ### Mobile layout improvements
 
 - The Pinned sidebar entry hides its label when the native sidebar is collapsed, matching the other navigation icons.

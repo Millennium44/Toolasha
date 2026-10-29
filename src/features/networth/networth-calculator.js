@@ -559,6 +559,10 @@ export function calculateCraftingCost(itemHrid) {
  * @param {string} itemHrid - Item HRID
  * @returns {{cost: number, partial: boolean}} Per-item cost and whether an input was unpriced
  */
+export function calculateCraftingCostDetailed(itemHrid) {
+    return craftingBill(itemHrid);
+}
+
 function craftingBill(itemHrid) {
     // The producing action comes from the once-built index rather than a scan
     // of every action in the game — see getActionIndexes

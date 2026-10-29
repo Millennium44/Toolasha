@@ -404,6 +404,11 @@ class TaskCompletionTracker {
          * key alongside the departing character's entire history.
          */
         this._generation = 0;
+        /**
+         * questIds recorded in memory that no save has landed yet (a full disk refuses every write).
+         * `load()` folds these back in so a reconnect's re-read cannot drop a claim from the tile.
+         */
+        this._unsaved = new Set();
         /** Entries a pull brought while the first read was still going, folded in when it commits */
         this._pulledEarly = [];
         /** Exact copies a pull deleted in the same window, as `copyKey` strings */
@@ -517,14 +522,24 @@ class TaskCompletionTracker {
             this._pulledEarly = [];
             const goneEarly = this._goneEarly;
             this._goneEarly = new Set();
+            // Claims held in memory that never reached storage (a full disk). The generation check above
+            // means `this.entries` is still this character's, so they are this character's to keep
+            const storedIds = new Set(stored.map((entry) => entry.questId));
+            const carried = this.entries.filter(
+                (entry) => this._unsaved.has(entry.questId) && !storedIds.has(entry.questId)
+            );
             this.entries = dedupeByQuest(
-                pruneEntries([...stored, ...early], Date.now()).filter((entry) => !goneEarly.has(copyKey(entry)))
+                pruneEntries([...stored, ...early, ...carried], Date.now()).filter(
+                    (entry) => !goneEarly.has(copyKey(entry))
+                )
             );
             this.recordedIds = new Set(this.entries.map((entry) => entry.questId));
             this._loaded = true;
 
-            // A load that pruned anything owes storage the pruning
-            if (this.entries.length !== stored.length) await this._store.save(charId, this.entries);
+            // A load that pruned anything owes storage the pruning (and the carried claims, once there is room)
+            if (this.entries.length !== stored.length && !storage.isQuotaExceeded?.()) {
+                await this._markSaved(charId, generation, this.entries);
+            }
         } catch (error) {
             console.error('[TaskCompletionTracker] Reading the completions failed:', error);
         }
@@ -546,6 +561,7 @@ class TaskCompletionTracker {
         this.recordedIds = new Set();
         this._pulledEarly = [];
         this._goneEarly = new Set();
+        this._unsaved = new Set();
         this._loaded = false;
         this._store.forget();
     }
@@ -713,6 +729,7 @@ class TaskCompletionTracker {
 
         this.entries.push(entry);
         this.recordedIds.add(entry.questId);
+        this._unsaved.add(entry.questId);
         return entry;
     }
 
@@ -764,10 +781,25 @@ class TaskCompletionTracker {
             if (this._generation !== generation) return;
             this.entries = dedupeByQuest(pruneEntries(this.entries, Date.now()));
             this.recordedIds = new Set(this.entries.map((entry) => entry.questId));
-            await this._store.save(charId, this.entries);
+            await this._markSaved(charId, generation, this.entries);
         } catch (error) {
             console.error('[TaskCompletionTracker] Storing the completions failed:', error);
         }
+    }
+
+    /**
+     * Save `entries` and, when the write landed for the same character, stop treating them as unsaved.
+     * @param {string} charId - Whose completions
+     * @param {number} generation - The generation the save was asked for in
+     * @param {Array<Object>} entries - The list to store
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _markSaved(charId, generation, entries) {
+        const ids = entries.map((entry) => entry.questId);
+        const saved = await this._store.save(charId, entries);
+        if (saved === false || this._generation !== generation) return;
+        for (const id of ids) this._unsaved.delete(id);
     }
 
     /**

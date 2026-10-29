@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
     sessions: [],
     snapshot: null,
     latestCombat: null,
+    battleData: null,
     settings: {},
     characterGameMode: 'standard',
     missingRewardTable: null,
@@ -89,6 +90,9 @@ vi.mock('../../core/data-manager.js', () => {
             getCurrentCharacterId: () => 'me',
             getCurrentCharacterName: () => 'Me',
             getCurrentCharacterGameMode: () => state.characterGameMode,
+            get battleData() {
+                return state.battleData;
+            },
         },
     };
 });
@@ -195,6 +199,7 @@ beforeEach(() => {
     state.sessions = [];
     state.snapshot = null;
     state.latestCombat = null;
+    state.battleData = null;
     state.settings = {};
     state.characterGameMode = 'standard';
     state.unpricedItems = [];
@@ -437,6 +442,21 @@ describe('drawing', () => {
 
     test('the drop quantity bonus is read off the latest combat snapshot', async () => {
         state.latestCombat = { players: [{ isCurrentPlayer: true, combatStats: { combatDropQuantity: 0.2 } }] };
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+        await board.render(container);
+
+        const cove = [...container.querySelectorAll('.mwi-dt-roi-row')].find((tr) =>
+            tr.firstChild.textContent.includes('Pirate')
+        );
+        expect(cove.children[6].title).toContain('6.00 chests');
+    });
+
+    test('the drop quantity bonus comes from the live battle when Combat Stats has no snapshot', async () => {
+        state.latestCombat = null;
+        state.battleData = {
+            players: [{ character: { id: 'me' }, combatDetails: { combatStats: { combatDropQuantity: 0.2 } } }],
+        };
         const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
         const container = panel();
         await board.render(container);

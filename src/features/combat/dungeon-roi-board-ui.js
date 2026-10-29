@@ -13,8 +13,8 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { calculateExpectedDrops, taxedDropValue } from '../combat-sim/combat-sim-adapter.js';
-import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { loadSessions } from '../combat-stats/combat-session-history.js';
+import { ownDropQuantity } from './dungeon-key-runway.js';
 import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
 import { buildDungeonRoiRows, sortRoiRows, ROI_SORT_COLUMNS } from './dungeon-roi-board.js';
 import { loadAllZonesSnapshot } from '../../utils/all-zones-snapshot.js';
@@ -142,14 +142,12 @@ function entryKeyOf(dungeonHrid) {
 }
 
 /**
- * The character's combat drop quantity bonus, from the latest combat snapshot.
+ * The character's combat drop quantity bonus: the live battle first (it exists without
+ * Combat Stats), then the latest combat snapshot.
  * @returns {number} A fraction; 0 when nothing has been seen yet
  */
 function currentDropQuantity() {
-    const latest = combatStatsDataCollector.getLatestData?.();
-    const me = latest?.players?.find((player) => player?.isCurrentPlayer);
-    const quantity = Number(me?.combatStats?.combatDropQuantity);
-    return Number.isFinite(quantity) ? quantity : 0;
+    return ownDropQuantity() ?? 0;
 }
 
 /**

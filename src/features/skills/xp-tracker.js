@@ -189,7 +189,7 @@ registerSyncMerge({
     // sample this device had thinned since it uploaded them (see the module)
     pull: (local, incoming) => foldXPSeriesForPull(local, incoming, { windowMs: WINDOW_1W, recentMs: WINDOW_10M }),
     label: 'Skill XP history',
-    // The only writer is `this.history`, a plain persisted record that folds stored under memory
+    // The only writer is `this.history`, an atomic persisted record that folds stored under memory (inside the write transaction)
     liveSafe: true,
 });
 
@@ -284,6 +284,10 @@ class XPTracker {
             store: STORE_NAME,
             empty: () => ({}),
             merge: mergeXPHistory,
+            // One save per action_completed would be a probe and a merge each time; atomic folds
+            // and writes in a single transaction after a 3 s coalescing delay, and lands the
+            // waiting save on page close, hide and character switch
+            atomic: true,
             label: 'XPTracker',
         });
         this.combatSession = {}; // skillId → { startExp, startTime, lastExp }
