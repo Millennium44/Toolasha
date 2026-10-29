@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Each unfinished achievement card now shows whether you can do it (level met, materials owned, or a rough buy cost with the coin icon), with a Go button that opens the right screen and a Missing Mats button that opens the marketplace on what you lack. Go and Missing Mats only navigate.
 - A "Toolasha hints" checkbox beside "Show Incomplete Only" turns them on or off; the separate finisher panel is gone.
 
+### Combat task Go opens the Zone estimate's zone, for real this time
+
+- The earlier fix never ran: Go looked up the card's estimate on the wrong element and found none. Go now opens the zone a Zone-mode estimate picked, with enough fights to finish the task; checked live on the test server (a Panda task opens Bear With It).
+
 ### Sync gists keep their server through older builds
 
 - A sync gist now also records its game server in a small marker file that older Toolasha versions leave alone, so a push from an un-updated device can no longer strip the tag and let the other server claim the gist.

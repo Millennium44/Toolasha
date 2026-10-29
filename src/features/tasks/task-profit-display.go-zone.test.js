@@ -10,6 +10,7 @@
 import { describe, test, expect, afterEach, beforeEach, vi } from 'vitest';
 import taskProfitDisplay from './task-profit-display.js';
 import dataManager from '../../core/data-manager.js';
+import config from '../../core/config.js';
 import { openCombatZoneAtTierSequence } from '../../utils/combat-zone-open.js';
 
 vi.mock('../../utils/combat-zone-open.js', async (importOriginal) => {
@@ -155,5 +156,84 @@ describe('_storeCardEstimate carries the mode', () => {
             'zone'
         );
         expect(taskProfitDisplay._cardEstimates.get(node)).toMatchObject({ zoneHrid: PLANET, mode: 'zone' });
+    });
+});
+
+describe('Go click on the whole RandomTask card (Panda: own single-monster action AND a planet zone)', () => {
+    const PANDA = '/actions/combat/panda';
+    const BEAR = '/actions/combat/bear_with_it';
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('the estimate stored under the taskInfo node is found from the outer card and opens the planet zone', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = {
+            actionDetailMap: {
+                [PANDA]: {
+                    type: '/action_types/combat',
+                    name: 'Panda',
+                    combatZoneInfo: {
+                        isDungeon: false,
+                        fightInfo: {
+                            randomSpawnInfo: { spawns: [{ combatMonsterHrid: '/monsters/panda' }] },
+                            bossSpawns: [],
+                        },
+                    },
+                },
+                [BEAR]: {
+                    type: '/action_types/combat',
+                    name: 'Bear With It',
+                    combatZoneInfo: {
+                        isDungeon: false,
+                        fightInfo: {
+                            randomSpawnInfo: {
+                                maxSpawnCount: 3,
+                                spawns: [
+                                    { combatMonsterHrid: '/monsters/panda' },
+                                    { combatMonsterHrid: '/monsters/bear' },
+                                ],
+                            },
+                            bossSpawns: [],
+                        },
+                    },
+                },
+            },
+            actionCategoryDetailMap: {},
+        };
+        vi.spyOn(config, 'getSetting').mockImplementation((key) => key === 'taskCombatEstimate');
+
+        // The game's DOM: the outer card holds the info node and the Go button
+        const card = document.createElement('div');
+        card.className = 'RandomTask_randomTask__1a';
+        const info = document.createElement('div');
+        info.className = 'RandomTask_taskInfo__1a';
+        card.appendChild(info);
+        const go = document.createElement('button');
+        go.className = 'Button_button__1a Button_success__1a';
+        card.appendChild(go);
+        document.body.appendChild(card);
+
+        // The game's own Go lands on the single-monster action
+        buildDetailPanel('Panda', 0);
+
+        // Zone mode picked the planet; stored the way _runCombatSimEstimate stores it
+        taskProfitDisplay._storeCardEstimate(
+            info,
+            BEAR,
+            '/monsters/panda',
+            0,
+            { predictedFights: 100, remaining: 118, killsPerFight: 2 },
+            'zone'
+        );
+
+        taskProfitDisplay._setupTaskNode(card);
+        go.click();
+        await vi.advanceTimersByTimeAsync(400);
+
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledTimes(1);
+        expect(openCombatZoneAtTierSequence.mock.calls[0].slice(0, 2)).toEqual([BEAR, 0]);
+        expect(openCombatZoneAtTierSequence.mock.calls[0][2].count).toBeGreaterThanOrEqual(100);
     });
 });
