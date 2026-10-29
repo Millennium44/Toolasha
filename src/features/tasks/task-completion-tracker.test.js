@@ -407,6 +407,54 @@ describe('where the completions are kept', () => {
         expect(storageMock.set).not.toHaveBeenCalled();
     });
 
+    test('a reconnect re-read keeps a claim a full disk never stored', async () => {
+        storageMock.isQuotaExceeded.mockImplementation(() => true);
+        tracker.ingest([claimed({ id: 9 }), claimed({ id: 10 })]);
+        await tracker.flush();
+        expect(storageMock.set).not.toHaveBeenCalled();
+
+        // character_initialized after a reconnect re-reads storage, which has neither claim
+        const reread = await tracker.load();
+
+        expect(reread.map((completion) => completion.questId).sort((a, b) => a - b)).toEqual([9, 10]);
+        expect(tracker.entries.map((completion) => completion.questId).sort((a, b) => a - b)).toEqual([9, 10]);
+        expect(storageMock.set).not.toHaveBeenCalled();
+
+        // Room again: the next save lands them, and a later re-read has them from storage
+        storageMock.isQuotaExceeded.mockImplementation(() => false);
+        tracker.ingest([claimed({ id: 11 })]);
+        await tracker.flush();
+        tracker._unsaved.clear();
+        await tracker.load();
+        expect(tracker.entries.map((completion) => completion.questId).sort((a, b) => a - b)).toEqual([9, 10, 11]);
+    });
+
+    test('a character switch drops the unsaved claims of the one who left', async () => {
+        storageMock.isQuotaExceeded.mockImplementation(() => true);
+        tracker.ingest([claimed({ id: 9 })]);
+        await tracker.flush();
+
+        game.charId = 'cow2';
+        tracker.forget();
+        const arrived = await tracker.load();
+
+        expect(arrived).toEqual([]);
+        expect(tracker.entries).toEqual([]);
+        expect(tracker._unsaved.size).toBe(0);
+    });
+
+    test('a switch landing during the re-read does not hand the arriving character the old claims', async () => {
+        storageMock.isQuotaExceeded.mockImplementation(() => true);
+        tracker.ingest([claimed({ id: 9 })]);
+        await tracker.flush();
+
+        const reading = tracker.load();
+        game.charId = 'cow2';
+        tracker.forget();
+        expect(await reading).toEqual([]);
+        expect(tracker.entries).toEqual([]);
+    });
+
     test('another character is another history', async () => {
         tracker.ingest([claimed({ id: 1 })]);
         await tracker.flush();
