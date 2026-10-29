@@ -16,6 +16,7 @@
  * control there does not get it back here.
  */
 
+import { ensureMarketMobileStyles, releaseMarketMobileStyles } from './market-mobile-layout.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { IRON_COW_ENABLED_SETTING, pricingRowsLocked } from '../settings/iron-cow-mode.js';
@@ -132,6 +133,20 @@ class MarketPricingControls {
             verticalAlign: 'middle',
         });
 
+        ensureMarketMobileStyles();
+        const disclosure = document.createElement('button');
+        disclosure.className = 'mwi-market-pricing-disclosure';
+        disclosure.type = 'button';
+        disclosure.setAttribute('aria-expanded', 'false');
+        disclosure.setAttribute('aria-controls', 'mwi-market-pricing-fields');
+        disclosure.addEventListener('click', () => {
+            const expanded = wrapper.toggleAttribute('data-expanded');
+            disclosure.setAttribute('aria-expanded', String(expanded));
+        });
+        const fields = document.createElement('span');
+        fields.id = 'mwi-market-pricing-fields';
+        wrapper.append(disclosure, fields);
+
         const selectCss = `${CONTROL_CSS} background-color: ${PRICING_SELECT_BACKGROUND};`;
         const chooser = (side) => (choice) => {
             // Iron Cow owns pricing: reachable by keyboard or script even though the select is disabled
@@ -157,7 +172,7 @@ class MarketPricingControls {
             this._sync();
         });
 
-        wrapper.append(buySelect, sellSelect, craftButton);
+        fields.append(buySelect, sellSelect, craftButton);
         titleElement.appendChild(wrapper);
 
         this.wrapper = wrapper;
@@ -187,6 +202,16 @@ class MarketPricingControls {
         this.sellSelect.style.display = showPricing ? '' : 'none';
         this.craftButton.style.display = showCraft ? '' : 'none';
         this.wrapper.style.display = showPricing || showCraft ? 'inline-flex' : 'none';
+        const summary = [];
+        if (showPricing) {
+            summary.push(
+                this.buySelect.selectedOptions[0]?.textContent,
+                this.sellSelect.selectedOptions[0]?.textContent
+            );
+        }
+        if (showCraft) summary.push(this.craftButton.textContent);
+        this.wrapper.querySelector('.mwi-market-pricing-disclosure').textContent =
+            `Pricing ▾ ${summary.filter(Boolean).join(' · ')}`;
     }
 
     /**
@@ -195,6 +220,7 @@ class MarketPricingControls {
      */
     _removeControls() {
         this.wrapper?.remove();
+        releaseMarketMobileStyles();
         if (this.titleElement && this._titleFlexWrap !== null) {
             this.titleElement.style.flexWrap = this._titleFlexWrap;
         }

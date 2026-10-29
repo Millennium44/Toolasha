@@ -296,6 +296,72 @@ describe('what the board says about its figures', () => {
 });
 
 describe('the opener, and the lifecycle', () => {
+    test('upgrades a fallback battle-panel opener when the real players area arrives', () => {
+        const host = document.createElement('div');
+        host.className = 'BattlePanel_battlePanel__fixture';
+        document.body.append(host);
+        const rect = vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ width: 360 });
+        feature.initialize();
+        const fallbackButton = button();
+        expect(fallbackButton.parentElement).toBe(host);
+        expect(fallbackButton.style.position).toBe('absolute');
+        const battle = document.createElement('div');
+        battle.className = 'BattlePanel_battleArea__fixture';
+        battle.innerHTML = '<div class="BattlePanel_playersArea__fixture"><div>727 DPS</div></div>';
+        host.append(battle);
+        for (const handler of opts.handlers) handler.callback(battle.firstElementChild);
+        expect(button()).not.toBe(fallbackButton);
+        expect(fallbackButton.isConnected).toBe(false);
+        expect(button().nextElementSibling).toBe(battle);
+        expect(button().style.position).toBe('relative');
+        rect.mockReturnValue({ width: 1000 });
+        window.dispatchEvent(new Event('resize'));
+        expect(button().parentElement).toBe(battle.firstElementChild);
+        feature.cleanup();
+        expect(host.style.position).toBe('');
+        rect.mockRestore();
+    });
+
+    test('narrow Per-player opener reserves a row above the battle instead of covering combat text', () => {
+        const host = document.createElement('div');
+        host.innerHTML =
+            '<div class="BattlePanel_battleArea__fixture"><div class="BattlePanel_playersArea__fixture"><div>727 DPS</div></div></div>';
+        document.body.append(host);
+        const battle = host.firstElementChild;
+        const area = battle.firstElementChild;
+        const rect = vi.spyOn(host, 'getBoundingClientRect').mockReturnValue({ width: 360 });
+        feature.initialize();
+        expect(button().parentElement).toBe(host);
+        expect(button().nextElementSibling).toBe(battle);
+        expect(button().style.position).toBe('relative');
+        expect(button().style.zIndex).toBe('auto');
+        expect(area.textContent).toBe('727 DPS');
+        // Only the battle area remounts; the docked opener itself is still
+        // connected above it. Its desktop home must switch to the new tiles.
+        const oldButton = button();
+        const rebuilt = document.createElement('div');
+        rebuilt.className = battle.className;
+        rebuilt.innerHTML =
+            '<div class="BattlePanel_playersArea__fixture" style="position:relative"><div>727 DPS</div></div>';
+        battle.replaceWith(rebuilt);
+        const newArea = rebuilt.firstElementChild;
+        for (const handler of opts.handlers) handler.callback(newArea);
+        expect(button()).not.toBe(oldButton);
+        expect(oldButton.isConnected).toBe(false);
+        expect(button().nextElementSibling).toBe(rebuilt);
+        rect.mockReturnValue({ width: 1000 });
+        window.dispatchEvent(new Event('resize'));
+        expect(button().parentElement).toBe(newArea);
+        expect(button().style.position).toBe('absolute');
+        expect(button().style.top).toBe('2px');
+        feature.cleanup();
+        expect(area.style.position).toBe('');
+        // The new native area's existing position is not ours to erase.
+        expect(newArea.style.position).toBe('relative');
+        expect(button()).toBeNull();
+        rect.mockRestore();
+    });
+
     test('the button lands on the battle panel and opens the board', () => {
         const area = battlePanel();
         feature.initialize();

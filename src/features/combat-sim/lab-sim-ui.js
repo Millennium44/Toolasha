@@ -1154,8 +1154,9 @@ class LabSimUI {
             'display:none; flex-direction:column; flex:1; overflow-y:auto; overflow-x:hidden;';
 
         const maxLevelControls = document.createElement('div');
+        // Wraps on a phone: five controls in one row ran Max hrs and Uncapped off the screen edge
         maxLevelControls.style.cssText = `
-            display: flex; align-items: center; gap: 12px;
+            display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
             padding: 8px 14px; border-bottom: 1px solid #222; flex-shrink: 0; font-size: 12px;
         `;
         maxLevelControls.innerHTML = `
