@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upstream fixes: quick-input loadout, offline limit for endless combat
+
+- The action panel's speed, efficiency and queue sizing now use the saved loadout for that action throughout, instead of mixing worn gear with the loadout's drinks.
+- A queue that ends in endless combat now shows the offline limit instead of an uncertain end. Both come from upstream.
+
 ### Guild trial readout fits beside the swarm
 
 - On a four-monster trial the readout no longer spills past the monster grid, so the In Progress tab has no side scroll and the monsters sit without a blank gap to their left.
