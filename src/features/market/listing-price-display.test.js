@@ -494,6 +494,17 @@ describe('compact My Listings details', () => {
         expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
     });
 
+    test('mirrored notes take color and title from the value span the cells really carry', () => {
+        const table = document.createElement('table');
+        table.innerHTML = `<thead><tr><th>Status</th><th>Type</th><th>Progress</th><th>Price</th><th class="mwi-listing-price-header">Top Order Price</th><th>Cancel</th></tr></thead>
+            <tbody><tr><td>Active</td><td>Sell</td><td>0 / 1</td><td>18.4M</td><td class="mwi-listing-price-cell"><span class="mwi-listing-price-value" style="color: rgb(255, 0, 0);" title="Updated 5m ago">17.9M</span></td><td><button>Cancel</button></td></tr></tbody>`;
+        document.body.append(table);
+        listingPriceDisplay.syncMobileDetails(table);
+        const note = table.querySelector('.mwi-market-mobile-note');
+        expect(note.style.color).toBe('rgb(255, 0, 0)');
+        expect(note.title).toBe('Updated 5m ago');
+    });
+
     test('adds no toggle, marker or rules when no detail has a label to mirror', () => {
         const table = document.createElement('table');
         table.innerHTML = `<thead><tr><th>Status</th><th>Type</th><th>Progress</th><th>Price</th><th class="mwi-listing-price-header"></th><th>Cancel</th></tr></thead>

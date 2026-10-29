@@ -1108,6 +1108,8 @@ class ListingPriceDisplay {
         for (const row of rows) {
             const price = row.children[3];
             [...row.querySelectorAll('.mwi-listing-price-cell')].forEach((cell, index) => {
+                // createStyledCell puts color and title on the inner value span, not the cell
+                const source = cell.querySelector('.mwi-listing-price-value') || cell;
                 const label = headers[index]?.textContent.replace(/\s*[▲▼#]$/, '').trim();
                 if (!label) return;
                 let note = price.querySelector(
@@ -1124,7 +1126,7 @@ class ListingPriceDisplay {
                 notes.delete(note);
                 kept.add(note);
                 const values = {
-                    title: cell.title,
+                    title: source.title || cell.title,
                     'data-label': label,
                     'data-value': cell.textContent,
                     'aria-label': `${label}: ${cell.textContent}`,
@@ -1132,7 +1134,8 @@ class ListingPriceDisplay {
                 for (const [name, value] of Object.entries(values)) {
                     if (note.getAttribute(name) !== value) note.setAttribute(name, value);
                 }
-                if (note.style.color !== cell.style.color) note.style.color = cell.style.color;
+                const color = source.style.color || cell.style.color;
+                if (note.style.color !== color) note.style.color = color;
             });
         }
         notes.forEach((note) => note.remove());
