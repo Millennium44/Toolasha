@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Party finder: your own auras and saved builds
+
+- "Also try my auras" makes the party search try each aura you own on you, in every party and alone, against your as-worn solo baseline (off by default; it multiplies the sims).
+- Save any build by name in the Party tab and add it as a teammate later; saved builds sync with the roster.
+
 ### Combat task Go opens the Zone estimate's zone, for real this time
 
 - The earlier fix never ran: Go looked up the card's estimate on the wrong element and found none. Go now opens the zone a Zone-mode estimate picked, with enough fights to finish the task; checked live on the test server (a Panda task opens Bear With It).
