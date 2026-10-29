@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Saved loadouts in the Metz simulator export
+
+- Your saved combat loadouts now travel with the Metz simulator export, so its loadout picker can switch between them (from upstream); written only when a loadout changes.
+
 ### Guild trial readout fits beside the swarm
 
 - On a four-monster trial the readout no longer spills past the monster grid, so the In Progress tab has no side scroll and the monsters sit without a blank gap to their left.
