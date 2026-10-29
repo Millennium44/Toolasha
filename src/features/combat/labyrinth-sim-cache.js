@@ -1526,6 +1526,10 @@ export const simCacheMethods = {
 
     async processSimQueue() {
         if (this.simRunning) return;
+        // A search owns the sim worker and the cancellation scope. Rows a table
+        // rerender queues meanwhile wait for its end (_resumePreemptedSims), and
+        // starting here would also reopen a Stop the player just pressed
+        if (this.recommendRunning) return;
         this.simRunning = true;
         this.beginSimBatch();
         const epoch = this.simEpoch();

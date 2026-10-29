@@ -455,14 +455,21 @@ export const recommendationMethods = {
     _resumePreemptedSims() {
         const stash = this._preemptedSims || [];
         this._preemptedSims = [];
-        if (this.simCancelled() || stash.length === 0) return;
-        let queued = 0;
-        for (const entry of stash) {
-            if (!entry.badge?.isConnected) continue;
-            this.queueCombatSim(entry.monsterHrid, entry.roomLevel, entry.badge, entry.attempt || 0);
-            queued++;
+        if (this.simCancelled()) {
+            // A cancelled search does not bring estimates back, the rows a
+            // rerender queued during it included
+            this.simQueue = [];
+            return;
         }
-        if (queued > 0) this.processSimQueue();
+        // Rows a rerender queued during the search are already waiting; a
+        // preempted row whose badge is among them is not queued twice
+        const waiting = new Set((this.simQueue || []).map((entry) => entry.badge));
+        for (const entry of stash) {
+            if (!entry.badge?.isConnected || waiting.has(entry.badge)) continue;
+            this.queueCombatSim(entry.monsterHrid, entry.roomLevel, entry.badge, entry.attempt || 0);
+            waiting.add(entry.badge);
+        }
+        if ((this.simQueue || []).length > 0) this.processSimQueue();
     },
 
     /**

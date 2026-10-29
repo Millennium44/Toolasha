@@ -399,6 +399,49 @@ describe('Recommend by Time', () => {
             expect(panel.simQueue).toEqual([]);
         });
 
+        test('a rerender during a search queues rows but neither starts the queue nor reopens a pending Stop', () => {
+            build();
+            panel.recommendRunning = true;
+            panel._simCancelRequested = true;
+            const computed = vi.spyOn(panel, 'computeCombatClear').mockResolvedValue({ clearChance: 1 });
+            const row = { monsterHrid: '/monsters/imp', roomLevel: 100, badge: badge(), attempt: 0 };
+            panel.queueCombatSim(row.monsterHrid, row.roomLevel, row.badge);
+            panel.processSimQueue();
+            expect(panel.simRunning).toBe(false);
+            expect(panel.simCancelled()).toBe(true);
+            expect(computed).not.toHaveBeenCalled();
+            expect(panel.simQueue).toEqual([row]);
+        });
+
+        test('rows queued during a search run after a normal finish, once each', () => {
+            build();
+            const kept = badge();
+            panel.recommendRunning = true;
+            panel.queueCombatSim('/monsters/imp', 101, kept);
+            // The preempted copy of a row the rerender queued again is not doubled
+            panel._preemptedSims = [
+                { monsterHrid: '/monsters/imp', roomLevel: 101, badge: kept, attempt: 0 },
+                { monsterHrid: '/monsters/imp', roomLevel: 102, badge: badge(), attempt: 0 },
+            ];
+            const process = vi.spyOn(panel, 'processSimQueue').mockResolvedValue();
+            panel.recommendRunning = false;
+            panel._resumePreemptedSims();
+            expect(panel.simQueue.map((e) => e.roomLevel)).toEqual([101, 102]);
+            expect(process).toHaveBeenCalledTimes(1);
+        });
+
+        test('rows queued during a search are dropped when the search was cancelled', () => {
+            build();
+            panel.recommendRunning = true;
+            panel.queueCombatSim('/monsters/imp', 101, badge());
+            panel._simCancelRequested = true;
+            panel.recommendRunning = false;
+            const process = vi.spyOn(panel, 'processSimQueue').mockResolvedValue();
+            panel._resumePreemptedSims();
+            expect(panel.simQueue).toEqual([]);
+            expect(process).not.toHaveBeenCalled();
+        });
+
         test('while a search runs the button that started it is its Cancel and presses cancel it', () => {
             const { win, time } = build();
             panel.recommendRunning = true;
