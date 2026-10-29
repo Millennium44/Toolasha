@@ -79,24 +79,37 @@ function scopedFor(base, charId) {
 }
 
 async function storeReadable(base) {
-    const now = Date.now();
-    if (readProbe.ok && now - readProbe.at < READ_PROBE_TTL_MS) return true;
+    if (readProbe.ok && Date.now() - readProbe.at < READ_PROBE_TTL_MS) return true;
 
-    const probed = await storage.tryGet(characterKey(base), COMBAT_STORE);
-    if (probed === null) {
-        readProbe.ok = false;
-        console.warn(`[Combat Stats] ${base} not saved: storage could not be read first`);
-        return false;
+    // One probe at a time: a wave and a consumable event landing together used to start a read each, and on
+    // a device where reads queue for seconds that stacked more reads behind the slow ones
+    if (!readProbe.pending) {
+        const probing = (async () => {
+            const probed = await storage.tryGet(characterKey(base), COMBAT_STORE);
+            if (probed === null) {
+                readProbe.ok = false;
+                console.warn(`[Combat Stats] ${base} not saved: storage could not be read first`);
+                return false;
+            }
+            readProbe.ok = true;
+            // Stamped when the read lands, not when it started: a read slower than the TTL used to be
+            // expired on arrival, so the very next save probed again
+            readProbe.at = Date.now();
+            return true;
+        })();
+        readProbe.pending = probing;
+        const settle = () => {
+            if (readProbe.pending === probing) readProbe.pending = null;
+        };
+        probing.then(settle, settle);
     }
-    readProbe.ok = true;
-    readProbe.at = now;
-    return true;
+    return readProbe.pending;
 }
 
 /** How long one successful readability probe stands in for the next ones */
 const READ_PROBE_TTL_MS = 5000;
-/** The last successful probe: when it was made, and whether it is still trusted */
-const readProbe = { ok: false, at: 0 };
+/** The last successful probe: when it was made, whether it is still trusted, and the read in flight */
+const readProbe = { ok: false, at: 0, pending: null };
 
 /**
  * Test-only: forget the cached readability probe, so the next save probes again.
@@ -105,6 +118,7 @@ const readProbe = { ok: false, at: 0 };
 export function _resetReadProbe() {
     readProbe.ok = false;
     readProbe.at = 0;
+    readProbe.pending = null;
 }
 const COMBAT_STORE = 'combatStats';
 const DISCARD_LEGACY = { migrate: 'discard' };
@@ -207,6 +221,8 @@ class CombatStatsDataCollector {
         // Party member consumable tracking (MCS-style)
         this.partyConsumableTrackers = {}; // { playerName: tracker }
         this.partyConsumableSnapshots = {}; // { playerName: { itemHrid: previousCount } }
+        // Scoped key → fingerprint of the party record this page last handed to storage; see `_writeIfChanged`
+        this._writtenPrints = new Map();
         this.partyLastKnownConsumables = {}; // { playerName: { itemHrid: { itemHrid, lastSeenCount } } }
 
         // Character switch listeners, registered once (see initialize)
@@ -616,6 +632,9 @@ class CombatStatsDataCollector {
             // already blanked memory for the arriving character, and the departing
             // character's records must not be poured back into it.
             const owner = dataManager.getCurrentCharacterId();
+            // Memory is about to be replaced by what storage holds, so what this page last wrote no longer
+            // describes it
+            this._writtenPrints.clear();
             const saved = await readScoped(CONSUMABLE_TRACKER_KEY, COMBAT_STORE, null, DISCARD_LEGACY);
             if (dataManager.getCurrentCharacterId() !== owner) return;
             if (saved) {
@@ -712,6 +731,7 @@ class CombatStatsDataCollector {
             if (savedSnapshots) {
                 this.partyConsumableSnapshots = savedSnapshots;
             }
+            this._writtenPrints.clear();
         } catch (error) {
             console.error('[Combat Stats] Error loading consumable tracking:', error);
         }
@@ -834,16 +854,55 @@ class CombatStatsDataCollector {
                     };
                 }
             });
-            await storage.set(scopedFor(PARTY_TRACKERS_KEY, owner), partyTrackersToSave, COMBAT_STORE);
+            // A solo character has no party members to track, so both party records are `{}` on every
+            // wave and consumable use; a party's snapshots change only when someone's count does. A write of
+            // what was last written is a transaction for nothing.
+            await this._writeIfChanged(
+                PARTY_TRACKERS_KEY,
+                owner,
+                partyTrackersToSave,
+                // The clock fields move on every save; startTime, which is what a reload reads, does not
+                // (unless the 24-hour cap shifted it, and then it differs here too)
+                (value) =>
+                    JSON.stringify(value, (key, field) => (key === 'saveTimestamp' || key === 'elapsedMs' ? 0 : field))
+            );
             if (dataManager.getCurrentCharacterId() !== owner) return false;
 
             // Save party snapshots
-            await storage.set(scopedFor(PARTY_SNAPSHOTS_KEY, owner), this.partyConsumableSnapshots, COMBAT_STORE);
+            await this._writeIfChanged(PARTY_SNAPSHOTS_KEY, owner, this.partyConsumableSnapshots);
             return true;
         } catch (error) {
             console.error('[Combat Stats] Error saving consumable tracking:', error);
             return false;
         }
+    }
+
+    /**
+     * Write one of the party records unless it is what this page last handed to storage.
+     *
+     * "Last handed over" is recorded when the write is issued and taken back if it does not land, so a
+     * value that reverts to an earlier one while a different write is still waiting is written again,
+     * and a failed write is retried by the next save. Forgotten by every reset and load, which is when
+     * memory stops being what this page wrote.
+     * @param {string} base - Unscoped key
+     * @param {string} owner - Character the record belongs to, captured by the caller
+     * @param {Object} value - What to store
+     * @param {(value: Object) => string} [fingerprint] - What counts as "the same"; defaults to the whole value
+     * @returns {Promise<boolean>} Whether storage has the value (false when the write did not land)
+     * @private
+     */
+    async _writeIfChanged(base, owner, value, fingerprint = JSON.stringify) {
+        const key = scopedFor(base, owner);
+        const print = fingerprint(value);
+        if (this._writtenPrints.get(key) === print) return true;
+        this._writtenPrints.set(key, print);
+        let landed = false;
+        try {
+            landed = (await storage.set(key, value, COMBAT_STORE)) === true;
+        } finally {
+            if (!landed && this._writtenPrints.get(key) === print) this._writtenPrints.delete(key);
+        }
+        return landed;
     }
 
     /**
@@ -872,6 +931,7 @@ class CombatStatsDataCollector {
         this.partyConsumableSnapshots = {};
         this.partyLastKnownConsumables = {};
         this.connectionInterrupted = false;
+        this._writtenPrints.clear();
     }
 
     /**
