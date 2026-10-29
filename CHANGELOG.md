@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Each unfinished achievement card now shows whether you can do it (level met, materials owned, or a rough buy cost with the coin icon), with a Go button that opens the right screen and a Missing Mats button that opens the marketplace on what you lack. Go and Missing Mats only navigate.
 - A "Toolasha hints" checkbox beside "Show Incomplete Only" turns them on or off; the separate finisher panel is gone.
 
+### Guild trial readout fits beside the swarm
+
+- On a four-monster trial the readout no longer spills past the monster grid, so the In Progress tab has no side scroll and the monsters sit without a blank gap to their left.
+
 ### Combat task Go opens the Zone estimate's zone, for real this time
 
 - The earlier fix never ran: Go looked up the card's estimate on the wrong element and found none. Go now opens the zone a Zone-mode estimate picked, with enough fights to finish the task; checked live on the test server (a Panda task opens Bear With It).
