@@ -8,11 +8,14 @@
  * live game ended up syncing with the test server's gist, and then could not
  * read it once the test passphrase changed.
  *
- * A gist says which server it is for in two places: its description, which
- * the gist list shows (discovery reads only the list, which carries no file
- * contents), and `server` in its manifest, which a push or pull reads. Both are
- * written together on every push. A gist written before either existed is
- * "untagged".
+ * A gist says which server it is for in three places, strongest first:
+ * - a marker file named for the server (`toolasha-server-live.txt`), which the
+ *   gist list shows by name without fetching content. A push from an older
+ *   build rewrites the description and manifest without the server but only
+ *   touches the files it names, so the marker survives it;
+ * - `server` in its manifest, which a push or pull reads;
+ * - its description, which the gist list also shows.
+ * A gist written before any of these existed is "untagged".
  */
 
 import { isTestServer } from '../../utils/game-server.js';
@@ -25,6 +28,51 @@ export const LEGACY_SYNC_DESCRIPTION = `${SYNC_DESCRIPTION_PREFIX} (do not edit 
 
 /** How a description names each server */
 const DESCRIPTION_LABELS = { live: 'live', test: 'test server' };
+
+/** Prefix of the marker file that names a gist's server in its file list */
+export const SERVER_MARKER_PREFIX = 'toolasha-server-';
+
+/**
+ * The marker file name for a server.
+ * @param {'live'|'test'} server - Server kind
+ * @returns {string} File name, e.g. `toolasha-server-live.txt`
+ */
+export function serverMarkerFile(server) {
+    return `${SERVER_MARKER_PREFIX}${server}.txt`;
+}
+
+/**
+ * The content of a marker file: one line saying what it is.
+ * @param {'live'|'test'} server - Server kind
+ * @returns {string} File content
+ */
+export function serverMarkerContent(server) {
+    return `Toolasha sync gist for ${server === 'test' ? 'the test server' : 'the live game'}. Do not edit or delete by hand.\n`;
+}
+
+/**
+ * Whether a gist file name is a server marker (of either server).
+ * @param {*} name - A gist file name
+ * @returns {boolean} True for a marker file
+ */
+export function isServerMarkerFile(name) {
+    return name === serverMarkerFile('live') || name === serverMarkerFile('test');
+}
+
+/**
+ * The server a gist's file names mark it for. Only one marker means anything;
+ * two (a hand-made mess) say nothing, so the manifest and description decide.
+ * @param {Iterable<string>|null|undefined} names - File names of the gist
+ * @returns {'live'|'test'|null} The marked server, or null
+ */
+export function markerServer(names) {
+    if (!names) return null;
+    const set = new Set(names);
+    const live = set.has(serverMarkerFile('live'));
+    const test = set.has(serverMarkerFile('test'));
+    if (live === test) return null;
+    return live ? 'live' : 'test';
+}
 
 /**
  * Which server this page is on.
