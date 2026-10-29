@@ -3,7 +3,10 @@ import { describe, test, expect } from 'vitest';
 import {
     LEGACY_SYNC_DESCRIPTION,
     descriptionServer,
+    isServerMarkerFile,
+    markerServer,
     parseGistId,
+    serverMarkerFile,
     serverKind,
     syncGistDescription,
 } from './sync-server.js';
@@ -61,5 +64,22 @@ describe('parseGistId', () => {
         ['https://gist.github.com/someone', 'a link with no id'],
     ])('%s is refused (%s)', (input) => {
         expect(parseGistId(input)).toBeNull();
+    });
+});
+
+describe('server marker files', () => {
+    test('are named for the server and recognized', () => {
+        expect(serverMarkerFile('live')).toBe('toolasha-server-live.txt');
+        expect(serverMarkerFile('test')).toBe('toolasha-server-test.txt');
+        expect(isServerMarkerFile('toolasha-server-test.txt')).toBe(true);
+        expect(isServerMarkerFile('toolasha-sync.json')).toBe(false);
+    });
+
+    test('markerServer reads one marker, and nothing from none or both', () => {
+        expect(markerServer(['toolasha-sync.json', 'toolasha-server-test.txt'])).toBe('test');
+        expect(markerServer(['toolasha-server-live.txt'])).toBe('live');
+        expect(markerServer(['toolasha-sync.json'])).toBeNull();
+        expect(markerServer(['toolasha-server-live.txt', 'toolasha-server-test.txt'])).toBeNull();
+        expect(markerServer(null)).toBeNull();
     });
 });

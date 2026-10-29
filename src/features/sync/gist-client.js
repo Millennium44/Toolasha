@@ -30,7 +30,17 @@
  */
 
 import { gmRequest, gmRequestAvailable, recordPageRequest } from '../../utils/gm-traffic.js';
-import { descriptionServer, isServerKind, serverKind, syncGistDescription, wrongServerMessage } from './sync-server.js';
+import {
+    descriptionServer,
+    isServerKind,
+    isServerMarkerFile,
+    markerServer,
+    serverKind,
+    serverMarkerContent,
+    serverMarkerFile,
+    syncGistDescription,
+    wrongServerMessage,
+} from './sync-server.js';
 
 /** Manifest file name; also how an existing sync gist is recognised */
 export const MANIFEST_FILE = 'toolasha-sync.json';
@@ -637,6 +647,22 @@ function listedManifest(files) {
 }
 
 /**
+ * The server a gist is tagged for, from what a gist response carries.
+ * The marker file wins because an older build's push rewrites the manifest and
+ * description without a server but leaves a file it does not name alone.
+ * @param {Object|null|undefined} files - The `files` map of a gist response
+ * @param {*} description - The gist's description
+ * @param {Object|null} [manifest] - An already parsed manifest, when the caller has one
+ * @returns {'live'|'test'|null} The server, or null for an untagged gist
+ */
+function gistFilesServer(files, description, manifest = null) {
+    let fromManifest;
+    if (manifest) fromManifest = isServerKind(manifest.server) ? manifest.server : null;
+    else fromManifest = listedManifest(files).server;
+    return markerServer(files ? Object.keys(files) : null) ?? fromManifest ?? descriptionServer(description);
+}
+
+/**
  * Split a payload into files small enough that GitHub returns them whole.
  *
  * Sliced by UTF-16 code units rather than bytes, which over-counts for ASCII and
@@ -735,10 +761,12 @@ export async function findSyncGist(token, server = serverKind()) {
     const sync = gists
         .filter((gist) => gist?.files && Object.hasOwn(gist.files, MANIFEST_FILE) && typeof gist.id === 'string')
         .sort((a, b) => updated(b) - updated(a));
-    const tagged = sync.find((gist) => descriptionServer(gist.description) === server);
+    // A gist's server: its marker file, else its description (the list carries no manifest content)
+    const serverOf = (gist) => markerServer(Object.keys(gist.files)) ?? descriptionServer(gist.description);
+    const tagged = sync.find((gist) => serverOf(gist) === server);
     if (tagged) return tagged.id;
     if (server !== 'live') return null;
-    const untagged = sync.filter((gist) => descriptionServer(gist.description) === null);
+    const untagged = sync.filter((gist) => serverOf(gist) === null);
     if (untagged.length === 1) return untagged[0].id;
     if (untagged.length > 1) {
         throw new GistError(
@@ -767,12 +795,13 @@ export async function inspectSyncGist(token, gistId) {
     return {
         id: typeof gist?.id === 'string' ? gist.id : gistId,
         isSyncGist: Object.hasOwn(files, MANIFEST_FILE),
-        server: listedManifest(files).server ?? descriptionServer(gist?.description),
+        server: gistFilesServer(files, gist?.description),
         // A sync gist must be secret: anyone can read a public one
         public: gist?.public === true,
         // Files that are neither the manifest nor a chunk: other content a push would sit beside
-        otherFiles: Object.keys(files).filter((name) => name !== MANIFEST_FILE && chunkIndexFromName(name) === null)
-            .length,
+        otherFiles: Object.keys(files).filter(
+            (name) => name !== MANIFEST_FILE && chunkIndexFromName(name) === null && !isServerMarkerFile(name)
+        ).length,
     };
 }
 
@@ -912,8 +941,8 @@ async function parseSyncGist(token, gistId, exchange) {
     const history = historyVersions(gist);
     return {
         manifest,
-        // The server the gist is tagged for: its manifest's word, else its description's
-        server: isServerKind(manifest?.server) ? manifest.server : descriptionServer(gist?.description),
+        // The server the gist is tagged for: its marker file's word, else its manifest's, else its description's
+        server: gistFilesServer(files, gist?.description, manifest),
         payload: parts.join(''),
         updatedAt: gist?.updated_at ?? null,
         etag: exchange.etag,
@@ -1008,6 +1037,9 @@ async function readFileContent(token, file, name = 'a gist file') {
  * @param {'live'|'test'|null} [options.server=null] - The game server this push is from. A gist whose
  *   listing names the other one is refused by an unattended push (`wrong-server`) and asked about by a
  *   pressed one. Null skips the check (the writes that put a gist's own revision back).
+ * @param {'live'|'test'|null} [options.markerServer=null] - For a write that puts a revision back (no `server`,
+ *   so no wrong-server check): the server that revision resolves to (marker, manifest, description), whose
+ *   marker is written in place of the other's. Falls back to the manifest's own `server`; none leaves markers alone.
  * @param {((gistServer: 'live'|'test') => Promise<boolean>)|null} [options.confirmServer=null] - For a pressed
  *   push: asked before writing over the other server's gist. False cancels the write.
  * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null,
@@ -1024,7 +1056,14 @@ export async function writeSyncGist(
     chunks,
     previousChunkCount = 0,
     known = null,
-    { unattended = false, confirmPlaintext = null, isAhead = null, server = null, confirmServer = null } = {}
+    {
+        unattended = false,
+        confirmPlaintext = null,
+        isAhead = null,
+        server = null,
+        confirmServer = null,
+        markerServer: restoredServer = null,
+    } = {}
 ) {
     let listing = known && gistId && known.gistId === gistId && known.etag && known.files ? known : null;
 
@@ -1079,6 +1118,7 @@ export async function writeSyncGist(
         if (existingFiles) {
             for (const [name, size] of Object.entries(existingFiles)) {
                 if (name === MANIFEST_FILE || Object.hasOwn(files, name)) continue; // being overwritten
+                if (isServerMarkerFile(name)) continue; // ours, a few bytes, rewritten or removed below
                 if (chunkIndexFromName(name) !== null) {
                     // A chunk this payload does not reach is an orphan, whoever wrote it
                     orphans.push(name);
@@ -1113,6 +1153,24 @@ export async function writeSyncGist(
                 }
                 serverConfirmed = true;
             }
+        }
+
+        // Both servers' markers on one gist (hand-made, or two racing pushes) say nothing about whose it is.
+        // A pressed push asks before taking it over, like the other server's gist; an automatic push or a
+        // restore only writes its own marker and deletes neither
+        const bothMarkers =
+            Boolean(listing?.files) &&
+            Object.hasOwn(listing.files, serverMarkerFile('live')) &&
+            Object.hasOwn(listing.files, serverMarkerFile('test'));
+        let bothMarkersConfirmed = false;
+        if (bothMarkers && isServerKind(server) && gistId && !unattended && confirmServer) {
+            if (!serverConfirmed) {
+                if (!(await confirmServer(server === 'live' ? 'test' : 'live'))) {
+                    throw new GistError('cancelled', 'The push was cancelled.');
+                }
+                serverConfirmed = true;
+            }
+            bothMarkersConfirmed = true;
         }
 
         // Unknown counts as encrypted: an unreadable manifest, or no listing for a pressed push, must
@@ -1160,13 +1218,29 @@ export async function writeSyncGist(
                 ? manifest
                 : { ...manifest, syncSeq, ...(basedOn ? { basedOn } : {}) };
 
-        const orphanKey = `${orphans.join('\n')}|${syncSeq}|${basedOn}`;
+        // The server the written marker names: this push's, or for a restore (no server named) the restored
+        // manifest's own, so the marker never contradicts the data put back. None leaves the markers alone
+        let markerFor = null;
+        if (isServerKind(server)) markerFor = server;
+        else if (isServerKind(restoredServer)) markerFor = restoredServer;
+        else if (isServerKind(writtenManifest?.server)) markerFor = writtenManifest.server;
+        const otherMarker = serverMarkerFile(markerFor === 'live' ? 'test' : 'live');
+        const dropsOtherMarker =
+            markerFor !== null &&
+            Boolean(existingFiles && Object.hasOwn(existingFiles, otherMarker)) &&
+            (!bothMarkers || bothMarkersConfirmed);
+        const orphanKey = `${orphans.join('\n')}|${syncSeq}|${basedOn}|${dropsOtherMarker}`;
         if (serialized?.orphanKey !== orphanKey) {
             const withOrphans = { [MANIFEST_FILE]: { content: JSON.stringify(writtenManifest, null, 2) }, ...files };
             for (const name of orphans) withOrphans[name] = null;
+            // The server marker: the written server's own, and the other's removed if present
+            if (markerFor !== null) {
+                withOrphans[serverMarkerFile(markerFor)] = { content: serverMarkerContent(markerFor) };
+                if (dropsOtherMarker) withOrphans[otherMarker] = null;
+            }
             const body = {
                 // Named for the server the push is from, so the gist list can tell live's from test's
-                description: syncGistDescription(isServerKind(server) ? server : writtenManifest?.server),
+                description: syncGistDescription(markerFor ?? writtenManifest?.server),
                 files: withOrphans,
                 ...(gistId ? {} : { public: false }),
             };
@@ -1275,7 +1349,9 @@ async function listGistFiles(token, gistId, previous) {
                 exportedAt: null,
                 unordered: false,
                 version: previous.version ?? null,
-                server: isServerKind(previous.server) ? previous.server : null,
+                server:
+                    markerServer(Object.keys(previous.files)) ??
+                    (isServerKind(previous.server) ? previous.server : null),
                 fresh: false,
             };
         }
@@ -1290,8 +1366,8 @@ async function listGistFiles(token, gistId, previous) {
                   version: historyVersions(exchange.data)?.[0] ?? null,
                   history: historyVersions(exchange.data),
                   ...listed,
-                  // The manifest's word on the server, else the description's
-                  server: listed.server ?? descriptionServer(exchange.data?.description),
+                  // The marker file's word on the server, else the manifest's, else the description's
+                  server: gistFilesServer(exchange.data?.files, exchange.data?.description),
               }
             : null;
     } catch (error) {

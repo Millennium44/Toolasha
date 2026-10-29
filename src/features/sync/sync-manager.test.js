@@ -3037,6 +3037,21 @@ describe('a push whose write replaced the other server’s', () => {
         expect(stored.map.toolasha_sync_lastHash).toBe('h:older');
     });
 
+    test('a restore passes the revision’s resolved server, which an old build’s manifest lacks', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        // An old build pushed to a test-marked gist: the marker survives, the manifest says nothing
+        gist.revisions = {
+            vOld: {
+                manifest: { toolashaSync: 1, chunks: 1, exportedAt: '2026-10-28T00:00:00Z' },
+                server: 'test',
+                payload: '{"test":1}',
+            },
+        };
+        await syncManager._restoreReplaced('tok', 'abc', 'vOld');
+        expect(gist.writes.at(-1).options).toMatchObject({ unattended: true, markerServer: 'test' });
+        expect(gist.writes.at(-1).options.server).toBeUndefined();
+    });
+
     test('older replaced revisions of the other server are not folded into a restore', async () => {
         stored.map.toolasha_sync_gistId = 'abc';
         const revision = (server, text) => ({
