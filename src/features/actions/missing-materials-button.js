@@ -2306,8 +2306,22 @@ export async function openMissingMaterials(actionHrid, numActions = 1, { upgrade
     await handleMissingMaterialsClick(actionHrid, numActions, upgradeItemLevel);
 }
 
+/**
+ * Open the marketplace on one Alchemy action's bill for an item, exactly as the Alchemy panel's
+ * button does for the panel's selection. Navigation only: nothing is bought.
+ *
+ * @param {string} itemHrid - The item being alchemized
+ * @param {string|null} actionType - The Alchemy tab (coinify, decompose, transmute)
+ * @param {number} [numActions] - How many actions to size the bill for
+ * @returns {Promise<void>}
+ */
+export async function openAlchemyMissingMaterials(itemHrid, actionType, numActions = 1) {
+    await handleAlchemyMissingMaterialsClick({ itemHrid, actionType, numActions, catalyst: null });
+}
+
 export default {
     initialize,
+    openAlchemyMissingMaterials,
     cleanup,
     openMissingMaterials,
     openMaterialsList,

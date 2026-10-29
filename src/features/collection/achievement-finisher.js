@@ -30,6 +30,11 @@ import { countsByMonster, totalBestiaryPoints } from '../../utils/bestiary.js';
 import { collectionCounts, totalCollectionPoints } from './collection-optimizer-plan.js';
 import { buildTierChecklists, nameFromHrid } from './achievement-finisher-model.js';
 import { readiness, resolveAchievement, sortRemaining } from './achievement-finisher-resolve.js';
+import {
+    buyableMissing,
+    openAlchemyMissingMaterials,
+    openMissingMaterials,
+} from '../actions/missing-materials-button.js';
 import { getGameObject, navigateToAction } from '../../utils/item-navigation.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
@@ -217,6 +222,55 @@ function hintWithCoins(text) {
 export function hasGoButton(res, ready) {
     if (res.kind !== 'equip') return true;
     return Boolean(ready?.buyHrid);
+}
+
+/**
+ * The bill lines a Missing Mats press would open tabs for: this row's short inputs, one action's worth.
+ * Empty for a row that is not a production or alchemy one, is owned, or is an Iron Cow's (which cannot buy).
+ * @param {Object} res
+ * @param {Object|null} ready - From `readiness`
+ * @param {Object|null} clientData
+ * @param {boolean} ironCow
+ * @returns {Array<Object>}
+ */
+export function missingMatsLines(res, ready, clientData, ironCow) {
+    if (res.kind !== 'production' && res.kind !== 'alchemy') return [];
+    if (!ready || ironCow || ready.owned !== false) return [];
+    const lines = (ready.shortfall || []).map((short) => ({
+        itemHrid: short.itemHrid,
+        itemName: itemName(clientData, short.itemHrid),
+        missing: short.need - short.have,
+        isTradeable: clientData?.itemDetailMap?.[short.itemHrid]?.isTradable === true,
+    }));
+    return buyableMissing(lines);
+}
+
+/**
+ * The Missing Mats button for a resolved row, or null when the row has nothing to buy.
+ * Takes the row and returns DOM, so any list of these rows can reuse it.
+ * @param {Object} res
+ * @param {Object|null} ready
+ * @param {Object|null} clientData
+ * @param {boolean} ironCow
+ * @param {() => void} onPress
+ * @returns {HTMLButtonElement|null}
+ */
+export function createMissingMatsButton(res, ready, clientData, ironCow, onPress) {
+    const lines = missingMatsLines(res, ready, clientData, ironCow);
+    if (lines.length === 0) return null;
+    const mats = el(
+        'button',
+        'margin-left:6px;padding:0 6px;font-size:11px;cursor:pointer;color:#fff;background:linear-gradient(180deg,rgba(91,141,239,0.2) 0%,rgba(91,141,239,0.1) 100%);border:1px solid rgba(91,141,239,0.4);border-radius:3px;',
+        'Missing Mats'
+    );
+    mats.type = 'button';
+    mats.className = `${PANEL_CLASS}-mats`;
+    mats.title = `Will buy: ${lines.map((m) => `${m.itemName} ×${formatKMB(m.missing)}`).join(', ')}`;
+    mats.addEventListener('click', (event) => {
+        event.stopPropagation();
+        onPress();
+    });
+    return mats;
 }
 
 class AchievementFinisher {
@@ -427,6 +481,25 @@ class AchievementFinisher {
         }
     }
 
+    /**
+     * Open the marketplace on one action's missing inputs, the same path as the action panel's
+     * Missing Mats Marketplace button. Navigation only: nothing is bought.
+     * @param {Object} res
+     */
+    openMissingMats(res) {
+        try {
+            const pending =
+                res.kind === 'alchemy'
+                    ? openAlchemyMissingMaterials(res.itemHrid, res.alchemyType, 1)
+                    : openMissingMaterials(res.actionHrid, 1);
+            Promise.resolve(pending).catch((error) =>
+                console.error('[AchievementFinisher] Missing Mats failed:', error)
+            );
+        } catch (error) {
+            console.error('[AchievementFinisher] Missing Mats failed:', error);
+        }
+    }
+
     cleanup() {
         this.disable();
     }
@@ -573,6 +646,10 @@ class AchievementFinisher {
                     });
                     row.appendChild(button);
                 }
+                const mats = createMissingMatsButton(res, ready, view.clientData, getContext().ironCow, () =>
+                    this.openMissingMats(res)
+                );
+                if (mats) row.appendChild(mats);
             }
             block.appendChild(row);
         }

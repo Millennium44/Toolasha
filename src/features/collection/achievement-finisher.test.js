@@ -35,6 +35,8 @@ const nav = vi.hoisted(() => ({
         price: hrid in game.prices ? game.prices[hrid] : null,
         estimated: game.estimated.has(hrid),
     })),
+    openMissingMaterials: vi.fn(async () => {}),
+    openAlchemyMissingMaterials: vi.fn(async () => {}),
     marketOn: vi.fn(),
     marketOff: vi.fn(),
 }));
@@ -83,6 +85,12 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+vi.mock('../actions/missing-materials-button.js', () => ({
+    buyableMissing: (materials) =>
+        materials.filter((m) => m && m.isTradeable !== false && m.missing > 0 && m.itemHrid !== '/items/coin'),
+    openMissingMaterials: nav.openMissingMaterials,
+    openAlchemyMissingMaterials: nav.openAlchemyMissingMaterials,
+}));
 vi.mock('../../api/marketplace.js', () => ({ default: { on: nav.marketOn, off: nav.marketOff } }));
 vi.mock('../../utils/item-navigation.js', () => ({
     getGameObject: () => game.gameObject,
@@ -591,6 +599,43 @@ describe('one-off rows: description, readiness, Go', () => {
         game.characterId = 8;
         game.handlers.achievements_updated.forEach((fn) => fn({}));
         expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(second);
+    });
+
+    test('Missing Mats shows only on rows that buy inputs, and opens the shared bill for one action', () => {
+        game.inventory = INVENTORY.filter((row) => row.itemHrid !== '/items/bamboo_gloves');
+        openVeteran();
+        const matsOf = (name) => rowOf(name).querySelector(`.${PANEL_CLASS}-mats`);
+        // Buy rows (production with a priced shortfall, alchemy with the item missing)
+        expect(matsOf('Dairy Chef').textContent).toBe('Missing Mats');
+        expect(matsOf('Dairy Chef').title).toMatch(/^Will buy: Peach ×/);
+        expect(matsOf('Recycler')).not.toBeNull();
+        // Go comes first, Missing Mats after it
+        expect(rowOf('Dairy Chef').lastChild).toBe(matsOf('Dairy Chef'));
+        // Not for an equip row (Go opens the market), a combat row or an unresolved one
+        expect(matsOf('Ginkgo Wielder')).toBeNull();
+        expect(matsOf('Jerry Hunter')).toBeNull();
+        expect(matsOf('Mystery')).toBeNull();
+
+        matsOf('Dairy Chef').click();
+        expect(nav.openMissingMaterials.mock.calls).toEqual([['/actions/cooking/peach_yogurt', 1]]);
+        matsOf('Recycler').click();
+        expect(nav.openAlchemyMissingMaterials.mock.calls).toEqual([['/items/bamboo_gloves', 'decompose', 1]]);
+        // Navigation only
+        expect(nav.navigateToMarketplace).not.toHaveBeenCalled();
+    });
+
+    test('Missing Mats is hidden for owned materials and for an Iron Cow', () => {
+        openVeteran();
+        // Recycler's materials are owned in the default inventory
+        expect(rowOf('Recycler').querySelector(`.${PANEL_CLASS}-mats`)).toBeNull();
+        expect(rowOf('Dairy Chef').querySelector(`.${PANEL_CLASS}-mats`)).not.toBeNull();
+        finisher.disable();
+
+        game.ironCow = true;
+        document.body.replaceChildren();
+        openVeteran();
+        expect(rowOf('Dairy Chef').textContent).toContain('missing 1 input');
+        expect(document.querySelector(`.${PANEL_CLASS}-mats`)).toBeNull();
     });
 
     test('a gold amount is followed by the game coin icon once the item sheet is known', () => {
