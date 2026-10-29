@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat task Go opens the Zone estimate's zone, for real this time
+
+- The earlier fix never ran: Go looked up the card's estimate on the wrong element and found none. Go now opens the zone a Zone-mode estimate picked, with enough fights to finish the task; checked live on the test server (a Panda task opens Bear With It).
+
 ### Sync gists keep their server through older builds
 
 - A sync gist now also records its game server in a small marker file that older Toolasha versions leave alone, so a push from an un-updated device can no longer strip the tag and let the other server claim the gist.
