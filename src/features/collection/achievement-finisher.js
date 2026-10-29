@@ -136,14 +136,15 @@ export function readinessText(res, ready, clientData, ownCombatLevel) {
     const parts = [];
     const lv = ready.level;
     if (res.kind === 'combat') {
-        if (res.tier > 0) parts.push(`T${res.tier}`);
+        if (res.dungeon) parts.push('dungeon');
+        parts.push(`T${res.tier}`);
         if (lv && lv.met === true) parts.push('level met');
         else if (lv && lv.met === false) parts.push(`needs Lv ${lv.need} (you ${lv.have})`);
-        else {
-            if (Number.isFinite(ownCombatLevel)) parts.push(`your Combat Lv ${ownCombatLevel}`);
-            if (res.monsterLevel) parts.push(`monster Lv ${res.monsterLevel}`);
-            if (!Number.isFinite(ownCombatLevel) && !res.monsterLevel) parts.push('level unknown');
-        }
+        else if (lv) parts.push('level unknown');
+        else parts.push('no level requirement');
+        // A solo fight: the levels to weigh it by, without running the sim
+        if (Number.isFinite(ownCombatLevel)) parts.push(`your Combat Lv ${ownCombatLevel}`);
+        if (res.monsterLevel) parts.push(`monster Lv ${res.monsterLevel}`);
         return parts.join(' · ');
     }
 

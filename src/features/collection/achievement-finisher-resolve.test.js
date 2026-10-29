@@ -13,7 +13,14 @@ import {
     sortRemaining,
     ownedCount,
 } from './achievement-finisher-resolve.js';
-import { ACHIEVEMENTS, DATA, INVENTORY, PRICES, SKILLS } from './__fixtures__/achievement-finisher-game.js';
+import {
+    ACHIEVEMENTS,
+    MORE_ACHIEVEMENTS as MORE,
+    DATA,
+    INVENTORY,
+    PRICES,
+    SKILLS,
+} from './__fixtures__/achievement-finisher-game.js';
 
 const resolve = (slug) => resolveAchievement(ACHIEVEMENTS[`/achievements/${slug}`], DATA);
 
@@ -80,17 +87,56 @@ describe('resolveAchievement: the nine listed achievements', () => {
             monsterLevel: 45,
         });
         expect(resolve('defeat_red_panda')).toMatchObject({
-            actionHrid: '/actions/combat/jungle_planet',
+            actionHrid: '/actions/combat/bear_with_it',
             tier: 0,
         });
     });
 
-    test('defeat T5: the tier comes from the id, and a zone that tops out below it is skipped', () => {
-        // Jerry spawns in a dungeon (sort 0), a zone with max tier 2 (sort 1) and Jungle Planet (max 5)
+    test('defeat T5 Jerry: /monsters/rat by its English name (not Butterjerry), in the zone named after it', () => {
+        // Rat spawns in a dungeon (sort 0), Smelly Planet (sort 1) and the Rat zone (sort 2)
         expect(resolve('defeat_jerry_t5')).toMatchObject({
-            actionHrid: '/actions/combat/jungle_planet',
-            monsterHrid: '/monsters/jerry',
+            actionHrid: '/actions/combat/rat',
+            monsterHrid: '/monsters/rat',
             tier: 5,
+        });
+        expect(resolveAchievement(MORE['/achievements/defeat_jerry'], DATA)).toMatchObject({
+            actionHrid: '/actions/combat/rat',
+            monsterHrid: '/monsters/rat',
+            tier: 0,
+        });
+    });
+
+    test('a zone that tops out below the tier is skipped for the next one that does not', () => {
+        // Butterjerry: Low Zone (max T2, sort 3) and Jungle Planet (max T5, sort 4)
+        expect(resolveAchievement({ steamAchievementId: 'ach_defeat_butterjerry_t5' }, DATA).actionHrid).toBe(
+            '/actions/combat/jungle_planet'
+        );
+        expect(resolveAchievement({ steamAchievementId: 'ach_defeat_butterjerry' }, DATA).actionHrid).toBe(
+            '/actions/combat/low_zone'
+        );
+    });
+
+    test('gather: the gathering action that drops the item', () => {
+        expect(resolveAchievement(MORE['/achievements/gather_milk'], DATA)).toEqual({
+            kind: 'production',
+            actionHrid: '/actions/milking/cow',
+            skillHrid: '/skills/milking',
+            level: 1,
+            inputs: [],
+        });
+    });
+
+    test('clear <dungeon>: that dungeon at T0; a level-0 empty requirement is none', () => {
+        expect(resolveAchievement(MORE['/achievements/clear_chimerical_den'], DATA)).toMatchObject({
+            kind: 'combat',
+            dungeon: true,
+            actionHrid: '/actions/combat/chimerical_den',
+            tier: 0,
+            requirement: null,
+        });
+        expect(resolveAchievement(MORE['/achievements/clear_gated_den'], DATA).requirement).toEqual({
+            skillHrid: '/skills/combat',
+            level: 90,
         });
     });
 
@@ -140,6 +186,17 @@ describe('resolveAchievement: what it refuses', () => {
         expect(
             resolveAchievement({ description: 'Equip any Ginkgo weapon (staff, bow, or crossbow)' }, DATA).kind
         ).toBe('equip');
+    });
+
+    test('refine and the category ids (any Azure tool, any Celestial tool or outfit) stay unresolved', () => {
+        for (const slug of [
+            'refine_something',
+            'cheesesmith_azure_tool',
+            'craft_celestial_tool_or_outfit',
+            'clear_t1_dungeon_10_times',
+        ]) {
+            expect(resolveAchievement(MORE[`/achievements/${slug}`], DATA)).toBeNull();
+        }
     });
 
     test('missing game data resolves nothing', () => {
@@ -234,9 +291,15 @@ describe('readiness', () => {
         expect(readiness(resolve('equip_ginkgo_weapon'), context({ ironCow: true })).buyHrid).toBeNull();
     });
 
-    test('combat with no zone requirement in the data: level unknown, never assumed met', () => {
+    test('a zone whose requirement is {skillHrid: "", level: 0} has none: met, ready', () => {
         const ready = readiness(resolve('defeat_jerry_t5'), context());
-        expect(ready.levelMet).toBeNull();
+        expect(ready).toMatchObject({ levelMet: true, level: null, owned: true });
+        expect(readinessGroup({ readiness: ready })).toBe(0);
+    });
+
+    test('a dungeon with a real requirement compares it against the combat level', () => {
+        const ready = readiness(resolveAchievement(MORE['/achievements/clear_gated_den'], DATA), context());
+        expect(ready.level).toMatchObject({ met: false, have: 60, need: 90 });
     });
 
     test('a zone requirement on a non-skill hrid compares against the combat level', () => {

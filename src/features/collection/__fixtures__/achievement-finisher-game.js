@@ -63,58 +63,54 @@ export const ACTIONS = {
         type: '/action_types/alchemy',
         levelRequirement: { skillHrid: '/skills/alchemy', level: 1 },
     },
-    '/actions/combat/low_zone': {
-        hrid: '/actions/combat/low_zone',
-        name: 'Low Zone',
-        type: '/action_types/combat',
-        sortIndex: 1,
-        maxDifficulty: 2,
-        combatZoneInfo: {
-            isDungeon: false,
-            fightInfo: { randomSpawnInfo: { spawns: [{ combatMonsterHrid: '/monsters/jerry' }] }, bossSpawns: [] },
-        },
+    '/actions/milking/cow': {
+        hrid: '/actions/milking/cow',
+        name: 'Cow',
+        type: '/action_types/milking',
+        levelRequirement: { skillHrid: '/skills/milking', level: 1 },
+        dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 1 }],
     },
-    '/actions/combat/jungle_planet': {
-        hrid: '/actions/combat/jungle_planet',
-        name: 'Jungle Planet',
-        type: '/action_types/combat',
-        sortIndex: 4,
-        maxDifficulty: 5,
-        combatZoneInfo: {
-            isDungeon: false,
-            fightInfo: {
-                randomSpawnInfo: { spawns: [{ combatMonsterHrid: '/monsters/jerry' }] },
-                bossSpawns: [{ combatMonsterHrid: '/monsters/red_panda' }],
-            },
-        },
-    },
-    '/actions/combat/gobo_planet': {
-        hrid: '/actions/combat/gobo_planet',
-        name: 'Gobo Planet',
-        type: '/action_types/combat',
-        sortIndex: 5,
-        maxDifficulty: 5,
-        combatZoneInfo: {
-            isDungeon: false,
-            fightInfo: {
-                randomSpawnInfo: { spawns: [{ combatMonsterHrid: '/monsters/gobo_stabby' }] },
-                bossSpawns: [{ combatMonsterHrid: '/monsters/gobo_chieftain' }],
-            },
-        },
-    },
+    // Live shapes (test server, 2026-10-28): no requirement is `{skillHrid: '', level: 0}`; the
+    // monster named "Jerry" is /monsters/rat, in /actions/combat/rat and smelly_planet (max T5) and
+    // the chimerical_den dungeon (max T2). Sort indexes here are made up.
+    '/actions/combat/smelly_planet': zone('smelly_planet', 'Smelly Planet', 1, 5, ['/monsters/rat']),
+    '/actions/combat/rat': zone('rat', 'Rat', 2, 5, ['/monsters/rat']),
+    '/actions/combat/low_zone': zone('low_zone', 'Low Zone', 3, 2, ['/monsters/butterjerry']),
+    '/actions/combat/jungle_planet': zone('jungle_planet', 'Jungle Planet', 4, 5, ['/monsters/butterjerry']),
+    '/actions/combat/gobo_planet': zone('gobo_planet', 'Gobo Planet', 5, 5, ['/monsters/gobo_stabby'], {
+        bosses: ['/monsters/gobo_chieftain'],
+    }),
+    '/actions/combat/bear_with_it': zone('bear_with_it', 'Bear With It', 6, 5, [], {
+        bosses: ['/monsters/red_panda'],
+    }),
     // A dungeon with Jerry in it and the lowest sort index: never the zone a solo kill opens
-    '/actions/combat/jerry_dungeon': {
-        hrid: '/actions/combat/jerry_dungeon',
-        name: 'Jerry Dungeon',
-        type: '/action_types/combat',
-        sortIndex: 0,
-        maxDifficulty: 5,
-        combatZoneInfo: {
-            isDungeon: true,
-            fightInfo: { randomSpawnInfo: { spawns: [{ combatMonsterHrid: '/monsters/jerry' }] }, bossSpawns: [] },
-        },
-    },
+    '/actions/combat/chimerical_den': zone('chimerical_den', 'Chimerical Den', 0, 2, ['/monsters/rat'], {
+        isDungeon: true,
+    }),
+    // A zone with a real requirement, to test that path
+    '/actions/combat/gated_den': zone('gated_den', 'Gated Den', 9, 0, [], {
+        isDungeon: true,
+        levelRequirement: { skillHrid: '/skills/combat', level: 90 },
+    }),
 };
+
+function zone(slug, name, sortIndex, maxDifficulty, spawns, { bosses = [], isDungeon = false, levelRequirement } = {}) {
+    return {
+        hrid: `/actions/combat/${slug}`,
+        name,
+        type: '/action_types/combat',
+        sortIndex,
+        maxDifficulty,
+        levelRequirement: levelRequirement || { skillHrid: '', level: 0 },
+        combatZoneInfo: {
+            isDungeon,
+            fightInfo: {
+                randomSpawnInfo: { spawns: spawns.map((combatMonsterHrid) => ({ combatMonsterHrid })) },
+                bossSpawns: bosses.map((combatMonsterHrid) => ({ combatMonsterHrid })),
+            },
+        },
+    };
+}
 
 const weapon = (name, type, level = 20) => ({
     name,
@@ -158,7 +154,9 @@ export const ITEMS = {
 };
 
 export const MONSTERS = {
-    '/monsters/jerry': { name: 'Jerry', combatDetails: { combatLevel: 60 } },
+    // Live: the monster named "Jerry" has the hrid /monsters/rat; Butterjerry is a different monster
+    '/monsters/rat': { name: 'Jerry', combatDetails: { combatLevel: 60 } },
+    '/monsters/butterjerry': { name: 'Butterjerry', combatDetails: { combatLevel: 70 } },
     '/monsters/red_panda': { name: 'Red Panda', combatDetails: { combatLevel: 55 } },
     '/monsters/gobo_chieftain': { name: 'Gobo Chieftain', combatDetails: { combatLevel: 45 } },
     '/monsters/gobo_stabby': { name: 'Gobo Stabby', combatDetails: { combatLevel: 30 } },
@@ -234,6 +232,38 @@ export const ACHIEVEMENTS = {
         'Mystery',
         'ach_enhance_something_plus_10',
         'Enhance something to +10'
+    ),
+};
+
+/** Further live verbs: gather and clear resolve; refine and the category ids do not */
+export const MORE_ACHIEVEMENTS = {
+    '/achievements/gather_milk': ach('gather_milk', 'Milkmaid', 'ach_gather_milk', 'Gather Milk'),
+    '/achievements/defeat_jerry': ach('defeat_jerry', 'Rat Catcher', 'ach_defeat_jerry', 'Defeat Jerry by yourself'),
+    '/achievements/clear_chimerical_den': ach(
+        'clear_chimerical_den',
+        'Den Delver',
+        'ach_clear_chimerical_den',
+        'Clear Chimerical Den'
+    ),
+    '/achievements/clear_gated_den': ach('clear_gated_den', 'Gated', 'ach_clear_gated_den', 'Clear Gated Den'),
+    '/achievements/clear_t1_dungeon_10_times': ach(
+        'clear_t1_dungeon_10_times',
+        'Regular',
+        'ach_clear_t1_dungeon_10_times',
+        'Clear any T1 dungeon 10 times'
+    ),
+    '/achievements/refine_something': ach('refine_something', 'Refiner', 'ach_refine_something', 'Refine an item'),
+    '/achievements/cheesesmith_azure_tool': ach(
+        'cheesesmith_azure_tool',
+        'Azure Smith',
+        'ach_cheesesmith_azure_tool',
+        'Make any Azure tool with Cheesesmithing'
+    ),
+    '/achievements/craft_celestial_tool_or_outfit': ach(
+        'craft_celestial_tool_or_outfit',
+        'Celestial',
+        'ach_craft_celestial_tool_or_outfit',
+        'Make any Celestial tool or outfit with Crafting'
     ),
 };
 

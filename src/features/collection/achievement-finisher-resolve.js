@@ -25,6 +25,9 @@ export const VERB_SKILLS = Object.freeze({
     milk: 'milking',
 });
 
+/** `gather_<item>`: whichever gathering skill's action drops that item */
+const GATHERING_SKILLS = ['milking', 'foraging', 'woodcutting'];
+
 /** Alchemy verbs → the alchemy tab, and the item field that makes the item eligible for it */
 export const ALCHEMY_VERBS = Object.freeze({
     decompose: 'decompose',
@@ -78,8 +81,10 @@ export function parseAchievement(detail) {
 }
 
 function classify(verb, rest) {
-    if (VERB_SKILLS[verb]) return { kind: 'production', verb, slug: rest, tier: null };
+    if (VERB_SKILLS[verb] || verb === 'gather') return { kind: 'production', verb, slug: rest, tier: null };
     if (ALCHEMY_VERBS[verb]) return { kind: 'alchemy', verb, slug: rest, tier: null };
+    // `clear_<dungeon>`; anything that is not a dungeon's hrid (clear_t1_dungeon_10_times) stays unresolved
+    if (verb === 'clear') return { kind: 'dungeon', verb, slug: rest, tier: 0 };
     if (verb === 'defeat') {
         const tiered = /^(.+)_t(\d+)$/.exec(rest);
         return {
@@ -132,11 +137,13 @@ function inputsOf(action) {
 }
 
 function resolveProduction(parsed, data) {
-    const skill = VERB_SKILLS[parsed.verb];
-    const typeHrid = `/action_types/${skill}`;
+    const gather = parsed.verb === 'gather';
+    const skills = gather ? GATHERING_SKILLS : [VERB_SKILLS[parsed.verb]];
+    const typeHrids = new Set(skills.map((skill) => `/action_types/${skill}`));
     const actions = data.actionDetailMap || {};
-    const ofType = (action) => action?.type === typeHrid;
-    let actionHrid = findOne(actions, parsed.slug, ofType);
+    const ofType = (action) => typeHrids.has(action?.type);
+    // `gather_<x>` names the item gathered, never the action
+    let actionHrid = gather ? null : findOne(actions, parsed.slug, ofType);
     if (!actionHrid) {
         // The target is the item the action makes or gathers
         const itemHrid = findOne(data.itemDetailMap, parsed.slug);
@@ -154,7 +161,7 @@ function resolveProduction(parsed, data) {
     return {
         kind: 'production',
         actionHrid,
-        skillHrid: action.levelRequirement?.skillHrid || `/skills/${skill}`,
+        skillHrid: action.levelRequirement?.skillHrid || `/skills/${action.type.split('/').pop()}`,
         level: action.levelRequirement?.level || 1,
         inputs: inputsOf(action),
     };
@@ -204,15 +211,41 @@ function resolveCombat(parsed, data) {
             zoneSpawns(action, monsterHrid)
     );
     if (zones.length === 0) return null;
-    zones.sort(([, a], [, b]) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0));
+    // The zone named after the monster (Jerry is /monsters/rat, in /actions/combat/rat), else the earliest
+    const named = (hrid) => (slugOf(hrid) === slugOf(monsterHrid) ? 0 : 1);
+    zones.sort(([ha, a], [hb, b]) => named(ha) - named(hb) || (a.sortIndex ?? 0) - (b.sortIndex ?? 0));
     const [zoneHrid, zone] = zones[0];
     return {
         kind: 'combat',
         actionHrid: zoneHrid,
         monsterHrid,
         tier,
-        requirement: zone.levelRequirement?.level > 0 ? { ...zone.levelRequirement } : null,
+        requirement: zoneRequirement(zone),
         monsterLevel: Number(monsters[monsterHrid]?.combatDetails?.combatLevel) || null,
+    };
+}
+
+/** A zone's level requirement; the game sends `{skillHrid: '', level: 0}` for none */
+function zoneRequirement(zone) {
+    const req = zone?.levelRequirement;
+    return req?.skillHrid && req.level > 0 ? { skillHrid: req.skillHrid, level: req.level } : null;
+}
+
+function resolveDungeon(parsed, data) {
+    const zoneHrid = findOne(
+        data.actionDetailMap,
+        parsed.slug,
+        (action) => action?.type === '/action_types/combat' && action.combatZoneInfo?.isDungeon === true
+    );
+    if (!zoneHrid) return null;
+    return {
+        kind: 'combat',
+        actionHrid: zoneHrid,
+        monsterHrid: null,
+        dungeon: true,
+        tier: 0,
+        requirement: zoneRequirement(data.actionDetailMap[zoneHrid]),
+        monsterLevel: null,
     };
 }
 
@@ -255,6 +288,8 @@ export function resolveAchievement(detail, data) {
             return resolveAlchemy(parsed, data);
         case 'combat':
             return resolveCombat(parsed, data);
+        case 'dungeon':
+            return resolveDungeon(parsed, data);
         case 'equip':
             return resolveEquip(parsed, data);
         default:
@@ -323,7 +358,8 @@ export function readiness(res, ctx) {
         out.level = res.requirement
             ? levelCheck(ctx.skillLevels, res.requirement.skillHrid, res.requirement.level, ctx.combatLevel)
             : null;
-        out.levelMet = out.level ? out.level.met : null;
+        // No requirement in the zone's data (`{skillHrid: '', level: 0}`) is met, not unknown
+        out.levelMet = out.level ? out.level.met : true;
         out.owned = true;
         return out;
     }

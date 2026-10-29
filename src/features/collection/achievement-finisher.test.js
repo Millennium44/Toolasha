@@ -97,6 +97,7 @@ import finisher, { findAchievementsHost, rewardText, PANEL_CLASS } from './achie
 import { buildTierChecklists } from './achievement-finisher-model.js';
 import {
     ACHIEVEMENTS,
+    MORE_ACHIEVEMENTS,
     ACTIONS,
     ITEMS,
     MONSTERS,
@@ -446,16 +447,17 @@ describe('one-off rows: description, readiness, Go', () => {
     const rowOf = (name) => rows().find((row) => row.textContent.startsWith(`○ ${name} `));
     const goOf = (name) => rowOf(name).querySelector(`.${PANEL_CLASS}-go`);
 
-    test('rows are sorted ready, needs buying (cheapest first), level unknown, level not met, unresolved', () => {
+    test('rows are sorted ready, needs buying (cheapest first), level not met, unresolved', () => {
         openVeteran();
+        // Combat zones with no requirement ({skillHrid: '', level: 0}) are ready
         expect(rows().map((row) => row.textContent.split(' — ')[0].slice(2))).toEqual([
             'Recycler',
-            'Arcane Lumberjack',
-            'Dairy Chef',
-            'Ginkgo Wielder',
             'Chief Slayer',
             'Jerry Hunter',
             'Panda Tamer',
+            'Arcane Lumberjack',
+            'Dairy Chef',
+            'Ginkgo Wielder',
             'Space Baker',
             'Shadow Tailor',
             'Mystery',
@@ -469,7 +471,8 @@ describe('one-off rows: description, readiness, Go', () => {
         expect(rowOf('Recycler').textContent).toContain('[level met · materials owned]');
         expect(rowOf('Space Baker').textContent).toContain('needs Cooking 70 (you 45)');
         expect(rowOf('Space Baker').textContent).toContain('unpriced: Mystery Sugar');
-        expect(rowOf('Jerry Hunter').textContent).toContain('[T5 · your Combat Lv');
+        expect(rowOf('Jerry Hunter').textContent).toContain('[T5 · no level requirement · your Combat Lv');
+        expect(rowOf('Chief Slayer').textContent).toContain('[T0 · no level requirement');
         expect(rowOf('Jerry Hunter').textContent).toContain('monster Lv 60]');
         expect(rowOf('Ginkgo Wielder').textContent).toContain('cheapest: Ginkgo Crossbow ~700');
         // Unresolved: the description and nothing else
@@ -484,7 +487,7 @@ describe('one-off rows: description, readiness, Go', () => {
 
         goOf('Jerry Hunter').click();
         // Exactly the zone and tier: no count, so nothing is filled in and nothing queued
-        expect(nav.openCombatZoneAtTier.mock.calls).toEqual([['/actions/combat/jungle_planet', 5]]);
+        expect(nav.openCombatZoneAtTier.mock.calls).toEqual([['/actions/combat/rat', 5]]);
 
         goOf('Ginkgo Wielder').click();
         expect(nav.navigateToMarketplace).toHaveBeenCalledWith('/items/ginkgo_crossbow', 0);
@@ -500,6 +503,22 @@ describe('one-off rows: description, readiness, Go', () => {
         await vi.runAllTimersAsync();
         // The game object was only ever asked to select the alchemy item
         expect(gameCalls.map(([name]) => name)).toEqual(['handleAlchemizeItem']);
+    });
+
+    test('clear <dungeon> opens the dungeon at T0; gather opens the gathering action; the rest get no Go', () => {
+        game.clientData = { ...game.clientData, achievementDetailMap: MORE_ACHIEVEMENTS };
+        game.detail = MORE_ACHIEVEMENTS;
+        openVeteran();
+        expect(rowOf('Den Delver').textContent).toContain('[dungeon · T0 · no level requirement');
+        goOf('Den Delver').click();
+        expect(nav.openCombatZoneAtTier.mock.calls).toEqual([['/actions/combat/chimerical_den', 0]]);
+        expect(rowOf('Gated').textContent).toContain('needs Lv 90 (you 50)');
+        goOf('Milkmaid').click();
+        expect(nav.navigateToAction.mock.calls).toEqual([['/actions/milking/cow']]);
+        for (const name of ['Regular', 'Refiner', 'Azure Smith', 'Celestial']) {
+            expect(goOf(name)).toBeNull();
+            expect(rowOf(name).querySelector(`.${PANEL_CLASS}-ready`)).toBeNull();
+        }
     });
 
     test('alchemy with no stack opens the alchemy action and selects the tab by position', async () => {
