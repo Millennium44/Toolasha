@@ -202,6 +202,25 @@ export const recommendationMethods = {
     },
 
     /**
+     * A room's recommendation as a reader should see it. While a run is going
+     * and its inputs have changed under it, a record written before the change
+     * answers for gear that is gone, so it reads as absent until the run's
+     * re-search replaces it. Every reader of the map goes through here: the
+     * badges, the skip-edit autofill and Lab Sim's recommended room level.
+     * @param {string} roomHrid
+     * @returns {Object|undefined} The record, or undefined when none is current
+     */
+    getCurrentRecommendation(roomHrid) {
+        const rec = this.recommendations?.get(roomHrid);
+        if (!rec) return undefined;
+        if (this.recommendRunning && this._recommendInputsChangedMidRun) {
+            const written = this._recommendRecordSerial?.get(roomHrid) ?? -1;
+            if (written < (this._recommendChangeSerial || 0)) return undefined;
+        }
+        return rec;
+    },
+
+    /**
      * The room level a Recommend run says this fight should be skipped to.
      *
      * The recommendation is a *threshold* — an offset — and the room it picks
@@ -220,7 +239,7 @@ export const recommendationMethods = {
      * @returns {number} Room level, 0 when there is no recommendation
      */
     getRecommendedCombatRoomLevel(monsterHrid) {
-        const rec = this.recommendations?.get(monsterHrid);
+        const rec = this.getCurrentRecommendation(monsterHrid);
         // A closest-miss from Recommend by Time is shown, not applied: it is
         // the level nearest the limit, not one that meets it
         if (rec?.qualifies === false) return 0;
@@ -510,6 +529,8 @@ export const recommendationMethods = {
 
         this._recommendInputsChangedMidRun = false;
         this._recommendChangeSerial = 0;
+        /** room -> the change serial its record was computed under */
+        this._recommendRecordSerial = new Map();
         /** combat room -> the change serial its search started under */
         const combatSearchedAt = new Map();
 
@@ -523,12 +544,15 @@ export const recommendationMethods = {
         });
         // Skilling rooms are closed-form: no sims, nothing to cancel
         const searchSkillRoom = async (roomHrid) => {
+            const startedAt = this._recommendChangeSerial;
             if (bySeconds) {
                 const found = await this.findRecommendedThresholdSeconds(roomHrid, targetSeconds);
                 if (this.simEpoch() !== epoch) return;
                 this.recommendations.set(roomHrid, secondsRecord(found));
+                this._recommendRecordSerial.set(roomHrid, startedAt);
                 return;
             }
+            this._recommendRecordSerial.set(roomHrid, startedAt);
             this.recommendations.set(roomHrid, {
                 threshold: this.findRecommendedThreshold(roomHrid, targetRate),
                 basis: 'winRate',
@@ -539,15 +563,18 @@ export const recommendationMethods = {
 
         // One combat room's search; false when the batch was cancelled or torn down
         const searchCombatRoom = async (roomHrid) => {
-            combatSearchedAt.set(roomHrid, this._recommendChangeSerial);
+            const startedAt = this._recommendChangeSerial;
+            combatSearchedAt.set(roomHrid, startedAt);
             if (bySeconds) {
                 const found = await this.findRecommendedThresholdSecondsCombat(roomHrid, targetSeconds);
                 if (this.simCancelled() || this.simEpoch() !== epoch) return false;
                 // An interrupted combat room reports nothing, as win-rate does — and a retry
                 // that could not run drops the record it was retrying, rather than leave a
                 // threshold for the inputs that changed
-                if (found) this.recommendations.set(roomHrid, secondsRecord(found));
-                else this.recommendations.delete(roomHrid);
+                if (found) {
+                    this.recommendations.set(roomHrid, secondsRecord(found));
+                    this._recommendRecordSerial.set(roomHrid, startedAt);
+                } else this.recommendations.delete(roomHrid);
                 return true;
             }
             const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
@@ -558,6 +585,7 @@ export const recommendationMethods = {
                 basisKey,
                 target: this._recommendTargetPct,
             });
+            this._recommendRecordSerial.set(roomHrid, startedAt);
             return true;
         };
 
@@ -717,7 +745,7 @@ export const recommendationMethods = {
             const roomHrid = this.extractRoomHrid(cell);
             if (!roomHrid) continue;
 
-            const rec = this.recommendations.get(roomHrid);
+            const rec = this.getCurrentRecommendation(roomHrid);
             if (!rec || rec.threshold === null) continue;
 
             const isSkill = roomHrid.startsWith('/skills/');

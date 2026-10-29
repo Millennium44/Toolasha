@@ -537,7 +537,7 @@ class LabyrinthClearRate {
         const roomHrid = this.extractRoomHrid(cell);
         if (!roomHrid) return;
 
-        const rec = this.recommendations.get(roomHrid);
+        const rec = this.getCurrentRecommendation(roomHrid);
         // A time recommendation that only found the closest miss is not a level
         // worth filling into the field
         const recommended = rec?.qualifies === false ? null : rec?.threshold;
