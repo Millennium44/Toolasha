@@ -159,7 +159,8 @@ class FakeGistError extends Error {
 vi.mock('./gist-client.js', () => ({
     GistError: FakeGistError,
     chunkPayload: (text) => [text],
-    readSyncGistRevision: async () => {
+    readSyncGistRevision: async (_token, _id, version) => {
+        if (gist.revisions?.[version]) return gist.revisions[version];
         throw new Error('no revisions in this fake');
     },
     findSyncGist: async (_token, server) => {
@@ -194,6 +195,8 @@ vi.mock('./gist-client.js', () => ({
             etag: gist.writeEtag,
             files: gist.writeFiles,
             syncSeq: gist.writeSeq ?? manifest.syncSeq,
+            // Versions another device wrote between this write's listing and the write, one list per write
+            intervening: gist.interveningQueue?.shift() ?? [],
         };
     },
 }));
@@ -257,6 +260,8 @@ beforeEach(() => {
     gist.writeSeq = undefined;
     gist.writeHook = null;
     gist.writeAsk = null;
+    gist.revisions = null;
+    gist.interveningQueue = null;
     gist.findServers = [];
     gist.findError = null;
     gist.inspected = [];
@@ -3000,5 +3005,48 @@ describe('a chosen gist, after review', () => {
         expect(stored.map.toolasha_sync_gistId).toBeNull();
         expect(seen.length).toBeGreaterThan(0);
         off();
+    });
+});
+
+describe('a push whose write replaced the other server’s', () => {
+    test('is not folded in: the gist goes back to that write, and automatic pushes are held', async () => {
+        // A test-server Push, confirmed over the gist, landed between this live push's listing and its write
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-08-01T00:00:00Z';
+        stored.map.toolasha_sync_lastHash = 'h:older';
+        gist.interveningQueue = [['vTest']];
+        gist.revisions = {
+            vTest: {
+                manifest: { toolashaSync: 1, chunks: 1, exportedAt: '2026-10-28T00:00:00Z', server: 'test' },
+                server: 'test',
+                payload: '{"test":1}',
+            },
+        };
+
+        expect(await syncManager.push({ silent: true, unattended: true })).toMatchObject({
+            ok: false,
+            reason: 'wrong-server',
+        });
+        expect(payload.uploadMerges).toBe(0);
+        expect(gist.writes).toHaveLength(2);
+        expect(gist.writes[1].manifest.server).toBe('test');
+        expect(gist.writes[1].chunks.join('')).toBe('{"test":1}');
+        expect(toasts).toHaveLength(1);
+        expect(toasts[0].message).toContain('belongs to the test server');
+        // This device did not record a success over a gist that is now the test server's
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:older');
+    });
+
+    test('older replaced revisions of the other server are not folded into a restore', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        const revision = (server, text) => ({
+            manifest: { toolashaSync: 1, chunks: 1, exportedAt: '2026-10-28T00:00:00Z', server },
+            server,
+            payload: text,
+        });
+        gist.revisions = { vTest: revision('test', '{"test":1}'), vLive: revision('live', '{"live":1}') };
+        await syncManager._restoreReplaced('tok', 'abc', 'vLive', ['vTest']);
+        expect(payload.uploadMerges).toBe(0);
+        expect(gist.writes.at(-1).chunks.join('')).toBe('{"live":1}');
     });
 });
