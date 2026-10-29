@@ -5,8 +5,8 @@
  * its description: a readiness hint (level, stock, cost to buy), a Go button
  * and, where inputs are short, a Missing Mats button. Finished cards, and
  * achievements that resolve to nothing the game can open (see
- * achievement-finisher-resolve.js), get nothing. The two point-total
- * achievements show "current / target points" instead.
+ * achievement-finisher-resolve.js), get nothing. The point-total achievements
+ * get nothing either: the game card shows that progress itself.
  *
  * Go and Missing Mats only navigate: they open the action, the alchemy tab, the
  * combat zone at its tier, or the marketplace, and never start, queue or buy.
@@ -26,8 +26,6 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
-import { countsByMonster, totalBestiaryPoints } from '../../utils/bestiary.js';
-import { collectionCounts, totalCollectionPoints } from './collection-optimizer-plan.js';
 import { nameFromHrid, plannerFor } from './achievement-finisher-model.js';
 import { readiness, resolveAchievement } from './achievement-finisher-resolve.js';
 import {
@@ -36,7 +34,6 @@ import {
     openMissingMaterials,
 } from '../actions/missing-materials-button.js';
 import { getGameObject, navigateToAction } from '../../utils/item-navigation.js';
-import { fiberFor } from '../../utils/react-click.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigation.js';
@@ -86,16 +83,6 @@ function el(tag, style = '', text = '') {
     if (style) node.style.cssText = style;
     if (text) node.textContent = text;
     return node;
-}
-
-/** @returns {{collection: number|null, bestiary: number|null}} Totals; null where the tab has not loaded them */
-function currentPoints() {
-    const collections = dataManager.getCharacterCollections?.();
-    const monsters = dataManager.getCharacterMonsters?.();
-    return {
-        collection: collections ? totalCollectionPoints(collectionCounts(collections)) : null,
-        bestiary: monsters ? totalBestiaryPoints(countsByMonster(monsters)) : null,
-    };
 }
 
 /** Game events that change readiness (stock, levels, prices) but not the checklist itself */
@@ -259,7 +246,7 @@ export function createMissingMatsButton(res, ready, clientData, ironCow, onPress
 }
 
 /** Selector assumptions about the game's markup (class prefixes, not hashes); check live */
-export const CARD_SELECTOR = '[class*="Achievement_"]';
+export const CARD_SELECTOR = '[class*="Achievement_achievement__"]';
 const CHECKBOX_CONTROL_SELECTOR = '[class*="AchievementsPanel_checkboxControl"]';
 const LINE_CLASS = `${PANEL_CLASS}-line`;
 const TOGGLE_CLASS = `${PANEL_CLASS}-toggle`;
@@ -283,6 +270,24 @@ const hintsOn = () => Boolean(config.getSetting(SETTING_KEY));
 export function findCards(host) {
     const nodes = [...host.querySelectorAll(CARD_SELECTOR)].filter((node) => !node.closest(`.${LINE_CLASS}`));
     return nodes.filter((node) => !nodes.some((other) => other !== node && other.contains(node)));
+}
+
+/**
+ * The achievement a card shows, from its icon: the sprite id in `achievements_sprite` is the hrid's last
+ * segment (`#cook_peach_yogurt` is `/achievements/cook_peach_yogurt`).
+ * @param {Element} card
+ * @param {Object} detailMap
+ * @returns {string|null}
+ */
+function hridFromIcon(card, detailMap) {
+    for (const use of card.querySelectorAll('svg use')) {
+        const href = use.getAttribute('href') || use.getAttribute('xlink:href') || '';
+        if (!href.includes('achievements_sprite')) continue;
+        const id = href.split('#')[1];
+        const hrid = id ? `/achievements/${id}` : null;
+        if (hrid && detailMap?.[hrid]) return hrid;
+    }
+    return null;
 }
 
 /** The visible text of every leaf element under a card, first element per text */
@@ -310,7 +315,7 @@ class AchievementFinisher {
         this.readinessVersion = 0;
         this.readinessRedrawPending = false;
         this.marketListener = null;
-        /** card element → achievement hrid or null, so the fiber fallback runs once per card */
+        /** card element → achievement hrid or null, so each card is identified once */
         this.cardHrids = new WeakMap();
         this.catalogSource = null;
         this.catalog = null;
@@ -616,48 +621,31 @@ class AchievementFinisher {
     }
 
     /**
-     * Which achievement a card shows: its name (and description, for same-named ones) first, as it is
-     * cheap; the React props of the card when the text does not settle it (a translated client).
+     * Which achievement a card shows: its icon's sprite id first (works in any language), then its name
+     * (and description, for same-named ones). The game's nodes carry no React props to read.
      * @param {Element} card
      * @param {Object} detailMap
      * @returns {string|null}
      */
     hridOfCard(card, detailMap) {
         if (this.cardHrids.has(card)) return this.cardHrids.get(card);
-        const texts = leafTexts(card);
-        const byName = this.catalogFor(detailMap);
-        let hrid = null;
-        for (const text of texts.keys()) {
-            const hits = byName.get(text);
-            if (!hits) continue;
-            const exact =
-                hits.length === 1 ? hits : hits.filter((hit) => hit.description && texts.has(hit.description));
-            if (exact.length === 1) {
-                hrid = exact[0].hrid;
-                break;
+        let hrid = hridFromIcon(card, detailMap);
+        if (!hrid) {
+            const texts = leafTexts(card);
+            const byName = this.catalogFor(detailMap);
+            for (const text of texts.keys()) {
+                const hits = byName.get(text);
+                if (!hits) continue;
+                const exact =
+                    hits.length === 1 ? hits : hits.filter((hit) => hit.description && texts.has(hit.description));
+                if (exact.length === 1) {
+                    hrid = exact[0].hrid;
+                    break;
+                }
             }
         }
-        if (!hrid) hrid = this.hridFromFiber(card, detailMap);
         this.cardHrids.set(card, hrid);
         return hrid;
-    }
-
-    hridFromFiber(card, detailMap) {
-        try {
-            let fiber = fiberFor(card);
-            for (let guard = 0; fiber && guard < 12; guard++, fiber = fiber.return) {
-                const props = fiber.memoizedProps;
-                const candidate =
-                    props?.achievementHrid ||
-                    props?.achievement?.hrid ||
-                    props?.achievementDetail?.hrid ||
-                    props?.achievement?.achievementHrid;
-                if (typeof candidate === 'string' && detailMap?.[candidate]) return candidate;
-            }
-        } catch (error) {
-            console.error('[AchievementFinisher] Reading the card failed:', error);
-        }
-        return null;
     }
 
     /** Add (or refresh) the hint line on every unfinished card */
@@ -672,14 +660,13 @@ class AchievementFinisher {
         const completed = new Set(
             achievements.filter((row) => row?.isCompleted === true).map((row) => row.achievementHrid)
         );
-        const points = currentPoints();
         let context = null;
         const getContext = () => (context ||= this.readinessContext());
 
         for (const card of findCards(host)) {
             const own = card.querySelector(`.${LINE_CLASS}`);
             const hrid = this.hridOfCard(card, detailMap);
-            const spec = hrid && !completed.has(hrid) ? this.lineFor(hrid, clientData, points, getContext) : null;
+            const spec = hrid && !completed.has(hrid) ? this.lineFor(hrid, clientData, getContext) : null;
             if (!spec) {
                 own?.remove();
                 continue;
@@ -688,33 +675,24 @@ class AchievementFinisher {
             own?.remove();
             const line = spec.build();
             line.dataset.key = spec.key;
-            this.placeLine(card, line, detailMap[hrid]);
+            this.placeLine(card, line);
         }
     }
 
-    /** Insert the line right under the card's description, else at the end of the card */
-    placeLine(card, line, detail) {
-        const description = detail?.description;
-        const anchor = description ? leafTexts(card).get(description) : null;
-        if (anchor && anchor !== card) anchor.after(line);
-        else card.appendChild(line);
+    /** Insert the line right under the card's description (inside its left column), else at the end of the card */
+    placeLine(card, line) {
+        const anchor = card.querySelector('[class*="Achievement_description"]');
+        if (anchor) anchor.after(line);
+        else (card.querySelector('[class*="Achievement_leftColumn"]') || card).appendChild(line);
     }
 
     /**
      * What a card's line says and does, or null for nothing.
      * @returns {{key: string, build: () => HTMLElement}|null}
      */
-    lineFor(hrid, clientData, points, getContext) {
-        const link = plannerFor(hrid);
-        if (link) {
-            const current = points[link.planner];
-            if (!Number.isFinite(current)) return null;
-            const text = `${Math.floor(current)} / ${link.target} points`;
-            return {
-                key: JSON.stringify(['points', text]),
-                build: () => this.buildLine(el('span', 'color:#aaa;', text)),
-            };
-        }
+    lineFor(hrid, clientData, getContext) {
+        // The game card shows the point-total achievements' progress itself
+        if (plannerFor(hrid)) return null;
         const res = this.resolutionFor(hrid, clientData);
         if (!res) return null;
         const ready = this.readinessFor(hrid, res, getContext);

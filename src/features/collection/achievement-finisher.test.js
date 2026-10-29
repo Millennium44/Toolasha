@@ -106,7 +106,6 @@ vi.mock('../../utils/market-data.js', () => ({ getItemPriceInfo: nav.getItemPric
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
 
 import finisher, { findAchievementsHost, PANEL_CLASS } from './achievement-finisher.js';
-import { collectionCounts, totalCollectionPoints } from './collection-optimizer-plan.js';
 import { buildTierChecklists } from './achievement-finisher-model.js';
 import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 import {
@@ -239,29 +238,41 @@ const nativeControl = (label) =>
     `<span class="MuiTypography-root MuiFormControlLabel-label">${label}</span></label></div>`;
 
 /**
- * The Achievements tab as the game draws it: a controls bar with "Show Incomplete Only", and the tier list
- * holding one `Achievement_*` card per achievement (name and description in leaf elements).
- * Class prefixes are the assumption; the hashes are made up.
+ * The Achievements tab as the test server draws it: a controls bar with "Show Incomplete Only", and tier
+ * sections whose grids hold one card per achievement. The icon's sprite id is the hrid's last segment.
+ * `translate` blanks the name and description, as a client in another language would show other text.
  */
-function achievementsTab(detailMap = game.detail, { translate = false } = {}) {
+function achievementsTab(detailMap = game.detail, { translate = false, icons = true } = {}) {
     const page = document.createElement('div');
     page.id = 'tab';
     const controls = document.createElement('div');
     controls.className = 'AchievementsPanel_controls__c';
     controls.innerHTML = nativeControl('Show Incomplete Only');
     page.appendChild(controls);
+    const content = document.createElement('div');
+    content.className = 'AchievementsPanel_achievementsContent__x';
+    const section = document.createElement('div');
+    section.className = 'AchievementsPanel_tierSection__t';
+    section.innerHTML = '<div class="AchievementsPanel_tierHeader__h">Veteran</div>';
     const list = document.createElement('div');
-    list.className = 'AchievementsPanel_achievements__x';
+    list.className = 'AchievementsPanel_achievementGrid__g';
     for (const [hrid, detail] of Object.entries(detailMap)) {
         const card = document.createElement('div');
-        card.className = 'Achievement_achievement__a';
+        card.className = 'Achievement_achievement__a Achievement_tierVeteran__v';
         card.dataset.hrid = hrid;
+        const icon = icons
+            ? `<svg><use href="/static/media/achievements_sprite.abc.svg#${hrid.split('/').pop()}" xlink:href="/static/media/achievements_sprite.abc.svg#${hrid.split('/').pop()}"></use></svg>`
+            : '';
         card.innerHTML =
-            `<div class="Achievement_name__n">${translate ? '成就' : detail.name}</div>` +
-            `<div class="Achievement_description__d">${translate ? '说明' : detail.description || ''}</div>`;
+            `<div class="Achievement_content__c"><div class="Achievement_iconContainer__i Achievement_incomplete__n">${icon}</div>` +
+            `<div class="Achievement_leftColumn__l"><div class="Achievement_titleRow__r"><div class="Achievement_name__n">${translate ? '成就' : detail.name}</div></div>` +
+            `<div class="Achievement_description__d">${translate ? '说明' : detail.description || ''}</div></div>` +
+            `<div class="Achievement_progressText__p">0 / 1</div></div>`;
         list.appendChild(card);
     }
-    page.appendChild(list);
+    section.appendChild(list);
+    content.appendChild(section);
+    page.appendChild(content);
     document.body.appendChild(page);
     return { page, controls, list };
 }
@@ -331,9 +342,9 @@ describe('hints on the game achievement cards', () => {
         achievementsTab();
         finisher.initialize();
         const dairy = cardOf('Dairy Chef');
-        expect(dairy.querySelector(`.${PANEL_CLASS}-line`).previousElementSibling.className).toBe(
-            'Achievement_description__d'
-        );
+        const line = dairy.querySelector(`.${PANEL_CLASS}-line`);
+        expect(line.previousElementSibling.className).toBe('Achievement_description__d');
+        expect(line.parentElement.className).toBe('Achievement_leftColumn__l');
         expect(lineOf('Dairy Chef').textContent).toContain('[level met · buy ~200 coin]');
         // Completed: nothing. Unresolved: the game card already shows the description
         expect(lineOf('Recycler')).toBeNull();
@@ -431,7 +442,7 @@ describe('hints on the game achievement cards', () => {
         expect(goOf('Ginkgo Wielder')).toBeNull();
     });
 
-    test('a point-total card shows current / target points when loaded, nothing when not', () => {
+    test('a point-total card gets no line: the game card shows that progress itself', () => {
         const detail = {
             '/achievements/collection_points_100': {
                 hrid: '/achievements/collection_points_100',
@@ -443,15 +454,10 @@ describe('hints on the game achievement cards', () => {
         };
         game.detail = detail;
         game.clientData = { achievementDetailMap: detail };
+        game.collections = [{ itemHrid: '/items/milk', count: 5 }];
         achievementsTab(detail);
         finisher.initialize();
         expect(lineOf('Collector')).toBeNull();
-
-        game.collections = [{ itemHrid: '/items/milk', count: 5 }];
-        const points = Math.floor(totalCollectionPoints(collectionCounts(game.collections)));
-        game.handlers.collections_updated.forEach((fn) => fn({}));
-        expect(lineOf('Collector').textContent).toBe(`${points} / 100 points`);
-        expect(goOf('Collector')).toBeNull();
     });
 
     test('the Toolasha hints checkbox sits beside Show Incomplete Only and flips the setting', () => {
@@ -553,33 +559,16 @@ describe('hints on the game achievement cards', () => {
         expect(toggle()).toBeNull();
     });
 
-    test('a card whose text does not match the catalog is identified by its React props; same-named ones by description', () => {
-        // Translated client: the card text names nothing in the catalog, the component props do
-        const { list } = achievementsTab(
-            { '/achievements/cook_peach_yogurt': ACHIEVEMENTS['/achievements/cook_peach_yogurt'] },
-            { translate: true }
-        );
-        const card = list.firstElementChild;
-        const root = document.createElement('div');
-        root.id = 'root';
-        root._reactRootContainer = {
-            current: {
-                stateNode: root,
-                child: {
-                    stateNode: card,
-                    memoizedProps: {},
-                    return: { memoizedProps: { achievementHrid: '/achievements/cook_peach_yogurt' } },
-                },
-            },
-        };
-        document.body.appendChild(root);
+    test('a card is identified by its icon sprite id first, then by name and description', () => {
+        // Translated client: the text names nothing in the catalog, the icon does
+        const yogurt = ACHIEVEMENTS['/achievements/cook_peach_yogurt'];
+        const { list } = achievementsTab({ [yogurt.hrid]: yogurt }, { translate: true });
         finisher.initialize();
-        expect(card.querySelector(`.${PANEL_CLASS}-line`).textContent).toContain('buy ~200');
+        expect(list.firstElementChild.querySelector(`.${PANEL_CLASS}-line`).textContent).toContain('buy ~200');
         finisher.disable();
 
-        // Two achievements share a name: the description tells their cards apart
+        // Same name on two cards: the icon settles each, even when the text could not
         document.body.replaceChildren();
-        const yogurt = ACHIEVEMENTS['/achievements/cook_peach_yogurt'];
         const gloves = ACHIEVEMENTS['/achievements/decompose_bamboo_gloves'];
         const twins = {
             [yogurt.hrid]: { ...yogurt, name: 'Twin' },
@@ -591,6 +580,15 @@ describe('hints on the game achievement cards', () => {
         const [first, second] = [...document.querySelectorAll('.Achievement_achievement__a')];
         expect(first.querySelector(`.${PANEL_CLASS}-line`).textContent).toContain('buy ~200');
         expect(second.querySelector(`.${PANEL_CLASS}-line`).textContent).toContain('materials owned');
+        finisher.disable();
+
+        // No icon (fallback): name settles a unique one, the description separates same-named ones
+        document.body.replaceChildren();
+        achievementsTab(twins, { icons: false });
+        finisher.initialize();
+        const [a, b] = [...document.querySelectorAll('.Achievement_achievement__a')];
+        expect(a.querySelector(`.${PANEL_CLASS}-line`).textContent).toContain('buy ~200');
+        expect(b.querySelector(`.${PANEL_CLASS}-line`).textContent).toContain('materials owned');
     });
 
     test('a character switch removes every addition; the next character gets fresh ones', () => {
