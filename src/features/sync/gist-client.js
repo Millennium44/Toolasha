@@ -30,6 +30,7 @@
  */
 
 import { gmRequest, gmRequestAvailable, recordPageRequest } from '../../utils/gm-traffic.js';
+import { descriptionServer, isServerKind, serverKind, syncGistDescription, wrongServerMessage } from './sync-server.js';
 
 /** Manifest file name; also how an existing sync gist is recognised */
 export const MANIFEST_FILE = 'toolasha-sync.json';
@@ -63,7 +64,8 @@ const API_ROOT = 'https://api.github.com';
  */
 export class GistError extends Error {
     /**
-     * @param {'auth'|'rate-limit'|'offline'|'not-found'|'too-large'|'conflict'|'http'|'parse'} kind - What went wrong
+     * @param {'auth'|'rate-limit'|'offline'|'not-found'|'too-large'|'conflict'|'http'|'parse'|'ambiguous'|
+     *   'wrong-server'} kind - What went wrong
      * @param {string} message - Human-readable, safe to show in a toast
      * @param {Object} [details] - Extra context, e.g. `{ resetAt }` for a rate limit
      */
@@ -598,12 +600,12 @@ function fileSizes(files) {
  * to know. A gist this sync never wrote holds no exchange, so it is not.
  *
  * @param {Object|null|undefined} files - The `files` map of a gist response
- * @returns {{syncSeq: number|null, encrypted: boolean|null, exportedAt: string|null, unordered: boolean}} What
- *   the manifest says
+ * @returns {{syncSeq: number|null, encrypted: boolean|null, exportedAt: string|null, unordered: boolean,
+ *   server: 'live'|'test'|null}} What the manifest says
  */
 function listedManifest(files) {
     const file = files?.[MANIFEST_FILE];
-    const unread = { syncSeq: null, encrypted: null, exportedAt: null, unordered: Boolean(file) };
+    const unread = { syncSeq: null, encrypted: null, exportedAt: null, unordered: Boolean(file), server: null };
     // No manifest and no sync chunks is a gist this sync never wrote: nothing in it can be encrypted.
     // Sync chunks without a manifest are an encrypted gist whose manifest was deleted, so the encryption
     // is unknown, as it is for a manifest that is there but unreadable; the push treats both as unsafe.
@@ -626,6 +628,8 @@ function listedManifest(files) {
             encrypted: Boolean(manifest?.encrypted),
             exportedAt,
             unordered: syncSeq === null && !Number.isFinite(Date.parse(exportedAt ?? '')),
+            // The game server the last push came from; null for a gist written before pushes said
+            server: isServerKind(manifest?.server) ? manifest.server : null,
         };
     } catch {
         return unread;
@@ -683,21 +687,73 @@ export function chunkIndexFromName(name) {
 }
 
 /**
- * Find an existing sync gist belonging to the token's owner.
+ * Find an existing sync gist belonging to the token's owner, for this game server.
  *
  * The point is a second device: the user pastes the same token and the gist id
  * is discovered rather than typed. Only the first page is searched — a sync
- * gist is created at most once and is touched on every push, so it sits at the
- * top of a list ordered by update time.
+ * gist is created at most once and is touched on every push, so it sits near
+ * the top of a list ordered by update time.
+ *
+ * One token commonly holds a gist for the live game and one for the test
+ * server, and the gist list carries descriptions but no file contents, so the
+ * description is what tells them apart (see `sync-server.js`):
+ * - a gist tagged for this server wins, the most recently updated one;
+ * - a gist tagged for the other server is never adopted;
+ * - an untagged gist (written before gists named a server) is never adopted on
+ *   the test server, and on live only when it is the only one: with several,
+ *   nothing says which is live's, and adopting the busiest is how a live game
+ *   once ended up on the test server's gist. That case throws rather than
+ *   answering "none", because "none" makes the next push create a gist.
  *
  * @param {string} token - GitHub personal access token
- * @returns {Promise<string|null>} Gist id, or null when there is none
+ * @param {'live'|'test'} [server] - The server to find a gist for; the page's own by default
+ * @returns {Promise<string|null>} Gist id, or null when this server has none
+ * @throws {GistError} `ambiguous` when several untagged gists could be live's
  */
-export async function findSyncGist(token) {
+export async function findSyncGist(token, server = serverKind()) {
     const gists = await apiCall(token, 'GET', '/gists?per_page=100');
     if (!Array.isArray(gists)) return null;
-    const match = gists.find((gist) => gist?.files && Object.hasOwn(gist.files, MANIFEST_FILE));
-    return match?.id ?? null;
+    const updated = (gist) => {
+        const at = Date.parse(gist?.updated_at ?? '');
+        return Number.isFinite(at) ? at : 0;
+    };
+    // Newest first whatever order the list came in; a stable sort keeps the list's order for ties
+    const sync = gists
+        .filter((gist) => gist?.files && Object.hasOwn(gist.files, MANIFEST_FILE) && typeof gist.id === 'string')
+        .sort((a, b) => updated(b) - updated(a));
+    const tagged = sync.find((gist) => descriptionServer(gist.description) === server);
+    if (tagged) return tagged.id;
+    if (server !== 'live') return null;
+    const untagged = sync.filter((gist) => descriptionServer(gist.description) === null);
+    if (untagged.length === 1) return untagged[0].id;
+    if (untagged.length > 1) {
+        throw new GistError(
+            'ambiguous',
+            `This token has ${untagged.length} Toolasha sync gists that do not say which game server they are ` +
+                'for, so none was picked.'
+        );
+    }
+    return null;
+}
+
+/**
+ * What a gist is, read before this device switches to it: whether it exists
+ * for this token, whether it holds sync data, and which server it is tagged for.
+ *
+ * @param {string} token - GitHub personal access token
+ * @param {string} gistId - Gist id
+ * @returns {Promise<{id: string, isSyncGist: boolean, server: 'live'|'test'|null}>} What the gist is
+ * @throws {GistError} `not-found` when the gist does not exist or the token cannot see it, and the
+ *   transport's own failures
+ */
+export async function inspectSyncGist(token, gistId) {
+    const gist = await apiCall(token, 'GET', `/gists/${encodeURIComponent(gistId)}`);
+    const files = gist?.files && typeof gist.files === 'object' ? gist.files : {};
+    return {
+        id: typeof gist?.id === 'string' ? gist.id : gistId,
+        isSyncGist: Object.hasOwn(files, MANIFEST_FILE),
+        server: listedManifest(files).server ?? descriptionServer(gist?.description),
+    };
 }
 
 /**
@@ -836,6 +892,8 @@ async function parseSyncGist(token, gistId, exchange) {
     const history = historyVersions(gist);
     return {
         manifest,
+        // The server the gist is tagged for: its manifest's word, else its description's
+        server: isServerKind(manifest?.server) ? manifest.server : descriptionServer(gist?.description),
         payload: parts.join(''),
         updatedAt: gist?.updated_at ?? null,
         etag: exchange.etag,
@@ -927,6 +985,11 @@ async function readFileContent(token, file, name = 'a gist file') {
  *   Asked of a gist this write had to download the listing of (not a 304 against `known`): true means the gist
  *   holds an exchange the caller has not taken, and the write stops with a `behind` GistError instead of
  *   overwriting it — the caller merges first.
+ * @param {'live'|'test'|null} [options.server=null] - The game server this push is from. A gist whose
+ *   listing names the other one is refused by an unattended push (`wrong-server`) and asked about by a
+ *   pressed one. Null skips the check (the writes that put a gist's own revision back).
+ * @param {((gistServer: 'live'|'test') => Promise<boolean>)|null} [options.confirmServer=null] - For a pressed
+ *   push: asked before writing over the other server's gist. False cancels the write.
  * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null,
  *   syncSeq: number|undefined, version: string|null, basedOn: string|null, intervening: Array<string>,
  *   interveningTruncated: boolean}>} The
@@ -941,7 +1004,7 @@ export async function writeSyncGist(
     chunks,
     previousChunkCount = 0,
     known = null,
-    { unattended = false, confirmPlaintext = null, isAhead = null } = {}
+    { unattended = false, confirmPlaintext = null, isAhead = null, server = null, confirmServer = null } = {}
 ) {
     let listing = known && gistId && known.gistId === gistId && known.etag && known.files ? known : null;
 
@@ -956,6 +1019,7 @@ export async function writeSyncGist(
     const payloadBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     let serialized = null;
     let plaintextConfirmed = false;
+    let serverConfirmed = false;
     let attempts = 0;
 
     const attempt = async () => {
@@ -1018,6 +1082,19 @@ export async function writeSyncGist(
             );
         }
 
+        // The gist is tagged for the other game server. An automatic push never writes it: the two
+        // servers are different worlds, and this is the gist the other one syncs with. A pressed push
+        // asks, once per push, and a yes re-tags the gist as this server's
+        if (server && gistId && isServerKind(listing?.server) && listing.server !== server) {
+            if (unattended || !confirmServer) throw wrongServerError(listing.server, server);
+            if (!serverConfirmed) {
+                if (!(await confirmServer(listing.server))) {
+                    throw new GistError('cancelled', 'The push was cancelled.');
+                }
+                serverConfirmed = true;
+            }
+        }
+
         // Unknown counts as encrypted: an unreadable manifest, or no listing for a pressed push, must
         // not let plaintext replace what may be an encrypted gist without asking
         if (gistId && listing?.encrypted !== false && !manifest?.encrypted) {
@@ -1068,7 +1145,8 @@ export async function writeSyncGist(
             const withOrphans = { [MANIFEST_FILE]: { content: JSON.stringify(writtenManifest, null, 2) }, ...files };
             for (const name of orphans) withOrphans[name] = null;
             const body = {
-                description: 'Toolasha cross-device sync (do not edit by hand)',
+                // Named for the server the push is from, so the gist list can tell live's from test's
+                description: syncGistDescription(isServerKind(server) ? server : writtenManifest?.server),
                 files: withOrphans,
                 ...(gistId ? {} : { public: false }),
             };
@@ -1135,6 +1213,16 @@ export async function writeSyncGist(
 }
 
 /**
+ * The refusal for a gist tagged for the other game server.
+ * @param {'live'|'test'} gistServer - The server the gist is tagged for
+ * @param {'live'|'test'} [here] - The server this page is on
+ * @returns {GistError} A `wrong-server` failure
+ */
+function wrongServerError(gistServer, here = serverKind()) {
+    return new GistError('wrong-server', wrongServerMessage(gistServer, here), { gistServer });
+}
+
+/**
  * The files a gist currently holds, or null when they cannot be read.
  *
  * A failure here must not fail the push: the listing is an improvement on the
@@ -1167,10 +1255,12 @@ async function listGistFiles(token, gistId, previous) {
                 exportedAt: null,
                 unordered: false,
                 version: previous.version ?? null,
+                server: isServerKind(previous.server) ? previous.server : null,
                 fresh: false,
             };
         }
         const files = fileSizes(exchange.data?.files);
+        const listed = listedManifest(exchange.data?.files);
         return files
             ? {
                   gistId,
@@ -1179,7 +1269,9 @@ async function listGistFiles(token, gistId, previous) {
                   fresh: true,
                   version: historyVersions(exchange.data)?.[0] ?? null,
                   history: historyVersions(exchange.data),
-                  ...listedManifest(exchange.data?.files),
+                  ...listed,
+                  // The manifest's word on the server, else the description's
+                  server: listed.server ?? descriptionServer(exchange.data?.description),
               }
             : null;
     } catch (error) {
@@ -1196,6 +1288,7 @@ export default {
     chunkPayload,
     chunkFileName,
     findSyncGist,
+    inspectSyncGist,
     readSyncGist,
     readSyncGistRevision,
     writeSyncGist,

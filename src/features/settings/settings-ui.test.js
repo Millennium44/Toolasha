@@ -75,6 +75,12 @@ const mocks = vi.hoisted(() => ({
     snapshotWrite: true,
     /** Held open to keep a snapshot read or write in flight across a character switch */
     snapshotGate: null,
+    /** What `syncManager.gistLinkState()` answers for the Gist ID box */
+    gistLink: { gistId: null, startNew: false, server: 'live' },
+    /** What the Gist ID box handed `syncManager.useGist`, in order */
+    usedGists: [],
+    /** What `syncManager.useGist` answers */
+    useGistResult: { ok: true, message: 'Linked.' },
 }));
 
 /**
@@ -498,6 +504,13 @@ vi.mock('../sync/sync-manager.js', () => ({
     default: {
         initialize: async () => {},
         describeStatus: async () => 'Not linked.',
+        gistLinkState: async () => mocks.gistLink,
+        useGist: async (input) => {
+            mocks.usedGists.push(input);
+            return mocks.useGistResult;
+        },
+        startNewGist: async () => ({ ok: true, message: 'The next Push creates a new gist.' }),
+        forgetGist: async () => {},
         prepareFullRestore: () => {},
         noteFullRestore: async (_payload, stores) => mocks.restoreNotes.push(stores),
     },
@@ -2422,5 +2435,81 @@ describe('a shorthand number box (the alchemy gold rate)', () => {
         const input = await typeRate('2k');
         expect(input.classList.contains('toolasha-input-invalid')).toBe(false);
         expect(mocks.settingsMap[ID].value).toBe(2000);
+    });
+});
+
+describe('the Gist ID box', () => {
+    const flush = async () => {
+        for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    };
+    const build = async () => {
+        const box = settingsUI.buildGistIdBox(async () => {});
+        document.body.appendChild(box.element);
+        await flush();
+        return box.element;
+    };
+    const visible = (el) => el.style.display !== 'none';
+
+    beforeEach(() => {
+        mocks.gistLink = { gistId: null, startNew: false, server: 'live' };
+        mocks.usedGists = [];
+        mocks.useGistResult = { ok: true, message: 'Linked.' };
+        mocks.choiceAnswer = null;
+        mocks.choiceCalls = [];
+    });
+
+    test("shows this device's gist id, read-only until Change is pressed", async () => {
+        mocks.gistLink = { gistId: 'a'.repeat(32), startNew: false, server: 'live' };
+        const box = await build();
+        expect(box.querySelector('.toolasha-sync-gist-id').textContent).toBe('a'.repeat(32));
+        expect(visible(box.querySelector('.toolasha-sync-gist-input'))).toBe(false);
+
+        box.querySelector('.toolasha-sync-gist-edit').click();
+        const input = box.querySelector('.toolasha-sync-gist-input');
+        expect(visible(input)).toBe(true);
+        expect(input.value).toBe('a'.repeat(32));
+    });
+
+    test('says what the next push does with no id, and after Start a new gist', async () => {
+        let box = await build();
+        expect(box.querySelector('.toolasha-sync-gist-id').textContent).toContain('looks for this server');
+
+        mocks.gistLink = { gistId: null, startNew: true, server: 'test' };
+        box = await build();
+        expect(box.querySelector('.toolasha-sync-gist-id').textContent).toContain('creates a new one (test server)');
+    });
+
+    test('a pasted link goes to useGist, and a refusal stays in the box with its message', async () => {
+        const link = `https://gist.github.com/someone/${'b'.repeat(32)}`;
+        const box = await build();
+        box.querySelector('.toolasha-sync-gist-edit').click();
+        const input = box.querySelector('.toolasha-sync-gist-input');
+        input.value = link;
+        mocks.useGistResult = { ok: false, reason: 'not-found', message: 'No gist with that id was found.' };
+        box.querySelector('.toolasha-sync-gist-save').click();
+        await flush();
+        expect(mocks.usedGists).toEqual([link]);
+        expect(box.querySelector('.toolasha-sync-gist-note').textContent).toBe('No gist with that id was found.');
+        expect(visible(input)).toBe(true);
+
+        mocks.useGistResult = { ok: true, message: 'Linked.' };
+        mocks.gistLink = { gistId: 'b'.repeat(32), startNew: false, server: 'live' };
+        box.querySelector('.toolasha-sync-gist-save').click();
+        await flush();
+        expect(visible(input)).toBe(false);
+        expect(box.querySelector('.toolasha-sync-gist-id').textContent).toBe('b'.repeat(32));
+    });
+
+    test('Start a new gist asks first, and does nothing when cancelled', async () => {
+        const box = await build();
+        box.querySelector('.toolasha-sync-gist-new').click();
+        await flush();
+        expect(mocks.choiceCalls.at(-1).title).toBe('Start a new gist');
+        expect(box.querySelector('.toolasha-sync-gist-note').textContent).toBe('');
+
+        mocks.choiceAnswer = 'new';
+        box.querySelector('.toolasha-sync-gist-new').click();
+        await flush();
+        expect(box.querySelector('.toolasha-sync-gist-note').textContent).toContain('creates a new gist');
     });
 });

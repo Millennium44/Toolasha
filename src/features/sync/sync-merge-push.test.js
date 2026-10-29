@@ -136,6 +136,7 @@ vi.mock('./gist-client.js', async () => {
         GistError,
         chunkPayload: (text) => [text],
         findSyncGist: async () => (gist.state ? 'g1' : null),
+        inspectSyncGist: async (_token, id) => ({ id, isSyncGist: Boolean(gist.state), server: null }),
         readSyncGist: async (_token, _id, { etag } = {}) => {
             gist.requests += 1;
             if (!gist.state) throw new GistError('not-found', 'no gist');
