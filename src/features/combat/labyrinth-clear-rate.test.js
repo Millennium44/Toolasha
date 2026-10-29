@@ -3358,6 +3358,9 @@ describe('a buff change re-runs the auto pass for the tiles it affects', () => {
             'guild_buffs_updated',
             'house_rooms_updated',
             'skills_updated',
+            'abilities_updated',
+            'combat_triggers_updated',
+            'all_combat_triggers_updated',
             'action_completed',
         ]) {
             expect(typeof handlerFor(event)).toBe('function');
@@ -3841,6 +3844,93 @@ describe('a chest (treasure room) never gets a combat clear-chance badge', () =>
         expect(spy).not.toHaveBeenCalled();
         expect(cell.querySelector('.mwi-labyrinth-tile-badge')).toBeNull();
         spy.mockRestore();
+    });
+});
+
+describe('a no-loadout room is keyed on the worn ability kit and its triggers', () => {
+    const ability = (hrid, level, triggers = null) => ({ hrid, level, triggers });
+    const trig = (value) => [
+        {
+            dependencyHrid: '/combat_trigger_dependencies/self',
+            conditionHrid: '/combat_trigger_conditions/current_hp',
+            comparatorHrid: '/combat_trigger_comparators/less_than_equal',
+            value,
+        },
+    ];
+    const setBuild = ({ abilities, food = [], equipment }) => {
+        dataManagerMock.characterData = { characterInfo: {} };
+        dataManagerMock.getInitClientData.mockReturnValue({});
+        dataManagerMock.characterEquipment = new Map(
+            equipment || [['/item_locations/main_hand', { itemHrid: '/items/cheese_sword', enhancementLevel: 0 }]]
+        );
+        adapterMock.buildPlayerDTO.mockReturnValue({ abilities, food, drinks: [] });
+    };
+    const key = (monster = '/monsters/imp') => labyrinthClearRate.buildCombatCacheKey(monster, 200);
+    const base = () => [null, ability('/abilities/poke', 3, trig(50)), null, null, null];
+
+    afterEach(() => {
+        dataManagerMock.characterData = null;
+        dataManagerMock.getInitClientData.mockReturnValue(null);
+        delete dataManagerMock.characterEquipment;
+        adapterMock.buildPlayerDTO.mockReset();
+    });
+
+    test('changing an equipped ability or its level moves the key', () => {
+        setBuild({ abilities: base() });
+        const before = key();
+        setBuild({ abilities: [null, ability('/abilities/scratch', 3, trig(50)), null, null, null] });
+        expect(key()).not.toBe(before);
+        setBuild({ abilities: [null, ability('/abilities/poke', 4, trig(50)), null, null, null] });
+        expect(key()).not.toBe(before);
+    });
+
+    test('changing a trigger moves the key', () => {
+        setBuild({ abilities: base() });
+        const before = key();
+        setBuild({ abilities: [null, ability('/abilities/poke', 3, trig(30)), null, null, null] });
+        expect(key()).not.toBe(before);
+    });
+
+    test('slot order matters', () => {
+        const a = ability('/abilities/poke', 3);
+        const b = ability('/abilities/scratch', 3);
+        setBuild({ abilities: [null, a, b, null, null] });
+        const before = key();
+        setBuild({ abilities: [null, b, a, null, null] });
+        expect(key()).not.toBe(before);
+    });
+
+    test('food and drink changes leave the key alone', () => {
+        setBuild({ abilities: base(), food: [] });
+        const before = key();
+        setBuild({ abilities: base(), food: [{ hrid: '/items/donut', triggers: null }] });
+        expect(key()).toBe(before);
+    });
+
+    test('a worn equipment change still moves the key', () => {
+        setBuild({ abilities: base() });
+        const before = key();
+        setBuild({
+            abilities: base(),
+            equipment: [['/item_locations/main_hand', { itemHrid: '/items/holy_sword', enhancementLevel: 5 }]],
+        });
+        expect(key()).not.toBe(before);
+    });
+
+    test('a room with a saved loadout ignores the worn kit', () => {
+        gear.snapshots[3] = { name: 'Cyclops kit', equipment: [] };
+        dataManagerMock.characterData = { characterSetting: { labyrinthLoadoutCyclops: 3 }, characterInfo: {} };
+        try {
+            dataManagerMock.getInitClientData.mockReturnValue({});
+            adapterMock.buildPlayerDTO.mockReturnValue({ abilities: base() });
+            const before = key('/monsters/cyclops');
+            adapterMock.buildPlayerDTO.mockReturnValue({
+                abilities: [null, ability('/abilities/scratch', 9), null, null, null],
+            });
+            expect(key('/monsters/cyclops')).toBe(before);
+        } finally {
+            delete gear.snapshots[3];
+        }
     });
 });
 

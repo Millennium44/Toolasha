@@ -115,6 +115,10 @@ const BUFF_INPUT_EVENTS = [
     'moo_pass_buffs_updated',
     'equipment_buffs_updated',
     'skills_updated',
+    // A no-loadout room fights with the worn ability kit and its triggers
+    'abilities_updated',
+    'combat_triggers_updated',
+    'all_combat_triggers_updated',
 ];
 /** How often the orphan check runs — slow on purpose, see `_previewWatchdogTick` */
 const PREVIEW_WATCHDOG_MS = 500;
@@ -537,7 +541,7 @@ class LabyrinthClearRate {
         const roomHrid = this.extractRoomHrid(cell);
         if (!roomHrid) return;
 
-        const rec = this.recommendations.get(roomHrid);
+        const rec = this.getCurrentRecommendation(roomHrid);
         // A time recommendation that only found the closest miss is not a level
         // worth filling into the field
         const recommended = rec?.qualifies === false ? null : rec?.threshold;

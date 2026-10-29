@@ -11,6 +11,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - One-off achievements now show the game's own description instead of "progress unavailable", with a readiness hint (level met, materials owned or a rough buy cost, unpriced inputs flagged) and the easiest ones sorted first.
 - A Go button opens the right screen for each one it can resolve — the cooking, crafting or gathering action, the alchemy tab for the item, the monster's combat zone at its tier, a dungeon, or the marketplace for the cheapest matching weapon. It only navigates; you press Start yourself.
 
+### Lab Recommend works while room estimates fill in
+
+- On the Labyrinth Automation tab, Recommend and Recommend by Time no longer wait for every room's estimate: pressing one stops the estimates, runs the search, then finishes the remaining rooms. A Stop estimates button stops a long estimate batch on its own.
+- If your gear changes during a Recommend run, the room levels found before the change are no longer shown or used by Lab Sim and skip autofill until that room is searched again.
+- A room with no loadout assigned re-estimates when you change your equipped abilities or their triggers, instead of keeping the old clear chance.
+
 ### Leftover number fixes
 
 - The Dungeon ROI board reads drop quantity from the live battle, so chest value and ROI no longer read low with Combat Stats off; refined-item craft costs now apply Artisan Tea to the coin fee, as the game does.
