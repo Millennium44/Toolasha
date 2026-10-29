@@ -41,7 +41,15 @@ const STORE_KEY_BUDGETS = {
     // entry, and a store must not be flagged for doing exactly what it is sized
     // to do
     lootLogHistory: 2000,
-    guildHistory: 80,
+    // Mostly small: a ledger record per week (26 kept per guild), one record per
+    // guild or character for trials, sessions, plans, loadouts and member
+    // skills. The bulk is the opt-in diagnostic trace (`guildTrialDiagnosticTrace`):
+    // it stores a trial's websocket stream as one gzipped chunk per ~500 events
+    // under `trialTraceChunk_<seq>_<charId>`, so a single 50-player hour is
+    // ~80 chunks and the trace's own 200,000-event cap (`MAX_EVENTS`) allows
+    // ~400. The trace evicts its oldest chunks past that cap and deletes stale
+    // ones on restore, so the count is bounded, not growing
+    guildHistory: 600,
     leaderboardHistory: 80,
     // Per character: the XP tracker's one rolling week, plus two unbounded
     // daily-checkpoint series (skills and abilities) at one record per calendar
