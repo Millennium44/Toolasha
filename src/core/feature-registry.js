@@ -1070,14 +1070,10 @@ async function runLiveStops() {
         if (startInFlight(feature.key) || !startedKeys.has(feature.key) || isGateOpen(feature)) continue;
 
         startedKeys.delete(feature.key);
-        try {
-            const featureInstance = getFeatureInstance(feature.key);
-            if (featureInstance && typeof featureInstance.disable === 'function') {
-                await featureInstance.disable();
-            }
-        } catch (error) {
-            noteDisableFailure(feature, error);
-        }
+        // Held in keyWork like every other disable: a re-enable arriving while a slow disable is still
+        // running queues its start behind it instead of initializing under it (the late disable would
+        // then clear the new instance), and a character switch's teardown waits for it
+        await trackedDisable(feature);
     }
 }
 

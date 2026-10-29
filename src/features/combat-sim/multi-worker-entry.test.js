@@ -82,13 +82,17 @@ afterEach(() => {
  * the final results. `decide: null` answers nothing, standing in for a main
  * thread that went away mid-sweep.
  */
-async function sweep(zones, { useEarlyExit, decide = () => false, maxWorkers = 4, ticks = 400, step = 5 } = {}) {
+async function sweep(
+    zones,
+    { useEarlyExit, decide = () => false, maxWorkers = 4, ticks = 400, step = 5, playerDTOs = [], streamResults } = {}
+) {
     globalThis.onmessage({
         data: {
             type: 'start_all_zones',
             workerScript: '',
             gameData: {},
-            playerDTOs: [],
+            playerDTOs,
+            streamResults,
             zones,
             simulationTimeLimit: 1,
             extraBuffs: {},
@@ -245,5 +249,50 @@ describe('the coordinator borrows its children instead of building one per task'
         const stalled = harness.workers.find((w) => w.tasks.includes('a'));
         expect(stalled.terminated).toBe(true);
         expect(stalled.tasks).toEqual(['a']);
+    });
+});
+
+describe('a composition sweep: one party per task, results as they land', () => {
+    test('a task carrying its own party runs that party; the rest run the sweep party', async () => {
+        const sweepParty = [{ hrid: 'player1', name: 'sweep' }];
+        const duo = [{ hrid: 'player1' }, { hrid: 'player2' }];
+        const zones = [
+            { zoneHrid: 'a', difficultyTier: 0 },
+            { zoneHrid: 'a', difficultyTier: 0, playerDTOs: duo },
+        ];
+        const done = await sweep(zones, { useEarlyExit: false, playerDTOs: sweepParty });
+        expect(done?.type).toBe('all_zones_result');
+        const parties = harness.childMessages.map((m) => m.playerDTOs);
+        expect(parties).toContainEqual(sweepParty);
+        expect(parties).toContainEqual(duo);
+    });
+
+    test('with streamResults every finished task is posted with its index, a failed one as null', async () => {
+        harness.behaviour.b = 'error';
+        const zones = [...tiers('a', 2), ...tiers('b', 1)];
+        const done = await sweep(zones, { useEarlyExit: false, streamResults: true });
+        expect(done?.type).toBe('all_zones_result');
+        const streamed = harness.sent.filter((m) => m.type === 'task_result');
+        expect(streamed.map((m) => m.index).sort()).toEqual([0, 1, 2]);
+        expect(streamed.find((m) => m.index === 2).simResult).toBeNull();
+        expect(streamed.find((m) => m.index === 1).simResult.tier).toBe(1);
+    });
+
+    test('a streamed run keeps no copy: its final message carries no results', async () => {
+        const done = await sweep(tiers('a', 3), { useEarlyExit: false, streamResults: true });
+        expect(done?.type).toBe('all_zones_result');
+        expect(done.results).toBeNull();
+        expect(harness.sent.filter((m) => m.type === 'task_result')).toHaveLength(3);
+    });
+
+    test('without streaming the final message still carries every result (All Zones, Seek)', async () => {
+        const done = await sweep(tiers('a', 2), { useEarlyExit: false });
+        expect(done.results.map((r) => r.tier)).toEqual([0, 1]);
+    });
+
+    test('without streamResults nothing extra is posted', async () => {
+        const done = await sweep(tiers('a', 2), { useEarlyExit: false });
+        expect(done?.type).toBe('all_zones_result');
+        expect(harness.sent.some((m) => m.type === 'task_result')).toBe(false);
     });
 });

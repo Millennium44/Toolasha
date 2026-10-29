@@ -25,6 +25,7 @@ import {
     sustainableGold,
     createResourceLedger,
     reservationLines,
+    peakFunds,
     GOAL_TYPES,
 } from './goal-planner.js';
 
@@ -1252,6 +1253,31 @@ describe('a skill target - costing a climb that spans levels', () => {
         expect(Math.abs(train.goldDelta - -54_000 * train.timeHours)).toBeLessThanOrEqual(oneCycle);
     });
 
+    test('a market cap on the sales is an hourly limit, not a per-completion one', () => {
+        // 54k/hr of sales at the starting pace, of which the market absorbs 5.4k/hr; costs are nil
+        const capped = rate({ goldPerHour: 5_400, saleProceedsPerHour: 54_000, saleCapPerHour: 5_400 });
+        const train = step(plan(10, [capped]), 'train');
+        const n = train.details.actionsNeeded;
+        // Efficiency shortens the climb, so n completions would sell more than the market takes in the time
+        expect((54_000 / 540) * n).toBeGreaterThan(5_400 * train.timeHours);
+        expect(train.goldDelta).toBeCloseTo(5_400 * train.timeHours, 6);
+        // The per-completion figure would have credited this
+        expect(train.goldDelta).toBeLessThan((5_400 / 540) * n);
+    });
+
+    test('a cap that does not bind leaves the per-completion figure alone', () => {
+        const loose = rate({ goldPerHour: 54_000, saleProceedsPerHour: 54_000, saleCapPerHour: 54_000 });
+        const train = step(plan(10, [loose]), 'train');
+        expect(train.goldDelta).toBeCloseTo(100 * train.details.actionsNeeded, 6);
+    });
+
+    test('a single level with a cap agrees with the hourly limit to within one cycle', () => {
+        const capped = rate({ goldPerHour: 5_400, saleProceedsPerHour: 54_000, saleCapPerHour: 5_400 });
+        const train = step(plan(2, [capped]), 'train');
+        const oneCycle = (5_400 * 10) / 3600;
+        expect(Math.abs(train.goldDelta - 5_400 * train.timeHours)).toBeLessThanOrEqual(oneCycle + 1e-6);
+    });
+
     test('an unknown margin stays unknown, never zero', () => {
         const result = plan(10, [rate({ goldPerHour: null, goldKnown: false })]);
         expect(step(result, 'train').goldDelta).toBe(0);
@@ -1611,5 +1637,92 @@ describe('a shortfall that is somebody else’s claim', () => {
     test('a step already done claims nothing', () => {
         const plan = housePlan({ owned: () => 500 });
         expect(reservationLines(plan)).toEqual([]);
+    });
+});
+
+describe('funds needed - the peak running deficit in planned order', () => {
+    const train = (id, net, startup, extra = {}) => ({
+        id,
+        kind: 'train',
+        goldDelta: -net,
+        costKnown: true,
+        done: false,
+        prerequisites: [],
+        details: { upfrontCost: startup },
+        ...extra,
+    });
+    const buy = (id, cost, prerequisites = []) => ({
+        id,
+        kind: 'acquire',
+        goldDelta: -cost,
+        costKnown: true,
+        done: false,
+        prerequisites,
+        details: {},
+    });
+
+    test('reusable startup capital before a purchase is not added to it', () => {
+        expect(peakFunds([train('t', 0, 100_000), buy('b', 1_000_000)])).toBe(1_000_000);
+    });
+
+    test('two training steps release their startups one after another', () => {
+        expect(peakFunds([train('a', 0, 100_000), train('b', 0, 200_000), buy('c', 1_000_000)])).toBe(1_000_000);
+    });
+
+    test('a net loss stays spent while the startup is handed back', () => {
+        expect(peakFunds([train('t', 50_000, 100_000), buy('b', 1_000_000)])).toBe(1_050_000);
+    });
+
+    test('a purchase before the training leaves the startup on top of it', () => {
+        expect(peakFunds([buy('b', 1_000_000), train('t', 0, 100_000)])).toBe(1_100_000);
+    });
+
+    test('no steps, and only finished steps, need nothing', () => {
+        expect(peakFunds([])).toBe(0);
+        expect(peakFunds([{ ...train('t', 9, 9), done: true }])).toBe(0);
+    });
+
+    describe('through a craft-gated equipment plan', () => {
+        const cape = '/items/sinister_cape';
+        const make = (gold, upfrontCost, goldPerHour = 0) =>
+            planGoal(
+                { type: 'equipment', itemHrid: cape, enhancementLevel: 0 },
+                context({
+                    gold,
+                    skill: () => ({ level: 69, experience: 69_000 }),
+                    acquire: () => ({
+                        strategy: 'craft',
+                        totalCost: 1_000_000,
+                        buyPrice: 5_000_000,
+                        requires: [{ skillHrid: '/skills/crafting', level: 70 }],
+                    }),
+                    xpRates: () => [
+                        {
+                            label: 'Cook',
+                            requiredLevel: 1,
+                            xpPerHour: 54_000,
+                            xpPerAction: 100,
+                            actionTime: 10,
+                            totalEfficiency: 0,
+                            actionsPerHour: 360,
+                            goldPerHour,
+                            goldKnown: true,
+                            upfrontCost,
+                        },
+                    ],
+                    goldRates: () => [{ label: 'Milking', goldPerHour: 1_000_000 }],
+                })
+            );
+
+        test('asks for the purchase alone when the startup is released first', () => {
+            const plan = make(0, 100_000);
+            expect(step(plan, 'fund').details.spend).toBe(1_000_000);
+            expect(step(plan, 'fund').goldDelta).toBe(1_000_000);
+            expect(step(plan, 'fund').timeHours).toBeCloseTo(1, 6);
+        });
+
+        test('a plan the character can already afford has no funding step', () => {
+            expect(step(make(1_000_000, 100_000), 'fund')).toBeUndefined();
+        });
     });
 });

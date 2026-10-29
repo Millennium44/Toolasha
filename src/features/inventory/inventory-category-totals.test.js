@@ -454,3 +454,66 @@ describe('native inventory tabs DOM (2026-09 patch)', () => {
         expect(labels['Currencies'].querySelector('.mwi-category-total')).toBeNull();
     });
 });
+
+describe('unpriced items mark the total', () => {
+    function drawCategory(tiles) {
+        const inventory = document.createElement('div');
+        const category = document.createElement('div');
+        category.className = 'Inventory_itemGrid__20YAH';
+        const label = document.createElement('div');
+        label.className = 'Inventory_label';
+        label.textContent = 'Loots';
+        category.appendChild(label);
+        for (const { value, expect: expectName } of tiles) {
+            const item = document.createElement('div');
+            item.className = 'Item_itemContainer';
+            item.dataset.askValue = String(value);
+            if (expectName) item.dataset.expectPrice = expectName;
+            category.appendChild(item);
+        }
+        inventory.appendChild(category);
+        document.body.appendChild(inventory);
+        badgeManagerMock.currentInventoryElem = inventory;
+        return label;
+    }
+
+    test('one unpriced item puts the mark on the figure and names the item in the hover', () => {
+        const label = drawCategory([
+            { value: 1000, expect: 'Cheese' },
+            { value: 0, expect: 'Rare Thing' },
+        ]);
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        const span = label.querySelector('.mwi-category-total');
+        expect(span.textContent).toBe('≥1000');
+        expect(span.title).toContain('Rare Thing');
+        expect(span.title).not.toContain('Cheese');
+    });
+
+    test('only priced items show no mark and no hover', () => {
+        const label = drawCategory([
+            { value: 1000, expect: 'Cheese' },
+            { value: 500, expect: 'Milk' },
+        ]);
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        const span = label.querySelector('.mwi-category-total');
+        expect(span.textContent).toBe('1500');
+        expect(span.title).toBe('');
+    });
+
+    test('a deliberate 0 (no flag, as trainee gear) does not trigger the mark', () => {
+        const label = drawCategory([{ value: 1000, expect: 'Cheese' }, { value: 0 }]);
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        expect(label.querySelector('.mwi-category-total').textContent).toBe('1000');
+    });
+
+    test('the hover lists ten names and counts the rest', () => {
+        const tiles = [{ value: 1000, expect: 'Cheese' }];
+        for (let i = 1; i <= 13; i++) tiles.push({ value: 0, expect: `Thing ${i}` });
+        const label = drawCategory(tiles);
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        const title = label.querySelector('.mwi-category-total').title;
+        expect(title).toContain('Thing 10');
+        expect(title).not.toContain('Thing 11');
+        expect(title).toContain('and 3 more');
+    });
+});

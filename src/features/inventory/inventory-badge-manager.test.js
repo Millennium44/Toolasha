@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
     chestKeys: {},
     keyCost: 0,
     tokenValues: {},
+    goldPerCredit: { ask: {}, bid: {} },
+    goldPerCreditCalls: 0,
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, onReady: () => () => {} } }));
@@ -91,6 +93,12 @@ vi.mock('../../utils/token-valuation.js', () => ({
     DUNGEON_TOKEN_HRIDS: new Set(['/items/chimerical_token', '/items/pirate_token']),
     calculateDungeonTokenValue: (hrid) => mocks.tokenValues[hrid] ?? null,
 }));
+vi.mock('../../utils/guild-credit-pricing.js', () => ({
+    buildGoldPerCredit: (mode) => {
+        mocks.goldPerCreditCalls++;
+        return mocks.goldPerCredit[mode] || {};
+    },
+}));
 vi.mock('../../utils/key-cost.js', () => ({ getKeyUnitCost: () => mocks.keyCost }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('../../utils/background-work.js', () => ({
@@ -112,6 +120,8 @@ beforeEach(() => {
     for (const k of Object.keys(mocks.chestKeys)) delete mocks.chestKeys[k];
     mocks.keyCost = 0;
     mocks.tokenValues = {};
+    mocks.goldPerCredit = { ask: {}, bid: {} };
+    mocks.goldPerCreditCalls = 0;
     mocks.yieldSpy.mockClear();
     inventoryBadgeManager.nameToHridMap = null;
 });
@@ -793,6 +803,7 @@ describe('dungeon tokens', () => {
         'invSort_netOfTax',
         'profitCalc_patientTickBuy',
         'profitCalc_patientTickSell',
+        'networth_includeGuildCredits',
     ])('changing %s reprices the tiles', async (key) => {
         inventoryBadgeManager.initialize();
         const spy = vi.spyOn(inventoryBadgeManager, 'renderAllBadges').mockResolvedValue();
@@ -813,5 +824,157 @@ describe('dungeon tokens', () => {
         const el = tokenEl('cowbell', 10);
         await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
         expect(el.dataset.askValue).toBe('0');
+    });
+});
+
+describe('guild credits', () => {
+    const CREDIT = '/items/brown_guild_credit';
+
+    function creditEl(count) {
+        const el = document.createElement('div');
+        el.className = 'Item_itemContainer';
+        el.innerHTML = '<svg><use href="/static/items_sprite.svg#brown_guild_credit"></use></svg>';
+        const countEl = document.createElement('div');
+        countEl.className = 'Item_count';
+        countEl.textContent = String(count);
+        el.appendChild(countEl);
+        return el;
+    }
+
+    beforeEach(() => {
+        mocks.initData = { itemDetailMap: { [CREDIT]: { name: 'Brown Guild Credit' } } };
+        mocks.settings.networth_includeGuildCredits = true;
+        mocks.goldPerCredit = { ask: { [CREDIT]: 1000 }, bid: { [CREDIT]: 400 } };
+    });
+
+    test('a stack counts toward the ask total at the ask rate and the bid total at the bid rate', async () => {
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+
+        expect(el.dataset.askPrice).toBe('1000');
+        expect(el.dataset.bidPrice).toBe('400');
+        expect(el.dataset.askValue).toBe(String(1000 * 42));
+        expect(el.dataset.bidValue).toBe(String(400 * 42));
+    });
+
+    test('takes no sales tax even in net-of-tax mode (a credit is bought, not sold)', async () => {
+        mocks.settings.invSort_netOfTax = true;
+        const el = creditEl(2);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.askValue).toBe('2000');
+    });
+
+    test('the rate map is built once per pass, not per tile', async () => {
+        await inventoryBadgeManager.calculateItemPrices([creditEl(1), creditEl(2), creditEl(3)], [], new Map());
+        expect(mocks.goldPerCreditCalls).toBe(2);
+    });
+
+    test('under the official value source both totals use the ask-based rate, as net worth does', async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+
+        expect(el.dataset.askValue).toBe(String(1000 * 42));
+        expect(el.dataset.bidValue).toBe(String(1000 * 42));
+        expect(el.dataset.bidPrice).toBe('1000');
+        expect(mocks.goldPerCreditCalls).toBe(1);
+    });
+
+    test('with no known rate the stack counts 0', async () => {
+        mocks.goldPerCredit = { ask: {}, bid: {} };
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.askValue).toBe('0');
+        expect(el.dataset.bidValue).toBe('0');
+    });
+
+    test('the setting off leaves credits out of the totals', async () => {
+        mocks.settings.networth_includeGuildCredits = false;
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(mocks.goldPerCreditCalls).toBe(0);
+        expect(el.dataset.askValue).not.toBe(String(1000 * 42));
+    });
+
+    test('credits left out by the setting are not flagged as unpriced', async () => {
+        mocks.settings.networth_includeGuildCredits = false;
+        const el = creditEl(42);
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.expectPrice).toBeUndefined();
+    });
+});
+
+describe('icon-first identity on a translated, xlink-only tile', () => {
+    test('prices a tile whose icon carries only xlink:href and whose label is not English', async () => {
+        mocks.initData = { itemDetailMap: { '/items/radiant_fiber': { name: 'Radiant Fiber' } } };
+        mocks.inventory = [
+            { itemLocationHrid: '/item_locations/inventory', itemHrid: '/items/radiant_fiber', count: 5 },
+        ];
+        mocks.priceBatch = new Map([['/items/radiant_fiber:0', { ask: 100, bid: 80 }]]);
+        document.body.innerHTML = `
+            <div class="Item_itemContainer__q">
+                <svg aria-label="Fibre radieuse"><use xlink:href="/static/media/items_sprite.abc.svg#radiant_fiber"></use></svg>
+                <div class="Item_count__q">5</div>
+            </div>`;
+        const el = document.querySelector('[class*="Item_itemContainer"]');
+        await inventoryBadgeManager.calculateItemPrices([el], mocks.inventory, new Map());
+        expect([el.dataset.askValue, el.dataset.bidValue]).toEqual(['500', '400']);
+    });
+});
+
+describe('items expected to carry a price (unpriced mark)', () => {
+    function itemEl(name, count) {
+        const el = document.createElement('div');
+        el.className = 'Item_itemContainer';
+        const svg = document.createElement('svg');
+        svg.setAttribute('aria-label', name);
+        el.appendChild(svg);
+        const countEl = document.createElement('div');
+        countEl.className = 'Item_count';
+        countEl.textContent = String(count);
+        el.appendChild(countEl);
+        return el;
+    }
+
+    beforeEach(() => {
+        mocks.initData = {
+            itemDetailMap: {
+                '/items/cheese': { name: 'Cheese' },
+                '/items/rare_thing': { name: 'Rare Thing' },
+                '/items/trainee_sword': {
+                    name: 'Trainee Sword',
+                    equipmentDetail: { type: '/equipment_types/main_hand' },
+                },
+                '/items/gold_coin': { name: 'Coin' },
+            },
+        };
+        mocks.priceBatch = new Map([['/items/cheese:0', { ask: 100, bid: 90 }]]);
+    });
+
+    test('an item with no price at all is flagged by name, a priced one has a value', async () => {
+        const unpriced = itemEl('Rare Thing', 3);
+        const priced = itemEl('Cheese', 5);
+        await inventoryBadgeManager.calculateItemPrices([unpriced, priced], [], new Map());
+
+        expect(unpriced.dataset.askValue).toBe('0');
+        expect(unpriced.dataset.expectPrice).toBe('Rare Thing');
+        expect(priced.dataset.askValue).toBe('500');
+    });
+
+    test('trainee gear and coins are deliberately 0 and carry no flag', async () => {
+        const trainee = itemEl('Trainee Sword', 1);
+        const coin = itemEl('Coin', 100);
+        await inventoryBadgeManager.calculateItemPrices([trainee, coin], [], new Map());
+
+        expect(trainee.dataset.askValue).toBe('0');
+        expect(trainee.dataset.expectPrice).toBeUndefined();
+        expect(coin.dataset.expectPrice).toBeUndefined();
+    });
+
+    test('a flag left by an earlier pass is cleared when the tile becomes deliberately 0', async () => {
+        const el = itemEl('Trainee Sword', 1);
+        el.dataset.expectPrice = 'Stale';
+        await inventoryBadgeManager.calculateItemPrices([el], [], new Map());
+        expect(el.dataset.expectPrice).toBeUndefined();
     });
 });

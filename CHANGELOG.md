@@ -17,6 +17,201 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Narrow layouts give the Labyrinth controls their own row above the map and keep task reroll tools in the page flow instead of covering game controls. Task estimate controls wrap below the title, while wider layouts restore their original placement.
 - Marketplace pricing options collapse into an expandable strip, history statistics stay within the content area, and extra order statistics become compact price details on narrow screens. My Listings retains an option to show the full sortable columns, and header order totals wrap within the native header width on mobile.
 
+### Sync: incomplete downloads
+
+- A sync pull whose gist file arrives short now says the download was incomplete and retries on the next run, instead of blaming the sync passphrase.
+
+### Audit round (2026-10-26, seventh): XP and character select
+
+- Character select no longer shows an online character as past its offline limit, and the leaderboard XP tracker no longer reads the previous board view's ranks after being turned off and on.
+
+### Pricing: estimated crate values and partial material bills
+
+- Crate and chest values that rest on the game's value map rather than real listings now show "~" in the tooltip, and an enhancing material priced from a recipe with an unpriced input now counts as unpriced in the enhancing panel, planner, score and savings card, not as a complete bill.
+
+### Queue time left past an untimed action
+
+- Queue time left keeps counting down as "≥ X" once an action with no known duration is running, rather than switching to "?" (it shows "?" only when that bound reaches zero), and a Combat Sim max-tier food or zones score change made during a sync pull is no longer reverted.
+
+### Price history shows the game base value
+
+- The price history chart's tooltip now shows that day's base market value, taken from the history the price service sends (adapted from mooket II); a new setting turns it off, and nothing shows for days without one.
+
+### Audit round (2026-10-27): imported-player tax and the goal planner
+
+- The goal planner no longer charges freely-selling gathering outputs as unsold when a climb speeds up, a Lab merged gear row for an imported profile is no longer priced from your own held copies, and Combat Sim's single-zone Results price an imported player's drops at their own sale tax.
+
+### Audit round (2026-10-27): Combat Stats
+
+- Switching characters while the last combat run was still loading no longer shows the previous character's run as the new one's, and no longer counts its loot in Gold Sources or files it into the new character's history.
+
+- **Inventory totals mark unpriced items**: an inventory, category or custom-tab total that left out items with no market price now shows a "≥", and its hover names the missing items, so a partial figure no longer reads as the full value.
+
+### Audit round (2026-10-26, sixth): dungeons and Party Loot
+
+- Party Loot's combined view adds up every session's consumables instead of charging only the newest one, and a finished run keeps its own duration.
+- The dungeon key runway counts the entry keys a clear actually spends, so a solo runway no longer reads about five times too long.
+
+### Audit round (2026-10-26, fifth): tasks
+
+- A combat task estimate no longer shows rewards as profit when the sim killed none of the monster, and Net Task Income is withheld when the reroll history can't be read.
+- The task statistics popup can no longer leave an overlay you can't close, Claim Reward and the reroll reminder appear without reopening the Tasks panel, and weekly windows stay right across daylight saving.
+
+### Audit round (2026-10-26, sixth): item tooltips
+
+- Tooltips mark an estimated price with ~, show an unpriced material or chest key as missing instead of free, and warn when an enhancement input is only partly priced.
+- The consumable tooltip works on any client language, and a slow profit section no longer lands under the next item's tooltip.
+
+### Audit round (2026-10-26, seventh): Lab Sim
+
+- Lab upgrade analysis no longer offers combat scrolls (they don't work in the Labyrinth), chooses the right loadout when two share a name, and prices a party member's book swaps at their own level.
+- A Lab run interrupted by a switch or rebuild can't draw into the new panel, Find Max no longer survives a rebuild unticked, and remembered all-target runs are saved, bannered and flag a pricing-mode change.
+
+### Audit round (2026-10-26, seventh): alchemy
+
+- Alchemy History, Best Items, action protection and the item pins now work on translated clients, and a run split by a reload keeps its unpriced mark.
+- The alchemy gold summary counts only the selected enhancement level and the exact queued item.
+
+### Bulk Sell holds back loadout consumables and Favorites
+
+- Bulk Sell no longer sells food or drinks used by any of your saved loadouts, or (by default) anything you've marked Favorite; a new setting lets Favorites sell, and the held-back note names the loadouts.
+
+### Enhancing tracker notes attempts missed during a gap
+
+- When a reload or dropped connection skips more than one enhancing attempt, the session now says how many were missed instead of silently reading as complete; its costs and per-attempt averages still count only what was measured.
+
+### Audit round (2026-10-26, third): market
+
+- Bulk Sell warns about an above-band bid whenever a stack would sell into one, shows that warning first, and holds the press until you have seen it.
+- Undercut alerts and the overbid table no longer count your own listing as a rival, and market filters show the filter actually in force after the marketplace reopens.
+
+### Audit round (2026-10-26, fourth): alerts and briefing
+
+- The guild trial start alert ignores player chat and replayed history, and the enhancement target alert fires for every copy of an item.
+- The away briefing dates older events, reports changes from zero, no longer claims fewer undercut listings when it can't tell, and never draws for the wrong character; an empty supply alert says it ran out.
+
+### Gold Sources charges the chest key for market-priced chests
+
+- Opening a chest that carries a market price now subtracts the chest key it spends in the Gold Sources Chests row, with a note when the key has no price; chests valued from their contents already net the key out.
+
+### Audit round (2026-10-26, second): party finder
+
+- Loading a party keeps the what-if house rooms and shrines it was simmed with, and teammates keep their game mode through Edit and Load.
+- Profit vs solo is marked when an unpriced item is counted as 0, and two teammates never show under the same numbered name.
+
+### Audit round (2026-10-26, third): enhancing
+
+- The loot-log enhancing summary no longer counts unpriced protection or an unlisted base item as free, and the "worth it" line needs a real bid rather than an estimate.
+- The enhancing panel finds its protection slot and Repeat box on any client language, and the marketplace enhance column refreshes when your pricing mode changes.
+
+### Audit round (2026-10-26, fourth): guild
+
+- The guild XP tracker no longer brings back the previous character's guild after a switch, and the net worth Guild Shrines total says when an unpriced credit is left out.
+
+### Audit round (2026-10-26, fourth): sync
+
+- A sync pull no longer overwrites a self-use mark or party roster edit you saved while it was merging, and a pruned snapshot can't come back because a delete was reported done too early.
+- Guild loadouts pulled from another device show in the roster and trial panels straight away.
+
+### Leftovers (2026-10-26, second): planner and pricing fixes
+
+- The goal planner counts training income only for output the market can absorb, so thin-market skills no longer look cheap to train.
+- "No sale price" credit lines now also show on merged skilling rows and in the Combat Sim breakdown, and a budget of 0 still shows free and refunding picks.
+- Guild credit rows in the net worth hover read gold per credit, and an early price read before game data loads no longer errors.
+
+### Audit round (2026-10-26, fifth): skilling optimizer and tea popups
+
+- Tea popups keep your pins and bans when you click an action or go back, and closing one no longer makes the next popup close on its first click.
+- The Simulator says when your teas leave some actions unable to start, instead of just showing a lower XP/hr.
+
+### Audit round (2026-10-26, fifth): settings
+
+- Twenty features (Bulk Sell, the listing price display, the pinned actions page and others) now start when you switch them on, without a reload.
+- Two tabs saving settings at the same moment no longer undo each other, and the guild credit valuation switch stays usable with net worth off.
+
+### Audit round (2026-10-26, sixth): inventory
+
+- The net-of-tax inventory setting stays usable with value badges off, since it still shapes totals and sort.
+- Inventory badges, totals and the watchlist dot recognise items on any client language.
+
+### Combat Stats counts consumables used while the page was closed
+
+- Food and drinks used while the tab was closed, asleep or reconnecting are now counted from the next battle's inventory, so consumption rates and the runway no longer read low after a gap; restocks and sales are never counted as use.
+
+### Audit round (2026-10-26, fourth): action bar
+
+- The action bar's time for a counted run stops at what your materials can pay for, matching the queue panel, and a character switch no longer paints the previous character's run into the new one's row.
+
+### Audit round (2026-10-26, third): treasure and Gold Sources
+
+- Replacing the chest history from a file now survives a sync instead of being undone by another device, and appending keeps a reset in place.
+- Gold Sources' Day and Week views cover the right dates around daylight-saving changes.
+
+### Lab upgrade analysis ignores coffee and tea
+
+- Lab upgrade analyses never rank a coffee or tea, since drink slots do not run in the Labyrinth (crates provide those buffs); the Lab simulation already left them out.
+
+### Imported players' profit at their own tax rate everywhere
+
+- All Zones, Seek, Reprice, trigger tuning and the skilling upgrade analysis now price an imported or other-mode player's drops and trade-ins at that player's own sale tax, as upgrade analysis already did.
+
+### From upstream: Combat Stats pricing, guild credits and smaller fixes
+
+- Combat Stats income and profit follow your profit pricing mode; the key pricing setting now prices only keys.
+- Held guild credits count in net worth and inventory totals, and token shop tooltips follow your pricing mode.
+- Community Buff dialogs' Max button buys the right amount, the Labyrinth room grid gets a size control, and item tooltips show a "Best plan" row when crafting sub-materials is cheaper.
+- Action tiles no longer redraw unchanged stats.
+
+### Combat Sim upgrade profit for an imported player
+
+- Upgrade analysis of an imported profile or a saved teammate now taxes its drop profit at that player's own rate, so an Iron Cow's profit isn't cut by a market tax it never pays (and the reverse).
+
+### Task completions sync without a reload
+
+- A sync pull that brings task completions from another device now folds them in without asking you to reload, and a claim seen by two open devices counts once in task income.
+
+### Leftovers (2026-10-26): networth craft costs and Lab room EXP
+
+- Net worth values an unlisted item's craft cost with your real Artisan bonus for that skill, instead of always assuming 10% savings.
+- A Lab room's EXP / Room and EXP / Hour update after you buy the labyrinth XP upgrade or a community XP buff changes, instead of keeping the cached figure.
+
+### Leftovers (2026-10-26): craft costs, Alchemy XP and the goal planner
+
+- Craft-cost estimates price recipe inputs at your custom buy price rather than your custom sell price.
+- Alchemy XP/hr in the Skilling Optimizer counts the catalyst's higher success rate, as gold/hr already did.
+- The goal planner asks you to earn the most you are ever short along the plan, not every training step's startup cost added together.
+- Turning off listing drag order mid-drag puts the rows back and clears the drag marks.
+
+### Leftovers (2026-10-26): Combat Sim and Lab upgrade costs
+
+- A cape or quiver bought with shop tokens is costed by your pricing mode in upgrade analysis and the equipment savings row, matching the treasure tracker's token value.
+- A replaced piece with no sale price now says "no sale price, so nothing is credited back" instead of "0 back".
+- The budget plan only says a cheaper upgrade costs more when a pick really was over budget, and its total notes unpriced guild shrine tokens.
+
+### Combat Sim: Party finder
+
+- New Party tab: save teammate builds and aura options, and it sims every party of you plus them across the zones you pick, ranking your EXP/hr and profit/hr against solo; any row loads into the editor.
+- Only teammates of your character's game mode (Iron Cow or market) are searched, since the two can't party; the others stay listed, greyed out.
+
+### Combat Sim upgrade costs follow the pricing mode
+
+- Upgrade analysis now prices enhancement rows, resale of a replaced or freed piece, and house materials by your pricing mode and custom prices, as tier rows already did. In the default Conservative mode a replaced piece is credited at its bid rather than its ask, so upgrades no longer look cheaper by the spread.
+
+### Audit round (2026-10-26): Combat Sim upgrade analysis
+
+- Combat level grind times for a party member or imported profile start from their XP, not yours, when you happen to share their level.
+- In the Lab, a party member's checked ability swap with no market price shows as unpriced instead of costing 0 because you own the book.
+
+### Audit round (2026-10-26): death recap
+
+- An open death recap updates when another death is recorded, and its Older/Newer buttons keep working after the recap you are viewing is dropped from the kept list.
+- A combat tick that leaves out your HP or damage counter no longer records a hit of unknown damage or a phantom miss.
+
+### Audit round (2026-10-26): Alchemy Profitability
+
+- Alchemy Profitability now redraws every time you come back from the marketplace; the earlier fix covered only one of the two paths that redraw it.
+- An update still running when the game rebuilds the panel no longer leaves it blank, and the Repeat box stops recalculating a panel that has been removed.
+
 ### Treasure popup on phones
 
 - The chest-opening summary no longer covers the game's loot window on a phone: with no room beside it, it sits above or below the window (scrolling if needed), so the game's Close stays reachable.
@@ -29,7 +224,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Combat Sim upgrade budget: pin and exclude picks
 
-- In the upgrade budget plan you can pin picks you will buy anyway and exclude ones you won't; the rest of the budget is filled around them, a plan that can't honor your pins says why, and "Confirm together" simulates exactly the upgrades picked (a suggested ability order is not part of it).
+- In the upgrade budget plan you can pin picks you will buy anyway and exclude ones you won't; the rest of the budget is filled around them, a plan that can't honor your pins says why, and "Confirm together" simulates exactly the upgrades picked (a suggested ability order is not part of it). A pinned pick that loses on the chosen goal counts as a loss, shown in red, instead of as zero.
 
 ### Combat Sim upgrade analysis and budget: six reported bugs
 

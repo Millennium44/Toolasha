@@ -22,6 +22,8 @@ const game = vi.hoisted(() => ({
     // `itemHrid:enhancementLevel` keys the Locked-item tests mark; empty by default,
     // which matches a server that has not shipped item marks
     locked: new Set(),
+    // Same keys, for items marked Favorite
+    favorite: new Set(),
 }));
 /** The settings store, so a per-character key can be proved to be per character */
 const store = vi.hoisted(() => ({ data: {} }));
@@ -44,6 +46,7 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.items;
         },
         isItemLocked: (itemHrid, enhancementLevel = 0) => game.locked.has(`${itemHrid}:${enhancementLevel}`),
+        isItemFavorite: (itemHrid, enhancementLevel = 0) => game.favorite.has(`${itemHrid}:${enhancementLevel}`),
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, register: () => () => {} } }));
@@ -139,6 +142,7 @@ beforeEach(() => {
     // The Loadout Snapshot feature is what fills the store the hold list reads;
     // on is the case every test but the "switched off" one is about
     settings['loadoutSnapshot'] = true;
+    settings['market_bulkSellHoldFavorites'] = true;
     game.details = {
         '/items/cheese': { isTradable: true },
         '/items/milk': { isTradable: true },
@@ -154,6 +158,7 @@ beforeEach(() => {
     bulkSell.holdProviders = new Map();
     bulkSell.selectedTabId = 'all';
     game.loadouts = [];
+    game.favorite = new Set();
     game.loadoutsReady = true;
     game.readyWaiters = [];
     game.characterId = 'char';
@@ -404,6 +409,83 @@ describe('the watchlist is only offered when it has something in it', () => {
     test('and not when the list is empty, since it would build an empty run', async () => {
         game.watched = [];
         expect(await optionValues()).not.toContain('watchlist');
+    });
+});
+
+describe('consumables saved into a loadout, and Favorite items', () => {
+    beforeEach(() => {
+        settings['market_bulkSellHoldFavorites'] = true;
+        game.details['/items/bread'] = { isTradable: true };
+        game.details['/items/coffee'] = { isTradable: true };
+        game.details['/items/trinket'] = { isTradable: true };
+        game.items = [
+            inventory('/items/bread'),
+            inventory('/items/coffee'),
+            inventory('/items/trinket', 1, 3),
+            inventory('/items/milk'),
+        ];
+        bulkSell.selectedTabId = 'all';
+    });
+
+    test('a loadout food is held', async () => {
+        game.loadouts = [{ name: 'Mage', food: [{ itemHrid: '/items/bread' }, { itemHrid: '' }], drinks: [] }];
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/bread');
+        expect(bulkSell._skipNote()).toContain('Mage');
+    });
+
+    test('a loadout drink is held', async () => {
+        game.loadouts = [{ name: 'Mage', food: [], drinks: [{ itemHrid: '/items/coffee' }] }];
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/coffee');
+    });
+
+    test('a Favorite item is held and said so', async () => {
+        game.favorite = new Set(['/items/milk:0']);
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/milk');
+        expect(bulkSell.favoriteSkipped).toBe(5);
+        expect(bulkSell._skipNote()).toContain('Favorite');
+    });
+
+    test('with the setting off a Favorite item sells and nothing is counted as Favorite', async () => {
+        settings['market_bulkSellHoldFavorites'] = false;
+        game.favorite = new Set(['/items/milk:0']);
+        await bulkSell._start();
+        expect(queued()).toContain('/items/milk');
+        expect(bulkSell.favoriteSkipped).toBe(0);
+        expect(bulkSell._skipNote()).not.toContain('Favorite');
+    });
+
+    test('with the setting off a loadout food is still held', async () => {
+        settings['market_bulkSellHoldFavorites'] = false;
+        game.loadouts = [{ name: 'Mage', food: [{ itemHrid: '/items/bread' }], drinks: [] }];
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/bread');
+    });
+
+    test('an unrelated item still sells', async () => {
+        game.loadouts = [{ name: 'Mage', food: [{ itemHrid: '/items/bread' }], drinks: [] }];
+        game.favorite = new Set(['/items/milk:0']);
+        await bulkSell._start();
+        expect(queued()).toContain('/items/coffee');
+    });
+
+    test('three loadouts sharing a consumable hold it once, naming each', async () => {
+        game.loadouts = ['A', 'B', 'C'].map((name) => ({ name, food: [{ itemHrid: '/items/bread' }], drinks: [] }));
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/bread');
+        expect(bulkSell.heldCount).toBe(5);
+        expect(bulkSell._skipNote()).toContain('A, B, C');
+    });
+
+    test('a Favorite at a nonzero level holds that level only', async () => {
+        game.favorite = new Set(['/items/trinket:3']);
+        await bulkSell._start();
+        expect(queued()).not.toContain('/items/trinket');
+        game.items = [inventory('/items/trinket', 1, 0)];
+        await bulkSell._start();
+        expect(queued()).toContain('/items/trinket');
     });
 });
 
@@ -668,6 +750,26 @@ describe('the insta-vs-listing decision', () => {
             bulkSell._decideAndOpen(rich(80));
             expect(bulkSell.decision.insta).toBe(false);
             expect(bulkSell.decision.warning).toBeUndefined();
+        });
+
+        test('an above-band top bid is warned about even when the walk ends inside the band', () => {
+            // 3 at 80 (above the band's 55) fill first, then the walk reaches 50 for the rest of the 12
+            band.value = { min: 45, max: 55 };
+            settings['market_bulkSellMaxSpreadPct'] = 99;
+            bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 2, count: 12 };
+            bulkSell._decideAndOpen({
+                asks: [
+                    { price: 200, orderQuantity: 10, filledQuantity: 0, createdTimestamp: new Date().toISOString() },
+                ],
+                bids: [
+                    { price: 80, orderQuantity: 5, filledQuantity: 2 },
+                    { price: 52, orderQuantity: 4, filledQuantity: 0 },
+                    { price: 50, orderQuantity: 10, filledQuantity: 0 },
+                ],
+            });
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.price).toBe(50);
+            expect(bulkSell.decision.warning).toMatch(/above the tradable range/);
         });
     });
 
@@ -1064,6 +1166,23 @@ describe('confirming from the strip', () => {
         expect(bulkSell.state).toBe('awaiting_next');
     });
 
+    test('an above-band warning leads the strip line, ahead of the reason the strip cuts off', () => {
+        const modal = openModal();
+        runAtStep0();
+        bulkSell.decision = {
+            insta: true,
+            price: 796000,
+            avgPrice: 796000,
+            reason: 'supply 1K > demand 500; fills best-first to 796K so the depth covers the stack',
+            warning: 'bid above the tradable range: the game may refuse it',
+        };
+        bulkSell._render();
+        const line = statusText();
+        expect(line.indexOf('above the tradable range')).toBeGreaterThan(-1);
+        expect(line.indexOf('above the tradable range')).toBeLessThan(line.indexOf('Cheese'));
+        closeModalAndSettle(modal);
+    });
+
     test("a market modal confirm keeps the plain click, not the game's handler", () => {
         reactClicks.calls = [];
         const modal = openModal();
@@ -1369,6 +1488,47 @@ describe('confirming from the strip', () => {
             expect(priceOf(modal)).toBe('100');
             expect(bulkSell.current.count).toBe(5);
             expect(bulkSell.decision.insta).toBe(true);
+        });
+
+        test('a re-walk at the press that newly sells into an above-band bid shows the warning before pressing', () => {
+            // Decided with no band known; by the press the band (max 90) puts the 100 top bid above it
+            band.value = { min: 40, max: 90 };
+            const modal = runDecided();
+            band.value = null;
+            bulkSell._decideAndOpen(bookOf());
+            bulkSell.state = 'awaiting_confirm';
+            band.value = { min: 40, max: 90 };
+            expect(bulkSell.decision.warning).toBeUndefined();
+            game.items = [inventory('/items/cheese', 3), inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('above the tradable range');
+            expect(statusText()).toContain('above the tradable range');
+            // Seen now: the next press sells the three
+            confirmBtn().click();
+            expect(gameClicks).toBe(1);
+            expect(modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input').value).toBe('3');
+            band.value = null;
+        });
+
+        test('a refused warning press still leaves the modal holding the new count and price', () => {
+            // Grows 5 to 10: the walk now needs the 50 level. Band max 90 puts the 100 top bid above it
+            const modal = runDecided();
+            band.value = { min: 40, max: 90 };
+            game.items = [inventory('/items/cheese', 10), inventory('/items/milk', 4)];
+            confirmBtn().click();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toContain('above the tradable range');
+            // The game's own button, pressed now, sells what the strip describes
+            expect(priceOf(modal)).toBe('50');
+            expect(modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input').value).toBe('10');
+            expect(bulkSell.current.count).toBe(10);
+            expect(bulkSell.decision.price).toBe(50);
+            // Said once on the line, not twice
+            expect(statusText().split('above the tradable range')).toHaveLength(2);
+            confirmBtn().click();
+            expect(gameClicks).toBe(1);
+            band.value = null;
         });
 
         test('an unchanged count leaves the decision and the price alone', () => {
@@ -1791,6 +1951,48 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(1);
         });
 
+        const favoriteCurrent = () =>
+            game.favorite.add(`${bulkSell.current.itemHrid}:${bulkSell.current.enhancementLevel || 0}`);
+
+        test('an item marked Favorite while the unarmed button settles is not sold', async () => {
+            openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            expect(armClicks).toBe(1);
+            favoriteCurrent();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.favoriteSkipped).toBeGreaterThan(0);
+        });
+
+        test('with the setting off, a Favorite marked during the vendor settle still sells', async () => {
+            settings['market_bulkSellHoldFavorites'] = false;
+            bulkSell.favoriteSkipped = 0;
+            openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            favoriteCurrent();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(1);
+            expect(bulkSell.favoriteSkipped).toBe(0);
+        });
+
+        test('an item marked Favorite while an already-armed button settles is not sold', async () => {
+            openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(100);
+            favoriteCurrent();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.favoriteSkipped).toBeGreaterThan(0);
+        });
+
         test("the sale is pressed through the game's handler, since it ignores an untrusted click", async () => {
             reactClicks.calls = [];
             openMenu({ label: 'Confirm Sell For 400K Coins' });
@@ -1884,6 +2086,25 @@ describe('confirming from the strip', () => {
             expect(confirmBtn().disabled).toBe(false);
             sell.click();
             expect(gameClicks).toBe(2);
+        });
+
+        test('an inventory tile whose icon carries only xlink:href is still found for the vendor sale', () => {
+            runAtStep0();
+            bulkSell.state = 'preparing';
+            const inventory = document.createElement('div');
+            inventory.className = 'Inventory_items__x';
+            // A +2 milk ahead of it, then a +3 cheese, then the +0 cheese with the legacy attribute only
+            inventory.innerHTML =
+                '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use xlink:href="#milk"></use></svg></div></div>' +
+                '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use xlink:href="#cheese"></use></svg>' +
+                '<div class="Item_enhancementLevel__x">+3</div></div></div>' +
+                '<div class="Item_itemContainer__x"><div class="Item_item__x plain"><svg><use xlink:href="#cheese"></use></svg></div></div>';
+            document.body.appendChild(inventory);
+            const clicked = [];
+            inventory.addEventListener('click', (event) => clicked.push(event.target.className));
+            expect(bulkSell._openVendorSell(PRICE, 1)).toBe(true);
+            expect(clicked).toEqual(['Item_item__x plain']);
+            inventory.remove();
         });
 
         test('an arming while the run waits for the menu to open still counts as recent', async () => {

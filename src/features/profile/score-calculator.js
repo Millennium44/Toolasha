@@ -712,7 +712,7 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
             const basePrice = priceBase(item.itemHrid, ASK).price;
             const targetCosts = [basePrice ?? 0]; // level 0 = base item
             const enhancementUnpriced =
-                !(basePrice > 0) || perAttemptMaterialCost(item.itemDetails, ASK).hasMissingPrices;
+                !(basePrice > 0) || isMaterialBillUnpriced(perAttemptMaterialCost(item.itemDetails, ASK));
             for (let subLevel = 1; subLevel <= item.enhancementLevel && !enhancementUnpriced; subLevel++) {
                 const { workerStartIndex, strategies } = item.subLevelTasks[subLevel - 1];
                 let minCost = null;
@@ -793,6 +793,11 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
     return { score, breakdown, hasEquipmentData, unpricedItems };
 }
 
+/** A bill with a missing or partial (craft-priced with an unpriced input) material is not a complete price */
+function isMaterialBillUnpriced(materials) {
+    return Boolean(materials.hasMissingPrices || materials.hasPartialPrices);
+}
+
 /**
  * Calculate total enhancement cost from worker result
  * Matches tooltip-enhancement.js calculateTotalCost() exactly: every input is priced by the shared
@@ -815,7 +820,7 @@ function calculateEnhancementCostFromWorkerResult(itemHrid, protectFrom, workerR
 
     // Material cost per attempt: a material nobody prices is a partial bill, not a cheaper run
     const materials = perAttemptMaterialCost(itemDetails, ASK);
-    if (materials.hasMissingPrices) return null;
+    if (isMaterialBillUnpriced(materials)) return null;
 
     // Total material cost = per-action cost × total expected attempts
     const materialCost = materials.cost * workerResult.attempts;

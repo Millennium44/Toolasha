@@ -1,4 +1,5 @@
 /** @vitest-environment happy-dom */
+/* global process */
 
 /**
  * The task statistics panel's arithmetic.
@@ -627,5 +628,111 @@ describe('the realized-payout-by-type card', () => {
         expect(stats.payouts.rows).toHaveLength(0);
         expect(stats.payouts.valuedClaims).toBe(0);
         expect(cardText(stats)).toContain('Not enough claims yet');
+    });
+});
+
+describe('opening the popup while a build is still in flight', () => {
+    /**
+     * Holds `calculateAllStatistics` open until released, the way the awaits across the market fetch and the
+     * per-task profit calculation hold it in the game.
+     * @returns {{release: Function}} Releases every build held so far
+     */
+    function holdBuilds() {
+        const waiting = [];
+        vi.spyOn(taskStatistics, 'calculateAllStatistics').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    waiting.push(() =>
+                        resolve({ overflow: { error: 'x' }, slots: {}, rewards: {}, completions: null })
+                    );
+                })
+        );
+        vi.spyOn(taskStatistics, 'createPopup').mockImplementation(function () {
+            const overlay = document.createElement('div');
+            overlay.className = 'toolasha-task-stats-overlay';
+            document.body.appendChild(overlay);
+            this.overlay = overlay;
+        });
+        return { release: () => waiting.forEach((resolve) => resolve()) };
+    }
+
+    beforeEach(async () => {
+        const { default: marketAPI } = await import('../../api/marketplace.js');
+        marketAPI.isLoaded = () => true;
+        document.body.innerHTML = '';
+        taskStatistics.closePopup();
+    });
+
+    test('two presses leave one popup, which closes', async () => {
+        const held = holdBuilds();
+
+        const first = taskStatistics.showPopup();
+        const second = taskStatistics.showPopup();
+        held.release();
+        await Promise.all([first, second]);
+
+        expect(document.querySelectorAll('.toolasha-task-stats-overlay')).toHaveLength(1);
+        taskStatistics.closePopup();
+        expect(document.querySelectorAll('.toolasha-task-stats-overlay')).toHaveLength(0);
+    });
+
+    test('a popup closed or switched off during the build is not drawn afterwards', async () => {
+        const held = holdBuilds();
+
+        const opening = taskStatistics.showPopup();
+        taskStatistics.disable();
+        held.release();
+        await opening;
+
+        expect(document.querySelectorAll('.toolasha-task-stats-overlay')).toHaveLength(0);
+    });
+});
+
+describe('the reroll spend window', () => {
+    test('covers the same seven calendar days as the claims, across a spring-forward', async () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'America/New_York';
+        try {
+            game.completions = { rates: { week: { completions: 0, tokens: 0, coins: 0 }, session: null }, recent: [] };
+            // 2026-03-08 is the spring-forward day, inside the week before the 12th
+            const now = new Date(2026, 2, 12, 12, 0, 0).getTime();
+            game.rerollHistory = [
+                // Half an hour more than seven days back
+                { taskId: 1, retiredAt: new Date(2026, 2, 5, 11, 30, 0).getTime(), goldSpent: 10000 },
+                { taskId: 2, retiredAt: new Date(2026, 2, 5, 12, 30, 0).getTime(), goldSpent: 20000 },
+            ];
+
+            const result = await taskStatistics.calculateCompletions(now);
+
+            expect(result.rerollSpend.gold).toBe(20000);
+        } finally {
+            if (originalTZ === undefined) delete process.env.TZ;
+            else process.env.TZ = originalTZ;
+        }
+    });
+
+    test('a history that could not be read withholds the net instead of showing no reroll cost', async () => {
+        game.completions = {
+            rates: {
+                week: {
+                    completions: 3,
+                    tokens: 6,
+                    coins: 100000,
+                    spanMs: 3600000,
+                    tokensPerHour: 3,
+                    coinsPerHour: 50000,
+                },
+                session: null,
+            },
+            recent: [],
+        };
+        game.rerollHistory = null;
+
+        const result = await taskStatistics.calculateCompletions(0);
+
+        expect(result.rerollSpend.unavailable).toBe(true);
+        expect(result.netValue).toBe(null);
+        expect(result.rewardValue).not.toBe(null);
+        expect(taskStatistics.createCompletionsSection(result, '#fff').textContent).toContain('Unavailable');
     });
 });

@@ -306,6 +306,16 @@ describe('the top bar', () => {
         expect(b._duration).toBe(300);
     });
 
+    test('an archived run is timed by the duration it was archived with, not by the time since it began', async () => {
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        partyLootPanel.show();
+        await settle();
+
+        choose('a|1');
+
+        expect(_partyRuns()[0]._duration).toBe(3600);
+    });
+
     test('choosing an archived run shows that run rather than the live one', async () => {
         game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
         partyLootPanel.show();

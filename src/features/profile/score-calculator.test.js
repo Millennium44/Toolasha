@@ -64,13 +64,15 @@ vi.mock('../../utils/enhancement-input-pricing.js', () => ({
         mocks.pricingOptions.push(options);
         let cost = 0;
         let hasMissingPrices = false;
+        let hasPartialPrices = false;
         for (const material of details.enhancementCosts || []) {
             const book = mocks.books[material.itemHrid];
+            if (book?.partial) hasPartialPrices = true;
             const price = book?.ask > 0 ? book.ask : book?.bid > 0 ? book.bid : 0;
             if (price > 0) cost += price * material.count;
             else hasMissingPrices = true;
         }
-        return { cost, hasCost: cost > 0, hasMissingPrices };
+        return { cost, hasCost: cost > 0, hasMissingPrices, hasPartialPrices };
     },
 }));
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinOnlyCost: () => 0, getShopCoinCost: () => 0 }));
@@ -328,6 +330,10 @@ describe('enhancement material pricing', () => {
 
     test('a two-sided book is costed at the ask — replacing the material is a purchase', async () => {
         expect(await scoreWithCharmBook({ ask: 5, bid: 3 })).toBeCloseTo(101 / 1_000_000, 12);
+    });
+
+    test('a material priced from a craft with an unpriced input leaves the piece unpriced, not cheap', async () => {
+        expect(await scoreWithCharmBook({ ask: 5, bid: 3, partial: true })).toBe(0);
     });
 
     test('no book at all leaves the piece unpriced - the vendor price is not a stand-in', async () => {

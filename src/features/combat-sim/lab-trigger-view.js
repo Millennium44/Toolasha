@@ -251,7 +251,7 @@ export function conditionResultsHtml(conditions, gameData) {
     if (conditions.capped) {
         body +=
             '<div style="font-size:11px; color:#ff9800; margin-top:4px;">Stopped at the condition search\'s sim ' +
-            'limit; abilities and consumables after that point were not searched.</div>';
+            'limit; abilities after that point were not searched.</div>';
     }
     return body;
 }

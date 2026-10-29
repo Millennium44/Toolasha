@@ -92,6 +92,19 @@ describe('awayDiffLines — readings', () => {
         expect(listings.since).toBe(NOW - 3 * HOUR);
     });
 
+    test('an undercut count the watcher has not measured yet is unknown, not zero', () => {
+        // Live facts carry null until the undercut watcher has compared a listing, which is usually still
+        // true at the moment of arrival
+        const lines = diff({ listings: { filled: 0, undercut: 3 } }, { listings: { filled: 0, undercut: null } });
+        expect(line(lines, 'listings')).toBeUndefined();
+        expect(diff({ listings: { filled: 0, undercut: null } }, { listings: { filled: 0, undercut: 4 } })).toEqual([]);
+    });
+
+    test('nothing beaten when you left and some beaten now is a change', () => {
+        const lines = diff({ listings: { filled: 0, undercut: 0 } }, { listings: { filled: 0, undercut: 2 } });
+        expect(line(lines, 'listings').value).toBe('2 more listings undercut');
+    });
+
     test('one listing is one listing, not one listings', () => {
         const lines = diff({ listings: { filled: 0, undercut: 3 } }, { listings: { filled: 0, undercut: 4 } });
         expect(line(lines, 'listings').value).toBe('1 more listing undercut');

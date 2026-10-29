@@ -39,7 +39,7 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid) =>
-        ({ '/items/pirate_essence': { ask: 5 }, '/items/kraken_fang': { ask: 9000 } })[hrid] ?? null,
+        ({ '/items/pirate_essence': { ask: 5, bid: 4 }, '/items/kraken_fang': { ask: 9000, bid: 8000 } })[hrid] ?? null,
 }));
 
 const { dungeonShopOffers } = await import('./dungeon-shop-offers.js');
@@ -57,5 +57,20 @@ describe('dungeonShopOffers', () => {
         expect(essence.outputCount).toBe(10);
         expect(essence.askPrice).toBe(5);
         expect(essence.goldPerToken).toBe(50);
+    });
+});
+
+describe('dungeonShopOffers price side', () => {
+    const fang = (offers) => offers.find((offer) => offer.name === 'Kraken Fang');
+
+    test('defaults to the ask, which is what the spend planner keeps', () => {
+        expect(fang(dungeonShopOffers('/items/pirate_token')).askPrice).toBe(9000);
+        expect(fang(dungeonShopOffers('/items/pirate_token', 'ask')).askPrice).toBe(9000);
+    });
+
+    test('reads the bid when asked', () => {
+        const offer = fang(dungeonShopOffers('/items/pirate_token', 'bid'));
+        expect(offer.askPrice).toBe(8000);
+        expect(offer.goldPerToken).toBeCloseTo(8000 / 3000);
     });
 });

@@ -998,6 +998,34 @@ describe('pricing a merged multi-skill item once', () => {
         expect(result.results[0].cost).toBe(700);
     });
 
+    test("an imported profile's single purchase is priced without the live character's held copies", () => {
+        const price = vi.spyOn(upgradeAdvisor, 'calculateUpgradeCost').mockReturnValue(1000);
+        const explain = vi.spyOn(upgradeAdvisor, 'explainUpgradeCost').mockReturnValue({});
+        const result = {
+            results: [
+                piece('/skills/milking', '/items/c1', { candidate: { type: 'enhancement' } }),
+                piece('/skills/foraging', '/items/c2', { candidate: { type: 'enhancement' } }),
+            ],
+        };
+        mergeMultiSkillGearRows({
+            analysisResult: result,
+            baseSetup: setup(),
+            evaluate,
+            roomLevel: 50,
+            gameData: {},
+            isSelf: false,
+        });
+        const priceSelf = price.mock.calls.map((call) => call[2]);
+        const explainSelf = explain.mock.calls.map((call) => call[2]);
+        price.mockRestore();
+        explain.mockRestore();
+
+        expect(result.results).toHaveLength(1);
+        expect(priceSelf.length).toBeGreaterThan(0);
+        expect(priceSelf.every((isSelf) => isSelf === false)).toBe(true);
+        expect(explainSelf.every((isSelf) => isSelf === false)).toBe(true);
+    });
+
     test('a displaced piece shared by several kits is credited once', () => {
         const price = vi
             .spyOn(upgradeAdvisor, 'calculateUpgradeCost')

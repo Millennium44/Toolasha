@@ -58,6 +58,8 @@ export function createSession(itemHrid, itemName, startLevel, targetLevel, prote
         // Cost tracking
         materialCosts: {}, // Format: { itemHrid: { count: 10, totalCost: 50000 } }
         hasUnpricedInput: false,
+        // Attempts that completed while no page was connected and could not be scored or costed
+        gapAttempts: 0,
         coinCost: 0,
         coinCount: 0, // Track number of times coins were spent
         protectionCost: 0,
@@ -236,6 +238,27 @@ export function deriveUnpricedInput(session) {
     }
     const mirrors = getMirrorUsage(session);
     return mirrors.count > 0 && !(mirrors.cost > 0);
+}
+
+/**
+ * Attempts a session missed in gaps (a reload or dropped connection that ran past one attempt).
+ * They are in neither its counts nor its costs. A session saved before the field reads 0.
+ * @param {Object} session - Enhancement session
+ * @returns {number}
+ */
+export function getGapAttempts(session) {
+    const n = session?.gapAttempts;
+    return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Record attempts missed in a gap, accumulated across gaps.
+ * @param {Object} session - Session (mutated)
+ * @param {number} count - Attempts missed
+ */
+export function addGapAttempts(session, count) {
+    if (!session || !(count > 0)) return;
+    session.gapAttempts = getGapAttempts(session) + count;
 }
 
 /**
@@ -827,6 +850,7 @@ export function foldSessions(ordered) {
         newest.mirrorCost = (newest.mirrorCost || 0) + (session.mirrorCost || 0);
         newest.mirrorCount = (newest.mirrorCount || 0) + (session.mirrorCount || 0);
         newest.hasUnpricedInput = newest.hasUnpricedInput === true || deriveUnpricedInput(session);
+        newest.gapAttempts = getGapAttempts(newest) + getGapAttempts(session);
         newest.longestSuccessStreak = Math.max(newest.longestSuccessStreak || 0, session.longestSuccessStreak || 0);
         newest.longestFailureStreak = Math.max(newest.longestFailureStreak || 0, session.longestFailureStreak || 0);
 
@@ -1403,6 +1427,7 @@ export function mergeSessions(sessions) {
         attemptsPerLevel: {},
         materialCosts: {},
         hasUnpricedInput: false,
+        gapAttempts: 0,
         expectedAttempts: 0,
         expectedProtections: 0,
     };
@@ -1434,6 +1459,7 @@ export function mergeSessions(sessions) {
         agg.protectionCost += protections.cost;
         agg.totalCost += session.totalCost || 0;
         agg.hasUnpricedInput ||= deriveUnpricedInput(session);
+        agg.gapAttempts += getGapAttempts(session);
         agg.durationSeconds += getSessionDuration(session);
         if (!agg.protectionItemHrid && session.protectionItemHrid) {
             agg.protectionItemHrid = session.protectionItemHrid;

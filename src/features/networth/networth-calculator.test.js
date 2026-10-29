@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
     labyrinthTokenDetail: null, // {value, itemHrid} the labyrinth shop's best line
     guildTokenValuation: null, // what explainGuildTokenValue answers
     guildTokenModes: [], // the pricing modes guild tokens were valued at
+    goldPerCredit: null, // { ask: {creditHrid: gold}, bid: {...} } the rate map buildGoldPerCredit answers
+    goldPerCreditModes: [], // the pricing modes credits were valued at
     shopCosts: {},
     unpricedAbilities: new Set(),
     marketValues: null, // { marketValuesVersion, marketItemValues } for getMarketItemValues()
@@ -30,6 +32,7 @@ const mocks = vi.hoisted(() => ({
     excluded: new Set(), // "type:value" pairs isExcluded() answers true for
     characterGuildBuffMap: null,
     loadoutSnapshots: [],
+    artisan: 0.1, // the player's Artisan bonus for any action type
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -128,6 +131,7 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid) => mocks.itemPrices[hrid] ?? null,
 }));
 vi.mock('../../utils/networth-worker-manager.js', () => ({ calculateItemValueBatch: vi.fn() }));
+vi.mock('../../utils/artisan-bonus.js', () => ({ getArtisanBonus: () => mocks.artisan }));
 vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
 vi.mock('../../utils/game-lookups.js', () => ({
     getShopCoinOnlyCost: () => 0,
@@ -156,11 +160,17 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 // Guild credits are never listed, so their gold value comes from conversions.
 // Priced here at a flat rate so the shrine arithmetic is the only thing under test.
 vi.mock('../../utils/guild-credit-pricing.js', () => ({
-    buildGoldPerCredit: (mode) => ({ '/items/guild_credit_1': mode === 'bid' ? 500 : 750 }),
+    buildGoldPerCredit: (mode) => {
+        mocks.goldPerCreditModes.push(mode);
+        return mocks.goldPerCredit
+            ? mocks.goldPerCredit[mode] || {}
+            : { '/items/guild_credit_1': mode === 'bid' ? 500 : 750 };
+    },
     priceGuildCreditCosts: (costs, { goldPerCredit }) => ({
         lines: (costs || []).map(({ itemHrid, count }) => {
             const each = goldPerCredit[itemHrid] ?? null;
-            return { itemHrid, count, goldEach: each, gold: each === null ? null : each * count };
+            const name = itemHrid.split('/').pop();
+            return { itemHrid, name, count, goldEach: each, gold: each === null ? null : each * count };
         }),
         total: null,
         unpriced: [],
@@ -196,6 +206,8 @@ beforeEach(() => {
     mocks.labyrinthTokenDetail = null;
     mocks.guildTokenValuation = null;
     mocks.guildTokenModes = [];
+    mocks.goldPerCredit = null;
+    mocks.goldPerCreditModes = [];
     mocks.shopCosts = {};
     mocks.unpricedAbilities = new Set();
     mocks.marketValues = null;
@@ -204,6 +216,7 @@ beforeEach(() => {
     mocks.excluded = new Set();
     mocks.characterGuildBuffMap = null;
     mocks.loadoutSnapshots = [];
+    mocks.artisan = 0.1;
     workerBatch.mockReset();
     _resetMarketValues();
 });
@@ -627,6 +640,30 @@ describe('calculateGuildShrinesCost', () => {
         expect(result).toEqual({ totalCost: 0, tokens: 0, breakdown: [], known: false });
     });
 
+    test('a credit nothing converts into is named, so the total reads as a floor and not as the whole bill', () => {
+        mocks.initData.guildBuffDetailMap['/guild_buffs/force_combat'].levelCosts[1].creditCosts.push({
+            itemHrid: '/items/guild_credit_unconvertible',
+            count: 3,
+        });
+
+        const result = calculateGuildShrinesCost(
+            shrines({ '/guild_buffs/force_combat': 1, '/guild_buffs/scholar_skilling': 1 })
+        );
+
+        // The priced credits still count; the unconvertible one adds nothing and is reported
+        expect(result.totalCost).toBe(7500 + 3000);
+        expect(result.unpriced).toEqual(['guild_credit_unconvertible']);
+        const byHrid = Object.fromEntries(result.breakdown.map((row) => [row.hrid, row]));
+        expect(byHrid['/guild_buffs/force_combat'].unpriced).toEqual(['guild_credit_unconvertible']);
+        expect(byHrid['/guild_buffs/scholar_skilling'].unpriced).toEqual([]);
+    });
+
+    test('a fully priced shrine list reports nothing unpriced', () => {
+        const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/force_combat': 3 }));
+
+        expect(result.unpriced).toEqual([]);
+    });
+
     test('a buff the cost table does not know is skipped rather than counted as free', () => {
         const result = calculateGuildShrinesCost(shrines({ '/guild_buffs/mystery_shrine': 5 }));
 
@@ -783,6 +820,7 @@ describe('craft-cost parity between the main thread and the worker', () => {
                     inputItems: action.inputItems || null,
                     upgradeItemHrid: action.upgradeItemHrid || null,
                     outputCount: output.count || 1,
+                    artisanBonus: mocks.artisan,
                 };
             }
         }
@@ -809,6 +847,46 @@ describe('craft-cost parity between the main thread and the worker', () => {
         const workerProductionCost = await loadWorkerProductionCost();
         const { priceMap, recipes } = shippedContext();
         expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
+    });
+
+    describe('the Artisan bonus is the real one', () => {
+        const setUp = () => {
+            mocks.settings.networth_pricingMode = 'ask';
+            mocks.initData = {
+                houseRoomDetailMap: {},
+                actionDetailMap: {
+                    '/actions/saw_planks': {
+                        type: '/action_types/woodcutting_craft',
+                        outputItems: [{ itemHrid: '/items/plank', count: 10 }],
+                        inputItems: [{ itemHrid: '/items/log', count: 3 }],
+                    },
+                },
+            };
+            mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+        };
+
+        test('no Artisan is a factor of 1 on both threads', async () => {
+            setUp();
+            mocks.artisan = 0;
+            const fromMain = calculateCraftingCost('/items/plank');
+            expect(fromMain).toBeCloseTo(3, 9); // 3 logs x 10, split ten ways
+            const workerProductionCost = await loadWorkerProductionCost();
+            const { priceMap, recipes } = shippedContext();
+            expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
+        });
+
+        test('a known bonus gives the same result on both threads, and a tea change recomputes', async () => {
+            setUp();
+            mocks.artisan = 0.25;
+            const fromMain = calculateCraftingCost('/items/plank');
+            expect(fromMain).toBeCloseTo(2.25, 9);
+            const workerProductionCost = await loadWorkerProductionCost();
+            const { priceMap, recipes } = shippedContext();
+            expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
+
+            mocks.artisan = 0;
+            expect(calculateCraftingCost('/items/plank')).toBeCloseTo(3, 9);
+        });
     });
 
     test('a by-product is priced by the action that makes it, on both threads', async () => {
@@ -1699,5 +1777,104 @@ describe('the token breakdown', () => {
         expect(row(result, '/items/guild_token')).toMatchObject({ counted: false, excludedBy: 'exclusion' });
         expect(result.totalNetworth).toBe(245_000 - 20_000);
         expect(result.excluded.total).toBe(20_000);
+    });
+});
+
+describe('held guild credits', () => {
+    const CREDIT = '/items/brown_guild_credit';
+    const OTHER = '/items/red_guild_credit';
+    const inv = (itemHrid, count) => ({
+        itemHrid,
+        enhancementLevel: 0,
+        count,
+        itemLocationHrid: '/item_locations/inventory',
+    });
+
+    beforeEach(() => {
+        // buildGoldPerCredit already returns the cheapest conversion per credit
+        mocks.goldPerCredit = { ask: { [CREDIT]: 1000, [OTHER]: 2500 }, bid: { [CREDIT]: 400 } };
+    });
+
+    function sweep() {
+        mocks.combinedData = {
+            characterItems: [inv('/items/coin', 100), inv(CREDIT, 5), inv(OTHER, 2)],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: {
+                '/items/coin': { name: 'Coin', categoryHrid: '/item_categories/currency' },
+                [CREDIT]: { name: 'Brown Guild Credit', categoryHrid: '/item_categories/currency' },
+                [OTHER]: { name: 'Red Guild Credit', categoryHrid: '/item_categories/currency' },
+            },
+        };
+        return calculateNetworth();
+    }
+
+    test('are valued at the cheapest gold per credit', async () => {
+        expect(await calculateItemValue({ itemHrid: CREDIT, count: 5 })).toBe(5_000);
+        expect(networthUnitValue(CREDIT)).toBe(1000);
+        expect(isUnpricedCurrency(CREDIT)).toBe(false);
+    });
+
+    test('follow the net worth pricing side, pinned to ask under the official value source', async () => {
+        mocks.settings.networth_pricingMode = 'bid';
+        expect(await calculateItemValue({ itemHrid: CREDIT, count: 5 })).toBe(2_000);
+
+        mocks.settings.networth_valueSource = 'officialValue';
+        mocks.goldPerCreditModes = [];
+        expect(await calculateItemValue({ itemHrid: CREDIT, count: 5 })).toBe(5_000);
+        expect(mocks.goldPerCreditModes).toEqual(['ask']);
+    });
+
+    test('the setting off leaves them worth 0 and not reported as unpriced', async () => {
+        mocks.settings.networth_includeGuildCredits = false;
+        expect(await calculateItemValue({ itemHrid: CREDIT, count: 5 })).toBe(0);
+        expect(isUnpricedCurrency(CREDIT)).toBe(false);
+    });
+
+    test('with no known rate they are worth 0 and flagged unpriced, not silently free', async () => {
+        expect(await calculateItemValue({ itemHrid: OTHER, count: 5 })).toBe(12_500);
+        mocks.goldPerCredit = { ask: {}, bid: {} };
+        expect(await calculateItemValue({ itemHrid: CREDIT, count: 5 })).toBe(0);
+        expect(isUnpricedCurrency(CREDIT)).toBe(true);
+        expect(explainTokenValue(CREDIT)).toMatchObject({ rate: null });
+    });
+
+    test('count in the total, the inventory breakdown and the token breakdown', async () => {
+        const result = await sweep();
+        const total = 100 + 5 * 1000 + 2 * 2500;
+
+        expect(result.totalNetworth).toBe(total);
+        expect(result.currentAssets.inventory.breakdown.find((i) => i.itemHrid === CREDIT)).toMatchObject({
+            value: 5_000,
+            unpriced: false,
+        });
+        const row = result.tokens.items.find((item) => item.itemHrid === CREDIT);
+        expect(row).toMatchObject({ kind: 'credit', count: 5, rate: 1000, value: 5_000, counted: true });
+        expect(result.tokens.value).toBe(5_000 + 5_000);
+    });
+
+    test('an unpriced credit stack is flagged in the breakdown and adds nothing to the total', async () => {
+        mocks.goldPerCredit = { ask: { [OTHER]: 2500 }, bid: {} };
+        const result = await sweep();
+
+        expect(result.totalNetworth).toBe(100 + 5_000);
+        expect(result.currentAssets.inventory.breakdown.find((i) => i.itemHrid === CREDIT)).toMatchObject({
+            value: 0,
+            unpriced: true,
+        });
+        expect(result.tokens.items.find((item) => item.itemHrid === CREDIT)).toMatchObject({ unpriced: true });
+    });
+
+    test('the setting off takes them out of the total and lists them as not counted', async () => {
+        mocks.settings.networth_includeGuildCredits = false;
+        const result = await sweep();
+
+        expect(result.totalNetworth).toBe(100);
+        expect(result.tokens.items.find((item) => item.itemHrid === CREDIT)).toMatchObject({
+            counted: false,
+            excludedBy: 'setting',
+        });
     });
 });

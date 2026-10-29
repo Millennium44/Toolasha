@@ -4,6 +4,7 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const guild = vi.hoisted(() => ({
     /** buffHrid → detail, as initClientData.guildBuffDetailMap sends it */
@@ -32,12 +33,17 @@ const saleTax = vi.hoisted(() => ({ ironCow: false }));
 /** What the character holds, worn and loose; empty unless a test says otherwise */
 const held = vi.hoisted(() => ({ items: [] }));
 
+/** The live character's skills (`dataManager.getSkills`); none unless a test says otherwise */
+const liveSkills = vi.hoisted(() => ({ list: [] }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getGuildBuildingLevel: (hrid) => guild.shrineLevels[hrid] || 0,
         // What the forced armor candidates read to price a piece at the level
         // you already own it at, and what merged skilling rows cap resale at
         getInventory: () => held.items,
+        // The live character's XP, which a combat level's grind time starts from when it is theirs
+        getSkills: () => liveSkills.list,
         // Read by the shared params resolver, to ask whether the piece being costed could be
         // bought finished from anybody. Nothing in this suite is untradable, so the sweeps here
         // all run on whichever bench the simulator settings resolve to.
@@ -278,10 +284,29 @@ const config = (await import('../../core/config.js')).default;
 // that does not price anything itself ("the materials behind a house level")
 // only worked while some earlier test's `mockImplementation` was still
 // installed, and threw on destructuring as soon as it ran first.
+/**
+ * `resolveItemPrice` as the conservative profit mode (the default) answers it: an enhanced level reads the
+ * order book, the ask on a buy and the bid on a sale, and nothing has a production fallback above +0. A read
+ * that names no context gets the ask on either side, as the real resolver gives it. A +0 read is `base`,
+ * unpriced unless a test says otherwise.
+ * @param {Object} [base] - What a +0 read returns
+ * @returns {Function} An implementation for `resolveItemPrice`
+ */
+const conservativeBook =
+    (base = { price: 0, custom: false, missing: true, estimated: false }) =>
+    (hrid, { context, side = 'sell', enhancementLevel = 0 } = {}) => {
+        if (!(enhancementLevel > 0)) return base;
+        const book = getItemPrices(hrid, enhancementLevel);
+        const price = context === 'profit' && side === 'sell' ? book?.bid : book?.ask;
+        return price > 0
+            ? { price, custom: false, missing: false, estimated: false }
+            : { price: 0, custom: false, missing: true, estimated: false };
+    };
+
 beforeEach(() => {
     held.items = [];
     perAttemptMaterialCost.mockReturnValue({ cost: 0, hasCost: false, hasMissingPrices: true });
-    resolveItemPrice.mockReturnValue({ price: 0, custom: false, missing: true, estimated: false });
+    resolveItemPrice.mockImplementation(conservativeBook());
 });
 
 const MAIN_HAND = '/equipment_types/main_hand';
@@ -1103,54 +1128,6 @@ describe('the charm slot is in the equipment candidates', () => {
 });
 
 describe('runLabyrinthAllFightsAnalysis', () => {
-    test('a drink addition records each fight its own free slots (#560 review)', async () => {
-        buildGameDataPayload.mockReturnValue(buildGameData());
-        runLabyrinthSimulation.mockImplementation(async () => ({ labyAttemptCount: 100, encounters: 50 }));
-        const levels = { staminaLevel: 50, intelligenceLevel: 50, attackLevel: 50, meleeLevel: 50 };
-        const worn = (hrid) => ({ hrid, triggers: null });
-        const dtos = [
-            { equipment: {}, drinks: [null, null, null], ...levels },
-            { equipment: {}, drinks: [worn('/items/a'), worn('/items/b'), null], ...levels },
-            { equipment: {}, drinks: [worn('/items/a'), worn('/items/b'), worn('/items/c')], ...levels },
-        ];
-        const result = await runLabyrinthAllFightsAnalysis(
-            {
-                fights: dtos.map((dto, i) => ({
-                    monsterHrid: `/monsters/m${i}`,
-                    monsterName: `M${i}`,
-                    roomLevel: 100,
-                    dto,
-                })),
-                crates: [],
-                hours: 1,
-                communityBuffs: {},
-                labyrinthCombatBuffs: [],
-                modes: [],
-                extraCandidates: [
-                    {
-                        type: 'drink',
-                        slot: 'drink_0',
-                        drinkIndex: 0,
-                        currentHrid: null,
-                        upgradeHrid: '/items/wisdom_coffee',
-                        upgradeLevel: 0,
-                        triggers: null,
-                        buffFamily: '/buff_uniques/wisdom_coffee',
-                        fillsFreeDrinkSlot: true,
-                        freeDrinkSlots: 3,
-                        description: 'Add Wisdom Coffee',
-                    },
-                ],
-            },
-            null,
-            {}
-        );
-
-        const row = result.results.find((r) => r.candidate.upgradeHrid === '/items/wisdom_coffee');
-        expect(row.fights.map((fight) => fight.freeDrinkSlots)).toEqual([3, 1, 0]);
-        expect(row.fights.map((fight) => fight.applied)).toEqual([true, true, false]);
-    });
-
     test('unions candidates across loadout styles and ranks by run-clear delta', async () => {
         const gameData = buildGameData();
         gameData.itemDetailMap['/items/fine_bow'] = {
@@ -4356,9 +4333,9 @@ describe('explainUpgradeCost', () => {
         getItemPrices.mockImplementation((_hrid, level) =>
             level === 7 ? { ask: 5_000_000, bid: 4_500_000 } : { ask: 3_000_000, bid: 2_000_000 }
         );
-        // Production fallbacks and the tester shop may differ from the order
-        // book, but the enhancement row is ranked on the two listings above.
-        resolveItemPrice.mockReturnValue({ price: 500_000 });
+        // A +0 production fallback may differ from the order book, but the
+        // enhancement row is ranked on the two listings above.
+        resolveItemPrice.mockImplementation(conservativeBook({ price: 500_000 }));
         const candidate = {
             type: 'enhancement',
             slot: BODY,
@@ -4436,6 +4413,37 @@ describe('explainUpgradeCost', () => {
         expect(detail.buys.map((b) => b.name)).toEqual(['Fire Top', 'Fire Bottoms']);
         expect(detail.credits.map((c) => c.name)).toEqual(['Nature Top']);
         expect(detail.credit).toBe(960_000);
+    });
+
+    test('a sold piece with no sale price is flagged, and the row is still charged the full buy', () => {
+        resolveItemPrice.mockImplementation((_hrid, { side } = {}) => ({ price: side === 'sell' ? null : 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+            removedItems: [{ hrid: '/items/nature_top', enhancementLevel: 7 }],
+        };
+
+        const detail = explainUpgradeCost(candidate, costGameData());
+
+        expect(detail.credits).toEqual([expect.objectContaining({ name: 'Nature Top', price: 0, noSalePrice: true })]);
+        // The cost stays the full purchase: the conservative reading
+        expect(detail.net).toBe(detail.gross);
+        expect(detail.net).not.toBeNull();
+    });
+
+    test('a sold piece that does have a sale price is not flagged', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+        const detail = explainUpgradeCost(
+            {
+                type: 'cross_slot',
+                addedSlots: { [BODY]: { hrid: '/items/fire_top', enhancementLevel: 7 } },
+                removedItems: [{ hrid: '/items/nature_top', enhancementLevel: 7 }],
+            },
+            costGameData()
+        );
+        expect(detail.credits[0].noSalePrice).toBeUndefined();
     });
 
     test('names the unpriced item that makes a cost unknown', () => {
@@ -5749,6 +5757,127 @@ describe('guild shrine candidates', () => {
         expect(detail.guild.rankedNote).toContain('credit half only');
     });
 
+    test('a shrine with no exchange rate is flagged partial, and the budget plan carries the flag', () => {
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        const detail = explainUpgradeCost(candidate, buildGameData());
+
+        // Still rankable on the credit half
+        expect(detail.net).toBe(3000);
+        expect(detail.partialCost).toBe('guild tokens not priced');
+
+        const plan = planWithinBudget(
+            [{ candidate, cost: detail.net, costDetail: detail, attemptsDelta: -1, significant: true }],
+            10_000
+        );
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.partialCostPicks).toEqual([candidate.description]);
+    });
+
+    test('a shrine whose tokens are priced is not flagged partial', () => {
+        token.goldPerToken = 50;
+        const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+        const [candidate] = generateGuildShrineCandidates(dto);
+        const detail = explainUpgradeCost(candidate, buildGameData());
+        expect(detail.partialCost).toBeUndefined();
+        const plan = planWithinBudget(
+            [{ candidate, cost: detail.net, costDetail: detail, attemptsDelta: -1, significant: true }],
+            10_000
+        );
+        expect(plan.partialCostPicks).toEqual([]);
+    });
+
+    describe('the partial-cost flag survives each real analysis path into a budget plan', () => {
+        const levels = { staminaLevel: 50, intelligenceLevel: 50, attackLevel: 50, meleeLevel: 50 };
+        const shrine = () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            return generateGuildShrineCandidates(dto)[0];
+        };
+        const planOf = (rows) =>
+            planWithinBudget(
+                rows.map((row) => ({ ...row, attemptsDelta: -1, significant: true })),
+                1_000_000
+            );
+        beforeEach(() => {
+            token.goldPerToken = null;
+            buildGameDataPayload.mockReturnValue(buildGameData());
+            calculateSimRevenue.mockReturnValue({ totalRevenue: 0, itemRevenues: [] });
+            resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+            getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+            runLabyrinthSimulation.mockImplementation(async () => ({ labyAttemptCount: 100, encounters: 50 }));
+            runSimulation.mockImplementation(async () => ({
+                simulatedTime: 3.6e12,
+                deaths: 0,
+                playerRanOutOfFood: false,
+            }));
+        });
+
+        test('Lab all-fights', async () => {
+            const result = await runLabyrinthAllFightsAnalysis(
+                {
+                    fights: [
+                        {
+                            monsterHrid: '/monsters/m0',
+                            monsterName: 'M0',
+                            roomLevel: 100,
+                            dto: { equipment: {}, ...levels },
+                        },
+                    ],
+                    crates: [],
+                    hours: 1,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    modes: [],
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+
+        test('Lab single-fight', async () => {
+            const result = await runLabyrinthUpgradeAnalysis(
+                {
+                    playerDTOs: [{ equipment: {}, abilities: [], ...levels, guildShrineLevels: {} }],
+                    playerIndex: 0,
+                    monsterHrid: '/monsters/goblin',
+                    roomLevel: 100,
+                    crates: [],
+                    hours: 1,
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    upgradeMode: 'ability_swap',
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+
+        test('Combat Sim runUpgradeAnalysis', async () => {
+            const result = await runUpgradeAnalysis(
+                {
+                    playerDTOs: [{ equipment: {}, abilities: [], hrid: '/players/me' }],
+                    playerIndex: 0,
+                    zoneHrid: '/actions/combat/fly',
+                    difficultyTier: 0,
+                    hours: 1,
+                    communityBuffs: {},
+                    upgradeMode: 'equipment',
+                    extraCandidates: [shrine()],
+                },
+                null,
+                {}
+            );
+            const row = result.results.find((r) => r.candidate.type === 'guild_shrine');
+            expect(planOf([row]).partialCostPicks).toEqual(['Force Shrine Lv3 → Lv4']);
+        });
+    });
+
     test('a priced token is folded into the cost, with both halves still reported', () => {
         token.goldPerToken = 50;
         const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
@@ -6143,7 +6272,6 @@ describe('community buff candidates', () => {
         // so the equipment test below it answered "this loadout is not wearing
         // community_buff|comExp" and dropped the row from a multi-fight run
         expect(candidateAppliesToDTO({ type: 'community_buff', buffKey: 'comExp' }, { equipment: {} })).toBe(true);
-        expect(candidateAppliesToDTO({ type: 'drink', drinkIndex: 0 }, { equipment: {} })).toBe(true);
     });
 
     test('unknown rather than free, so it lands in the unpriced group', () => {
@@ -6210,9 +6338,10 @@ describe('scroll candidates', () => {
         expect(dto.scrollBuffs).toEqual(['/buff_types/rare_find']);
     });
 
-    test('a scroll applies to every fight, not a slot a loadout might leave empty', () => {
+    test('a scroll applies to no Labyrinth fight, the only caller of candidateAppliesToDTO', () => {
+        // The worker clears scrollBuffs in every Labyrinth sim, so a Lab row for one could only report noise
         expect(candidateAppliesToDTO({ type: 'scroll', buffTypeHrid: '/buff_types/wisdom' }, { equipment: {} })).toBe(
-            true
+            false
         );
     });
 
@@ -6316,6 +6445,70 @@ describe('the grind time for combat levels', () => {
         // than the flat run, and strictly slower than if it were 4× throughout
         expect(faster.levelTimeHours).toBeLessThan(flat.levelTimeHours);
         expect(faster.levelTimeHours).toBeGreaterThan(flat.levelTimeHours / 4);
+    });
+
+    describe('whose XP the grind starts from', () => {
+        afterEach(() => {
+            liveSkills.list = [];
+        });
+
+        /** Attack 10 → 30 for player1, the live character 90% of the way through their own Attack 10 */
+        const grindFor = async (selfHrid) => {
+            buildGameDataPayload.mockReturnValue({
+                ...buildGameData(),
+                levelExperienceTable: Array.from({ length: 40 }, (_, level) => level * 1_000_000),
+            });
+            calculateSimRevenue.mockReturnValue({ netPerHour: 0 });
+            // Melee is the weapon's skill, so Attack's grind also times Melee along with it
+            runSimulation.mockImplementation(async () => ({
+                simulatedTime: 3600 * 1e9,
+                encounters: 1000,
+                deaths: { player1: 0 },
+                totalDamageDealt: { player1: 1000 },
+                experienceGained: { player1: { attack: 100_000, melee: 100_000 } },
+            }));
+            liveSkills.list = [
+                { skillHrid: '/skills/attack', level: 10, experience: 10_900_000 },
+                { skillHrid: '/skills/melee', level: 10, experience: 10_900_000 },
+            ];
+            const { results } = await runUpgradeAnalysis({
+                playerDTOs: [
+                    {
+                        hrid: 'player1',
+                        equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                        abilities: [],
+                        attackLevel: 10,
+                        meleeLevel: 10,
+                        drinks: [],
+                    },
+                ],
+                playerIndex: 0,
+                selfHrid,
+                zoneHrid: '/actions/combat/zone',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeModes: ['combat_level'],
+                abilityTargetLevel: 20,
+                combatLevelTargets: { attackLevel: 30 },
+            });
+            return results.find((r) => r.candidate.skillKey === 'attackLevel');
+        };
+
+        test("a party member at the live character's level is timed from the start of that level", async () => {
+            const row = await grindFor('someone_else');
+            // 30M - 10M at 100K/h; the live character's 10.9M is not theirs
+            expect(row.levelTimeHours).toBeCloseTo(200, 6);
+            // Melee earns as much over the same 20M: 10M + 20M reaches level 30, not the live 10.9M + 20M
+            expect(row.alongside).toEqual(expect.objectContaining({ skillKey: 'meleeLevel', upgradeLevel: 30 }));
+            expect(row.alongside.xpGained).toBeCloseTo(20_000_000, 0);
+        });
+
+        test("the live character's own row starts from their live XP", async () => {
+            const row = await grindFor('player1');
+            expect(row.levelTimeHours).toBeCloseTo(191, 6);
+            expect(row.alongside.xpGained).toBeCloseTo(19_100_000, 0);
+        });
     });
 });
 
@@ -7170,6 +7363,76 @@ describe('the skilling escalation walk only climbs items the clear-rate model ca
     });
 });
 
+describe('the skilling analysis prices another player at their own sale tax', () => {
+    const NECK = '/equipment_types/neck';
+
+    beforeEach(() => {
+        clearRate.impl = {
+            getSkillingMetricsFromOverrides: (skillId) => ({ skillId }),
+            computeSkillingClearWithParams: () => ({ clearChance: 0.5, xpPerRoom: 1000 }),
+            computeEnhancingClearWithParams: () => ({ clearChance: 0.5, xpPerRoom: 1000 }),
+        };
+        // Every piece sells and buys for the same 1,000,000, so the trade-in is the only thing tax touches
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue(null);
+        buildGameDataPayload.mockReturnValue({
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/necklace_of_speed': {
+                    name: 'Necklace Of Speed',
+                    itemLevel: 60,
+                    equipmentDetail: { type: NECK, noncombatStats: { skillingSpeed: 0.05 } },
+                },
+                '/items/philosophers_necklace': {
+                    name: "Philosopher's Necklace",
+                    itemLevel: 90,
+                    equipmentDetail: {
+                        type: NECK,
+                        combatStats: { stabDamage: 0.05 },
+                        noncombatStats: { skillingExperience: 0.05 },
+                    },
+                },
+            },
+        });
+    });
+
+    const costOfPhilo = async (editorDTO, extra = {}) => {
+        const { results } = await runSkillingUpgradeAnalysis({
+            editorDTO: {
+                equipment: { [NECK]: { hrid: '/items/necklace_of_speed', enhancementLevel: 0 } },
+                houseRooms: {},
+                tokenUpgrades: {},
+                communityBuffLevels: {},
+                ...editorDTO,
+            },
+            roomLevel: 100,
+            crateHrids: [],
+            ...extra,
+        });
+        const philo = results.find((r) => r.candidate.upgradeHrid === '/items/philosophers_necklace');
+        expect(philo).toBeDefined();
+        return philo;
+    };
+
+    test('an imported Iron Cow trades the worn piece in untaxed; the same DTO as the live character does not', async () => {
+        const imported = await costOfPhilo({ gameMode: '/game_mode/ironcow' }, { isSelf: false });
+        const self = await costOfPhilo({ gameMode: '/game_mode/ironcow' }, { isSelf: true });
+        const omitted = await costOfPhilo({ gameMode: '/game_mode/ironcow' });
+        // Selling the worn necklace brings in all of its price when nothing is taxed
+        expect(imported.costDetail.credit).toBe(1_000_000);
+        expect(imported.candidate.saleTaxRate).toBe(0);
+        expect(self.costDetail.credit).toBeLessThan(1_000_000);
+        expect(self.candidate).not.toHaveProperty('saleTaxRate');
+        // Omitting isSelf is the live character, as before
+        expect(omitted.costDetail.credit).toBe(self.costDetail.credit);
+    });
+
+    test('an imported market player is taxed at the market rate, the same as the combat analysis', async () => {
+        const imported = await costOfPhilo({}, { isSelf: false });
+        expect(imported.candidate.saleTaxRate).toBe(MARKET_TAX);
+    });
+});
+
 describe('runLabyrinthUpgradeAnalysis ranked by room levels', () => {
     /**
      * A labyrinth analysis over a handful of named candidates, with every
@@ -7533,6 +7796,98 @@ describe('one skilling purchase is one row, raised to one level for every kit', 
             { hrid: SPEED, enhancementLevel: 0 },
         ]);
         expect(costDetail.ownershipNotes).toBeUndefined();
+    });
+
+    test('a freed piece with no sale price is flagged on its merged credit line, not shown as 0 back', () => {
+        const NOSALE = '/items/unsellable_ring';
+        resolveItemPrice.mockImplementation((hrid) =>
+            hrid === NOSALE
+                ? { price: null, custom: false, missing: true, estimated: false }
+                : { price: 100, custom: false, missing: false, estimated: false }
+        );
+        const enhance = {
+            candidate: { skillKey: BREWING, type: 'enhancement', currentHrid: PHILO, currentLevel: 3, upgradeLevel: 5 },
+            cost: 500,
+            costDetail: { buys: [], credits: [], gross: 500, credit: 0, net: 500, unpriced: [] },
+        };
+        const freeing = {
+            candidate: {
+                skillKey: CRAFTING,
+                type: 'skilling_gear',
+                currentHrid: NOSALE,
+                currentLevel: 0,
+                upgradeHrid: PHILO,
+                upgradeLevel: 5,
+                removedItems: [
+                    { hrid: NOSALE, enhancementLevel: 0 },
+                    { hrid: SPEED, enhancementLevel: 5 },
+                ],
+            },
+            cost: null,
+            costDetail: null,
+        };
+        const { costDetail } = priceMergedAcquisition(
+            [enhance, freeing],
+            { itemDetailMap },
+            {
+                // Each priced piece sold takes 100 off the purchase; the unsellable ring takes nothing off
+                price: (candidate) =>
+                    1000 - 100 * (candidate.removedItems || []).filter((i) => i.hrid === SPEED).length,
+                explain: () => ({}),
+            }
+        );
+
+        const ring = costDetail.credits.find((line) => line.hrid === NOSALE);
+        const speed = costDetail.credits.find((line) => line.hrid === SPEED);
+        expect(ring).toMatchObject({ price: 0, noSalePrice: true });
+        expect(speed.noSalePrice).toBeUndefined();
+    });
+
+    test('an unsellable piece listed last keeps the remainder as a real credit and is not flagged', () => {
+        const NOSALE = '/items/unsellable_ring';
+        resolveItemPrice.mockImplementation((hrid) =>
+            hrid === NOSALE
+                ? { price: null, custom: false, missing: true, estimated: false }
+                : { price: 100, custom: false, missing: false, estimated: false }
+        );
+        const enhance = {
+            candidate: { skillKey: BREWING, type: 'enhancement', currentHrid: PHILO, currentLevel: 3, upgradeLevel: 5 },
+            cost: 500,
+            costDetail: { buys: [], credits: [], gross: 500, credit: 0, net: 500, unpriced: [] },
+        };
+        const freeing = {
+            candidate: {
+                skillKey: CRAFTING,
+                type: 'skilling_gear',
+                currentHrid: SPEED,
+                currentLevel: 5,
+                upgradeHrid: PHILO,
+                upgradeLevel: 5,
+                removedItems: [
+                    { hrid: SPEED, enhancementLevel: 5 },
+                    { hrid: NOSALE, enhancementLevel: 0 },
+                ],
+            },
+            cost: null,
+            costDetail: null,
+        };
+        const { costDetail } = priceMergedAcquisition(
+            [enhance, freeing],
+            { itemDetailMap },
+            {
+                // The purchase falls 130 for the pair but only 100 for the ring-free piece: the last line takes 30
+                price: (candidate) =>
+                    1000 -
+                    (candidate.removedItems?.length === 2
+                        ? 130
+                        : 100 * (candidate.removedItems || []).filter((i) => i.hrid === SPEED).length),
+                explain: () => ({}),
+            }
+        );
+
+        const ring = costDetail.credits.find((line) => line.hrid === NOSALE);
+        expect(ring.price).toBe(30);
+        expect(ring.noSalePrice).toBeUndefined();
     });
 });
 
@@ -8006,6 +8361,103 @@ describe('one price snapshot per analysis (#544)', () => {
     });
 });
 
+describe('profit is taxed as the analysed player pays it', () => {
+    const fight = () => ({
+        simulatedTime: 3.6e12,
+        experienceGained: {},
+        deaths: {},
+        encounters: 100,
+        totalDamageDealt: {},
+    });
+
+    /** `calculateSimRevenue`'s options, one entry per call */
+    const optionsSeen = () => calculateSimRevenue.mock.calls.map((call) => call[4]);
+
+    function setup(dtoOver = {}, selfHrid = '/players/live') {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+        plannedWorkerCount.mockReturnValue(1);
+        return {
+            playerDTOs: [
+                {
+                    equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                    abilities: [],
+                    hrid: '/players/target',
+                    ...dtoOver,
+                },
+            ],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: {},
+            upgradeMode: 'equipment',
+            selfHrid,
+        };
+    }
+
+    beforeEach(() => {
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(async () => fight());
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0, revenuePerHour: 0, costPerHour: 0 });
+    });
+
+    test('an Iron Cow profile analyzed from a market character: every pricing is untaxed, the basket too', async () => {
+        const analysis = await runUpgradeAnalysis(setup({ gameMode: '/game_mode/ironcow' }), null, {});
+        expect(analysis.results.length).toBeGreaterThan(0);
+        expect(optionsSeen().length).toBeGreaterThan(1);
+        for (const options of optionsSeen()) expect(options.saleTaxRate).toBe(0);
+
+        calculateSimRevenue.mockClear();
+        const outcome = await confirmUpgradeBudgetPlan([analysis.results[0]], analysis.context);
+        expect(outcome.ok).toBe(true);
+        expect(optionsSeen()).toHaveLength(2);
+        for (const options of optionsSeen()) expect(options.saleTaxRate).toBe(0);
+    });
+
+    test('a market profile analyzed from an Iron Cow character: every pricing is taxed', async () => {
+        const analysis = await runUpgradeAnalysis(setup({ gameMode: '/game_mode/standard' }), null, {});
+        expect(optionsSeen().length).toBeGreaterThan(1);
+        for (const options of optionsSeen()) expect(options.saleTaxRate).toBe(MARKET_TAX);
+
+        calculateSimRevenue.mockClear();
+        await confirmUpgradeBudgetPlan([analysis.results[0]], analysis.context);
+        for (const options of optionsSeen()) expect(options.saleTaxRate).toBe(MARKET_TAX);
+    });
+
+    test('the price snapshot is taken under the keys the rate of whoever is analysed reads', async () => {
+        seedSimPriceCache.mockClear();
+        await runUpgradeAnalysis(setup({ gameMode: '/game_mode/ironcow' }), null, {});
+        expect(seedSimPriceCache.mock.calls[0][2].saleTaxRate).toBe(0);
+
+        seedSimPriceCache.mockClear();
+        await runUpgradeAnalysis(setup({ hrid: '/players/live' }), null, {});
+        expect('saleTaxRate' in seedSimPriceCache.mock.calls[0][2]).toBe(false);
+    });
+
+    test('the live character: no rate is passed, so the live tax and the existing cache keys stand', async () => {
+        const analysis = await runUpgradeAnalysis(setup({ hrid: '/players/live' }), null, {});
+        expect(optionsSeen().length).toBeGreaterThan(1);
+        for (const options of optionsSeen()) expect('saleTaxRate' in options).toBe(false);
+
+        calculateSimRevenue.mockClear();
+        await confirmUpgradeBudgetPlan([analysis.results[0]], analysis.context);
+        expect(optionsSeen()).toHaveLength(2);
+        for (const options of optionsSeen()) expect('saleTaxRate' in options).toBe(false);
+    });
+
+    test('a context stored before the rate existed prices the basket at the live tax', async () => {
+        const analysis = await runUpgradeAnalysis(setup({ hrid: '/players/live' }), null, {});
+        const { saleTaxRate: _dropped, ...older } = analysis.context;
+        calculateSimRevenue.mockClear();
+        await confirmUpgradeBudgetPlan([analysis.results[0]], older);
+        for (const options of optionsSeen()) expect('saleTaxRate' in options).toBe(false);
+    });
+});
+
 describe('Stop keeps the candidates that finished (#540)', () => {
     const fight = () => ({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 100 });
 
@@ -8195,8 +8647,8 @@ describe('a resale credits what the sale pays after the market tax (#539)', () =
 
     beforeEach(() => {
         saleTax.ironCow = false;
-        // No mirror quote, so the ordinary market route is the one priced
-        resolveItemPrice.mockImplementation(() => ({ price: null }));
+        // No mirror quote, so the ordinary market route is the one priced; enhanced levels read the book
+        resolveItemPrice.mockImplementation(conservativeBook({ price: null }));
     });
 
     afterEach(() => {
@@ -8285,6 +8737,21 @@ describe('a resale credits what the sale pays after the market tax (#539)', () =
         getItemPrices.mockReturnValue({ ask: 100_000_000, bid: 90_000_000 });
 
         expect(calculateUpgradeCost(enhance, gameData())).toBe(10_000_000);
+    });
+
+    test('an unlisted target or current level with no sweep to fall back on is unpriced, never free', () => {
+        // The bench sweep has a material nobody prices (the suite default), so it cannot stand in either
+        getItemPrices.mockImplementation((_hrid, level) =>
+            level === 10 ? { ask: null, bid: 90_000_000 } : { ask: 80_000_000, bid: 70_000_000 }
+        );
+        expect(calculateUpgradeCost(enhance, gameData())).toBeNull();
+        expect(explainUpgradeCost(enhance, gameData()).net).toBeNull();
+
+        getItemPrices.mockImplementation((_hrid, level) =>
+            level === 10 ? { ask: 100_000_000, bid: 90_000_000 } : { ask: 80_000_000, bid: null }
+        );
+        expect(calculateUpgradeCost(enhance, gameData())).toBeNull();
+        expect(explainUpgradeCost(enhance, gameData()).net).toBeNull();
     });
 
     test('the outlier cap is weighed against the after-tax proceeds', () => {
@@ -8429,74 +8896,26 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
         expect(outcome.reason).toMatch(/cannot fit on the drink bar/);
         expect(runSimulation).not.toHaveBeenCalled();
     });
-});
 
-describe('a coffee applies only to a lab loadout whose drink bar can take it', () => {
-    function drinkGameData() {
-        const coffee = (hrid, family, itemLevel) => [
-            hrid,
-            {
-                name: hrid,
-                itemLevel,
-                categoryHrid: '/item_categories/drink',
-                consumableDetail: {
-                    hitpointRestore: 0,
-                    manapointRestore: 0,
-                    cooldownDuration: 300,
-                    buffs: [{ uniqueHrid: `/buff_uniques/${family}`, typeHrid: '/buff_types/damage' }],
-                    defaultCombatTriggers: [],
-                },
+    test('a second coffee of one family takes no slot and is not bought', () => {
+        const addition = (name) => ({
+            candidate: {
+                type: 'drink',
+                slot: 'drink_0',
+                drinkIndex: 0,
+                currentHrid: null,
+                upgradeHrid: `/items/${name}`,
+                buffFamily: '/buff_uniques/same_family',
+                fillsFreeDrinkSlot: true,
+                freeDrinkSlots: 3,
+                description: `Add ${name}`,
             },
-        ];
-        return {
-            itemDetailMap: Object.fromEntries([
-                coffee('/items/power_coffee', 'power', 20),
-                coffee('/items/super_power_coffee', 'power', 50),
-                coffee('/items/wisdom_coffee', 'wisdom', 30),
-                coffee('/items/speed_coffee', 'speed', 30),
-                coffee('/items/lucky_coffee', 'lucky', 30),
-            ]),
-        };
-    }
-    const gameData = drinkGameData();
-    let addWisdom;
-    let tierUp;
-    beforeEach(() => {
-        resolveItemPrice.mockImplementation(() => ({ price: 1000 }));
-        addWisdom = generateDrinkCandidates({ drinks: [null, null, null] }, gameData).find(
-            (c) => c.upgradeHrid === '/items/wisdom_coffee'
-        );
-        tierUp = generateDrinkCandidates({ drinks: [{ hrid: '/items/power_coffee' }, null, null] }, gameData).find(
-            (c) => c.currentHrid === '/items/power_coffee'
-        );
-    });
-    const bar = (...hrids) => ({ drinks: hrids.map((hrid) => (hrid ? { hrid } : null)) });
-
-    test('an addition skips a full bar, so it never overwrites a coffee that loadout wears', () => {
-        expect(
-            candidateAppliesToDTO(
-                addWisdom,
-                bar('/items/power_coffee', '/items/speed_coffee', '/items/lucky_coffee'),
-                gameData
-            )
-        ).toBe(false);
-    });
-
-    test('an addition skips a bar already running its family, and applies to one with a free slot', () => {
-        expect(candidateAppliesToDTO(addWisdom, bar('/items/wisdom_coffee', null, null), gameData)).toBe(false);
-        expect(candidateAppliesToDTO(addWisdom, bar('/items/power_coffee', null, null), gameData)).toBe(true);
-        expect(candidateAppliesToDTO(addWisdom, { drinks: [] }, gameData)).toBe(true);
-    });
-
-    test('a tier up applies only where the drink it replaces is worn', () => {
-        expect(candidateAppliesToDTO(tierUp, bar(null, '/items/power_coffee', null), gameData)).toBe(true);
-        expect(
-            candidateAppliesToDTO(
-                tierUp,
-                bar('/items/wisdom_coffee', '/items/speed_coffee', '/items/lucky_coffee'),
-                gameData
-            )
-        ).toBe(false);
+            cost: 0,
+            attemptsDelta: -1,
+            significant: true,
+        });
+        const plan = planWithinBudget([addition('a'), addition('a2')], 1000);
+        expect(plan.picks.map((pick) => pick.candidate.description)).toEqual(['Add a']);
     });
 });
 
@@ -8932,115 +9351,222 @@ describe('the Lab single-fight analysis taxes resale as the analysed character p
     });
 });
 
-describe('the all-fights plan counts free drink slots per fight (#560 review)', () => {
-    // Three rooms at a 50% win rate: two expected attempts each
-    const BASELINE = [0, 1, 2].map((i) => ({ monsterHrid: `/monsters/m${i}`, roomLevel: 100, winRate: 0.5 }));
-    /**
-     * An addition pooled from a three-slot bar. `free` is each room's own free drink slots; a room with none
-     * is not simulated (applied false), as `drinkAppliesToDTO` leaves it.
-     */
-    const addition = (name, free, { family = name, rooms = [0, 1, 2] } = {}) => ({
+describe('a pinned loss stays a loss in the plan (#562)', () => {
+    const BASE = [0, 1].map((i) => ({ monsterHrid: `/monsters/m${i}`, roomLevel: 100, winRate: 0.5 }));
+    const piece = (name, delta, extra = {}) => ({
         candidate: {
-            type: 'drink',
-            slot: 'drink_0',
-            drinkIndex: 0,
-            currentHrid: null,
+            type: 'tier',
+            slot: extra.slot || `/equipment_types/${name}`,
             upgradeHrid: `/items/${name}`,
-            upgradeLevel: 0,
-            buffFamily: `/buff_uniques/${family}`,
-            fillsFreeDrinkSlot: true,
-            freeDrinkSlots: 3,
-            description: `Add ${name}`,
+            description: name,
         },
-        cost: 0,
-        attemptsDelta: -rooms.length,
+        cost: 100,
+        attemptsDelta: delta,
         significant: true,
-        fights: BASELINE.map((fight, i) => ({
-            ...fight,
-            freeDrinkSlots: free[i],
-            ...(rooms.includes(i) && free[i] > 0 ? { winRate: 1, applied: true } : { applied: false }),
-        })),
+        ...(extra.fights ? { fights: extra.fights } : {}),
     });
-    const planFor = (results) => planWithinBudget(results, 1000, { baselineFights: BASELINE });
+    const sum = (plan) => plan.picks.reduce((total, pick) => total + pick.marginalAttemptsSaved, 0);
 
-    test('a pooled three-slot addition does not count gains in a room that only has one slot', () => {
-        const free = [3, 1, 0];
-        const plan = planFor([addition('a', free), addition('b', free), addition('c', free)]);
+    test('a losing pin beside a winner totals the signed sum, and the row is negative', () => {
+        const loser = piece('loser', 1000);
+        const plan = planWithinBudget([loser, piece('winner', -200)], 500, { required: [candidateKey(loser)] });
 
-        expect(plan.picks).toHaveLength(3);
-        // Room 0 takes all three coffees, room 1 only the first; room 2 has no slot at all.
-        // The old plan summed all three coffees in room 1 as well (6, not 4).
-        expect(plan.attemptsSaved).toBeCloseTo(4);
-        expect(plan.picks.map((pick) => pick.rooms).sort()).toEqual([1, 1, 2]);
-        expect(plan.picks.reduce((sum, pick) => sum + pick.marginalAttemptsSaved, 0)).toBeCloseTo(4);
+        expect(plan.picks.map((p) => p.marginalAttemptsSaved)).toEqual([-1000, 200]);
+        expect(plan.attemptsSaved).toBeCloseTo(-800);
     });
 
-    test('an addition whose every room is already full is skipped for want of a slot', () => {
-        const free = [0, 1, 0];
-        const plan = planFor([addition('a', free, { rooms: [1] }), addition('b', free, { rooms: [1] })]);
-
-        expect(plan.picks).toHaveLength(1);
-        expect(plan.skipped.map((s) => s.reason)).toContain('no drink slot is left free for it');
+    test('a losing pin alone totals negative, and an unpinned loser is not taken', () => {
+        const loser = piece('loser', 3);
+        expect(planWithinBudget([loser], 500, { required: [candidateKey(loser)] }).attemptsSaved).toBeCloseTo(-3);
+        expect(planWithinBudget([loser], 500).picks).toEqual([]);
     });
 
-    test('a second coffee of one family takes no slot', () => {
-        const free = [1, 1, 1];
-        const plan = planFor([addition('a', free, { family: 'f' }), addition('a2', free, { family: 'f' })]);
-
-        expect(plan.picks).toHaveLength(1);
-        expect(plan.attemptsSaved).toBeCloseTo(3);
-    });
-
-    test('two coffees on a bar with one free slot in the middle room share that room once', () => {
-        const free = [3, 1, 3];
-        const plan = planFor([addition('a', free), addition('b', free)]);
-        // Rooms 0 and 2 take both coffees (2 + 2); room 1 only the first (1)
-        expect(plan.picks).toHaveLength(2);
-        expect(plan.attemptsSaved).toBeCloseTo(5);
-    });
-
-    test('pinned additions are credited only in the rooms that still had a free slot', () => {
-        const free = [3, 1, 0];
-        const rows = [addition('a', free), addition('b', free), addition('c', free)];
-        const plan = planWithinBudget(rows, 1000, { baselineFights: BASELINE, required: rows.map(candidateKey) });
-
-        expect(plan.blocked).toBeNull();
-        expect(plan.picks).toHaveLength(3);
-        expect(plan.attemptsSaved).toBeCloseTo(4);
-        expect(plan.picks.map((pick) => pick.rooms).sort()).toEqual([1, 1, 2]);
-        expect(plan.picks.reduce((sum, pick) => sum + pick.marginalAttemptsSaved, 0)).toBeCloseTo(4);
-    });
-
-    test('pinning more additions than any room has free slots blocks the plan', () => {
-        const free = [1, 1, 0];
-        const rows = [addition('a', free), addition('b', free)];
-        const plan = planWithinBudget(rows, 1000, { baselineFights: BASELINE, required: rows.map(candidateKey) });
-
-        expect(plan.blocked.map((x) => x.kind)).toEqual(['drink-slots']);
-        expect(plan.blocked[0].reason).toContain('no fight has a free drink slot left');
-        expect(plan.picks).toEqual([]);
-    });
-
-    test('an addition takes a slot in every room it is installed in, even one where it saves nothing', () => {
-        // Both coffees apply to rooms 0 and 1 (one free slot each); a saves only in room 0, b only in room 1
-        const saveIn = (row, room) => ({
-            ...row,
-            fights: row.fights.map((fight, i) => (i === room ? fight : { ...fight, winRate: 0.5 })),
+    test('per-fight savings keep the sign: a pin that wins one room and loses another nets out', () => {
+        const mixed = piece('mixed', 0, {
+            fights: [
+                { ...BASE[0], winRate: 1, applied: true },
+                { ...BASE[1], winRate: 0.25, applied: true },
+            ],
         });
-        const a = saveIn(addition('a', [1, 1, 0], { rooms: [0, 1] }), 0);
-        const b = saveIn(addition('b', [1, 1, 0], { rooms: [0, 1] }), 1);
-        const plan = planFor([a, b]);
-
-        expect(plan.picks).toHaveLength(1);
-        expect(plan.skipped.map((s) => s.reason)).toContain('no drink slot is left free for it');
+        // Room 0: 2 -> 1 attempts (+1); room 1: 2 -> 4 attempts (-2)
+        const plan = planWithinBudget([mixed], 500, { baselineFights: BASE, required: [candidateKey(mixed)] });
+        expect(plan.attemptsSaved).toBeCloseTo(-1);
+        expect(sum(plan)).toBeCloseTo(-1);
     });
 
-    test('rows without per-fight slots keep the single capacity the candidate carried', () => {
-        const rows = ['a', 'b', 'c', 'd'].map((name) => {
-            const row = addition(name, [3, 3, 3]);
-            return { ...row, fights: row.fights.map(({ freeDrinkSlots: _free, ...fight }) => fight) };
+    test('a fill sharing a pinned loss is credited only what it adds, so the pin loss is not cancelled', () => {
+        const body = '/equipment_types/body';
+        const loser = piece('loser', 10, { slot: body });
+        const fill = piece('fill', -3, { slot: body });
+        const plan = planWithinBudget([loser, fill], 500, { required: [candidateKey(loser)] });
+
+        expect(sum(plan)).toBeCloseTo(plan.attemptsSaved);
+        expect(plan.attemptsSaved).toBeLessThan(0);
+    });
+});
+
+describe('drinks are never a Labyrinth upgrade, since drink slots do not run there', () => {
+    const COFFEE = '/items/wisdom_coffee';
+    const levels = { staminaLevel: 50, intelligenceLevel: 50, attackLevel: 50, meleeLevel: 50 };
+    /** buildGameData plus two coffees of different families, so the drink generator has something to offer */
+    function gameDataWithCoffees() {
+        const gameData = buildGameData();
+        const coffee = (hrid, family) => ({
+            name: hrid,
+            itemLevel: 30,
+            isTradable: true,
+            categoryHrid: '/item_categories/drink',
+            consumableDetail: {
+                hitpointRestore: 0,
+                manapointRestore: 0,
+                cooldownDuration: 300,
+                buffs: [{ uniqueHrid: `/buff_uniques/${family}`, typeHrid: '/buff_types/damage', flatBoost: 0.05 }],
+                defaultCombatTriggers: [],
+            },
         });
-        const plan = planFor(rows);
-        expect(plan.picks).toHaveLength(3);
+        gameData.itemDetailMap[COFFEE] = coffee(COFFEE, 'wisdom_coffee');
+        gameData.itemDetailMap['/items/power_coffee'] = coffee('/items/power_coffee', 'power_coffee');
+        return gameData;
+    }
+    const addCoffee = () => ({
+        type: 'drink',
+        slot: 'drink_0',
+        drinkIndex: 0,
+        currentHrid: null,
+        upgradeHrid: COFFEE,
+        upgradeLevel: 0,
+        triggers: null,
+        buffFamily: '/buff_uniques/wisdom_coffee',
+        fillsFreeDrinkSlot: true,
+        freeDrinkSlots: 3,
+        description: 'Add Wisdom Coffee',
+    });
+    const simmedACoffee = () =>
+        runLabyrinthSimulation.mock.calls.some(([params]) =>
+            (params.playerDTOs || []).some((dto) => (dto.drinks || []).some((drink) => drink?.hrid === COFFEE))
+        );
+
+    beforeEach(() => {
+        buildGameDataPayload.mockReturnValue(gameDataWithCoffees());
+        resolveItemPrice.mockImplementation(() => ({ price: 1000 }));
+        runLabyrinthSimulation.mockReset();
+        runLabyrinthSimulation.mockImplementation(async () => ({ labyAttemptCount: 100, encounters: 50 }));
+    });
+
+    test('the Combat Sim still generates drink candidates', () => {
+        const dto = { equipment: {}, drinks: [null, null, null], ...levels };
+        const drinks = generateCandidates(dto, gameDataWithCoffees(), 'drink');
+        expect(drinks.length).toBeGreaterThan(0);
+        expect(drinks.every((candidate) => candidate.type === 'drink')).toBe(true);
+    });
+
+    test('the Lab single-fight analysis ranks no drink, from the drink mode or handed in by name', async () => {
+        const result = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [{ equipment: {}, abilities: [], drinks: [null, null, null], ...levels }],
+                playerIndex: 0,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'drink',
+                extraCandidates: [addCoffee()],
+            },
+            null,
+            {}
+        );
+        expect(result.results.filter((row) => row.candidate.type === 'drink')).toEqual([]);
+        expect(simmedACoffee()).toBe(false);
+    });
+
+    test('the Lab all-fights analysis pools no drink, from a mode or handed in by name', async () => {
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [0, 1].map((i) => ({
+                    monsterHrid: `/monsters/m${i}`,
+                    monsterName: `M${i}`,
+                    roomLevel: 100,
+                    dto: { equipment: {}, drinks: [null, null, null], ...levels },
+                })),
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['drink'],
+                extraCandidates: [addCoffee()],
+            },
+            null,
+            {}
+        );
+        expect(result.results.filter((row) => row.candidate.type === 'drink')).toEqual([]);
+        expect(simmedACoffee()).toBe(false);
+    });
+
+    test('a drink applies to no Lab loadout, even one with a free drink slot', () => {
+        expect(candidateAppliesToDTO(addCoffee(), { drinks: [null, null, null] }, gameDataWithCoffees())).toBe(false);
+    });
+
+    // Combat scrolls are cleared from every Labyrinth sim by the worker, like the drink slots
+    const addScroll = () => ({
+        type: 'scroll',
+        slot: 'scroll|/buff_types/damage',
+        buffTypeHrid: '/buff_types/damage',
+        enable: true,
+        measuresLoss: false,
+        description: 'Add Damage scroll',
+    });
+    const simmedAScroll = () =>
+        runLabyrinthSimulation.mock.calls.some(([params]) =>
+            (params.playerDTOs || []).some((dto) => (dto.scrollBuffs || []).length > 0)
+        );
+
+    test('a combat scroll applies to no Lab loadout', () => {
+        expect(candidateAppliesToDTO(addScroll(), { drinks: [null, null, null] }, gameDataWithCoffees())).toBe(false);
+    });
+
+    test('the Lab single-fight analysis ranks no scroll handed in by name', async () => {
+        const result = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [{ equipment: {}, abilities: [], drinks: [null, null, null], ...levels }],
+                playerIndex: 0,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'combat_level',
+                extraCandidates: [addScroll()],
+            },
+            null,
+            {}
+        );
+        expect(result.results.filter((row) => row.candidate.type === 'scroll')).toEqual([]);
+        expect(simmedAScroll()).toBe(false);
+    });
+
+    test('the Lab all-fights analysis pools no scroll handed in by name', async () => {
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [0, 1].map((i) => ({
+                    monsterHrid: `/monsters/m${i}`,
+                    monsterName: `M${i}`,
+                    roomLevel: 100,
+                    dto: { equipment: {}, drinks: [null, null, null], ...levels },
+                })),
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['combat_level'],
+                extraCandidates: [addScroll()],
+            },
+            null,
+            {}
+        );
+        expect(result.results.filter((row) => row.candidate.type === 'scroll')).toEqual([]);
+        expect(simmedAScroll()).toBe(false);
     });
 });

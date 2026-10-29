@@ -38,6 +38,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
+import { itemHridFromIcon } from '../../utils/item-icon.js';
 import { createCuratedRecord } from '../../utils/persisted-record.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
@@ -1037,8 +1038,10 @@ function markTrackedItem(itemElem) {
         return;
     }
 
+    // The icon's sprite first: the label is translated for a non-English client and names nothing then
     const name = itemElem.querySelector('svg')?.getAttribute('aria-label');
-    const hrid = name && hridForName(name);
+    const hrid =
+        itemHridFromIcon(itemElem, dataManager.getInitClientData?.()?.itemDetailMap) || (name && hridForName(name));
     if (!hrid || !isWatched(hrid)) {
         existing?.remove();
         return;

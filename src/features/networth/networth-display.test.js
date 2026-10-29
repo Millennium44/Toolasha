@@ -123,6 +123,86 @@ describe('guild shrines row', () => {
         expect(breakdown).toContain('60 tokens');
     });
 
+    test('a total that leaves an unpriced credit out says it is a floor', () => {
+        networthInventoryDisplay.update(
+            networthData({
+                totalCost: 7500,
+                tokens: 10,
+                known: true,
+                unpriced: ['Purple Guild Credit'],
+                breakdown: [
+                    {
+                        hrid: '/guild_buffs/force_combat',
+                        name: 'Force Combat 1',
+                        level: 1,
+                        cost: 7500,
+                        tokens: 10,
+                        unpriced: ['Purple Guild Credit'],
+                    },
+                ],
+            })
+        );
+
+        const toggle = networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-toggle');
+        expect(toggle.textContent).toContain('at least');
+        expect(toggle.title).toContain('Purple Guild Credit');
+        expect(networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-breakdown').textContent).toContain(
+            'at least; Purple Guild Credit unpriced'
+        );
+    });
+
+    test('the floor wording survives expanding and collapsing the row', () => {
+        networthInventoryDisplay.update(
+            networthData({
+                totalCost: 7500,
+                tokens: 10,
+                known: true,
+                unpriced: ['Purple Guild Credit'],
+                breakdown: [
+                    {
+                        hrid: '/guild_buffs/force_combat',
+                        name: 'Force Combat 1',
+                        level: 1,
+                        cost: 7500,
+                        tokens: 10,
+                        unpriced: ['Purple Guild Credit'],
+                    },
+                ],
+            })
+        );
+
+        const toggle = networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-toggle');
+        toggle.click();
+        expect(toggle.textContent).toContain('at least');
+        toggle.click();
+        expect(toggle.textContent).toContain('at least');
+    });
+
+    test('a fully priced total carries no floor wording', () => {
+        networthInventoryDisplay.update(
+            networthData({
+                totalCost: 7500,
+                tokens: 10,
+                known: true,
+                unpriced: [],
+                breakdown: [
+                    {
+                        hrid: '/guild_buffs/force_combat',
+                        name: 'Force Combat 1',
+                        level: 1,
+                        cost: 7500,
+                        tokens: 10,
+                        unpriced: [],
+                    },
+                ],
+            })
+        );
+
+        expect(networthInventoryDisplay.container.querySelector('#mwi-guild-shrines-toggle').textContent).not.toContain(
+            'at least'
+        );
+    });
+
     test('unknown shrine levels draw no row rather than a zero', () => {
         networthInventoryDisplay.update(networthData({ totalCost: 0, tokens: 0, breakdown: [], known: false }));
 
@@ -347,5 +427,35 @@ describe('a partial crafting bill', () => {
         networthInventoryDisplay.update(networthData({ totalCost: 0, tokens: 0, known: false, breakdown: [] }));
         expect(panelText()).not.toContain('a floor');
         expect(panelText()).not.toContain('*');
+    });
+});
+
+describe('token row hover', () => {
+    const row = (extra) => ({
+        name: 'Token',
+        count: 5,
+        rate: 1000,
+        value: 5000,
+        counted: true,
+        unpriced: false,
+        ...extra,
+    });
+    const titles = (items) => {
+        const host = document.createElement('div');
+        host.innerHTML = networthInventoryDisplay.renderTokensBreakdown(items);
+        return [...host.querySelectorAll('.mwi-token-row')].map((el) => el.getAttribute('title'));
+    };
+
+    test('a guild credit row reads gold per credit, not per token', () => {
+        const [title] = titles([row({ kind: 'credit' })]);
+        expect(title).toContain('gold/credit');
+        expect(title).not.toContain('gold/token');
+        expect(title).toContain('cheapest gold per credit');
+    });
+
+    test('other token rows keep the gold/token wording', () => {
+        const [title] = titles([row({ kind: 'dungeon', bestItemName: 'Chest' })]);
+        expect(title).toContain('into Chest and sold at the best rate');
+        expect(title).toContain('gold/token');
     });
 });

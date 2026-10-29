@@ -489,7 +489,8 @@ class InventorySort {
      */
     selectedTabIconId(inventoryElem) {
         const selectedTab = inventoryElem.querySelector('[role="tab"][aria-selected="true"]');
-        const href = selectedTab?.querySelector('use')?.getAttribute('href');
+        const use = selectedTab?.querySelector('use');
+        const href = use?.getAttribute('href') || use?.getAttribute('xlink:href');
         return href?.match(/#(.+)$/)?.[1] ?? null;
     }
 

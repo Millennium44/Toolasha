@@ -1169,7 +1169,7 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
  * @param {string|null} locationName - Optional location name to filter actions (e.g., "Silly Cow Valley")
  * @param {string|null} actionNameFilter - Optional action name to restrict optimization to a single action
  * @param {number|null} playerLevelOverride - Planned level; null uses the live character level
- * @param {{collectAll?: boolean, teaSetGoal?: string, includeEmpty?: boolean, matchGoldCatalyst?: boolean}|null} options - `collectAll` adds `evaluatedAll`
+ * @param {{collectAll?: boolean, teaSetGoal?: string, includeEmpty?: boolean}|null} options - `collectAll` adds `evaluatedAll`
  *   (every scored combination, not just the top five); `teaSetGoal` picks which goal's tea list is
  *   enumerated, so an XP pass and a gold pass can score the identical set of combinations
  * @returns {Object} Optimization result
@@ -1333,11 +1333,10 @@ export function findOptimalTeas(
                 skills: skillsWithPlannedLevel('/skills/alchemy', playerLevel),
             };
             if (goal === 'xp') {
-                // The floor search compares one real setup per candidate: score XP with the catalyst
-                // its gold figure used (a catalyst raises success, and failures give 10% XP)
-                const catalystBonus = options?.matchGoldCatalyst
-                    ? calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext).catalystBonus
-                    : 0;
+                // Always score XP with the catalyst this candidate's gold figure used (a catalyst
+                // raises success, and failures give 10% XP), so a search, the XP floor and
+                // calculateSkillPerformance all read the same setup the same way
+                const catalystBonus = calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext).catalystBonus;
                 score = calculateAlchemyXpPerHour(
                     alchemyContext,
                     buffs,
@@ -1635,7 +1634,7 @@ export function findXpFloorChoice(skillName, params = {}) {
             null,
             null,
             params.playerLevel ?? null,
-            { collectAll: true, teaSetGoal: 'gold', includeEmpty: true, matchGoldCatalyst: true }
+            { collectAll: true, teaSetGoal: 'gold', includeEmpty: true }
         );
     const xpPass = run('xp');
     const goldPass = run('gold');
@@ -1792,9 +1791,18 @@ export function scoreEquipmentSetup(
             drinks: teaHrids.filter(Boolean).map((itemHrid) => ({ itemHrid })),
             skills: skillsWithPlannedLevel('/skills/alchemy', playerLevel),
         };
-        return goal === 'gold'
-            ? calculateAlchemyGoldPerHour(context, buffs, actionContext).profitPerHour
-            : calculateAlchemyXpPerHour(context, buffs, playerLevel, otherEfficiency, calcContext);
+        const goldResult = calculateAlchemyGoldPerHour(context, buffs, actionContext);
+        if (goal === 'gold') return goldResult.profitPerHour;
+        // A catalyst raises success, and failures give 10% XP, so the XP figure needs the catalyst
+        // the gold figure for this setup would use
+        return calculateAlchemyXpPerHour(
+            context,
+            buffs,
+            playerLevel,
+            otherEfficiency,
+            calcContext,
+            goldResult.catalystBonus
+        );
     }
 
     let totalScore = 0;
@@ -1995,13 +2003,21 @@ export function calculateSkillPerformance(
             resolveActiveAlchemyItemContext() ||
             (repItemHrid ? { actionType: 'decompose', itemHrid: repItemHrid } : null);
         if (!itemContext) return empty;
-        const xpPerHour = calculateAlchemyXpPerHour(itemContext, buffs, playerLevel, otherEfficiency, calcContext);
         const actionContext = {
             equipment,
             drinks: filteredTeas.map((itemHrid) => ({ itemHrid })),
             skills: skillsWithPlannedLevel('/skills/alchemy', playerLevel),
         };
         const goldResult = calculateAlchemyGoldPerHour(itemContext, buffs, actionContext);
+        // XP uses the catalyst the gold figure was priced with: it raises success, and failures give 10% XP
+        const xpPerHour = calculateAlchemyXpPerHour(
+            itemContext,
+            buffs,
+            playerLevel,
+            otherEfficiency,
+            calcContext,
+            goldResult.catalystBonus
+        );
         const goldPerHour = goldResult.profitPerHour;
         return {
             xpPerHour: xpPerHour > 0 ? xpPerHour : 0,
@@ -2011,11 +2027,11 @@ export function calculateSkillPerformance(
         };
     }
 
-    let totalXp = 0,
-        xpCount = 0;
+    let totalXp = 0;
     let totalGold = 0,
         goldCount = 0;
     let hasMissingPrices = false;
+    let blockedActionCount = 0;
 
     for (const action of actions) {
         // These are the character's actual current teas, not a hypothetical combo — but the
@@ -2028,12 +2044,14 @@ export function calculateSkillPerformance(
             teaSkillLevelBonus: buffs.skillLevels[normalizedSkill] || 0,
             actionLevelBonus: buffs.actionLevel,
         });
-        if (!canStart) continue;
+        if (!canStart) {
+            blockedActionCount++;
+            continue;
+        }
 
         const xp = calculateXpPerHour(action, buffs, playerLevel, otherEfficiency, calcContext);
         if (xp > 0) {
             totalXp += xp;
-            xpCount++;
         }
 
         const gold = isGathering
@@ -2051,12 +2069,18 @@ export function calculateSkillPerformance(
     }
 
     return {
-        xpPerHour: xpCount > 0 ? totalXp / xpCount : 0,
+        // Same divisor as findOptimalTeas (every action offered), so the current setup and a
+        // recommendation are averaged over the same set; a blocked action counts as 0 in both
+        xpPerHour: totalXp / actions.length,
         goldPerHour: goldCount > 0 ? totalGold / goldCount : 0,
         teaCostPerHour: teaCost.total,
         // See actionHasUnpricedMaterials: true when goldPerHour counts an action whose score
         // depends on an item with no price data, treated as free rather than excluded.
         hasMissingPrices,
+        // Actions the drinks' Action Level buff stops from starting: they count as 0 in the XP
+        // average above and are left out of the gold one, so a caller can say why a figure is low
+        blockedActionCount,
+        actionsOffered: actions.length,
     };
 }
 

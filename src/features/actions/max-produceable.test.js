@@ -381,3 +381,62 @@ describe('disable unregisters the setting-change listeners it registered', () =>
         expect(settingListeners.actionPanel_showExpPerHour_production).toHaveLength(1);
     });
 });
+
+describe('updateCount - unchanged render', () => {
+    let panel;
+    let display;
+
+    beforeEach(() => {
+        panel = document.createElement('div');
+        display = document.createElement('div');
+        panel.appendChild(display);
+        document.body.appendChild(panel);
+        maxProduceable.actionElements.set(panel, { actionHrid: SWORD, displayElement: display });
+        vi.spyOn(maxProduceable, 'fitLineFontSizes').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        maxProduceable.actionElements.clear();
+        panel.remove();
+        vi.restoreAllMocks();
+    });
+
+    test('keeps the existing line elements when the rendered text is unchanged', async () => {
+        vi.spyOn(maxProduceable, 'calculateMaxProduceable').mockReturnValue(5);
+
+        await maxProduceable.updateCount(panel, new Map());
+        const firstLine = display.firstElementChild;
+        expect(firstLine).not.toBeNull();
+
+        await maxProduceable.updateCount(panel, new Map());
+
+        expect(display.firstElementChild).toBe(firstLine);
+        expect(maxProduceable.fitLineFontSizes).toHaveBeenCalledTimes(1);
+    });
+
+    test('rewrites the lines when the text changes', async () => {
+        const calc = vi.spyOn(maxProduceable, 'calculateMaxProduceable').mockReturnValue(5);
+
+        await maxProduceable.updateCount(panel, new Map());
+        const firstLine = display.firstElementChild;
+
+        calc.mockReturnValue(6);
+        await maxProduceable.updateCount(panel, new Map());
+
+        expect(display.firstElementChild).not.toBe(firstLine);
+        expect(maxProduceable.fitLineFontSizes).toHaveBeenCalledTimes(2);
+    });
+
+    test('shows the display again after it was hidden for an unavailable count', async () => {
+        const calc = vi.spyOn(maxProduceable, 'calculateMaxProduceable').mockReturnValue(5);
+        await maxProduceable.updateCount(panel, new Map());
+
+        calc.mockReturnValue(null);
+        await maxProduceable.updateCount(panel, new Map());
+        expect(display.style.display).toBe('none');
+
+        calc.mockReturnValue(5);
+        await maxProduceable.updateCount(panel, new Map());
+        expect(display.style.display).toBe('block');
+    });
+});

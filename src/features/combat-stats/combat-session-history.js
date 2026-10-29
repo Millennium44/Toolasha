@@ -488,11 +488,34 @@ export function combineSessions(sessions) {
             if (!name) continue;
 
             if (!byName.has(name)) {
-                byName.set(name, { ...player, loot: {}, experience: {}, deathCount: 0, durationSeconds: 0 });
+                // `consumables` restarts empty like the other totals: `...player`
+                // would carry the first session's food bill alone against loot
+                // summed over every session, and profit would read too high
+                byName.set(name, {
+                    ...player,
+                    loot: {},
+                    experience: {},
+                    consumables: [],
+                    deathCount: 0,
+                    durationSeconds: 0,
+                });
             }
             const combined = byName.get(name);
             combined.deathCount += player.deathCount || 0;
             combined.durationSeconds += sessionDuration;
+
+            // What was eaten and drunk adds up like the loot it was spent to earn
+            for (const line of Array.isArray(player.consumables) ? player.consumables : []) {
+                if (!line?.itemHrid) continue;
+                const held = combined.consumables.find((entry) => entry.itemHrid === line.itemHrid);
+                if (!held) {
+                    combined.consumables.push({ ...line });
+                    continue;
+                }
+                held.consumed = (held.consumed || 0) + (line.consumed || 0);
+                held.actualConsumed = (held.actualConsumed || 0) + (line.actualConsumed || 0);
+                held.elapsedSeconds = (held.elapsedSeconds || 0) + (line.elapsedSeconds || 0);
+            }
 
             // Keyed by item rather than by the game's slot key: two sessions
             // number their slots independently, so merging on the raw key would
@@ -510,6 +533,16 @@ export function combineSessions(sessions) {
             // wouldn't) does not read as "no experience this week"
             for (const [skillHrid, amount] of Object.entries(player.experience || {})) {
                 combined.experience[skillHrid] = (combined.experience[skillHrid] || 0) + (amount || 0);
+            }
+        }
+    }
+
+    // The daily burn is the summed use over the player's own summed time, not
+    // the rate of whichever session came first
+    for (const combined of byName.values()) {
+        for (const line of combined.consumables) {
+            if (combined.durationSeconds > 0) {
+                line.consumedPerDay = Math.ceil(((line.consumed || 0) / combined.durationSeconds) * 86400);
             }
         }
     }

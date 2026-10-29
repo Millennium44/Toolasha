@@ -790,8 +790,8 @@ function buildMirrorOptimizedResult(
  * @returns {{cost: number, hasCost: boolean, costPartial: boolean}}
  */
 export function calculatePerAttemptMaterialCost(itemDetails) {
-    const { cost, hasCost, hasMissingPrices } = perAttemptMaterialCost(itemDetails);
-    return { cost, hasCost, costPartial: hasMissingPrices };
+    const { cost, hasCost, hasMissingPrices, hasPartialPrices } = perAttemptMaterialCost(itemDetails);
+    return { cost, hasCost, costPartial: Boolean(hasMissingPrices || hasPartialPrices) };
 }
 
 /**
@@ -829,8 +829,12 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         totalExpectedXP,
         paramsNote,
         enhancementParams,
-        pricesPartial,
+        pricesPartial: someInputUnpriced,
+        inputsPartial,
     } = enhancementData;
+    // An input nobody prices, or a chosen input that is itself a partial crafting bill: either way the
+    // total is an under-quote (the same two flags net worth and the inventory badges read together)
+    const pricesPartial = someInputUnpriced === true || inputsPartial === true;
 
     // Validate required fields
     if (

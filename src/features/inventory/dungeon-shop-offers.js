@@ -24,11 +24,13 @@ export const DUNGEON_TOKEN_HRIDS = [
  * Every Dungeon-shop item bought with one token.
  *
  * @param {string} tokenHrid - A dungeon token
+ * @param {'ask'|'bid'} [side='ask'] - Book side the price is read from. The spend planner keeps the ask;
+ *   the token tooltip passes the side the inventory badge uses.
  * @returns {Array<{itemHrid: string, name: string, cost: number, outputCount: number, askPrice: number|null,
  *   goldPerToken: number}>} In shop order. `cost` is tokens per purchase, `outputCount` units per purchase,
  *   `askPrice` per unit — null for an item with no ask (untradeable or an empty book), with `goldPerToken` 0.
  */
-export function dungeonShopOffers(tokenHrid) {
+export function dungeonShopOffers(tokenHrid, side = 'ask') {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.shopItemDetailMap || !gameData?.itemDetailMap) return [];
 
@@ -47,7 +49,7 @@ export function dungeonShopOffers(tokenHrid) {
                 const cost = shopItem.costs[0].count;
                 // One purchase can hand over several units; values and volume are per unit
                 const outputCount = shopItem.outputCount > 0 ? shopItem.outputCount : 1;
-                const ask = getItemPrices(shopItem.itemHrid, 0)?.ask;
+                const ask = getItemPrices(shopItem.itemHrid, 0)?.[side === 'bid' ? 'bid' : 'ask'];
                 const askPrice = ask > 0 ? ask : null;
                 return {
                     itemHrid: shopItem.itemHrid,

@@ -111,6 +111,8 @@ vi.mock('./upgrade-advisor.js', () => ({
     pairedTrialRule: (result) => ({ minTrials: result.labyAttemptCount, maxTrials: result.labyAttemptCount }),
 }));
 
+const sampleOptions = vi.hoisted(() => []);
+
 vi.mock('./trigger-optimizer.js', () => ({
     concurrency: () => 2,
     createLimiter: (limit) => {
@@ -127,7 +129,7 @@ vi.mock('./trigger-optimizer.js', () => ({
             }
         };
     },
-    sampleFromResult: (result) => ({
+    sampleFromResult: (result, _gameData, _hrids, _hours, options) => ({
         perPlayer: {
             p1: {
                 xp: 1000 + (result.seed % 7) * 10 + (result.marker === 'good' ? 200 : 0),
@@ -142,6 +144,7 @@ vi.mock('./trigger-optimizer.js', () => ({
         },
         encounters: 50,
         pools: {},
+        __opts: sampleOptions.push(options),
     }),
 }));
 
@@ -772,6 +775,15 @@ describe('verifyTriggerChanges', () => {
             tunables: [tunable],
         },
         ...extra,
+    });
+
+    test('every sample is valued at the sale taxes the tuner run recorded', async () => {
+        sampleOptions.length = 0;
+        const result = combatResult();
+        result.verifyContext.saleTaxRates = { p1: 0 };
+        await verifyTriggerChanges({ result, seeds: 2, hoursMultiplier: 1 });
+        expect(sampleOptions.length).toBeGreaterThan(0);
+        expect(sampleOptions.every((options) => options.saleTaxRates?.p1 === 0)).toBe(true);
     });
 
     test('a remembered result cannot be verified', async () => {

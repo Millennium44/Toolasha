@@ -19,6 +19,8 @@ import {
     resumeSession,
     extendSession,
     finalizeSession,
+    getGapAttempts,
+    addGapAttempts,
     getCurrentLegCounters,
     getSessionDuration,
     mergeSessions,
@@ -1276,5 +1278,38 @@ describe('a flag-less legacy session that consumed an unpriced input', () => {
         const agg = mergeSessions([legacy(), priced]);
 
         expect(agg.hasUnpricedInput).toBe(true);
+    });
+});
+
+describe('attempts missed in gaps', () => {
+    test('accumulate across gaps, and a session saved before the field reads 0', () => {
+        const session = createSession('/items/sword', 'Sword', 0, 5, 0);
+        expect(getGapAttempts(session)).toBe(0);
+        addGapAttempts(session, 3);
+        addGapAttempts(session, 2);
+        addGapAttempts(session, 0);
+        expect(getGapAttempts(session)).toBe(5);
+
+        const legacy = createSession('/items/sword', 'Sword', 0, 5, 0);
+        delete legacy.gapAttempts;
+        expect(getGapAttempts(legacy)).toBe(0);
+        expect(getGapAttempts(null)).toBe(0);
+    });
+
+    test('add up when sessions are combined for reading, and when they are merged into one', () => {
+        const a = createSession('/items/sword', 'Sword', 0, 5, 0);
+        const b = createSession('/items/sword', 'Sword', 0, 5, 0);
+        const legacy = createSession('/items/sword', 'Sword', 0, 5, 0);
+        delete legacy.gapAttempts;
+        a.gapAttempts = 3;
+        b.gapAttempts = 4;
+        expect(mergeSessions([a, b, legacy]).gapAttempts).toBe(7);
+
+        const first = createSession('/items/sword', 'Sword', 0, 5, 0);
+        const second = createSession('/items/sword', 'Sword', 0, 5, 0);
+        first.gapAttempts = 2;
+        second.gapAttempts = 5;
+        second.startTime = first.startTime + 1000;
+        expect(foldSessions([first, second]).gapAttempts).toBe(7);
     });
 });

@@ -213,6 +213,7 @@ const MARKET_EXTRAS = [
     'networth_includeTaskTokens',
     'networth_includeLabyrinthTokens',
     'networth_includeGuildTokens',
+    'networth_includeGuildCredits',
     'networth_historyChart',
     'invWorth',
     'invCategoryTotals',

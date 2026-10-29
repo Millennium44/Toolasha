@@ -27,11 +27,15 @@ const game = vi.hoisted(() => ({
     resolvedDrinks: undefined,
     buffVersion: 0,
     customVersion: 0,
+    // Per-side custom prices by hrid: { buy, sell }
+    customSides: {},
+    // When true the game data has not loaded: getInitClientData() answers null
+    noInit: false,
 }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ itemDetailMap: game.items, actionDetailMap: game.actions }),
+        getInitClientData: () => (game.noInit ? null : { itemDetailMap: game.items, actionDetailMap: game.actions }),
         getEquipment: () => new Map(game.equipment),
         getActionDrinkSlots: () => game.drinks,
         getBuffStateVersion: () => game.buffVersion,
@@ -53,7 +57,8 @@ vi.mock('../features/settings/custom-price-overrides.js', () => ({
 }));
 vi.mock('./market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
-    getItemPrice: (hrid, { mode = 'ask' } = {}) => game.prices[`${hrid}:0`]?.[mode] || 0,
+    getItemPrice: (hrid, { mode = 'ask', side = 'sell' } = {}) =>
+        game.customSides[hrid]?.[side] ?? (game.prices[`${hrid}:0`]?.[mode] || 0),
 }));
 
 const {
@@ -72,10 +77,12 @@ beforeEach(() => {
         '/items/fine_sword': { name: 'Fine Sword' },
     };
     game.prices = {};
+    game.customSides = {};
     game.actions = {};
     game.equipment = new Map();
     game.drinks = [];
     game.resolvedDrinks = undefined;
+    game.noInit = false;
     // Monotonic across tests, never reset: the memo maps are module state and
     // survive between tests, so rewinding the version would revive their entries
     game.buffVersion++;
@@ -244,6 +251,13 @@ describe('production-cost memo invalidation', () => {
         expect(getProductionCost('/items/custom_mat')).toBe(2_000);
     });
 
+    test('inputs are priced at the custom buy figure, not the custom sell one', () => {
+        makeRecipe('/items/side_mat', '/items/side_ore');
+        game.customSides['/items/side_ore'] = { buy: 300, sell: 900 };
+        // 2 ore at the buy price of 300
+        expect(getProductionCost('/items/side_mat')).toBe(600);
+    });
+
     test('a bill that counted an unpriced input as nothing is partial, and says so up the chain', () => {
         makeRecipe('/items/part_mat', '/items/part_ore');
         game.actions['/actions/make_part_mat'].inputItems.push({ itemHrid: '/items/no_such_dust', count: 1 });
@@ -337,5 +351,25 @@ describe('getCheapestProtectionPrice', () => {
         // Zero read as a price makes protection free, and a free protection wins
         // every strategy comparison on a quote nobody has a basis for
         expect(getCheapestProtectionPrice('/items/fine_sword')).toEqual({ price: null, itemHrid: null });
+    });
+});
+
+describe('getProductionCostDetailed before game data loads', () => {
+    test('a null init is unpriced and flagged partial, not a throw, and is not cached', () => {
+        game.items['/items/late_mat'] = { name: 'Late' };
+        game.noInit = true;
+
+        expect(getProductionCostDetailed('/items/late_mat')).toEqual({ cost: 0, partial: true });
+        expect(getProductionCost('/items/late_mat')).toBe(0);
+
+        // Once the data arrives the earlier answer must not stick
+        game.noInit = false;
+        game.prices['/items/enhance_mat:0'] = { ask: 100, bid: 100 };
+        game.actions['/actions/make_late'] = {
+            type: '/action_types/cheesesmithing',
+            inputItems: [{ itemHrid: '/items/enhance_mat', count: 2 }],
+            outputItems: [{ itemHrid: '/items/late_mat', count: 1 }],
+        };
+        expect(getProductionCostDetailed('/items/late_mat').cost).toBe(200);
     });
 });

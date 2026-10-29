@@ -98,6 +98,10 @@ const mocks = vi.hoisted(() => ({
     allZonesRuns: 0,
     /** playerHrid each calculateSimRevenue() call was made with, in order */
     revenueCalls: [],
+    /** The options object each calculateSimRevenue() call was made with, in order */
+    revenueOptions: [],
+    /** The sale tax rate argument of each taxedDropValue() call, in order (null: the live rate) */
+    taxedDropRates: [],
     /** How many upgrade-advisor runs and worker cancellations were requested */
     upgradeRuns: 0,
     cancelActiveCalls: 0,
@@ -105,6 +109,8 @@ const mocks = vi.hoisted(() => ({
     characterId: 'char1',
     /** Whether the House Upgrade target grid omits skilling-only rooms */
     skipSkillingRooms: false,
+    /** `combatSim_partyFinder`: off unless a test turns the Party tab on */
+    partyFinder: false,
     settingChangeCallbacks: new Map(),
     /** The `getSettingValue` mock's `profitCalc_keyPricingMode`, for the pricing quick-settings row */
     keyPricingMode: 'ask',
@@ -169,8 +175,11 @@ vi.mock('../../core/config.js', () => ({
             if (key === 'combatSim_autoVerifyCloseCalls') return mocks.autoVerify;
             return fallback;
         },
-        getSetting: (key, fallback = false) =>
-            key === 'combatSim_upgradeSkipSkillingRooms' ? mocks.skipSkillingRooms : fallback,
+        getSetting: (key, fallback = false) => {
+            if (key === 'combatSim_upgradeSkipSkillingRooms') return mocks.skipSkillingRooms;
+            if (key === 'combatSim_partyFinder') return mocks.partyFinder;
+            return fallback;
+        },
         // Real `setSetting`/`setSettingValue` fire the registered change callback
         // synchronously; the pricing quick-settings row (and the dropdowns it is
         // built from) depend on that to resync themselves after their own write.
@@ -355,6 +364,7 @@ vi.mock('../market/expected-value-calculator.js', () => ({
         calculateExpectedValue: () => null,
         getCachedValue: () => null,
         calculateSingleContainer: () => null,
+        calculateContainerValueAtTaxRate: () => null,
     },
 }));
 
@@ -385,6 +395,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
     seedSimPriceCache: (cache) => cache,
 
     buildGameDataPayload: () => mocks.gameData,
+    // The Party tab reads the live build only when asked to (Copy my build, or simming as yourself)
+    buildPlayerDTO: () => null,
     buildAllPlayerDTOs: async () =>
         mocks.buildPlayerDTOs
             ? mocks.buildPlayerDTOs()
@@ -394,14 +406,21 @@ vi.mock('./combat-sim-adapter.js', () => ({
     getCommunityBuffs: () => ({}),
     calculateExpectedDrops: () => mocks.drops,
     calculateDungeonKeyCosts: () => [],
-    calculateSimRevenue: (simResult, gameData, playerHrid) => {
+    calculateSimRevenue: (simResult, gameData, playerHrid, _hours, options) => {
         mocks.revenueCalls.push(playerHrid);
+        mocks.revenueOptions.push(options);
         return mocks.revenueFor?.(simResult, playerHrid) || { netPerHour: 0, costPerHour: 0, revenuePerHour: 0 };
     },
     // Faithful to the real one: coin untaxed, cowbell 18%, everything else the
-    // 5% patch-live market rate the suite runs under
-    taxedDropValue: (hrid, v) =>
-        v > 0 && hrid !== '/items/coin' ? v * (1 - (hrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.05)) : v,
+    // 5% patch-live market rate the suite runs under; another player's explicit
+    // rate (0 for an Iron Cow, bags included) when one is passed
+    taxedDropValue: (hrid, v, rate = null) => {
+        mocks.taxedDropRates.push(rate);
+        if (!(v > 0) || hrid === '/items/coin') return v;
+        if (Number.isFinite(rate))
+            return rate === 0 ? v : v * (1 - (hrid === '/items/bag_of_10_cowbells' ? 0.18 : rate));
+        return v * (1 - (hrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.05));
+    },
     getZonesThatDropItem: () => [],
     getGuildBuffDetailMap: () => mocks.guildBuffDetailMap || {},
     guildBuffMaxLevel: (detail) => detail?.maxLevel ?? 20,
@@ -1005,6 +1024,92 @@ describe('planUpgradeBudget', () => {
         expect(plan.picks.map((p) => p.candidate.description)).toEqual(['All-rounder']);
         expect(plan.gainTotal).toBeCloseTo(12);
         expect(plan.provisional).toBe(false);
+    });
+});
+
+describe('planUpgradeBudget keeps a pinned loss as a loss (#562)', () => {
+    const body = () => row('Pinned body', { slot: '/equipment_types/body', cost: 100, profitGain: -1000 });
+    const ring = () => row('Ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 200 });
+    const pin = (r) => [candidateKey(r)];
+
+    test('the issue case: a -1000 pin and a +200 ring total -800, and the pinned row shows -1000', () => {
+        const b = body();
+        const plan = planUpgradeBudget([b, ring()], 500, { baseline: BASELINE, required: pin(b) });
+
+        expect(plan.blocked).toBeNull();
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Pinned body', 'Ring']);
+        expect(plan.picks[0].marginalAttemptsSaved).toBeCloseTo(-1000);
+        expect(plan.picks[1].marginalAttemptsSaved).toBeCloseTo(200);
+        expect(plan.gainTotal).toBeCloseTo(-800);
+    });
+
+    test('a lone losing pin gives a negative total, and an unpinned loser is never auto-picked', () => {
+        const b = body();
+        expect(planUpgradeBudget([b], 500, { baseline: BASELINE, required: pin(b) }).gainTotal).toBeCloseTo(-1000);
+        const free = planUpgradeBudget([b, ring()], 500, { baseline: BASELINE });
+        expect(free.picks.map((p) => p.candidate.description)).toEqual(['Ring']);
+    });
+
+    test('mixed positive, zero and negative pins sum with their signs', () => {
+        const a = row('A', { slot: '/equipment_types/body', profitGain: 300 });
+        const z = row('Z', { slot: '/equipment_types/legs', profitGain: 0 });
+        const n = row('N', { slot: '/equipment_types/neck', profitGain: -500 });
+        const plan = planUpgradeBudget([a, z, n], 1000, { baseline: BASELINE, required: [a, z, n].map(candidateKey) });
+
+        expect(plan.gainTotal).toBeCloseTo(-200);
+        expect(plan.picks.reduce((sum, p) => sum + p.marginalAttemptsSaved, 0)).toBeCloseTo(-200);
+    });
+
+    test('a pin chosen for DPS keeps its profit loss when the plan is on Profit/hr', () => {
+        const b = body();
+        b.metrics.dps = 150;
+        const onProfit = planUpgradeBudget([b], 500, { baseline: BASELINE, metricKey: 'profit', required: pin(b) });
+        const onDps = planUpgradeBudget([b], 500, { baseline: BASELINE, metricKey: 'dps', required: pin(b) });
+
+        expect(onProfit.gainTotal).toBeCloseTo(-1000);
+        expect(onDps.gainTotal).toBeCloseTo(50);
+    });
+
+    test('the inverted deaths axis: a pin that adds deaths is a negative gain, one that avoids them positive', () => {
+        const worse = row('Worse', { slot: '/equipment_types/body' });
+        const better = row('Better', { slot: '/equipment_types/legs' });
+        worse.metrics.deathsPerHour = 3;
+        better.metrics.deathsPerHour = 0.5;
+        const baseline = { ...BASELINE, deathsPerHour: 2 };
+        const plan = planUpgradeBudget([worse, better], 1000, {
+            baseline,
+            metricKey: 'deaths',
+            required: [worse, better].map(candidateKey),
+        });
+
+        expect(plan.picks.find((p) => p.candidate.description === 'Worse').marginalAttemptsSaved).toBeCloseTo(-1);
+        expect(plan.gainTotal).toBeCloseTo(0.5);
+        const metric = UPGRADE_PLAN_METRICS.find((m) => m.key === 'deaths');
+        expect(metric.format(-1)).toBe('1.00/hr more deaths');
+        expect(metric.format(1.5)).toBe('1.50/hr fewer deaths');
+    });
+
+    test('XP, encounters and score pins keep their sign too', () => {
+        for (const [metricKey, patch, expected] of [
+            ['xp', { xpPerHour: 700 }, -300],
+            ['encounters', { encountersPerHour: 8 }, -2],
+            ['score', null, -4],
+        ]) {
+            const r = row('Pin', { slot: '/equipment_types/body' });
+            if (patch) Object.assign(r.metrics, patch);
+            else r.score = -4;
+            const plan = planUpgradeBudget([r], 500, { baseline: BASELINE, metricKey, required: pin(r) });
+            expect(plan.gainTotal).toBeCloseTo(expected);
+        }
+    });
+
+    test('a within-noise pin still carries its loss and the estimate flag', () => {
+        const b = body();
+        b.significant = false;
+        const plan = planUpgradeBudget([b], 500, { baseline: BASELINE, required: pin(b) });
+
+        expect(plan.picks[0].provisional).toBe(true);
+        expect(plan.gainTotal).toBeCloseTo(-1000);
     });
 });
 
@@ -3849,6 +3954,39 @@ describe('the all-zones table', () => {
                 mocks.store.set('settings:combatSimAllZonesScoreScale', 'bogus');
                 await ui._loadZonesScorePref();
                 expect(ui._allZonesScoreScale).toBe(ZONES_SCORE_LADDER);
+            });
+
+            test('a scale picked while the stored one is being read is kept', async () => {
+                mocks.store.set('settings:combatSimAllZonesScoreScale', ZONES_SCORE_LADDER);
+                ui._allZonesScoreScale = ZONES_SCORE_LADDER;
+                const load = ui._loadZonesScorePref();
+                ui._allZonesScoreScale = SCORE_PERCENT;
+                await ui._persistZonesScorePref();
+                await load;
+
+                expect(ui._allZonesScoreScale).toBe(SCORE_PERCENT);
+                expect(mocks.store.get('settings:combatSimAllZonesScoreScale')).toBe(SCORE_PERCENT);
+            });
+
+            test('the max-tier food toggle flipped during a read is neither reverted nor unchecked', async () => {
+                mocks.store.set('settings:combatSimAllZonesMaxTierFood', false);
+                ui._maxTierFoodEnabled = false;
+                const load = ui._loadMaxTierFoodPref();
+                ui._maxTierFoodEnabled = true;
+                const input = ui.panel.querySelector('#mwi-csim-maxfood');
+                input.checked = true;
+                await ui._persistMaxTierFoodPref();
+                await load;
+
+                expect(ui._maxTierFoodEnabled).toBe(true);
+                expect(input.checked).toBe(true);
+            });
+
+            test('with no edit in flight a read still adopts the stored max-tier food value', async () => {
+                mocks.store.set('settings:combatSimAllZonesMaxTierFood', true);
+                await ui._loadMaxTierFoodPref();
+                expect(ui._maxTierFoodEnabled).toBe(true);
+                expect(ui.panel.querySelector('#mwi-csim-maxfood').checked).toBe(true);
             });
         });
 
@@ -6857,6 +6995,179 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
     });
 });
 
+describe('the sale tax of a player other than the live character', () => {
+    const IRON_COW = '/game_mode/ironcow';
+    const sweepResult = [
+        {
+            simulatedTime: 3600 * 1e9,
+            encounters: 10,
+            deaths: { player1: 0 },
+            experienceGained: { player1: { defense: 100 } },
+        },
+    ];
+    // An imported Iron Cow profile: one player, and nobody in the run is the live character
+    const importedIronCow = () => {
+        mocks.editedDTOs = {
+            player1: { hrid: 'player1', gameMode: IRON_COW, equipment: {}, food: [null, null, null] },
+        };
+        mocks.editorSelfHrid = null;
+    };
+
+    beforeEach(() => {
+        mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+        mocks.allZonesResult = sweepResult;
+        mocks.revenueOptions = [];
+        mocks.editorSoloMode = false;
+        ui.buildPanel();
+        ui._allZonesMode = 'group';
+        ui._updateAllZonesUI();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.editorActivePlayer = null;
+        mocks.allZonesArgs = null;
+        mocks.allZonesResult = [];
+        mocks.zones = [];
+        mocks.revenueOptions = [];
+    });
+
+    test('All Zones taxes an imported Iron Cow profile at nothing: early exit, the rows and the later Reprice', async () => {
+        importedIronCow();
+
+        await ui._onSimulateAllZones();
+
+        expect(mocks.allZonesArgs.saleTaxRate).toBe(0);
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => options?.saleTaxRate === 0)).toBe(true);
+
+        mocks.revenueOptions = [];
+        ui._repriceAllZonesResults();
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => options?.saleTaxRate === 0)).toBe(true);
+        // A redraw alone (a sort click) keeps the run's tax for the Reprice after it
+        await ui._displayAllZonesResults(ui._allZonesResults, 1, {}, 'player1');
+        expect(ui._allZonesRedrawArgs.saleTaxRate).toBe(0);
+    });
+
+    test('All Zones leaves the live character exactly as before: no rate passed anywhere', async () => {
+        // Their DTO even says Iron Cow: for the live character the live status is what counts
+        mocks.editedDTOs = {
+            player1: { hrid: 'player1', gameMode: IRON_COW, equipment: {}, food: [null, null, null] },
+        };
+        mocks.editorSelfHrid = 'player1';
+
+        await ui._onSimulateAllZones();
+
+        expect('saleTaxRate' in mocks.allZonesArgs).toBe(false);
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => !('saleTaxRate' in options))).toBe(true);
+        mocks.revenueOptions = [];
+        ui._repriceAllZonesResults();
+        expect(mocks.revenueOptions.every((options) => !('saleTaxRate' in options))).toBe(true);
+    });
+
+    test('All Zones on a teammate beside the live character taxes them as they pay it', async () => {
+        mocks.editedDTOs = {
+            player1: { hrid: 'player1', equipment: {}, food: [null, null, null] },
+            player2: { hrid: 'player2', gameMode: IRON_COW, equipment: {}, food: [null, null, null] },
+        };
+        mocks.editorSelfHrid = 'player1';
+        mocks.editorActivePlayer = 'player2';
+        mocks.editorSoloMode = true;
+        mocks.allZonesResult = [{ ...sweepResult[0], deaths: { player2: 0 }, experienceGained: { player2: {} } }];
+
+        await ui._onSimulateAllZones();
+
+        expect(mocks.allZonesArgs.saleTaxRate).toBe(0);
+        expect(mocks.revenueOptions.every((options) => options?.saleTaxRate === 0)).toBe(true);
+    });
+
+    test('Seek taxes an imported Iron Cow profile at nothing, and the live character at the live rate', async () => {
+        const adapter = await import('./combat-sim-adapter.js');
+        const dropSpy = vi
+            .spyOn(adapter, 'getZonesThatDropItem')
+            .mockReturnValue([{ hrid: '/actions/combat/fly', name: 'Fly', difficultyTier: 0 }]);
+        mocks.drops = new Map([['/items/cheese', 5]]);
+        const seek = async () => {
+            ui.panel.querySelector('#mwi-csim-seek-input').value = 'Cheese';
+            ui._seekItems = [{ itemHrid: '/items/cheese', name: 'Cheese' }];
+            ui._seekSelectedItem = { itemHrid: '/items/cheese', name: 'Cheese' };
+            mocks.revenueOptions = [];
+            await ui._onSeek();
+        };
+
+        importedIronCow();
+        await seek();
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => options?.saleTaxRate === 0)).toBe(true);
+
+        mocks.editorSelfHrid = 'player1';
+        await seek();
+        dropSpy.mockRestore();
+        mocks.drops = new Map();
+        expect(mocks.revenueOptions.length).toBeGreaterThan(0);
+        expect(mocks.revenueOptions.every((options) => !('saleTaxRate' in options))).toBe(true);
+    });
+});
+
+describe('the single-zone Results of a player other than the live character', () => {
+    const IRON_COW = '/game_mode/ironcow';
+    const run = async (selfHrid) => {
+        mocks.editedDTOs = {
+            player1: { hrid: 'player1', gameMode: IRON_COW, equipment: {}, food: [null, null, null] },
+        };
+        mocks.editorSelfHrid = selfHrid;
+        mocks.taxedDropRates = [];
+        await ui._onSimulate();
+        return ui._simHistory[ui._simHistory.length - 1];
+    };
+
+    beforeEach(() => {
+        mocks.characterId = 'char1';
+        mocks.onRun = null;
+        mocks.buildPlayerDTOs = null;
+        mocks.editorSoloMode = false;
+        mocks.editorActivePlayer = null;
+        mocks.pricingMode = 'hybrid';
+        mocks.patientTick = false;
+        // The panel is a singleton: an All Zones mode an earlier test turned on would route Simulate to a sweep
+        ui._allZonesMode = null;
+        mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+        mocks.simResult = oneHourFight({ zoneName: '/actions/combat/fly', difficultyTier: 0 });
+        mocks.drops = new Map([['/items/cheese', 100]]);
+        mocks.prices['/items/cheese'] = { bid: 8, ask: 10 };
+        ui.buildPanel();
+        selectZone();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.simResult = null;
+        mocks.zones = [];
+        mocks.drops = new Map();
+        mocks.prices = {};
+        mocks.taxedDropRates = [];
+    });
+
+    test('an imported Iron Cow profile is shown and compared at no sale tax', async () => {
+        const entry = await run(null);
+        expect(mocks.taxedDropRates.length).toBeGreaterThan(0);
+        expect(mocks.taxedDropRates.every((rate) => rate === 0)).toBe(true);
+        expect(entry.metrics.revenuePerHr).toBeGreaterThan(0);
+        const untaxed = entry.metrics.revenuePerHr;
+
+        // The live character keeps the live rate, whatever their DTO says
+        const live = await run('player1');
+        expect(mocks.taxedDropRates.every((rate) => rate === null)).toBe(true);
+        expect(live.metrics.revenuePerHr).toBeCloseTo(untaxed * 0.95, 6);
+    });
+});
+
 describe('a dungeon run with no wave figure', () => {
     beforeEach(() => {
         mocks.drops = new Map();
@@ -7176,6 +7487,20 @@ describe('the budget box', () => {
         ui.destroy();
     });
 
+    test('a typed budget of 0 still plans a refunding pick; an empty box shows nothing', () => {
+        const refund = row('Ring', { slot: '/equipment_types/ring', cost: -40, profitGain: 50 });
+        ui._upgradeBudget = 0;
+
+        ui._upgradeBudgetText = '0';
+        expect(ui._renderUpgradeBudget([refund], BASELINE)).toContain('Ring');
+
+        ui._upgradeBudgetText = '';
+        const empty = ui._renderUpgradeBudget([refund], BASELINE);
+        expect(empty).not.toContain('Ring');
+        expect(empty).not.toContain('Nothing in the list');
+        ui._upgradeBudgetText = '';
+    });
+
     test('a plan made of unproven gains says so on its face', () => {
         const html = ui._renderUpgradeBudget([abilityRow('Berserk', { hrid: '/abilities/berserk' })], BASELINE);
 
@@ -7190,6 +7515,24 @@ describe('the budget box', () => {
 
         expect(html).toContain('Ring');
         expect(html).not.toContain('Ranked on estimates');
+    });
+
+    test('a shrine pick with no token rate says the total leaves the guild tokens out', () => {
+        const shrine = row('Force Shrine Lv3 → Lv4', { slot: 'guild_shrine_force', cost: 3000, profitGain: 50 });
+        shrine.costDetail = { partialCost: 'guild tokens not priced', buys: [], credits: [], net: 3000 };
+        const html = ui._renderUpgradeBudget([shrine], BASELINE);
+
+        expect(html).toContain('+ guild tokens not priced');
+        expect(html).toContain('Force Shrine Lv3 → Lv4');
+    });
+
+    test('a fully priced plan carries no such note', () => {
+        const html = ui._renderUpgradeBudget(
+            [row('Ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 })],
+            BASELINE
+        );
+
+        expect(html).not.toContain('guild tokens not priced');
     });
 
     test('and nothing affordable is still nothing affordable', () => {
@@ -9539,6 +9882,23 @@ describe('the cost basis detail', () => {
         expect(html).toContain('Enhance rates: Yours.');
     });
 
+    test('a piece with no sale price says nothing is credited back for it', () => {
+        const html = ui._renderUpgradeCostBasis({
+            costSource: 'market',
+            costDetail: {
+                gross: 5_000_000,
+                credit: 0,
+                credits: [
+                    { name: 'Nature Top', enhancementLevel: 0, price: 0, noSalePrice: true },
+                    { name: 'Wooden Sword', enhancementLevel: 0, price: 100 },
+                ],
+            },
+            candidate: {},
+        });
+        expect(html).toContain('No sale price for Nature Top, so nothing is credited back for it.');
+        expect(html).not.toContain('Wooden Sword');
+    });
+
     test('a row with no sweep behind it says nothing about benches', () => {
         const html = ui._renderUpgradeCostBasis({
             costSource: 'market',
@@ -10853,6 +11213,22 @@ describe('the Triggers option', () => {
         expect(mocks.triggerRuns[0].include).toBe('abilities');
         expect(mocks.triggerRuns[0].objective).toBe('profit');
         expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
+    });
+
+    test('tells the optimizer who the live character is, so anyone else is taxed as they pay it', async () => {
+        const run = async () => {
+            ui.buildPanel();
+            selectZone();
+            onlyTriggers();
+            mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
+            await ui._onUpgradeAnalyze();
+            return mocks.triggerRuns.at(-1).selfHrid;
+        };
+        mocks.editorSelfHrid = 'player1';
+        expect(await run()).toBe('player1');
+        // An imported profile: nobody in the run is the live character
+        mocks.editorSelfHrid = null;
+        expect(await run()).toBeNull();
     });
 
     test('the result box minimizes to its headline and stays minimized on the next run', async () => {
@@ -13046,5 +13422,72 @@ describe('pinning and excluding picks in the budget plan (#545)', () => {
 
         expect(planText()).toContain('Nothing in the list both fits');
         expect(container().querySelectorAll('[data-budget-constraint="Excluded"]')).toHaveLength(3);
+    });
+});
+
+describe('the Party tab follows its setting', () => {
+    afterEach(() => {
+        ui.destroy();
+        mocks.partyFinder = false;
+    });
+
+    test('off: no tab, and switching to it lands on Configure', () => {
+        mocks.partyFinder = false;
+        ui.buildPanel();
+        expect(ui.panel.querySelector('#mwi-csim-tab-party').style.display).toBe('none');
+        expect(ui.panel.querySelector('.mwi-csim-party-finder')).toBeNull();
+        ui._switchTab('party');
+        expect(ui._activeMainTab).toBe('configure');
+    });
+
+    test('on: the tab is built; turned off live, it goes, nodes and all; on again, it comes back', () => {
+        mocks.partyFinder = true;
+        ui.buildPanel();
+        expect(ui.panel.querySelector('#mwi-csim-tab-party').style.display).toBe('');
+        ui._switchTab('party');
+        expect(ui._activeMainTab).toBe('party');
+        expect(ui.panel.querySelector('#mwi-csim-party-content').style.display).toBe('flex');
+        expect(ui.panel.querySelector('.mwi-csim-party-finder')).not.toBeNull();
+
+        mocks.partyFinder = false;
+        mocks.settingChangeCallbacks.get('combatSim_partyFinder')?.('combatSim_partyFinder', false);
+        expect(ui._partyFinder).toBeNull();
+        expect(ui.panel.querySelector('.mwi-csim-party-finder')).toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-tab-party').style.display).toBe('none');
+        expect(ui._activeMainTab).toBe('configure');
+
+        mocks.partyFinder = true;
+        mocks.settingChangeCallbacks.get('combatSim_partyFinder')?.('combatSim_partyFinder', true);
+        expect(ui.panel.querySelector('.mwi-csim-party-finder')).not.toBeNull();
+    });
+
+    test('Simulate refuses while a party search runs instead of cancelling it', async () => {
+        mocks.partyFinder = true;
+        ui.buildPanel();
+        ui._partyFinder._running = true;
+        ui.isRunning = true;
+        await ui._onSimulate();
+        expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe(
+            'A party search is running. Stop it on the Party tab first.'
+        );
+        // Still running: nothing cancelled it, and the tab was not switched away
+        expect(ui.isRunning).toBe(true);
+        ui._partyFinder._running = false;
+        ui.isRunning = false;
+    });
+
+    test('a party search in flight makes the panel busy, and destroy lets the tab go', () => {
+        mocks.partyFinder = true;
+        ui.buildPanel();
+        const tab = ui._partyFinder;
+        tab._running = true;
+        expect(ui._isBusy()).toBe(true);
+        tab._running = false;
+        ui.destroy();
+        expect(tab.root).toBeNull();
+        expect(ui._partyFinder).toBeNull();
+        expect(mocks.settingChangeCallbacks.has('combatSim_partyFinder')).toBe(false);
+        // destroy() runs again in afterEach; build a panel for it to take down
+        ui.buildPanel();
     });
 });

@@ -1568,6 +1568,25 @@ describe('what a run costs, through the real Markov chain', () => {
         expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeNull();
     });
 
+    test('a material priced by a craft with an unpriced input makes the run unpriced, not cheaper', () => {
+        expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeGreaterThan(0);
+
+        // Crafted from a priced shard and a dust nobody sells: the craft figure is a partial bill
+        game.details['/items/crafted_charm'] = { name: 'Crafted Charm' };
+        game.details['/items/dust'] = { name: 'Dust' };
+        game.actions['/actions/make_charm'] = {
+            type: '/action_types/crafting',
+            inputItems: [
+                { itemHrid: '/items/shard', count: 1 },
+                { itemHrid: '/items/dust', count: 1 },
+            ],
+            outputItems: [{ itemHrid: '/items/crafted_charm', count: 1 }],
+        };
+        game.details['/items/sinister_cape'].enhancementCosts.push({ itemHrid: '/items/crafted_charm', count: 1 });
+
+        expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeNull();
+    });
+
     test('the two levels the report was about, the right way round', () => {
         const fromFive = enhancementCost('/items/sinister_cape', 7, 5);
         const fromFour = enhancementCost('/items/sinister_cape', 7, 4);

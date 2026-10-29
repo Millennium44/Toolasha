@@ -84,7 +84,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
     // what the remembered-selection restore leans on
     applyLoadoutSnapshotToDTO: (dto, name) => {
         bridge.applied.push(name);
-        const found = bridge.snapshots.some((snap) => snap.name === name);
+        // The real one takes a snapshot object as given, without a name lookup
+        const found = name && typeof name === 'object' ? true : bridge.snapshots.some((snap) => snap.name === name);
         // The real function mutates the DTO to match the snapshot; a test that
         // cares whether a legitimate loadout/current-gear difference gets
         // mistaken for a hand edit needs that mutation to actually happen.
@@ -1331,6 +1332,26 @@ describe('the loadout target can be a non-self tab, even with self loaded', () =
     });
 });
 
+describe('a loadout handed over as a snapshot', () => {
+    test('is applied as given, not looked up by a name another loadout shares', () => {
+        // The Lab resolves each monster's loadout by the server's id; sent back by name, the editor applied
+        // the first of two loadouts called the same thing
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('player1')], ['A']);
+        const first = { id: 3, name: 'Lab', actionTypeHrid: '/action_types/combat' };
+        const assigned = { id: 7, name: 'Lab', actionTypeHrid: '/action_types/combat' };
+        bridge.snapshots = [first, assigned];
+        bridge.applied = [];
+
+        expect(editor.applyLoadoutByName(assigned)).toBe(true);
+
+        expect(bridge.applied[0]).toBe(assigned);
+        expect(editor.getSelectedLoadoutName()).toBe('Lab');
+        expect(editor.getLoadoutNameFor('player1')).toBe('Lab');
+    });
+});
+
 function engineAchievementTypes(dto) {
     const off = new Set(dto.achievementBuffsOff);
     return dto.achievementCombatBuffs.map((b) => b.typeHrid).filter((t) => !off.has(t));
@@ -2454,5 +2475,118 @@ describe('applying optimizer trigger values', () => {
         ]);
         expect(out.applied).toBe(2);
         expect(slotOf(editor).triggers.map((t) => t.value)).toEqual([700, 30]);
+    });
+});
+
+describe('loadParty (the Party Finder hands a whole party over)', () => {
+    test('replaces the scenario: you are player1, teammates follow, each a copy', () => {
+        const { editor } = editorWithStrangers();
+        const me = { ...emptyDTO('player4'), magicLevel: 90 };
+        const mate = { ...emptyDTO('player9'), magicLevel: 120 };
+        editor.loadParty([me, mate], ['Milkman', 'Bob'], { selfIsLive: true });
+
+        expect(editor.getPlayerInfo()).toEqual([
+            { hrid: 'player1', name: 'Milkman' },
+            { hrid: 'player2', name: 'Bob' },
+        ]);
+        expect(editor.getSelfHrid()).toBe('player1');
+        expect(editor.getActiveEditPlayer()).toBe('player1');
+        const dtos = editor.getEditedDTOs();
+        expect(dtos.player2.magicLevel).toBe(120);
+        // Copies: the caller's objects are not adopted
+        expect(mate.hrid).toBe('player9');
+        dtos.player2.magicLevel = 1;
+        expect(mate.magicLevel).toBe(120);
+    });
+
+    test('the live self keeps the house rooms and shrines it was simmed with, hand edits included', () => {
+        const FORCE = '/guild_buffs/force_combat';
+        guild.detailMap = { [FORCE]: { hrid: FORCE, isCombat: true, sortIndex: 1 } };
+        guild.levels = { [FORCE]: 3 };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        game.selfDTO.houseRooms = { '/house_rooms/dojo': 2, '/house_rooms/garden': 8 };
+        game.selfDTO.guildShrineLevels = { [FORCE]: 3 };
+        game.houseRooms = new Map([
+            ['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 2 }],
+            ['/house_rooms/garden', { houseRoomHrid: '/house_rooms/garden', level: 8 }],
+        ]);
+        editor.resetToSelf();
+        // "What would Dojo 5 and Force 9 buy me?" — the build the Party tab sims as "you"
+        const me = editor.getEditedDTOs().player1;
+        me.houseRooms['/house_rooms/dojo'] = 5;
+        me.guildShrineLevels[FORCE] = 9;
+        const simmed = structuredClone(me);
+        const mate = { ...emptyDTO('player2'), houseRooms: { '/house_rooms/dojo': 7 } };
+
+        editor.loadParty([simmed, mate], ['Milkman', 'Bob'], { selfIsLive: true });
+
+        // The game has not moved; the loaded party is the one the finder simmed
+        const dtos = editor.getEditedDTOs();
+        expect(dtos.player1.houseRooms['/house_rooms/dojo']).toBe(5);
+        expect(dtos.player1.guildShrineLevels[FORCE]).toBe(9);
+        expect(dtos.player2.houseRooms['/house_rooms/dojo']).toBe(7);
+        // An untouched room still follows the game
+        game.houseRooms.set('/house_rooms/garden', { houseRoomHrid: '/house_rooms/garden', level: 9 });
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/garden']).toBe(9);
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(5);
+    });
+
+    test('the baseline is the game, not an outgoing original a hand edit held back', () => {
+        const FORCE = '/guild_buffs/force_combat';
+        guild.detailMap = { [FORCE]: { hrid: FORCE, isCombat: true, sortIndex: 1 } };
+        guild.levels = { [FORCE]: 3 };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        game.selfDTO.houseRooms = { '/house_rooms/dojo': 2 };
+        game.selfDTO.guildShrineLevels = { [FORCE]: 3 };
+        game.houseRooms = new Map([['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 2 }]]);
+        editor.resetToSelf();
+        // Hand-edited to 5 and 9, so the sync stops moving the outgoing original for them
+        editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo'] = 5;
+        editor.getEditedDTOs().player1.guildShrineLevels[FORCE] = 9;
+        // The real room and shrine are upgraded meanwhile
+        game.houseRooms.set('/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 3 });
+        guild.levels = { [FORCE]: 4 };
+        editor.getEditedDTOs();
+
+        // "My current build": the live levels, loaded as player1
+        const current = {
+            ...emptyDTO('player1'),
+            houseRooms: { '/house_rooms/dojo': 3 },
+            guildShrineLevels: { [FORCE]: 4 },
+            guildCombatBuffs: [{ from: FORCE, level: 4 }],
+        };
+        editor.loadParty([current], ['Milkman'], { selfIsLive: true });
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(3);
+
+        // Unedited, so it follows the next upgrade
+        game.houseRooms.set('/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 4 });
+        guild.levels = { [FORCE]: 5 };
+        const after = editor.getEditedDTOs().player1;
+        expect(after.houseRooms['/house_rooms/dojo']).toBe(4);
+        expect(after.guildShrineLevels[FORCE]).toBe(5);
+        expect(after.guildCombatBuffs).toContainEqual({ from: FORCE, level: 5 });
+
+        // A what-if loaded the same way stays put
+        editor.loadParty(
+            [{ ...current, houseRooms: { '/house_rooms/dojo': 7 }, guildShrineLevels: { [FORCE]: 9 } }],
+            ['Milkman'],
+            { selfIsLive: true }
+        );
+        game.houseRooms.set('/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 5 });
+        guild.levels = { [FORCE]: 6 };
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(7);
+        expect(editor.getEditedDTOs().player1.guildShrineLevels[FORCE]).toBe(9);
+    });
+
+    test('a self that is not the live character is not synced from the game', () => {
+        const { editor } = editorWithStrangers();
+        const imported = emptyDTO('player1');
+        imported.houseRooms = { '/house_rooms/dojo': 5 };
+        editor.loadParty([imported], ['Imported me'], { selfIsLive: false });
+        game.houseRooms = new Map([['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 2 }]]);
+        expect(editor.getSelfHrid()).toBeNull();
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(5);
     });
 });

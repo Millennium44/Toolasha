@@ -1976,7 +1976,8 @@ class LabSimUI {
         if (!loadoutId) return;
         const snapshot = (loadoutSnapshot() || bundledLoadoutSnapshot).snapshots[loadoutId];
         if (!snapshot?.name) return;
-        this._editor.applyLoadoutByName(snapshot.name);
+        // The snapshot itself, not its name: two loadouts can share a name, and a name lookup applies the first
+        this._editor.applyLoadoutByName(snapshot);
     }
 
     /** @private */
@@ -3491,9 +3492,9 @@ class LabSimUI {
             'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa; border-radius:6px; ' +
             'padding:4px 10px; font-size:12px; cursor:pointer; font-family:inherit;';
         const what =
-            'Tune the numbers in each loadout’s trigger rows (how much enemy HP an ability waits for, how low ' +
-            'your HP or MP gets before a food or drink fires) to need fewer attempts in the labyrinth fights the ' +
-            'loadout is assigned to. Tunes the fights the Upgrade tab’s Targets scope names (the Configure fight, ' +
+            'Tune the numbers in each loadout’s ability trigger rows (how much enemy HP an ability waits for, how ' +
+            'low your HP or MP gets before a heal fires) to need fewer attempts in the labyrinth fights the ' +
+            'loadout is assigned to. The labyrinth allows no food or drink, so only abilities are tuned. Tunes the fights the Upgrade tab’s Targets scope names (the Configure fight, ' +
             'all targets, or the chosen ones). Only simulates: set any change in the game by hand.';
         bar.innerHTML = `
             <div id="mwi-labsim-trigger-header" style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;"
@@ -4726,12 +4727,19 @@ class LabSimUI {
         // the first run's results.
         if (this._upgradeRunning || this._skillingRunning || this._runStarting || this.isRunning) return;
         this._upgradeRunning = true;
-        // A remembered result a sync pull brings is no longer drawn over this panel's own runs
-        this._upgradeRunStarted = true;
         const startToken = ++this._runStartToken;
 
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
+        // Whether this invocation is still the one the panel is running: a teardown bumps the token (a
+        // character switch, or the feature turned off and on for the same character), and after that the
+        // run's results, its status line and the `_upgradeRunning` guard belong to the panel built since
+        const isCurrent = () =>
+            startToken === this._runStartToken && Boolean(this.panel) && this._stillSameCharacter(ownerId);
+        // Released only by the run that holds it, so a stale run cannot unlock a newer run's guard
+        const release = () => {
+            if (startToken === this._runStartToken) this._upgradeRunning = false;
+        };
 
         const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
         const monsterHrid = this.panel.querySelector('#mwi-labsim-monster')?.value;
@@ -4776,7 +4784,6 @@ class LabSimUI {
             this._upgradeRunning = false;
             return;
         }
-
         let playerDTOs;
         let selfHrid = null;
         try {
@@ -4809,6 +4816,10 @@ class LabSimUI {
             this._upgradeRunning = false;
             return;
         }
+        // A remembered result a sync pull brings is no longer drawn over this panel's own runs. Set once the
+        // run is really starting: a press that ran nothing (no sets ticked, a failed profile read) must not stop
+        // a pull from repainting the table. While the profile loads, `_upgradeRunning` already holds it off
+        this._upgradeRunStarted = true;
 
         const communityBuffs = getCommunityBuffs();
         // Both halves of the same answer: the buff array the sims run under, and
@@ -4894,6 +4905,10 @@ class LabSimUI {
                 communityBuffs,
                 labyrinthCombatBuffs,
             });
+            if (!isCurrent()) {
+                release();
+                return;
+            }
             if (!roomLevel || this._upgradeAborted) {
                 if (!this._upgradeAborted) {
                     this._setStatus(
@@ -4904,7 +4919,7 @@ class LabSimUI {
                 progressEl.style.display = 'none';
                 runBtn.style.display = '';
                 stopBtn.style.display = 'none';
-                this._upgradeRunning = false;
+                release();
                 return;
             }
         }
@@ -4969,10 +4984,25 @@ class LabSimUI {
                         { abortSignal: () => this._upgradeAborted }
                     );
 
+                    // A run torn down mid-analysis draws nothing on the panel built since
+                    if (!isCurrent()) return;
+                    // A fresh run supersedes any restored set, so its banner goes
+                    this._restoredUpgradeAt = null;
+                    this._restoredUpgradeMeta = null;
                     this._registerVerifyLive('all', analysisResult, ownerId);
                     this._renderAllFightsResults(analysisResult, resultsEl);
                     // Marked, so a reload draws it with the all-fights renderer rather than the single-fight one
                     if (analysisResult?.results?.length) allFightsAnalysis = { ...analysisResult, allFights: true };
+                    // Remembered here unless the order pass follows, which saves this table with its section.
+                    // Unsaved, a reload brought back whichever older run was remembered instead of this one
+                    // Not a stopped run's partial rows: they would replace a complete remembered run
+                    if (allFightsAnalysis && !plan.includeAbilityOrder && !this._upgradeAborted) {
+                        const playerIndex =
+                            parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+                        this._saveLabUpgradeResults(allFightsAnalysis, {
+                            characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
+                        });
+                    }
                 }
                 if (plan.includeAbilityOrder && startToken === this._runStartToken && !this._upgradeAborted) {
                     await this._runUpgradeAbilityOrder({
@@ -4993,7 +5023,7 @@ class LabSimUI {
                 }
                 await this._autoVerifyCloseCalls({ startToken, ownerId });
             } catch (error) {
-                if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
+                if (isCurrent() && error.message !== 'Cancelled' && error.message !== 'Aborted') {
                     console.error('[LabSimUI] All-fights analysis failed:', error);
                     this._setStatus('All-fights analysis failed: ' + error.message);
                 }
@@ -5001,7 +5031,7 @@ class LabSimUI {
                 progressEl.style.display = 'none';
                 runBtn.style.display = '';
                 stopBtn.style.display = 'none';
-                this._upgradeRunning = false;
+                release();
             }
             return;
         }
@@ -5064,6 +5094,8 @@ class LabSimUI {
                                 guildShrineCapToGuild,
                                 communityBuffs,
                                 communityBuffTargetLevel: this._getCommunityTargetLevel(),
+                                // The rule `runLabyrinthUpgradeAnalysis` reads `isSelf` by
+                                isSelf: selfHrid != null && playerDTOs[playerIndex]?.hrid === selfHrid,
                             }
                         ),
                     },
@@ -5081,6 +5113,9 @@ class LabSimUI {
                     { abortSignal: () => this._upgradeAborted }
                 );
 
+                // A run torn down mid-analysis draws and saves nothing: its result may be a stopped partial one,
+                // and the panel and remembered set now belong to whoever the panel was rebuilt for
+                if (!isCurrent()) return;
                 // A fresh run supersedes any restored set — drop the "from a previous
                 // run" note before drawing, and remember the new results (opt-in).
                 this._restoredUpgradeAt = null;
@@ -5095,7 +5130,7 @@ class LabSimUI {
                 // analysis they were keeping
                 if (analysisResult?.results?.length && this._stillSameCharacter(ownerId)) {
                     const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
-                    saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, analysisResult, {
+                    this._saveLabUpgradeResults(analysisResult, {
                         characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
                     });
                 }
@@ -5133,7 +5168,7 @@ class LabSimUI {
             }
             await this._autoVerifyCloseCalls({ startToken, ownerId });
         } catch (error) {
-            if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
+            if (isCurrent() && error.message !== 'Cancelled' && error.message !== 'Aborted') {
                 console.error('[LabSimUI] Upgrade analysis failed:', error);
                 this._setStatus('Upgrade analysis failed: ' + error.message);
             }
@@ -5141,7 +5176,7 @@ class LabSimUI {
             progressEl.style.display = 'none';
             runBtn.style.display = '';
             stopBtn.style.display = 'none';
-            this._upgradeRunning = false;
+            release();
         }
     }
 
@@ -5160,7 +5195,7 @@ class LabSimUI {
      * @param {Object} gameData - From `buildGameDataPayload`
      * @param {Object} options - `{ abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets,
      *   auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
-     *   guildShrineCapToGuild }`
+     *   guildShrineCapToGuild, isSelf }`
      * @returns {Array<Object>} Candidates, deduplicated by the analysis itself
      * @private
      */
@@ -5179,6 +5214,7 @@ class LabSimUI {
             guildShrineCapToGuild = false,
             communityBuffs = null,
             communityBuffTargetLevel = 0,
+            isSelf = true,
         } = options;
         try {
             return modes.flatMap((mode) =>
@@ -5201,6 +5237,9 @@ class LabSimUI {
                         communityBuffTargetLevel,
                         guildShrineTargets,
                         guildShrineCapToGuild,
+                        // As the analysis's own mode is generated: a party member's swaps are not levelled from
+                        // the live character's ability books
+                        isSelf,
                     }
                 )
             );
@@ -6239,12 +6278,20 @@ class LabSimUI {
             'padding:2px 8px; font-size:11px; cursor:pointer;';
 
         let body = '';
-        if (budget > 0) {
+        // A typed 0 is a budget: free and refunding picks cost nothing. An empty or unreadable box
+        // is not one (parseKMB answers NaN for it) and shows nothing.
+        if (budget > 0 || Number.isFinite(parseKMB(this._allFightsBudgetText))) {
             const plan = planWithinBudget(results, budget, { baselineFights });
             if (!plan.picks.length) {
-                body = `<div style="color:#888; font-size:11px;">Nothing in the list fits ${money(budget)}${
-                    plan.skipped.length ? ' — the cheapest measured upgrade costs more.' : '.'
-                }</div>`;
+                // "Costs more" is true only of an upgrade skipped for being over budget; a row dropped as
+                // noise, excluded or already covered says nothing about its price
+                const overBudget = plan.skipped.some((s) => s.reason === 'over budget');
+                const why = overBudget
+                    ? ' — the cheapest measured upgrade costs more.'
+                    : plan.skipped.length
+                      ? ' — nothing listed fits the budget and improves the metric.'
+                      : '.';
+                body = `<div style="color:#888; font-size:11px;">Nothing in the list fits ${money(budget)}${why}</div>`;
             } else {
                 const rows = plan.picks
                     .map((pick) => {
@@ -6273,6 +6320,14 @@ class LabSimUI {
                             plan.totalCost < 0
                                 ? `${money(-plan.totalCost)} back, none of ${money(budget)} spent`
                                 : `${money(plan.totalCost)} of ${money(budget)}`
+                        }${
+                            // A pick priced on part of its bill (shrine credits with no token rate) makes
+                            // the total a floor, so it says what it leaves out
+                            plan.partialCostPicks?.length
+                                ? ` <span data-budget-partial-cost style="color:#ff9800;" title="${plan.partialCostPicks
+                                      .join(', ')
+                                      .replace(/"/g, '&quot;')}">+ guild tokens not priced</span>`
+                                : ''
                         } ·
                         <span style="color:#4caf50; font-weight:600;">−${plan.attemptsSaved.toFixed(1)} attempts</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
@@ -7213,7 +7268,7 @@ class LabSimUI {
         // record is replaced whole, so skipping it would bring an older run's section back on reload
         if (this._stillSameCharacter(ownerId)) {
             const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
-            saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, savedAnalysis || { results: [] }, {
+            this._saveLabUpgradeResults(savedAnalysis || { results: [] }, {
                 characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
                 orderSection: section,
             });
@@ -7525,6 +7580,10 @@ class LabSimUI {
             : levelsOnly
               ? ''
               : this._renderBudgetPlan(goldResults, baseline);
+        // A remembered all-targets table says so, as the single-fight table does
+        if (!checked && this._restoredUpgradeAt) {
+            html = this._restoredUpgradeNote(this._restoredUpgradeAt, this._restoredUpgradeMeta) + html;
+        }
         html += `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
@@ -7638,6 +7697,7 @@ class LabSimUI {
         if (!checked) html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
         container.innerHTML = html;
         if (checked) this._wireCheckedHeading('combat', container);
+        else this._wireRememberedClear(container);
 
         if (!checked)
             this._addCsvExport(container, 'labsim-all-fights', () => ({
@@ -8041,9 +8101,15 @@ class LabSimUI {
      */
     async _restoreUpgradeResults({ replace = false } = {}) {
         try {
-            const container = this.panel?.querySelector('#mwi-labsim-upgrade-results');
+            const panel = this.panel;
+            const container = panel?.querySelector('#mwi-labsim-upgrade-results');
             if (!container || (container.querySelector('table') && !replace)) return;
+            // The read is scoped to whoever is current now; captured so a switch while it is out is noticed
+            const ownerId = dataManager.getCurrentCharacterId();
             const payload = await loadUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
+            // A teardown while the read was out (a character switch) rebuilt the panel: this payload is the
+            // departing panel's, and its banner state and order section must not land on the new one
+            if (this.panel !== panel || !this._stillSameCharacter(ownerId)) return;
             // Whatever the read's kind: an analysis (an order-only one draws no table to notice) that started
             // or finished while it was out owns the panel, and the older saved payload must not paint over it
             if (this._upgradeRunning || this._upgradeRunStarted) return;
@@ -8059,7 +8125,10 @@ class LabSimUI {
             }
             if (!this.panel || (container.querySelector('table') && !replace)) return;
             this._restoredUpgradeAt = payload.savedAt || null;
-            this._restoredUpgradeMeta = { characterName: payload.characterName || null };
+            this._restoredUpgradeMeta = {
+                characterName: payload.characterName || null,
+                pricingLabel: payload.pricingLabel || null,
+            };
             // An order-only run saved no table, only its section
             // A combined all-fights run saved its own table, marked, and draws with the renderer the run used
             if (payload.data?.results?.length && payload.data.allFights) {
@@ -8085,16 +8154,55 @@ class LabSimUI {
         // A payload from before the name was stored renders the old sentence.
         // No zone half here - the lab is the zone
         const who = meta?.characterName ? escapeHtmlAttribute(meta.characterName) : null;
+        // Costs were read at the pricing the run was saved under; said when that is no longer the one set
+        const pricedUnder = meta?.pricingLabel || null;
+        const pricingNow = config.getPricingModeDisplayLabel?.() || null;
+        const repriced =
+            pricedUnder && pricingNow && pricedUnder !== pricingNow
+                ? ` Costs were priced at ${escapeHtmlAttribute(pricedUnder)}; prices are now set to ` +
+                  `${escapeHtmlAttribute(pricingNow)}.`
+                : '';
         return (
             `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; display:flex; ` +
             `align-items:center; justify-content:space-between; gap:8px; ` +
             `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
-            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.</span>` +
+            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.${repriced}</span>` +
             `<button data-clear-remembered-upgrade title="Forget these remembered results. Does not affect a running analysis." ` +
             `style="flex:0 0 auto; background:transparent; color:#9ab; border:1px solid rgba(120,150,190,0.4); ` +
             `border-radius:3px; padding:1px 6px; font-size:10px; cursor:pointer; font-family:inherit;">Clear</button>` +
             `</div>`
         );
+    }
+
+    /**
+     * Remember a Lab upgrade result for this character, stamped with the pricing its costs were read at.
+     * @param {Object} analysis - The result set to save
+     * @param {Object} meta - `{ characterName, orderSection? }`
+     * @private
+     */
+    _saveLabUpgradeResults(analysis, meta) {
+        saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, analysis, {
+            ...meta,
+            pricingLabel: config.getPricingModeDisplayLabel?.() || null,
+        });
+    }
+
+    /**
+     * Wire the remembered-run banner's Clear button. It forgets the saved run only: the table on screen came
+     * from the render call that drew it and stays right there.
+     * @param {HTMLElement} container - The results container the banner was drawn into
+     * @private
+     */
+    _wireRememberedClear(container) {
+        const clearBtn = container.querySelector('[data-clear-remembered-upgrade]');
+        if (!clearBtn) return;
+        clearBtn.addEventListener('click', async () => {
+            clearBtn.disabled = true;
+            await clearUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
+            this._restoredUpgradeAt = null;
+            this._restoredUpgradeMeta = null;
+            clearBtn.closest('div')?.remove();
+        });
     }
 
     _renderUpgradeResults(analysisResult, container) {
@@ -8450,18 +8558,7 @@ class LabSimUI {
             // wired to the elements it threw away do nothing at all
             combatSimUI.wireUpgradeRowActions(container, 'LabSimUI');
 
-            // Forgets the saved run only — the table on screen came from this
-            // render call and stays right there
-            const clearBtn = container.querySelector('[data-clear-remembered-upgrade]');
-            if (clearBtn) {
-                clearBtn.addEventListener('click', async () => {
-                    clearBtn.disabled = true;
-                    await clearUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
-                    this._restoredUpgradeAt = null;
-                    this._restoredUpgradeMeta = null;
-                    clearBtn.closest('div')?.remove();
-                });
-            }
+            this._wireRememberedClear(container);
         };
 
         renderAll();
@@ -8786,7 +8883,15 @@ class LabSimUI {
         } else if (!detail.kept?.length && detail.credits?.length > 0) {
             for (const credit of detail.credits) {
                 parts.push(
-                    line(`Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`, '#8bc34a')
+                    credit.noSalePrice
+                        ? line(
+                              `Sell ${credit.name} +${credit.enhancementLevel} — no sale price, so nothing is credited back`,
+                              '#ff9800'
+                          )
+                        : line(
+                              `Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`,
+                              '#8bc34a'
+                          )
                 );
             }
             if (detail.creditCapped) {
@@ -8988,9 +9093,11 @@ class LabSimUI {
             html += `<select class="toolasha-select" data-skill-loadout="${skill.hrid}" style="${selectStyle}">`;
             html += `<option value=""${!current ? ' selected' : ''}>Current Gear</option>`;
             for (const snap of [...nonCombatSnapshots, ...allSkillsSnapshots]) {
-                const label = snap.name + (snap.actionTypeHrid ? '' : ' (All)');
+                // Escaped: a loadout is named by the player, and a quote in the name cut the value short, so
+                // picking it saved a name no loadout has and the room silently fell back to current gear
+                const label = escapeHtmlAttribute(snap.name + (snap.actionTypeHrid ? '' : ' (All)'));
                 const selected = current === snap.name ? ' selected' : '';
-                html += `<option value="${snap.name}"${selected}>${label}</option>`;
+                html += `<option value="${escapeHtmlAttribute(snap.name)}"${selected}>${label}</option>`;
             }
             html += '</select></div>';
         }
@@ -9363,7 +9470,14 @@ class LabSimUI {
 
         try {
             const analysisResult = await runSkillingUpgradeAnalysis(
-                { editorDTO: dto, roomLevel, crateHrids, skillEquipmentMap, targetSkill },
+                {
+                    editorDTO: dto,
+                    roomLevel,
+                    crateHrids,
+                    skillEquipmentMap,
+                    targetSkill,
+                    isSelf: Boolean(selfHrid) && dto.hrid === selfHrid,
+                },
                 ({ current, total, description }) => {
                     if (isAborted()) return;
                     const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');
@@ -9430,6 +9544,9 @@ class LabSimUI {
                         roomLevel,
                         targetSkill,
                         gameData,
+                        // An imported profile's single purchase is priced as its parts were: not from the live
+                        // character's held copies
+                        isSelf: Boolean(selfHrid) && dto.hrid === selfHrid,
                     });
                 }
                 if (analysisResult?.baseline && !isAborted()) {
@@ -10346,6 +10463,8 @@ class LabSimUI {
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;
+        // The Find Max box is rebuilt unticked, so the mode it set goes with the panel it belonged to
+        this._labyFindMaxMode = false;
         this._labyResults = null;
         this._upgradeTargetHrids = null;
         // "I picked a crate by hand" is a choice about the panel that is being

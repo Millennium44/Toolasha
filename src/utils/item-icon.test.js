@@ -46,3 +46,14 @@ describe('itemHridFromIcon', () => {
         expect(itemHridFromIcon(undefined, {})).toBeNull();
     });
 });
+
+describe('itemHridFromIcon with an xlink-only icon', () => {
+    test('reads the sprite id off `xlink:href` when the icon has no plain `href`', () => {
+        document.body.innerHTML = `
+            <div class="Item_itemContainer__q">
+                <svg aria-label="Fibre radieuse"><use xlink:href="/static/media/items_sprite.abc123.svg#radiant_fiber"></use></svg>
+            </div>`;
+        const el = document.querySelector('[class*="Item_itemContainer"]');
+        expect(itemHridFromIcon(el)).toBe('/items/radiant_fiber');
+    });
+});

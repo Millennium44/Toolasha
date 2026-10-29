@@ -12,6 +12,7 @@ import {
     mergedExpectation,
     hasPredictionLegs,
     getProtectionUsage,
+    getGapAttempts,
     PHILOSOPHERS_MIRROR_HRID,
     getMirrorUsage,
     mergeSessions,
@@ -133,6 +134,9 @@ export function enhancementSessionText(
         `Attempts: ${session.totalAttempts || 0} ` +
             `(${session.totalSuccesses || 0} success, ${session.totalBlessed || 0} blessed, ` +
             `${session.totalFailures || 0} fail)`,
+        ...(getGapAttempts(session) > 0
+            ? [`${getGapAttempts(session)} attempts missed during a gap (not counted or costed)`]
+            : []),
         `Protections used: ${getProtectionUsage(session).count}`,
         ...(getMirrorUsage(session).count > 0 ? [`Philosopher's Mirrors used: ${getMirrorUsage(session).count}`] : []),
         // A total that leaves an unpriced input out is a partial bill, and says so
@@ -162,6 +166,20 @@ export function enhancementSessionText(
     }
 
     return lines.join('\n');
+}
+
+/**
+ * The note that a session missed attempts in a gap: a reload or dropped connection ran past one
+ * attempt, so they are in neither its counts nor its spend. Distinct from the `*` on a total.
+ * @param {number} missed - Attempts missed
+ * @returns {string} HTML, empty when none
+ */
+function gapNoteHTML(missed) {
+    if (!(missed > 0)) return '';
+    return `
+                <div class="enh-gap-note" style="font-size: 12px; margin-top: 4px; color: ${STYLE.colors.textSecondary};" title="These attempts completed while no page was connected. They are not in the counts or the cost.">
+                    ${missed} attempt${missed === 1 ? '' : 's'} missed during a gap
+                </div>`;
 }
 
 /**
@@ -1269,7 +1287,7 @@ class EnhancementUI {
             <div style="margin-top: 8px;">
                 <div style="font-size: 13px;">
                     Attempts ${totalAttempts} · Successes ${totalSuccess} · Blessed ${totalBlessed} · Failures ${totalFailure}
-                </div>
+                </div>${gapNoteHTML(getGapAttempts(session))}
                 <div style="font-size: 13px; margin-top: 4px;">
                     <span>Prots Used:</span>
                     <strong> ${getProtectionUsage(session).count}</strong>
@@ -1605,7 +1623,7 @@ class EnhancementUI {
             <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
                 <div><span>Total Attempts:</span><strong> ${merged.totalAttempts}</strong></div>
                 <div><span>Prots Used:</span><strong> ${merged.protectionCount || 0}</strong></div>
-            </div>
+            </div>${gapNoteHTML(getGapAttempts(merged))}
             <div style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 13px;">
                 <span>Success Rate:</span>
                 <strong>${successRate}</strong>
@@ -1699,14 +1717,14 @@ class EnhancementUI {
         if (worth.valueN == null) {
             return `
             <div style="margin-top: 6px; font-size: 12px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
-                💎 No market price for +${worth.level} — worth-it unknown.
+                💎 No market bid for +${worth.level} — worth-it unknown.
             </div>`;
         }
 
         if (worth.value0 == null) {
             return `
             <div style="margin-top: 6px; font-size: 12px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
-                💎 No market price for the starting +${worth.baseLevel} item — worth-it unknown.
+                💎 No market bid for the starting +${worth.baseLevel} item — worth-it unknown.
             </div>`;
         }
 

@@ -7,6 +7,7 @@ import {
     findEdibleToolsData,
     mergeTally,
 } from './chest-import.js';
+import { mergeStoredTally } from './chest-tally.js';
 
 const tally = {
     '/items/small_chest': { opened: 10, loot: { '/items/coin': 2000 }, last: { opened: 1, loot: {} } },
@@ -167,5 +168,39 @@ describe('mergeTally', () => {
     test('appending brings in chests not held before', () => {
         const merged = mergeTally(tally, { '/items/new': { opened: 2, loot: {} } }, 'append');
         expect(Object.keys(merged)).toHaveLength(2);
+    });
+});
+
+describe('mergeTally and a sync fold', () => {
+    // A peer that still holds the pre-import counts, as a gist copy would
+    const peer = {
+        '/items/small_chest': { opened: 10, loot: { '/items/coin': 2000 }, last: { opened: 1, loot: {} } },
+        '/items/old_chest': { opened: 4, loot: { '/items/coin': 400 }, last: { opened: 1, loot: {} } },
+    };
+    const file = {
+        '/items/small_chest': { opened: 5, loot: { '/items/coin': 500 }, last: { opened: 5, loot: {} } },
+    };
+
+    test('a stamped replace stays replaced when a peer still holds the larger counts', () => {
+        const replaced = mergeTally(peer, file, 'replace', 5000);
+        const folded = mergeStoredTally(replaced, peer);
+        expect(folded['/items/small_chest'].opened).toBe(5);
+        expect(folded['/items/small_chest'].loot['/items/coin']).toBe(500);
+        // A chest the file lacks is thrown away too, not restored by the peer
+        expect(folded['/items/old_chest'].opened).toBe(0);
+    });
+
+    test('a replace without a stamp is the file as it is', () => {
+        expect(mergeTally(peer, file, 'replace')).toEqual(file);
+    });
+
+    test('an append keeps the stamp a reset left on the held bucket', () => {
+        const held = { '/items/small_chest': { opened: 0, loot: {}, since: 9000 } };
+        const merged = mergeTally(held, file, 'append');
+        expect(merged['/items/small_chest'].since).toBe(9000);
+        expect(merged['/items/small_chest'].opened).toBe(5);
+        // A peer holding the same reset's stamp folds by max, so the appended counts survive it
+        const stalePeer = { '/items/small_chest': { opened: 0, loot: {}, since: 9000 } };
+        expect(mergeStoredTally(stalePeer, merged)['/items/small_chest'].opened).toBe(5);
     });
 });

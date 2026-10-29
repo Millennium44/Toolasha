@@ -451,6 +451,23 @@ describe('leaderboard XP tracker', () => {
         expect(leaderboardXPTracker.getPlayerStats('A', 'foraging').lastXPH).toBe(0);
     });
 
+    test('disable forgets the view of the last board, so a re-enable reads ranks under the default view', async () => {
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'foraging',
+            gameModeFilter: 'ironcow',
+            leaderboard: { rows: [{ name: 'A', value2: 1000, rank: 3 }] },
+        });
+        leaderboardXPTracker.disable();
+        await leaderboardXPTracker.initialize();
+        const now = Date.now();
+        leaderboardXPTracker.playerXPHistory['rank|foraging|all_A'] = [
+            { t: now - 60000, r: 5 },
+            { t: now, r: 4 },
+        ];
+
+        expect(leaderboardXPTracker.getPreviousRank('A', 'foraging')).toEqual({ rank: 5, at: now - 60000 });
+    });
+
     test('stats carry the span of the readings they were taken over, and the reading count', () => {
         const now = Date.now();
         leaderboardXPTracker.playerXPHistory['foraging_B'] = [

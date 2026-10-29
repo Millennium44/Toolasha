@@ -45,6 +45,7 @@ import config from '../core/config.js';
 import { getItemPrices, getPricingMode } from './market-data.js';
 import { resolveItemPrice } from './profit-helpers.js';
 import { getShopCoinCost } from './game-lookups.js';
+import { testerShopEnabled } from './tester-shop.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 import {
     TRAINEE_SHOP_PRICE,
@@ -166,7 +167,8 @@ function guardQuotes(itemHrid, options) {
     // an official-value estimate filling an empty side is not a quote at all
     const askLive = book?.ask > 0 && !book.askEstimated;
     if (askLive && book.ask === resolved.price) {
-        return { quotes: { ask: book.ask, bid: book.bid > 0 ? book.bid : 0 }, resolved };
+        // An estimated bid is an official-value fill, not a quote: left out, as on the crossFilled path
+        return { quotes: { ask: book.ask, bid: book.bid > 0 && !book.bidEstimated ? book.bid : 0 }, resolved };
     }
     return { quotes: same, resolved };
 }
@@ -193,6 +195,8 @@ export function pricingStamp() {
         config.isFeatureEnabled?.('enhanceSim_baseItemCraftingCost') ? 'craft' : 'buy',
         // A buy at the bid is priced one tick up when this is on, so it moves every bid-side input
         config.getSetting?.('profitCalc_patientTickBuy') === true ? 'tick' : '',
+        // Tester-shop pricing swaps shop-vs-market results
+        testerShopEnabled() ? 'tester' : '',
         custom,
     ].join('|');
 }
@@ -358,10 +362,18 @@ export function getCheapestProtectionPrice(itemHrid, options = {}) {
  * @param {Object} [options] - Options
  * @param {'profit'|'networth'} [options.context='profit'] - Whose pricing mode to read
  * @param {'ask'|'bid'|'average'} [options.mode] - Force one book side
- * @returns {{cost: number, hasCost: boolean, hasMissingPrices: boolean}}
+ * @returns {{cost: number, hasCost: boolean, hasMissingPrices: boolean, hasPartialPrices: boolean}}
  */
 export function perAttemptMaterialCost(itemDetails, { context = 'profit', mode } = {}) {
-    return perAttemptMaterialCostFrom(itemDetails, {
-        priceMaterial: (hrid) => priceMaterial(hrid, { context, mode }).price || 0,
+    // A craft-priced material with an unpriced input is a partial figure: carry that out, so a caller
+    // does not add the bill up as complete
+    let hasPartialPrices = false;
+    const total = perAttemptMaterialCostFrom(itemDetails, {
+        priceMaterial: (hrid) => {
+            const priced = priceMaterial(hrid, { context, mode });
+            if (priced.partial) hasPartialPrices = true;
+            return priced.price || 0;
+        },
     });
+    return { ...total, hasPartialPrices };
 }

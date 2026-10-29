@@ -100,6 +100,8 @@ let seeded = false;
 
 let handlers = [];
 const uiNodes = { button: null, modal: null };
+/** The recap the open modal is showing, kept even after it is evicted from `recaps` */
+let viewing = null;
 
 /** @returns {string|null} The logged-in character id */
 function currentId() {
@@ -182,6 +184,12 @@ function keep(recap) {
     recaps.unshift(recap);
     if (recaps.length > MAX_RECAPS) recaps.length = MAX_RECAPS;
     refreshButton();
+    // An open modal's "n of N" and its Older/Newer targets were drawn for the old list
+    if (uiNodes.modal && viewing) {
+        const scroll = uiNodes.modal.scrollTop;
+        renderRecap(viewing);
+        if (uiNodes.modal) uiNodes.modal.scrollTop = scroll;
+    }
 }
 
 /**
@@ -303,6 +311,30 @@ function onNewBattle(data) {
     }
 }
 
+/**
+ * A tick whose own row omits `cHP` or `dmgCounter` means "unchanged". The damage diff reads a missing `cHP` as NaN
+ * (a hit of NaN damage, then a poisoned baseline) and a missing counter as 0 (so the next real counter reads as
+ * a new hit), so the last known values are filled in. With no baseline to fill from, the row is left out.
+ * @param {Object} data - `battle_updated` payload
+ * @param {string} index - Our seat
+ * @returns {Object} The payload to diff, never mutating `data`
+ */
+function carryOmitted(data, index) {
+    const row = data?.pMap?.[index];
+    if (!row) return data;
+    const known = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
+    const patch = {};
+    if (!known(row.cHP)) {
+        if (!known(takenState.playersHP[index])) {
+            const { [index]: _omitted, ...rest } = data.pMap;
+            return { ...data, pMap: rest };
+        }
+        patch.cHP = takenState.playersHP[index];
+    }
+    if (!known(row.dmgCounter) && known(takenState.playersDmg[index])) patch.dmgCounter = takenState.playersDmg[index];
+    return Object.keys(patch).length ? { ...data, pMap: { ...data.pMap, [index]: { ...row, ...patch } } } : data;
+}
+
 /** Handle a `battle_updated` tick */
 function onBattleUpdated(data) {
     try {
@@ -329,7 +361,9 @@ function onBattleUpdated(data) {
         if (!player) return;
 
         const now = Date.now();
-        const events = attributeIncoming(data, takenState).filter((e) => e.playerIndex === ownIndex);
+        const events = attributeIncoming(carryOmitted(data, ownIndex), takenState).filter(
+            (e) => e.playerIndex === ownIndex
+        );
 
         // A reload in an ongoing fight: its new_battle came before this module listened, and a solo respawn sends
         // none, so the names come from the data manager's cached copy, as the seat does (seatFromTick)
@@ -437,9 +471,13 @@ function fmt(n) {
  * @returns {boolean} Whether a recap was shown
  */
 export function openRecap(id) {
-    if (typeof document === 'undefined' || !document.body) return false;
     const recap = id === undefined ? recaps[0] : recaps.find((r) => r.id === id);
-    if (!recap) return false;
+    return recap ? renderRecap(recap) : false;
+}
+
+/** @param {Object} recap A recap object @returns {boolean} Whether it was drawn */
+function renderRecap(recap) {
+    if (typeof document === 'undefined' || !document.body) return false;
     closeModal();
 
     const modal = document.createElement('div');
@@ -527,6 +565,7 @@ export function openRecap(id) {
 
     document.body.appendChild(modal);
     uiNodes.modal = modal;
+    viewing = recap;
     return true;
 }
 
@@ -534,6 +573,7 @@ export function openRecap(id) {
 function closeModal() {
     uiNodes.modal?.remove();
     uiNodes.modal = null;
+    viewing = null;
 }
 
 /** Forget everything and detach */

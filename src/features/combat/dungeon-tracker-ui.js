@@ -26,7 +26,7 @@ import {
     pacePercent,
     paceChip,
 } from './dungeon-pace.js';
-import { estimateKeyRunway } from './dungeon-key-runway.js';
+import { estimateKeyRunway, entryKeysPerClear } from './dungeon-key-runway.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE } from '../../utils/all-zones-snapshot.js';
@@ -1221,7 +1221,15 @@ class DungeonTrackerUI {
             const sameScope =
                 cache.dungeonName === run.dungeonName && cache.tier === (run.tier ?? null) && cache.teamKey === teamKey;
             const keys = (run.keyCountsMap && run.keyCountsMap[characterName]) || 0;
-            if (sameScope) estimate = estimateKeyRunway(cache.clears, keys);
+            if (sameScope) {
+                // Keys go one per regular chest, and a small party is paid more of them
+                const keysPerClear = entryKeysPerClear(
+                    run.dungeonHrid,
+                    run.tier ?? null,
+                    Object.keys(run.keyCountsMap || {}).length || 1
+                );
+                if (keysPerClear !== null) estimate = estimateKeyRunway(cache.clears, keys, keysPerClear);
+            }
         }
 
         runway.textContent = estimate ? ` (~${timeReadable(Math.round(estimate.seconds))})` : '';

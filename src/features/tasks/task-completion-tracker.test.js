@@ -1,3 +1,4 @@
+/* global process */
 /**
  * The task completion tracker.
  *
@@ -619,6 +620,29 @@ describe('the rate', () => {
         expect(rates.session.tokensPerHour).toBeCloseTo(4, 6);
         expect(rates.week.completions).toBe(3);
         expect(rates.total.completions).toBe(4);
+    });
+
+    test('the last seven days start at this time of day a week ago, across a spring-forward', () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'America/New_York';
+        try {
+            // 2026-03-08 is the spring-forward day, inside the week before the 12th
+            const now = new Date(2026, 2, 12, 12, 0, 0).getTime();
+            const rates = computeRates(
+                [
+                    // 11:30 a week ago is half an hour more than seven days back
+                    entry(new Date(2026, 2, 5, 11, 30, 0).getTime(), 1),
+                    entry(new Date(2026, 2, 5, 12, 30, 0).getTime(), 2),
+                ],
+                now
+            );
+
+            expect(rates.week.completions).toBe(1);
+            expect(rates.total.completions).toBe(2);
+        } finally {
+            if (originalTZ === undefined) delete process.env.TZ;
+            else process.env.TZ = originalTZ;
+        }
     });
 
     test('the tracker reports its rates without touching storage', () => {

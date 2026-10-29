@@ -60,7 +60,7 @@ import marketAPI from '../../api/marketplace.js';
 import networthHistory from '../networth/networth-history.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
-import { shopPurchasePrice } from '../../utils/token-valuation.js';
+import { shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { findProducingAction } from '../../utils/production-index.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
@@ -1253,6 +1253,8 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
     // run unpriced (see the plan check below).
     const materials = perAttemptMaterialCost(details);
     if (!materials.hasCost) return null;
+    // A craft-priced material with an unpriced input is a partial bill: the same as a missing price
+    const unpricedMaterials = Boolean(materials.hasMissingPrices || materials.hasPartialPrices);
 
     // Without `includeSelf` this would offer a second copy of the piece as
     // protection. This card exists for untradable gear, where there is no second
@@ -1281,7 +1283,7 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
         params.guzzlingBonus || 1,
         params.blessedTeaBonus ?? '',
         materials.cost,
-        materials.hasMissingPrices ? 1 : 0,
+        unpricedMaterials ? 1 : 0,
         protection.itemHrid || '',
         protection.price,
     ].join('|');
@@ -1317,7 +1319,7 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
             startLevel,
             materialCostPerAttempt: materials.cost,
             protectionOptions: protection.price > 0 ? [{ itemHrid: protection.itemHrid, price: protection.price }] : [],
-            hasMissingPrices: materials.hasMissingPrices,
+            hasMissingPrices: unpricedMaterials,
             // The namespace's calculator rather than the engine's own import.
             // In the built script they are the same module — enhancement-calculator
             // is shared, so the market bundle's import resolves to exactly this
@@ -1471,7 +1473,7 @@ function basePrice(itemHrid) {
         // lookups — once per target and again for its ladder before this memo
         const data = dataManager.getInitClientData?.() || {};
         const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
-        return shopPurchasePrice(itemHrid, shops, (hrid) => getItemPrices(hrid, 0)?.ask || 0) || 0;
+        return shopPurchasePriceByMode(itemHrid, shops) || 0;
     });
 }
 

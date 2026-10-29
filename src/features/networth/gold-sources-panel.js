@@ -35,14 +35,20 @@ import config from '../../core/config.js';
 import { networthFormatter } from '../../utils/formatters.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
 import { registerCommand } from '../../utils/command-registry.js';
-import { attributeGoldSources, SOURCE_KEYS, SOURCE_META, CATEGORY_KEYS, dayStart, localDayId } from './gold-sources.js';
+import {
+    attributeGoldSources,
+    SOURCE_KEYS,
+    SOURCE_META,
+    CATEGORY_KEYS,
+    dayEnd,
+    windowStart,
+    localDayId,
+} from './gold-sources.js';
 import { collectGoldSourceInputs } from './gold-sources-collect.js';
 import { buildNetworthCalendar, CALENDAR_WEEKS } from './networth-calendar.js';
 
 export const MODAL_ID = 'toolasha-goldSources-panel';
 export const BUTTON_ID = 'mwi-gold-sources-btn';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The windows the panel offers */
 export const WINDOWS = [
@@ -751,7 +757,8 @@ export function buildPanelBody(attribution, { series = null, now = undefined, on
     // price is not an opening that paid nothing
     const unpricedChests = attribution?.unpricedChests || 0;
     const unpricedChestItems = attribution?.unpricedChestItems || 0;
-    if (unpricedChests > 0 || unpricedChestItems > 0) {
+    const unpricedChestKeys = attribution?.unpricedChestKeys || 0;
+    if (unpricedChests > 0 || unpricedChestItems > 0 || unpricedChestKeys > 0) {
         const warning = document.createElement('div');
         warning.className = 'mwi-gold-sources-unpriced-chests';
         warning.style.cssText = 'font-size: 10px; color: #fbbf24; margin-top: 6px;';
@@ -764,6 +771,9 @@ export function buildPanelBody(attribution, { series = null, now = undefined, on
         }
         if (unpricedChestItems > 0) {
             pieces.push(`${plural(unpricedChestItems, 'item')} that came out of a chest could not be priced`);
+        }
+        if (unpricedChestKeys > 0) {
+            pieces.push(`${plural(unpricedChestKeys, 'chest key')} spent opening chests could not be priced`);
         }
         warning.textContent = `${pieces.join(', and ')} — the chest row is short by that much, and it sits in the residual.`;
         body.appendChild(warning);
@@ -1068,7 +1078,7 @@ function ensureLoaded() {
             // localDayId, not toISOString(): the ISO slice is the UTC date, and
             // feeding a UTC id to a LOCAL dayStart put the window's start in the
             // future for any evening west of Greenwich — an empty Day view
-            const from = dayStart(localDayId(to - (days - 1) * DAY_MS));
+            const from = windowStart(to, days);
             const inputs = await collectGoldSourceInputs();
             // Superseded by a newer window/day/character while this was in
             // flight — its answer is about a question nobody is asking anymore
@@ -1111,7 +1121,7 @@ function onSelectDay(dayId) {
     activeWindow = 'day';
     // The end of that local day, so the "Day" window's own now-minus-(days-1)
     // arithmetic lands on exactly that day
-    anchorTo = dayStart(dayId) + DAY_MS - 1;
+    anchorTo = dayEnd(dayId);
     invalidate();
     goldSourcesPanel.render();
 }

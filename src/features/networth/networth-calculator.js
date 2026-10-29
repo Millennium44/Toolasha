@@ -39,7 +39,10 @@ import { validateNetworthCache } from './networth-cache-validation.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
+import { getArtisanBonus } from '../../utils/artisan-bonus.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
+import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
+import { guildCreditPricingMode } from '../../utils/guild-credit-networth-side.js';
 
 /**
  * Calculate the value of a single item
@@ -215,7 +218,7 @@ function resolveNetworthPrices(itemHrid, enhancementLevel, priceCache = null) {
  */
 export function isUnpricedCurrency(itemHrid) {
     const kind = tokenKind(itemHrid);
-    if (kind !== 'task' && kind !== 'labyrinth' && kind !== 'guild') return false;
+    if (kind !== 'task' && kind !== 'labyrinth' && kind !== 'guild' && kind !== 'credit') return false;
     if (!isTokenIncluded(itemHrid)) return false;
 
     return !(explainTokenValue(itemHrid).rate > 0);
@@ -237,18 +240,20 @@ export const TOKEN_INCLUDE_SETTINGS = {
     task: 'networth_includeTaskTokens',
     labyrinth: 'networth_includeLabyrinthTokens',
     guild: 'networth_includeGuildTokens',
+    credit: 'networth_includeGuildCredits',
 };
 
 /**
  * Which kind of token an item is, if any.
  * @param {string} itemHrid - Item HRID
- * @returns {'task'|'dungeon'|'labyrinth'|'guild'|null} The kind, or null for anything else
+ * @returns {'task'|'dungeon'|'labyrinth'|'guild'|'credit'|null} The kind, or null for anything else
  */
 export function tokenKind(itemHrid) {
     if (itemHrid === '/items/task_token') return 'task';
     if (DUNGEON_TOKEN_HRIDS.has(itemHrid)) return 'dungeon';
     if (itemHrid === LABYRINTH_TOKEN_HRID) return 'labyrinth';
     if (isGuildTokenHrid(itemHrid)) return 'guild';
+    if (GUILD_CREDIT_HRIDS.has(itemHrid)) return 'credit';
     return null;
 }
 
@@ -264,20 +269,6 @@ function isTokenIncluded(itemHrid) {
     return !setting || config.getSetting(setting) !== false;
 }
 
-/**
- * The pricing side guild credits are read at for net worth: the net worth
- * pricing mode, pinned to ask when the value source is the game's own market
- * value (credits are never priced from that map, and the mode's help text
- * promises it is ignored there). Shared by the shrine levels and held guild
- * tokens so the two always agree on what a credit is worth.
- * @returns {string} 'ask' or 'bid'
- */
-function guildCreditPricingMode() {
-    return (config.getSettingValue('networth_valueSource') || 'orderBook') === 'officialValue'
-        ? 'ask'
-        : config.getSettingValue('networth_pricingMode') || 'ask';
-}
-
 /** Why a guild token is unpriced while its exchange rate is only the setting's assumption */
 export const GUILD_RATE_UNKNOWN_NOTE = 'no exchange rate yet — open the Guild Shop exchange to read it';
 
@@ -290,6 +281,7 @@ export const GUILD_RATE_UNKNOWN_NOTE = 'no exchange rate yet — open the Guild 
  * - Labyrinth tokens: the best labyrinth shop line, priced the way the dungeon
  *   tokens are — the tooltip's best Gold/Token under the default mode.
  * - Guild tokens: the guild-token valuation, tokens → credits → gold.
+ * - Guild credits: the cheapest gold cost of one credit through the items that convert into it.
  *
  * @param {string} itemHrid - Token HRID
  * @returns {{rate: number|null, bestItemHrid: string|null, note: string|null}} Coins per token
@@ -327,6 +319,13 @@ export function explainTokenValue(itemHrid) {
             return valuation?.gold > 0
                 ? { rate: valuation.gold, bestItemHrid: valuation.creditItemHrid || null, note: valuation.note }
                 : none;
+        }
+        case 'credit': {
+            // Never listed: the cheapest tradeable item that converts into one, read at the
+            // same side the shrine levels and held guild tokens use. No rate is unpriced,
+            // not free
+            const perCredit = buildGoldPerCredit(guildCreditPricingMode())[itemHrid];
+            return perCredit > 0 ? { rate: perCredit, bestItemHrid: null, note: null } : none;
         }
         default:
             return none;
@@ -492,7 +491,7 @@ function calculateCurrencyValue(itemHrid) {
     // labyrinth shop. Guild tokens: tokens → credits → gold. An excluded
     // labyrinth or guild token is worth 0 here, not whatever a fallback finds
     const kind = tokenKind(itemHrid);
-    if (kind === 'dungeon' || kind === 'labyrinth' || kind === 'guild') {
+    if (kind === 'dungeon' || kind === 'labyrinth' || kind === 'guild' || kind === 'credit') {
         if (!isTokenIncluded(itemHrid)) return 0;
         return explainTokenValue(itemHrid).rate || 0;
     }
@@ -545,7 +544,7 @@ function getActionIndexes() {
 
 /**
  * Calculate crafting cost for an item (simple version without efficiency bonuses)
- * Applies Artisan Tea reduction (0.9x) to input materials
+ * Applies the player's real Artisan reduction (x1 with no tea) to input materials
  * @param {string} itemHrid - Item HRID
  * @returns {number} Total material cost or 0 if not craftable
  */
@@ -577,8 +576,8 @@ function craftingBill(itemHrid) {
         }
     }
 
-    // Apply Artisan Tea reduction (0.9x) to input materials
-    inputCost *= 0.9;
+    // Artisan reduces input materials by the player's real bonus for this action's skill (none: x1)
+    inputCost *= 1 - getArtisanBonus(action.type);
 
     // Add upgrade item cost (not affected by Artisan Tea)
     let upgradeCost = 0;
@@ -726,7 +725,7 @@ export function calculateAllAbilitiesCost(characterAbilities, abilityCombatTrigg
  *
  * @param {Object} characterGuildBuffMap - buffHrid → `{guildBuffHrid, level}`
  * @param {string} [pricingMode='ask'] - Pricing side, as the net worth setting selects it
- * @returns {{totalCost: number, tokens: number, breakdown: Array<Object>, known: boolean}}
+ * @returns {{totalCost: number, tokens: number, breakdown: Array<Object>, known: boolean, unpriced?: Array<string>}}
  */
 export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = 'ask') {
     const detailMap = dataManager.getInitClientData()?.guildBuffDetailMap;
@@ -740,6 +739,8 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
     let totalCost = 0;
     let totalTokens = 0;
     const breakdown = [];
+    // Credits no conversion prices: counted at 0 in the total, so the total is a floor and has to say so
+    const unpriced = new Set();
 
     for (const [buffHrid, entry] of Object.entries(characterGuildBuffMap)) {
         const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
@@ -748,15 +749,23 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
 
         let cost = 0;
         let tokens = 0;
+        const shrineUnpriced = new Set();
         for (let step = 1; step <= level; step++) {
             const levelCost = detail.levelCosts?.[String(step)];
             if (!levelCost) continue;
             tokens += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
             // An unpriced credit contributes nothing rather than blocking the
             // whole row: this is a running total of what was spent, and one
-            // credit type without a conversion should not blank the other four
+            // credit type without a conversion should not blank the other four.
+            // It is named, though, so the display can say the figure is a floor
             const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { mode: pricingMode, goldPerCredit });
-            for (const line of lines) cost += line.gold || 0;
+            for (const line of lines) {
+                cost += line.gold || 0;
+                if (line.gold === null) {
+                    shrineUnpriced.add(line.name);
+                    unpriced.add(line.name);
+                }
+            }
         }
 
         totalCost += cost;
@@ -770,12 +779,19 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
             .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
             .join(' ');
 
-        breakdown.push({ hrid: buffHrid, name: `${buffName} ${level}`, level, cost, tokens });
+        breakdown.push({
+            hrid: buffHrid,
+            name: `${buffName} ${level}`,
+            level,
+            cost,
+            tokens,
+            unpriced: [...shrineUnpriced],
+        });
     }
 
     breakdown.sort((a, b) => b.cost - a.cost);
 
-    return { totalCost, tokens: totalTokens, breakdown, known: true };
+    return { totalCost, tokens: totalTokens, breakdown, known: true, unpriced: [...unpriced] };
 }
 
 /**
@@ -1493,7 +1509,7 @@ export async function calculateNetworth() {
     let guildShrinesData = calculateGuildShrinesCost(dataManager.characterGuildBuffMap, shrinesPricingMode);
     if (isExcluded('assetType', 'guildShrines') && guildShrinesData.totalCost > 0) {
         trackExcluded('assetType', 'guildShrines', 'All Guild Shrines', guildShrinesData.totalCost);
-        guildShrinesData = { totalCost: 0, tokens: 0, breakdown: [], known: guildShrinesData.known };
+        guildShrinesData = { totalCost: 0, tokens: 0, breakdown: [], known: guildShrinesData.known, unpriced: [] };
     } else {
         let excludedShrineCost = 0;
         let excludedShrineTokens = 0;
@@ -1513,6 +1529,8 @@ export async function calculateNetworth() {
                 tokens: guildShrinesData.tokens - excludedShrineTokens,
                 breakdown: remainingShrines,
                 known: guildShrinesData.known,
+                // Only the credits of the shrines still counted can leave the total short
+                unpriced: [...new Set(remainingShrines.flatMap((shrine) => shrine.unpriced || []))],
             };
         }
     }

@@ -12,6 +12,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import inventorySort from './inventory-sort.js';
+import { summarizeTileValues, unpricedTitle, UNPRICED_MARK } from './inventory-unpriced.js';
 import { BADGE_MODE_SETTING, totalValueKey } from './inventory-badge-mode.js';
 import { formatKMB } from '../../utils/formatters.js';
 import * as dom from '../../utils/dom.js';
@@ -253,15 +254,9 @@ class InventoryCategoryTotals {
             }
 
             const itemContainers = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
-            let total = 0;
-            for (const itemEl of itemContainers) {
-                const val = parseFloat(itemEl.dataset[valueKey]);
-                if (val > 0) {
-                    total += val;
-                }
-            }
+            const { total, unpriced } = summarizeTileValues(itemContainers, valueKey);
 
-            this.injectOrUpdateLabel(labelEl, total);
+            this.injectOrUpdateLabel(labelEl, total, unpriced);
         }
     }
 
@@ -314,8 +309,9 @@ class InventoryCategoryTotals {
     /**
      * @param {HTMLElement} labelEl
      * @param {number} total
+     * @param {string[]} [unpriced] - Names of items the total left out for want of a price
      */
-    injectOrUpdateLabel(labelEl, total) {
+    injectOrUpdateLabel(labelEl, total, unpriced = []) {
         let span = labelEl.querySelector(`[${SPAN_ATTR}]`);
 
         if (total <= 0) {
@@ -332,7 +328,9 @@ class InventoryCategoryTotals {
             labelEl.appendChild(span);
         }
 
-        span.textContent = formatKMB(total);
+        span.textContent = `${unpriced.length > 0 ? UNPRICED_MARK : ''}${formatKMB(total)}`;
+        if (unpriced.length > 0) span.title = unpricedTitle(unpriced);
+        else span.removeAttribute('title');
     }
 }
 

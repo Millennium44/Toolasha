@@ -214,3 +214,12 @@ describe('readers of mirror state', () => {
         expect(enhancementSessionText(createSession('/items/foo', 'Foo', 0, 10, 2))).not.toContain('Mirrors used');
     });
 });
+
+describe('the session text states the attempts a gap hid', () => {
+    test('only when there were some', () => {
+        const session = createSession('/items/foo', 'Foo', 0, 10, 2);
+        expect(enhancementSessionText(session)).not.toContain('missed during a gap');
+        session.gapAttempts = 3;
+        expect(enhancementSessionText(session)).toContain('3 attempts missed during a gap');
+    });
+});

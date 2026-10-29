@@ -470,7 +470,7 @@ export function resolveItemPrice(itemHrid, options = {}) {
     // enhanced copy, so its price is the wrong figure for a +N input)
     if (side === 'buy' && enhancementLevel === 0) {
         const shopCost = getShopCoinCost(itemHrid);
-        if (shopCost > 0 && (marketPrice === null || shopCost < marketPrice)) {
+        if (shopCost > 0 && (marketPrice === null || shopCost <= marketPrice)) {
             return { price: shopCost, custom: false, missing: false, estimated: false };
         }
     }

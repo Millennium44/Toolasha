@@ -307,7 +307,7 @@ describe('what a queue snapshot still implies', () => {
         expect(queueState(snapshot, now).remainingSeconds).toBeCloseTo(600);
     });
 
-    test('timed work behind an untimed fight that has started has no estimate, and is never idle', () => {
+    test('timed work behind an untimed fight that has started is a lower bound, and is never idle', () => {
         const snapshot = {
             timestamp: now - HOUR,
             totalQueueSeconds: 3600,
@@ -318,6 +318,19 @@ describe('what a queue snapshot still implies', () => {
             ],
         };
         expect(queueState(snapshot, now)).toMatchObject({ state: 'untimed', remainingSeconds: null });
+        // Half an hour in, the 1 h of known work behind the fight still shrinks as a lower bound
+        const earlier = { ...snapshot, timestamp: now - HOUR / 2 };
+        expect(queueState(earlier, now)).toMatchObject({ state: 'busy', atLeast: true });
+        expect(queueState(earlier, now).remainingSeconds).toBeCloseTo(1800);
+    });
+
+    test('an untimed row without hasUnknownAction set still never reads idle at zero', () => {
+        const snapshot = {
+            timestamp: now - 3 * HOUR,
+            totalQueueSeconds: 600,
+            actions: [{ estimatedSeconds: null, isInfinite: false }],
+        };
+        expect(queueState(snapshot, now).state).toBe('untimed');
     });
 
     test('timed work behind an untimed fight keeps its whole length while the prefix before it runs', () => {

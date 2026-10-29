@@ -154,6 +154,8 @@ hook — but the market history API, the volume-split estimate, and the shape of
 panel are Q7's work.
 The 365-day range and the 10-minute auto-refresh of an open chart follow mooket II's `DAYS`
 list and `AUTO_REFRESH_INTERVAL`.
+The tooltip's "Base value" line (the history rows' `market_value`, as a median per daily bucket) follows
+mooket II version 20261017.0.18.25; its "Ref Price Range" line was not taken.
 
 <https://greasyfork.org/scripts/569362>
 

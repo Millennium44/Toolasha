@@ -40,6 +40,7 @@ import {
     historyLabels,
     HISTORY_RANGES,
     describeCooldown,
+    tooltipFooterLines,
 } from './market-history-data.js';
 import { priceKey } from './market-prices.js';
 import {
@@ -1268,15 +1269,15 @@ class MarketHistoryPanel {
                             // The split is an estimate from where the traded
                             // price sat in the spread, and says so. A source with
                             // no volume has nothing to split, so it says nothing.
-                            footer: (items) => {
-                                if (!marketHistoryAPI.currentSource().hasVolume) return '';
-                                const point = this.chart?.$series?.[items[0].dataIndex];
-                                if (!point) return '';
-                                return (
-                                    `Est. bought at the ask: ${formatWithSeparator(point.atAsk)}\n` +
-                                    `Est. sold into the bid: ${formatWithSeparator(point.atBid)}`
-                                );
-                            },
+                            footer: (items) =>
+                                tooltipFooterLines(
+                                    this.chart?.$series?.[items[0].dataIndex],
+                                    {
+                                        hasVolume: marketHistoryAPI.currentSource().hasVolume,
+                                        showBaseValue: config.getSetting('market_historyBaseValue') !== false,
+                                    },
+                                    formatWithSeparator
+                                ),
                         },
                     },
                 },

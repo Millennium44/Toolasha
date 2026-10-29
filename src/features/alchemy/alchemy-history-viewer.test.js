@@ -142,7 +142,11 @@ function buildAlchemyTablist() {
         tab.textContent = label;
         tablist.appendChild(tab);
     }
-    document.body.appendChild(tablist);
+    // The real client keeps the strip inside the panel's tab container
+    const container = document.createElement('div');
+    container.className = 'AlchemyPanel_tabsComponentContainer__x1';
+    container.appendChild(tablist);
+    document.body.appendChild(container);
     return tablist;
 }
 
@@ -246,6 +250,33 @@ describe('Alchemy History tab', () => {
         disableAll();
         expect(tablist.style.overflowX).toBe('hidden');
         expect(tablist.style.flexWrap).toBe('');
+    });
+
+    test('a translated client still gets the tab, found through the panel strip', () => {
+        tablist.remove();
+        document.body.innerHTML = '';
+        // Another tablist comes first on the page, and the alchemy labels are Chinese
+        const other = document.createElement('div');
+        other.setAttribute('role', 'tablist');
+        other.innerHTML = '<button role="tab">Other</button>';
+        const container = document.createElement('div');
+        container.className = 'AlchemyPanel_tabsComponentContainer__x1';
+        const strip = document.createElement('div');
+        strip.setAttribute('role', 'tablist');
+        for (const label of ['点金', '分解', '转化', '精炼还原', '当前行动']) {
+            const tab = document.createElement('button');
+            tab.setAttribute('role', 'tab');
+            tab.textContent = label;
+            strip.appendChild(tab);
+        }
+        container.appendChild(strip);
+        document.body.append(other, container);
+        tablist = container;
+
+        initializeAll();
+
+        expect(strip.querySelector('[data-mwi-alchemy-history-tab="true"]')).not.toBeNull();
+        expect(other.querySelector('[data-mwi-alchemy-history-tab="true"]')).toBeNull();
     });
 
     test('no tab when every type is off', () => {

@@ -29,6 +29,7 @@ import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { padFightCount } from '../../utils/fight-confidence.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
+import { calendarDaysBefore } from '../../utils/calendar-days.js';
 import { TOOLASHA } from '../../utils/selectors.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
@@ -63,6 +64,8 @@ class TaskStatistics {
         this.isInitialized = false;
         this.overlay = null;
         this.zoneRun = null;
+        /** Bumped by every close, so a popup build that awaited across one knows it was superseded */
+        this._popupGeneration = 0;
         this.unregisterHandlers = [];
     }
 
@@ -153,15 +156,26 @@ class TaskStatistics {
      * Show statistics popup
      */
     async showPopup() {
-        // Close any existing popup
+        // Close any existing popup. This also bumps the popup generation, which stands down a build
+        // still in flight: two presses of the button (or the tile's double-click) used to each finish
+        // and draw an overlay, and only the later one was ever tracked, so the other could not be closed
         this.closePopup();
+        const generation = this._popupGeneration;
+        const characterId = dataManager.getCurrentCharacterId?.();
+        // Closed, switched off or handed to another character while the build awaited: nothing to draw
+        const superseded = () =>
+            generation !== this._popupGeneration ||
+            Boolean(dataManager.getIsCharacterSwitching?.()) ||
+            dataManager.getCurrentCharacterId?.() !== characterId;
 
         // Ensure market data is loaded for token valuation
         if (!marketAPI.isLoaded()) {
             await marketAPI.fetch();
+            if (superseded()) return;
         }
 
         const statsData = await this.calculateAllStatistics();
+        if (superseded()) return;
         this.createPopup(statsData);
     }
 
@@ -264,11 +278,14 @@ class TaskStatistics {
 
             // Only the rerolls paid on tasks retired inside the same window, so
             // the two halves of the net are measuring the same seven days
-            const windowStart = now - 7 * 24 * 60 * 60 * 1000;
-            const history = await taskRerollTracker.loadHistory();
+            const windowStart = calendarDaysBefore(now, 7);
+            // Strict: a history that could not be read is not a history of no rerolls, and reading it as
+            // one would show the week's income with none of its cost taken off
+            const history = await taskRerollTracker.loadHistory({ strict: true });
+            const spendKnown = Array.isArray(history);
             let gold = 0;
             let cowbells = 0;
-            for (const retired of history) {
+            for (const retired of spendKnown ? history : []) {
                 if (!(retired?.retiredAt >= windowStart)) continue;
                 gold += retired.goldSpent || 0;
                 cowbells += retired.cowbellsSpent || 0;
@@ -279,12 +296,12 @@ class TaskStatistics {
                 week,
                 session: rates.session,
                 recent: recent.slice(0, 5),
-                rerollSpend: { gold, cowbells, totalValue: spendValue },
+                rerollSpend: { gold, cowbells, totalValue: spendValue, unavailable: !spendKnown },
                 rewardValue,
                 // Carried so the section can mark a figure that is a floor rather
                 // than presenting a partial valuation as a firm one
                 tokenValuation: tokenValue,
-                netValue: rewardValue === null ? null : rewardValue - spendValue,
+                netValue: rewardValue === null || !spendKnown ? null : rewardValue - spendValue,
             };
         } catch (error) {
             console.error('[TaskStatistics] Reading the recorded completions failed:', error);
@@ -1288,7 +1305,9 @@ class TaskStatistics {
         // What those claims cost: the rerolls paid on tasks retired in the same
         // window, and what is left after them
         const spend = completions.rerollSpend;
-        if (spend.totalValue > 0) {
+        if (spend.unavailable) {
+            section.appendChild(this.createRow('Reroll Spend', 'Unavailable', config.COLOR_TEXT_SECONDARY));
+        } else if (spend.totalValue > 0) {
             const parts = [];
             if (spend.gold > 0) parts.push(`${formatKMB(Math.round(spend.gold))}💰`);
             if (spend.cowbells > 0) parts.push(`${spend.cowbells}🔔`);
@@ -1378,6 +1397,7 @@ class TaskStatistics {
      * Close the statistics popup
      */
     closePopup() {
+        this._popupGeneration += 1;
         this.cancelZoneProgress();
         if (this.overlay) {
             this.overlay.remove();

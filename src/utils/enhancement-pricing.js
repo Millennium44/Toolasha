@@ -30,9 +30,8 @@
 import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
 import { getItemPrice, getItemPrices } from './market-data.js';
-import { parseArtisanBonus, getDrinkConcentration } from './tea-parser.js';
+import { getArtisanBonus } from './artisan-bonus.js';
 import { findProducingAction } from './production-index.js';
-import { resolveActionContext } from './action-context.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 
 /**
@@ -265,6 +264,9 @@ export function getProductionCost(itemHrid, mode = 'ask') {
  * @returns {{cost: number, partial: boolean}} Coins per unit produced and whether an input was unpriced
  */
 export function getProductionCostDetailed(itemHrid, mode = 'ask') {
+    // Game data not loaded yet: nothing can be priced. Unpriced (cost 0, flagged partial), never a
+    // throw, and not cached, so the answer is recomputed once the data arrives
+    if (!dataManager.getInitClientData()) return { cost: 0, partial: true };
     const cacheKey = `${itemHrid}|${mode}`;
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
@@ -304,15 +306,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     // Compute artisan tea reduction dynamically (same approach as material-calculator.js).
     // resolveActionContext drops a drink that is slotted but out of stock and no longer
     // buffed, matching the Missing Materials panel.
-    let artisanBonus = 0;
-    try {
-        const itemDetailMap = gameData.itemDetailMap || {};
-        const { equipment, drinks: activeDrinks } = resolveActionContext(action.type);
-        const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-        artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
-    } catch {
-        // Fall back to no reduction if data unavailable
-    }
+    const artisanBonus = getArtisanBonus(action.type);
 
     // Sum up input material costs (artisan tea reduces material quantities, not upgrade items)
     if (action.inputItems) {
@@ -321,7 +315,8 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
                 totalPrice += input.count * (1 - artisanBonus);
                 continue;
             }
-            let inputPrice = getItemPrice(input.itemHrid, { mode }) || 0;
+            // Inputs are bought, so a per-side custom price must answer with its buy figure
+            let inputPrice = getItemPrice(input.itemHrid, { mode, side: 'buy' }) || 0;
             if (inputPrice === 0) {
                 const crafted = getProductionCostDetailed(input.itemHrid, mode);
                 inputPrice = crafted.cost;
@@ -335,7 +330,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     // Add upgrade item cost if this is an upgrade recipe (not affected by artisan tea)
     // Use min(market, craft) so refined items reflect the cheapest way to obtain the base item
     if (action.upgradeItemHrid) {
-        const upgradeMarketPrice = getItemPrice(action.upgradeItemHrid, { mode }) || 0;
+        const upgradeMarketPrice = getItemPrice(action.upgradeItemHrid, { mode, side: 'buy' }) || 0;
         const upgradeCraft = getProductionCostDetailed(action.upgradeItemHrid, mode);
         const upgradeCraftPrice = upgradeCraft.cost;
         let upgradePrice;
@@ -390,7 +385,7 @@ function _computeProductionChainTime(itemHrid) {
     let totalTime = action.baseTimeCost / 1e9;
 
     if (action.upgradeItemHrid) {
-        const marketPrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
+        const marketPrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask', side: 'buy' }) || 0;
         const craftPrice = getProductionCost(action.upgradeItemHrid, 'ask');
         if (craftPrice > 0 && (marketPrice === 0 || craftPrice < marketPrice)) {
             totalTime += getProductionChainTime(action.upgradeItemHrid);

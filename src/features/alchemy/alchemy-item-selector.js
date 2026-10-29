@@ -25,6 +25,7 @@
  */
 
 import { MENU_SELECTOR, TILE_SELECTOR, tileItemHrid, menuTiles } from '../../utils/item-selector-dom.js';
+import { readAlchemyTabType } from './alchemy-tabs.js';
 
 export { tileItemHrid, menuTiles };
 
@@ -130,7 +131,8 @@ export function activeAlchemyAction() {
         const text = (selected?.textContent || '').toLowerCase();
         return ALCHEMY_ACTIONS.find((action) => text.includes(action)) || '';
     }
-    return '';
+    // No tab labelled Coinify: a translated client, whose game tabs are told apart by position
+    return readAlchemyTabType() || '';
 }
 
 /**

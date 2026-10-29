@@ -32,6 +32,7 @@ import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimit
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
 import { cheapestWithMirror } from '../../utils/mirror-route.js';
+import { getIconHref } from '../../utils/game-lookups.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -59,18 +60,14 @@ export function getProtectionItemFromUI(panel) {
             return null;
         }
 
-        // Look for SVG sprites with items_sprite pattern
-        // Protection items are rendered as: <use href="/static/media/items_sprite.{hash}.svg#item_name"></use>
-        const useElements = protectionContainer.querySelectorAll('use[href*="items_sprite"]');
+        // The item sprite in the slot. Item icons often carry the sprite id on `xlink:href` alone, so
+        // a plain `use[href]` selector misses them and the slot reads as empty
+        const href = getIconHref(protectionContainer, 'items_sprite');
 
-        if (useElements.length === 0) {
+        if (!href) {
             // No protection item equipped
             return null;
         }
-
-        // Extract item HRID from the sprite reference
-        const useElement = useElements[0];
-        const href = useElement.getAttribute('href');
 
         // Extract item name after the # (fragment identifier)
         // Format: /static/media/items_sprite.{hash}.svg#mirror_of_protection
@@ -667,6 +664,11 @@ export function getTargetLevelFromUI(panel) {
  * @returns {boolean}
  */
 export function isRepeatUnlimitedFromUI(panel) {
+    // The Repeat field sits in its own container whatever language the client runs in
+    const field = panel.querySelector(
+        '[class*="maxActionCountInput"] input[type="number"], [class*="maxActionCountInput"] input[type="text"]'
+    );
+    if (field) return field.value === '∞';
     const labels = Array.from(panel.querySelectorAll('*')).filter(
         (el) => el.textContent.trim() === 'Repeat' && el.children.length === 0
     );
@@ -883,12 +885,14 @@ const SPREAD_EXACT_NOTE = 'Exact: no protection is used, so every attempt costs 
 /**
  * Unit price of one enhancing material, through the shared enhancement input rule: trainee charms
  * and coins first, then the profit resolver (custom price, Iron Cow, the book on the profit mode's
- * side, shop floor, craft cost). Never the vendor price; 0 is unpriced.
+ * side, shop floor, craft cost). Never the vendor price; 0 is unpriced (so is a partial craft cost).
  * @param {string} itemHrid - Material hrid
  * @returns {number} Coins per unit, 0 when nothing prices it
  */
 function materialUnitPrice(itemHrid) {
-    return priceMaterial(itemHrid).price || 0;
+    const priced = priceMaterial(itemHrid);
+    // A craft cost that skipped an unpriced input is a partial bill: unpriced here, not a cheap material
+    return priced.partial ? 0 : priced.price || 0;
 }
 
 /**

@@ -7,6 +7,16 @@ const shop = vi.hoisted(() => ({ costs: {} }));
 // each test hands the batch stands in for the book, and the recipes for the craft-cost walk
 const yielded = vi.hoisted(() => ({ count: 0 }));
 const ctx = vi.hoisted(() => ({ priceMap: {}, recipes: {} }));
+// The player's Artisan bonus per action type, and every task the pool was handed
+const artisan = vi.hoisted(() => ({ byType: {}, asked: [], tasks: [] }));
+
+// The manager reads the bonus on the main thread; this suite has no tea-parser feed behind it
+vi.mock('./artisan-bonus.js', () => ({
+    getArtisanBonus: (type) => {
+        artisan.asked.push(type);
+        return artisan.byType[type] ?? 0;
+    },
+}));
 
 // The shop's coin price is read off the game data, which this suite has none of
 vi.mock('./game-lookups.js', () => ({ getShopCoinCost: (hrid) => shop.costs[hrid] || 0 }));
@@ -68,6 +78,7 @@ vi.mock('./worker-pool.js', () => {
             return { poolSize: 1, busyWorkers: 0, queuedTasks: 0 };
         }
         async executeAll(tasks) {
+            artisan.tasks.push(...tasks);
             return tasks.map((task) => {
                 const posted = [];
                 const sandbox = { self: { postMessage: (message) => posted.push(message) }, console };
@@ -336,5 +347,59 @@ describe('networth enhancement path parity with the main thread', () => {
 
         expect(await value(coins, noQuote, 5)).toBe(0);
         expect(await value(coins, noQuote, 5, { [ITEM]: 7000 })).toBe(7000);
+    });
+});
+
+describe('networth production-cost fallback uses the real Artisan bonus', () => {
+    const PLANK = '/items/plank';
+    const SMITH = '/items/anvil';
+    const gameData = {
+        itemDetailMap: {},
+        actionDetailMap: {
+            '/actions/saw': {
+                type: '/action_types/woodcutting_craft',
+                outputItems: [{ itemHrid: PLANK, count: 1 }],
+                inputItems: [{ itemHrid: '/items/log', count: 4 }],
+            },
+            '/actions/forge': {
+                type: '/action_types/forging',
+                outputItems: [{ itemHrid: SMITH, count: 1 }],
+                inputItems: [{ itemHrid: '/items/log', count: 4 }],
+            },
+        },
+    };
+    const priceMap = { '/items/log:0': 10, '/items/log:0_ask': 10, '/items/log:0_bid': 10 };
+    const value = async (hrid) => {
+        const [v] = await runBatch(
+            [{ itemHrid: hrid, enhancementLevel: 0, count: 1 }],
+            priceMap,
+            { useHighEnhancementCost: false, minLevel: 99, enhancementParams: {} },
+            gameData
+        );
+        terminateItemValueWorkerPool();
+        return v;
+    };
+
+    test('no Artisan is a factor of 1, not 0.9', async () => {
+        artisan.byType = {};
+        expect(await value(PLANK)).toBeCloseTo(40, 9);
+    });
+
+    test('a known bonus is applied, per the recipe own skill, and rides the payload', async () => {
+        artisan.byType = { '/action_types/woodcutting_craft': 0.25, '/action_types/forging': 0.1 };
+        artisan.tasks = [];
+        expect(await value(PLANK)).toBeCloseTo(30, 9); // 4 x 10 x (1 - 0.25)
+        const shipped = artisan.tasks[0].params.recipes[PLANK];
+        expect(shipped.artisanBonus).toBe(0.25);
+        expect(await value(SMITH)).toBeCloseTo(36, 9); // the forging tea, not the woodcutting one
+    });
+
+    test('a tea change shows in the next batch: the bonus is read per batch, never memoized', async () => {
+        artisan.byType = { '/action_types/woodcutting_craft': 0.2 };
+        const withTea = await value(PLANK);
+        artisan.byType = {};
+        const without = await value(PLANK);
+        expect(withTea).toBeCloseTo(32, 9);
+        expect(without).toBeCloseTo(40, 9);
     });
 });

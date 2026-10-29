@@ -14,6 +14,7 @@ import networthCache from '../networth/networth-cache.js';
 import { validateNetworthCache } from '../networth/networth-cache-validation.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { itemHridFromIcon } from '../../utils/item-icon.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
@@ -25,6 +26,9 @@ import { officialValueOverride } from '../../utils/official-value-override.js';
 import { reconcileBook } from '../../utils/market-values.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { calculateDungeonTokenValue, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
+import { buildGoldPerCredit } from '../../utils/guild-credit-pricing.js';
+import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
+import { isOfficialValueSource } from '../../utils/guild-credit-networth-side.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
 // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
@@ -170,6 +174,8 @@ class InventoryBadgeManager {
             'expectedValue_respectPricingMode',
             // Token values (and every other market-priced tile) are taken net of tax under this one
             'invSort_netOfTax',
+            // Guild credit tiles are valued only while this is on
+            'networth_includeGuildCredits',
             ...PATIENT_TICK_SETTING_KEYS,
         ]) {
             this.unregisterHandlers.push(config.onSettingChange(key, () => reprice('token pricing setting change')));
@@ -490,6 +496,9 @@ class InventoryBadgeManager {
         // handled separately below: unlike these they have a derivable gold-equivalent value.
         const currencyHrids = new Set(['/items/gold_coin', '/items/cowbell', '/items/task_token']);
 
+        // Gold per guild credit on each side, built on the first credit tile and reused for the rest
+        let creditRates = null;
+
         let sliceStart = performance.now();
 
         for (const itemElem of itemElems) {
@@ -510,6 +519,9 @@ class InventoryBadgeManager {
             // remains only as a fallback for anything the sprite doesn't resolve.
             const svg = itemElem.querySelector('svg');
             if (!svg) continue;
+
+            // Set again below only for a tile whose 0 would mean "no price" (see inventory-unpriced.js)
+            delete itemElem.dataset.expectPrice;
 
             const itemHrid =
                 this.getItemHridFromContainer(itemElem, gameData) ||
@@ -546,6 +558,27 @@ class InventoryBadgeManager {
                 itemElem.dataset.bidPrice = perToken;
                 itemElem.dataset.askValue = perToken * itemCount;
                 itemElem.dataset.bidValue = perToken * itemCount;
+                if (itemCount > 0) itemElem.dataset.expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
+                continue;
+            }
+
+            // Guild credits have no listing; each is worth the cheapest tradeable item that converts
+            // into it - a cost to acquire, so no sales tax comes off. The ask total reads the
+            // ask-based rate and the bid total the bid-based one. A credit with no known rate counts
+            // 0 (unpriced), as on a dungeon token with no shop line. Opt-out setting shared with Net Worth.
+            if (GUILD_CREDIT_HRIDS.has(itemHrid) && config.getSetting('networth_includeGuildCredits') !== false) {
+                if (!creditRates) {
+                    // Net worth's rule: the game's own market value pins both totals to the ask-based rate
+                    const ask = buildGoldPerCredit('ask');
+                    creditRates = { ask, bid: isOfficialValueSource() ? ask : buildGoldPerCredit('bid') };
+                }
+                const askPerCredit = creditRates.ask[itemHrid] || 0;
+                const bidPerCredit = creditRates.bid[itemHrid] || 0;
+                itemElem.dataset.askPrice = askPerCredit;
+                itemElem.dataset.bidPrice = bidPerCredit;
+                itemElem.dataset.askValue = askPerCredit * itemCount;
+                itemElem.dataset.bidValue = bidPerCredit * itemCount;
+                if (itemCount > 0) itemElem.dataset.expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
                 continue;
             }
 
@@ -778,6 +811,10 @@ class InventoryBadgeManager {
             // Store stack totals (for sorting and stack value badges)
             itemElem.dataset.askValue = askPrice * itemCount;
             itemElem.dataset.bidValue = bidPrice * itemCount;
+            // Guild credits reach here only when the player left them out of totals on purpose
+            if (itemCount > 0 && !GUILD_CREDIT_HRIDS.has(itemHrid)) {
+                itemElem.dataset.expectPrice = itemDetails?.name || itemHrid;
+            }
         }
     }
 
@@ -837,12 +874,7 @@ class InventoryBadgeManager {
      * @returns {string|null} Item HRID or null
      */
     getItemHridFromContainer(itemContainer, gameData) {
-        const useElement = itemContainer.querySelector('svg use');
-        const href = useElement?.getAttribute('href');
-        const match = href?.match(/#(.+)$/);
-        if (!match) return null;
-        const itemHrid = `/items/${match[1]}`;
-        return gameData?.itemDetailMap?.[itemHrid] ? itemHrid : null;
+        return itemHridFromIcon(itemContainer, gameData?.itemDetailMap || {});
     }
 
     /**

@@ -7,6 +7,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { SUPPLY_HRIDS } from './labyrinth-supplies.js';
+import { roomXpPerHour } from './labyrinth-formulas.js';
 import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 
 /** Gear the mocked loadoutSnapshot reports; mutated in place (see setGear) so
@@ -3891,6 +3892,69 @@ describe('precision and the fight cap reach the cache', () => {
         labyrinthClearRate.combatCache.set(key, tight);
 
         expect(await labyrinthClearRate.computeCombatClear('/monsters/imp', 200, { uncapped: true })).toBe(tight);
+    });
+});
+
+/**
+ * A cached combat result carries the experience a clear pays, worked out from
+ * the labyrinth experience upgrade and the Experience community buff. Neither
+ * is in the cache key or the build fingerprint, so a purchase or a buff change
+ * left the cached EXP / Room and EXP / Hour as they were. The sim's own figures
+ * (win rate, time) do not move with either, so the two are recomputed on read
+ * instead of re-simming the room.
+ */
+describe('a cached combat result reads its experience live', () => {
+    const KEY_ARGS = ['/monsters/imp', 200];
+    const cached = () => ({
+        clearChance: 0.5,
+        winRate: 0.5,
+        expectedSeconds: 20,
+        type: 'combat',
+        trials: 500,
+        roomLevel: 200,
+        xpPerRoom: 200 * 50,
+        xpPerHour: roomXpPerHour(200 * 50, 20, 0.5),
+    });
+
+    beforeEach(() => {
+        labyrinthClearRate.combatCache.clear();
+        community.levels = {};
+        dataManagerMock.characterData = { characterInfo: {} };
+        labyrinthClearRate.combatCache.set(labyrinthClearRate.buildCombatCacheKey(...KEY_ARGS), cached());
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.combatCache.clear();
+        community.levels = {};
+        dataManagerMock.characterData = null;
+    });
+
+    test('buying the experience upgrade changes EXP / Room on the cached result, not its win rate', () => {
+        const before = labyrinthClearRate.getCachedCombatResult(...KEY_ARGS);
+        dataManagerMock.characterData = { characterInfo: { labyrinthExperienceLevel: 10 } };
+        const after = labyrinthClearRate.getCachedCombatResult(...KEY_ARGS);
+
+        expect(after.xpPerRoom).toBeCloseTo(before.xpPerRoom * 1.1, 6);
+        expect(after.xpPerHour).toBeGreaterThan(before.xpPerHour);
+        expect(after.winRate).toBe(before.winRate);
+        expect(after.expectedSeconds).toBe(before.expectedSeconds);
+    });
+
+    test('peekCombatClear (the path every badge reads) gets the fresh figure too', () => {
+        const before = labyrinthClearRate.peekCombatClear(...KEY_ARGS);
+        dataManagerMock.characterData = { characterInfo: { labyrinthExperienceLevel: 20 } };
+        expect(labyrinthClearRate.peekCombatClear(...KEY_ARGS).xpPerRoom).toBeCloseTo(before.xpPerRoom * 1.2, 6);
+    });
+
+    test('an Experience community buff starting is picked up', () => {
+        const before = labyrinthClearRate.getCachedCombatResult(...KEY_ARGS);
+        community.levels['/community_buff_types/experience'] = 1;
+        expect(labyrinthClearRate.getCachedCombatResult(...KEY_ARGS).xpPerRoom).toBeGreaterThan(before.xpPerRoom);
+    });
+
+    test('nothing changed: the stored object itself comes back', () => {
+        const stored = labyrinthClearRate.combatCache.get(labyrinthClearRate.buildCombatCacheKey(...KEY_ARGS));
+        expect(labyrinthClearRate.getCachedCombatResult(...KEY_ARGS)).toBe(stored);
     });
 });
 

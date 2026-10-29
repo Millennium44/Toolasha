@@ -117,6 +117,16 @@ describe('absoluteTime', () => {
             expect(text).toMatch(/\d{1,2}:\d{2}/);
         }
     });
+
+    test('an instant a day or more in the past takes the weekday, as one in the future does', () => {
+        // The away diff words "Ale ran dry at ..." for an instant that has already gone by
+        const weekday = (at) => new Date(at).toLocaleDateString(undefined, { weekday: 'short' });
+        for (const offset of [-40 * HOUR, -3 * 24 * HOUR, 40 * HOUR]) {
+            expect(absoluteTime(NOW + offset, NOW)).toMatch(new RegExp(`^${weekday(NOW + offset)} `));
+        }
+        // Within the day either way it stays a bare clock time
+        expect(absoluteTime(NOW - 5 * HOUR, NOW)).not.toMatch(new RegExp(`^${weekday(NOW - 5 * HOUR)} `));
+    });
 });
 
 describe('snapshotSubjects', () => {

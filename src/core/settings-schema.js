@@ -917,6 +917,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Shows material costs table with Ask/Bid prices, actions/hour, and profit breakdown',
             },
+            itemTooltip_craftCostSubMaterials: {
+                id: 'itemTooltip_craftCostSubMaterials',
+                label: 'Craft cost includes crafting sub-materials',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a "Best plan" row to the detailed materials table that prices the craft by buying or crafting each ingredient, whichever is cheaper, all the way down. Shown only when it differs from the Total row; a sub-material with no market price marks it as a floor (≥). The profit/hr figure always uses the Total row. Not shown while "direct recipe only" is on',
+            },
             itemTooltip_detailedProfitFlat: {
                 id: 'itemTooltip_detailedProfitFlat',
                 label: 'Profit: direct recipe only (buy base items, no sub-craft chain)',
@@ -1851,6 +1858,13 @@ export const settingsGroups = {
                 min: 0,
                 help: 'Stacks worth less than this (count × ask price) are insta-sold to the best bid instead of using up a sell listing slot. 0 turns this rule off. Default: 1,500,000.',
             },
+            market_bulkSellHoldFavorites: {
+                id: 'market_bulkSellHoldFavorites',
+                label: 'Market: Bulk sell holds back items marked Favorite',
+                type: 'checkbox',
+                default: true,
+                help: 'The Bulk Sell Assistant never sells items you have marked Favorite in the game. Off: Favorite items are sold like any other item. Food and drinks used by your saved loadouts are always held back.',
+            },
             market_tradeHistory: {
                 id: 'market_tradeHistory',
                 label: 'Market: Show personal trade history',
@@ -1951,6 +1965,14 @@ export const settingsGroups = {
                     { value: 'mooket1', label: 'mooket I \u2014 IOMisaka (mooket.qi-e.top)' },
                 ],
                 help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from \u2014 and, since you feed the pool you read, the one your opened order books are contributed back to. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\’s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above.',
+            },
+            market_historyBaseValue: {
+                id: 'market_historyBaseValue',
+                label: "Price history: show the game's base value in the chart tooltip",
+                type: 'checkbox',
+                default: true,
+                help: "Adds a “Base value” line to the price history chart tooltip: the game's base market value for that day (the median of the day's readings on the longer ranges). Shown only when the history server sends it; older data shows nothing. Needs the price history panel.",
+                requires: 'market_pooledHistory',
             },
             market_listingAgeFormat: {
                 id: 'market_listingAgeFormat',
@@ -2170,9 +2192,10 @@ export const settingsGroups = {
                 ],
                 help:
                     'How a dungeon key is valued everywhere the script prices one: item tooltips, net worth and the ' +
-                    'inventory badges, combat income and the key-cost breakdown, the combat simulator, the dungeon ' +
+                    'inventory badges, Combat Stats key costs (it prices keys only; the rest of Combat Stats follows the ' +
+                    'profit calculation pricing mode), the combat simulator, the dungeon ' +
                     'ROI board, the chest risk-of-ruin model, and the consumables panel’s dungeon readiness card. ' +
-                    'Changing it moves your net worth and your combat profit/hr, not only the dungeon card. “Same ' +
+                    'Changing it moves your net worth and your combat key costs, not only the dungeon card. “Same ' +
                     'as the profit calculation pricing mode” follows that setting’s buy side — keys are only ever ' +
                     'bought, so its sell side has nothing to say here — and it also takes that setting’s ' +
                     'patient-tick delay on a bid quote the same way ordinary profit prices do, so it can read ' +
@@ -2275,7 +2298,10 @@ export const settingsGroups = {
                 label: 'Show badge values net of market tax',
                 type: 'checkbox',
                 default: false,
-                requires: 'inv_valueBadges',
+                // No `requires`: the value badges are only one reader. The inventory category totals,
+                // the custom-tab section totals and the sort order read the same tax-adjusted values
+                // with badges set to None.
+                help: 'Takes the market sales tax off every value the inventory shows: the stack badges, the category and custom-tab totals, and the sort order. Applies even when value badges are set to None',
             },
             invSort_sortEquipment: {
                 id: 'invSort_sortEquipment',
@@ -2364,6 +2390,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Value guild tokens you hold through the Guild Shop credit exchange (credits per token × the gold value of a credit). Tokens already spent on shrine levels are not counted. Disable to exclude them from net worth.',
                 requires: 'networth',
+            },
+            networth_includeGuildCredits: {
+                id: 'networth_includeGuildCredits',
+                label: 'Value guild credits (net worth, inventory totals)',
+                type: 'checkbox',
+                default: true,
+                help: 'Guild Credits cannot be sold, so each is valued at the cheapest tradeable item that converts into it. Disable to leave them out of net worth and inventory totals.',
             },
             networth_abilityBooksAsInventory: {
                 id: 'networth_abilityBooksAsInventory',
@@ -2772,6 +2805,23 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a button next to the Supplies section of the Labyrinth entry screen that opens the marketplace on whichever Torch/Shroud/Beacon is short of its carry cap, quantities filled in. Nothing is bought until you confirm in the game',
+            },
+            labyrinthGridScaleControl: {
+                id: 'labyrinthGridScaleControl',
+                label: 'Labyrinth: Show grid size control',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a - / + control to the Labyrinth header row that enlarges the room grid',
+            },
+            labyrinthGridScale: {
+                id: 'labyrinthGridScale',
+                label: 'Labyrinth: Room grid size',
+                type: 'slider',
+                default: 1,
+                min: 1,
+                max: 2,
+                step: 0.25,
+                help: 'Scale of the Labyrinth room grid. Also adjustable with the - / + control on the Labyrinth panel',
             },
             labyrinthMonsterStatCheck: {
                 id: 'labyrinthMonsterStatCheck',
@@ -3192,6 +3242,16 @@ export const settingsGroups = {
                 max: 10000,
                 step: 1,
                 help: 'Default simulation duration in hours for Seek Best Source runs',
+            },
+            combatSim_partyFinder: {
+                id: 'combatSim_partyFinder',
+                label: 'Combat Simulator: Party tab (find your best party)',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Adds a Party tab to the Combat Simulator: save teammate builds to a roster, then sim you with ' +
+                    'every party you could make from it, in the zones you pick, and rank the parties by your own ' +
+                    'EXP/hr and profit/hr against going solo. Off: the tab and its roster controls are not drawn.',
             },
             combatSim_decimalMinutes: {
                 id: 'combatSim_decimalMinutes',

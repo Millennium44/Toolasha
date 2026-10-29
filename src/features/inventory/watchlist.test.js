@@ -751,6 +751,18 @@ describe('the dot on tracked items', () => {
         expect(dots(element)).toHaveLength(1);
     });
 
+    test('is drawn on a tracked item whose label is translated and whose icon carries only xlink:href', () => {
+        game.data = { itemDetailMap: { '/items/cheese': { name: 'Cheese' } } };
+        watchlist.initialize();
+        const element = document.createElement('div');
+        element.innerHTML =
+            '<svg aria-label="Fromage"><use xlink:href="/static/media/items_sprite.abc.svg#cheese"></use></svg>';
+        document.body.appendChild(element);
+        provider(element);
+
+        expect(dots(element)).toHaveLength(1);
+    });
+
     test('and not on an untracked one', () => {
         watchlist.initialize();
         const element = tile('Bread');

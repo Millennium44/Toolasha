@@ -48,6 +48,7 @@ vi.mock('../../core/data-manager.js', () => ({
             return world.items;
         },
         isItemLocked: () => false,
+        isItemFavorite: () => false,
         on: (event, handler) => {
             (events.handlers[event] ??= []).push(handler);
         },

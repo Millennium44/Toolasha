@@ -79,7 +79,8 @@ export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel
     // An enhance run with a material nobody prices is unknown, not the cost of the materials that have one:
     // every caller reads null as "cannot be quoted" (flags the row unpriced or drops the route), and a number
     // here would read as a full quote and rank the upgrade cheaper than it can be done
-    if (materials.hasMissingPrices) return null;
+    // (a craft-priced material with an unpriced input is the same: its price is a partial bill)
+    if (materials.hasMissingPrices || materials.hasPartialPrices) return null;
 
     // Get cheapest protection price. Null when nothing that could protect this
     // item has a price — which makes every protecting strategy unpriceable, not
@@ -112,7 +113,7 @@ export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel
             startLevel,
             materialCostPerAttempt: materials.cost,
             protectionOptions: protPrice > 0 ? [{ itemHrid: protHrid, price: protPrice }] : [],
-            hasMissingPrices: materials.hasMissingPrices,
+            hasMissingPrices: materials.hasMissingPrices || materials.hasPartialPrices,
         });
 
         // Nothing about the run could be priced — unknown, not free

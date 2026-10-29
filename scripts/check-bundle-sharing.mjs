@@ -217,6 +217,21 @@ const ALLOWLIST = new Map([
         'stateless running-action selectors; no module state to share',
     ],
     [
+        'src/utils/calendar-days.js',
+        // Pure date arithmetic (calendar-day windows that step across DST);
+        // no module state. Imported by the task statistics (ui) and the task
+        // completion tracker (market); every copy computes the same window.
+        'stateless calendar-day window helper; no module state to share',
+    ],
+    [
+        'src/utils/artisan-bonus.js',
+        // One function that reads the current drinks and equipment from
+        // dataManager (shared core) at call time; nothing is cached here.
+        // Imported by the networth calculator (market) and the networth worker
+        // manager (utils), and every copy answers the same bonus.
+        'stateless Artisan bonus lookup; drinks and equipment are read at call time from shared core',
+    ],
+    [
         'src/utils/init-ownership.js',
         // Two pure functions and a teardown counter kept on the owner object
         // under a `Symbol.for` key, not in this module — so every inlined copy

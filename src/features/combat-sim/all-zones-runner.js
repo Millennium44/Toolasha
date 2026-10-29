@@ -22,18 +22,37 @@ let activeCleanup = null;
  * @param {Object} params
  * @param {Object} params.gameData - Game data maps from buildGameDataPayload()
  * @param {Array<Object>} params.playerDTOs - Player DTOs from buildAllPlayerDTOs()
- * @param {Array<{zoneHrid: string, difficultyTier: number}>} params.zones - Zones to simulate
+ * @param {Array<{zoneHrid: string, difficultyTier: number, playerDTOs?: Array<Object>}>} params.zones - Zones to
+ *   simulate. An entry may carry its own `playerDTOs`, which that task runs instead of `params.playerDTOs` — a
+ *   party-composition sweep sends many parties through one pool. Not for early exit, which chains tiers by zone
+ *   hrid and so cannot tell two parties in one zone apart; a sweep with any per-zone party runs without it.
  * @param {number} params.hours - Hours to simulate per zone
  * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
  * @param {boolean} [params.useEarlyExit] - Skip higher tiers when both XP/hr and profit/hr decline
  * @param {string} [params.playerHrid] - Which player the early-exit decision reads XP and profit
  *   for. Must be the same player the ranked table shows (the caller's self), or the skip decision
  *   prunes tiers by a figure the user never sees. Defaults to 'player1' for the solo path.
+ * @param {number|null} [params.saleTaxRate] - The analyzed player's sale tax when they are not the live
+ *   character (`saleTaxRateOf`); omitted for the live character. The early-exit profit/hr is taxed at it.
+ * @param {Function} [params.onResult] - Called with (index, simResult|null) as each zone finishes, so a caller
+ *   that cancels the run keeps the results that had already landed. With it, results are delivered only there:
+ *   the coordinator keeps no copy, and the run resolves with an empty array
  * @param {Function} [onProgress] - Called with (percent: 0-100) for overall progress
  * @returns {Promise<Array<Object>>} Array of SimResults, one per zone (same order as input)
  */
 export async function runAllZonesSimulation(params, onProgress) {
-    const { gameData, playerDTOs, zones, hours, communityBuffs, useEarlyExit, playerHrid = 'player1' } = params;
+    const {
+        gameData,
+        playerDTOs,
+        zones,
+        hours,
+        communityBuffs,
+        playerHrid = 'player1',
+        onResult,
+        saleTaxRate,
+    } = params;
+    const perZoneParties = zones.some((zone) => Array.isArray(zone?.playerDTOs));
+    const useEarlyExit = Boolean(params.useEarlyExit) && !perZoneParties;
 
     if (!zones.length) return [];
 
@@ -78,6 +97,12 @@ export async function runAllZonesSimulation(params, onProgress) {
 
             if (msg.type === 'progress') {
                 if (onProgress) onProgress(Math.round(msg.progress));
+            } else if (msg.type === 'task_result') {
+                try {
+                    onResult?.(msg.index, msg.simResult ?? null);
+                } catch (error) {
+                    console.error('[AllZones] Result callback failed:', error);
+                }
             } else if (msg.type === 'zone_tier_result') {
                 // Calculate XP/hr and profit/hr for this tier and decide whether to skip the next.
                 // Whatever happens in here, a decision must go back: a chain in the
@@ -94,7 +119,8 @@ export async function runAllZonesSimulation(params, onProgress) {
                 worker.terminate();
                 cleanup();
                 if (onProgress) onProgress(100);
-                resolve(msg.results);
+                // A streamed run's results went to onResult one by one; the final message carries none
+                resolve(Array.isArray(msg.results) ? msg.results : []);
             } else if (msg.type === 'error') {
                 worker.terminate();
                 cleanup();
@@ -126,7 +152,9 @@ export async function runAllZonesSimulation(params, onProgress) {
 
                 let profitPerHour = 0;
                 try {
-                    const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours);
+                    const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours, {
+                        ...(Number.isFinite(saleTaxRate) ? { saleTaxRate } : {}),
+                    });
                     profitPerHour = revenue.netPerHour;
                 } catch {
                     // Revenue calculation may fail if market data is unavailable
@@ -165,7 +193,8 @@ export async function runAllZonesSimulation(params, onProgress) {
             simulationTimeLimit,
             extraBuffs,
             maxWorkers,
-            useEarlyExit: !!useEarlyExit,
+            useEarlyExit,
+            streamResults: typeof onResult === 'function',
         });
     });
 }

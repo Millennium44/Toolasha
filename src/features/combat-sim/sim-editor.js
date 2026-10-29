@@ -442,13 +442,17 @@ export class SimEditor {
      * user has since deleted must fall back to current gear rather than half-
      * applying anything.
      *
-     * @param {string} loadoutName - Snapshot name to apply
+     * A snapshot object is applied as given rather than looked up by its name: a caller that resolved a
+     * loadout by the server's id (the Lab's per-monster assignment) must not get the first of two loadouts
+     * that share a name.
+     *
+     * @param {string|Object} loadoutName - Snapshot name to apply, or the snapshot itself
      * @returns {boolean} True when a snapshot of that name was applied
      */
     applyLoadoutByName(loadoutName) {
         if (!loadoutName || !this._editedDTOs) return false;
         if (!this._applyLoadoutToDTO(loadoutName)) return false;
-        this._selectedLoadoutName = loadoutName;
+        this._selectedLoadoutName = typeof loadoutName === 'object' ? loadoutName.name || '' : loadoutName;
         this._saveLoadoutMemory();
         this.renderEditor();
         return true;
@@ -608,6 +612,85 @@ export class SimEditor {
         this._editorInitialized = true;
         this._scenarioToken++;
         this.renderEditor();
+    }
+
+    /**
+     * Replace the loaded scenario with a whole party — the Party Finder's "load this party". Player 1 is you;
+     * `selfIsLive` says whether that build is the live character (so the live house-room and shrine sync keeps
+     * applying to it) or an imported or edited one that must be left alone.
+     * @param {Array<Object>} players - Player DTOs, you first; copied, never kept
+     * @param {Array<string>} names - Display names, same order
+     * @param {Object} [options]
+     * @param {boolean} [options.selfIsLive=false]
+     * @param {string} [options.note] - A line shown above the editor about where the party came from
+     */
+    loadParty(players, names, { selfIsLive = false, note = '' } = {}) {
+        const dtoMap = {};
+        const info = [];
+        players.forEach((dto, index) => {
+            const hrid = `player${index + 1}`;
+            dtoMap[hrid] = { ...structuredClone(dto), hrid };
+            info.push({ hrid, name: names[index] || `Player ${index + 1}` });
+        });
+        this._originalDTOs = structuredClone(dtoMap);
+        // The live self's original holds the game's house rooms and shrines, which is what the live sync measures a
+        // hand edit against: the build handed over may carry a what-if level, and recorded as the original it would
+        // read as unedited and be put back to the game's level on the next read
+        if (selfIsLive && this._originalDTOs.player1) this._seedLiveBaseline(this._originalDTOs.player1);
+        this._editedDTOs = dtoMap;
+        this._editedPlayerInfo = info;
+        this._selfHrid = selfIsLive ? 'player1' : null;
+        this._activeEditPlayer = 'player1';
+        this._missingMembers = [];
+        this._profileStatus = [];
+        this._importSkipped = [];
+        this._partyKeyAtLoad = null;
+        this._externalNote = note || '';
+        this._loadoutFetchNote = '';
+        this._forgetAppliedLoadouts();
+        this._selectedLoadoutName = '';
+        this._editorInitialized = true;
+        this._scenarioToken++;
+        this._recomputeLevelGapDebuffs();
+        this.renderEditor();
+    }
+
+    /**
+     * Set a live self's original house rooms and guild shrines to what the game says now, read from the same
+     * sources the live syncs read (never from an outgoing original, whose hand-edited fields those syncs leave
+     * behind). Rooms or shrines the game does not report keep the value the DTO was handed with.
+     * @param {Object} original - The live self's entry in `_originalDTOs`; mutated
+     * @private
+     */
+    _seedLiveBaseline(original) {
+        try {
+            const rooms = dataManager.getHouseRooms?.();
+            if (rooms && typeof rooms.forEach === 'function') {
+                original.houseRooms = { ...(original.houseRooms || {}) };
+                rooms.forEach((room, hrid) => {
+                    original.houseRooms[hrid] = Number(room?.level) || 0;
+                });
+            }
+        } catch (error) {
+            console.error('[SimEditor] Failed to read the house rooms:', error);
+        }
+        let shrines = null;
+        try {
+            shrines = readGuildShrineLevels();
+        } catch (error) {
+            console.error('[SimEditor] Failed to read the guild shrine levels:', error);
+        }
+        // Nothing read is not every shrine at zero (see `_syncGuildShrinesFromGame`)
+        if (!shrines || typeof shrines !== 'object' || !Object.keys(shrines).length) return;
+        const detailMap = getGuildBuffDetailMap();
+        original.guildShrineLevels = { ...(original.guildShrineLevels || {}) };
+        for (const [buffHrid, rawLevel] of Object.entries(shrines)) {
+            const level = Math.max(0, Math.floor(Number(rawLevel) || 0));
+            original.guildShrineLevels[buffHrid] = level;
+            const detail = detailMap[buffHrid];
+            if (detail?.isCombat)
+                original.guildCombatBuffs = applyGuildBuffLevel(original.guildCombatBuffs, detail, level);
+        }
     }
 
     /**
@@ -3628,7 +3711,7 @@ export class SimEditor {
     }
 
     /**
-     * @param {string} loadoutName - Snapshot name
+     * @param {string|Object} loadoutName - Snapshot name, or the snapshot itself (applied as given)
      * @returns {boolean} True when a snapshot of that name was found and applied
      * @private
      */
@@ -3652,7 +3735,8 @@ export class SimEditor {
             if (!this._loadoutBaselineDTOs) this._loadoutBaselineDTOs = {};
             this._loadoutBaselineDTOs[this._activeEditPlayer] = baseline;
             if (!this._loadoutAppliedNames) this._loadoutAppliedNames = {};
-            this._loadoutAppliedNames[this._activeEditPlayer] = loadoutName;
+            this._loadoutAppliedNames[this._activeEditPlayer] =
+                typeof loadoutName === 'object' ? loadoutName.name || '' : loadoutName;
         }
         return applied;
     }

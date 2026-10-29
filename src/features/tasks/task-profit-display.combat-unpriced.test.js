@@ -39,15 +39,15 @@ const dropEntries = [{ itemHrid: '/items/cheese', name: 'Cheese', countPerHour: 
  * @param {Array<Object>} consumableEntries - Priced consumables
  * @returns {string} The first line of the rendered estimate
  */
-function render(unpriced, consumableEntries = []) {
+function render(unpriced, consumableEntries = [], { timeEstimate = '1h', completionSeconds = 3600 } = {}) {
     const container = document.createElement('div');
     taskProfitDisplay._renderCombatEstimateResult(
         container,
         { quantity: 100, currentProgress: 0, coinReward: 1000, taskTokenReward: 0 },
         'Rat',
         100,
-        '1h',
-        3600,
+        timeEstimate,
+        completionSeconds,
         '',
         0,
         rewardValue,
@@ -80,5 +80,11 @@ describe('combat estimate with unpriced items', () => {
         const line = render({ drops: [], consumables: ['/items/mystery_tea'] });
         expect(line).toContain('-- ⚠');
         expect(line).not.toContain('2.0K');
+    });
+
+    test('a sim with no kills of the monster withholds the figure instead of quoting the rewards alone', () => {
+        const line = render({ drops: [], consumables: [] }, [], { timeEstimate: '???', completionSeconds: null });
+        expect(line).toContain('-- ⚠');
+        expect(line).not.toContain('1.0K');
     });
 });

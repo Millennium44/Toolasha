@@ -9,10 +9,14 @@ vi.mock('./multi-worker-entry.js?worker', () => ({ default: '// coordinator' }))
 vi.mock('./combat-sim-worker.js?worker', () => ({ default: '// sim' }));
 // Revenue keyed off the requested player, read from a test-only `__profit` map on
 // the sim result, so a test can prove the early-exit decision reads the right one.
+const revenueCalls = vi.hoisted(() => []);
 vi.mock('./combat-sim-adapter.js', () => ({
     seedSimPriceCache: (cache) => cache,
 
-    calculateSimRevenue: (simResult, _gameData, playerHrid) => ({ netPerHour: simResult?.__profit?.[playerHrid] ?? 0 }),
+    calculateSimRevenue: (simResult, _gameData, playerHrid, _hours, options) => {
+        revenueCalls.push(options);
+        return { netPerHour: simResult?.__profit?.[playerHrid] ?? 0 };
+    },
 }));
 
 const { runAllZonesSimulation, cancelAllZonesSimulation } = await import('./all-zones-runner.js');
@@ -138,6 +142,41 @@ describe('early-exit decision keys on the reported player', () => {
         await expect(run).rejects.toThrow();
     });
 
+    test('the early-exit profit is taxed at the analyzed rate; self passes none', async () => {
+        revenueCalls.length = 0;
+        const other = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [{ zoneHrid: '/actions/combat/a', difficultyTier: 0 }],
+            hours: 1,
+            useEarlyExit: true,
+            saleTaxRate: 0,
+        });
+        other.catch(() => {});
+        workers[0].postMessage = () => {};
+        workers[0].onmessage({
+            data: { type: 'zone_tier_result', zoneHrid: '/actions/combat/a', simResult: { simulatedTime: HOUR } },
+        });
+        cancelAllZonesSimulation();
+        expect(revenueCalls).toEqual([{ saleTaxRate: 0 }]);
+
+        revenueCalls.length = 0;
+        const self = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [{ zoneHrid: '/actions/combat/a', difficultyTier: 0 }],
+            hours: 1,
+            useEarlyExit: true,
+        });
+        self.catch(() => {});
+        workers[1].postMessage = () => {};
+        workers[1].onmessage({
+            data: { type: 'zone_tier_result', zoneHrid: '/actions/combat/a', simResult: { simulatedTime: HOUR } },
+        });
+        cancelAllZonesSimulation();
+        expect(revenueCalls).toEqual([{}]);
+    });
+
     test('the solo path still defaults to player1', async () => {
         // Only player1 exists; T1 falls on both metrics, so the next tier is skipped
         const solo0 = { simulatedTime: HOUR, experienceGained: { player1: { a: 100 } }, __profit: { player1: 100 } };
@@ -148,5 +187,85 @@ describe('early-exit decision keys on the reported player', () => {
 
         cancelAllZonesSimulation();
         await expect(run).rejects.toThrow();
+    });
+});
+
+describe('per-zone parties and streamed results', () => {
+    test('relays each task_result to onResult and still resolves with the full array', async () => {
+        const seen = [];
+        const run = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [
+                { zoneHrid: '/actions/combat/a', difficultyTier: 0, playerDTOs: [{ hrid: 'player1' }] },
+                {
+                    zoneHrid: '/actions/combat/a',
+                    difficultyTier: 0,
+                    playerDTOs: [{ hrid: 'player1' }, { hrid: 'player2' }],
+                },
+            ],
+            hours: 1,
+            onResult: (index, simResult) => seen.push([index, simResult]),
+        });
+        const worker = workers[0];
+        worker.onmessage({ data: { type: 'task_result', index: 1, simResult: { x: 1 } } });
+        worker.onmessage({ data: { type: 'task_result', index: 0, simResult: null } });
+        worker.onmessage({ data: { type: 'all_zones_result', results: [null, { x: 1 }] } });
+        await expect(run).resolves.toEqual([null, { x: 1 }]);
+        expect(seen).toEqual([
+            [1, { x: 1 }],
+            [0, null],
+        ]);
+    });
+
+    test('a streamed run whose final message carries no results resolves with an empty array', async () => {
+        const run = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [{ zoneHrid: '/actions/combat/a', difficultyTier: 0 }],
+            hours: 1,
+            onResult: () => {},
+        });
+        workers[0].onmessage({ data: { type: 'all_zones_result', results: null } });
+        await expect(run).resolves.toEqual([]);
+    });
+
+    test('results streamed before a cancel stay with the caller', async () => {
+        const seen = [];
+        const run = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [
+                { zoneHrid: '/actions/combat/a', difficultyTier: 0 },
+                { zoneHrid: '/actions/combat/b', difficultyTier: 0 },
+            ],
+            hours: 1,
+            onResult: (index) => seen.push(index),
+        });
+        workers[0].onmessage({ data: { type: 'task_result', index: 0, simResult: { ok: true } } });
+        cancelAllZonesSimulation();
+        await expect(run).rejects.toThrow('Cancelled');
+        expect(seen).toEqual([0]);
+    });
+
+    test('a sweep with per-zone parties runs without early exit and asks for streamed results', () => {
+        let start = null;
+        globalThis.Worker = class extends FakeWorker {
+            postMessage(msg) {
+                if (msg.type === 'start_all_zones') start = msg;
+            }
+        };
+        const run = runAllZonesSimulation({
+            gameData: {},
+            playerDTOs: [],
+            zones: [{ zoneHrid: '/actions/combat/a', difficultyTier: 0, playerDTOs: [{ hrid: 'player1' }] }],
+            hours: 1,
+            useEarlyExit: true,
+            onResult: () => {},
+        });
+        run.catch(() => {});
+        expect(start.useEarlyExit).toBe(false);
+        expect(start.streamResults).toBe(true);
+        cancelAllZonesSimulation();
     });
 });

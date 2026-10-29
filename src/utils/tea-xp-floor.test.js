@@ -188,7 +188,6 @@ describe('findXpFloorChoice', () => {
                 collectAll: true,
                 teaSetGoal: 'gold',
                 includeEmpty: true,
-                matchGoldCatalyst: true,
             }).evaluatedAll;
         const gold = new Map(pass('gold').map((r) => [key(r.teas), r]));
         return pass('xp').map((r) => ({ ...r, xp: r.score, gold: gold.get(key(r.teas)).score }));

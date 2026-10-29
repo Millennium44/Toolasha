@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
     initData: null,
     itemDetails: {},
     prices: {},
+    /** hrids whose price in `prices` is a value-map estimate, not a listing */
+    estimatedPrices: new Set(),
     priceCalls: [],
     customPrices: {},
     dungeonTokenValues: {},
@@ -23,6 +25,7 @@ const mocks = vi.hoisted(() => ({
     marketListeners: [],
     marketLoaded: true,
     emitted: [],
+    ironCow: false,
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
@@ -79,6 +82,11 @@ vi.mock('../../utils/market-data.js', () => ({
         mocks.priceCalls.push([hrid, options]);
         return hrid in mocks.prices ? mocks.prices[hrid] : null;
     },
+    getItemPriceInfo: (hrid, options) => {
+        mocks.priceCalls.push([hrid, options]);
+        const price = hrid in mocks.prices ? mocks.prices[hrid] : null;
+        return { price, source: price === null ? null : 'book', estimated: mocks.estimatedPrices.has(hrid) };
+    },
 }));
 
 vi.mock('../settings/custom-price-overrides.js', () => ({
@@ -88,6 +96,11 @@ vi.mock('../settings/custom-price-overrides.js', () => ({
 
 vi.mock('../../utils/profit-helpers.js', () => ({
     calculatePriceAfterTax: (price, taxRate = 0.02) => price * (1 - taxRate),
+}));
+
+vi.mock('../../utils/ironcow-valuation.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    isIronCowCharacter: () => mocks.ironCow,
 }));
 
 vi.mock('../../utils/ev-worker-manager.js', () => ({
@@ -113,6 +126,7 @@ beforeEach(() => {
         [JUNK_HRID]: 50,
     };
     mocks.priceCalls = [];
+    mocks.estimatedPrices = new Set();
     mocks.customPrices = {};
     mocks.dungeonTokenValues = {};
     mocks.initData = {
@@ -126,9 +140,11 @@ beforeEach(() => {
     };
     expectedValueCalculator.containerCache.clear();
     expectedValueCalculator.containerMissingCounts.clear();
+    expectedValueCalculator.containerEstimatedCounts.clear();
     expectedValueCalculator.isInitialized = false;
     expectedValueCalculator._initPromise = null;
     mocks.emitted = [];
+    mocks.ironCow = false;
 });
 
 describe('getDropPrice', () => {
@@ -177,6 +193,7 @@ describe('resolveSellSideValue', () => {
             value: 1000,
             source: 'market',
             needsTax: true,
+            estimated: false,
         });
     });
 
@@ -207,6 +224,7 @@ describe('resolveSellSideValue', () => {
             source: 'expectedValue',
             needsTax: false,
             missingCount: 0,
+            estimatedCount: 0,
         });
     });
 
@@ -446,10 +464,34 @@ describe('nested containers', () => {
         mocks.itemDetails[INNER].isTradable = true;
         const priceMap = expectedValueCalculator.buildPriceMap([OUTER, INNER, CHEST_HRID], mocks.initData);
 
-        expect(priceMap[INNER]).toEqual({ price: 1000 * (1 - MARKET_TAX), canBeSold: false, missingCount: 0 });
-        expect(priceMap[GEM_HRID]).toEqual({ price: 1000, canBeSold: true, missingCount: 0 });
-        expect(priceMap[JUNK_HRID]).toEqual({ price: 50, canBeSold: false, missingCount: 0 });
-        expect(priceMap['/items/coin']).toEqual({ price: 1, canBeSold: false, missingCount: 0 });
+        expect(priceMap[INNER]).toEqual({
+            price: 1000 * (1 - MARKET_TAX),
+            canBeSold: false,
+            missingCount: 0,
+            estimated: false,
+            estimatedCount: 0,
+        });
+        expect(priceMap[GEM_HRID]).toEqual({
+            price: 1000,
+            canBeSold: true,
+            missingCount: 0,
+            estimated: false,
+            estimatedCount: 0,
+        });
+        expect(priceMap[JUNK_HRID]).toEqual({
+            price: 50,
+            canBeSold: false,
+            missingCount: 0,
+            estimated: false,
+            estimatedCount: 0,
+        });
+        expect(priceMap['/items/coin']).toEqual({
+            price: 1,
+            canBeSold: false,
+            missingCount: 0,
+            estimated: false,
+            estimatedCount: 0,
+        });
     });
 
     test('a container that contains itself terminates instead of recursing forever', () => {
@@ -733,6 +775,62 @@ describe('truncation is per branch, not per traversal', () => {
         // ...while the two that genuinely had a branch cut off stay uncached
         expect(expectedValueCalculator.containerCache.has(CYCLIC)).toBe(false);
         expect(expectedValueCalculator.containerCache.has(PARENT)).toBe(false);
+    });
+});
+
+describe('drops priced only by the value map', () => {
+    const OUTER = '/items/outer_chest';
+    const INNER = '/items/inner_crate';
+
+    beforeEach(() => {
+        mocks.itemDetails[OUTER] = { name: 'Outer Chest', isOpenable: true };
+        mocks.itemDetails[INNER] = { name: 'Inner Crate', isOpenable: true };
+        mocks.initData.openableLootDropMap[OUTER] = [{ itemHrid: INNER, dropRate: 1, minCount: 1, maxCount: 1 }];
+        mocks.initData.openableLootDropMap[INNER] = [
+            { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: JUNK_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+        mocks.estimatedPrices.add(JUNK_HRID);
+        expectedValueCalculator.isInitialized = true;
+    });
+
+    test('a crate priced partly by the value map counts the estimate and keeps the same figure', () => {
+        const estimated = expectedValueCalculator.calculateExpectedValue(INNER);
+        mocks.estimatedPrices.clear();
+        const firm = expectedValueCalculator.calculateExpectedValue(INNER);
+
+        expect(estimated).toMatchObject({ estimatedCount: 1, isEstimated: true, isPartial: false });
+        expect(firm).toMatchObject({ estimatedCount: 0, isEstimated: false });
+        expect(estimated.expectedValue).toBe(firm.expectedValue);
+    });
+
+    test('a chest around it inherits the count, on the direct path and from the cache', () => {
+        expect(expectedValueCalculator.calculateExpectedValue(OUTER).estimatedCount).toBe(1);
+        expect(expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData).estimatedCount).toBe(1);
+        // Now served from the container cache
+        expect(expectedValueCalculator.resolveContainerValue(OUTER)).toMatchObject({ estimatedCount: 1 });
+    });
+
+    test('the worker recount agrees with the main path', () => {
+        const priceMap = {
+            [GEM_HRID]: { price: 1000, canBeSold: true, estimated: false, estimatedCount: 0 },
+            [JUNK_HRID]: { price: 50, canBeSold: true, estimated: true, estimatedCount: 0 },
+        };
+        expect(expectedValueCalculator.countEstimatedDrops(mocks.initData.openableLootDropMap[INNER], priceMap)).toBe(
+            1
+        );
+        // An unpriced drop is missing, not estimated
+        priceMap[JUNK_HRID] = { price: null, canBeSold: false, estimated: false, estimatedCount: 0 };
+        expect(expectedValueCalculator.countEstimatedDrops(mocks.initData.openableLootDropMap[INNER], priceMap)).toBe(
+            0
+        );
+    });
+
+    test('a ~ marks the formatted figure, and a partial one keeps its floor mark', () => {
+        const ev = expectedValueCalculator.calculateExpectedValue(INNER);
+        expect(expectedValueCalculator.formatExpectedValue(ev)).toBe(`~${Math.round(ev.expectedValue)}`);
+        const partial = { ...ev, isPartial: true, missingCount: 2 };
+        expect(expectedValueCalculator.formatExpectedValue(partial)).toContain('≥ ~');
     });
 });
 
@@ -1095,5 +1193,68 @@ describe('calculateGrossContainerValue', () => {
             (1000 * (1 - COWBELL_BAG_TAX)) / 10,
             6
         );
+    });
+});
+
+describe('calculateContainerValueAtTaxRate', () => {
+    // 500 (gem, sellable) + 150 (untradable junk, exempt) + 100 (coin, exempt)
+    test('an Iron Cow rate on a standard live character leaves sellable contents untaxed', () => {
+        expect(expectedValueCalculator.calculateContainerValueAtTaxRate(CHEST_HRID, 0)).toBeCloseTo(750, 6);
+        // The live path is unchanged and nothing leaked into its cache
+        expect(expectedValueCalculator.getCachedValue(CHEST_HRID)).toBeNull();
+        expect(expectedValueCalculator.calculateSingleContainer(CHEST_HRID, mocks.initData)).toBeCloseTo(
+            500 * (1 - MARKET_TAX) + 250,
+            6
+        );
+    });
+
+    test('a market rate on a live Iron Cow taxes the sellable contents only', () => {
+        mocks.ironCow = true;
+        expect(expectedValueCalculator.calculateContainerValueAtTaxRate(CHEST_HRID, MARKET_TAX)).toBeCloseTo(
+            500 * (1 - MARKET_TAX) + 250,
+            6
+        );
+        // The live Iron Cow path stays untaxed
+        expect(expectedValueCalculator.calculateSingleContainer(CHEST_HRID, mocks.initData)).toBeCloseTo(750, 6);
+    });
+
+    test('a cached live figure is not read, and a rate pass does not feed the cache', () => {
+        expectedValueCalculator.calculateSingleContainer(CHEST_HRID, mocks.initData);
+        const cached = expectedValueCalculator.getCachedValue(CHEST_HRID);
+        expect(expectedValueCalculator.calculateContainerValueAtTaxRate(CHEST_HRID, 0)).toBeCloseTo(750, 6);
+        expect(expectedValueCalculator.getCachedValue(CHEST_HRID)).toBe(cached);
+    });
+
+    test('a nested container is re-valued at the rate rather than read from the cache', () => {
+        const OUTER = '/items/test_outer';
+        mocks.itemDetails[OUTER] = { name: 'Outer', isOpenable: true };
+        mocks.initData.openableLootDropMap[OUTER] = [{ itemHrid: CHEST_HRID, dropRate: 1, minCount: 1, maxCount: 1 }];
+        expectedValueCalculator.calculateSingleContainer(OUTER, mocks.initData); // warms the cache, taxed
+        expect(expectedValueCalculator.calculateContainerValueAtTaxRate(OUTER, 0)).toBeCloseTo(750, 6);
+    });
+
+    test('a cowbell takes its bag rate on a market rate and none at 0, whatever the live character is', () => {
+        mocks.prices['/items/bag_of_10_cowbells'] = 1000;
+        mocks.ironCow = true;
+        const ctx = (saleTaxRate) => ({ path: new Set(), truncated: false, saleTaxRate });
+        expect(expectedValueCalculator.resolveSellSideValue('/items/cowbell', 0, ctx(0)).value).toBeCloseTo(100, 6);
+        expect(expectedValueCalculator.resolveSellSideValue('/items/cowbell', 0, ctx(MARKET_TAX)).value).toBeCloseTo(
+            (1000 * (1 - COWBELL_BAG_TAX)) / 10,
+            6
+        );
+    });
+});
+
+describe('cleanup', () => {
+    test('cleanup empties every per-container count, the estimated one included', () => {
+        expectedValueCalculator.containerCache.set(CHEST_HRID, 5);
+        expectedValueCalculator.containerMissingCounts.set(CHEST_HRID, 1);
+        expectedValueCalculator.containerEstimatedCounts.set(CHEST_HRID, 2);
+
+        expectedValueCalculator.cleanup();
+
+        expect(expectedValueCalculator.containerCache.size).toBe(0);
+        expect(expectedValueCalculator.containerMissingCounts.size).toBe(0);
+        expect(expectedValueCalculator.containerEstimatedCounts.size).toBe(0);
     });
 });

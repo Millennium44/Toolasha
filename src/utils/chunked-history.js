@@ -1727,6 +1727,11 @@ class ChunkedHistory {
             fresh.push(entry);
         }
         if (fresh.length > 0) this._entries = this._sorted([...this._entries, ...fresh]);
+        // The owner holds its own copy of the history, so an entry this write found on disk (a peer's, brought
+        // in by a pull whose pending writes were drained before it was announced) is news to it. The refresh
+        // that follows the pull finds it already here and would not report it. `_adopted` is left alone: the
+        // owner's next save hands it back, which drops it from there.
+        if (fresh.length > 0 && this._charId) this._notifyRefreshed(this._charId, fresh, []);
         // What is on disk now, so the next save of an unchanged chunk is still
         // skipped rather than written once more to say the same thing. The
         // entry is updated in place: one carried forward by a later save is
@@ -1963,17 +1968,28 @@ class ChunkedHistory {
         const allRemoved = [...dropped, ...removed];
         if (fresh.length === 0 && allRemoved.length === 0) return;
         if (this._refreshListeners.size === 0) return;
-        for (const listener of [...this._refreshListeners]) {
-            try {
-                listener(charId, fresh, allRemoved);
-            } catch (error) {
-                console.error(`[${this.label}] A refresh listener threw:`, error);
-            }
-        }
+        this._notifyRefreshed(charId, fresh, allRemoved);
         // The owners hold them now. Left in `_adopted`, a save would put back an entry the owner then deleted
         for (const entry of fresh) {
             const id = this._identity(entry);
             if (id !== undefined && id !== null) this._adopted.delete(id);
+        }
+    }
+
+    /**
+     * Tell the `onRefreshed` listeners what changed under them.
+     * @param {string} charId - Whose history
+     * @param {Array<Object>} fresh - Entries added or advanced
+     * @param {Array<Object>} removed - Entries taken out
+     * @private
+     */
+    _notifyRefreshed(charId, fresh, removed) {
+        for (const listener of [...this._refreshListeners]) {
+            try {
+                listener(charId, fresh, removed);
+            } catch (error) {
+                console.error(`[${this.label}] A refresh listener threw:`, error);
+            }
         }
     }
 

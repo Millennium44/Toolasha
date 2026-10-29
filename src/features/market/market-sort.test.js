@@ -130,14 +130,16 @@ function priced(perAction, perHour) {
  * @param {Array<string>} names - Item names, as they appear in the sprite href
  * @returns {HTMLElement} The market items container
  */
-function buildGrid(names) {
+function buildGrid(names, { xlink = [] } = {}) {
     document.body.innerHTML = '';
     const container = document.createElement('div');
     container.className = 'MarketplacePanel_marketItems__abc';
     for (const name of names) {
         const tile = document.createElement('div');
         tile.className = 'Item_itemContainer__xyz';
-        tile.innerHTML = `<svg><use href="/static/media/items_sprite.svg#${name}"></use></svg>`;
+        // Many of the game's item icons carry the sprite id on `xlink:href` alone
+        const attr = xlink.includes(name) ? 'xlink:href' : 'href';
+        tile.innerHTML = `<svg><use ${attr}="/static/media/items_sprite.svg#${name}"></use></svg>`;
         container.appendChild(tile);
     }
     document.body.appendChild(container);
@@ -150,9 +152,10 @@ function buildGrid(names) {
  * @returns {Array<string>} Item names
  */
 function order(container) {
-    return Array.from(container.querySelectorAll('div[class*="Item_itemContainer"]')).map(
-        (tile) => tile.querySelector('use').getAttribute('href').split('#')[1]
-    );
+    return Array.from(container.querySelectorAll('div[class*="Item_itemContainer"]')).map((tile) => {
+        const use = tile.querySelector('use');
+        return (use.getAttribute('href') || use.getAttribute('xlink:href')).split('#')[1];
+    });
 }
 
 /**
@@ -230,6 +233,23 @@ describe('alchemy ranking', () => {
         await marketSort.sortByProfitability();
 
         expect(order(container)).toEqual(['item_c', 'item_a', 'item_b']);
+    });
+
+    test('tiles whose icons carry only xlink:href are ranked, and a reset puts each back in its place', async () => {
+        const container = buildGrid(['item_a', 'item_b', 'item_c', 'item_d'], { xlink: ['item_b', 'item_d'] });
+        engine.answers = {
+            '/items/item_a': { transmute: priced(100, 1000) },
+            '/items/item_b': { transmute: priced(400, 1000) },
+            '/items/item_c': {},
+            '/items/item_d': { transmute: priced(200, 900) },
+        };
+
+        marketSort.sortMode = 'alchemyProfit';
+        await marketSort.sortByProfitability();
+        expect(order(container)).toEqual(['item_b', 'item_d', 'item_a', 'item_c']);
+
+        marketSort.resetOrder();
+        expect(order(container)).toEqual(['item_a', 'item_b', 'item_c', 'item_d']);
     });
 
     test('picks the best-paying alchemy action for each item', async () => {

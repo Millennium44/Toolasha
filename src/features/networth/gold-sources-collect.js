@@ -48,6 +48,7 @@ import { calculateCraftingCost, networthUnitValue } from './networth-calculator.
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { characterKey } from '../../utils/character-key.js';
+import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 
 /**
  * Where the task reroll tracker keeps the tasks that have left the board, and
@@ -326,6 +327,8 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
         price,
         basisPrice: createBasisPricer(price),
         holdingPrice: createHoldingPricer(price),
+        chestKeyOf: (chestHrid) =>
+            dataManager.getItemDetails?.(chestHrid)?.openKeyItemHrid || DUNGEON_CHEST_CHEST_KEYS[chestHrid] || null,
         marketTax: MARKET_TAX,
     };
 }

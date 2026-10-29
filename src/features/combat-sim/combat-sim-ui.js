@@ -108,6 +108,7 @@ import {
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelActiveSimulations } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
+import { PartyFinderTab } from './party-finder-ui.js';
 import {
     runUpgradeAnalysis,
     getStyleExcludedSkills,
@@ -131,6 +132,7 @@ import {
     generateAbilityOrderCandidates,
     conflictKeys,
     candidateAssignmentKey,
+    saleTaxRateOf,
 } from './upgrade-advisor.js';
 import {
     VERIFY_DEFAULTS,
@@ -777,6 +779,14 @@ export function gradientLadders(rows, scoredKeys) {
 const withSign = (value, formatted) => (value < 0 ? formatted : `+${formatted}`);
 
 /**
+ * The color of a budget-plan gain by its own sign: a pinned pick can lose on the chosen axis, and a loss
+ * is red rather than a green figure.
+ * @param {number} gain - Signed gain on the plan's metric
+ * @returns {string}
+ */
+export const budgetGainColor = (gain) => (gain < 0 ? '#e57373' : gain === 0 ? '#888' : '#4caf50');
+
+/**
  * What the Upgrade-tab budget planner can shop for.
  *
  * A labyrinth plan has one axis — attempts saved — because every fight is the
@@ -818,7 +828,8 @@ export const UPGRADE_PLAN_METRICS = [
         // A death avoided is the gain, so the row's rate is subtracted from the
         // baseline's — the same flip the Gold/0.01% DPH column already applies.
         gain: (row, baseline) => (baseline?.deathsPerHour ?? 0) - (row?.metrics?.deathsPerHour ?? 0),
-        format: (value) => `${value.toFixed(2)}/hr fewer deaths`,
+        format: (value) =>
+            value < 0 ? `${(-value).toFixed(2)}/hr more deaths` : `${value.toFixed(2)}/hr fewer deaths`,
     },
     {
         key: 'score',
@@ -1335,6 +1346,24 @@ export function resolveSimParty(editor, editedDTOs, { solo } = {}) {
         profileStatus,
         soloApplied: false,
     };
+}
+
+/**
+ * The sale tax rate to price the analyzed player's drops at, for `calculateSimRevenue` and `seedSimPriceCache`.
+ *
+ * Null (no rate passed, so the live character's own tax and the unchanged `drop|` cache keys) when the analyzed
+ * player is the live character; otherwise their own (`saleTaxRateOf`: an Iron Cow pays none), looked up on the
+ * DTO that was simulated.
+ * @param {Array<Object>} playerDTOs - The simulated party
+ * @param {string} playerHrid - The analyzed player
+ * @param {string|null} trueSelfHrid - The live character's hrid in this party, or null when none of them is
+ * @returns {number|null}
+ */
+export function analyzedSaleTaxRate(playerDTOs, playerHrid, trueSelfHrid) {
+    const isSelf = Boolean(trueSelfHrid) && trueSelfHrid === playerHrid;
+    if (isSelf) return null;
+    const dto = (playerDTOs || []).find((candidate) => candidate?.hrid === playerHrid);
+    return saleTaxRateOf(dto, false);
 }
 
 /**
@@ -3113,6 +3142,9 @@ class CombatSimUI {
         this._lastSimHours = null;
         this._lastGameData = null;
         this._lastPartyWarnings = [];
+        // Each single-zone result's players' sale tax (hrid -> rate, null for the live character), keyed by the
+        // SimResult so the live view and every history entry built from it read the rates it was run with
+        this._saleTaxRatesBySim = new WeakMap();
         // Which of _lastSimResult / _allZonesResults a pricing change should
         // redraw — see `_redisplayLastResults`. Set by whichever of
         // _displayResults / _displayAllZonesResults last actually drew.
@@ -3166,6 +3198,9 @@ class CombatSimUI {
         this._seekResults = null;
         this._seekSortCol = null;
         this._seekSortAsc = true;
+        // Party tab (`party-finder-ui.js`): built while `combatSim_partyFinder` is on
+        this._partyFinder = null;
+        this._unsubscribePartyFinderSetting = null;
     }
 
     /**
@@ -3248,6 +3283,7 @@ class CombatSimUI {
             <button id="mwi-csim-tab-results" style="${tabStyle(false)}">Results</button>
             <button id="mwi-csim-tab-seek" style="${tabStyle(false)}">Seek</button>
             <button id="mwi-csim-tab-upgrade" style="${tabStyle(false)}">Upgrade</button>
+            <button id="mwi-csim-tab-party" style="${tabStyle(false)}" title="Find the best party from your saved teammates">Party</button>
         `;
 
         // Configure tab content
@@ -3709,6 +3745,11 @@ class CombatSimUI {
         upgradeContent.appendChild(triggerBox);
         upgradeContent.appendChild(upgradeResults);
 
+        // Party tab content (hidden by default; filled by the party finder while its setting is on)
+        const partyContent = document.createElement('div');
+        partyContent.id = 'mwi-csim-party-content';
+        partyContent.style.cssText = 'display:none; flex-direction:column; flex:1; overflow-y:auto; overflow-x:hidden;';
+
         // Status bar
         const status = document.createElement('div');
         status.id = 'mwi-csim-status';
@@ -3722,6 +3763,7 @@ class CombatSimUI {
         this.panel.appendChild(resultsContent);
         this.panel.appendChild(seekContent);
         this.panel.appendChild(upgradeContent);
+        this.panel.appendChild(partyContent);
         this.panel.appendChild(progressContainer);
         this.panel.appendChild(status);
 
@@ -3759,7 +3801,16 @@ class CombatSimUI {
         this.minimizeCtl = attachMinimize({
             panel: this.panel,
             header,
-            body: [tabBar, configureContent, resultsContent, seekContent, upgradeContent, progressContainer, status],
+            body: [
+                tabBar,
+                configureContent,
+                resultsContent,
+                seekContent,
+                upgradeContent,
+                partyContent,
+                progressContainer,
+                status,
+            ],
             panelKey: GEOMETRY_KEY,
             beforeEl: header.querySelector('#mwi-csim-close'),
             accent: '#aaa',
@@ -3778,6 +3829,12 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-tab-results').addEventListener('click', () => this._switchTab('results'));
         this.panel.querySelector('#mwi-csim-tab-seek').addEventListener('click', () => this._switchTab('seek'));
         this.panel.querySelector('#mwi-csim-tab-upgrade').addEventListener('click', () => this._switchTab('upgrade'));
+        this.panel.querySelector('#mwi-csim-tab-party').addEventListener('click', () => this._switchTab('party'));
+        this._syncPartyFinderTab();
+        this._unsubscribePartyFinderSetting?.();
+        this._unsubscribePartyFinderSetting = config.onSettingChange('combatSim_partyFinder', () =>
+            this._syncPartyFinderTab()
+        );
         // The Configure and Upgrade Hours boxes are one setting: editing either updates the other
         for (const [id, twinId] of [
             ['#mwi-csim-hours', '#mwi-csim-upgrade-hours'],
@@ -4410,6 +4467,7 @@ class CombatSimUI {
 
     /** @private */
     async _persistZonesScorePref() {
+        this._zonesScoreEdits = (this._zonesScoreEdits || 0) + 1;
         try {
             await storage.set(ALL_ZONES_SCORE_SCALE_KEY, this._allZonesScoreScale, 'settings');
         } catch (error) {
@@ -4419,8 +4477,12 @@ class CombatSimUI {
 
     /** @private */
     async _loadZonesScorePref() {
+        // Bumped by every user change: a scale picked while this read was out is saved and on screen, and
+        // the read holds the older value
+        const editsBefore = this._zonesScoreEdits || 0;
         try {
             const saved = await storage.get(ALL_ZONES_SCORE_SCALE_KEY, 'settings', null);
+            if ((this._zonesScoreEdits || 0) !== editsBefore) return;
             // A key from a build that offered other scales is ignored, not trusted
             if (isZonesScoreScale(saved)) this._allZonesScoreScale = saved;
         } catch (error) {
@@ -4430,6 +4492,7 @@ class CombatSimUI {
 
     /** @private */
     async _persistMaxTierFoodPref() {
+        this._maxTierFoodEdits = (this._maxTierFoodEdits || 0) + 1;
         try {
             await storage.set(ALL_ZONES_MAX_FOOD_KEY, this._maxTierFoodEnabled, 'settings');
         } catch (error) {
@@ -4439,8 +4502,11 @@ class CombatSimUI {
 
     /** @private */
     async _loadMaxTierFoodPref() {
+        // Same guard as the Score scale: a toggle flipped while this read was out is not reverted by it
+        const editsBefore = this._maxTierFoodEdits || 0;
         try {
             const saved = await storage.get(ALL_ZONES_MAX_FOOD_KEY, 'settings', false);
+            if ((this._maxTierFoodEdits || 0) !== editsBefore) return;
             this._maxTierFoodEnabled = Boolean(saved);
             const input = this.panel?.querySelector('#mwi-csim-maxfood');
             if (input) input.checked = this._maxTierFoodEnabled;
@@ -4726,7 +4792,7 @@ class CombatSimUI {
         hours,
         gameData,
         playerHrid = this._activePlayerTab || 'player1',
-        { newRun = false } = {}
+        { newRun = false, saleTaxRate } = {}
     ) {
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (!container) return;
@@ -4759,7 +4825,11 @@ class CombatSimUI {
         const bestiaryCounts = bestiaryRows ? countsByMonster(bestiaryRows) : null;
         // Not loaded yet: ask the game for it the way the Bestiary tab does,
         // and redraw when it lands so the column fills in by itself
-        this._allZonesRedrawArgs = { hours, gameData, playerHrid };
+        // The sale tax the rows were priced at (null: the live character's), kept for Reprice. A redraw passes none
+        // and keeps the run's; a new run states its own
+        const sweepSaleTaxRate =
+            saleTaxRate !== undefined ? saleTaxRate : newRun ? null : (this._allZonesRedrawArgs?.saleTaxRate ?? null);
+        this._allZonesRedrawArgs = { hours, gameData, playerHrid, saleTaxRate: sweepSaleTaxRate };
         if (bestiaryOn && !bestiaryRows) this._requestBestiary();
         // Phases, so a slow run on a real account says WHICH part was slow rather
         // than leaving it to be guessed at: building rows, warming the volume
@@ -6340,12 +6410,15 @@ class CombatSimUI {
         this._runStarting = true;
         const startToken = ++this._runStartToken;
         let playerDTOs;
+        // The live character's hrid in this party, null when the analyzed player is somebody else's profile
+        let seekTrueSelfHrid = null;
         try {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
                 // Same Solo narrowing as Simulate and All Zones — see resolveSimParty()
                 const resolved = resolveSimParty(this._editor, editedDTOs);
                 playerDTOs = resolved.playerDTOs;
+                seekTrueSelfHrid = resolved.trueSelfHrid;
                 // Revenue/drops below are computed for whichever player
                 // `_activePlayerTab` names, and that field doubles as "which
                 // player's tab is open in a previous single-zone result" — left
@@ -6357,6 +6430,7 @@ class CombatSimUI {
                 playerDTOs = result.players;
                 this._playerInfo = result.playerInfo;
                 this._activePlayerTab = result.selfHrid;
+                seekTrueSelfHrid = result.selfHrid;
             }
         } catch (error) {
             if (startToken !== this._runStartToken) return;
@@ -6429,6 +6503,8 @@ class CombatSimUI {
             const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
 
             const playerHrid = this._activePlayerTab || 'player1';
+            // Another player's drops are taxed as they pay it, not at the live character's rate
+            const saleTaxRate = analyzedSaleTaxRate(playerDTOs, playerHrid, seekTrueSelfHrid);
 
             const seekRows = simResults
                 .map((simResult, i) => {
@@ -6444,7 +6520,9 @@ class CombatSimUI {
                     let profitPerHour = 0;
                     let costPerHour = 0;
                     try {
-                        const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours);
+                        const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours, {
+                            ...(saleTaxRate != null ? { saleTaxRate } : {}),
+                        });
                         profitPerHour = revenue.netPerHour;
                         costPerHour = revenue.costPerHour;
                     } catch {
@@ -6632,11 +6710,13 @@ class CombatSimUI {
     }
 
     /**
-     * Switch between Configure and Results tabs.
-     * @param {string} tab - 'configure' or 'results'
+     * Switch between the panel's tabs.
+     * @param {string} requested - 'configure', 'results', 'seek', 'upgrade' or 'party'
      * @private
      */
-    _switchTab(tab) {
+    _switchTab(requested) {
+        // The Party tab only exists while its setting is on
+        const tab = requested === 'party' && !this._partyFinder ? 'configure' : requested;
         this._activeMainTab = tab;
         const configureContent = this.panel.querySelector('#mwi-csim-configure-content');
         const resultsContent = this.panel.querySelector('#mwi-csim-results-content');
@@ -6646,6 +6726,8 @@ class CombatSimUI {
         const tabResults = this.panel.querySelector('#mwi-csim-tab-results');
         const tabSeek = this.panel.querySelector('#mwi-csim-tab-seek');
         const tabUpgrade = this.panel.querySelector('#mwi-csim-tab-upgrade');
+        const partyContent = this.panel.querySelector('#mwi-csim-party-content');
+        const tabParty = this.panel.querySelector('#mwi-csim-tab-party');
 
         const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${ACCENT}; border-bottom:2px solid ${ACCENT};`;
         const inactiveStyle =
@@ -6655,10 +6737,12 @@ class CombatSimUI {
         resultsContent.style.display = 'none';
         if (seekContent) seekContent.style.display = 'none';
         if (upgradeContent) upgradeContent.style.display = 'none';
+        if (partyContent) partyContent.style.display = 'none';
         tabConfigure.style.cssText = inactiveStyle;
         tabResults.style.cssText = inactiveStyle;
         if (tabSeek) tabSeek.style.cssText = inactiveStyle;
         if (tabUpgrade) tabUpgrade.style.cssText = inactiveStyle;
+        if (tabParty) tabParty.style.cssText = inactiveStyle + (this._partyFinder ? '' : ' display:none;');
 
         // A run owns the status line. The prompts below describe what the tab is
         // for, which is true when nothing is happening and a lie mid-run — the
@@ -6682,6 +6766,10 @@ class CombatSimUI {
             if (idle) this._setStatus('Select a player and click Analyze.');
             // The zone, tier or build may have been changed on Configure since a remembered result was drawn
             this._refreshCachedTriggerResult();
+        } else if (tab === 'party') {
+            if (partyContent) partyContent.style.display = 'flex';
+            if (tabParty) tabParty.style.cssText = activeStyle;
+            this._partyFinder.onShow();
         } else {
             resultsContent.style.display = 'flex';
             tabResults.style.cssText = activeStyle;
@@ -6713,7 +6801,30 @@ class CombatSimUI {
      * @private
      */
     _isBusy() {
-        return Boolean(this._runStarting || this.isRunning || this._upgradeRunning);
+        return Boolean(this._runStarting || this.isRunning || this._upgradeRunning || this._partyFinder?.isBusy());
+    }
+
+    /**
+     * Build or tear down the Party tab to match `combatSim_partyFinder`. Off takes the tab, its nodes, its
+     * listeners and any search in flight with it; on builds it fresh.
+     * @private
+     */
+    _syncPartyFinderTab() {
+        if (!this.panel) return;
+        const wanted = config.getSetting('combatSim_partyFinder') !== false;
+        const tabButton = this.panel.querySelector('#mwi-csim-tab-party');
+        const content = this.panel.querySelector('#mwi-csim-party-content');
+        if (wanted && !this._partyFinder && content) {
+            this._partyFinder = new PartyFinderTab(this);
+            this._partyFinder.mount(content);
+        } else if (!wanted && this._partyFinder) {
+            const wasActive = this._activeMainTab === 'party';
+            this._partyFinder.detach();
+            this._partyFinder = null;
+            if (content) content.textContent = '';
+            if (wasActive) this._switchTab('configure');
+        }
+        if (tabButton) tabButton.style.display = this._partyFinder ? '' : 'none';
     }
 
     /**
@@ -6722,6 +6833,11 @@ class CombatSimUI {
      */
     async _onSimulate() {
         if (this._runStarting) return;
+        // A party search marks the panel running too, but this button is not its Stop: it has its own
+        if (this._partyFinder?.isBusy()) {
+            this._setStatus('A party search is running. Stop it on the Party tab first.');
+            return;
+        }
         if (this.isRunning) {
             // Stop the running simulation. The warm workers stay: Stop here is
             // almost always "that is not what I meant" followed by an edit and
@@ -6909,6 +7025,15 @@ class CombatSimUI {
             this._lastSimResult = simResult;
             this._lastSimHours = hours;
             this._lastGameData = gameData;
+            // Another player's drops are taxed as they pay it (an imported Iron Cow pays none), not at the live rate
+            this._saleTaxRatesBySim.set(
+                simResult,
+                Object.fromEntries(
+                    (playerDTOs || [])
+                        .filter((dto) => dto?.hrid)
+                        .map((dto) => [dto.hrid, analyzedSaleTaxRate(playerDTOs, dto.hrid, trueSelfHrid)])
+                )
+            );
             this._persistConsumableRates(simResult, trueSelfHrid, ownerId);
 
             // Generate label before displaying (display may re-render)
@@ -7103,6 +7228,9 @@ class CombatSimUI {
         let editedDTOs;
         // Solo on a party member other than yourself: their sweep, not yours
         let soloOtherMember = false;
+        // The live character's hrid in this party (null with only imported profiles): whether the analyzed
+        // player pays the live tax or their own
+        let allZonesTrueSelfHrid = null;
         this._runStarting = true;
         const startToken = ++this._runStartToken;
         try {
@@ -7116,6 +7244,7 @@ class CombatSimUI {
                 const selectedHrid = soloVsParty ? this._soloPartySimulatedHrid(editedDTOs) : resolved.selfHrid;
                 playerDTOs = resolved.playerDTOs;
                 soloOtherMember = resolved.soloApplied && resolved.trueSelfHrid === null;
+                allZonesTrueSelfHrid = resolved.trueSelfHrid;
                 // The roster the bestiary pace matches recorded runs against (`runMatchesSimParty`);
                 // the single-zone path copies it the same way, this one used to leave it empty
                 // A copy: the editor mutates its own array in place when a player is imported later
@@ -7131,6 +7260,7 @@ class CombatSimUI {
                 playerDTOs = result.players;
                 this._playerInfo = result.playerInfo;
                 this._activePlayerTab = result.selfHrid;
+                allZonesTrueSelfHrid = result.selfHrid;
             }
         } catch (error) {
             if (startToken !== this._runStartToken) return;
@@ -7239,6 +7369,9 @@ class CombatSimUI {
         this._allZonesFoodSwaps = foodSwaps;
 
         const communityBuffs = getCommunityBuffs();
+        // The analyzed player's own sale tax when they are not the live character (null for self): read by the
+        // early-exit decision, every row's revenue and a later Reprice
+        const saleTaxRate = analyzedSaleTaxRate(playerDTOs, this._activePlayerTab || 'player1', allZonesTrueSelfHrid);
 
         // UI: disable Simulate button, show progress
         this.isRunning = true;
@@ -7293,6 +7426,7 @@ class CombatSimUI {
                         // The early-exit decision must read the same player the ranked
                         // table shows, or it prunes tiers by a figure the user never sees
                         playerHrid: this._activePlayerTab || 'player1',
+                        ...(saleTaxRate != null ? { saleTaxRate } : {}),
                     },
                     (sweepPercent) => {
                         if (!this._isCurrentRun(ownerId, startToken)) return;
@@ -7334,7 +7468,9 @@ class CombatSimUI {
 
                         let revenue = null;
                         try {
-                            revenue = calculateSimRevenue(simResult, gameData, playerHrid, hours);
+                            revenue = calculateSimRevenue(simResult, gameData, playerHrid, hours, {
+                                ...(saleTaxRate != null ? { saleTaxRate } : {}),
+                            });
                         } catch {
                             // Revenue calculation may not be available
                         }
@@ -7355,7 +7491,7 @@ class CombatSimUI {
 
             this._allZonesSortCol = 'score';
             this._allZonesSortAsc = false;
-            await this._displayAllZonesResults(zoneResults, hours, gameData, playerHrid, { newRun: true });
+            await this._displayAllZonesResults(zoneResults, hours, gameData, playerHrid, { newRun: true, saleTaxRate });
             if (!this._isCurrentRun(ownerId, startToken)) return;
 
             // Outlives the panel: the ranked action list reads this to put combat
@@ -7377,7 +7513,7 @@ class CombatSimUI {
                 // A pricing change during the run is replayed on screen after it ends,
                 // but the snapshot is written here, so it is priced now as well
                 const snapshotRows = this._repricePending
-                    ? this._repriceZoneEntries(zoneResults, gameData, playerHrid, hours)
+                    ? this._repriceZoneEntries(zoneResults, gameData, playerHrid, hours, saleTaxRate)
                     : zoneResults;
                 // Kept so a later re-price (the pending replay, or any pricing change
                 // while this sweep is shown) rewrites the snapshot with the table
@@ -7573,6 +7709,8 @@ class CombatSimUI {
      * case.
      */
     _redisplayLastResults() {
+        // The Party tab prices its own rows (and holds the change for the end of its own run)
+        this._partyFinder?.onPricingChanged();
         // A run in progress has hidden the old results; redrawing them would show them
         // beside its progress.
         // Not dropped, though: a run's revenue is captured before its final draw awaits,
@@ -7635,7 +7773,13 @@ class CombatSimUI {
         // The player the displayed sweep was measured for, not whoever's tab
         // is open now: the snapshot re-saved below was built for that player too
         const playerHrid = args.playerHrid || this._activePlayerTab || 'player1';
-        const repriced = this._repriceZoneEntries(this._allZonesResults, args.gameData, playerHrid, args.hours);
+        const repriced = this._repriceZoneEntries(
+            this._allZonesResults,
+            args.gameData,
+            playerHrid,
+            args.hours,
+            args.saleTaxRate ?? null
+        );
         this._displayAllZonesResults(repriced, args.hours, args.gameData, playerHrid);
         this._resaveAllZonesSnapshot(repriced);
     }
@@ -7672,15 +7816,18 @@ class CombatSimUI {
      * @param {Object} gameData - The sweep's game data
      * @param {string} playerHrid - Whose revenue
      * @param {number} hours - Simulated hours
+     * @param {number|null} [saleTaxRate] - The analyzed player's sale tax when they are not the live character
      * @returns {Array<Object>} New rows; the input is left alone
      * @private
      */
-    _repriceZoneEntries(entries, gameData, playerHrid, hours) {
+    _repriceZoneEntries(entries, gameData, playerHrid, hours, saleTaxRate = null) {
         return entries.map((entry) => {
             if (!entry?.simResult) return entry;
             let revenue = entry.revenue;
             try {
-                revenue = calculateSimRevenue(entry.simResult, gameData, playerHrid, hours);
+                revenue = calculateSimRevenue(entry.simResult, gameData, playerHrid, hours, {
+                    ...(Number.isFinite(saleTaxRate) ? { saleTaxRate } : {}),
+                });
             } catch {
                 // Keep the stale revenue rather than drop the row over a pricing quirk
             }
@@ -7752,6 +7899,8 @@ class CombatSimUI {
         const activeTab = entryPlayer?.hrid || this._activePlayerTab;
         const playerInfo = entryPlayer?.playerInfo || entryRoster || this._playerInfo;
         const numberOfPlayers = simResult.numberOfPlayers || 1;
+        // The shown player's sale tax when they are not the live character (null: the live rate)
+        const saleTaxRate = this._saleTaxRateFor(simResult, activeTab);
 
         const sectionStyle = 'margin-bottom:12px;';
         const headingStyle = `color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; border-bottom:1px solid #222; padding-bottom:4px;`;
@@ -8091,15 +8240,19 @@ class CombatSimUI {
             const dropData = [...dropMap.entries()]
                 .filter(([, total]) => total > 0)
                 .map(([itemHrid, total]) => {
-                    // Revenue: sell price for the pricing mode, net of the sale tax
-                    let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid));
+                    // Revenue: sell price for the pricing mode, net of the shown player's sale tax
+                    let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid), saleTaxRate);
                     if (unitValue === 0 && itemHrid === '/items/coin') {
                         unitValue = 1;
                     }
                     if (unitValue === 0) {
-                        // Use cached EV or calculate directly (matches combat stats approach)
+                        // Use cached EV or calculate directly (matches combat stats approach); another player's
+                        // tax is not what the shared cache holds, so their contents are valued at it
                         const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
-                        const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
+                        const ev =
+                            saleTaxRate != null
+                                ? evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate)
+                                : evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
                         if (ev !== null && ev > 0) unitValue = ev;
                     }
                     return { itemHrid, total, unitValue, totalGold: total * unitValue };
@@ -8905,7 +9058,13 @@ class CombatSimUI {
         for (const entry of this._simHistory) {
             const tab = historyEntryPlayer(entry)?.hrid || activeTab;
             if (!entry.metrics || entry.metricsTab !== tab || entry.metricsPricing !== pricing) {
-                entry.metrics = this._computeMetrics(entry.simResult, entry.hours, entry.gameData, tab);
+                entry.metrics = this._computeMetrics(
+                    entry.simResult,
+                    entry.hours,
+                    entry.gameData,
+                    tab,
+                    this._saleTaxRateFor(entry.simResult, tab)
+                );
                 entry.metricsTab = tab;
                 entry.metricsPricing = pricing;
             }
@@ -8913,10 +9072,25 @@ class CombatSimUI {
     }
 
     /**
-     * Compute metrics for a sim result.
+     * The sale tax a single-zone result's player is priced at: their own when they are not the live character
+     * (`analyzedSaleTaxRate`, stamped when the run finished), null for the live character or a result with no
+     * stamp, which keeps the live character's rate.
+     * @param {Object} simResult - The result shown
+     * @param {string} playerHrid - Whose drops
+     * @returns {number|null}
      * @private
      */
-    _computeMetrics(simResult, hours, gameData, activeTab) {
+    _saleTaxRateFor(simResult, playerHrid) {
+        const rate = this._saleTaxRatesBySim?.get(simResult)?.[playerHrid];
+        return Number.isFinite(rate) ? rate : null;
+    }
+
+    /**
+     * Compute metrics for a sim result.
+     * @param {number|null} [saleTaxRate] - The player's sale tax when not the live character (see `_saleTaxRateFor`)
+     * @private
+     */
+    _computeMetrics(simResult, hours, gameData, activeTab, saleTaxRate = null) {
         // Encounters
         const encountersPerHr = simResult.encounters / hours;
 
@@ -8942,13 +9116,17 @@ class CombatSimUI {
             const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
             for (const [itemHrid, total] of dropMap.entries()) {
                 if (total <= 0) continue;
-                let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid));
+                let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid), saleTaxRate);
                 if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
                 if (unitValue === 0) {
-                    const evData = (expectedValueCalculator() || bundledExpectedValueCalculator).calculateExpectedValue(
-                        itemHrid
-                    );
-                    if (evData?.expectedValue > 0) unitValue = evData.expectedValue;
+                    const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
+                    if (saleTaxRate != null) {
+                        const ev = evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate);
+                        if (ev > 0) unitValue = ev;
+                    } else {
+                        const evData = evc.calculateExpectedValue(itemHrid);
+                        if (evData?.expectedValue > 0) unitValue = evData.expectedValue;
+                    }
                 }
                 revenuePerHr += (total / hours) * unitValue;
             }
@@ -9632,6 +9810,10 @@ class CombatSimUI {
         this._unsubscribePricingQuickSettings = [];
         this._pricingQuickSettings = null;
         cleanupUpgradeMarketAutofill();
+        this._unsubscribePartyFinderSetting?.();
+        this._unsubscribePartyFinderSetting = null;
+        this._partyFinder?.detach();
+        this._partyFinder = null;
         // An in-flight verify (or analysis) reads the abort flag and is terminated the way Stop terminates it
         this._upgradeAborted = true;
         cancelActiveSimulations();
@@ -10823,8 +11005,9 @@ class CombatSimUI {
     async _loadTriggerParty(playerIndex) {
         const editedDTOs = this._editor?.getEditedDTOs();
         if (!editedDTOs) {
-            const players = (await buildAllPlayerDTOs()).players;
-            return { simDTOs: players, liveDTOs: players, playerIndex, soloApplied: false };
+            const built = await buildAllPlayerDTOs();
+            const players = built.players;
+            return { simDTOs: players, liveDTOs: players, playerIndex, soloApplied: false, selfHrid: built.selfHrid };
         }
         return this._resolveEditorTriggerParty(editedDTOs, playerIndex);
     }
@@ -10844,7 +11027,14 @@ class CombatSimUI {
         let index = simDTOs.findIndex((dto) => dto.hrid === selectedHrid);
         // Solo simulates one player whatever the selector says; otherwise an unknown player stays unknown
         if (index < 0) index = resolved.soloApplied ? 0 : playerIndex;
-        return { simDTOs, liveDTOs, playerIndex: index, soloApplied: resolved.soloApplied };
+        return {
+            simDTOs,
+            liveDTOs,
+            playerIndex: index,
+            soloApplied: resolved.soloApplied,
+            // The live character among them, or null: the profit objective taxes everyone else as they pay it
+            selfHrid: resolved.trueSelfHrid,
+        };
     }
 
     /**
@@ -11023,6 +11213,7 @@ class CombatSimUI {
                     gameData,
                     playerDTOs,
                     playerIndex,
+                    selfHrid: party.selfHrid ?? null,
                     zoneHrid,
                     difficultyTier,
                     communityBuffs,
@@ -11524,6 +11715,17 @@ class CombatSimUI {
             const gross = detail.gross == null ? 'no price' : formatKMB(detail.gross);
             parts.push(
                 `<span style="color:#888;">Buys ${gross}, resale credit ${formatKMB(detail.credit || 0)} after tax.</span>`
+            );
+        }
+
+        // A replaced or freed piece with no sale price adds nothing to the credit; "resale credit 0" alone would
+        // read as a sale that happened to fetch nothing
+        const unsellable = (detail?.credits || []).filter((credit) => credit.noSalePrice);
+        if (unsellable.length) {
+            parts.push(
+                `<span style="color:#ff9800;">No sale price for ${unsellable
+                    .map((credit) => escapeAttribute(credit.name))
+                    .join(', ')}, so nothing is credited back for it.</span>`
             );
         }
 
@@ -12607,7 +12809,9 @@ class CombatSimUI {
             'padding:2px 4px; font-size:11px; font-family:inherit;';
 
         let body = '';
-        if (budget > 0) {
+        // A typed 0 is a budget: free and refunding picks cost nothing. An empty or unreadable box
+        // is not one (parseKMB answers NaN for it) and shows nothing.
+        if (budget > 0 || Number.isFinite(parseKMB(this._upgradeBudgetText))) {
             const { pins, excludes } = this._budgetConstraints();
             const plan = planUpgradeBudget(rows, budget, {
                 baseline,
@@ -12646,7 +12850,7 @@ class CombatSimUI {
                                     : ''
                             }</span>
                             <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
-                                <span style="color:#4caf50;">${plan.metric.format(pick.marginalAttemptsSaved)}</span>
+                                <span style="color:${budgetGainColor(pick.marginalAttemptsSaved)};">${plan.metric.format(pick.marginalAttemptsSaved)}</span>
                                 ${this._budgetToggleButtons(pick)}
                             </span>
                         </div>`
@@ -12667,8 +12871,16 @@ class CombatSimUI {
                     orderPlan.html +
                     `<div style="margin-top:4px; padding-top:4px; border-top:1px solid #222; color:#aaa; font-size:11px;">
                         ${plan.picks.length} upgrade${plan.picks.length === 1 ? '' : 's'}${orderPlan.appended ? ' + order' : ''} ·
-                        ${money(plan.totalCost)} of ${money(budget)} ·
-                        <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
+                        ${money(plan.totalCost)} of ${money(budget)}${
+                            // A pick priced on part of its bill (shrine credits with no token rate) makes
+                            // the total a floor, so it says what it leaves out
+                            plan.partialCostPicks?.length
+                                ? ` <span data-budget-partial-cost style="color:#ff9800;" title="${plan.partialCostPicks
+                                      .join(', ')
+                                      .replace(/"/g, '&quot;')}">+ guild tokens not priced</span>`
+                                : ''
+                        } ·
+                        <span style="color:${budgetGainColor(plan.gainTotal + orderPlan.gain)}; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
                     </div>${provisional}${partialNote}${constraintsHtml}${this._renderBudgetConfirm(plan, baseline)}`;
             }
@@ -13002,7 +13214,7 @@ class CombatSimUI {
                       })();
             return wrap(
                 `<div style="font-size:11px; color:#aaa;">summed
-                    <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
+                    <span style="color:${budgetGainColor(plan.gainTotal)}; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
                     · together
                     ${togetherHtml}
                     <span style="color:#666;" title="Every pick worn at once, simulated in one run against the same

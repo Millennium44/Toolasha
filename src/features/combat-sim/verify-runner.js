@@ -306,7 +306,12 @@ export async function verifyCombatCandidates({
     const baselines = Array.from({ length: seeds }, (_, k) =>
         simulate(playerDTOs, communityBuffs, seedOf(k)).then((result) => {
             report('Verify: baseline');
-            return result ? computeMetrics(result, gameData, playerHrid, hoursPerSeed, { priceCache }) : null;
+            return result
+                ? computeMetrics(result, gameData, playerHrid, hoursPerSeed, {
+                      priceCache,
+                      saleTaxRate: context.saleTaxRate,
+                  })
+                : null;
         })
     );
     // A baseline that throws takes the whole verify down: nothing can be paired to it. Awaiting them all here
@@ -375,7 +380,10 @@ export async function verifyCombatCandidates({
                     report(`Verify: ${description ?? key}`);
                     return {
                         base: baseMetrics[k],
-                        cand: computeMetrics(result, gameData, playerHrid, hoursPerSeed, { priceCache }),
+                        cand: computeMetrics(result, gameData, playerHrid, hoursPerSeed, {
+                            priceCache,
+                            saleTaxRate: context.saleTaxRate,
+                        }),
                     };
                 } catch (error) {
                     // A simulation Stop terminated is a seed that did not finish, not a broken candidate
@@ -782,6 +790,7 @@ async function measureCombatTriggers({
         communityBuffs,
         scopeHrids,
         allHrids,
+        saleTaxRates,
         tunables,
     } = ctx;
     const tunedDtos = (() => {
@@ -818,7 +827,7 @@ async function measureCombatTriggers({
             }
             tally.done++;
             report('Verify: triggers');
-            return sampleFromResult(simResult, gameData, allHrids, hoursPerSeed, { priceCache });
+            return sampleFromResult(simResult, gameData, allHrids, hoursPerSeed, { priceCache, saleTaxRates });
         });
 
     const pairs = await Promise.all(

@@ -26,7 +26,7 @@ export const DUNGEON_TOKEN_HRIDS = new Set(Object.keys(TOKEN_ESSENCE_MAP));
  * @param {string} respectModeSetting - Config key for whether that mode is respected
  * @returns {'ask'|'bid'}
  */
-function tokenPricingSide(pricingModeSetting, respectModeSetting) {
+export function tokenPricingSide(pricingModeSetting, respectModeSetting) {
     // `false` in place of a setting key pins the bid outright, for a caller that promises an instant sale
     if (respectModeSetting === false) return 'bid';
     const pricingMode = config.getSettingValue(pricingModeSetting, 'hybrid');
@@ -264,6 +264,22 @@ export function shopPurchasePrice(itemHrid, shopMaps, priceOf) {
         if (priced && total > 0) return total / (line.outputCount || 1);
     }
     return null;
+}
+
+/**
+ * {@link shopPurchasePrice} with every currency valued the way the profit pricing mode
+ * values a sale: a dungeon token through its own shop at the mode's side, anything else
+ * at the profit sell price. This is the reading the treasure tracker prices a shop-only
+ * piece with, so a cape's cost agrees wherever it is shown. No tax is added.
+ *
+ * @param {string} itemHrid - The item
+ * @param {Array<Object>} shopMaps - The game's shop maps, in preference order
+ * @returns {number|null} Coins, or null when nothing prices it
+ */
+export function shopPurchasePriceByMode(itemHrid, shopMaps) {
+    return shopPurchasePrice(itemHrid, shopMaps, (hrid) =>
+        hrid ? (calculateDungeonTokenValue(hrid) ?? getItemPrice(hrid, { context: 'profit', side: 'sell' })) : null
+    );
 }
 
 /**

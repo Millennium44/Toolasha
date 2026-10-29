@@ -98,6 +98,7 @@ export const IRON_COW_SETTINGS = new Set([
     'networth_includeTaskTokens',
     'networth_includeLabyrinthTokens',
     'networth_includeGuildTokens',
+    'networth_includeGuildCredits',
     'networth_abilityBooksAsInventory',
     // Missing materials marketplace button
     'actions_missingMaterialsButton',

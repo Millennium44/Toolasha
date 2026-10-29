@@ -744,3 +744,69 @@ describe('a rebuilt Alchemy panel gets its display back', () => {
         }
     });
 });
+
+describe('a second trip away from the Alchemy panel and back', () => {
+    const livePanel = () => {
+        const component = document.createElement('div');
+        component.className = 'SkillActionDetail_alchemyComponent__x';
+        const info = document.createElement('div');
+        info.className = 'SkillActionDetail_info__x';
+        component.appendChild(info);
+        document.body.appendChild(component);
+        return { component, info };
+    };
+
+    test('checkAndUpdateDisplay redraws a display stranded on the detached old panel', () => {
+        vi.spyOn(display, '_fingerprint').mockReturnValue('same');
+        const update = vi.spyOn(display, 'updateDisplay').mockImplementation(() => {});
+        vi.useFakeTimers();
+        try {
+            // First round trip: the old panel is gone, its display still has a parent
+            const oldPanel = document.createElement('div');
+            display.displayElement = document.createElement('div');
+            oldPanel.appendChild(display.displayElement);
+            display.lastFingerprint = 'same';
+
+            const { info } = livePanel();
+            display.checkAndUpdateDisplay();
+            vi.advanceTimersByTime(200);
+            expect(update).toHaveBeenCalledTimes(1);
+            expect(update).toHaveBeenCalledWith(info);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a display stranded on a dead panel is dropped when the panel should not show', () => {
+        const dead = document.createElement('div');
+        display.displayElement = document.createElement('div');
+        dead.appendChild(display.displayElement);
+        // No Alchemy panel on the page at all
+        display.checkAndUpdateDisplay();
+        expect(display.displayElement).toBeNull();
+    });
+
+    test('an update that finished after the panel was rebuilt draws nothing into the dead container', async () => {
+        panel.requirements = [{ itemHrid: '/items/x', enhancementLevel: 0 }];
+        const create = vi.spyOn(display, 'createDisplay').mockImplementation(() => {});
+        const remove = vi.spyOn(display, 'removeDisplay');
+        const { info } = livePanel();
+        const pending = display.updateDisplay(info);
+        // The game swaps the panel while the item extraction is still awaiting
+        info.remove();
+        await pending;
+        expect(create).not.toHaveBeenCalled();
+        expect(remove).not.toHaveBeenCalled();
+    });
+
+    test('removing the display detaches the Repeat input listeners', () => {
+        const field = document.createElement('input');
+        const remove = vi.spyOn(field, 'removeEventListener');
+        display.profitSummaryInputListeners = { field, onInput: () => {}, onChange: () => {} };
+        display.speedTimeInputListeners = { field, onInput: () => {}, onChange: () => {} };
+        display.removeDisplay();
+        expect(remove).toHaveBeenCalledTimes(4);
+        expect(display.profitSummaryInputListeners).toBeNull();
+        expect(display.speedTimeInputListeners).toBeNull();
+    });
+});

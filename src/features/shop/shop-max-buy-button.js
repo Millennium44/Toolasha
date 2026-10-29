@@ -10,7 +10,14 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
-import { resolveCostLines, computeMaxAffordable, findMaxValidQuantity } from '../../utils/shop-max-buy.js';
+import {
+    resolveCostLines,
+    computeMaxAffordable,
+    findMaxValidQuantity,
+    resolveCommunityBuffCostLines,
+    findCommunityBuffIcon,
+    normalizeCostLinesToUnit,
+} from '../../utils/shop-max-buy.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 
@@ -78,7 +85,7 @@ class ShopMaxBuyButton {
             const unregister = domObserver.onClass(
                 `shop-max-buy-${panel.key}`,
                 panel.inputContainerClass,
-                (container) => this.injectButton(container, panel.modalContentClass)
+                (container) => this.injectButton(container, panel.modalContentClass, panel.key)
             );
             this.registry.registerCleanup(unregister);
         }
@@ -95,8 +102,9 @@ class ShopMaxBuyButton {
     /**
      * @param {Element} container - the *Panel_inputContainer element
      * @param {string} [modalContentClass] - the panel's *_modalContent class prefix
+     * @param {string} [panelKey] - the PANEL_CLASSES key of the panel the dialog belongs to
      */
-    injectButton(container, modalContentClass) {
+    injectButton(container, modalContentClass, panelKey) {
         if (container.querySelector(`.${BUTTON_CLASS}`)) return;
 
         const input = container.querySelector('input[type="number"]');
@@ -109,7 +117,7 @@ class ShopMaxBuyButton {
         button.textContent = 'Max';
         button.addEventListener('click', (event) => {
             event.preventDefault();
-            this.handleMaxClick(container, input, modalContentClass);
+            this.handleMaxClick(container, input, modalContentClass, panelKey);
         });
 
         inputWrapper.insertAdjacentElement('afterend', button);
@@ -119,15 +127,35 @@ class ShopMaxBuyButton {
      * @param {Element} container
      * @param {HTMLInputElement} input
      * @param {string} [modalContentClass]
+     * @param {string} [panelKey]
      */
-    async handleMaxClick(container, input, modalContentClass) {
+    async handleMaxClick(container, input, modalContentClass, panelKey) {
         try {
-            const candidate = computeMaxAffordable(resolveCostLines(container));
+            const candidate = computeMaxAffordable(this.resolveUnitCostLines(container, input, panelKey));
             if (candidate === null) return;
             await this.fillAndVerify(container, input, candidate, modalContentClass);
         } catch (error) {
             console.error('[ShopMaxBuyButton] Max failed:', error);
         }
+    }
+
+    /**
+     * Per-unit cost lines for the dialog. Community Buff dialogs open at 10 minutes, so their
+     * "You Pay" row is a total, not a unit price: take the per-minute cost from game data, and
+     * only if that cannot be resolved divide the displayed total by the typed quantity.
+     * @param {Element} container
+     * @param {HTMLInputElement} input
+     * @param {string} [panelKey]
+     * @returns {Array<{itemHrid: string, perUnitAmount: number}>}
+     */
+    resolveUnitCostLines(container, input, panelKey) {
+        // Only Community Buff dialogs open at a multi-minute total; item dialogs show a unit price
+        if (panelKey !== 'cowbellStore' || !findCommunityBuffIcon(container)) return resolveCostLines(container);
+
+        const fromGameData = resolveCommunityBuffCostLines(container);
+        if (fromGameData) return fromGameData;
+
+        return normalizeCostLinesToUnit(resolveCostLines(container), parseInt(input.value, 10));
     }
 
     /**
