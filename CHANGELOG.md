@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Live damage graphs save every 10 seconds instead of 4 (a normal close still saves at once), and the two combat timing tallies save once a minute and on page hide or close.
 - The health dialog reads "Toolasha health" when nothing failed, and the guild history store's soft budget covers the guild trial diagnostic trace.
 
+### Sync: one gist per game server
+
+- The live game and the test server no longer adopt each other's sync gist. Discovery only picks a gist tagged for the same server, and automatic syncs refuse the other server's gist instead of failing on its passphrase.
+- Cross-Device Sync shows which gist this device uses, in a Gist ID box that takes an id or a gist link, with "Start a new gist". A first Push to a newly chosen gist can merge with it instead of only overwriting it.
+
 ### Sync: incomplete downloads
 
 - A sync pull whose gist file arrives short now says the download was incomplete and retries on the next run, instead of blaming the sync passphrase.
