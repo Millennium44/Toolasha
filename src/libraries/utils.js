@@ -90,6 +90,9 @@ import * as itemNavigation from '../utils/item-navigation.js';
 // The shared "open a combat zone at a tier" helper — see the matching
 // utilsExternalGlobals entry in rollup.config.js.
 import * as combatZoneOpen from '../utils/combat-zone-open.js';
+// "Open Alchemy on this item", shared by Missing Materials (actions) and the
+// achievement finisher (market). Needs a matching utilsExternalGlobals entry.
+import * as alchemyNavigation from '../utils/alchemy-navigation.js';
 import * as marketplaceTabs from '../utils/marketplace-tabs.js';
 import * as marketplaceAutofill from '../utils/marketplace-autofill.js';
 import * as shoppingList from '../utils/shopping-list.js';
@@ -285,6 +288,7 @@ toolashaRoot.Utils = {
     productionIndex,
     itemNavigation,
     combatZoneOpen,
+    alchemyNavigation,
     marketplaceTabs,
     marketplaceAutofill,
     shoppingList,
