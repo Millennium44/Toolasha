@@ -6,7 +6,7 @@ const shop = vi.hoisted(() => ({ costs: {} }));
 // What the main thread's shared input rule reads: this suite has no market feed, so the price map
 // each test hands the batch stands in for the book, and the recipes for the craft-cost walk
 const yielded = vi.hoisted(() => ({ count: 0 }));
-const ctx = vi.hoisted(() => ({ priceMap: {}, recipes: {} }));
+const ctx = vi.hoisted(() => ({ priceMap: {}, recipes: {}, assumedBases: new Set() }));
 // The player's Artisan bonus per action type, and every task the pool was handed
 const artisan = vi.hoisted(() => ({ byType: {}, asked: [], tasks: [] }));
 
@@ -60,7 +60,11 @@ vi.mock('./enhancement-input-pricing.js', async () => {
             return answer(ask || bid || craftCost(hrid));
         },
         priceGuarded: guarded,
-        priceBase: guarded,
+        // An untradable cape's base the main thread values by assumption: unpriced, but marked
+        priceBase: (hrid) =>
+            ctx.assumedBases.has(hrid)
+                ? { price: null, unpriced: true, estimated: false, partial: true, assumed: true }
+                : guarded(hrid),
     };
 });
 
@@ -401,5 +405,50 @@ describe('networth production-cost fallback uses the real Artisan bonus', () => 
         const without = await value(PLANK);
         expect(withTea).toBeCloseTo(32, 9);
         expect(without).toBeCloseTo(40, 9);
+    });
+});
+
+describe('networth enhancement cost of an untradable cape whose base is an assumption', () => {
+    const CAPE = '/items/gatherer_cape';
+    const params = { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1 };
+    const gameData = {
+        itemDetailMap: {
+            [CAPE]: {
+                itemLevel: 10,
+                enhancementCosts: [{ itemHrid: '/items/coin', count: 5000 }],
+                protectionItemHrids: [],
+            },
+        },
+        actionDetailMap: {},
+    };
+
+    async function cost() {
+        ctx.priceMap = {};
+        ctx.recipes = {};
+        const partial = new Set();
+        const [value] = await calculateItemValueBatch(
+            [{ itemHrid: CAPE, enhancementLevel: 5, count: 1 }],
+            {},
+            { useHighEnhancementCost: false, minLevel: 99, enhancementParams: params },
+            gameData,
+            partial
+        );
+        terminateItemValueWorkerPool();
+        return { value, partial: partial.has(0) };
+    }
+
+    test('a base the main thread marks assumed lets the run stand: its materials, flagged partial', async () => {
+        ctx.assumedBases = new Set([CAPE]);
+        const result = await cost();
+
+        expect(result.value).toBeGreaterThan(0);
+        expect(result.partial).toBe(true);
+    });
+
+    test('an ordinary unpriced base is still not a value', async () => {
+        ctx.assumedBases = new Set();
+        const result = await cost();
+
+        expect(result.value).toBe(0);
     });
 });

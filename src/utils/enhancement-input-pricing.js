@@ -47,6 +47,7 @@ import { resolveItemPrice } from './profit-helpers.js';
 import { getShopCoinCost } from './game-lookups.js';
 import { testerShopEnabled } from './tester-shop.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
+import { getCapeBaseValue, getCapeBaseValueMode, isRefinedCape, isUntradableCape } from './untradable-cape.js';
 import {
     TRAINEE_SHOP_PRICE,
     getCheapestProtectionPrice as getCheapestProtectionPriceFrom,
@@ -197,8 +198,22 @@ export function pricingStamp() {
         config.getSetting?.('profitCalc_patientTickBuy') === true ? 'tick' : '',
         // Tester-shop pricing swaps shop-vs-market results
         testerShopEnabled() ? 'tester' : '',
+        // What an unrefined untradable cape is assumed to be worth moves every cape's base cost
+        getCapeBaseValueMode(),
         custom,
     ].join('|');
+}
+
+/**
+ * The base of an unrefined untradable cape: the cape setting's value, marked `assumed`. On the
+ * "nothing" setting (or an unpriced mirror) it is an assumed zero: still unpriced, but flagged
+ * partial so a total built on it says it is a floor, and told apart from an input nobody could price.
+ * @param {Object} options - Same as {@link priceMaterial}
+ * @returns {{price: number|null, unpriced: boolean, estimated: boolean, custom: boolean, partial: boolean, assumed: true}}
+ */
+function assumedCapeBase(options) {
+    const value = getCapeBaseValue({ context: options.context || 'profit', mode: options.mode });
+    return value > 0 ? { ...result(value, true), assumed: true } : { ...result(0), partial: true, assumed: true };
 }
 
 /**
@@ -213,7 +228,15 @@ export function priceGuarded(itemHrid, options = {}) {
     const { quotes, resolved } = guardQuotes(itemHrid, options);
     // A custom price of 0 or less is the player's own "unpriced": it stays unpriced but keeps its custom
     // provenance, so priceBase does not let a craft cost replace that choice
-    if (!quotes) return { ...result(0), custom: Boolean(resolved.custom) };
+    if (!quotes) {
+        // An unrefined untradable cape has no listing, recipe or value to find: its base is what the
+        // cape setting assumes, flagged so a caller can tell an assumption from an unpriced input. (A
+        // refined one is priced by its recipe; a custom price of 0 stays the player's own "unpriced".)
+        if (!resolved.custom && isUntradableCape(itemHrid) && !isRefinedCape(itemHrid)) {
+            return assumedCapeBase(options);
+        }
+        return { ...result(0), custom: Boolean(resolved.custom) };
+    }
     const price = getRealisticBaseItemPriceFrom(itemHrid, { quoteOf: () => quotes });
     // A craft-cost figure (the resolver's own fallback, or the guard swapping an inflated ask for it)
     // is a partial bill when a recipe input went unpriced

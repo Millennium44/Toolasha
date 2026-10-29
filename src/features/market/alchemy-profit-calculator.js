@@ -20,6 +20,8 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { getDrinkConcentration, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
 import { getItemPrice, isPriceEstimated } from '../../utils/market-data.js';
+import { isUntradableCape } from '../../utils/untradable-cape.js';
+import { getUntradableCapeValue } from '../enhancement/untradable-cape-value.js';
 import {
     COINIFY_BASE_SUCCESS_RATE,
     COINIFY_COINS_PER_SELL_PRICE,
@@ -45,6 +47,19 @@ import {
     calculateProfitPerDay,
     calculateTeaCostsPerHour,
 } from '../../utils/profit-helpers.js';
+
+/**
+ * What an untradable cape is assumed to be worth where the market has no price for it, or null
+ * when the item is not one or nothing could value it (then it stays unpriced, never 0).
+ * @param {string} itemHrid - Item HRID
+ * @param {number} [enhancementLevel=0] - Enhancement level
+ * @returns {{itemHrid: string, enhancementLevel: number, value: number, partial: boolean}|null}
+ */
+function assumedCape(itemHrid, enhancementLevel = 0) {
+    if (!isUntradableCape(itemHrid)) return null;
+    const cape = getUntradableCapeValue(itemHrid, enhancementLevel);
+    return cape?.value > 0 ? { itemHrid, enhancementLevel, value: cape.value, partial: cape.partial } : null;
+}
 
 // Base success rates for alchemy actions
 const BASE_SUCCESS_RATES = {
@@ -405,13 +420,52 @@ class AlchemyProfitCalculator {
      * @param {number} enhancementLevel - Enhancement level of the input
      * @returns {number|null} Price, or null when nobody prices it
      */
-    _inputBuyPrice(itemHrid, enhancementLevel = 0) {
+    _marketInputBuyPrice(itemHrid, enhancementLevel = 0) {
         const market = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
         if (!this.inputBuyOverride || enhancementLevel) return market;
         const alternative = this.inputBuyOverride(itemHrid);
         if (alternative === null || alternative === undefined || !(alternative >= 0)) return market;
         if (market === null || !(market > 0) || alternative < market) return alternative;
         return market;
+    }
+
+    /**
+     * The price of the item an alchemy action consumes, falling back to the assumed value of an
+     * untradable cape when the market has nothing (a cape is never listed). The cape fallback is
+     * returned beside the price so the result can say the figure is an assumption.
+     * @param {string} itemHrid - Item HRID
+     * @param {number} [enhancementLevel=0] - Enhancement level of the input
+     * @returns {{price: number|null, assumedCape: Object|null}} Price (null when nobody prices it)
+     */
+    _resolveInput(itemHrid, enhancementLevel = 0) {
+        const market = this._marketInputBuyPrice(itemHrid, enhancementLevel);
+        if (market !== null) return { price: market, assumedCape: null };
+        const cape = assumedCape(itemHrid, enhancementLevel);
+        return cape ? { price: cape.value, assumedCape: cape } : { price: null, assumedCape: null };
+    }
+
+    /**
+     * One side of an Unrefine: the market's price, else the assumed value of an untradable cape.
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level
+     * @param {'buy'|'sell'} side - Which side of the book the market price is read from
+     * @returns {{price: number|null, assumedCape: Object|null}} Price (null when nobody prices it)
+     */
+    _resolveUnrefineSide(itemHrid, enhancementLevel, side) {
+        const market = getItemPrice(itemHrid, { context: 'profit', side, enhancementLevel });
+        if (market !== null) return { price: market, assumedCape: null };
+        const cape = assumedCape(itemHrid, enhancementLevel);
+        return cape ? { price: cape.value, assumedCape: cape } : { price: null, assumedCape: null };
+    }
+
+    /**
+     * {@link _resolveInput}, price only.
+     * @param {string} itemHrid - Item HRID
+     * @param {number} [enhancementLevel=0] - Enhancement level of the input
+     * @returns {number|null}
+     */
+    _inputBuyPrice(itemHrid, enhancementLevel = 0) {
+        return this._resolveInput(itemHrid, enhancementLevel).price;
     }
 
     /**
@@ -1010,10 +1064,12 @@ class AlchemyProfitCalculator {
 
             // Calculate input cost (material cost)
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-            const pricePerItem = this._inputBuyPrice(itemHrid, enhancementLevel);
+            const inputQuote = this._resolveInput(itemHrid, enhancementLevel);
+            const pricePerItem = inputQuote.price;
             if (pricePerItem === null) {
                 return null; // No market data
             }
+            const assumedCapes = inputQuote.assumedCape ? [inputQuote.assumedCape] : [];
             const materialCost = pricePerItem * bulkMultiplier;
 
             // Coinify has no coin cost — items go in, coins come out
@@ -1189,6 +1245,8 @@ class AlchemyProfitCalculator {
                 enhancementLevel,
                 /** Bonus drops left out of the revenue for want of a price */
                 unpricedOutputs: [...alchemyBonus.unpricedDrops],
+                /** Untradable capes valued at an assumption (the cape setting), not a quote */
+                assumedCapes,
 
                 // Summary totals
                 profitPerHour,
@@ -1324,10 +1382,12 @@ class AlchemyProfitCalculator {
             // Some items (e.g. Holy Milk) consume multiple copies per action — bulkMultiplier
             // scales both the input consumed and the base decompose outputs received.
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-            const pricePerItem = this._inputBuyPrice(itemHrid, enhancementLevel);
+            const inputQuote = this._resolveInput(itemHrid, enhancementLevel);
+            const pricePerItem = inputQuote.price;
             if (pricePerItem === null) {
                 return null; // No market data
             }
+            const assumedCapes = inputQuote.assumedCape ? [inputQuote.assumedCape] : [];
             const inputPrice = pricePerItem * bulkMultiplier;
 
             // Calculate output value
@@ -1346,7 +1406,23 @@ class AlchemyProfitCalculator {
             for (const output of itemDetails.alchemyDetail.decomposeItems) {
                 const outputPrice = getItemPrice(output.itemHrid, { context: 'profit', side: 'sell' });
                 const shopValue = outputPrice === null ? getAlchemyOutputShopValue(output.itemHrid) : null;
-                if (shopValue) {
+                const capeOutput = outputPrice === null && !shopValue ? assumedCape(output.itemHrid) : null;
+                if (capeOutput) {
+                    // Untradable, so it is never sold: valued untaxed, and marked as an assumption
+                    const outputCount = output.count * bulkMultiplier;
+                    const dropValue = capeOutput.value * outputCount;
+                    outputValue += dropValue;
+                    assumedCapes.push(capeOutput);
+                    estimatedOutputs.push(output.itemHrid);
+                    dropDetails.push({
+                        itemHrid: output.itemHrid,
+                        count: outputCount,
+                        price: capeOutput.value,
+                        afterTax: capeOutput.value,
+                        isEssence: false,
+                        expectedValue: dropValue,
+                    });
+                } else if (shopValue) {
                     // Taxed: the shop value is the market sell price of what the shop converts the
                     // token into, so turning it into gold is a market sale — matches the history windows
                     const outputCount = output.count * bulkMultiplier;
@@ -1580,6 +1656,8 @@ class AlchemyProfitCalculator {
                 estimatedOutputs,
                 /** Outputs valued through a shop conversion: `{itemHrid, valuePerUnit, sourceItemName, ...}` */
                 shopValuedOutputs,
+                /** Untradable capes valued at an assumption (the cape setting), not a quote */
+                assumedCapes,
 
                 // Summary totals
                 profitPerHour,
@@ -1737,10 +1815,12 @@ class AlchemyProfitCalculator {
             });
 
             // Get input cost (market price of the item being transmuted)
-            const inputPrice = this._inputBuyPrice(itemHrid, enhancementLevel);
+            const inputQuote = this._resolveInput(itemHrid, enhancementLevel);
+            const inputPrice = inputQuote.price;
             if (inputPrice === null) {
                 return null; // No market data
             }
+            const assumedCapes = inputQuote.assumedCape ? [inputQuote.assumedCape] : [];
 
             // Get bulk multiplier (number of items consumed AND produced per action)
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
@@ -1767,7 +1847,24 @@ class AlchemyProfitCalculator {
                 }
 
                 const outputPrice = getItemPrice(drop.itemHrid, { context: 'profit', side: 'sell' });
-                if (outputPrice === null) {
+                const capeOutput = outputPrice === null && !isSelfReturn ? assumedCape(drop.itemHrid) : null;
+                if (capeOutput) {
+                    // Untradable, so it is never sold: valued untaxed, and marked as an assumption
+                    const dropValue = capeOutput.value * drop.dropRate * averageCount * bulkMultiplier;
+                    expectedOutputValue += dropValue;
+                    assumedCapes.push(capeOutput);
+                    estimatedOutputs.push(drop.itemHrid);
+                    dropDetails.push({
+                        itemHrid: drop.itemHrid,
+                        dropRate: drop.dropRate,
+                        minCount: drop.minCount,
+                        maxCount: drop.maxCount,
+                        averageCount,
+                        price: capeOutput.value,
+                        expectedValue: dropValue,
+                        isSelfReturn,
+                    });
+                } else if (outputPrice === null) {
                     // A self-return is credited at the input's buy price through the
                     // material cost above and never enters the revenue, so a missing
                     // resale price leaves nothing understated. It stays in the drop list at
@@ -1989,6 +2086,8 @@ class AlchemyProfitCalculator {
                 /** Output hrids left out of the revenue for want of a price */
                 unpricedOutputs: [...unpricedOutputs, ...alchemyBonus.unpricedDrops],
                 estimatedOutputs,
+                /** Untradable capes valued at an assumption (the cape setting), not a quote */
+                assumedCapes,
 
                 // Summary totals
                 profitPerHour,
@@ -2098,27 +2197,32 @@ class AlchemyProfitCalculator {
                 actionTime: actionStats.actionTime,
             });
 
-            const pricePerItem = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
-            const baseOutputPrice = getItemPrice(unrefineDetail.baseItemHrid, {
-                context: 'profit',
-                side: 'sell',
-                enhancementLevel,
-            });
+            // An untradable cape has no market on either side: it is valued at the cape setting plus
+            // its refinement and enhancement, and the output (never sold) is not taxed
+            const inputQuote = this._resolveUnrefineSide(itemHrid, enhancementLevel, 'buy');
+            const outputQuote = this._resolveUnrefineSide(unrefineDetail.baseItemHrid, enhancementLevel, 'sell');
+            const pricePerItem = inputQuote.price;
+            const baseOutputPrice = outputQuote.price;
             if (pricePerItem === null || baseOutputPrice === null) return null;
+            const assumedCapes = [inputQuote.assumedCape, outputQuote.assumedCape].filter(Boolean);
 
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
             const inputPrice = pricePerItem * bulkMultiplier;
 
-            const baseOutputAfterTax = calculatePriceAfterTax(baseOutputPrice);
+            const baseOutputAfterTax = outputQuote.assumedCape
+                ? baseOutputPrice
+                : calculatePriceAfterTax(baseOutputPrice);
             let outputValue = baseOutputAfterTax;
             const unpricedOutputs = [];
-            const estimatedOutputs = isPriceEstimated(unrefineDetail.baseItemHrid, {
-                context: 'profit',
-                side: 'sell',
-                enhancementLevel,
-            })
-                ? [unrefineDetail.baseItemHrid]
-                : [];
+            const estimatedOutputs =
+                outputQuote.assumedCape ||
+                isPriceEstimated(unrefineDetail.baseItemHrid, {
+                    context: 'profit',
+                    side: 'sell',
+                    enhancementLevel,
+                })
+                    ? [unrefineDetail.baseItemHrid]
+                    : [];
             const dropDetails = [
                 {
                     itemHrid: unrefineDetail.baseItemHrid,
@@ -2247,6 +2351,8 @@ class AlchemyProfitCalculator {
                 enhancementLevel,
                 unpricedOutputs: [...unpricedOutputs, ...alchemyBonus.unpricedDrops],
                 estimatedOutputs,
+                /** Untradable capes valued at an assumption (the cape setting), not a quote */
+                assumedCapes,
                 profitPerHour,
                 profitPerDay: calculateProfitPerDay(profitPerHour),
                 revenuePerHour,

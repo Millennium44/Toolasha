@@ -141,7 +141,10 @@ function calculateEnhancementCost(params) {
     // Together with an unpriced material (below) it makes the bill a partial one, not a price:
     // return null and the caller falls back to the base item's price, as the main thread does
     // when the path reports pricesPartial.
-    if (!(basePrice > 0)) return null;
+    // An untradable cape's base is the cape setting's assumption: at its 0 the run is just the
+    // materials, flagged partial through basePartial above, not an unpriced input
+    const baseAssumed = Boolean(inputPrices && inputPrices.baseAssumed && inputPrices.baseAssumed[itemHrid]);
+    if (!(basePrice > 0) && !baseAssumed) return null;
     let hasUnpricedMaterial = false;
 
     // Build cost array for each level by testing all protection strategies
@@ -794,6 +797,8 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
         materialPartial: {},
         guardedPartial: {},
         basePartial: {},
+        // Which base is an assumed value (an untradable cape's), not a quote or an unpriced input
+        baseAssumed: {},
         // A refined piece's mirror route consumes copies of the unrefined base: its price and whether
         // that base is a partial crafting bill, keyed by the refined item
         copyPrice: {},
@@ -823,6 +828,7 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
         const base = priceBase(item.itemHrid, { context: 'networth' });
         inputPrices.base[item.itemHrid] = base.price;
         inputPrices.basePartial[item.itemHrid] = Boolean(base.partial);
+        inputPrices.baseAssumed[item.itemHrid] = Boolean(base.assumed);
         const copyHrid = unrefinedBaseOf(item.itemHrid, gameData);
         if (copyHrid) {
             const copy = priceBase(copyHrid, { context: 'networth' });

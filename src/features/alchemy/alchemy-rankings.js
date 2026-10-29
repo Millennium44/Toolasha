@@ -321,6 +321,13 @@ function collectRankings(type, method, gameData, level, shopPrices, results) {
         const marketPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
         const shopPrice = shopPrices ? shopUnitPrice(itemHrid) : null;
         const shopPriced = shopBeatsMarket(marketPrice, shopPrice);
+        // An untradable cape has no market price; the calculator costed it at its assumed value, and
+        // the row's price (and the price filters) read that rather than a 0 beside an asterisk
+        const assumedPrice =
+            marketPrice === null
+                ? profitData.assumedCapes?.find((cape) => cape.itemHrid === itemHrid && !(cape.enhancementLevel > 0))
+                      ?.value
+                : null;
 
         results.push({
             action: type,
@@ -328,7 +335,7 @@ function collectRankings(type, method, gameData, level, shopPrices, results) {
             itemHrid,
             name: itemDetails.name,
             itemLevel,
-            itemPrice: (shopPriced ? shopPrice : marketPrice) || 0,
+            itemPrice: (shopPriced ? shopPrice : (marketPrice ?? assumedPrice)) || 0,
             shopPriced,
             shopPrice: shopPrice ?? null,
             marketPrice: marketPrice ?? null,

@@ -17,6 +17,7 @@ import { formatKMB, formatWithSeparator, formatPercentage, timeReadable } from '
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/untradable-cape.js';
 import {
     capProfitRate,
     sellsFromProfitData,
@@ -1375,6 +1376,21 @@ class AlchemyBestItems {
                     'margin-left: 6px; padding: 0 4px; border-radius: 3px; font-size: 0.65rem; ' +
                     'background: #3b4a2f; color: #bef264;';
                 nameTd.appendChild(tag);
+            }
+            // An untradable cape has no market price: its value in this row is an assumption
+            if (isUntradableCape(item.itemHrid)) {
+                const baseValue = isRefinedCape(item.itemHrid) ? 0 : getCapeBaseValue();
+                const marker = document.createElement('span');
+                marker.textContent = '*';
+                marker.setAttribute('data-mwi-assumed-value', 'true');
+                marker.style.cssText = 'color: #fbbf24; margin-left: 2px; cursor: help;';
+                marker.title =
+                    'Not on the market, so its value here is an assumption: ' +
+                    (baseValue > 0
+                        ? `the base cape counts as ${formatWithSeparator(Math.round(baseValue))} coins (the untradable-cape setting)`
+                        : 'the base cape counts as nothing (the untradable-cape setting), so this is a floor') +
+                    ', plus refinement and your own enhancing cost. Never taxed.';
+                nameTd.appendChild(marker);
             }
             if (ownMode) {
                 const heldTag = document.createElement('span');

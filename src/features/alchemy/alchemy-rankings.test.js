@@ -98,6 +98,7 @@ const { rankAlchemyType, alchemyGoldRates, clearAlchemyRateCache, isEligible, OW
     await import('./alchemy-rankings.js');
 const { getAlchemyCoinCost } = await import('../../utils/alchemy-fees.js');
 const { calculatePriceAfterTax } = await import('../../utils/profit-helpers.js');
+const { default: alchemyProfitCalculator } = await import('../market/alchemy-profit-calculator.js');
 
 /** Absurd, so the six-way catalyst search always prefers no catalyst at all */
 const CATALYST_PRICE = 1e12;
@@ -278,6 +279,31 @@ describe('rankAlchemyType with shop prices', () => {
         expect(row.profitPerHour).toBeCloseTo(profitAt(80), 6);
         expect(row.itemPrice).toBe(80);
         expect(row.shopPriced).toBe(true);
+    });
+
+    test('an untradable cape with no market price shows its assumed value as the row price, not 0', () => {
+        mocks.itemPrices['/items/cheese'] = null;
+        const spy = vi.spyOn(alchemyProfitCalculator, 'calculateCoinifyProfit').mockReturnValue({
+            successRate: 0.7,
+            profitPerHour: 1000,
+            actionsPerHour: 100,
+            assumedCapes: [
+                { itemHrid: '/items/cheese', enhancementLevel: 0, value: 4321, partial: false },
+                { itemHrid: '/items/cheese', enhancementLevel: 3, value: 99999, partial: false },
+            ],
+        });
+        try {
+            const [row] = rankAlchemyType('coinify');
+            expect(row.itemPrice).toBe(4321);
+            expect(row.marketPrice).toBeNull();
+            expect(row.shopPriced).toBe(false);
+
+            // A market price is never replaced by an assumption
+            mocks.itemPrices['/items/cheese'] = 200;
+            expect(rankAlchemyType('coinify')[0].itemPrice).toBe(200);
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     test('a bundled offer is priced per unit', () => {

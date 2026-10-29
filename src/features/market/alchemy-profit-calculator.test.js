@@ -40,6 +40,8 @@ const mocks = vi.hoisted(() => ({
      *  mirroring those, so existing tests that never touch this are unaffected. */
     resolvedDrinks: null,
     resolvedEquipment: null,
+    /** hrid:level -> {value, partial} the cape valuation answers for an unlisted untradable cape */
+    capeValues: {},
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getSettingValue: (k, f) => f } }));
@@ -70,6 +72,9 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 vi.mock('../../utils/alchemy-shop-value.js', () => ({
     getAlchemyOutputShopValue: (hrid) => mocks.shopValues[hrid] ?? null,
+}));
+vi.mock('../enhancement/untradable-cape-value.js', () => ({
+    getUntradableCapeValue: (hrid, level = 0) => mocks.capeValues[hrid + ':' + level] ?? null,
 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => mocks.alchemyTeaBonus }));
 vi.mock('../../utils/equipment-parser.js', () => ({
@@ -119,6 +124,7 @@ beforeEach(() => {
     mocks.shopValues = {};
     mocks.resolvedDrinks = null;
     mocks.resolvedEquipment = null;
+    mocks.capeValues = {};
 });
 
 describe('calculateSuccessRateBreakdown', () => {
@@ -1539,5 +1545,156 @@ describe('a partially priced bonus crate is not reported as a firm figure', () =
         mocks.evMissing = { '/items/small_artisans_crate': 0 };
         const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
         expect(result.unpricedOutputs).not.toContain('/items/small_artisans_crate');
+    });
+});
+
+describe('untradable capes in alchemy', () => {
+    const CAPE = '/items/gatherer_cape';
+    const REFINED = '/items/gatherer_cape_refined';
+    const back = { equipmentDetail: { type: '/equipment_types/back' } };
+    const alchemyAction = { type: '/action_types/alchemy', baseTimeCost: 20 * 1e9 };
+
+    beforeEach(() => {
+        mocks.initClientData = {
+            itemDetailMap: {
+                [CAPE]: {
+                    name: 'Gatherer Cape',
+                    itemLevel: 10,
+                    sellPrice: 100000,
+                    ...back,
+                    alchemyDetail: { isCoinifiable: true, bulkMultiplier: 1 },
+                },
+                [REFINED]: {
+                    name: 'Gatherer Cape (Refined)',
+                    itemLevel: 10,
+                    ...back,
+                    alchemyDetail: {
+                        unrefineDetail: {
+                            baseItemHrid: CAPE,
+                            shardReturn: { itemHrid: '/items/refinement_shard', count: 2 },
+                        },
+                    },
+                },
+                '/items/old_rag': {
+                    name: 'Old Rag',
+                    itemLevel: 10,
+                    sellPrice: 5,
+                    alchemyDetail: { decomposeItems: [{ itemHrid: CAPE, count: 1 }], bulkMultiplier: 1 },
+                },
+                '/items/milk': {
+                    name: 'Milk',
+                    itemLevel: 10,
+                    sellPrice: 20,
+                    alchemyDetail: {
+                        transmuteSuccessRate: 0.5,
+                        transmuteDropTable: [{ itemHrid: CAPE, dropRate: 0.5, minCount: 1, maxCount: 3 }],
+                    },
+                },
+                '/items/refinement_shard': { name: 'Refinement Shard' },
+            },
+            actionDetailMap: {
+                '/actions/alchemy/coinify': alchemyAction,
+                '/actions/alchemy/decompose': alchemyAction,
+                '/actions/alchemy/transmute': alchemyAction,
+                '/actions/alchemy/unrefine': alchemyAction,
+            },
+        };
+        mocks.actionStats = { actionTime: 16, totalEfficiency: 0, efficiencyBreakdown: {} };
+        // The market has nothing on any cape; the shard and the rag are ordinary
+        mocks.itemPrice = null;
+        mocks.itemPrices = { '/items/refinement_shard': 50, '/items/old_rag': 10, '/items/milk': 10 };
+    });
+
+    test('unrefine: a refined +5 cape in and an enhanced base cape out are both valued, the output untaxed', () => {
+        mocks.capeValues = {
+            [`${REFINED}:5`]: { value: 5000, partial: false },
+            [`${CAPE}:5`]: { value: 3000, partial: true },
+        };
+
+        const result = alchemyProfitCalculator.calculateUnrefineProfit(REFINED, 5);
+
+        expect(result).not.toBeNull();
+        expect(result.requirementCosts[0]).toMatchObject({
+            itemHrid: REFINED,
+            enhancementLevel: 5,
+            costPerAction: 5000,
+        });
+        const capeDrop = result.dropRevenues.find((drop) => drop.itemHrid === CAPE);
+        expect(capeDrop).toMatchObject({ price: 3000, revenuePerAttempt: 3000, enhancementLevel: 5 });
+        // Revenue is the cape untaxed plus the (taxed) shards the market does quote
+        const shardDrop = result.dropRevenues.find((drop) => drop.itemHrid === '/items/refinement_shard');
+        expect(result.incomePerAttempt).toBeCloseTo(3000 + shardDrop.revenuePerAttempt, 8);
+        expect(result.estimatedOutputs).toContain(CAPE);
+        expect(result.assumedCapes).toEqual([
+            { itemHrid: REFINED, enhancementLevel: 5, value: 5000, partial: false },
+            { itemHrid: CAPE, enhancementLevel: 5, value: 3000, partial: true },
+        ]);
+    });
+
+    test('unrefine: a cape nothing can value stays unpriced (no row), never free', () => {
+        expect(alchemyProfitCalculator.calculateUnrefineProfit(REFINED, 5)).toBeNull();
+        // The input alone valued is not enough: the output has no price either
+        mocks.capeValues = { [`${REFINED}:5`]: { value: 5000, partial: false } };
+        expect(alchemyProfitCalculator.calculateUnrefineProfit(REFINED, 5)).toBeNull();
+    });
+
+    test('unrefine: a cape the book does quote (an Iron Cow vendor value) is that quote, never the assumption', () => {
+        mocks.itemPrices[REFINED] = 100000;
+        mocks.itemPrices[CAPE] = 100000;
+        mocks.capeValues = {
+            [`${REFINED}:5`]: { value: 999, partial: false },
+            [`${CAPE}:5`]: { value: 999, partial: false },
+        };
+
+        const result = alchemyProfitCalculator.calculateUnrefineProfit(REFINED, 5);
+
+        expect(result.requirementCosts[0].costPerAction).toBe(100000);
+        expect(result.assumedCapes).toEqual([]);
+        expect(result.estimatedOutputs).not.toContain(CAPE);
+    });
+
+    test('decompose: a cape output is valued untaxed and marked, and an unvalued one is named as unpriced', () => {
+        mocks.capeValues = { [`${CAPE}:0`]: { value: 4000, partial: false } };
+
+        const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/old_rag');
+
+        // Untaxed: the drop is the cape value times the chance the decompose succeeds, nothing more
+        expect(result.dropRevenues.find((drop) => drop.itemHrid === CAPE)).toMatchObject({ price: 4000 });
+        expect(result.dropRevenues.find((drop) => drop.itemHrid === CAPE).revenuePerAttempt).toBeCloseTo(
+            4000 * result.successRateBreakdown.total,
+            8
+        );
+        expect(result.estimatedOutputs).toContain(CAPE);
+        expect(result.unpricedOutputs).not.toContain(CAPE);
+        expect(result.assumedCapes).toEqual([{ itemHrid: CAPE, enhancementLevel: 0, value: 4000, partial: false }]);
+
+        mocks.capeValues = {};
+        const unvalued = alchemyProfitCalculator.calculateDecomposeProfit('/items/old_rag');
+        expect(unvalued.unpricedOutputs).toContain(CAPE);
+        expect(unvalued.assumedCapes).toEqual([]);
+    });
+
+    test('transmute: a cape drop is worth its expected count untaxed', () => {
+        mocks.capeValues = { [`${CAPE}:0`]: { value: 4000, partial: true } };
+
+        const result = alchemyProfitCalculator.calculateTransmuteProfit('/items/milk');
+
+        const drop = result.dropRevenues.find((entry) => entry.itemHrid === CAPE);
+        // dropRate 0.5 x average count 2 x 4000 x the success chance, no market tax
+        expect(drop.revenuePerAttempt).toBeCloseTo(4000 * result.successRateBreakdown.total, 8);
+        expect(result.estimatedOutputs).toContain(CAPE);
+        expect(result.assumedCapes[0]).toMatchObject({ itemHrid: CAPE, partial: true });
+    });
+
+    test('coinify: a cape input is costed at its assumed value, and the result says so', () => {
+        mocks.capeValues = { [`${CAPE}:0`]: { value: 6000, partial: false } };
+
+        const result = alchemyProfitCalculator.calculateCoinifyProfit(CAPE);
+
+        expect(result).not.toBeNull();
+        expect(result.materialCost).toBe(6000);
+        expect(result.assumedCapes).toEqual([{ itemHrid: CAPE, enhancementLevel: 0, value: 6000, partial: false }]);
+        mocks.capeValues = {};
+        expect(alchemyProfitCalculator.calculateCoinifyProfit(CAPE)).toBeNull();
     });
 });

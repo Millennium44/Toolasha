@@ -695,6 +695,38 @@ describe('createDisplay names where a non-market figure came from', () => {
         expect(text).toContain('via Shard');
         expect(text).not.toContain('No market price');
     });
+
+    test('an untradable cape valued by assumption says so, names its level, and flags a floor', () => {
+        game.initClientData = { itemDetailMap: { '/items/gatherer_cape': { name: 'Gatherer Cape' } } };
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        display.createDisplay(
+            container,
+            profitData({
+                unpricedOutputs: [],
+                assumedCapes: [
+                    { itemHrid: '/items/gatherer_cape', enhancementLevel: 5, value: 3_000_000, partial: true },
+                ],
+            }),
+            'decompose',
+            '/items/gatherer_cape_refined'
+        );
+
+        const text = container.textContent;
+        expect(text).toContain('Gatherer Cape +5: not on the market');
+        expect(text).toContain('never taxed');
+        expect(text).toContain('floor');
+    });
+
+    test('a result with no assumed capes prints no cape note', () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        display.createDisplay(container, profitData({ unpricedOutputs: [] }), 'decompose', '/items/cheese_hat');
+
+        expect(container.textContent).not.toContain('not on the market');
+    });
 });
 
 describe('a rebuilt Alchemy panel gets its display back', () => {

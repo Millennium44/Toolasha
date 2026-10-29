@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     enhancementPaths: {}, // `${hrid}:${level}` -> totalCost
     inputsPartialPaths: new Set(),
     partialPaths: new Set(), // keys whose path reports an unpriced material or base
+    assumedBasePaths: new Set(), // partial keys whose only unpriced input is an untradable cape's assumed base
     taskTokenValue: null,
     dungeonTokenValues: {},
     labyrinthTokenDetail: null, // {value, itemHrid} the labyrinth shop's best line
@@ -87,6 +88,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
                   pricesPartial: mocks.partialPaths.has(key),
                   // The path's own report of whether an input it SELECTED is a partial crafting bill
                   inputsPartial: mocks.inputsPartialPaths.has(key),
+                  pricesPartialOnlyByAssumedBase: mocks.assumedBasePaths.has(key),
               }
             : null;
     },
@@ -201,6 +203,7 @@ beforeEach(() => {
     mocks.enhancementPaths = {};
     mocks.inputsPartialPaths = new Set();
     mocks.partialPaths = new Set();
+    mocks.assumedBasePaths = new Set();
     mocks.taskTokenValue = null;
     mocks.dungeonTokenValues = {};
     mocks.labyrinthTokenDetail = null;
@@ -1875,6 +1878,115 @@ describe('held guild credits', () => {
         expect(result.tokens.items.find((item) => item.itemHrid === CREDIT)).toMatchObject({
             counted: false,
             excludedBy: 'setting',
+        });
+    });
+});
+
+describe('untradable capes', () => {
+    const CAPE = '/items/gatherer_cape';
+    const REFINED = '/items/gatherer_cape_refined';
+    const MIRROR = '/items/mirror_of_protection';
+    const back = { equipmentDetail: { type: '/equipment_types/back' } };
+
+    beforeEach(() => {
+        mocks.itemDetails[CAPE] = { ...back };
+        mocks.itemDetails[REFINED] = { ...back };
+        mocks.itemPrices[MIRROR] = { ask: 1000, bid: 800 };
+        mocks.settings.networth_pricingMode = 'ask';
+    });
+
+    test('a +0 cape with no listing, recipe or shop price is a flagged floor on the "nothing" setting, not a silent 0', async () => {
+        const detail = await calculateItemValueDetailed({ itemHrid: CAPE, enhancementLevel: 0, count: 3 });
+        expect(detail).toEqual({ value: 0, partial: true });
+    });
+
+    test('on the Mirror of Protection setting the cape is worth the mirror at the net worth mode, per copy', async () => {
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        expect(await calculateItemValueDetailed({ itemHrid: CAPE, enhancementLevel: 0, count: 3 })).toEqual({
+            value: 3000,
+            partial: false,
+        });
+        mocks.settings.networth_pricingMode = 'bid';
+        expect(await calculateItemValue({ itemHrid: CAPE, enhancementLevel: 0, count: 1 })).toBe(800);
+    });
+
+    test('a mirror that is itself unpriced leaves the cape a flagged floor, not free', async () => {
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        delete mocks.itemPrices[MIRROR];
+        expect(await calculateItemValueDetailed({ itemHrid: CAPE, enhancementLevel: 0 })).toEqual({
+            value: 0,
+            partial: true,
+        });
+    });
+
+    test('a priced cape (an Iron Cow vendor value in the book) is never overridden by the setting', async () => {
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        mocks.itemPrices[CAPE] = { ask: 100000, bid: 100000 };
+        expect(await calculateItemValueDetailed({ itemHrid: CAPE, enhancementLevel: 0, count: 2 })).toEqual({
+            value: 200000,
+            partial: false,
+        });
+    });
+
+    test('a tradable back piece, or an untradable item outside the back slot, is untouched', async () => {
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        mocks.itemDetails['/items/cloak'] = { isTradable: true, equipmentDetail: { type: '/equipment_types/back' } };
+        mocks.itemDetails['/items/key'] = { equipmentDetail: { type: '/equipment_types/neck' } };
+        expect(await calculateItemValueDetailed({ itemHrid: '/items/cloak' })).toEqual({ value: 0, partial: false });
+        expect(await calculateItemValueDetailed({ itemHrid: '/items/key' })).toEqual({ value: 0, partial: false });
+    });
+
+    test('a refined cape counts its base through the recipe: mirror setting adds it, "nothing" leaves a flagged floor', async () => {
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            actionDetailMap: {
+                '/actions/upgrade/refine': {
+                    type: '/action_types/alchemy',
+                    outputItems: [{ itemHrid: REFINED, count: 1 }],
+                    inputItems: [{ itemHrid: '/items/shard', count: 10 }],
+                    upgradeItemHrid: CAPE,
+                },
+            },
+        };
+        mocks.itemPrices['/items/shard'] = { ask: 100, bid: 90 };
+        mocks.artisan = 0;
+
+        expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
+            value: 1000,
+            partial: true,
+        });
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
+            value: 2000,
+            partial: false,
+        });
+    });
+
+    test('an enhanced cape whose only unpriced input is its assumed 0 base is its enhancement cost, flagged', async () => {
+        mocks.enhancementPaths[`${CAPE}:5`] = 3000;
+        mocks.partialPaths.add(`${CAPE}:5`);
+        mocks.assumedBasePaths.add(`${CAPE}:5`);
+        expect(await calculateItemValueDetailed({ itemHrid: CAPE, enhancementLevel: 5, count: 2 })).toEqual({
+            value: 6000,
+            partial: true,
+        });
+    });
+
+    test('an enhanced cape with an unpriced material is still not a value, and falls back to the flagged base floor', async () => {
+        mocks.enhancementPaths[`${CAPE}:5`] = 3000;
+        mocks.partialPaths.add(`${CAPE}:5`);
+        expect(await calculateItemValueDetailed({ itemHrid: CAPE, enhancementLevel: 5 })).toEqual({
+            value: 0,
+            partial: true,
+        });
+    });
+
+    test('an enhanced cape on the mirror setting is the full path, unflagged', async () => {
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        mocks.enhancementPaths[`${CAPE}:5`] = 4000;
+        expect(await calculateItemValueDetailed({ itemHrid: CAPE, enhancementLevel: 5 })).toEqual({
+            value: 4000,
+            partial: false,
         });
     });
 });

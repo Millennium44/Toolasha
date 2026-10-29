@@ -40,9 +40,31 @@ import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { getArtisanBonus } from '../../utils/artisan-bonus.js';
+import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/untradable-cape.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
 import { guildCreditPricingMode } from '../../utils/guild-credit-networth-side.js';
+
+/**
+ * Whether an enhancement path can stand as an item's value. An unpriced input makes it a partial
+ * bill rather than a price; the one exception is an untradable cape whose base is the cape
+ * setting's assumed value, where the path is the cost of the run and says so through its flag.
+ * @param {Object|null} path - Result of calculateEnhancementPath
+ * @returns {boolean}
+ */
+function usablePath(path) {
+    return Boolean(path?.optimalStrategy) && (!path.pricesPartial || path.pricesPartialOnlyByAssumedBase === true);
+}
+
+/**
+ * Whether a usable path's figure is a floor: a selected input is a partial bill, or the base was an
+ * assumed value of nothing.
+ * @param {Object} path - A path accepted by {@link usablePath}
+ * @returns {boolean}
+ */
+function pathPartial(path) {
+    return path.inputsPartial === true || path.pricesPartialOnlyByAssumedBase === true;
+}
 
 /**
  * Calculate the value of a single item
@@ -96,11 +118,11 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
 
                 // A path with an unpriced material or base is a partial bill, not a value: fall back to the
                 // base item's price, as the worker does
-                if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
+                if (usablePath(enhancementPath)) {
                     itemValue = enhancementPath.optimalStrategy.totalCost;
                     // Partial when an input the path SELECTED is a partial crafting bill, as the path itself
                     // reports it
-                    partial = enhancementPath.inputsPartial === true;
+                    partial = pathPartial(enhancementPath);
                     // Cache the result
                     networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
                 } else {
@@ -129,9 +151,9 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
 
                     // A path with an unpriced material or base is a partial bill, not a value: fall back to the
                     // base item's price, as the worker does
-                    if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
+                    if (usablePath(enhancementPath)) {
                         itemValue = enhancementPath.optimalStrategy.totalCost;
-                        partial = enhancementPath.inputsPartial === true;
+                        partial = pathPartial(enhancementPath);
                         networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
                     } else {
                         console.warn(
@@ -405,6 +427,16 @@ function priceWithPartial(itemHrid, enhancementLevel, priceCache = null) {
         const shopCost = getShopCoinCost(itemHrid);
         if (shopCost > 0) {
             return { price: shopCost, partial: false };
+        }
+
+        // An untradable cape nothing else prices (no listing, no recipe): the cape setting's value.
+        // On "nothing" it is 0 and says so: a total with such a cape in it is a floor, never silently
+        // complete. (A refined cape with no bill stays 0 and partial: its base is not the whole of it.)
+        if (isUntradableCape(itemHrid)) {
+            const capeValue = isRefinedCape(itemHrid)
+                ? 0
+                : getCapeBaseValue({ context: 'networth', mode: pricingMode });
+            return { price: capeValue, partial: !(capeValue > 0) };
         }
     }
 
