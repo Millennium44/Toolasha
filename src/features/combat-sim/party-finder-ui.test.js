@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
     gameData: null,
     imported: null,
     revenueTaxRates: [],
+    owned: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -31,7 +32,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => state.charId,
         getCurrentCharacterGameMode: () => state.gameMode,
         get characterData() {
-            return { character: { name: 'Milkman' } };
+            return { character: { name: 'Milkman' }, characterAbilities: state.owned };
         },
     },
 }));
@@ -235,6 +236,7 @@ beforeEach(() => {
     state.selfDTO = build(90);
     state.imported = null;
     state.revenueTaxRates = [];
+    state.owned = [];
     state.gameData = {
         itemDetailMap: {
             '/items/rippling_trident': {},
@@ -1018,5 +1020,137 @@ describe('teammates of the other game mode', () => {
         state.gameMode = 'standard';
         tab._renderRoster();
         expect(planText()).toContain("No teammates of this character's mode");
+    });
+});
+
+describe('also try my auras', () => {
+    const auraDetail = (name) => ({
+        name,
+        isSpecialAbility: true,
+        abilityEffects: [{ effectType: '/ability_effect_types/buff', targetType: 'allAllies', buffs: [{}] }],
+    });
+    beforeEach(() => {
+        state.gameData.abilityDetailMap['/abilities/fierce_aura'] = auraDetail('Fierce Aura');
+        state.gameData.abilityDetailMap['/abilities/mystic_aura'] = auraDetail('Mystic Aura');
+        state.gameData.levelExperienceTable = Array.from({ length: 201 }, (_, i) => i);
+        // Learned abilities: two auras and an ordinary ability, which is never offered
+        state.owned = [
+            { abilityHrid: '/abilities/fierce_aura', level: 20 },
+            { abilityHrid: '/abilities/mystic_aura', level: 7 },
+            { abilityHrid: '/abilities/water_strike', level: 40 },
+        ];
+    });
+
+    const tick = async () => {
+        el('self-auras').checked = true;
+        el('self-auras').dispatchEvent(new Event('change'));
+        await flush();
+    };
+
+    test('off by default: the plan is the plain one', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        expect(el('self-auras').checked).toBe(false);
+        expect(el('plan').textContent).toMatch(/^2 quick sims/);
+        expect(el('plan').textContent).not.toMatch(/aura variant/);
+    });
+
+    test('on: you are tried with each aura you own, alone and with Ann; the baseline is you as worn', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        await tick();
+        expect(el('self-aura-info').textContent).toBe('2 auras you own');
+        // Solo + Ann, each as worn and with 2 auras
+        expect(el('plan').textContent).toMatch(/^6 quick sims/);
+        expect(el('plan').textContent).toMatch(/2 aura variants of you/);
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        const zones = state.calls[0].params.zones;
+        expect(zones).toHaveLength(6);
+        expect(zones.map((z) => z.playerDTOs[0].abilities[0]?.hrid ?? null)).toEqual([
+            null,
+            '/abilities/fierce_aura',
+            '/abilities/mystic_aura',
+            null,
+            '/abilities/fierce_aura',
+            '/abilities/mystic_aura',
+        ]);
+        expect(zones[1].playerDTOs).toHaveLength(1);
+        expect(zones[5].playerDTOs[0].abilities[0]).toMatchObject({ hrid: '/abilities/mystic_aura', level: 7 });
+        // Ann is never touched by your aura
+        expect(zones[5].playerDTOs[1].abilities[0]).toBeNull();
+        await finishPass((_z, index) => sim(1000 + index * 100, 100));
+        const rows = tab.sortedRows();
+        // Row ids carry your aura, so no two rows share one
+        expect(new Set(rows.map((r) => r.id)).size).toBe(6);
+        expect(rows.filter((r) => r.isBaseline)).toHaveLength(1);
+        const text = rows.map((r) => rowText(r.id));
+        expect(text.some((t) => /Solo \(you: Fierce Aura 20\)/.test(t))).toBe(true);
+        expect(text.some((t) => /Ann \(you: Mystic Aura 7\)/.test(t))).toBe(true);
+        // A solo row with an aura is compared with the as-worn baseline
+        const soloAura = rows.find((r) => r.comp.selfAura && !r.comp.members.length);
+        expect(rowText(soloAura.id)).toMatch(/%/);
+        // Load puts your aura in the editor's copy of you
+        tab.root.querySelector(`[data-pf-load="${soloAura.id}"]`).click();
+        expect(host._editor.loadParty.mock.calls[0][0][0].abilities[0].hrid).toBe(soloAura.comp.selfAura.hrid);
+    });
+
+    test('the confirm count includes your auras', async () => {
+        seedRoster(Array.from({ length: 6 }, (_, i) => [`m${i}`, `M${i}`, build(60 + i)]));
+        await mountTab();
+        await tick();
+        tab.start();
+        await flush();
+        // 6 teammates, cap 3 -> 1 + 6 + 15 = 22 compositions, each of 3 variants of you
+        expect(el('confirm').textContent).toMatch(/66 quick/);
+    });
+
+    test('a player loaded in the editor, not the live character: pick the auras by hand', async () => {
+        state.owned = [];
+        host._editor.players = [
+            { hrid: 'player1', name: 'Milkman', dto: build(90), self: true },
+            { hrid: 'player2', name: 'Venaam', dto: build(110) },
+        ];
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        el('self').value = 'editor:player2';
+        el('self').dispatchEvent(new Event('change'));
+        await tick();
+        expect(el('self-aura-info').textContent).toMatch(/unknown/);
+        expect(el('self-aura-edit').textContent).toBe('You — Auras');
+        expect(el('plan').textContent).toMatch(/no aura of yours to try/);
+
+        el('self-aura-edit').click();
+        const select = tab.root.querySelector('[data-pf-aura-pick="self"]');
+        select.value = '/abilities/fierce_aura';
+        tab.root.querySelector('[data-pf-aura-level="self"]').value = '25';
+        tab.root.querySelector('[data-pf-aura-add="self"]').click();
+        await flush();
+        expect(el('self-aura-edit').textContent).toBe('You — Auras (1) Close');
+        expect(el('plan').textContent).toMatch(/^4 quick sims/);
+        expect(tab.root.querySelector('[data-pf-as-built="self"]')).toBeNull();
+
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        const zones = state.calls[0].params.zones;
+        expect(zones[1].playerDTOs[0].abilities[0]).toMatchObject({ hrid: '/abilities/fierce_aura', level: 25 });
+        // Venaam's own build is the as-worn row
+        expect(zones[0].playerDTOs[0].magicLevel).toBe(110);
+        // Picks belong to that player; switching to the live character brings the owned list back
+        el('self').value = 'live';
+        el('self').dispatchEvent(new Event('change'));
+        await flush();
+        expect(el('self-aura-info').textContent).toBe('no auras learned yet');
+    });
+
+    test('an aura you already wear at that level is not tried twice', async () => {
+        state.selfDTO.abilities[0] = { hrid: '/abilities/fierce_aura', level: 20, triggers: null };
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        await tick();
+        // Mystic only: Solo + Ann, as worn and with Mystic
+        expect(el('plan').textContent).toMatch(/^4 quick sims/);
     });
 });

@@ -45,6 +45,7 @@ import {
     removeTeammate,
     replaceTeammateBuild,
     setTeammateAuras,
+    normalizeAuraOptions,
     MAX_AURA_OPTIONS,
     partyModeOf,
     teammateModeOf,
@@ -213,6 +214,11 @@ export class PartyFinderTab {
         this._pendingDeleteTimer = null;
         /** The teammate whose aura options are open, if any */
         this._auraOpen = null;
+        /** "Also try my auras": off by default, since every aura of yours multiplies the sims */
+        this._trySelfAuras = false;
+        /** Auras picked by hand for an editor-loaded "you" (what they own is unknown), by the picker's value */
+        this._selfAuraPicks = new Map();
+        this._selfAuraOpen = false;
         this._lastRun = null;
         this._summary = '';
         this._unsubscribePull = null;
@@ -279,6 +285,9 @@ export class PartyFinderTab {
         this._pendingConfirm = null;
         this._pendingDelete = null;
         this._auraOpen = null;
+        this._trySelfAuras = false;
+        this._selfAuraPicks = new Map();
+        this._selfAuraOpen = false;
         this._lastRun = null;
         this._summary = '';
     }
@@ -333,7 +342,15 @@ export class PartyFinderTab {
                 `<div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
                     <select class="toolasha-select" data-pf="self" style="${INPUT_STYLE}"></select>
                     <span style="color:#666; font-size:11px;">Every figure below is this player's own.</span>
-                </div>`
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">
+                    <label style="color:#aaa; font-size:11px; display:flex; gap:4px; align-items:center;" title="Also sim you wearing each aura you own, alone and in every party">
+                        <input type="checkbox" data-pf="self-auras"> Also try my auras</label>
+                    <span data-pf="self-aura-info" style="color:#888; font-size:11px;"></span>
+                    <button data-pf="self-aura-edit" style="${SMALL_BTN_STYLE} display:none;"></button>
+                </div>
+                <div data-pf="self-aura-editor"></div>
+                <div style="color:#666; font-size:11px; margin-top:4px;">With auras on, each aura of yours is tried alone and in every party, so the sims multiply. "vs solo" always compares against you as worn, alone (the baseline row); the solo rows with an aura show whether it helps you alone.</div>`
             ),
             section(
                 'Teammates <span data-pf="roster-count" style="color:#666; font-weight:400;"></span>',
@@ -410,6 +427,16 @@ export class PartyFinderTab {
     _wire() {
         this._el('add-editor').addEventListener('click', () => this._onAddFromEditor());
         this._el('add-self').addEventListener('click', () => this._onCopySelf());
+        this._el('self-auras').addEventListener('change', (e) => {
+            this._trySelfAuras = e.target.checked;
+            this._selfAuraOpen = false;
+            this._renderSelfAuras();
+            this._renderPlan();
+        });
+        this._el('self-aura-edit').addEventListener('click', () => {
+            this._selfAuraOpen = !this._selfAuraOpen;
+            this._renderSelfAuras();
+        });
         this._el('toggle-import').addEventListener('click', () => {
             const box = this._el('import-box');
             box.style.display = box.style.display === 'none' ? 'block' : 'none';
@@ -595,11 +622,14 @@ export class PartyFinderTab {
 
     /**
      * The aura options editor under one teammate's row.
-     * @param {Object} entry - Roster entry
+     * @param {Object} entry - Roster entry (or, for you, `{id: 'self', dto, auras}`)
+     * @param {{save: Function, intro: string, hideAsBuilt: boolean}} [custom] - For anyone but a roster teammate:
+     *   how a change is stored, what the editor says, and whether "also try as built" is offered (you as worn
+     *   are always tried)
      * @returns {HTMLElement}
      * @private
      */
-    _auraEditor(entry) {
+    _auraEditor(entry, custom = null) {
         const gameData = buildGameDataPayload();
         const maxLevel = maxAbilityLevel(gameData);
         const box = document.createElement('div');
@@ -610,13 +640,18 @@ export class PartyFinderTab {
         const intro = document.createElement('div');
         intro.style.color = '#888';
         intro.textContent =
+            custom?.intro ||
             'Try this teammate with each aura below as well. An aura takes their special ability slot, ' +
-            'replacing the special they wear.';
+                'replacing the special they wear.';
         box.appendChild(intro);
 
         // Every edit is a change to the list as stored when it is written, not to the copy this editor was drawn
         // from: another tab (or a pull) may have changed it since
         const save = async (change) => {
+            if (custom?.save) {
+                await custom.save(change);
+                return;
+            }
             const result = await setTeammateAuras(entry.id, change);
             this._adoptRoster(result);
             if (!result.ok) this._rosterNote('Could not save the aura options.', true);
@@ -728,7 +763,7 @@ export class PartyFinderTab {
         tick.disabled = !entry.auras.length;
         tick.addEventListener('change', () => save((stored) => ({ ...stored, includeAsBuilt: tick.checked })));
         asBuilt.append(tick, document.createTextNode('Also try them as built'));
-        box.appendChild(asBuilt);
+        if (!custom?.hideAsBuilt) box.appendChild(asBuilt);
         return box;
     }
 
@@ -945,6 +980,76 @@ export class PartyFinderTab {
         return options;
     }
 
+    /**
+     * The auras the search tries YOU with, when "Also try my auras" is on: every aura the live character has
+     * learned (at its level), or for an editor-loaded player whose learned abilities are unknown the ones picked by
+     * hand in {@link PartyFinderTab#_renderSelfAuras}.
+     * @param {Object|null} gameData
+     * @returns {{on: boolean, auras: Array<{hrid: string, level: number}>, dto: Object|null, manual: boolean,
+     *   key: string, self: Object|null}}
+     * @private
+     */
+    _selfAuraInfo(gameData) {
+        const key = this._el('self')?.value || 'live';
+        const none = { on: this._trySelfAuras, auras: [], dto: null, manual: false, key, self: null };
+        if (!this._trySelfAuras) return none;
+        const self = this._resolveSelf();
+        if (!self) return none;
+        if (self.isLive) {
+            const details = gameData?.abilityDetailMap || {};
+            const auras = (dataManager.characterData?.characterAbilities || [])
+                .filter((a) => a?.abilityHrid && isAuraAbility(details[a.abilityHrid]))
+                .map((a) => ({ hrid: a.abilityHrid, level: Math.max(1, Math.floor(Number(a.level)) || 1) }));
+            return { ...none, auras, dto: self.dto, self };
+        }
+        return { ...none, auras: this._selfAuraPicks.get(key) || [], dto: self.dto, manual: true, self };
+    }
+
+    /** The switch, what it will try, and for a player not the live character the by-hand aura list. @private */
+    _renderSelfAuras() {
+        const tick = this._el('self-auras');
+        const info = this._el('self-aura-info');
+        const edit = this._el('self-aura-edit');
+        const holder = this._el('self-aura-editor');
+        if (!tick || !info || !edit || !holder) return;
+        tick.checked = this._trySelfAuras;
+        holder.textContent = '';
+        edit.style.display = 'none';
+        info.textContent = '';
+        if (!this._trySelfAuras) return;
+        const gameData = buildGameDataPayload();
+        const state = this._selfAuraInfo(gameData);
+        if (!state.manual) {
+            info.textContent = state.auras.length
+                ? `${state.auras.length} aura${state.auras.length === 1 ? '' : 's'} you own`
+                : 'no auras learned yet';
+            return;
+        }
+        const count = state.auras.length;
+        info.textContent = 'What this player owns is unknown: pick the auras to try.';
+        edit.style.display = '';
+        edit.textContent = count ? `You — Auras (${count}) ${this._selfAuraOpen ? 'Close' : 'Edit'}` : 'You — Auras';
+        if (!this._selfAuraOpen) return;
+        const key = state.key;
+        holder.appendChild(
+            this._auraEditor(
+                { id: 'self', dto: state.dto, auras: state.auras, includeAsBuilt: true },
+                {
+                    intro:
+                        'Try you with each aura below as well, alone and in every party. An aura takes your ' +
+                        'special ability slot, replacing the special you wear; you as built are always tried.',
+                    hideAsBuilt: true,
+                    save: async (change) => {
+                        const next = change({ auras: (this._selfAuraPicks.get(key) || []).map((o) => ({ ...o })) });
+                        this._selfAuraPicks.set(key, normalizeAuraOptions(next?.auras));
+                        this._renderSelfAuras();
+                        this._renderPlan();
+                    },
+                }
+            )
+        );
+    }
+
     /** @private */
     _renderSelfPicker() {
         const select = this._el('self');
@@ -956,8 +1061,13 @@ export class PartyFinderTab {
         if (!select.dataset.pfModeBound) {
             select.dataset.pfModeBound = '1';
             // Who "you" are decides which teammates can party with you
-            select.addEventListener('change', () => this._renderRoster());
+            select.addEventListener('change', () => {
+                this._selfAuraOpen = false;
+                this._renderSelfAuras();
+                this._renderRoster();
+            });
         }
+        this._renderSelfAuras();
     }
 
     /**
@@ -1168,6 +1278,7 @@ export class PartyFinderTab {
     _plan(gameData) {
         const settings = this._settings();
         const { roster, skipped } = this._planRoster(gameData);
+        const mine = this._selfAuraInfo(gameData);
         const plan = planSweep({
             zones: this._zones,
             roster,
@@ -1175,6 +1286,8 @@ export class PartyFinderTab {
             maxPartySize: settings.maxPartySize,
             gameData,
             selfMode: this._selfMode(),
+            selfAuras: mine.auras,
+            selfDto: mine.dto,
         });
         const zoneCount = plan.perZone.filter((z) => z.count > 0).length;
         const rerunMax = settings.topK > 0 ? Math.min(settings.topK, Math.max(0, plan.total - zoneCount)) : 0;
@@ -1219,6 +1332,15 @@ export class PartyFinderTab {
         }
         if (plan.skipped.length) notes.push(`Left out, not runnable here: ${plan.skipped.join('; ')}.`);
         for (const note of plan.notes || []) notes.push(`${note}.`);
+        if (this._trySelfAuras) {
+            const aura = plan.tasks.find((t) => t.comp.selfAura)?.comp.selfAura;
+            const variants = new Set(plan.tasks.map((t) => t.comp.selfAura?.hrid + ':' + t.comp.selfAura?.level));
+            notes.push(
+                aura
+                    ? `Trying ${variants.size - 1} aura variant${variants.size === 2 ? '' : 's'} of you beside as worn.`
+                    : 'Also try my auras: no aura of yours to try here, so you are only tried as worn.'
+            );
+        }
         el.textContent = notes.join(' ');
     }
 
@@ -1378,7 +1500,7 @@ export class PartyFinderTab {
             const stage1 = plan.tasks.map((task) => ({
                 ...task,
                 id: `${task.zoneKey}|${task.comp.key}`,
-                party: buildCompositionParty(self.dto, task.comp.members),
+                party: buildCompositionParty(self.dto, task.comp.members, task.comp.selfAura),
             }));
             const finished1 = await this._runPass(
                 stage1,
@@ -1408,7 +1530,7 @@ export class PartyFinderTab {
                         zoneKey: row.zoneKey,
                         comp: row.comp,
                         id: row.id,
-                        party: buildCompositionParty(self.dto, row.comp.members),
+                        party: buildCompositionParty(self.dto, row.comp.members, row.comp.selfAura),
                     }));
                     const finished2 = await this._runPass(
                         stage2,
@@ -1656,6 +1778,9 @@ export class PartyFinderTab {
             const replaced = row.comp.members
                 .filter((m) => m.aura && m.replaced)
                 .map((m) => `${m.name}: ${m.aura.name} replaces ${m.replaced}`);
+            if (row.comp.selfAura?.replaced) {
+                replaced.unshift(`You: ${row.comp.selfAura.name} replaces ${row.comp.selfAura.replaced}`);
+            }
             const sharedChip = row.shared?.length
                 ? ` <span style="color:#ffb74d; font-size:9px;" title="Two or more players run this aura">${esc(
                       row.shared.map((a) => `${a.name} ×${a.count}`).join(', ')
@@ -1720,7 +1845,7 @@ export class PartyFinderTab {
         const self = this._lastRun?.self;
         const editor = this.host?._editor;
         if (!row || !self || !editor?.loadParty) return false;
-        const party = buildCompositionParty(self.dto, row.comp.members);
+        const party = buildCompositionParty(self.dto, row.comp.members, row.comp.selfAura);
         editor.loadParty(party, [self.name, ...row.comp.members.map((m) => m.name)], {
             selfIsLive: self.isLive,
             note: `From the party finder: ${partyLabel(row.comp)}`,
