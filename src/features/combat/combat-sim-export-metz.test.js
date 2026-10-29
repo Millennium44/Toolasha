@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     partySkills: [],
     profiles: null,
     battleRoster: null,
+    loadouts: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -38,6 +39,10 @@ vi.mock('../../core/data-manager.js', () => ({
             };
         }),
     },
+}));
+
+vi.mock('./combat-sim-loadouts-metz.js', () => ({
+    getMetzLoadouts: vi.fn(() => mocks.loadouts),
 }));
 
 vi.mock('./combat-sim-export.js', () => ({
@@ -88,6 +93,7 @@ describe('Metz combat export', () => {
     beforeEach(() => {
         mocks.characterData = baseCharacter();
         mocks.onGamePage = true;
+        mocks.loadouts = [];
         mocks.inventory = [];
         mocks.itemDetailMap = {};
         mocks.mooPassBuffs = [];
@@ -714,6 +720,29 @@ describe('Metz export - MooPass expiry and speed gear', () => {
         expect(character.skilling.speedGear).toEqual([
             { itemHrid: '/items/philosophers_necklace', enhancementLevel: 9 },
         ]);
+    });
+
+    test('self export carries saved loadouts, teammates never do', async () => {
+        mocks.characterData = baseCharacter({
+            partyInfo: { partySlotMap: { a: { characterID: 'party-1' } } },
+        });
+        mocks.loadouts = [{ id: '12', name: 'Dungeon' }];
+
+        const team = await constructMetzTeamExport();
+
+        expect(team[0].loadouts).toEqual(mocks.loadouts);
+        expect('loadouts' in team.find((p) => p.name === 'Teammate')).toBe(false);
+    });
+
+    test('self export omits loadouts when there are none, and the one-loadout override keeps them', async () => {
+        mocks.loadouts = [];
+        expect('loadouts' in (await constructMetzCharacterExport())).toBe(false);
+
+        mocks.loadouts = [{ id: '12', name: 'Dungeon' }];
+        const team = await constructMetzTeamExport(null, {
+            selfLoadoutOverride: { equipment: [], abilities: [], triggerMap: {}, food: [], drinks: [] },
+        });
+        expect(team[0].loadouts).toEqual(mocks.loadouts);
     });
 
     test('worn speed gear alone is exported', async () => {

@@ -1801,6 +1801,15 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'metzLoadoutPublisher',
+            name: 'Metz Loadout Publisher',
+            category: 'Combat',
+            module: Combat.metzLoadoutPublisher,
+            async: true,
+            // Copies the saved loadouts to GM storage for the Metz site; needs the store it reads
+            customCheck: () => config.isFeatureEnabled('loadoutSnapshot'),
+        },
+        {
             key: 'scrollSimulatorUI',
             name: 'Scroll Simulator UI',
             category: 'Combat',

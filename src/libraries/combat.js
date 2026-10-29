@@ -71,6 +71,7 @@ import {
     constructMetzCharacterExport,
     applyLoadoutOverrideToMetzCharacter,
 } from '../features/combat/combat-sim-export-metz.js';
+import { metzLoadoutPublisher } from '../features/combat/combat-sim-loadouts-metz.js';
 import { constructMilkonomyExport } from '../features/combat/milkonomy-export.js';
 import combatSim from '../features/combat-sim/combat-sim.js';
 import labSim from '../features/combat-sim/lab-sim.js';
@@ -171,6 +172,7 @@ toolashaRoot.Combat = {
     labyrinthCapture,
     combatSimIntegration,
     combatSimIntegrationMetz,
+    metzLoadoutPublisher,
     combatSimExport: {
         constructExportObject,
         constructMetzTeamExport,
