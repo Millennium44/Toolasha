@@ -56,6 +56,7 @@ import {
     modeMismatchReason,
     buildFingerprint,
 } from './party-roster.js';
+import { PARTY_TEMPLATES, TEMPLATE_ROLE_GROUPS, templatesForGroup, templateTeammateName } from './party-templates.js';
 import {
     planSweep,
     buildCompositionParty,
@@ -216,6 +217,7 @@ export class PartyFinderTab {
         this._renderTimer = null;
         this._pendingConfirm = null;
         this._pendingDelete = null;
+        this._templatesOpen = false;
         this._pendingDeleteTimer = null;
         /** The teammate whose aura options are open, if any */
         this._auraOpen = null;
@@ -376,7 +378,8 @@ export class PartyFinderTab {
             ),
             section(
                 'Saved builds <span data-pf="build-count" style="color:#666; font-weight:400;"></span>',
-                `<div data-pf="builds" style="display:flex; flex-direction:column; gap:3px;"></div>
+                `<div data-pf="templates" style="margin-bottom:6px;"></div>
+                <div data-pf="builds" style="display:flex; flex-direction:column; gap:3px;"></div>
                 <div style="margin-top:6px;">
                     <button data-pf="save-build-open" style="${SMALL_BTN_STYLE}" title="Keep a build under a name, to add as a teammate later">Save build…</button>
                 </div>
@@ -647,8 +650,74 @@ export class PartyFinderTab {
         note.style.color = warn ? '#ff9800' : '#888';
     }
 
+    /**
+     * The read-only Templates group above the saved builds: collapsed by default, grouped by role. Templates ship
+     * with the script, so nothing here reads or writes the roster record.
+     * @private
+     */
+    _renderTemplates() {
+        const box = this._el('templates');
+        if (!box) return;
+        box.textContent = '';
+        const open = this._templatesOpen;
+        const head = document.createElement('button');
+        head.dataset.pfTemplatesToggle = '';
+        head.style.cssText = `${SMALL_BTN_STYLE} width:100%; text-align:left;`;
+        head.textContent = `${open ? '▾' : '▸'} Templates (${PARTY_TEMPLATES.length})`;
+        head.title = 'Ready-made builds from guides and lab loadouts, to add as teammates';
+        head.addEventListener('click', () => {
+            this._templatesOpen = !this._templatesOpen;
+            this._renderTemplates();
+        });
+        box.appendChild(head);
+        if (!open) return;
+        const body = document.createElement('div');
+        body.dataset.pfTemplatesBody = '';
+        body.style.cssText = 'display:flex; flex-direction:column; gap:3px; margin-top:4px;';
+        for (const group of TEMPLATE_ROLE_GROUPS) {
+            const templates = templatesForGroup(group);
+            if (!templates.length) continue;
+            const title = document.createElement('div');
+            title.style.cssText = 'color:#aaa; font-size:11px; font-weight:700; margin-top:2px;';
+            title.textContent = group.label;
+            body.appendChild(title);
+            for (const template of templates) {
+                const row = document.createElement('div');
+                row.dataset.pfTemplate = template.id;
+                row.style.cssText = 'display:flex; gap:6px; align-items:center; font-size:12px;';
+                const name = document.createElement('span');
+                name.style.cssText =
+                    'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+                name.textContent = `${template.label} · ${template.tier}`;
+                name.title = template.source;
+                const add = document.createElement('button');
+                add.style.cssText = SMALL_BTN_STYLE;
+                add.textContent = 'Add as teammate';
+                add.title = `Add a copy to the roster, then set Try/Always/Never and Auras. ${template.source}`;
+                add.addEventListener('click', () => this._onAddTemplateAsTeammate(template));
+                row.append(name, add);
+                body.appendChild(row);
+            }
+        }
+        box.appendChild(body);
+    }
+
+    /**
+     * @param {Object} template - A built-in template
+     * @private
+     */
+    async _onAddTemplateAsTeammate(template) {
+        // No game mode: a template fits a market party and an Iron Cow one alike
+        const result = await addTeammates([
+            { name: templateTeammateName(template), dto: template.playerDto, source: 'template' },
+        ]);
+        this._adoptRoster(result);
+        this._reportAdd(result);
+    }
+
     /** The saved builds list. @private */
     _renderBuilds() {
+        this._renderTemplates();
         const list = this._el('builds');
         if (!list) return;
         const builds = this._roster.builds || [];
