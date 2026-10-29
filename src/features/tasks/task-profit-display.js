@@ -1020,7 +1020,11 @@ class TaskProfitDisplay {
         // Checked here, not only when drawing: a simulation still in flight when the
         // setting went off stores its estimate after the redraw that cleared the rest
         if (!config.getSetting('taskCombatEstimate')) return null;
-        const estimate = this._cardEstimates.get(taskNode);
+        // `_setupTaskNode` is handed the whole `RandomTask_randomTask` card, but every
+        // estimate is stored under its `RandomTask_taskInfo` node (the one the
+        // estimate container sits in). Looked up by the outer card it was never
+        // found, so Go never reached `_applyGoEstimate` at all.
+        const estimate = this._cardEstimates.get(this._estimateKeyNode(taskNode));
         if (!estimate || !estimate.zoneHrid || !Number.isFinite(estimate.predictedFights)) return null;
 
         if (config.getSetting('taskGoMerge') && estimate.monsterHrid) {
@@ -1035,6 +1039,20 @@ class TaskProfitDisplay {
         }
 
         return estimate;
+    }
+
+    /**
+     * The node a card's estimate is stored under (`RandomTask_taskInfo`),
+     * given the node a caller holds: that node, a descendant, or the
+     * enclosing `RandomTask_randomTask` card.
+     * @param {HTMLElement} taskNode
+     * @returns {HTMLElement}
+     * @private
+     */
+    _estimateKeyNode(taskNode) {
+        if (!taskNode?.matches) return taskNode;
+        if (taskNode.matches(GAME.TASK_INFO)) return taskNode;
+        return taskNode.closest(GAME.TASK_INFO) || taskNode.querySelector(GAME.TASK_INFO) || taskNode;
     }
 
     /**
