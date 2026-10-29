@@ -2450,6 +2450,16 @@ export const settingsGroups = {
                 help: 'When enabled, Scroll of... items from the Labyrinth are not auto-opened',
                 requires: 'autoAllButton',
             },
+            scrollPlanner: {
+                id: 'scrollPlanner',
+                label: 'Scroll Planner: plan and step through opening scrolls',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Adds a "Plan scrolls" button to Scroll of... item menus. Choose how many of each scroll to open, ' +
+                    'then be walked through them one at a time: the menu opens with the quantity filled in and the ' +
+                    'Open button highlighted, and you press Open yourself. Your last plan can be loaded on any character.',
+            },
         },
     },
 

@@ -19,6 +19,11 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({
             itemDetailMap: {
                 '/items/chest': { name: 'Chest', isOpenable: true },
+                '/items/seal_of_damage': {
+                    name: 'Scroll Of Damage',
+                    isOpenable: true,
+                    categoryHrid: '/item_categories/scroll',
+                },
             },
         }),
     },
@@ -36,12 +41,13 @@ vi.mock('../../core/tooltip-observer.js', () => ({
 }));
 
 const { default: autoAllButton } = await import('./auto-all-button.js');
+const { setScrollRunActive } = await import('./scroll-planner/scroll-planner-state.js');
 
-function openableContainer() {
+function openableContainer(itemName = 'Chest') {
     const container = document.createElement('div');
     const name = document.createElement('span');
     name.className = 'Item_name';
-    name.textContent = 'Chest';
+    name.textContent = itemName;
     const all = document.createElement('button');
     all.textContent = 'All';
     container.append(name, all);
@@ -57,6 +63,7 @@ beforeEach(() => {
 
 afterEach(() => {
     autoAllButton.cleanup();
+    setScrollRunActive(false);
     document.body.replaceChildren();
     vi.useRealTimers();
 });
@@ -150,5 +157,34 @@ describe('delayed All-button click', () => {
 
         expect(firstClick).not.toHaveBeenCalled();
         expect(secondClick).toHaveBeenCalledOnce();
+    });
+});
+
+describe('a guided Scroll Planner run', () => {
+    test('stands Auto All down on scroll menus, so the planned quantity is not overwritten', () => {
+        setScrollRunActive(true);
+        const { container, all } = openableContainer('Scroll Of Damage');
+        const click = vi.spyOn(all, 'click');
+
+        state.callback(container, 'opened');
+        vi.advanceTimersByTime(50);
+
+        expect(click).not.toHaveBeenCalled();
+    });
+
+    test('still clicks All on other openables during the run, and on scrolls once it ends', () => {
+        setScrollRunActive(true);
+        const chest = openableContainer();
+        const chestClick = vi.spyOn(chest.all, 'click');
+        state.callback(chest.container, 'opened');
+        vi.advanceTimersByTime(50);
+        expect(chestClick).toHaveBeenCalledOnce();
+
+        setScrollRunActive(false);
+        const scroll = openableContainer('Scroll Of Damage');
+        const scrollClick = vi.spyOn(scroll.all, 'click');
+        state.callback(scroll.container, 'opened');
+        vi.advanceTimersByTime(50);
+        expect(scrollClick).toHaveBeenCalledOnce();
     });
 });

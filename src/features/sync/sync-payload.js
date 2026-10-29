@@ -170,6 +170,9 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     // What this device's settings carry-over could not decide, waiting to be
     // shown once here. Another device's notice is not this one's to show
     'settings_shared_scope_conflicts',
+    // A Scroll Planner run in progress, per character. Another device's run is not one this device
+    // is stepping through, and a pulled one would put the progress bar up and open an item menu here
+    'scrollPlanner_run_',
     'panelGeometry',
     'modalPositions3',
     'panelSizeMemory',
