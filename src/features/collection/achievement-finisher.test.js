@@ -354,6 +354,30 @@ describe('hints on the game achievement cards', () => {
         expect(document.querySelector(`.${PANEL_CLASS}-header`)).toBeNull();
     });
 
+    test('the live page: Collections and Bestiary tab panels mounted beside the Achievements tab', () => {
+        // The game keeps all three tab panels in the page at once, inside one outer panel with a title
+        const { page } = achievementsTab();
+        page.className = 'AchievementsPanel_achievements__3nd4D';
+        const outer = document.createElement('div');
+        outer.className = 'AchievementsPanel_achievementsPanel__2rSYa';
+        outer.innerHTML = '<div class="AchievementsPanel_title__o1faP">Achievements</div>';
+        const tabPanel = document.createElement('div');
+        tabPanel.className = 'TabPanel_tabPanel__tXMJF';
+        tabPanel.appendChild(page);
+        outer.appendChild(tabPanel);
+        for (const other of ['collections__qA6CY', 'bestiary__w1C-B']) {
+            const node = document.createElement('div');
+            node.className = `AchievementsPanel_${other}`;
+            node.innerHTML = '<div class="AchievementsPanel_controls__c"></div>';
+            outer.appendChild(node);
+        }
+        document.body.appendChild(outer);
+        finisher.initialize();
+        expect(lineOf('Dairy Chef')).not.toBeNull();
+        expect(toggle()).not.toBeNull();
+        expect(page.contains(toggle())).toBe(true);
+    });
+
     test('hint text per ending, from the same readiness the panel used', () => {
         achievementsTab();
         finisher.initialize();

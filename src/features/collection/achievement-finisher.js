@@ -61,6 +61,13 @@ const OTHER_TABS = '[class*="AchievementsPanel_collections"], [class*="Achieveme
  * @returns {Element|null}
  */
 export function findAchievementsHost(root = document) {
+    // The Achievements tab's own panel (controls + tier sections). The game keeps the
+    // Collections and Bestiary tab panels mounted beside it, so the outermost-wrapper search
+    // below would land on the page title instead; measured live on 2026-10-29.
+    const tabPanel = [...root.querySelectorAll('[class*="AchievementsPanel_achievements__"]')].find(
+        (node) => !node.closest(EXCLUDED_ANCESTORS) && !node.closest(OTHER_TABS)
+    );
+    if (tabPanel) return tabPanel;
     const candidates = [...root.querySelectorAll('[class*="AchievementsPanel_"]')].filter((node) => {
         const cls = typeof node.className === 'string' ? node.className : '';
         if (NOT_THE_LIST.test(cls)) return false;
