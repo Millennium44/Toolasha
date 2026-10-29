@@ -299,6 +299,7 @@ const {
     ownParticipation,
     participantCounts,
     placeTrialBlock,
+    restoreFightGrids,
     renderTrialBlock,
     renderTrialPlayers,
     signedUpMembers,
@@ -1374,6 +1375,86 @@ describe('placeTrialBlock', () => {
         expect(gridColumnCount('176px 176px 176px 176px')).toBe(4);
         expect(gridColumnCount('repeat(4, 176px)')).toBe(4);
         expect(gridColumnCount('repeat(2, 100px 20px)')).toBe(4);
+    });
+
+    describe('sidecar track fit', () => {
+        /**
+         * Give the grid and its panel a measured width.
+         * @param {Element} grid - The fight grid
+         * @param {number} width - Panel clientWidth
+         */
+        function measure(grid, width) {
+            Object.defineProperty(grid.parentElement, 'clientWidth', { value: width, configurable: true });
+            grid.style.columnGap = '2px';
+        }
+
+        test('the live shape (five 120px tracks, 724 wide, four cards) sizes the sidecar track', () => {
+            const { root, grid, cards } = fightLayout(4);
+            grid.style.gridTemplateColumns = '120px 120px 120px 120px 120px';
+            measure(grid, 724);
+            const block = newBlock();
+
+            expect(placeTrialBlock(root, cards[0], block, 'Trial Swarm')).toBe('fight-sidecar');
+            expect(block.style.gridRow).toBe('1');
+            expect(block.style.gridColumn).toBe('5');
+            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
+            // 4 x 120 + 220 + 4 gaps of 2 fits 724: nothing to scroll
+            expect(480 + 220 + 8).toBeLessThanOrEqual(724);
+            // Idempotent on a re-place
+            fightSidecarPlacement(grid);
+            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
+        });
+
+        test('a grid too narrow for the group wraps and leaves the template alone', () => {
+            const { root, grid, cards } = fightLayout(4);
+            grid.style.gridTemplateColumns = '120px 120px 120px 120px 120px';
+            measure(grid, 600);
+            const block = newBlock();
+
+            placeTrialBlock(root, cards[0], block, 'Trial Swarm');
+            expect(block.style.gridRow).toBe('2');
+            expect(block.style.gridColumn).toBe('1 / -1');
+            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 120px');
+        });
+
+        test('removal restores the original inline template, and a wave change re-measures', () => {
+            const { root, grid, cards } = fightLayout(4);
+            grid.style.gridTemplateColumns = '120px 120px 120px 120px 120px';
+            measure(grid, 724);
+            const block = newBlock();
+            block.dataset.mwiBlock = 'tile:a';
+            placeTrialBlock(root, cards[0], block, 'Trial Swarm');
+            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
+
+            restoreFightGrids(document);
+            // The block is still there, so the fit is kept
+            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
+            block.remove();
+            restoreFightGrids(document);
+            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 120px');
+            expect(grid.dataset.mwiFitCards).toBeUndefined();
+
+            // Fit, then the wave loses a card: the stale fit is dropped first
+            placeTrialBlock(root, cards[0], newBlock(), 'Trial Swarm');
+            cards[3].remove();
+            fightSidecarPlacement(grid);
+            expect(grid.dataset.mwiFitCards).toBe('3');
+            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 220px');
+        });
+
+        test('the old 4x176 shape behaves as before when the width is unknown or too small', () => {
+            const { grid } = fightLayout(4);
+            expect(fightSidecarPlacement(grid).wrapped).toBe(true);
+            measure(grid, 724);
+            expect(fightSidecarPlacement(grid).wrapped).toBe(true);
+            expect(grid.style.gridTemplateColumns).toBe('176px 176px 176px 176px');
+            const one = fightLayout(1).grid;
+            expect(fightSidecarPlacement(one)).toEqual({ row: 1, column: '2', wrapped: false });
+            // Measured: one boss + sidecar is a 176px + 220px group, centred
+            measure(one, 724);
+            expect(fightSidecarPlacement(one).wrapped).toBe(false);
+            expect(one.style.gridTemplateColumns).toBe('176px 220px');
+        });
     });
 
     test('one to four monsters each get a placement that fits the grid', () => {

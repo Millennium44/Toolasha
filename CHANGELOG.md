@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial readout fits beside the swarm
+
+- On a four-monster trial the readout no longer spills past the monster grid, so the In Progress tab has no side scroll and the monsters sit without a blank gap to their left.
+
 ### Combat task Go opens the Zone estimate's zone, for real this time
 
 - The earlier fix never ran: Go looked up the card's estimate on the wrong element and found none. Go now opens the zone a Zone-mode estimate picked, with enough fights to finish the task; checked live on the test server (a Panda task opens Bear With It).
