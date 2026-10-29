@@ -818,7 +818,12 @@ class SyncManager {
         const gistId = await this._resolveGistId(token);
         let remote;
         try {
-            remote = downloaded?.payload ? downloaded : await this._readRemote(token, gistId, null);
+            // The other game server's gist is never merged into automatically, and is refused before
+            // its passphrase is asked for; `_run` says so once. A pressed merge goes on, and its
+            // write asks before replacing that gist
+            remote = downloaded?.payload
+                ? downloaded
+                : await this._readRemote(token, gistId, null, null, null, { refuseOtherServer: unattended });
         } catch (error) {
             // A pressed merge reports what stopped it, through `_run`
             if (!unattended) throw error;
@@ -836,13 +841,6 @@ class SyncManager {
             throw error;
         }
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
-
-        // The other game server's gist is never merged into automatically; `_run` says so once.
-        // A pressed merge goes on, and its write asks before replacing that gist
-        const remoteServer = gistServerOf(remote);
-        if (unattended && remoteServer && remoteServer !== serverKind()) {
-            throw new GistError('wrong-server', wrongServerMessage(remoteServer, serverKind()));
-        }
 
         // The gist named key prefixes another script registered that this
         // device had not heard of. Rebuilt with them, this device's payload
@@ -1177,15 +1175,25 @@ class SyncManager {
      * @param {Object|null} known - The remembered version, for `seen`
      * @param {string|null} [etag] - Ask conditionally against this ETag
      * @param {string|null} [revision] - Read this past version instead of the current one
+     * @param {Object} [options] - Options
+     * @param {boolean} [options.refuseOtherServer=false] - Throw `wrong-server` for a gist tagged for the other
+     *   game server. Checked before decrypting (the tag is in the clear), so the other server's encrypted gist
+     *   is refused as what it is rather than asked for a passphrase this device should never have
      * @returns {Promise<{notModified?: boolean, manifest?: Object, payload?: string, seen?: Object|null}>}
      *   The plaintext payload and its manifest, and the version record this download proves
      * @private
      */
-    async _readRemote(token, gistId, known, etag = null, revision = null) {
+    async _readRemote(token, gistId, known, etag = null, revision = null, { refuseOtherServer = false } = {}) {
         const remote = revision
             ? await readSyncGistRevision(token, gistId, revision)
             : await readSyncGist(token, gistId, etag ? { etag } : undefined);
         if (remote.notModified) return { notModified: true };
+        if (refuseOtherServer) {
+            const tagged = gistServerOf(remote);
+            if (tagged && tagged !== serverKind()) {
+                throw new GistError('wrong-server', wrongServerMessage(tagged, serverKind()));
+            }
+        }
         const manifest = remote.manifest;
         // What this download proves about the gist's file set, whatever the
         // caller goes on to decide. It stays `current` only if it already was;
@@ -1436,7 +1444,11 @@ class SyncManager {
         // whatever is left.
         const conditional =
             silent && !takeUnapplied && known && !(await storage.get(KEY_MERGE_HELD, STORE, null)) ? known.etag : null;
-        const remote = await this._readRemote(token, gistId, known, conditional);
+        // The other game server's gist is never applied here, pressed or not: the cure for a wrong
+        // gist is choosing the right one (the Gist ID box), not importing the other world's data.
+        // Refused before any passphrase is asked for, and nothing is recorded, so choosing the
+        // right gist starts clean
+        const remote = await this._readRemote(token, gistId, known, conditional, null, { refuseOtherServer: true });
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
         if (remote.notModified) {
             // An unchanged gist answers 304 before any download, so deletes an earlier pull owes are
@@ -1446,14 +1458,6 @@ class SyncManager {
         }
         const { manifest, seen } = remote;
         const payload = remote.payload;
-
-        // The other game server's gist is never applied here, pressed or not: the cure for a wrong
-        // gist is choosing the right one (the Gist ID box), not importing the other world's data.
-        // Nothing is recorded, so choosing the right gist starts clean
-        const remoteServer = gistServerOf(remote);
-        if (remoteServer && remoteServer !== serverKind()) {
-            throw new GistError('wrong-server', wrongServerMessage(remoteServer, serverKind()));
-        }
 
         const remoteAt = manifest?.exportedAt ?? null;
         const lastSyncedAt = await storage.get(KEY_LAST_SYNCED_AT, STORE, null);

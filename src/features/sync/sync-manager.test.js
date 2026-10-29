@@ -2664,6 +2664,24 @@ describe('one gist per game server', () => {
             expect(toasts[0].duration).toBe(0);
         });
 
+        test('an encrypted one is refused as the other server’s, not asked for its passphrase', async () => {
+            // The live game stuck on the test server's gist, with the test passphrase on it
+            linked();
+            const encrypted = remote('test');
+            encrypted.manifest.encrypted = { salt: 's', iv: 'i' };
+            gist.read = encrypted;
+            expect(await syncManager.pull()).toMatchObject({ ok: false, reason: 'wrong-server' });
+            expect(toasts.at(-1).message).toContain('belongs to the test server');
+
+            toasts.length = 0;
+            stored.map.toolasha_sync_unapplied = { since: '2026-08-02T00:00:00Z' };
+            expect(await syncManager.push({ silent: true, unattended: true })).toMatchObject({
+                reason: 'wrong-server',
+            });
+            expect(toasts).toHaveLength(1);
+            expect(gist.writes).toHaveLength(0);
+        });
+
         test('an untagged gist is pulled as before', async () => {
             linked();
             gist.read = remote(null);
