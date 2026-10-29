@@ -43,8 +43,13 @@ export const LIVE_SESSION_SETTING = 'combatSessionRestore';
 /** Older than this, a saved session describes a run the player has long left */
 export const LIVE_SESSION_MAX_AGE_MS = 20 * 60_000;
 
-/** At most one write per this interval while a session keeps changing; the loss bound */
-export const LIVE_SESSION_PERSIST_MS = 4000;
+/**
+ * At most one write per this interval while a session keeps changing; the loss bound for a process
+ * that dies without a page event. Ten seconds, not four: a full serialize of every table per write,
+ * three trackers over hours of fighting, was thousands of transactions a session on a phone, and the
+ * unload, pagehide and tab-hidden flushes (not this interval) are what cover a normal close.
+ */
+export const LIVE_SESSION_PERSIST_MS = 10_000;
 
 /** Bumped when a saved payload's shape stops being readable by the code adopting it */
 export const LIVE_SESSION_VERSION = 1;
