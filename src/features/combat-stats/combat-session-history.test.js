@@ -45,6 +45,17 @@ const storageMock = vi.hoisted(() => {
             return true;
         },
         getAllKeys: async (store = 'settings') => Array.from(storeFor(store).keys()),
+        // The write feed `sessionsRevision` listens to; the module subscribes once, so it outlives reset()
+        listeners: new Set(),
+        crossTabVisible: true,
+        onWrite(listener) {
+            storageMock.listeners.add(listener);
+            return () => storageMock.listeners.delete(listener);
+        },
+        crossTabWritesVisible: () => storageMock.crossTabVisible,
+        emit(write) {
+            for (const listener of storageMock.listeners) listener(write);
+        },
     };
 });
 const game = vi.hoisted(() => ({ characterId: 'char1' }));
@@ -70,6 +81,8 @@ const {
     archiveSession,
     clearSessions,
     mergeSessionHistory,
+    sessionsRevision,
+    loadSessionsWithStatus,
 } = await import('./combat-session-history.js');
 const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
 const { entriesOf } = await import('../../utils/cleared-record.js');
@@ -585,4 +598,76 @@ describe('Clear survives a sync pull', () => {
     function starts(record) {
         return entriesOf(record).map((s) => s.combatStartTime);
     }
+});
+
+describe('reading the archive with its status', () => {
+    beforeEach(() => {
+        game.characterId = 'char1';
+    });
+
+    test('says ok on a read it could make, and not when storage cannot be read', async () => {
+        expect((await loadSessionsWithStatus()).ok).toBe(true);
+
+        storageMock.unavailable = true;
+        const failed = await loadSessionsWithStatus();
+        expect(failed.ok).toBe(false);
+        // The same list loadSessions has always answered with
+        expect(failed.sessions).toEqual(await loadSessions());
+        storageMock.unavailable = false;
+    });
+});
+
+describe('knowing when the archive may have changed', () => {
+    beforeEach(() => {
+        game.characterId = 'char1';
+        storageMock.crossTabVisible = true;
+    });
+
+    test('is the same token until something writes the archive', () => {
+        const before = sessionsRevision();
+        storageMock.emit({ storeName: 'combatStats', keys: ['consumableTracker_char1'], origin: 'local' });
+        storageMock.emit({ storeName: 'settings', keys: ['combatSessionHistory_char1'], origin: 'local' });
+        expect(sessionsRevision()).toBe(before);
+    });
+
+    test('moves when the archive is written, here or by another tab', () => {
+        const before = sessionsRevision();
+        storageMock.emit({ storeName: 'combatStats', keys: ['combatSessionHistory_char1'], origin: 'local' });
+        const afterLocal = sessionsRevision();
+        expect(afterLocal).not.toBe(before);
+
+        storageMock.emit({ storeName: 'combatStats', keys: ['combatSessionHistory_char1'], origin: 'remote' });
+        expect(sessionsRevision()).not.toBe(afterLocal);
+    });
+
+    test('moves for a write that does not list its keys, and for one that may have touched anything', () => {
+        const before = sessionsRevision();
+        storageMock.emit({ storeName: 'combatStats', keys: null, origin: 'commit' });
+        const afterBulk = sessionsRevision();
+        expect(afterBulk).not.toBe(before);
+
+        storageMock.emit({ storeName: null, keys: null, origin: 'remote' });
+        expect(sessionsRevision()).not.toBe(afterBulk);
+    });
+
+    test('moves with the character', () => {
+        const before = sessionsRevision();
+        game.characterId = 'char2';
+        expect(sessionsRevision()).not.toBe(before);
+    });
+
+    test('where other tabs cannot be heard it moves once a minute instead', () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+            storageMock.crossTabVisible = false;
+            const before = sessionsRevision();
+            vi.setSystemTime(new Date('2026-08-03T01:00:30Z'));
+            expect(sessionsRevision()).toBe(before);
+            vi.setSystemTime(new Date('2026-08-03T01:01:10Z'));
+            expect(sessionsRevision()).not.toBe(before);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

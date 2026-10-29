@@ -144,6 +144,7 @@ vi.mock('./gist-client.js', () => ({
         throw new Error('no revisions in this fake');
     },
     findSyncGist: async () => (world.gist ? 'gist-1' : null),
+    inspectSyncGist: async (_token, id) => ({ id, isSyncGist: true, server: null }),
     readSyncGist: async () => {
         if (!world.gist) throw new FakeGistError('not-found', 'no gist');
         return { manifest: world.gist.manifest, payload: world.gist.payload, updatedAt: 'now' };

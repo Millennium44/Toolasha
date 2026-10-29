@@ -17,6 +17,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Narrow layouts give the Labyrinth controls their own row above the map and keep task reroll tools in the page flow instead of covering game controls. Task estimate controls wrap below the title, while wider layouts restore their original placement.
 - Marketplace pricing options collapse into an expandable strip and history statistics stay within the content area on narrow screens. Order-book and My Listings tables keep the game's single row and Toolasha's columns, and scroll sideways on a phone so every column is reachable; header order totals wrap within the native header width.
 
+### Lighter storage traffic in combat
+
+- The Party Loot panel no longer re-reads the whole session archive every 5 seconds while open, slow storage checks no longer pile up, and unchanged party consumable records are no longer rewritten after every wave; on a phone these were thousands of database calls per session.
+- Live damage graphs save every 10 seconds instead of 4 (a normal close still saves at once), and the two combat timing tallies save once a minute and on page hide or close.
+- The health dialog reads "Toolasha health" when nothing failed, and the guild history store's soft budget covers the guild trial diagnostic trace.
+
+### Sync: one gist per game server
+
+- The live game and the test server no longer adopt each other's sync gist. Discovery only picks a gist tagged for the same server, and automatic syncs refuse the other server's gist instead of failing on its passphrase.
+- Cross-Device Sync shows which gist this device uses, in a Gist ID box that takes an id or a gist link, with "Start a new gist". A first Push to a newly chosen gist can merge with it instead of only overwriting it.
+
 ### Sync: incomplete downloads
 
 - A sync pull whose gist file arrives short now says the download was incomplete and retries on the next run, instead of blaming the sync passphrase.

@@ -2013,7 +2013,7 @@ class SettingsUI {
     }
 
     /**
-     * Push / Pull / Unlink, plus a line saying where this device stands.
+     * Push / Pull / Unlink, the Gist ID box, plus a line saying where this device stands.
      *
      * Kept inside the Sync group rather than in the utility row at the bottom of
      * the panel: those buttons are all local operations, and a button that
@@ -2042,6 +2042,9 @@ class SettingsUI {
         };
         refreshStatus();
 
+        // Which gist this device syncs with, and the way to choose one
+        const gistBox = this.buildGistIdBox(refreshStatus);
+
         const row = document.createElement('div');
         row.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px;';
 
@@ -2063,12 +2066,15 @@ class SettingsUI {
                 button.textContent = busyLabel;
                 try {
                     const result = await run();
-                    button.textContent = result?.ok ? 'Done ✓' : 'Failed';
+                    // A sync that ended without changing anything (cancelled, nothing to push) says so
+                    button.textContent = result?.ok ? (result.skipped ? 'No change' : 'Done ✓') : 'Failed';
                 } catch (error) {
                     console.error('[SettingsUI] Sync action failed:', error);
                     button.textContent = 'Failed';
                 } finally {
                     await refreshStatus();
+                    // A push can discover or create the gist, and a failure can forget it
+                    await gistBox.refresh();
                     this.timerRegistry.scheduleTimeout(() => {
                         button.textContent = label;
                         button.disabled = false;
@@ -2086,15 +2092,18 @@ class SettingsUI {
                     title: 'Unlink the sync gist',
                     message:
                         'This device forgets which gist it was using and what it last synced. The gist itself is ' +
-                        'left alone on GitHub — the next push finds it again or makes a new one.',
+                        "left alone on GitHub — the next push looks for this server's gist again or makes a new " +
+                        'one. To choose a gist yourself, use Gist ID instead.',
                     choices: [
                         { value: 'unlink', label: 'Unlink' },
                         { value: null, label: 'Cancel' },
                     ],
                 });
                 if (answer !== 'unlink') return { ok: false };
-                await syncManager.forgetGist();
-                return { ok: true };
+                const result = await syncManager.forgetGist();
+                // Refused while a sync runs: the button says Failed, the box says why
+                if (!result?.ok && result?.message) gistBox.say(result);
+                return result;
             })
         );
 
@@ -2115,9 +2124,175 @@ class SettingsUI {
         copyRow.appendChild(copyBtn);
 
         wrapper.appendChild(row);
+        wrapper.appendChild(gistBox.element);
         wrapper.appendChild(copyRow);
         wrapper.appendChild(status);
         container.appendChild(wrapper);
+    }
+
+    /**
+     * The Gist ID box: which gist this device syncs with on this server, a way
+     * to choose one by id or link, and "Start a new gist".
+     *
+     * Discovery picks this server's gist by its tag and refuses to guess between
+     * several untagged ones; this is where the player settles it.
+     *
+     * @param {() => Promise<void>} refreshStatus - Redraws the sync status line
+     * @returns {{element: HTMLElement, refresh: () => Promise<void>, say: (result: Object) => void}} The box, a
+     *   redraw from storage, and a way to show an outcome's message in it
+     */
+    buildGistIdBox(refreshStatus) {
+        const box = document.createElement('div');
+        box.className = 'toolasha-sync-gist';
+        box.style.cssText = 'display:flex; flex-direction:column; gap:4px;';
+
+        const line = document.createElement('div');
+        line.style.cssText = 'display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px;';
+        const label = document.createElement('span');
+        label.textContent = 'Gist ID:';
+        label.style.cssText = 'color:#ccc;';
+        const shown = document.createElement('code');
+        shown.className = 'toolasha-sync-gist-id';
+        shown.style.cssText = 'color:#ddd; user-select:all; word-break:break-all;';
+        shown.textContent = '…';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'toolasha-sync-gist-input';
+        input.placeholder = 'Gist id or gist.github.com link';
+        input.spellcheck = false;
+        input.style.cssText = 'display:none; flex:1 1 220px; min-width:0; font-size:12px; padding:2px 4px;';
+
+        const smallButton = (text, className) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = text;
+            button.className = `toolasha-utility-button ${className}`;
+            return button;
+        };
+        const edit = smallButton('Change', 'toolasha-sync-gist-edit');
+        const save = smallButton('Use this gist', 'toolasha-sync-gist-save');
+        const cancel = smallButton('Cancel', 'toolasha-sync-gist-cancel');
+        const startNew = smallButton('Start a new gist', 'toolasha-sync-gist-new');
+
+        const note = document.createElement('div');
+        note.className = 'toolasha-sync-gist-note';
+        note.style.cssText = 'font-size:11px; color:#aaa; line-height:1.4;';
+
+        const help = document.createElement('div');
+        help.style.cssText = 'font-size:11px; color:#888; line-height:1.4;';
+        help.textContent =
+            'The gist this device syncs with. The live game and the test server keep separate gists: a gist ' +
+            'marked for the other server is refused here, and by every sync except a pressed Push, which asks ' +
+            'first. Paste a gist id or link to switch: this device forgets what it last synced, and automatic ' +
+            'sync waits for your first exchange. Push and choose "Merge with the gist and push" to combine the ' +
+            'two; Pull instead takes the gist’s values for settings and lists. "Start a new gist" makes the next ' +
+            'Push create a fresh one for this server.';
+
+        /** Whether the id is being typed */
+        let isEditing = false;
+        const showEditing = (on) => {
+            isEditing = on;
+            input.style.display = on ? '' : 'none';
+            save.style.display = on ? '' : 'none';
+            cancel.style.display = on ? '' : 'none';
+            shown.style.display = on ? 'none' : '';
+            edit.style.display = on ? 'none' : '';
+        };
+        showEditing(false);
+
+        /** The stored id, or null; kept so "Change" starts from it */
+        let currentId = null;
+        const refresh = async () => {
+            try {
+                const state = await syncManager.gistLinkState();
+                currentId = state.gistId;
+                const where = state.server === 'test' ? 'test server' : 'live game';
+                if (state.gistId) shown.textContent = state.gistId;
+                else if (state.startNew) shown.textContent = `none — the next Push creates a new one (${where})`;
+                else shown.textContent = `none — the next Push looks for this server’s (${where})`;
+            } catch (error) {
+                console.error('[SettingsUI] Reading the sync gist id failed:', error);
+                shown.textContent = 'unavailable';
+            }
+        };
+
+        const settle = async (result) => {
+            note.textContent = result?.message || (result?.ok ? 'Done.' : 'That did not work.');
+            note.style.color = result?.ok ? '#8c8' : '#e88';
+            await refresh();
+            await refreshStatus();
+        };
+
+        edit.addEventListener('click', () => {
+            input.value = currentId || '';
+            note.textContent = '';
+            showEditing(true);
+            input.focus();
+        });
+        cancel.addEventListener('click', () => showEditing(false));
+        save.addEventListener('click', async () => {
+            if (save.disabled) return;
+            save.disabled = true;
+            try {
+                const result = await syncManager.useGist(input.value);
+                if (result?.ok) showEditing(false);
+                await settle(result);
+            } catch (error) {
+                console.error('[SettingsUI] Setting the sync gist failed:', error);
+                await settle({ ok: false, message: 'Setting the gist failed; the console has the detail.' });
+            } finally {
+                save.disabled = false;
+            }
+        });
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && isEditing) save.click();
+            if (event.key === 'Escape') showEditing(false);
+        });
+        startNew.addEventListener('click', async () => {
+            if (startNew.disabled) return;
+            const answer = await askChoice({
+                title: 'Start a new gist',
+                message:
+                    'This device forgets the gist it was using and what it last synced, and the next Push creates ' +
+                    'a new private gist for this server instead of looking for one. The old gist is left alone on ' +
+                    'GitHub.',
+                choices: [
+                    { value: 'new', label: 'Start a new gist' },
+                    { value: null, label: 'Cancel' },
+                ],
+            });
+            if (answer !== 'new') return;
+            startNew.disabled = true;
+            try {
+                const result = await syncManager.startNewGist();
+                if (result?.ok) showEditing(false);
+                await settle(result);
+            } catch (error) {
+                console.error('[SettingsUI] Starting a new sync gist failed:', error);
+                await settle({ ok: false, message: 'That failed; the console has the detail.' });
+            } finally {
+                startNew.disabled = false;
+            }
+        });
+
+        line.append(label, shown, input, edit, save, cancel, startNew);
+        box.append(line, note, help);
+        refresh();
+        // A sync elsewhere can change the link (forget a gist that is gone, discover one); redraw while
+        // the box is on screen, and stop listening once the panel has gone
+        const stopListening = syncManager.onLinkChange(() => {
+            if (!box.isConnected) {
+                stopListening();
+                return;
+            }
+            refresh();
+        });
+        const say = (result) => {
+            note.textContent = result?.message || '';
+            note.style.color = result?.ok ? '#8c8' : '#e88';
+        };
+        return { element: box, refresh, say };
     }
 
     addUtilityButtons(container) {
