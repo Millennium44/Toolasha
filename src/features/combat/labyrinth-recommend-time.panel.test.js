@@ -375,6 +375,21 @@ describe('Recommend by Time', () => {
             expect(panel.simQueue).toEqual([]);
         });
 
+        test('estimates resumed after a search show Stop estimates while they run', async () => {
+            const { stop } = build();
+            panel._preemptedSims = [{ monsterHrid: '/monsters/imp', roomLevel: 100, badge: badge(), attempt: 0 }];
+            let finish;
+            vi.spyOn(panel, 'computeCombatClear').mockImplementation(
+                () => new Promise((resolve) => (finish = resolve))
+            );
+            panel._resumePreemptedSims();
+            expect(panel.simRunning).toBe(true);
+            expect(stop.style.display).toBe('');
+            finish({ cancelled: true });
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
         test('a search the player cancels does not bring the estimates back', () => {
             build();
             panel._preemptedSims = [{ monsterHrid: '/monsters/imp', roomLevel: 100, badge: badge(), attempt: 0 }];

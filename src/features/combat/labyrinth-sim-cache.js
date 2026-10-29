@@ -1529,6 +1529,9 @@ export const simCacheMethods = {
         this.simRunning = true;
         this.beginSimBatch();
         const epoch = this.simEpoch();
+        // Show Stop estimates now, not only once the controls are next drawn:
+        // a queue resumed after a search starts after its last redraw
+        this.refreshAutomationRunningState?.();
         // The Automation tab's own precision and cap, not the floor map's —
         // this queue is what fills the per-room table's cached badges
         const simOptions = this.automationSimOptions();
