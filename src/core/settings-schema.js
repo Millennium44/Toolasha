@@ -1047,6 +1047,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a Max button to the Shop, Task Shop, Labyrinth Shop, and Cowbell Store buy dialogs that fills in the most you can afford. It only types the quantity; you press Buy',
             },
+            shopTokenValues: {
+                id: 'shopTokenValues',
+                label: 'Shop: Show value per token',
+                type: 'checkbox',
+                default: true,
+                help: 'Shows what one token is worth in each entry of the Dungeon and Labyrinth shops (the market value of what it buys, after market tax, per token) and stars the best entry for each token. Untradable capes show the untradable-cape base value setting with an asterisk and are never starred.',
+            },
             dungeonShopPlanner: {
                 id: 'dungeonShopPlanner',
                 label: 'Dungeon shop: Plan token spend (volume-capped)',
