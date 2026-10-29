@@ -82,6 +82,7 @@ const {
     clearSessions,
     mergeSessionHistory,
     sessionsRevision,
+    loadSessionsWithStatus,
 } = await import('./combat-session-history.js');
 const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
 const { entriesOf } = await import('../../utils/cleared-record.js');
@@ -597,6 +598,23 @@ describe('Clear survives a sync pull', () => {
     function starts(record) {
         return entriesOf(record).map((s) => s.combatStartTime);
     }
+});
+
+describe('reading the archive with its status', () => {
+    beforeEach(() => {
+        game.characterId = 'char1';
+    });
+
+    test('says ok on a read it could make, and not when storage cannot be read', async () => {
+        expect((await loadSessionsWithStatus()).ok).toBe(true);
+
+        storageMock.unavailable = true;
+        const failed = await loadSessionsWithStatus();
+        expect(failed.ok).toBe(false);
+        // The same list loadSessions has always answered with
+        expect(failed.sessions).toEqual(await loadSessions());
+        storageMock.unavailable = false;
+    });
 });
 
 describe('knowing when the archive may have changed', () => {

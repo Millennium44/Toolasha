@@ -18,6 +18,8 @@ const game = vi.hoisted(() => {
         data: null,
         revision: 0,
         reads: 0,
+        readFails: false,
+        held: [],
         get sessions() {
             return sessions;
         },
@@ -122,9 +124,12 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () =>
 // exercised by its own tests, and pulling it in here recurses through the mock
 // factory while the graph is still being built
 vi.mock('../combat-stats/combat-session-history.js', () => ({
-    loadSessions: async () => {
+    // Like the real one: a read that cannot be made answers with what was held, and says so
+    loadSessionsWithStatus: async () => {
         game.reads += 1;
-        return game.sessions;
+        if (game.readFails) return { sessions: game.held, ok: false };
+        game.held = game.sessions;
+        return { sessions: game.sessions, ok: true };
     },
     sessionsRevision: () => `rev${game.revision}`,
     // `game.combinedResult` lets one test hand back a specific combined
@@ -157,6 +162,8 @@ beforeEach(() => {
         ironCow_enabled: false,
     };
     game.sessions = [];
+    game.held = [];
+    game.readFails = false;
     game.combinedResult = undefined;
     game.data = {
         combatStartTime: '2026-08-03T01:00:00Z',
@@ -311,18 +318,46 @@ describe('the top bar', () => {
     });
 
     test('a first read that fails (and so returns nothing) is asked for again on the next draw', async () => {
-        // Storage not ready yet: the read comes back empty, with no write to move the revision afterwards
-        game.sessions = [];
+        // Storage not ready yet: the read fails with nothing held, and no write moves the revision afterwards
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        game.readFails = true;
         partyLootPanel.show();
         await settle();
         const afterFailed = game.reads;
         expect(values()).not.toContain('a|1');
 
-        game.sessionsSilently = [archived('a|1', '2026-08-02T22:00:00Z')];
+        game.readFails = false;
         await settle();
 
         expect(game.reads).toBeGreaterThan(afterFailed);
         expect(values()).toContain('a|1');
+    });
+
+    test('a failed read after the archive changed keeps the old list and tries again', async () => {
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        partyLootPanel.show();
+        await settle();
+        expect(values()).toContain('a|1');
+
+        // Another tab archives a run; this tab's read of it fails and hands back the list it held
+        game.sessions = [archived('b|2', '2026-08-02T23:00:00Z'), archived('a|1', '2026-08-02T22:00:00Z')];
+        game.readFails = true;
+        await settle();
+        expect(values()).toContain('a|1');
+        expect(values()).not.toContain('b|2');
+
+        game.readFails = false;
+        await settle();
+        expect(values()).toContain('b|2');
+    });
+
+    test('a confirmed empty archive is not read again until it changes', async () => {
+        partyLootPanel.show();
+        await settle();
+        const afterFirst = game.reads;
+        partyLootPanel.render();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(game.reads).toBe(afterFirst);
     });
 
     test('a combined view appears only when there is more than one run', async () => {

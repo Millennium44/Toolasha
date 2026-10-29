@@ -45,7 +45,7 @@ import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import {
-    loadSessions,
+    loadSessionsWithStatus,
     combineSessions,
     describeSession,
     sessionsRevision,
@@ -230,13 +230,14 @@ async function refreshSessions() {
     if (revision === sessionsSeen || revision === sessionsReading) return;
     sessionsReading = revision;
     try {
-        const fresh = await loadSessions();
+        const { sessions: fresh, ok } = await loadSessionsWithStatus();
         // A newer read has been started since (the archive changed under this one): its answer stands
         if (sessionsReading !== revision) return;
-        // Taken only once a read has produced something. An empty list is also how `loadSessions` reports a
-        // read it could not make (storage not ready yet after a login or a switch), so an empty one is asked
-        // for again on the next draw: one read per refresh for a character with no history yet.
-        if (fresh.length > 0) sessionsSeen = revision;
+        // A read that could not be made (storage not ready after a login or a switch, or a failed one while
+        // another tab changed the archive) hands back whatever was held: keep showing what we had, and ask
+        // again on the next draw
+        if (!ok) return;
+        sessionsSeen = revision;
         const changed = fresh.length !== sessions.length || fresh[0]?.key !== sessions[0]?.key;
         sessions = fresh;
         if (changed) partyLootPanel.render();

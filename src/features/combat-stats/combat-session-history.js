@@ -442,13 +442,24 @@ export function sessionsRevision() {
  * @returns {Promise<Array<Object>>}
  */
 export async function loadSessions() {
+    return (await loadSessionsWithStatus()).sessions;
+}
+
+/**
+ * Every finished run, newest first, and whether storage could be read for it.
+ *
+ * `loadSessions` answers with whatever is held when a read fails (the in-memory list, or `[]`), which a
+ * reader that caches by revision cannot tell from a real answer.
+ * @returns {Promise<{sessions: Array<Object>, ok: boolean}>} `ok` is false when the read could not be made
+ */
+export async function loadSessionsWithStatus() {
     try {
         const sessions = record();
-        await sessions.load();
-        return entriesOf(sessions.get()).slice();
+        const ok = (await sessions.load()) === true;
+        return { sessions: entriesOf(sessions.get()).slice(), ok };
     } catch (error) {
         console.error('[CombatSessionHistory] Reading the session list failed:', error);
-        return [];
+        return { sessions: [], ok: false };
     }
 }
 
