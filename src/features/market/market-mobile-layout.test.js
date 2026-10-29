@@ -1,6 +1,11 @@
 /** @vitest-environment happy-dom */
 import { afterEach, describe, expect, test } from 'vitest';
-import { ensureMarketMobileStyles, removeMobileListingNotes, syncMobileListingNotes } from './market-mobile-layout.js';
+import {
+    ensureMarketMobileStyles,
+    releaseMarketMobileStyles,
+    removeMobileListingNotes,
+    syncMobileListingNotes,
+} from './market-mobile-layout.js';
 
 afterEach(() => {
     document.body.innerHTML = '';
@@ -50,6 +55,24 @@ describe('mobile order book annotations', () => {
         expect(table.querySelectorAll('.mwi-market-mobile-note')).toHaveLength(1);
         expect(document.getElementById('mwi-market-mobile-layout')).not.toBeNull();
         removeMobileListingNotes(table, 'mwi-estimated-age-cell');
+        expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
+    });
+
+    test('release keeps the shared rules while a columns toggle or a table marker still owns them', () => {
+        ensureMarketMobileStyles();
+        const toggle = document.createElement('button');
+        toggle.className = 'mwi-my-listings-columns-toggle';
+        document.body.append(toggle);
+        releaseMarketMobileStyles();
+        expect(document.getElementById('mwi-market-mobile-layout')).not.toBeNull();
+        toggle.remove();
+        const table = document.createElement('table');
+        table.setAttribute('data-mwi-mobile-mwi-listing-price-cell', '');
+        document.body.append(table);
+        releaseMarketMobileStyles();
+        expect(document.getElementById('mwi-market-mobile-layout')).not.toBeNull();
+        table.removeAttribute('data-mwi-mobile-mwi-listing-price-cell');
+        releaseMarketMobileStyles();
         expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
     });
 

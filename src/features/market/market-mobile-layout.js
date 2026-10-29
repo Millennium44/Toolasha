@@ -75,11 +75,14 @@ export function ensureMarketMobileStyles() {
 
 /** Remove the shared rules only when the last owning UI has gone away. */
 export function releaseMarketMobileStyles() {
-    if (
-        !document.querySelector(
-            '#mwi-market-pricing-controls, .mwi-market-mobile-note, .mwi-market-order-totals, .mwi-volume-stats'
-        )
-    ) {
+    const owned =
+        document.querySelector(
+            '#mwi-market-pricing-controls, .mwi-market-mobile-note, .mwi-market-order-totals, .mwi-volume-stats, .mwi-my-listings-columns-toggle'
+        ) ||
+        [...document.querySelectorAll('table')].some((table) =>
+            table.getAttributeNames().some((name) => name.startsWith('data-mwi-mobile-'))
+        );
+    if (!owned) {
         document.getElementById(STYLE_ID)?.remove();
     }
 }

@@ -493,4 +493,16 @@ describe('compact My Listings details', () => {
         expect(table.hasAttribute('data-mwi-mobile-mwi-listing-price-cell')).toBe(false);
         expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
     });
+
+    test('adds no toggle, marker or rules when no detail has a label to mirror', () => {
+        const table = document.createElement('table');
+        table.innerHTML = `<thead><tr><th>Status</th><th>Type</th><th>Progress</th><th>Price</th><th class="mwi-listing-price-header"></th><th>Cancel</th></tr></thead>
+            <tbody><tr><td>Active</td><td>Sell</td><td>0 / 1</td><td>18.4M</td><td class="mwi-listing-price-cell">N/A</td><td><button>Cancel</button></td></tr></tbody>`;
+        document.body.append(table);
+        listingPriceDisplay.syncMobileDetails(table);
+        expect(document.querySelector('.mwi-my-listings-columns-toggle')).toBeNull();
+        expect(table.hasAttribute('data-mwi-mobile-mwi-listing-price-cell')).toBe(false);
+        expect(document.querySelector('.mwi-market-mobile-note')).toBeNull();
+        expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
+    });
 });

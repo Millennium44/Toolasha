@@ -7,7 +7,11 @@
  * Ported from Ranged Way Idle's showListingInfo feature
  */
 
-import { ensureMarketMobileStyles, removeMobileListingNotes } from './market-mobile-layout.js';
+import {
+    ensureMarketMobileStyles,
+    releaseMarketMobileStyles,
+    removeMobileListingNotes,
+} from './market-mobile-layout.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
@@ -1096,6 +1100,7 @@ class ListingPriceDisplay {
         const rows = [...table.querySelectorAll('tbody tr')];
         if (!headers.length || !rows.length || rows.some((row) => !row.children[3])) return;
         const notes = new Set(table.querySelectorAll('[data-mwi-mobile-column="mwi-listing-price-cell"]'));
+        const kept = new Set();
         ensureMarketMobileStyles();
         if (!table.hasAttribute('data-mwi-mobile-mwi-listing-price-cell')) {
             table.setAttribute('data-mwi-mobile-mwi-listing-price-cell', '');
@@ -1117,6 +1122,7 @@ class ListingPriceDisplay {
                     price.appendChild(note);
                 }
                 notes.delete(note);
+                kept.add(note);
                 const values = {
                     title: cell.title,
                     'data-label': label,
@@ -1130,6 +1136,15 @@ class ListingPriceDisplay {
             });
         }
         notes.forEach((note) => note.remove());
+        if (!kept.size) {
+            // Nothing is mirrored, so the full columns stay visible and the toggle has nothing to switch.
+            table.removeAttribute('data-mwi-mobile-mwi-listing-price-cell');
+            table.removeAttribute('data-mwi-show-full-columns');
+            const stale = table.previousElementSibling;
+            if (stale?.classList.contains('mwi-my-listings-columns-toggle')) stale.remove();
+            releaseMarketMobileStyles();
+            return;
+        }
         if (!table.previousElementSibling?.classList.contains('mwi-my-listings-columns-toggle')) {
             const toggle = document.createElement('button');
             toggle.type = 'button';
