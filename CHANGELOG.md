@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - One-off achievements now show the game's own description instead of "progress unavailable", with a readiness hint (level met, materials owned or a rough buy cost, unpriced inputs flagged) and the easiest ones sorted first.
 - A Go button opens the right screen for each one it can resolve — the cooking, crafting or gathering action, the alchemy tab for the item, the monster's combat zone at its tier, a dungeon, or the marketplace for the cheapest matching weapon. It only navigates; you press Start yourself.
 
+### Dungeon tokens in crates valued after tax
+
+- Crate and chest values now count dungeon tokens net of the market tax, matching the loot log and the Dungeon ROI board; the personal-use (no sell tax) view still counts them whole.
+
 ### Lab Recommend works while room estimates fill in
 
 - On the Labyrinth Automation tab, Recommend and Recommend by Time no longer wait for every room's estimate: pressing one stops the estimates, runs the search, then finishes the remaining rooms. A Stop estimates button stops a long estimate batch on its own.
