@@ -533,8 +533,12 @@ class HealthStatusPanel {
         });
 
         const title = document.createElement('span');
-        title.textContent = `Toolasha — ${this.failures.length} feature${this.failures.length === 1 ? '' : 's'} did not start`;
-        Object.assign(title.style, { fontWeight: 'bold', color: COLORS.accent });
+        // Opened by hand with nothing failed, the alarm wording and color would contradict the body
+        const failed = this.failures.length > 0;
+        title.textContent = failed
+            ? `Toolasha — ${this.failures.length} feature${this.failures.length === 1 ? '' : 's'} did not start`
+            : 'Toolasha health';
+        Object.assign(title.style, { fontWeight: 'bold', color: failed ? COLORS.accent : COLORS.text });
 
         const close = document.createElement('button');
         close.type = 'button';
