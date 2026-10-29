@@ -1096,6 +1096,20 @@ describe('also try my auras', () => {
         expect(host._editor.loadParty.mock.calls[0][0][0].abilities[0].hrid).toBe(soloAura.comp.selfAura.hrid);
     });
 
+    test('with no teammates at all, your own auras still run alone; with the switch off it asks for teammates', async () => {
+        seedRoster([]);
+        await mountTab();
+        expect(el('plan').textContent).toMatch(/Add teammates to the roster first/);
+        await tick();
+        // As worn plus 2 aura solos
+        expect(el('plan').textContent).toMatch(/^3 quick sims/);
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        expect(lastStatus()).not.toBe('Add teammates to the roster first.');
+        expect(state.calls[0].params.zones).toHaveLength(3);
+    });
+
     test('the confirm count includes your auras', async () => {
         seedRoster(Array.from({ length: 6 }, (_, i) => [`m${i}`, `M${i}`, build(60 + i)]));
         await mountTab();

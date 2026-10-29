@@ -1527,8 +1527,9 @@ export class PartyFinderTab {
         const plan = this._plan(buildGameDataPayload());
         const notes = [];
         if (!this._zones.length) notes.push('Pick at least one zone.');
-        else if (!this._roster.entries.length) notes.push('Add teammates to the roster first.');
-        else if (plan.refused) notes.push(plan.refused);
+        else if (!this._roster.entries.length && !(this._trySelfAuras && plan.selfAuraCount)) {
+            notes.push('Add teammates to the roster first.');
+        } else if (plan.refused) notes.push(plan.refused);
         else {
             const { quickHours, fullHours } = plan.settings;
             notes.push(
@@ -1579,16 +1580,17 @@ export class PartyFinderTab {
             this._status('Pick at least one zone first.');
             return;
         }
-        if (!this._roster.entries.length) {
-            this._status('Add teammates to the roster first.');
-            return;
-        }
         const gameData = buildGameDataPayload();
         if (!gameData) {
             this._status('No game data available.');
             return;
         }
         const plan = this._plan(gameData);
+        // With no teammates, your own aura variants alone are still worth a run (each aura solo)
+        if (!this._roster.entries.length && !(this._trySelfAuras && plan.selfAuraCount)) {
+            this._status('Add teammates to the roster first.');
+            return;
+        }
         if (plan.refused) {
             this._status(plan.refused);
             return;
