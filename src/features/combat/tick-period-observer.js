@@ -48,8 +48,12 @@ const STORAGE_KEY = 'tickPeriodTally';
 /** Which object store it lives in */
 const STORAGE_STORE = 'settings';
 
-/** How long a burst of intervals accumulates before a write */
-const WRITE_DEBOUNCE_MS = 4000;
+/**
+ * How long intervals accumulate before a write. A histogram over thousands of
+ * intervals gains nothing from being on disk four seconds sooner; what bounds
+ * the loss is the flush when the tab is hidden or the page goes away.
+ */
+const WRITE_DEBOUNCE_MS = 60_000;
 
 /** Panel accent — the amber the other "this is a measurement" panels use */
 const ACCENT = '#f0c674';
@@ -107,6 +111,25 @@ function scheduleWrite() {
         WRITE_DEBOUNCE_MS,
         'tick-period:write'
     );
+}
+
+/**
+ * Write a waiting tally now. Synchronous up to the storage call, because it is also the page-close
+ * and tab-hidden path, where only a transaction opened before the first `await` can land.
+ * @returns {void}
+ */
+function flushNow() {
+    if (!dirty) return;
+    dirty = false;
+    if (storage.isQuotaExceeded?.()) return;
+    Promise.resolve(storage.set(STORAGE_KEY, tally, STORAGE_STORE, true)).catch((error) => {
+        console.error('[TickPeriod] Could not save the tally:', error);
+    });
+}
+
+/** Land the tally when the tab goes to the background, the last event a phone reliably delivers. */
+function flushWhenHidden() {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') flushNow();
 }
 
 /**
@@ -223,11 +246,15 @@ const tickPeriod = {
 
         hook().on('new_battle', onNewBattle);
         hook().on('battle_updated', onBattleUpdated);
+        const offTeardown = storage.onBeforeTeardown?.(flushNow);
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', flushWhenHidden);
         registry.registerCleanup(() => {
             if (onNewBattle) hook().off('new_battle', onNewBattle);
             if (onBattleUpdated) hook().off('battle_updated', onBattleUpdated);
             onNewBattle = null;
             onBattleUpdated = null;
+            if (typeof offTeardown === 'function') offTeardown();
+            if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', flushWhenHidden);
         });
     },
 

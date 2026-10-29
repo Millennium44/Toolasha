@@ -14,6 +14,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const state = vi.hoisted(() => ({
     settings: { waveGapWatch: true },
     stored: new Map(),
+    sets: [],
+    teardown: new Set(),
     handlers: new Map(),
     actions: [],
     actionDetails: {},
@@ -38,9 +40,14 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => (state.stored.has(key) ? state.stored.get(key) : fallback),
-        set: async (key, value) => {
+        set: async (key, value, _store, immediate) => {
+            state.sets.push({ key, immediate: immediate === true });
             state.stored.set(key, value);
             return true;
+        },
+        onBeforeTeardown: (listener) => {
+            state.teardown.add(listener);
+            return () => state.teardown.delete(listener);
         },
         isQuotaExceeded: () => false,
     },
@@ -81,6 +88,8 @@ const roster = (wave) => ({ wave, monsters: { 0: {}, 1: {} } });
 beforeEach(() => {
     state.settings = { waveGapWatch: true };
     state.stored.clear();
+    state.sets.length = 0;
+    state.teardown.clear();
     state.handlers.clear();
     state.actions = [{ actionHrid: '/actions/combat/golem_cave', isDone: false, ordinal: 0, id: 'a' }];
     state.actionDetails = { '/actions/combat/golem_cave': { combatZoneInfo: { isDungeon: false } } };
@@ -189,6 +198,56 @@ describe('the durable tally', () => {
         vi.useRealTimers();
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(state.stored.get('waveGapTally')?.categories[CATEGORIES.openZone].n).toBe(1);
+    });
+
+    test('a run of waves is written once a minute, not every few seconds', async () => {
+        await waveGap.initialize();
+        const battle = state.handlers.get('new_battle');
+        const tick = state.handlers.get('battle_updated');
+        vi.useFakeTimers();
+        let now = 1_700_000_000_000;
+        for (let i = 0; i < 4; i += 1) {
+            vi.setSystemTime(now);
+            battle(roster(0));
+            vi.setSystemTime((now += 4_000));
+            tick({ pMap: {}, mMap: { 0: { cHP: 0 }, 1: { cHP: 0 } } });
+            vi.setSystemTime((now += 3_000));
+            battle(roster(0));
+            vi.advanceTimersByTime(3_000);
+        }
+        expect(waveGap.tally().categories[CATEGORIES.openZone].n).toBe(4);
+        expect(state.sets).toEqual([]);
+
+        vi.advanceTimersByTime(60_000);
+        expect(state.sets).toHaveLength(1);
+        vi.useRealTimers();
+    });
+
+    test('a page close writes the waiting tally at once, and only once', async () => {
+        await waveGap.initialize();
+        const battle = state.handlers.get('new_battle');
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        battle(roster(0));
+        vi.setSystemTime(1_700_000_004_000);
+        state.handlers.get('battle_updated')({ pMap: {}, mMap: { 0: { cHP: 0 }, 1: { cHP: 0 } } });
+        vi.setSystemTime(1_700_000_007_037);
+        battle(roster(0));
+        expect(state.sets).toEqual([]);
+
+        for (const listener of state.teardown) listener('pagehide');
+        expect(state.sets).toEqual([{ key: 'waveGapTally', immediate: true }]);
+
+        for (const listener of state.teardown) listener('pagehide');
+        expect(state.sets).toHaveLength(1);
+        vi.useRealTimers();
+    });
+
+    test('stops listening for the page close when it is torn down', async () => {
+        await waveGap.initialize();
+        expect(state.teardown.size).toBe(1);
+        waveGap.cleanup();
+        expect(state.teardown.size).toBe(0);
     });
 
     test('the write debounce leaves nothing in the registry once it has fired', async () => {
