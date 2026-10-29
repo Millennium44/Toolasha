@@ -64,7 +64,12 @@ vi.mock('./item-flow-recorder.js', () => ({ default: { load: async () => [] } })
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0 }));
 vi.mock('./networth-calculator.js', () => ({
     GUILD_RATE_UNKNOWN_NOTE: 'no exchange rate yet — open the Guild Shop exchange to read it',
-    calculateCraftingCost: (itemHrid) => (itemHrid === '/items/culinary_cape' ? 300_000 : 0),
+    calculateCraftingCost: (itemHrid) =>
+        itemHrid === '/items/culinary_cape' ? 300_000 : itemHrid === '/items/partial_cape' ? 120_000 : 0,
+    calculateCraftingCostDetailed: (itemHrid) => ({
+        cost: itemHrid === '/items/culinary_cape' ? 300_000 : itemHrid === '/items/partial_cape' ? 120_000 : 0,
+        partial: itemHrid === '/items/partial_cape',
+    }),
     networthUnitValue: (itemHrid) => (itemHrid === '/items/task_token' ? 40_000 : 0),
 }));
 vi.mock('../market/expected-value-calculator.js', () => ({
@@ -172,6 +177,11 @@ describe('the cost-basis pricer', () => {
     test('falls back to material cost for a base item the market cannot price', () => {
         const basis = createBasisPricer(() => null);
         expect(basis('/items/culinary_cape', 0)).toBe(300_000);
+    });
+
+    test('a crafting bill with an unpriced input is unvalued, not a silent lower bound', () => {
+        const basis = createBasisPricer(() => null);
+        expect(basis('/items/partial_cape', 0)).toBeNull();
     });
 
     test('never answers an enhanced lookup with the base item’s cost', () => {
