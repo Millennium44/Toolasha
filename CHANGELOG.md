@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Recommend works while room estimates fill in
+
+- On the Labyrinth Automation tab, Recommend and Recommend by Time no longer wait for every room's estimate: pressing one stops the estimates, runs the search, then finishes the remaining rooms. A Stop estimates button stops a long estimate batch on its own.
+
 ### Combat task Go opens the Zone estimate's zone
 
 - When a combat task's estimate is in Zone mode and the game's Go lands on the monster's own zone, Toolasha now opens the zone the estimate picked, at its tier, and fills the fight count. Solo mode keeps the game's landing.
