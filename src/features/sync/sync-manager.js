@@ -48,12 +48,14 @@ import { askChoice } from '../../utils/choice-dialog.js';
 import {
     GistError,
     findSyncGist,
+    inspectSyncGist,
     readSyncGist,
     readSyncGistRevision,
     writeSyncGist,
     chunkPayload,
 } from './gist-client.js';
 import { compressionAvailable, gzipText, gunzipToText } from './sync-compress.js';
+import { isServerKind, parseGistId, serverKind, serverName, wrongServerMessage } from './sync-server.js';
 import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes } from './sync-crypto.js';
 import {
     buildPayloadJSON,
@@ -89,6 +91,13 @@ const STORE = 'settings';
 
 /** Which gist this device is using. Never uploaded — see sync-payload.js */
 const KEY_GIST_ID = 'toolasha_sync_gistId';
+
+/**
+ * Set by "Start a new gist": the next push creates a fresh gist for this
+ * server instead of discovering one. Cleared once a gist id is recorded, and
+ * by linking or unlinking a gist.
+ */
+const KEY_START_NEW = 'toolasha_sync_startNewGist';
 
 /** `exportedAt` of the payload this device last pushed or pulled */
 const KEY_LAST_SYNCED_AT = 'toolasha_sync_lastSyncedAt';
@@ -482,20 +491,22 @@ class SyncManager {
         // would be overwriting — a fresh phone pushing before its first pull
         // would replace a year of data with an empty database. Ask, with the
         // right answer suggested; the interval never asks, it just declines.
-        if (gistId && !(await storage.get(KEY_LAST_SYNCED_AT, STORE, null))) {
+        // A merged upload has folded the gist in already, so it is not asked about again.
+        if (gistId && !merged && !(await storage.get(KEY_LAST_SYNCED_AT, STORE, null))) {
             if (silent) return { ok: true, skipped: true, reason: 'never-synced' };
             const answer = await askChoice({
                 title: 'Overwrite the gist?',
                 message:
-                    'This device has never synced with the gist already on this account. Pushing replaces ' +
-                    "everything in the gist with this device's data. If this device is the new or empty one, " +
-                    'Pull first instead.',
+                    'This device has never synced with this gist. Merging combines the gist with this ' +
+                    "device's data and pushes the result. Overwriting replaces everything in the gist with " +
+                    "this device's data. If this device is the new or empty one, Pull first instead.",
                 choices: [
+                    { value: 'merge', label: 'Merge with the gist and push', tone: 'primary' },
                     { value: 'push', label: 'Push and overwrite the gist', tone: 'danger' },
                     { value: null, label: 'Cancel' },
                 ],
             });
-            if (answer !== 'push') return { ok: true, skipped: true, reason: 'cancelled' };
+            if (answer !== 'push' && answer !== 'merge') return { ok: true, skipped: true, reason: 'cancelled' };
             // The dialog just above can sit open for as long as the player
             // ignores it — the paradigm case of "wedged" that lets a takeover
             // happen at all (see `_run`). If one did, this push is racing an
@@ -503,6 +514,7 @@ class SyncManager {
             // database and the gist; writing now would stomp whatever it just
             // wrote. Stand down instead of overwriting a newer sync.
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+            if (answer === 'merge') return this._mergeIntoUpload(localPayload, opToken, silent, null, false);
         }
 
         // A pressed Push overwrites by design, so a device keeping fewer entries
@@ -584,6 +596,8 @@ class SyncManager {
             // `toolashaSync` and `chunks` and passes the rest through
             // untouched, so a field it has never heard of costs it nothing.
             syncSeq,
+            // Which game server pushed it, so the other one's automatic syncs refuse it
+            server: serverKind(),
             chunks: chunks.length,
             bytes: payload.length,
             hash,
@@ -630,6 +644,10 @@ class SyncManager {
                 // that is encrypted. That may be meant, but it removes the
                 // encryption for every device, so it is asked rather than done
                 confirmPlaintext: unattended ? null : () => this._confirmPlaintextPush(opToken),
+                // A gist tagged for the other game server: an automatic push is refused
+                // (`wrong-server`, toasted once by `_run`), a pressed one asks
+                server: serverKind(),
+                confirmServer: unattended ? null : (gistServer) => this._confirmOtherServerPush(gistServer, opToken),
                 // An automatic push never overwrites an exchange this device has
                 // not taken: that is how a setting changed on the other device
                 // was lost on both. It merges first (below). A pressed Push
@@ -735,6 +753,7 @@ class SyncManager {
                 syncSeq: Number.isSafeInteger(written.syncSeq) ? written.syncSeq : syncSeq,
                 encrypted: manifest.encrypted,
                 version: written.version,
+                server: manifest.server,
             }),
             // In the same transaction as the counter. Written after it, a page
             // closing between the two kept the advanced counter and lost the
@@ -801,6 +820,8 @@ class SyncManager {
         try {
             remote = downloaded?.payload ? downloaded : await this._readRemote(token, gistId, null);
         } catch (error) {
+            // A pressed merge reports what stopped it, through `_run`
+            if (!unattended) throw error;
             if (error instanceof GistError && error.kind === 'passphrase') {
                 console.warn(`[Sync] Skipped an automatic merge (passphrase): ${error.message}`);
                 return { ok: false, reason: 'passphrase' };
@@ -815,6 +836,13 @@ class SyncManager {
             throw error;
         }
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+
+        // The other game server's gist is never merged into automatically; `_run` says so once.
+        // A pressed merge goes on, and its write asks before replacing that gist
+        const remoteServer = gistServerOf(remote);
+        if (unattended && remoteServer && remoteServer !== serverKind()) {
+            throw new GistError('wrong-server', wrongServerMessage(remoteServer, serverKind()));
+        }
 
         // The gist named key prefixes another script registered that this
         // device had not heard of. Rebuilt with them, this device's payload
@@ -1011,6 +1039,7 @@ class SyncManager {
                 syncSeq: written.syncSeq,
                 encrypted,
                 version: written.version,
+                server: serverKind(),
             }),
             remoteAdds,
             remoteAt: exportedAt,
@@ -1164,6 +1193,7 @@ class SyncManager {
         const seen = gistVersion(gistId, remote.etag, remote.files, known?.current && known.etag === remote.etag, {
             ...manifest,
             version: remote.version,
+            server: gistServerOf(remote),
         });
         let payload = remote.payload;
 
@@ -1186,7 +1216,7 @@ class SyncManager {
         }
 
         verifyAgainstManifest(manifest, payload);
-        return { manifest, payload, seen, history: remote.history ?? null };
+        return { manifest, payload, seen, history: remote.history ?? null, server: remote.server ?? null };
     }
 
     /**
@@ -1313,6 +1343,31 @@ class SyncManager {
     }
 
     /**
+     * Ask before a pressed push writes over the gist the other game server syncs with.
+     * @param {'live'|'test'} gistServer - The server the gist is tagged for
+     * @param {number} opToken - The push's ownership token; a takeover during the dialog cancels it
+     * @returns {Promise<boolean>} True to go ahead
+     * @private
+     */
+    async _confirmOtherServerPush(gistServer, opToken) {
+        const here = serverKind();
+        const answer = await askChoice({
+            title: `Push over ${serverName(gistServer)}\u2019s gist?`,
+            message:
+                `The sync gist this device uses is marked as ${serverName(gistServer)}\u2019s, and this is ` +
+                `${serverName(here)}. Pushing replaces it with this device's data and marks it as ` +
+                `${serverName(here)}\u2019s, so ${serverName(gistServer)} will refuse it from then on. To keep ` +
+                'the two apart, cancel and set the Gist ID in Settings \u2192 Cross-Device Sync, or start a new ' +
+                'gist there.',
+            choices: [
+                { value: 'push', label: 'Push anyway', tone: 'danger' },
+                { value: null, label: 'Cancel' },
+            ],
+        });
+        return answer === 'push' && this._stillOwns(opToken);
+    }
+
+    /**
      * What a push returns when a pull's held-back records have not landed yet.
      * @param {boolean} silent - Whether to say anything about it
      * @returns {{ok: boolean, reason: string}} Outcome
@@ -1354,7 +1409,14 @@ class SyncManager {
         const gistId = await this._resolveGistId(token);
         if (!gistId) {
             if (!silent) {
-                showToast('No sync gist found for this token yet. Push once to create it.', { kind: 'warn' });
+                const startNew = await storage.get(KEY_START_NEW, STORE, null);
+                showToast(
+                    startNew
+                        ? 'This device is set to start a new gist. Push once to create it.'
+                        : `No sync gist for ${serverName(serverKind())} found for this token yet. Push once to ` +
+                              'create it, or set the Gist ID in Settings \u2192 Cross-Device Sync.',
+                    { kind: 'warn' }
+                );
             }
             return { ok: true, skipped: true, reason: 'no-gist' };
         }
@@ -1384,6 +1446,14 @@ class SyncManager {
         }
         const { manifest, seen } = remote;
         const payload = remote.payload;
+
+        // The other game server's gist is never applied here, pressed or not: the cure for a wrong
+        // gist is choosing the right one (the Gist ID box), not importing the other world's data.
+        // Nothing is recorded, so choosing the right gist starts clean
+        const remoteServer = gistServerOf(remote);
+        if (remoteServer && remoteServer !== serverKind()) {
+            throw new GistError('wrong-server', wrongServerMessage(remoteServer, serverKind()));
+        }
 
         const remoteAt = manifest?.exportedAt ?? null;
         const lastSyncedAt = await storage.get(KEY_LAST_SYNCED_AT, STORE, null);
@@ -1876,31 +1946,149 @@ class SyncManager {
 
     /**
      * Forget which gist this device uses, without touching the gist itself.
-     * The next push discovers or creates one.
+     * The next push discovers this server's gist or creates one.
      * @returns {Promise<void>}
      */
     async forgetGist() {
-        await rememberLocal({
-            [KEY_GIST_ID]: null,
-            [KEY_LAST_SYNCED_AT]: null,
-            [KEY_LAST_HASH]: null,
-            [KEY_CHUNK_COUNT]: 0,
-            // The counter counts exchanges with the gist we just forgot. Kept,
-            // it would make the first push to a NEW gist claim a counter above
-            // everything that gist has ever carried, and the devices already
-            // on it would read their own newer payloads as older.
-            [KEY_LAST_SYNCED_SEQ]: null,
-            // The push stamp belongs to the gist we just forgot. Leaving it behind makes
-            // the next gist look like somewhere this device has already pushed to, which
-            // is exactly the check that decides whether a first push stops to ask.
-            [KEY_LAST_PUSHED_AT]: null,
-            [KEY_MERGE_HELD]: null,
-            [KEY_GIST_VERSION]: null,
-            [KEY_UNAPPLIED]: null,
-            [KEY_BASELINE]: null,
-            [KEY_LAST_PUSHED_VERSION]: null,
-            [KEY_MERGE_ON_TRIM]: null,
+        await rememberLocal(forgottenGistEntries());
+        this._resetOnceNotices();
+    }
+
+    /**
+     * This device's gist link, for the Gist ID box.
+     * @returns {Promise<{gistId: string|null, startNew: boolean, server: 'live'|'test'}>} The stored gist id,
+     *   whether the next push starts a new gist, and the server this page is on
+     */
+    async gistLinkState() {
+        const gistId = await storage.get(KEY_GIST_ID, STORE, null);
+        const startNew = Boolean(await storage.get(KEY_START_NEW, STORE, null));
+        return { gistId: typeof gistId === 'string' && gistId ? gistId : null, startNew, server: serverKind() };
+    }
+
+    /**
+     * Switch this device to a gist someone chose: an id, or a gist link.
+     *
+     * The gist is read first, so a typo, a gist this token cannot see, or the
+     * other server's gist changes nothing. Then this device forgets everything
+     * it knew about the gist it was using (as `forgetGist` does) and records the
+     * new id: with no stamp, fingerprint, counter, baseline or remembered ETag,
+     * the first exchange downloads the gist in full and is never settled as
+     * "unchanged". A pressed Push then asks before it replaces the gist and
+     * offers to merge; an automatic push waits for the first pull; a pull
+     * combines histories and applies the gist's settings (an automatic one
+     * merges settings by their change stamps).
+     *
+     * @param {string} input - What was typed or pasted into the Gist ID box
+     * @returns {Promise<{ok: boolean, reason?: string, message: string, gistId?: string}>} Outcome, with a
+     *   message for the box
+     */
+    async useGist(input) {
+        const gistId = parseGistId(input);
+        if (!gistId) {
+            return {
+                ok: false,
+                reason: 'invalid',
+                message: 'That is not a gist id or gist link. A gist id is 32 letters and digits (0-9, a-f).',
+            };
+        }
+        const token = this._token();
+        if (!token) return { ok: false, reason: 'no-token', message: 'Add a GitHub token above first.' };
+        return this._exclusive(async (opToken) => {
+            let found;
+            try {
+                found = await inspectSyncGist(token, gistId);
+            } catch (error) {
+                if (!(error instanceof GistError)) throw error;
+                const message =
+                    error.kind === 'not-found'
+                        ? 'No gist with that id was found, or this token cannot see it.'
+                        : error.message;
+                return { ok: false, reason: error.kind, message: `${message} Nothing was changed.` };
+            }
+            if (!this._stillOwns(opToken)) {
+                return { ok: false, reason: 'superseded', message: 'A sync started meanwhile. Try again.' };
+            }
+            const here = serverKind();
+            if (isServerKind(found.server) && found.server !== here) {
+                return {
+                    ok: false,
+                    reason: 'wrong-server',
+                    message:
+                        `That gist is ${serverName(found.server)}\u2019s sync gist, and this is ${serverName(here)}. ` +
+                        'Nothing was changed. Use a gist for this server, or start a new one.',
+                };
+            }
+            const current = await this.gistLinkState();
+            if (current.gistId === found.id && !current.startNew) {
+                return { ok: true, reason: 'unchanged', gistId: found.id, message: 'Already using that gist.' };
+            }
+            await rememberLocal({ ...forgottenGistEntries(), [KEY_GIST_ID]: found.id });
+            this._resetOnceNotices();
+            return {
+                ok: true,
+                gistId: found.id,
+                message: found.isSyncGist
+                    ? 'Linked. Pull to take that gist\u2019s data, or Push and choose Merge to combine the two.'
+                    : 'Linked. That gist holds no sync data yet; the next Push fills it.',
+            };
         });
+    }
+
+    /**
+     * Make the next push create a fresh gist for this server rather than find
+     * one. This device forgets the gist it was using, as `forgetGist` does.
+     * @returns {Promise<{ok: boolean, reason?: string, message: string}>} Outcome, with a message for the box
+     */
+    async startNewGist() {
+        return this._exclusive(async () => {
+            await rememberLocal({ ...forgottenGistEntries(), [KEY_START_NEW]: true });
+            this._resetOnceNotices();
+            return { ok: true, message: `The next Push creates a new gist for ${serverName(serverKind())}.` };
+        });
+    }
+
+    /**
+     * Run a change to the gist link while no sync is running, here or in another tab: a push finishing
+     * after the change would record the old gist's id over the new one.
+     * @param {(opToken: number) => Promise<Object>} operation - The change, given a `busy` token
+     * @returns {Promise<Object>} The change's outcome, or a refusal with a message
+     * @private
+     */
+    async _exclusive(operation) {
+        if (this.busy) {
+            return { ok: false, reason: 'busy', message: 'A sync is running. Try again when it finishes.' };
+        }
+        const token = (this._busySeq = (this._busySeq || 0) + 1);
+        this.busy = token;
+        this.busySince = Date.now();
+        try {
+            const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
+            if (typeof locks?.request !== 'function') return await operation(token);
+            let ran = false;
+            let outcome;
+            await locks.request('toolasha-sync', { ifAvailable: true }, async (lock) => {
+                if (!lock) return;
+                ran = true;
+                outcome = await operation(token);
+            });
+            if (ran) return outcome;
+            return {
+                ok: false,
+                reason: 'another-tab',
+                message: 'Sync is running in another tab. Try again when it finishes.',
+            };
+        } finally {
+            if (this.busy === token) this.busy = false;
+        }
+    }
+
+    /**
+     * Forget which once-a-session notices were shown, so a problem with the next gist is said again.
+     * @private
+     */
+    _resetOnceNotices() {
+        this._toastedSilently = null;
+        this._stuckLogged = null;
     }
 
     /**
@@ -1912,7 +2100,12 @@ class SyncManager {
         if (!this._token()) return 'Sync is on, but no GitHub token is set.';
         const gistId = await storage.get(KEY_GIST_ID, STORE, null);
         const lastSyncedAt = await storage.get(KEY_LAST_SYNCED_AT, STORE, null);
-        if (!gistId) return 'Ready. No gist yet — press Push to create one.';
+        if (!gistId) {
+            if (await storage.get(KEY_START_NEW, STORE, null)) {
+                return `Ready. The next Push creates a new gist for ${serverName(serverKind())}.`;
+            }
+            return 'Ready. No gist yet — press Push to find or create one.';
+        }
         return lastSyncedAt ? `Last synced ${formatWhen(lastSyncedAt)}.` : 'Linked to a gist, not yet synced.';
     }
 
@@ -2097,9 +2290,10 @@ class SyncManager {
     }
 
     /**
-     * The gist to use: the one this device remembers, else one already on the
-     * account (which is how a second device finds the first one's gist from
-     * nothing but the same token), else none.
+     * The gist to use: the one this device remembers, else this server's one
+     * already on the account (which is how a second device finds the first
+     * one's gist from nothing but the same token), else none — and none,
+     * without looking, after "Start a new gist".
      *
      * Null is the answer for "there isn't one", which `push` reads as "create
      * it" and `pull` reads as "nothing to read yet".
@@ -2112,7 +2306,12 @@ class SyncManager {
         const stored = await storage.get(KEY_GIST_ID, STORE, null);
         if (stored) return stored;
 
-        const found = await findSyncGist(token);
+        // "Start a new gist": the push creates one, whatever the account already holds
+        if (await storage.get(KEY_START_NEW, STORE, null)) return null;
+
+        // Only this server's gist; several untagged ones on live throw `ambiguous` rather than
+        // answer none, so nothing is created while it is unclear which gist is live's
+        const found = await findSyncGist(token, serverKind());
         if (found) {
             await rememberLocal({ [KEY_GIST_ID]: found });
             return found;
@@ -2144,6 +2343,8 @@ class SyncManager {
         await rememberLocal({
             ...extra,
             [KEY_GIST_ID]: gistId,
+            // A gist is recorded, so a pending "Start a new gist" is done
+            ...(gistId ? { [KEY_START_NEW]: null } : {}),
             [KEY_LAST_SYNCED_AT]: exportedAt,
             [KEY_LAST_HASH]: hash,
             [KEY_CHUNK_COUNT]: chunkCount,
@@ -2339,12 +2540,15 @@ class SyncManager {
                 // A corrupt or newer-format gist fails every unattended sync the
                 // same way until someone pushes over it. One sticky toast says
                 // so; repeating it every interval only stacks them.
-                const repeat = `${error.kind}:${error.message}`;
+                // The other server's gist and an unclear choice of gist are the same: one sticky
+                // toast a session, for pushes and pulls alike, until the gist link changes
+                const once = ONCE_A_SESSION_KINDS.has(error.kind);
+                const repeat = error.kind === 'parse' ? `${error.kind}:${error.message}` : error.kind;
                 this._toastedSilently = this._toastedSilently || new Set();
-                if (silent && error.kind === 'parse' && this._toastedSilently.has(repeat)) {
+                if (silent && once && this._toastedSilently.has(repeat)) {
                     return { ok: false, reason: error.kind };
                 }
-                if (silent && error.kind === 'parse') this._toastedSilently.add(repeat);
+                if (silent && once) this._toastedSilently.add(repeat);
                 showToast(describeFailure(label, error), {
                     kind: error.kind === 'rate-limit' ? 'warn' : 'error',
                     // A failure the player has to act on must not fade before
@@ -2379,12 +2583,21 @@ class SyncManager {
  */
 const REMEDIES = {
     auth: 'Check the token in Settings → Cross-Device Sync — it needs the "gist" scope.',
-    'not-found': 'This device has forgotten that gist; press Push to make a new one.',
+    'not-found':
+        "This device has forgotten that gist; press Push to find this server's or make a new one, or set the " +
+        'Gist ID in Settings \u2192 Cross-Device Sync.',
     'too-large': 'Set Sync scope to "Settings only" in Settings → Cross-Device Sync.',
     passphrase: 'Enter the same sync passphrase in Settings → Cross-Device Sync on every device that shares the gist.',
     parse: 'Push from a device whose data is good to replace what is in the gist.',
     http: 'Try again shortly; githubstatus.com says whether GitHub itself is unwell.',
+    ambiguous:
+        'Set the Gist ID in Settings \u2192 Cross-Device Sync to the gist this server uses, or start a new gist ' +
+        'there.',
+    'wrong-server': "Set this server's Gist ID in Settings \u2192 Cross-Device Sync, or start a new gist there.",
 };
+
+/** Failures an unattended sync toasts once a session rather than on every interval */
+const ONCE_A_SESSION_KINDS = new Set(['parse', 'ambiguous', 'wrong-server']);
 
 /** Failures the player has to do something about, so their toast stays up */
 const ACTIONABLE_KINDS = new Set(Object.keys(REMEDIES));
@@ -2420,6 +2633,47 @@ function heldAsUnapplied(baseline, held) {
         if (typeof out[id] === 'string') out[id] = { gist: out[id], local: null };
     }
     return out;
+}
+
+/**
+ * What forgetting the gist writes: no gist id, and none of what this device
+ * knew about the one it was using.
+ * @returns {Record<string, *>} Bookkeeping entries for `rememberLocal`
+ */
+function forgottenGistEntries() {
+    return {
+        [KEY_GIST_ID]: null,
+        [KEY_START_NEW]: null,
+        [KEY_LAST_SYNCED_AT]: null,
+        [KEY_LAST_HASH]: null,
+        [KEY_CHUNK_COUNT]: 0,
+        // The counter counts exchanges with the gist we just forgot. Kept,
+        // it would make the first push to a NEW gist claim a counter above
+        // everything that gist has ever carried, and the devices already
+        // on it would read their own newer payloads as older.
+        [KEY_LAST_SYNCED_SEQ]: null,
+        // The push stamp belongs to the gist we just forgot. Leaving it behind makes
+        // the next gist look like somewhere this device has already pushed to, which
+        // is exactly the check that decides whether a first push stops to ask.
+        [KEY_LAST_PUSHED_AT]: null,
+        [KEY_MERGE_HELD]: null,
+        [KEY_GIST_VERSION]: null,
+        [KEY_UNAPPLIED]: null,
+        [KEY_BASELINE]: null,
+        [KEY_LAST_PUSHED_VERSION]: null,
+        [KEY_MERGE_ON_TRIM]: null,
+    };
+}
+
+/**
+ * The game server a downloaded gist is tagged for.
+ * @param {{server?: *, manifest?: {server?: *}}|null|undefined} remote - A `_readRemote` result
+ * @returns {'live'|'test'|null} The server, or null for an untagged gist
+ */
+function gistServerOf(remote) {
+    if (isServerKind(remote?.server)) return remote.server;
+    if (isServerKind(remote?.manifest?.server)) return remote.manifest.server;
+    return null;
 }
 
 /**
@@ -2511,6 +2765,9 @@ function gistVersion(gistId, etag, files, current, manifest) {
         current: Boolean(current),
         syncSeq: readSeq(manifest?.syncSeq),
         encrypted: Boolean(manifest?.encrypted),
+        // The server it is tagged for, so a write listed against it by a 304 can still refuse
+        // the other server's gist
+        server: isServerKind(manifest?.server) ? manifest.server : null,
         // The history version it is, so a write listed against it by a 304
         // still knows what it was based on
         version: typeof manifest?.version === 'string' ? manifest.version : null,

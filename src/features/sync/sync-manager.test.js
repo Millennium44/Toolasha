@@ -141,6 +141,11 @@ const gist = vi.hoisted(() => ({
     remoteFiles: null,
     writeEtag: undefined,
     writeFiles: undefined,
+    findServers: [],
+    findError: null,
+    inspected: [],
+    inspectError: null,
+    inspect: null,
 }));
 
 class FakeGistError extends Error {
@@ -156,7 +161,16 @@ vi.mock('./gist-client.js', () => ({
     readSyncGistRevision: async () => {
         throw new Error('no revisions in this fake');
     },
-    findSyncGist: async () => gist.found,
+    findSyncGist: async (_token, server) => {
+        gist.findServers.push(server);
+        if (gist.findError) throw gist.findError;
+        return gist.found;
+    },
+    inspectSyncGist: async (_token, id) => {
+        gist.inspected.push(id);
+        if (gist.inspectError) throw gist.inspectError;
+        return { id, isSyncGist: true, server: null, ...gist.inspect };
+    },
     readSyncGist: async (_token, _id, options) => {
         gist.readCalls += 1;
         gist.readOptions.push(options);
@@ -171,6 +185,7 @@ vi.mock('./gist-client.js', () => ({
         if (gist.writeWait) await gist.writeWait;
         if (gist.writeError) throw gist.writeError;
         gist.writeHook?.(options);
+        if (gist.writeAsk) await gist.writeAsk(options);
         gist.writes.push({ id, manifest, chunks, previous, known, options });
         return {
             id: id ?? 'created-id',
@@ -239,6 +254,13 @@ beforeEach(() => {
     gist.writeFiles = undefined;
     gist.writeSeq = undefined;
     gist.writeHook = null;
+    gist.writeAsk = null;
+    gist.findServers = [];
+    gist.findError = null;
+    gist.inspected = [];
+    gist.inspectError = null;
+    gist.inspect = null;
+    syncManager._resetOnceNotices();
     panelOpens.length = 0;
     clearPullSummary();
     syncManager.busy = false;
@@ -1583,6 +1605,7 @@ describe('the remembered gist version', () => {
             current: true,
             syncSeq: null,
             encrypted: false,
+            server: null,
             version: null,
         });
 
@@ -1663,6 +1686,7 @@ describe('the remembered gist version', () => {
             current: true,
             syncSeq: 1,
             encrypted: false,
+            server: 'live',
             version: null,
         });
     });
@@ -2517,6 +2541,317 @@ describe('automatic pushes merge into the upload, never into this device', () =>
             expect(toasts[0].message).toContain('Reload now');
             expect(toasts[0].message).toContain('1 written whole');
             expect(toasts[0].message).toContain('5 already the same');
+        });
+    });
+});
+
+describe('one gist per game server', () => {
+    const ID = '0123456789abcdef0123456789abcdef';
+    const remote = (server) => ({
+        manifest: {
+            exportedAt: '2027-02-01T00:00:00.000Z',
+            chunks: 1,
+            hash: 'h:{"remote":1}',
+            ...(server ? { server } : {}),
+        },
+        payload: '{"remote":1}',
+    });
+    /** A device that has synced with gist 'abc' before, and changed since */
+    const linked = () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-08-01T00:00:00Z';
+        stored.map.toolasha_sync_lastHash = 'h:older';
+    };
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    describe('discovery', () => {
+        test('looks only for the gist of the server this page is on', async () => {
+            vi.stubGlobal('location', { hostname: 'test.milkywayidle.com' });
+            await syncManager.push();
+            expect(gist.findServers).toEqual(['test']);
+            expect(gist.writes[0].manifest.server).toBe('test');
+            expect(gist.writes[0].options.server).toBe('test');
+
+            vi.stubGlobal('location', { hostname: 'www.milkywayidle.com' });
+            stored.map = {};
+            await syncManager.push();
+            expect(gist.findServers).toEqual(['test', 'live']);
+            expect(gist.writes[1].manifest.server).toBe('live');
+        });
+
+        test('several untagged gists: nothing is created, and automatic syncs say so once', async () => {
+            gist.findError = new FakeGistError('ambiguous', 'Several gists could be live’s.');
+            expect(await syncManager.push({ silent: true, unattended: true })).toMatchObject({
+                ok: false,
+                reason: 'ambiguous',
+            });
+            await syncManager.pull({ silent: true });
+            await syncManager.push({ silent: true, unattended: true });
+            expect(gist.writes).toHaveLength(0);
+            expect(stored.map.toolasha_sync_gistId).toBeUndefined();
+            expect(toasts).toHaveLength(1);
+            expect(toasts[0].duration).toBe(0);
+            expect(toasts[0].message).toContain('Gist ID');
+
+            // A pressed push says it every time
+            await syncManager.push();
+            expect(toasts).toHaveLength(2);
+            expect(gist.writes).toHaveLength(0);
+        });
+
+        test('no gist for this server: a pull says how to get one, a push creates one', async () => {
+            expect(await syncManager.pull()).toMatchObject({ reason: 'no-gist' });
+            expect(toasts[0].message).toContain('the live game');
+            expect(toasts[0].message).toContain('Gist ID');
+            await syncManager.push();
+            expect(gist.writes[0].id).toBeNull();
+        });
+    });
+
+    describe('Start a new gist', () => {
+        test('the next push creates a gist instead of adopting the one discovery would find', async () => {
+            gist.found = 'existing';
+            linked();
+            expect(await syncManager.startNewGist()).toMatchObject({ ok: true });
+            expect(stored.map.toolasha_sync_gistId).toBeNull();
+            expect(await syncManager.describeStatus()).toContain('creates a new gist');
+            expect(await syncManager.pull()).toMatchObject({ reason: 'no-gist' });
+            expect(toasts.at(-1).message).toContain('start a new gist');
+
+            await syncManager.push();
+            expect(gist.findServers).toEqual([]);
+            expect(gist.writes[0].id).toBeNull();
+            expect(stored.map.toolasha_sync_gistId).toBe('created-id');
+            expect(stored.map.toolasha_sync_startNewGist).toBeNull();
+        });
+
+        test('a create that fails keeps the flag, so the retry does not fall back to discovery', async () => {
+            gist.found = 'existing';
+            await syncManager.startNewGist();
+            gist.writeError = new FakeGistError('offline', 'Could not reach GitHub.');
+            await syncManager.push();
+            expect(stored.map.toolasha_sync_startNewGist).toBe(true);
+            gist.writeError = null;
+            await syncManager.push();
+            expect(gist.findServers).toEqual([]);
+            expect(gist.writes[0].id).toBeNull();
+        });
+
+        test('Unlink clears it', async () => {
+            await syncManager.startNewGist();
+            await syncManager.forgetGist();
+            expect(stored.map.toolasha_sync_startNewGist).toBeNull();
+        });
+    });
+
+    describe('the other server’s gist', () => {
+        test('a pull, pressed or not, refuses it and applies nothing', async () => {
+            linked();
+            gist.read = remote('test');
+            expect(await syncManager.pull()).toMatchObject({ ok: false, reason: 'wrong-server' });
+            expect(payload.applyCalls).toBe(0);
+            expect(toasts.at(-1).message).toContain('belongs to the test server');
+            expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2026-08-01T00:00:00Z');
+
+            toasts.length = 0;
+            await syncManager.pull({ silent: true });
+            await syncManager.pull({ silent: true, startup: true });
+            expect(payload.applyCalls).toBe(0);
+            expect(toasts).toHaveLength(1);
+            expect(toasts[0].duration).toBe(0);
+        });
+
+        test('an untagged gist is pulled as before', async () => {
+            linked();
+            gist.read = remote(null);
+            dialog.answer = 'pull';
+            expect(await syncManager.pull()).toMatchObject({ ok: true });
+            expect(payload.applyCalls).toBe(1);
+        });
+
+        test('an automatic push is held, with one sticky toast however many intervals pass', async () => {
+            linked();
+            gist.writeError = new FakeGistError('wrong-server', 'The sync gist belongs to the test server.');
+            for (let tick = 0; tick < 3; tick += 1) {
+                expect(await syncManager.push({ silent: true, unattended: true })).toMatchObject({
+                    ok: false,
+                    reason: 'wrong-server',
+                });
+            }
+            expect(toasts).toHaveLength(1);
+            expect(toasts[0].duration).toBe(0);
+            expect(toasts[0].message).toContain('Gist ID');
+        });
+
+        test('an automatic merge refuses it before merging anything', async () => {
+            linked();
+            stored.map.toolasha_sync_unapplied = { since: '2026-08-02T00:00:00Z' };
+            gist.read = remote('test');
+            expect(await syncManager.push({ silent: true, unattended: true })).toMatchObject({
+                reason: 'wrong-server',
+            });
+            expect(payload.uploadMerges).toBe(0);
+            expect(gist.writes).toHaveLength(0);
+        });
+
+        test('an automatic push hands the write no way to say yes; a pressed one asks', async () => {
+            linked();
+            await syncManager.push({ silent: true, unattended: true });
+            expect(gist.writes[0].options.server).toBe('live');
+            expect(gist.writes[0].options.confirmServer).toBeNull();
+
+            // What the write's own check would do over a gist the listing says is the test server's
+            const answers = [];
+            gist.writeAsk = async (options) => {
+                answers.push(await options.confirmServer('test'));
+                if (!answers.at(-1)) throw new FakeGistError('cancelled', 'The push was cancelled.');
+            };
+            gist.read = remote(null);
+            dialog.answer = null;
+            expect(await syncManager.push()).toMatchObject({ reason: 'cancelled' });
+            expect(dialog.last.title).toContain('the test server');
+            expect(dialog.last.message).toContain('Gist ID');
+            dialog.answer = 'push';
+            expect(await syncManager.push()).toMatchObject({ ok: true });
+            expect(answers).toEqual([false, true]);
+        });
+    });
+
+    describe('a first push to a gist this device never synced with', () => {
+        test('offers to merge, and merging asks once and folds the gist in', async () => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            gist.read = remote(null);
+            dialog.answer = 'merge';
+            expect(await syncManager.push()).toMatchObject({ ok: true });
+            expect(dialog.calls).toBe(1);
+            expect(payload.uploadMerges).toBe(1);
+            expect(gist.writes).toHaveLength(1);
+            expect(gist.writes[0].chunks.join('')).not.toBe('{"local":1}');
+        });
+
+        test('a merge whose download fails says why instead of failing quietly', async () => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            gist.readError = new FakeGistError('passphrase', 'This sync gist is encrypted.');
+            dialog.answer = 'merge';
+            expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'passphrase' });
+            expect(toasts.at(-1).message).toContain('encrypted');
+            expect(gist.writes).toHaveLength(0);
+        });
+    });
+
+    describe('the Gist ID box', () => {
+        test('an invalid id changes nothing and asks GitHub nothing', async () => {
+            linked();
+            expect(await syncManager.useGist('not a gist')).toMatchObject({ ok: false, reason: 'invalid' });
+            expect(gist.inspected).toEqual([]);
+            expect(stored.map.toolasha_sync_gistId).toBe('abc');
+        });
+
+        test('a pasted link is read for its id, and the device forgets the old gist', async () => {
+            linked();
+            stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: {}, current: true };
+            stored.map.toolasha_sync_lastSyncedSeq = 9;
+            stored.map.toolasha_sync_baseline = { some: 'hash' };
+            const result = await syncManager.useGist(`https://gist.github.com/someone/${ID}`);
+            expect(result).toMatchObject({ ok: true, gistId: ID });
+            expect(gist.inspected).toEqual([ID]);
+            expect(stored.map.toolasha_sync_gistId).toBe(ID);
+            for (const key of [
+                'toolasha_sync_lastSyncedAt',
+                'toolasha_sync_lastHash',
+                'toolasha_sync_gistVersion',
+                'toolasha_sync_lastSyncedSeq',
+                'toolasha_sync_baseline',
+                'toolasha_sync_startNewGist',
+            ]) {
+                expect(stored.map[key]).toBeNull();
+            }
+            expect(await syncManager.gistLinkState()).toMatchObject({ gistId: ID, startNew: false });
+        });
+
+        test('the first exchange with the chosen gist downloads it whole and applies it', async () => {
+            linked();
+            // What this device last exchanged with its old gist is the very content of the new one:
+            // a stale fingerprint or ETag must not settle the first pull as already in step
+            stored.map.toolasha_sync_lastHash = 'h:{"remote":1}';
+            stored.map.toolasha_sync_gistVersion = { gistId: ID, etag: 'W/"e1"', files: {}, current: true };
+            gist.remoteEtag = 'W/"e1"';
+            gist.remoteFiles = {};
+            await syncManager.useGist(ID);
+            gist.read = remote(null);
+
+            await syncManager.pull({ silent: true, startup: true });
+            expect(gist.readOptions[0]).toBeUndefined();
+            expect(payload.applyCalls).toBe(1);
+            expect(payload.applyOptions.mode).toBe('merge');
+        });
+
+        test('an automatic push waits for that first pull, and a pressed one asks first', async () => {
+            await syncManager.useGist(ID);
+            expect(await syncManager.push({ silent: true, unattended: true })).toMatchObject({
+                reason: 'never-synced',
+            });
+            dialog.answer = null;
+            expect(await syncManager.push()).toMatchObject({ reason: 'cancelled' });
+            expect(dialog.last.choices.map((choice) => choice.value)).toEqual(['merge', 'push', null]);
+            expect(gist.writes).toHaveLength(0);
+        });
+
+        test('an id that 404s changes nothing', async () => {
+            linked();
+            gist.inspectError = new FakeGistError('not-found', 'That gist no longer exists.');
+            const result = await syncManager.useGist(ID);
+            expect(result).toMatchObject({ ok: false, reason: 'not-found' });
+            expect(result.message).toContain('Nothing was changed');
+            expect(stored.map.toolasha_sync_gistId).toBe('abc');
+            expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2026-08-01T00:00:00Z');
+        });
+
+        test('the other server’s gist is refused; an untagged one is taken', async () => {
+            linked();
+            gist.inspect = { server: 'test' };
+            const refused = await syncManager.useGist(ID);
+            expect(refused).toMatchObject({ ok: false, reason: 'wrong-server' });
+            expect(refused.message).toContain('the test server');
+            expect(stored.map.toolasha_sync_gistId).toBe('abc');
+
+            vi.stubGlobal('location', { hostname: 'test.milkywayidle.com' });
+            gist.inspect = { server: null };
+            expect(await syncManager.useGist(ID)).toMatchObject({ ok: true });
+            expect(stored.map.toolasha_sync_gistId).toBe(ID);
+        });
+
+        test('a gist with no sync data in it is linked, and says the next push fills it', async () => {
+            gist.inspect = { isSyncGist: false };
+            const result = await syncManager.useGist(ID);
+            expect(result.ok).toBe(true);
+            expect(result.message).toContain('no sync data yet');
+        });
+
+        test('the id already in use keeps what this device knows about it', async () => {
+            stored.map.toolasha_sync_gistId = ID;
+            stored.map.toolasha_sync_lastSyncedAt = '2026-08-01T00:00:00Z';
+            expect(await syncManager.useGist(ID.toUpperCase())).toMatchObject({ ok: true, reason: 'unchanged' });
+            expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2026-08-01T00:00:00Z');
+        });
+
+        test('not while a sync is running: its result would record the old gist over the new one', async () => {
+            linked();
+            syncManager.busy = 7;
+            syncManager.busySince = Date.now();
+            expect(await syncManager.useGist(ID)).toMatchObject({ ok: false, reason: 'busy' });
+            expect(await syncManager.startNewGist()).toMatchObject({ ok: false, reason: 'busy' });
+            expect(gist.inspected).toEqual([]);
+            expect(stored.map.toolasha_sync_gistId).toBe('abc');
+            syncManager.busy = false;
+        });
+
+        test('with no token it says to add one', async () => {
+            settings.values.sync_token = '';
+            expect(await syncManager.useGist(ID)).toMatchObject({ ok: false, reason: 'no-token' });
         });
     });
 });

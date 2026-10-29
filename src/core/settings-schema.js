@@ -5016,7 +5016,8 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'Carries your Toolasha data between browsers through one private GitHub gist that you own. ' +
+                    'Carries your Toolasha data between browsers through a private GitHub gist that you own — one ' +
+                    'for the live game and a separate one for the test server, which never sync with each other. ' +
                     'Nothing goes to any server of ours, and nothing is sent until you press Push or turn on ' +
                     'automatic sync below. Everything in this group is shared by every character on this ' +
                     'device — set it up once and your alts are set up too.',

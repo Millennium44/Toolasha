@@ -95,6 +95,7 @@ vi.mock('./gist-client.js', () => ({
         throw new Error('no revisions in this fake');
     },
     findSyncGist: async () => null,
+    inspectSyncGist: async (_token, id) => ({ id, isSyncGist: true, server: null }),
     readSyncGist: async () => null,
     writeSyncGist: async (_token, id, manifest) => {
         gist.writes.push({ id, manifest });

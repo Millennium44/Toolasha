@@ -8,6 +8,7 @@ import {
     chunkIndexFromName,
     findSyncGist,
     httpRequest,
+    inspectSyncGist,
     readSyncGist,
     readSyncGistRevision,
     resetTransportForTests,
@@ -508,6 +509,95 @@ describe('findSyncGist', () => {
     });
 });
 
+describe('findSyncGist picks this game server’s gist', () => {
+    const LEGACY = 'Toolasha cross-device sync (do not edit by hand)';
+    const LIVE = 'Toolasha cross-device sync — live (do not edit by hand)';
+    const TEST = 'Toolasha cross-device sync — test server (do not edit by hand)';
+    const gist = (id, description, updatedAt) => ({
+        id,
+        description,
+        updated_at: updatedAt,
+        files: { [MANIFEST_FILE]: {}, [chunkFileName(0)]: {} },
+    });
+    // The wrong answer is always the most recently updated one, and the list is not in update order
+    const everyKind = () => [
+        gist('untagged-new', LEGACY, '2026-10-25T12:00:00Z'),
+        gist('test-new', TEST, '2026-10-27T12:00:00Z'),
+        gist('live-old', LIVE, '2026-09-01T12:00:00Z'),
+        gist('untagged-old', LEGACY, '2026-08-01T12:00:00Z'),
+        gist('live-newer', LIVE, '2026-10-01T12:00:00Z'),
+        gist('test-old', TEST, '2026-07-01T12:00:00Z'),
+        { id: 'notes', description: TEST, updated_at: '2026-10-28T12:00:00Z', files: { 'notes.md': {} } },
+    ];
+
+    test('a gist tagged for this server wins, the most recently updated one', async () => {
+        responses.push({ status: 200, body: everyKind() });
+        expect(await findSyncGist('tok', 'live')).toBe('live-newer');
+        responses.push({ status: 200, body: everyKind() });
+        expect(await findSyncGist('tok', 'test')).toBe('test-new');
+    });
+
+    test('the other server’s gists are never adopted', async () => {
+        responses.push({ status: 200, body: [gist('test-only', TEST, '2026-10-27T12:00:00Z')] });
+        expect(await findSyncGist('tok', 'live')).toBeNull();
+        responses.push({ status: 200, body: [gist('live-only', LIVE, '2026-10-27T12:00:00Z')] });
+        expect(await findSyncGist('tok', 'test')).toBeNull();
+    });
+
+    test('the test server never adopts an untagged gist', async () => {
+        responses.push({ status: 200, body: [gist('untagged', LEGACY, '2026-10-27T12:00:00Z')] });
+        expect(await findSyncGist('tok', 'test')).toBeNull();
+    });
+
+    test('live adopts an untagged gist only when it is the only one', async () => {
+        responses.push({
+            status: 200,
+            body: [gist('test-new', TEST, '2026-10-27T12:00:00Z'), gist('untagged', LEGACY, '2026-01-01T00:00:00Z')],
+        });
+        expect(await findSyncGist('tok', 'live')).toBe('untagged');
+    });
+
+    test('several untagged gists on live adopt nothing and say so, rather than answer "none"', async () => {
+        const list = everyKind().filter((entry) => !entry.description.includes('live'));
+        responses.push({ status: 200, body: list });
+        const error = await findSyncGist('tok', 'live').catch((caught) => caught);
+        expect(error).toBeInstanceOf(GistError);
+        expect(error.kind).toBe('ambiguous');
+    });
+
+    test('a hand-edited description counts as untagged', async () => {
+        responses.push({ status: 200, body: [gist('edited', 'my sync', '2026-10-27T12:00:00Z')] });
+        expect(await findSyncGist('tok', 'live')).toBe('edited');
+    });
+});
+
+describe('inspectSyncGist', () => {
+    test('says whether a gist is a sync gist and which server it is tagged for', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                id: 'abc',
+                description: 'Toolasha cross-device sync (do not edit by hand)',
+                files: {
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 1, server: 'test' }) },
+                },
+            },
+        });
+        expect(await inspectSyncGist('tok', 'abc')).toEqual({ id: 'abc', isSyncGist: true, server: 'test' });
+
+        responses.push({
+            status: 200,
+            body: { id: 'def', description: 'Toolasha cross-device sync — live (do not edit by hand)', files: {} },
+        });
+        expect(await inspectSyncGist('tok', 'def')).toEqual({ id: 'def', isSyncGist: false, server: 'live' });
+    });
+
+    test('a gist that is not there is not-found', async () => {
+        responses.push({ status: 404, body: { message: 'Not Found' } });
+        await expect(inspectSyncGist('tok', 'abc')).rejects.toMatchObject({ kind: 'not-found' });
+    });
+});
+
 describe('readSyncGist', () => {
     test('reassembles chunks in manifest order', async () => {
         responses.push({
@@ -702,6 +792,93 @@ describe('writeSyncGist', () => {
         expect(result.id).toBe('new-id');
         expect(calls[0].method).toBe('POST');
         expect(JSON.parse(calls[0].data).public).toBe(false);
+    });
+
+    test('names the server it pushes from in the description, so an untagged gist gets tagged', async () => {
+        responses.push({ status: 201, body: { id: 'new-id' } });
+        await writeSyncGist('tok', null, { chunks: 1, server: 'test' }, ['data'], 0, null, { server: 'test' });
+        expect(JSON.parse(calls[0].data).description).toBe(
+            'Toolasha cross-device sync — test server (do not edit by hand)'
+        );
+
+        responses.push({
+            status: 200,
+            body: {
+                description: 'Toolasha cross-device sync (do not edit by hand)',
+                files: { [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) } },
+            },
+        });
+        responses.push({ status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1, server: 'live' }, ['data'], 0, null, {
+            server: 'live',
+            unattended: true,
+        });
+        const body = JSON.parse(calls[2].data);
+        expect(body.description).toBe('Toolasha cross-device sync — live (do not edit by hand)');
+        expect(JSON.parse(body.files[MANIFEST_FILE].content).server).toBe('live');
+    });
+
+    describe('a gist tagged for the other game server', () => {
+        const otherServers = (byDescription) => ({
+            status: 200,
+            body: {
+                description: byDescription
+                    ? 'Toolasha cross-device sync — test server (do not edit by hand)'
+                    : 'Toolasha cross-device sync (do not edit by hand)',
+                files: {
+                    [MANIFEST_FILE]: {
+                        content: JSON.stringify({
+                            toolashaSync: 1,
+                            chunks: 1,
+                            ...(byDescription ? {} : { server: 'test' }),
+                        }),
+                    },
+                },
+            },
+        });
+
+        test.each([
+            ['its manifest', false],
+            ['its description', true],
+        ])('is refused by an automatic push, read from %s', async (_label, byDescription) => {
+            responses.push(otherServers(byDescription));
+            const error = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 0, null, {
+                server: 'live',
+                unattended: true,
+            }).catch((caught) => caught);
+            expect(error).toBeInstanceOf(GistError);
+            expect(error.kind).toBe('wrong-server');
+            expect(calls.map((call) => call.method)).toEqual(['GET']);
+        });
+
+        test('is asked about by a pressed push, once, and a no writes nothing', async () => {
+            const confirmServer = vi.fn(async () => false);
+            responses.push(otherServers(false));
+            const error = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 0, null, {
+                server: 'live',
+                confirmServer,
+            }).catch((caught) => caught);
+            expect(error.kind).toBe('cancelled');
+            expect(confirmServer).toHaveBeenCalledWith('test');
+            expect(calls.map((call) => call.method)).toEqual(['GET']);
+
+            confirmServer.mockImplementation(async () => true);
+            responses.push(otherServers(false));
+            responses.push({ status: 200, body: { id: 'abc' } });
+            await writeSyncGist('tok', 'abc', { chunks: 1, server: 'live' }, ['data'], 0, null, {
+                server: 'live',
+                confirmServer,
+            });
+            expect(confirmServer).toHaveBeenCalledTimes(2);
+            expect(JSON.parse(calls.at(-1).data).description).toContain('— live');
+        });
+
+        test('is written by the writes that do not name a server (putting a revision back)', async () => {
+            responses.push(otherServers(false));
+            responses.push({ status: 200, body: { id: 'abc' } });
+            await writeSyncGist('tok', 'abc', { chunks: 1, server: 'test' }, ['data'], 0, null, { unattended: true });
+            expect(JSON.parse(calls.at(-1).data).description).toContain('— test server');
+        });
     });
 
     test('patches an existing gist rather than making a second one', async () => {
