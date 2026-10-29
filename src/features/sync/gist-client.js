@@ -686,13 +686,20 @@ export function chunkIndexFromName(name) {
     return Number(match[1]);
 }
 
+/** Gists per page of the list discovery reads (GitHub's ceiling) */
+const DISCOVERY_PAGE_SIZE = 100;
+
+/** Pages of the gist list discovery reads at most */
+const DISCOVERY_PAGES = 5;
+
 /**
  * Find an existing sync gist belonging to the token's owner, for this game server.
  *
  * The point is a second device: the user pastes the same token and the gist id
- * is discovered rather than typed. Only the first page is searched — a sync
- * gist is created at most once and is touched on every push, so it sits near
- * the top of a list ordered by update time.
+ * is discovered rather than typed. Up to `DISCOVERY_PAGES` pages of the list
+ * are read: a sync gist is touched on every push, so it sits near the top of a
+ * list ordered by update time, but an account with many gists can push an idle
+ * server's one past the first page.
  *
  * One token commonly holds a gist for the live game and one for the test
  * server, and the gist list carries descriptions but no file contents, so the
@@ -711,8 +718,15 @@ export function chunkIndexFromName(name) {
  * @throws {GistError} `ambiguous` when several untagged gists could be live's
  */
 export async function findSyncGist(token, server = serverKind()) {
-    const gists = await apiCall(token, 'GET', '/gists?per_page=100');
-    if (!Array.isArray(gists)) return null;
+    // Every page up to the cap: an untagged gist on page 3 still makes two, and a tagged one there
+    // still beats creating a third
+    const gists = [];
+    for (let page = 1; page <= DISCOVERY_PAGES; page += 1) {
+        const listed = await apiCall(token, 'GET', `/gists?per_page=${DISCOVERY_PAGE_SIZE}&page=${page}`);
+        if (!Array.isArray(listed)) break;
+        gists.push(...listed);
+        if (listed.length < DISCOVERY_PAGE_SIZE) break;
+    }
     const updated = (gist) => {
         const at = Date.parse(gist?.updated_at ?? '');
         return Number.isFinite(at) ? at : 0;
@@ -742,7 +756,8 @@ export async function findSyncGist(token, server = serverKind()) {
  *
  * @param {string} token - GitHub personal access token
  * @param {string} gistId - Gist id
- * @returns {Promise<{id: string, isSyncGist: boolean, server: 'live'|'test'|null}>} What the gist is
+ * @returns {Promise<{id: string, isSyncGist: boolean, server: 'live'|'test'|null, public: boolean,
+ *   otherFiles: number}>} What the gist is: whether it is public, and how many of its files are not sync files
  * @throws {GistError} `not-found` when the gist does not exist or the token cannot see it, and the
  *   transport's own failures
  */
@@ -753,6 +768,11 @@ export async function inspectSyncGist(token, gistId) {
         id: typeof gist?.id === 'string' ? gist.id : gistId,
         isSyncGist: Object.hasOwn(files, MANIFEST_FILE),
         server: listedManifest(files).server ?? descriptionServer(gist?.description),
+        // A sync gist must be secret: anyone can read a public one
+        public: gist?.public === true,
+        // Files that are neither the manifest nor a chunk: other content a push would sit beside
+        otherFiles: Object.keys(files).filter((name) => name !== MANIFEST_FILE && chunkIndexFromName(name) === null)
+            .length,
     };
 }
 

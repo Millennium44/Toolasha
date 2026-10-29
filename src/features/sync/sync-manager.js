@@ -99,6 +99,19 @@ const KEY_GIST_ID = 'toolasha_sync_gistId';
  */
 const KEY_START_NEW = 'toolasha_sync_startNewGist';
 
+/**
+ * Set by choosing a gist (Gist ID box) or "Start a new gist": automatic pulls
+ * apply nothing until a pressed Push or Pull has exchanged with that gist.
+ *
+ * Choosing a gist forgets the baseline (what this device last exchanged), and
+ * without one an automatic pull's merge has nothing to tell "this device moved
+ * it" from "the gist moved it" — so every whole-value key would silently take
+ * the gist's value. A pressed exchange is where the player decides that
+ * (Merge with the gist and push, or Pull). Automatic pushes already wait, as
+ * `never-synced`. Cleared by the first exchange recorded, and by unlinking.
+ */
+const KEY_LINK_PENDING = 'toolasha_sync_linkPending';
+
 /** `exportedAt` of the payload this device last pushed or pulled */
 const KEY_LAST_SYNCED_AT = 'toolasha_sync_lastSyncedAt';
 
@@ -818,12 +831,16 @@ class SyncManager {
         const gistId = await this._resolveGistId(token);
         let remote;
         try {
-            // The other game server's gist is never merged into automatically, and is refused before
-            // its passphrase is asked for; `_run` says so once. A pressed merge goes on, and its
-            // write asks before replacing that gist
+            // The other game server's gist is never merged, pressed or not: a merge would carry the
+            // other world's data into this one. Refused before its passphrase is asked for; an
+            // automatic one is toasted once by `_run`. A pressed plain Push still asks instead
             remote = downloaded?.payload
                 ? downloaded
-                : await this._readRemote(token, gistId, null, null, null, { refuseOtherServer: unattended });
+                : await this._readRemote(token, gistId, null, null, null, { refuseOtherServer: true });
+            const tagged = gistServerOf(remote);
+            if (tagged && tagged !== serverKind()) {
+                throw new GistError('wrong-server', wrongServerMessage(tagged, serverKind()));
+            }
         } catch (error) {
             // A pressed merge reports what stopped it, through `_run`
             if (!unattended) throw error;
@@ -857,6 +874,14 @@ class SyncManager {
             merged = mergeForUpload(localText, remote.payload, baseline);
         } catch (error) {
             this._logStuckOnce('unmergeable', error);
+            if (!unattended) {
+                showToast(
+                    `Sync push stopped: the gist could not be merged with this device's data ` +
+                        `(${error?.message || 'unknown reason'}). Nothing was pushed. "Push and overwrite the ` +
+                        'gist" replaces it instead.',
+                    { kind: 'error', duration: 0 }
+                );
+            }
             return { ok: false, reason: 'unmergeable' };
         }
         // Whatever the gist taught the registry is saved before the result goes up
@@ -885,6 +910,7 @@ class SyncManager {
                 // longer copy with it (see `registeredKeysDiverge`)
                 extra: { [KEY_BASELINE]: exchangeBaseline(remote.payload, localText), [KEY_UNAPPLIED]: null },
             });
+            if (!unattended) showToast('Nothing to push: the gist already holds the same data as this device.');
             return { ok: true, skipped: true, reason: 'in-step' };
         }
 
@@ -898,6 +924,12 @@ class SyncManager {
                 [KEY_UNAPPLIED]: { since: remote.manifest?.exportedAt ?? null },
                 ...(remote.seen ? { [KEY_GIST_VERSION]: remote.seen } : {}),
             });
+            if (!unattended) {
+                showToast(
+                    'Nothing to push: the gist already holds everything this device has, and more. Pull to ' +
+                        'take the rest.'
+                );
+            }
             return { ok: true, skipped: true, reason: 'gist-has-it' };
         }
 
@@ -1429,6 +1461,12 @@ class SyncManager {
             return { ok: true, skipped: true, reason: 'no-gist' };
         }
 
+        // A gist chosen by hand has not been exchanged with yet: automatic pulls
+        // wait for the pressed Push or Pull that decides how (see KEY_LINK_PENDING)
+        if (silent && (await storage.get(KEY_LINK_PENDING, STORE, null))) {
+            return { ok: true, skipped: true, reason: 'link-pending' };
+        }
+
         // A silent pull asks GitHub whether the gist moved before downloading
         // it. Held-back records are the exception: they wait on a re-read of
         // the very version this device already has. So is a gist an automatic
@@ -1954,8 +1992,47 @@ class SyncManager {
      * @returns {Promise<void>}
      */
     async forgetGist() {
+        return this._exclusive(async () => {
+            await this._forgetGistNow();
+            return { ok: true, message: 'Unlinked.' };
+        });
+    }
+
+    /**
+     * `forgetGist`'s body, for a caller already holding the sync lock (`_run`, on a gist that is gone).
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _forgetGistNow() {
         await rememberLocal(forgottenGistEntries());
         this._resetOnceNotices();
+        this._notifyLinkChange();
+    }
+
+    /**
+     * Be told when this device's gist link changes: chosen, started anew, unlinked, forgotten as gone,
+     * or first recorded by a push or discovery.
+     * @param {() => void} listener - Called after the change is stored
+     * @returns {() => void} Stops the calls
+     */
+    onLinkChange(listener) {
+        this._linkListeners = this._linkListeners || new Set();
+        this._linkListeners.add(listener);
+        return () => this._linkListeners?.delete(listener);
+    }
+
+    /**
+     * Tell the link listeners. One that throws does not stop the others.
+     * @private
+     */
+    _notifyLinkChange() {
+        for (const listener of [...(this._linkListeners || [])]) {
+            try {
+                listener();
+            } catch (error) {
+                console.error('[Sync] A gist link listener failed:', error);
+            }
+        }
     }
 
     /**
@@ -1977,10 +2054,10 @@ class SyncManager {
      * it knew about the gist it was using (as `forgetGist` does) and records the
      * new id: with no stamp, fingerprint, counter, baseline or remembered ETag,
      * the first exchange downloads the gist in full and is never settled as
-     * "unchanged". A pressed Push then asks before it replaces the gist and
-     * offers to merge; an automatic push waits for the first pull; a pull
-     * combines histories and applies the gist's settings (an automatic one
-     * merges settings by their change stamps).
+     * "unchanged". Automatic pushes and pulls then wait for a pressed exchange
+     * (KEY_LINK_PENDING): a pressed Push asks before it replaces the gist and
+     * offers to merge, and a pressed Pull combines histories and applies the
+     * gist's values for everything else.
      *
      * @param {string} input - What was typed or pasted into the Gist ID box
      * @returns {Promise<{ok: boolean, reason?: string, message: string, gistId?: string}>} Outcome, with a
@@ -2022,18 +2099,39 @@ class SyncManager {
                         'Nothing was changed. Use a gist for this server, or start a new one.',
                 };
             }
+            if (found.public) {
+                return {
+                    ok: false,
+                    reason: 'public',
+                    message:
+                        'That gist is public, and anyone can read it; sync gists must be secret. Nothing was ' +
+                        'changed. Use a secret gist, or start a new one.',
+                };
+            }
+            if (!found.isSyncGist && found.otherFiles > 0) {
+                return {
+                    ok: false,
+                    reason: 'not-sync',
+                    message:
+                        'That gist holds other files and no sync data, so it is not a sync gist. Nothing was ' +
+                        'changed. Use a sync gist, or start a new one.',
+                };
+            }
             const current = await this.gistLinkState();
             if (current.gistId === found.id && !current.startNew) {
                 return { ok: true, reason: 'unchanged', gistId: found.id, message: 'Already using that gist.' };
             }
-            await rememberLocal({ ...forgottenGistEntries(), [KEY_GIST_ID]: found.id });
+            await rememberLocal({ ...forgottenGistEntries(), [KEY_GIST_ID]: found.id, [KEY_LINK_PENDING]: true });
             this._resetOnceNotices();
+            this._notifyLinkChange();
             return {
                 ok: true,
                 gistId: found.id,
                 message: found.isSyncGist
-                    ? 'Linked. Pull to take that gist\u2019s data, or Push and choose Merge to combine the two.'
-                    : 'Linked. That gist holds no sync data yet; the next Push fills it.',
+                    ? 'Linked. Automatic sync waits for your first exchange: Push and choose "Merge with the ' +
+                      'gist and push" to combine the two, or Pull, which takes the gist\u2019s values for ' +
+                      'settings and lists.'
+                    : 'Linked. That gist holds no sync data yet; the next Push writes into it.',
             };
         });
     }
@@ -2045,8 +2143,9 @@ class SyncManager {
      */
     async startNewGist() {
         return this._exclusive(async () => {
-            await rememberLocal({ ...forgottenGistEntries(), [KEY_START_NEW]: true });
+            await rememberLocal({ ...forgottenGistEntries(), [KEY_START_NEW]: true, [KEY_LINK_PENDING]: true });
             this._resetOnceNotices();
+            this._notifyLinkChange();
             return { ok: true, message: `The next Push creates a new gist for ${serverName(serverKind())}.` };
         });
     }
@@ -2109,6 +2208,12 @@ class SyncManager {
                 return `Ready. The next Push creates a new gist for ${serverName(serverKind())}.`;
             }
             return 'Ready. No gist yet — press Push to find or create one.';
+        }
+        if (!lastSyncedAt && (await storage.get(KEY_LINK_PENDING, STORE, null))) {
+            return (
+                'Linked to a gist, not yet synced. Automatic sync waits until you Push (and choose "Merge with ' +
+                'the gist and push") or Pull once.'
+            );
         }
         return lastSyncedAt ? `Last synced ${formatWhen(lastSyncedAt)}.` : 'Linked to a gist, not yet synced.';
     }
@@ -2318,6 +2423,7 @@ class SyncManager {
         const found = await findSyncGist(token, serverKind());
         if (found) {
             await rememberLocal({ [KEY_GIST_ID]: found });
+            this._notifyLinkChange();
             return found;
         }
 
@@ -2344,11 +2450,13 @@ class SyncManager {
         version,
         extra = {},
     }) {
+        const before = await storage.get(KEY_GIST_ID, STORE, null);
         await rememberLocal({
             ...extra,
             [KEY_GIST_ID]: gistId,
-            // A gist is recorded, so a pending "Start a new gist" is done
-            ...(gistId ? { [KEY_START_NEW]: null } : {}),
+            // A gist is recorded, so a pending "Start a new gist" is done, and so is the
+            // first exchange with a gist chosen by hand
+            ...(gistId ? { [KEY_START_NEW]: null, [KEY_LINK_PENDING]: null } : {}),
             [KEY_LAST_SYNCED_AT]: exportedAt,
             [KEY_LAST_HASH]: hash,
             [KEY_CHUNK_COUNT]: chunkCount,
@@ -2359,6 +2467,8 @@ class SyncManager {
             [KEY_GIST_VERSION]: version ?? null,
             ...(mergeHeld === undefined ? {} : { [KEY_MERGE_HELD]: mergeHeld }),
         });
+        // A push that created the gist: whoever shows the id redraws
+        if (before !== gistId) this._notifyLinkChange();
     }
 
     /**
@@ -2540,7 +2650,7 @@ class SyncManager {
             // Neither path can carry the token: it only ever appears in a header.
             if (error instanceof GistError) {
                 console.warn(`[Sync] ${label} failed (${error.kind})`, error.githubMessage || '');
-                if (error.kind === 'not-found') await this.forgetGist();
+                if (error.kind === 'not-found') await this._forgetGistNow();
                 // A corrupt or newer-format gist fails every unattended sync the
                 // same way until someone pushes over it. One sticky toast says
                 // so; repeating it every interval only stacks them.
@@ -2648,6 +2758,7 @@ function forgottenGistEntries() {
     return {
         [KEY_GIST_ID]: null,
         [KEY_START_NEW]: null,
+        [KEY_LINK_PENDING]: null,
         [KEY_LAST_SYNCED_AT]: null,
         [KEY_LAST_HASH]: null,
         [KEY_CHUNK_COUNT]: 0,
