@@ -552,6 +552,7 @@ class MarketVolumeStats {
                 host.appendChild(panel);
             }
             panel.style.transform = '';
+            this.syncScrollTabStop(panel, true);
             return true;
         }
         if (panel.parentElement !== card) {
@@ -560,7 +561,16 @@ class MarketVolumeStats {
         }
         this.mobileHost?.remove();
         this.mobileHost = null;
+        this.syncScrollTabStop(panel, false);
         return false;
+    }
+
+    /** The phone's scrolling table is keyboard-reachable; on desktop it is not a tab stop. */
+    syncScrollTabStop(panel, narrow) {
+        const scroller = panel.querySelector('.mwi-volume-stats-table-scroll');
+        if (!scroller) return;
+        if (narrow) scroller.setAttribute('tabindex', '0');
+        else scroller.removeAttribute('tabindex');
     }
 
     /** Restore only the card style owned by this feature, including after a card replacement. */
@@ -651,7 +661,7 @@ class MarketVolumeStats {
             `<button type="button" class="mwi-volume-stats-gear" title="Choose columns" ` +
             `style="position:absolute;top:2px;left:2px;background:none;border:none;color:#AAAAAA;` +
             `cursor:pointer;font-size:13px;padding:0;line-height:1;z-index:1;">⚙</button>` +
-            `<div class="mwi-volume-stats-table-scroll" tabindex="0" role="region" aria-label="Trade statistics">` +
+            `<div class="mwi-volume-stats-table-scroll" role="region" aria-label="Trade statistics">` +
             `<table style="border-collapse:collapse;font-size:13px;">` +
             `<tr style="color:#AAAAAA;font-size:11px;"><td style="width:16px;"></td>${header}</tr>${rows}</table></div>` +
             `</div>`;

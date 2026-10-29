@@ -797,4 +797,25 @@ describe('phone stats placement', () => {
         expect(marketVolumeStats.fitResizeCleanup).toBe(false);
         media.mockRestore();
     });
+
+    test('the scrolling table is a tab stop only while on the phone layout', () => {
+        const media = vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true });
+        const area = document.createElement('div');
+        area.className = 'MarketplacePanel_infoContainer__phone';
+        const card = document.createElement('div');
+        card.className = 'MarketplacePanel_currentItem__phone';
+        area.append(card);
+        document.body.append(area);
+        area.getBoundingClientRect = () => ({ left: 36 });
+        const panel = marketVolumeStats.attachPanel(card);
+        panel.innerHTML = '<div class="mwi-volume-stats-table-scroll" role="region"></div>';
+        marketVolumeStats.placePanel(panel);
+        const scroller = panel.querySelector('.mwi-volume-stats-table-scroll');
+        expect(scroller.getAttribute('tabindex')).toBe('0');
+        media.mockReturnValue({ matches: false });
+        marketVolumeStats.placePanel(panel);
+        expect(scroller.hasAttribute('tabindex')).toBe(false);
+        marketVolumeStats.disable();
+        media.mockRestore();
+    });
 });
