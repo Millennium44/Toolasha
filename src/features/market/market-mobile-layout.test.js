@@ -104,3 +104,14 @@ describe('phone listings scroll sideways', () => {
         expect(document.querySelectorAll('#mwi-market-mobile-layout')).toHaveLength(1);
     });
 });
+
+describe('trade stats on a phone', () => {
+    test('the stats host sizes to its content, not the height of the column it sits in', () => {
+        ensureMarketMobileStyles();
+        const css = document.getElementById('mwi-market-mobile-layout').textContent;
+        const rule = css.match(/\.mwi-volume-stats-mobile-host\s*\{([^}]*)\}/)[1];
+        // The game lays the listings area out as a flex column, where a 100% basis is 100% of its height
+        expect(rule).not.toMatch(/flex:\s*0 0 100%/);
+        expect(rule).toMatch(/flex:\s*0 0 auto/);
+    });
+});

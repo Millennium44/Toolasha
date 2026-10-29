@@ -36,7 +36,7 @@ export function ensureMarketMobileStyles() {
             }
             .mwi-market-order-totals > div { white-space: nowrap; }
             .mwi-volume-stats-mobile-host {
-                box-sizing: border-box; width: 100%; min-width: 0; flex: 0 0 100%;
+                box-sizing: border-box; width: 100%; min-width: 0; flex: 0 0 auto;
                 grid-column: 1 / -1; margin: 6px 0;
             }
             .mwi-volume-stats-mobile-host .mwi-volume-stats {
