@@ -743,6 +743,7 @@ export const simCacheMethods = {
             clearTimeout(this._simRetryTimer);
             this._simRetryTimer = null;
         }
+        this._simRetryEntries = null;
         // The full teardown, not the warm-pool-preserving one: this is the path
         // a character switch takes (labyrinth-clear-rate's teardown calls it),
         // and a worker kept warm across a switch holds the departing
@@ -1536,9 +1537,14 @@ export const simCacheMethods = {
         try {
             while (this.simQueue.length > 0) {
                 if (this.simCancelled() || this.simEpoch() !== epoch) break;
-                const { monsterHrid, roomLevel, badge, attempt = 0 } = this.simQueue.shift();
+                const entry = this.simQueue.shift();
+                const { monsterHrid, roomLevel, badge, attempt = 0 } = entry;
                 if (!badge.isConnected) continue;
+                // Remembered so a search that preempts the queue can put this
+                // room back: it is in neither the queue nor the retry list
+                this._simInFlight = entry;
                 const result = await this.computeCombatClear(monsterHrid, roomLevel, simOptions);
+                if (this._simInFlight === entry) this._simInFlight = null;
                 if (result?.cancelled || this.simEpoch() !== epoch) break;
                 if (!badge.isConnected) continue;
 
@@ -1566,11 +1572,17 @@ export const simCacheMethods = {
             // cancelled — a queue restarting itself seconds after teardown.
             if (this.simEpoch() === epoch) {
                 this.simRunning = false;
+                this._simInFlight = null;
                 // The queue draining is the end of a search; land its results now
                 // rather than a flush window later
                 this._flushCombatCache();
                 this.refreshAutomationRunningState?.();
-                if (retry.length > 0 && !this.simCancelled()) this._scheduleSimRetry(retry);
+                if (retry.length > 0 && !this.simCancelled() && !this.recommendRunning) {
+                    this._scheduleSimRetry(retry);
+                } else if (retry.length > 0 && this.recommendRunning && this._preemptedSims) {
+                    // A search took over mid-queue: these rooms wait for its end
+                    this._preemptedSims.push(...retry);
+                }
             }
         }
     },
@@ -1584,8 +1596,10 @@ export const simCacheMethods = {
      */
     _scheduleSimRetry(entries) {
         if (this._simRetryTimer) clearTimeout(this._simRetryTimer);
+        this._simRetryEntries = entries;
         this._simRetryTimer = setTimeout(() => {
             this._simRetryTimer = null;
+            this._simRetryEntries = null;
             let queued = 0;
             for (const entry of entries) {
                 // A badge the table's own rerender discarded needs no answer

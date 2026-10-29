@@ -279,4 +279,123 @@ describe('Recommend by Time', () => {
         expect(timeButton.textContent).toBe('Recommend by Time');
         expect(winButton.disabled).toBe(false);
     });
+
+    describe('row-estimate queue and the search buttons', () => {
+        const build = () => {
+            document.body.innerHTML = '<div><table class="LabyrinthPanel_automationTable_x"></table></div>';
+            panel.injectRecommendControls();
+            return {
+                win: document.querySelector('.mwi-labyrinth-recommend-controls-run'),
+                time: document.querySelector('.mwi-labyrinth-recommend-controls-run-seconds'),
+                stop: document.querySelector('.mwi-labyrinth-recommend-controls-stop-estimates'),
+            };
+        };
+        const badge = () => {
+            const el = document.createElement('span');
+            document.body.appendChild(el);
+            return el;
+        };
+
+        afterEach(() => {
+            panel.simRunning = false;
+            panel.simQueue = [];
+            panel._simInFlight = null;
+            panel._preemptedSims = [];
+            panel._simCancelRequested = false;
+        });
+
+        test('while only the row queue runs both buttons keep their labels and Stop estimates shows', () => {
+            const { win, time, stop } = build();
+            expect(stop.style.display).toBe('none');
+            panel.simRunning = true;
+            panel.refreshAutomationRunningState();
+            expect(win.textContent).toBe('Recommend');
+            expect(time.textContent).toBe('Recommend by Time');
+            expect(win.disabled).toBe(false);
+            expect(time.disabled).toBe(false);
+            expect(stop.style.display).toBe('');
+            panel.simRunning = false;
+            panel.refreshAutomationRunningState();
+            expect(stop.style.display).toBe('none');
+        });
+
+        test('pressing Recommend stops the queue and starts the search, which is not cancelled', async () => {
+            const { win } = build();
+            const a = badge();
+            const b = badge();
+            const inFlight = { monsterHrid: '/monsters/imp', roomLevel: 100, badge: a, attempt: 0 };
+            const waiting = { monsterHrid: '/monsters/imp', roomLevel: 101, badge: b, attempt: 0 };
+            panel.simRunning = true;
+            panel._simInFlight = inFlight;
+            panel.simQueue = [waiting];
+            let cancelledDuringRun = null;
+            const run = vi.spyOn(panel, 'runRecommendations').mockImplementation(async () => {
+                panel.beginSimBatch();
+                cancelledDuringRun = panel.simCancelled();
+                panel.recommendRunning = true;
+                panel.refreshAutomationRunningState();
+                expect(win.textContent).toBe('Cancel');
+                panel.recommendRunning = false;
+                panel._resumePreemptedSims();
+            });
+            const process = vi.spyOn(panel, 'processSimQueue').mockResolvedValue();
+
+            win.click();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(run).toHaveBeenCalledWith('winRate');
+            expect(cancelledDuringRun).toBe(false);
+            // Both the in-flight and the unreached room fill in again afterwards
+            expect(panel.simQueue).toEqual([inFlight, waiting]);
+            expect(process).toHaveBeenCalledTimes(1);
+        });
+
+        test('Recommend by Time preempts the queue the same way', async () => {
+            const { time } = build();
+            panel.simRunning = true;
+            panel.simQueue = [];
+            const run = vi.spyOn(panel, 'runRecommendations').mockResolvedValue();
+            time.click();
+            await Promise.resolve();
+            expect(run).toHaveBeenCalledWith('seconds');
+        });
+
+        test('Stop estimates stops the queue without a search and re-queues nothing', () => {
+            const { stop } = build();
+            panel.simRunning = true;
+            panel.simQueue = [{ monsterHrid: '/monsters/imp', roomLevel: 100, badge: badge(), attempt: 0 }];
+            const run = vi.spyOn(panel, 'runRecommendations').mockResolvedValue();
+            stop.click();
+            expect(run).not.toHaveBeenCalled();
+            expect(panel.simQueue).toEqual([]);
+            expect(panel.simCancelled()).toBe(true);
+            expect(stop.style.display).toBe('none');
+            panel._resumePreemptedSims();
+            expect(panel.simQueue).toEqual([]);
+        });
+
+        test('a search the player cancels does not bring the estimates back', () => {
+            build();
+            panel._preemptedSims = [{ monsterHrid: '/monsters/imp', roomLevel: 100, badge: badge(), attempt: 0 }];
+            panel._simCancelRequested = true;
+            vi.spyOn(panel, 'processSimQueue').mockResolvedValue();
+            panel._resumePreemptedSims();
+            expect(panel.simQueue).toEqual([]);
+        });
+
+        test('while a search runs the button that started it is its Cancel and presses cancel it', () => {
+            const { win, time } = build();
+            panel.recommendRunning = true;
+            panel.simRunning = true;
+            const cancel = vi.spyOn(panel, 'cancelRunningSims').mockImplementation(() => {});
+            const run = vi.spyOn(panel, 'runRecommendations').mockResolvedValue();
+            panel.refreshAutomationRunningState(1, 4);
+            expect(win.textContent).toBe('Cancel (1/4)');
+            expect(time.disabled).toBe(true);
+            win.click();
+            expect(cancel).toHaveBeenCalled();
+            expect(run).not.toHaveBeenCalled();
+        });
+    });
 });

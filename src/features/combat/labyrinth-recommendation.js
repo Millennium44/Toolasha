@@ -32,6 +32,7 @@ import {
 
 export const RECOMMEND_CLASS = 'mwi-labyrinth-recommend';
 export const RECOMMEND_CONTROLS_CLASS = 'mwi-labyrinth-recommend-controls';
+export const STOP_ESTIMATES_CLASS = `${RECOMMEND_CONTROLS_CLASS}-stop-estimates`;
 export const RECOMMEND_SECONDS_BUTTON_CLASS = `${RECOMMEND_CONTROLS_CLASS}-run-seconds`;
 /** Fallback for the recommend panel's Target Win %, matching settings-schema */
 const DEFAULT_RECOMMEND_TARGET_PCT = 70;
@@ -419,6 +420,52 @@ export const recommendationMethods = {
     },
 
     /**
+     * Start a search from a button press. If only the per-room estimate queue
+     * is running, it is stopped first and its unfinished rooms (the one in
+     * flight included) are remembered so they fill in again once the search is
+     * done. The search's own beginSimBatch reopens the cancellation scope, so
+     * the stop does not reach it.
+     * @param {'winRate'|'seconds'} [basis]
+     * @returns {Promise<void>}
+     */
+    async startRecommendations(basis = 'winRate') {
+        if (this.recommendRunning) return;
+        if (this.simRunning) {
+            const stash = [...(this._simRetryEntries || []), ...(this._simInFlight ? [this._simInFlight] : [])];
+            stash.push(...(this.simQueue || []));
+            this._preemptedSims = stash;
+            this.cancelRunningSims();
+        }
+        await this.runRecommendations(basis);
+    },
+
+    /**
+     * Stop the per-room estimate queue without starting a search.
+     */
+    stopRowEstimates() {
+        this._preemptedSims = [];
+        this.cancelRunningSims();
+        this.refreshAutomationRunningState();
+    },
+
+    /**
+     * Put the rooms a search preempted back on the estimate queue.
+     * @private
+     */
+    _resumePreemptedSims() {
+        const stash = this._preemptedSims || [];
+        this._preemptedSims = [];
+        if (this.simCancelled() || stash.length === 0) return;
+        let queued = 0;
+        for (const entry of stash) {
+            if (!entry.badge?.isConnected) continue;
+            this.queueCombatSim(entry.monsterHrid, entry.roomLevel, entry.badge, entry.attempt || 0);
+            queued++;
+        }
+        if (queued > 0) this.processSimQueue();
+    },
+
+    /**
      * Run recommendations for all visible rooms
      * @param {'winRate'|'seconds'} [basis] - Highest threshold that still clears
      *   at the Target Win %, or the highest whose expected clear time is within
@@ -597,6 +644,7 @@ export const recommendationMethods = {
         // character's thresholds onto the next one's table.
         if (this.simEpoch() !== epoch) return;
         this.injectRecommendationBadges();
+        this._resumePreemptedSims();
     },
 
     /**
@@ -611,12 +659,20 @@ export const recommendationMethods = {
         const button = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} .${RECOMMEND_CONTROLS_CLASS}-run`);
         const secondsButton = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} .${RECOMMEND_SECONDS_BUTTON_CLASS}`);
         if (!button && !secondsButton) return;
-        const running = !!this.recommendRunning || !!this.simRunning;
+        // Only a search occupies the buttons. The row-estimate queue behind the
+        // table is preempted by a press, so it never turns Recommend into Cancel
+        const running = !!this.recommendRunning;
         // The button that started a time batch becomes its Cancel; every other
         // run state keeps the original button as the Cancel, and the time
         // button is disabled so a second batch cannot start on top of it
         const timeRun = !!this.recommendRunning && this._recommendBasis === 'seconds';
         const hint = total > 0 ? ` (${done}/${total})` : '';
+        const stopButton = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} .${STOP_ESTIMATES_CLASS}`);
+        if (stopButton) {
+            // Shown while only the row queue is running: a long uncapped batch
+            // must be stoppable without starting a search
+            stopButton.style.display = this.simRunning && !this.recommendRunning && !this.simCancelled() ? '' : 'none';
+        }
         if (button) {
             if (running && !timeRun) {
                 button.textContent = `Cancel${hint}`;
@@ -921,11 +977,11 @@ export const recommendationMethods = {
         // every room can take a very long time, and there is nowhere else the
         // stop would obviously belong
         button.addEventListener('click', () => {
-            if (this.recommendRunning || this.simRunning) {
+            if (this.recommendRunning) {
                 this.cancelRunningSims();
                 this.refreshAutomationRunningState();
             } else {
-                this.runRecommendations();
+                this.startRecommendations();
             }
         });
 
@@ -935,11 +991,11 @@ export const recommendationMethods = {
         secondsButton.style.cssText = button.style.cssText;
         // Starts a time run, and while that one is going it stops it
         secondsButton.addEventListener('click', () => {
-            if (this.recommendRunning || this.simRunning) {
+            if (this.recommendRunning) {
                 this.cancelRunningSims();
                 this.refreshAutomationRunningState();
             } else {
-                this.runRecommendations('seconds');
+                this.startRecommendations('seconds');
             }
         });
 
@@ -951,7 +1007,16 @@ export const recommendationMethods = {
         container.appendChild(precisionInput);
         container.appendChild(uncappedButton);
         container.appendChild(button);
+        const stopButton = document.createElement('button');
+        stopButton.className = STOP_ESTIMATES_CLASS;
+        stopButton.textContent = 'Stop estimates';
+        stopButton.title = 'Stop filling in the per-room estimates. Rooms already estimated keep their numbers.';
+        stopButton.style.cssText = button.style.cssText;
+        stopButton.style.display = 'none';
+        stopButton.addEventListener('click', () => this.stopRowEstimates());
+
         container.appendChild(secondsButton);
+        container.appendChild(stopButton);
         table.parentNode.insertBefore(container, table);
         this.refreshAutomationRunningState();
     },
