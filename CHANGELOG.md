@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A sync gist now also records its game server in a small marker file that older Toolasha versions leave alone, so a push from an un-updated device can no longer strip the tag and let the other server claim the gist.
 
+### Dungeon tokens in crates valued after tax
+
+- Crate and chest values now count dungeon tokens net of the market tax, matching the loot log and the Dungeon ROI board; the personal-use (no sell tax) view still counts them whole.
+
 ### Lab Recommend works while room estimates fill in
 
 - On the Labyrinth Automation tab, Recommend and Recommend by Time no longer wait for every room's estimate: pressing one stops the estimates, runs the search, then finishes the remaining rooms. A Stop estimates button stops a long estimate batch on its own.
