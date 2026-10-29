@@ -1071,8 +1071,9 @@ function talliesFromTrials(trials) {
  * ({@link trialCycleGroups}), carrying that cycle's `cycleAt`, its trials, and
  * its members' tallies rebuilt from those trials. The week's sign-up rosters
  * go with every one of them: a sign-up is for the week, and so for each of its
- * cycles. A record holding an entry with no per-member figures cannot have its
- * tallies divided and stays whole.
+ * cycles. A cycle holding an entry with no per-member figures (a legacy
+ * record) cannot have its tallies divided: it is still split by its trials' times, but carries no member
+ * tallies rather than the whole week's.
  *
  * @param {Array<Object>} records - Week records, oldest first
  * @param {Object} [options] - Context
@@ -1085,16 +1086,21 @@ export function ledgerCyclesByAnchor(records, { perCycle = isTestServer() } = {}
     for (const record of records || []) {
         const trials = Array.isArray(record?.trials) ? record.trials : [];
         const groups = trialCycleGroups(trials);
-        if (groups.length <= 1 || !trials.every((trial) => Array.isArray(trial?.memberFigures))) {
+        if (groups.length <= 1) {
             cycles.push(record);
             continue;
         }
         for (const group of groups) {
+            // A legacy entry without per-member figures cannot have the week's tallies divided. Its cycle is
+            // still its own (windowing, counting and coverage read it by its trials' times) but carries no
+            // member tallies: counting the whole week's totals under each cycle would put trials outside
+            // a window into the table, so the members are unknown for it, as for any unobserved trial
+            const splittable = group.trials.every((trial) => Array.isArray(trial?.memberFigures));
             cycles.push({
                 ...record,
                 cycleAt: group.cycleAt,
                 trials: group.trials,
-                members: talliesFromTrials(group.trials),
+                members: splittable ? talliesFromTrials(group.trials) : {},
             });
         }
     }
