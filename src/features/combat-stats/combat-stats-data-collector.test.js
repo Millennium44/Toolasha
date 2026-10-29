@@ -24,6 +24,11 @@ const store = vi.hoisted(() => ({
     probeDelayMs: 0,
     /** What the next writes resolve with */
     setResult: true,
+    /** `storage.onWrite` listeners; the collector subscribes once, so they outlive a test */
+    listeners: new Set(),
+    emit(write) {
+        for (const listener of store.listeners) listener(write);
+    },
     /** The game socket the hook last attached to */
     socket: null,
 }));
@@ -73,9 +78,15 @@ vi.mock('../../core/storage.js', () => ({
             const value = await read(key);
             return value == null ? { found: false, value: null } : { found: true, value };
         },
-        set: async (key, value) => {
+        set: async (key, value, storeName) => {
+            // Like the real one: announced synchronously, before the first await
+            store.emit({ storeName, keys: [key], origin: 'local' });
             store.writes.push([key, value]);
             return store.setResult;
+        },
+        onWrite: (listener) => {
+            store.listeners.add(listener);
+            return () => store.listeners.delete(listener);
         },
         setJSON: async () => true,
         delete: async () => true,
@@ -294,6 +305,41 @@ describe('the party records are written when they change', () => {
             'partyConsumableTrackers_me',
             'partyConsumableSnapshots_me',
         ]);
+    });
+
+    test('a sync pull or another tab writing the key makes the same local value be written again', async () => {
+        const snapshots = () => partyWrites().filter((key) => key.startsWith('partyConsumableSnapshots'));
+        collector.partyConsumableSnapshots = { Ally: { '/items/tea': 5 } };
+        await collector.saveConsumableTracking();
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(1);
+
+        // A pull (putAll announces 'local' outside the collector's own set) replaces the stored record
+        store.emit({ storeName: 'combatStats', keys: ['partyConsumableSnapshots_me'], origin: 'local' });
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(2);
+
+        // Another tab's write, once committed
+        store.emit({ storeName: 'combatStats', keys: ['partyConsumableSnapshots_me'], origin: 'remote' });
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(3);
+    });
+
+    test('its own writes, their commits and other keys do not forget anything', async () => {
+        const snapshots = () => partyWrites().filter((key) => key.startsWith('partyConsumableSnapshots'));
+        collector.partyConsumableSnapshots = { Ally: { '/items/tea': 5 } };
+        await collector.saveConsumableTracking();
+
+        store.emit({ storeName: 'combatStats', keys: ['partyConsumableSnapshots_me'], origin: 'commit' });
+        store.emit({ storeName: 'combatStats', keys: ['somethingElse_me'], origin: 'remote' });
+        store.emit({ storeName: 'settings', keys: ['partyConsumableSnapshots_me'], origin: 'remote' });
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(1);
+
+        // A write that lists no keys may have touched anything
+        store.emit({ storeName: 'combatStats', keys: null, origin: 'local' });
+        await collector.saveConsumableTracking();
+        expect(snapshots()).toHaveLength(2);
     });
 
     test('a reset and a load both make the next save write again', async () => {

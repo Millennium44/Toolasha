@@ -223,6 +223,8 @@ class CombatStatsDataCollector {
         this.partyConsumableSnapshots = {}; // { playerName: { itemHrid: previousCount } }
         // Scoped key → fingerprint of the party record this page last handed to storage; see `_writeIfChanged`
         this._writtenPrints = new Map();
+        this._ownSetDepth = 0;
+        this._foreignWritesHeard = false;
         this.partyLastKnownConsumables = {}; // { playerName: { itemHrid: { itemHrid, lastSeenCount } } }
 
         // Character switch listeners, registered once (see initialize)
@@ -878,6 +880,30 @@ class CombatStatsDataCollector {
     }
 
     /**
+     * Forget what this page last wrote to a key when anything else writes it.
+     *
+     * The party records travel with sync, and another tab or a pull can replace them; an unchanged local
+     * value must then be written again rather than skipped. Heard once, for the life of the page. The
+     * 'commit' announcements are ignored: they follow every write, ours included, and a pull or another
+     * tab has already been heard when it was asked for ('local' outside our own `set` call) or announced
+     * ('remote').
+     * @private
+     */
+    _listenForForeignWrites() {
+        if (this._foreignWritesHeard || typeof storage.onWrite !== 'function') return;
+        this._foreignWritesHeard = true;
+        storage.onWrite(({ storeName, keys, origin } = {}) => {
+            if (origin === 'commit' || this._ownSetDepth > 0) return;
+            if (storeName !== null && storeName !== undefined && storeName !== COMBAT_STORE) return;
+            if (storeName == null || !Array.isArray(keys)) {
+                this._writtenPrints.clear();
+                return;
+            }
+            for (const key of keys) this._writtenPrints.delete(key);
+        });
+    }
+
+    /**
      * Write one of the party records unless it is what this page last handed to storage.
      *
      * "Last handed over" is recorded when the write is issued and taken back if it does not land, so a
@@ -895,10 +921,20 @@ class CombatStatsDataCollector {
         const key = scopedFor(base, owner);
         const print = fingerprint(value);
         if (this._writtenPrints.get(key) === print) return true;
+        this._listenForForeignWrites();
         this._writtenPrints.set(key, print);
         let landed = false;
         try {
-            landed = (await storage.set(key, value, COMBAT_STORE)) === true;
+            // `set` announces the write synchronously, inside this call, so the announcement can be told
+            // from a sync pull's (which arrives through another caller) by this counter alone
+            this._ownSetDepth += 1;
+            let pending;
+            try {
+                pending = storage.set(key, value, COMBAT_STORE);
+            } finally {
+                this._ownSetDepth -= 1;
+            }
+            landed = (await pending) === true;
         } finally {
             if (!landed && this._writtenPrints.get(key) === print) this._writtenPrints.delete(key);
         }
