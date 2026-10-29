@@ -307,4 +307,74 @@ describe('Recommend run over skilling and combat rooms', () => {
         panel.beginSimBatch();
         expect(await panel.findRecommendedThresholdCombat('/monsters/imp', 0.3)).toBeNull();
     });
+    describe('readers while a run has seen its inputs change', () => {
+        const cellOf = (hrid) => document.querySelector(`[data-hrid="${hrid}"]`);
+        const autofill = async (hrid) => {
+            const cell = cellOf(hrid);
+            const input = document.createElement('input');
+            const button = document.createElement('button');
+            button.textContent = 'Edit';
+            cell.append(input, button);
+            panel.onSkipEditClick({ target: button });
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            const filled = input.value;
+            input.remove();
+            button.remove();
+            return filled;
+        };
+
+        test('pre-change records read as absent to badges, autofill and the Lab Sim level until re-searched', async () => {
+            buildTable();
+            vi.spyOn(panel, 'getPlayerEffectiveCombatLevel').mockReturnValue(100);
+            vi.spyOn(panel, 'findRecommendedThreshold').mockReturnValue(8);
+            let call = 0;
+            const seen = {};
+            vi.spyOn(panel, 'findRecommendedThresholdCombat').mockImplementation(async () => {
+                call++;
+                // Rooms 1 and 2 search before the change (call 2 changes the gear);
+                // the third room is searched wholly under the new gear
+                if (call === 2) inputsChange('gear-b');
+                // First re-search call: the skilling rooms were redone, the two
+                // combat rooms searched at or before the change are still old
+                if (call === 4) {
+                    panel.injectRecommendationBadges();
+                    seen.badged = badgedRooms().sort();
+                    seen.levels = MONSTERS.map((hrid) => panel.getRecommendedCombatRoomLevel(hrid));
+                    seen.fillStale = await autofill(MONSTERS[0]);
+                    seen.fillFresh = await autofill(MONSTERS[2]);
+                    seen.running = panel.recommendRunning && panel._recommendInputsChangedMidRun;
+                }
+                return 20 + call;
+            });
+
+            await panel.runRecommendations();
+
+            expect(seen.running).toBe(true);
+            expect(seen.badged).toEqual([...SKILLS, MONSTERS[2]].sort());
+            // Lab Sim falls back to the configured skip (0 here) for the stale rooms only
+            expect(seen.levels).toEqual([0, 0, 100 + 23 - 1]);
+            // The stale room's field gets the configured threshold, not the old record's
+            expect(seen.fillStale).toBe('5');
+            expect(seen.fillFresh).toBe('23');
+            // Once the run settles every record answers for the current inputs
+            expect(badgedRooms().sort()).toEqual([...ALL].sort());
+            expect(panel.getRecommendedCombatRoomLevel(MONSTERS[0])).toBeGreaterThan(0);
+        });
+
+        test('with no change mid-run every record reads normally, and a finished run clears the stale view', () => {
+            buildTable();
+            vi.spyOn(panel, 'getPlayerEffectiveCombatLevel').mockReturnValue(100);
+            panel.recommendations.set(MONSTERS[0], { threshold: 4, basis: 'winRate' });
+            panel.recommendRunning = true;
+            panel._recommendInputsChangedMidRun = false;
+            expect(panel.getRecommendedCombatRoomLevel(MONSTERS[0])).toBe(103);
+            panel._recommendInputsChangedMidRun = true;
+            panel._recommendChangeSerial = 1;
+            panel._recommendRecordSerial = new Map([[MONSTERS[0], 0]]);
+            expect(panel.getRecommendedCombatRoomLevel(MONSTERS[0])).toBe(0);
+            panel.recommendRunning = false;
+            expect(panel.getRecommendedCombatRoomLevel(MONSTERS[0])).toBe(103);
+            panel._recommendInputsChangedMidRun = false;
+        });
+    });
 });

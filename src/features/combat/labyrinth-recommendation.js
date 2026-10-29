@@ -32,6 +32,7 @@ import {
 
 export const RECOMMEND_CLASS = 'mwi-labyrinth-recommend';
 export const RECOMMEND_CONTROLS_CLASS = 'mwi-labyrinth-recommend-controls';
+export const STOP_ESTIMATES_CLASS = `${RECOMMEND_CONTROLS_CLASS}-stop-estimates`;
 export const RECOMMEND_SECONDS_BUTTON_CLASS = `${RECOMMEND_CONTROLS_CLASS}-run-seconds`;
 /** Fallback for the recommend panel's Target Win %, matching settings-schema */
 const DEFAULT_RECOMMEND_TARGET_PCT = 70;
@@ -201,6 +202,25 @@ export const recommendationMethods = {
     },
 
     /**
+     * A room's recommendation as a reader should see it. While a run is going
+     * and its inputs have changed under it, a record written before the change
+     * answers for gear that is gone, so it reads as absent until the run's
+     * re-search replaces it. Every reader of the map goes through here: the
+     * badges, the skip-edit autofill and Lab Sim's recommended room level.
+     * @param {string} roomHrid
+     * @returns {Object|undefined} The record, or undefined when none is current
+     */
+    getCurrentRecommendation(roomHrid) {
+        const rec = this.recommendations?.get(roomHrid);
+        if (!rec) return undefined;
+        if (this.recommendRunning && this._recommendInputsChangedMidRun) {
+            const written = this._recommendRecordSerial?.get(roomHrid) ?? -1;
+            if (written < (this._recommendChangeSerial || 0)) return undefined;
+        }
+        return rec;
+    },
+
+    /**
      * The room level a Recommend run says this fight should be skipped to.
      *
      * The recommendation is a *threshold* — an offset — and the room it picks
@@ -219,7 +239,7 @@ export const recommendationMethods = {
      * @returns {number} Room level, 0 when there is no recommendation
      */
     getRecommendedCombatRoomLevel(monsterHrid) {
-        const rec = this.recommendations?.get(monsterHrid);
+        const rec = this.getCurrentRecommendation(monsterHrid);
         // A closest-miss from Recommend by Time is shown, not applied: it is
         // the level nearest the limit, not one that meets it
         if (rec?.qualifies === false) return 0;
@@ -419,6 +439,59 @@ export const recommendationMethods = {
     },
 
     /**
+     * Start a search from a button press. If only the per-room estimate queue
+     * is running, it is stopped first and its unfinished rooms (the one in
+     * flight included) are remembered so they fill in again once the search is
+     * done. The search's own beginSimBatch reopens the cancellation scope, so
+     * the stop does not reach it.
+     * @param {'winRate'|'seconds'} [basis]
+     * @returns {Promise<void>}
+     */
+    async startRecommendations(basis = 'winRate') {
+        if (this.recommendRunning) return;
+        if (this.simRunning) {
+            const stash = [...(this._simRetryEntries || []), ...(this._simInFlight ? [this._simInFlight] : [])];
+            stash.push(...(this.simQueue || []));
+            this._preemptedSims = stash;
+            this.cancelRunningSims();
+        }
+        await this.runRecommendations(basis);
+    },
+
+    /**
+     * Stop the per-room estimate queue without starting a search.
+     */
+    stopRowEstimates() {
+        this._preemptedSims = [];
+        this.cancelRunningSims();
+        this.refreshAutomationRunningState();
+    },
+
+    /**
+     * Put the rooms a search preempted back on the estimate queue.
+     * @private
+     */
+    _resumePreemptedSims() {
+        const stash = this._preemptedSims || [];
+        this._preemptedSims = [];
+        if (this.simCancelled()) {
+            // A cancelled search does not bring estimates back, the rows a
+            // rerender queued during it included
+            this.simQueue = [];
+            return;
+        }
+        // Rows a rerender queued during the search are already waiting; a
+        // preempted row whose badge is among them is not queued twice
+        const waiting = new Set((this.simQueue || []).map((entry) => entry.badge));
+        for (const entry of stash) {
+            if (!entry.badge?.isConnected || waiting.has(entry.badge)) continue;
+            this.queueCombatSim(entry.monsterHrid, entry.roomLevel, entry.badge, entry.attempt || 0);
+            waiting.add(entry.badge);
+        }
+        if ((this.simQueue || []).length > 0) this.processSimQueue();
+    },
+
+    /**
      * Run recommendations for all visible rooms
      * @param {'winRate'|'seconds'} [basis] - Highest threshold that still clears
      *   at the Target Win %, or the highest whose expected clear time is within
@@ -456,6 +529,8 @@ export const recommendationMethods = {
 
         this._recommendInputsChangedMidRun = false;
         this._recommendChangeSerial = 0;
+        /** room -> the change serial its record was computed under */
+        this._recommendRecordSerial = new Map();
         /** combat room -> the change serial its search started under */
         const combatSearchedAt = new Map();
 
@@ -469,12 +544,15 @@ export const recommendationMethods = {
         });
         // Skilling rooms are closed-form: no sims, nothing to cancel
         const searchSkillRoom = async (roomHrid) => {
+            const startedAt = this._recommendChangeSerial;
             if (bySeconds) {
                 const found = await this.findRecommendedThresholdSeconds(roomHrid, targetSeconds);
                 if (this.simEpoch() !== epoch) return;
                 this.recommendations.set(roomHrid, secondsRecord(found));
+                this._recommendRecordSerial.set(roomHrid, startedAt);
                 return;
             }
+            this._recommendRecordSerial.set(roomHrid, startedAt);
             this.recommendations.set(roomHrid, {
                 threshold: this.findRecommendedThreshold(roomHrid, targetRate),
                 basis: 'winRate',
@@ -485,15 +563,18 @@ export const recommendationMethods = {
 
         // One combat room's search; false when the batch was cancelled or torn down
         const searchCombatRoom = async (roomHrid) => {
-            combatSearchedAt.set(roomHrid, this._recommendChangeSerial);
+            const startedAt = this._recommendChangeSerial;
+            combatSearchedAt.set(roomHrid, startedAt);
             if (bySeconds) {
                 const found = await this.findRecommendedThresholdSecondsCombat(roomHrid, targetSeconds);
                 if (this.simCancelled() || this.simEpoch() !== epoch) return false;
                 // An interrupted combat room reports nothing, as win-rate does — and a retry
                 // that could not run drops the record it was retrying, rather than leave a
                 // threshold for the inputs that changed
-                if (found) this.recommendations.set(roomHrid, secondsRecord(found));
-                else this.recommendations.delete(roomHrid);
+                if (found) {
+                    this.recommendations.set(roomHrid, secondsRecord(found));
+                    this._recommendRecordSerial.set(roomHrid, startedAt);
+                } else this.recommendations.delete(roomHrid);
                 return true;
             }
             const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
@@ -504,6 +585,7 @@ export const recommendationMethods = {
                 basisKey,
                 target: this._recommendTargetPct,
             });
+            this._recommendRecordSerial.set(roomHrid, startedAt);
             return true;
         };
 
@@ -597,6 +679,7 @@ export const recommendationMethods = {
         // character's thresholds onto the next one's table.
         if (this.simEpoch() !== epoch) return;
         this.injectRecommendationBadges();
+        this._resumePreemptedSims();
     },
 
     /**
@@ -611,12 +694,20 @@ export const recommendationMethods = {
         const button = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} .${RECOMMEND_CONTROLS_CLASS}-run`);
         const secondsButton = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} .${RECOMMEND_SECONDS_BUTTON_CLASS}`);
         if (!button && !secondsButton) return;
-        const running = !!this.recommendRunning || !!this.simRunning;
+        // Only a search occupies the buttons. The row-estimate queue behind the
+        // table is preempted by a press, so it never turns Recommend into Cancel
+        const running = !!this.recommendRunning;
         // The button that started a time batch becomes its Cancel; every other
         // run state keeps the original button as the Cancel, and the time
         // button is disabled so a second batch cannot start on top of it
         const timeRun = !!this.recommendRunning && this._recommendBasis === 'seconds';
         const hint = total > 0 ? ` (${done}/${total})` : '';
+        const stopButton = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} .${STOP_ESTIMATES_CLASS}`);
+        if (stopButton) {
+            // Shown while only the row queue is running: a long uncapped batch
+            // must be stoppable without starting a search
+            stopButton.style.display = this.simRunning && !this.recommendRunning && !this.simCancelled() ? '' : 'none';
+        }
         if (button) {
             if (running && !timeRun) {
                 button.textContent = `Cancel${hint}`;
@@ -654,7 +745,7 @@ export const recommendationMethods = {
             const roomHrid = this.extractRoomHrid(cell);
             if (!roomHrid) continue;
 
-            const rec = this.recommendations.get(roomHrid);
+            const rec = this.getCurrentRecommendation(roomHrid);
             if (!rec || rec.threshold === null) continue;
 
             const isSkill = roomHrid.startsWith('/skills/');
@@ -921,11 +1012,11 @@ export const recommendationMethods = {
         // every room can take a very long time, and there is nowhere else the
         // stop would obviously belong
         button.addEventListener('click', () => {
-            if (this.recommendRunning || this.simRunning) {
+            if (this.recommendRunning) {
                 this.cancelRunningSims();
                 this.refreshAutomationRunningState();
             } else {
-                this.runRecommendations();
+                this.startRecommendations();
             }
         });
 
@@ -935,11 +1026,11 @@ export const recommendationMethods = {
         secondsButton.style.cssText = button.style.cssText;
         // Starts a time run, and while that one is going it stops it
         secondsButton.addEventListener('click', () => {
-            if (this.recommendRunning || this.simRunning) {
+            if (this.recommendRunning) {
                 this.cancelRunningSims();
                 this.refreshAutomationRunningState();
             } else {
-                this.runRecommendations('seconds');
+                this.startRecommendations('seconds');
             }
         });
 
@@ -951,7 +1042,16 @@ export const recommendationMethods = {
         container.appendChild(precisionInput);
         container.appendChild(uncappedButton);
         container.appendChild(button);
+        const stopButton = document.createElement('button');
+        stopButton.className = STOP_ESTIMATES_CLASS;
+        stopButton.textContent = 'Stop estimates';
+        stopButton.title = 'Stop filling in the per-room estimates. Rooms already estimated keep their numbers.';
+        stopButton.style.cssText = button.style.cssText;
+        stopButton.style.display = 'none';
+        stopButton.addEventListener('click', () => this.stopRowEstimates());
+
         container.appendChild(secondsButton);
+        container.appendChild(stopButton);
         table.parentNode.insertBefore(container, table);
         this.refreshAutomationRunningState();
     },
