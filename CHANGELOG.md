@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon tokens in crates valued after tax
+
+- Crate and chest values now count dungeon tokens net of the market tax, matching the loot log and the Dungeon ROI board; the personal-use (no sell tax) view still counts them whole.
+
 ### Leftover number fixes
 
 - The Dungeon ROI board reads drop quantity from the live battle, so chest value and ROI no longer read low with Combat Stats off; refined-item craft costs now apply Artisan Tea to the coin fee, as the game does.
