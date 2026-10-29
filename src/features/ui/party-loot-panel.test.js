@@ -11,7 +11,22 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ data: null, sessions: [] }));
+// Setting `sessions` is a write to the archive, which is what moves its revision
+const game = vi.hoisted(() => {
+    let sessions = [];
+    return {
+        data: null,
+        revision: 0,
+        reads: 0,
+        get sessions() {
+            return sessions;
+        },
+        set sessions(value) {
+            sessions = value;
+            this.revision += 1;
+        },
+    };
+});
 
 // A small live config, extended past the panel's own settings to cover the
 // pricing quick-settings row it now mounts: three real settings the row
@@ -103,7 +118,11 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () =>
 // exercised by its own tests, and pulling it in here recurses through the mock
 // factory while the graph is still being built
 vi.mock('../combat-stats/combat-session-history.js', () => ({
-    loadSessions: async () => game.sessions,
+    loadSessions: async () => {
+        game.reads += 1;
+        return game.sessions;
+    },
+    sessionsRevision: () => `rev${game.revision}`,
     // `game.combinedResult` lets one test hand back a specific combined
     // snapshot (an old `combatStartTime`, per-player `durationSeconds`) to
     // check what the panel does with it, without exercising the real merge
@@ -265,6 +284,26 @@ describe('the top bar', () => {
         await settle();
 
         expect(values()).toContain('a|1');
+    });
+
+    test('redrawing on the refresh timer does not read the archive again while it has not changed', async () => {
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        game.reads = 0;
+        partyLootPanel.show();
+        await settle();
+        const afterFirstRead = game.reads;
+        expect(afterFirstRead).toBeGreaterThan(0);
+
+        for (let i = 0; i < 10; i++) {
+            partyLootPanel.render();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        expect(game.reads).toBe(afterFirstRead);
+
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z'), archived('b|2', '2026-08-02T20:00:00Z')];
+        await settle();
+        expect(game.reads).toBeGreaterThan(afterFirstRead);
+        expect(values()).toContain('combined');
     });
 
     test('a combined view appears only when there is more than one run', async () => {

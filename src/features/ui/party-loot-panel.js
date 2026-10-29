@@ -44,7 +44,12 @@ import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
-import { loadSessions, combineSessions, describeSession } from '../combat-stats/combat-session-history.js';
+import {
+    loadSessions,
+    combineSessions,
+    describeSession,
+    sessionsRevision,
+} from '../combat-stats/combat-session-history.js';
 import {
     createPricingQuickSettings,
     PRICING_QUICK_SETTINGS_KEYS,
@@ -193,6 +198,10 @@ let viewing = 'live';
 /** Archived runs, newest first; refilled whenever the panel draws */
 let sessions = [];
 
+/** The `sessionsRevision` the list above was read at, and the one a read is in flight for */
+let sessionsSeen = null;
+let sessionsReading = null;
+
 /**
  * Which characters' cards are expanded to their full breakdown, by name.
  *
@@ -214,13 +223,26 @@ let expandedNames = new Set();
  * redraws, and no change at all never re-renders (which would loop).
  */
 async function refreshSessions() {
+    // The archive is read in full from storage, so a redraw every five seconds for hours was a read every
+    // five seconds. Read again only when the archive may have changed: the token moves with the character
+    // and with any write to it (see `sessionsRevision`).
+    const revision = sessionsRevision();
+    if (revision === sessionsSeen || revision === sessionsReading) return;
+    sessionsReading = revision;
     try {
         const fresh = await loadSessions();
+        // A newer read has been started since (the archive changed under this one): its answer stands
+        if (sessionsReading !== revision) return;
+        // Taken only once the read has landed, so a failed one is asked for again on the next draw. An
+        // empty list over a full one is how `loadSessions` reports a read it could not make.
+        if (fresh.length > 0 || sessions.length === 0) sessionsSeen = revision;
         const changed = fresh.length !== sessions.length || fresh[0]?.key !== sessions[0]?.key;
         sessions = fresh;
         if (changed) partyLootPanel.render();
     } catch (error) {
         console.error('[PartyLoot] Reading the session list failed:', error);
+    } finally {
+        if (sessionsReading === revision) sessionsReading = null;
     }
 }
 
@@ -299,6 +321,8 @@ export function _partyRuns() {
 export function _resetView() {
     viewing = 'live';
     sessions = [];
+    sessionsSeen = null;
+    sessionsReading = null;
     expandedNames = new Set();
 }
 
