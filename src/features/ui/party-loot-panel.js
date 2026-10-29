@@ -233,9 +233,10 @@ async function refreshSessions() {
         const fresh = await loadSessions();
         // A newer read has been started since (the archive changed under this one): its answer stands
         if (sessionsReading !== revision) return;
-        // Taken only once the read has landed, so a failed one is asked for again on the next draw. An
-        // empty list over a full one is how `loadSessions` reports a read it could not make.
-        if (fresh.length > 0 || sessions.length === 0) sessionsSeen = revision;
+        // Taken only once a read has produced something. An empty list is also how `loadSessions` reports a
+        // read it could not make (storage not ready yet after a login or a switch), so an empty one is asked
+        // for again on the next draw: one read per refresh for a character with no history yet.
+        if (fresh.length > 0) sessionsSeen = revision;
         const changed = fresh.length !== sessions.length || fresh[0]?.key !== sessions[0]?.key;
         sessions = fresh;
         if (changed) partyLootPanel.render();

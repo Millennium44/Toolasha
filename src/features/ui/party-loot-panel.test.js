@@ -25,6 +25,10 @@ const game = vi.hoisted(() => {
             sessions = value;
             this.revision += 1;
         },
+        // Storage catching up without any write the revision could hear
+        set sessionsSilently(value) {
+            sessions = value;
+        },
     };
 });
 
@@ -304,6 +308,21 @@ describe('the top bar', () => {
         await settle();
         expect(game.reads).toBeGreaterThan(afterFirstRead);
         expect(values()).toContain('combined');
+    });
+
+    test('a first read that fails (and so returns nothing) is asked for again on the next draw', async () => {
+        // Storage not ready yet: the read comes back empty, with no write to move the revision afterwards
+        game.sessions = [];
+        partyLootPanel.show();
+        await settle();
+        const afterFailed = game.reads;
+        expect(values()).not.toContain('a|1');
+
+        game.sessionsSilently = [archived('a|1', '2026-08-02T22:00:00Z')];
+        await settle();
+
+        expect(game.reads).toBeGreaterThan(afterFailed);
+        expect(values()).toContain('a|1');
     });
 
     test('a combined view appears only when there is more than one run', async () => {
