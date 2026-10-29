@@ -9,6 +9,7 @@
  * - cowbell: the bag's sell price after the bag's 18% tax, over 10
  * - dungeon tokens: the best token-shop line's quote after market tax
  * - labyrinth tokens: the best labyrinth shop line's quote after market tax
+ * - guild tokens: the best Guild Shop credit exchange, read at the column's side (`explainGuildTokenValue`)
  * - task tokens: the best Task Shop line plus the Task Point it grants (`valueTaskRewards`, as task profit)
  *
  * The loot log keeps ask and bid totals side by side, so every figure here is asked for one
@@ -23,6 +24,7 @@ import {
     calculateLabyrinthTokenValueDetail,
     DUNGEON_TOKEN_HRIDS,
 } from '../../utils/token-valuation.js';
+import { explainGuildTokenValue, isGuildTokenHrid } from '../guild/guild-token-value.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -41,7 +43,8 @@ export function isNonMarketCurrency(baseHrid) {
         baseHrid === COWBELL_HRID ||
         DUNGEON_TOKEN_HRIDS.has(baseHrid) ||
         baseHrid === LABYRINTH_TOKEN_HRID ||
-        baseHrid === TASK_TOKEN_HRID
+        baseHrid === TASK_TOKEN_HRID ||
+        isGuildTokenHrid(baseHrid)
     );
 }
 
@@ -86,6 +89,11 @@ export function resolveCurrencyValue(baseHrid, side = 'ask') {
         // The same valuation task profit uses (`valueTaskRewards`): each token rewarded also earns a Task
         // Point toward Purple's Gift, so one token is its shop value plus the gift share
         value = valueTaskRewards(calculateTaskTokenValue(), { tokens: 1 });
+    } else if (isGuildTokenHrid(baseHrid)) {
+        // Its best credit exchange. An exchange rate nobody read off the Guild Shop is only the
+        // setting's guess, so (as net worth does) it stays unpriced rather than moving the total
+        const valuation = explainGuildTokenValue(bookSide);
+        value = valuation?.assumed ? null : valuation?.gold;
     } else if (baseHrid === LABYRINTH_TOKEN_HRID) {
         // The best shop reward's market quote: a sale of it pays the market tax
         const quote = calculateLabyrinthTokenValueDetail(undefined, undefined, bookSide)?.value;
