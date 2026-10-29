@@ -569,6 +569,27 @@ describe('findSyncGist picks this game server’s gist', () => {
         responses.push({ status: 200, body: [gist('edited', 'my sync', '2026-10-27T12:00:00Z')] });
         expect(await findSyncGist('tok', 'live')).toBe('edited');
     });
+
+    test('reads past the first 100 gists, a page at a time, up to five pages', async () => {
+        const filler = (page) =>
+            Array.from({ length: 100 }, (_, index) => ({ id: `n${page}-${index}`, files: { 'notes.md': {} } }));
+        responses.push({ status: 200, body: filler(1) });
+        responses.push({ status: 200, body: [gist('live-on-page-2', LIVE, '2026-10-27T12:00:00Z')] });
+        expect(await findSyncGist('tok', 'live')).toBe('live-on-page-2');
+        expect(calls.map((call) => new URL(call.url).searchParams.get('page'))).toEqual(['1', '2']);
+
+        // An untagged gist on page 1 and another on page 3 is still two
+        calls.length = 0;
+        responses.push({ status: 200, body: [...filler(1).slice(1), gist('a', LEGACY, '2026-10-01T00:00:00Z')] });
+        responses.push({ status: 200, body: filler(2) });
+        responses.push({ status: 200, body: [gist('b', LEGACY, '2026-09-01T00:00:00Z')] });
+        await expect(findSyncGist('tok', 'live')).rejects.toMatchObject({ kind: 'ambiguous' });
+
+        calls.length = 0;
+        for (let page = 1; page <= 5; page += 1) responses.push({ status: 200, body: filler(page) });
+        expect(await findSyncGist('tok', 'live')).toBeNull();
+        expect(calls).toHaveLength(5);
+    });
 });
 
 describe('inspectSyncGist', () => {
@@ -583,13 +604,30 @@ describe('inspectSyncGist', () => {
                 },
             },
         });
-        expect(await inspectSyncGist('tok', 'abc')).toEqual({ id: 'abc', isSyncGist: true, server: 'test' });
+        expect(await inspectSyncGist('tok', 'abc')).toEqual({
+            id: 'abc',
+            isSyncGist: true,
+            server: 'test',
+            public: false,
+            otherFiles: 0,
+        });
 
         responses.push({
             status: 200,
-            body: { id: 'def', description: 'Toolasha cross-device sync — live (do not edit by hand)', files: {} },
+            body: {
+                id: 'def',
+                public: true,
+                description: 'Toolasha cross-device sync — live (do not edit by hand)',
+                files: { 'notes.md': {}, [chunkFileName(0)]: {} },
+            },
         });
-        expect(await inspectSyncGist('tok', 'def')).toEqual({ id: 'def', isSyncGist: false, server: 'live' });
+        expect(await inspectSyncGist('tok', 'def')).toEqual({
+            id: 'def',
+            isSyncGist: false,
+            server: 'live',
+            public: true,
+            otherFiles: 1,
+        });
     });
 
     test('a gist that is not there is not-found', async () => {

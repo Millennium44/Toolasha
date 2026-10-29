@@ -2066,12 +2066,15 @@ class SettingsUI {
                 button.textContent = busyLabel;
                 try {
                     const result = await run();
-                    button.textContent = result?.ok ? 'Done ✓' : 'Failed';
+                    // A sync that ended without changing anything (cancelled, nothing to push) says so
+                    button.textContent = result?.ok ? (result.skipped ? 'No change' : 'Done ✓') : 'Failed';
                 } catch (error) {
                     console.error('[SettingsUI] Sync action failed:', error);
                     button.textContent = 'Failed';
                 } finally {
                     await refreshStatus();
+                    // A push can discover or create the gist, and a failure can forget it
+                    await gistBox.refresh();
                     this.timerRegistry.scheduleTimeout(() => {
                         button.textContent = label;
                         button.disabled = false;
@@ -2097,9 +2100,10 @@ class SettingsUI {
                     ],
                 });
                 if (answer !== 'unlink') return { ok: false };
-                await syncManager.forgetGist();
-                await gistBox.refresh();
-                return { ok: true };
+                const result = await syncManager.forgetGist();
+                // Refused while a sync runs: the button says Failed, the box says why
+                if (!result?.ok && result?.message) gistBox.say(result);
+                return result;
             })
         );
 
@@ -2134,7 +2138,8 @@ class SettingsUI {
      * several untagged ones; this is where the player settles it.
      *
      * @param {() => Promise<void>} refreshStatus - Redraws the sync status line
-     * @returns {{element: HTMLElement, refresh: () => Promise<void>}} The box, and a redraw from storage
+     * @returns {{element: HTMLElement, refresh: () => Promise<void>, say: (result: Object) => void}} The box, a
+     *   redraw from storage, and a way to show an outcome's message in it
      */
     buildGistIdBox(refreshStatus) {
         const box = document.createElement('div');
@@ -2179,9 +2184,10 @@ class SettingsUI {
         help.textContent =
             'The gist this device syncs with. The live game and the test server keep separate gists: a gist ' +
             'marked for the other server is refused here, and by every sync except a pressed Push, which asks ' +
-            'first. Paste a gist id or link to switch: this device forgets what ' +
-            'it last synced, then Pull takes the new gist’s data, and Push asks before replacing it and offers ' +
-            'to merge. "Start a new gist" makes the next Push create a fresh one for this server.';
+            'first. Paste a gist id or link to switch: this device forgets what it last synced, and automatic ' +
+            'sync waits for your first exchange. Push and choose "Merge with the gist and push" to combine the ' +
+            'two; Pull instead takes the gist’s values for settings and lists. "Start a new gist" makes the next ' +
+            'Push create a fresh one for this server.';
 
         /** Whether the id is being typed */
         let isEditing = false;
@@ -2273,7 +2279,20 @@ class SettingsUI {
         line.append(label, shown, input, edit, save, cancel, startNew);
         box.append(line, note, help);
         refresh();
-        return { element: box, refresh };
+        // A sync elsewhere can change the link (forget a gist that is gone, discover one); redraw while
+        // the box is on screen, and stop listening once the panel has gone
+        const stopListening = syncManager.onLinkChange(() => {
+            if (!box.isConnected) {
+                stopListening();
+                return;
+            }
+            refresh();
+        });
+        const say = (result) => {
+            note.textContent = result?.message || '';
+            note.style.color = result?.ok ? '#8c8' : '#e88';
+        };
+        return { element: box, refresh, say };
     }
 
     addUtilityButtons(container) {

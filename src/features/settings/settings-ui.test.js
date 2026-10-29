@@ -81,6 +81,8 @@ const mocks = vi.hoisted(() => ({
     usedGists: [],
     /** What `syncManager.useGist` answers */
     useGistResult: { ok: true, message: 'Linked.' },
+    /** Listeners the Gist ID box registered through `syncManager.onLinkChange` */
+    linkListeners: [],
 }));
 
 /**
@@ -510,7 +512,15 @@ vi.mock('../sync/sync-manager.js', () => ({
             return mocks.useGistResult;
         },
         startNewGist: async () => ({ ok: true, message: 'The next Push creates a new gist.' }),
-        forgetGist: async () => {},
+        forgetGist: async () => ({ ok: true, message: 'Unlinked.' }),
+        push: async () => ({ ok: true }),
+        pull: async () => ({ ok: true }),
+        onLinkChange: (listener) => {
+            mocks.linkListeners.push(listener);
+            return () => {
+                mocks.linkListeners = mocks.linkListeners.filter((entry) => entry !== listener);
+            };
+        },
         prepareFullRestore: () => {},
         noteFullRestore: async (_payload, stores) => mocks.restoreNotes.push(stores),
     },
@@ -2498,6 +2508,32 @@ describe('the Gist ID box', () => {
         await flush();
         expect(visible(input)).toBe(false);
         expect(box.querySelector('.toolasha-sync-gist-id').textContent).toBe('b'.repeat(32));
+    });
+
+    test('a Push or Pull redraws the id, and so does the gist being forgotten elsewhere', async () => {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        settingsUI.addSyncControls(container);
+        await flush();
+        const shown = () => container.querySelector('.toolasha-sync-gist-id').textContent;
+        expect(shown()).toContain('none');
+
+        // The push discovered or created a gist
+        mocks.gistLink = { gistId: 'c'.repeat(32), startNew: false, server: 'live' };
+        [...container.querySelectorAll('button')].find((button) => button.textContent.includes('Push')).click();
+        await flush();
+        expect(shown()).toBe('c'.repeat(32));
+
+        // A sync elsewhere found the gist gone and forgot it
+        mocks.gistLink = { gistId: null, startNew: false, server: 'live' };
+        for (const listener of mocks.linkListeners) listener();
+        await flush();
+        expect(shown()).toContain('none');
+
+        // Once the panel is gone, its listener goes too
+        container.remove();
+        for (const listener of [...mocks.linkListeners]) listener();
+        expect(mocks.linkListeners).toHaveLength(0);
     });
 
     test('Start a new gist asks first, and does nothing when cancelled', async () => {
