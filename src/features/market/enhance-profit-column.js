@@ -19,7 +19,7 @@
  * order book's asks by position.
  */
 
-import { syncMobileListingNotes, removeMobileListingNotes } from './market-mobile-layout.js';
+import { syncListingScroll, releaseListingScroll } from './market-mobile-layout.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
@@ -285,7 +285,7 @@ class EnhanceProfitColumn {
     removeFrom(table) {
         table.querySelectorAll(`.${HEADER_CLASS}, .${CELL_CLASS}`).forEach((el) => el.remove());
         table.removeAttribute(STAMP_ATTR);
-        removeMobileListingNotes(table, CELL_CLASS);
+        releaseListingScroll(table.parentElement || table);
     }
 
     /**
@@ -356,7 +356,7 @@ class EnhanceProfitColumn {
             theadRow.querySelectorAll(`.${HEADER_CLASS}`).length === 1 &&
             rows.every((row) => row.querySelectorAll(`.${CELL_CLASS}`).length === 1);
         if (complete) {
-            syncMobileListingNotes(table, CELL_CLASS, 'Profit/h');
+            syncListingScroll(table);
             return;
         }
 
@@ -392,7 +392,7 @@ class EnhanceProfitColumn {
             if (ask) this.fillCell(cell, quote, ask.price);
             insertAt(row, cell, priceIndex >= 0 ? priceIndex + 1 : -1);
         }
-        syncMobileListingNotes(table, CELL_CLASS, 'Profit/h');
+        syncListingScroll(table);
     }
 
     /**
@@ -485,8 +485,7 @@ class EnhanceProfitColumn {
     clearDisplays() {
         document.querySelectorAll(`.${HEADER_CLASS}, .${CELL_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`[${STAMP_ATTR}]`).forEach((el) => el.removeAttribute(STAMP_ATTR));
-        // The phone layout mirrors each value as a note under the price; those outlive the column otherwise
-        removeMobileListingNotes(document, CELL_CLASS);
+        releaseListingScroll(document.documentElement);
     }
 
     disable() {

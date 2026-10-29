@@ -7,7 +7,7 @@
  * - Displays estimated ages on the main Market Listings (order book) tab
  */
 
-import { syncMobileListingNotes, removeMobileListingNotes } from './market-mobile-layout.js';
+import { syncListingScroll, releaseListingScroll } from './market-mobile-layout.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
@@ -2110,9 +2110,9 @@ class EstimatedListingAge {
         }
 
         // Remove existing age column elements if they exist (RWI pattern)
-        removeMobileListingNotes(table, 'mwi-estimated-age-cell');
         thead.querySelectorAll('.mwi-estimated-age-header').forEach((el) => el.remove());
         tbody.querySelectorAll('.mwi-estimated-age-cell').forEach((el) => el.remove());
+        releaseListingScroll(table.parentElement || table);
 
         // Get current item and order book data
         const currentItemHrid = this.getCurrentItemHrid();
@@ -2263,7 +2263,7 @@ class EstimatedListingAge {
             row.appendChild(cell);
             index++;
         });
-        syncMobileListingNotes(table, 'mwi-estimated-age-cell', 'Age');
+        syncListingScroll(table);
     }
 
     /**
@@ -2547,7 +2547,7 @@ class EstimatedListingAge {
         });
         document.querySelectorAll('.mwi-estimated-age-header').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-estimated-age-cell').forEach((el) => el.remove());
-        removeMobileListingNotes(document, 'mwi-estimated-age-cell');
+        releaseListingScroll(document.documentElement);
     }
 
     /**

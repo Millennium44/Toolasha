@@ -46,6 +46,7 @@ vi.mock('./estimated-listing-age.js', () => ({ default: ageMock }));
 vi.mock('./listing-markers.js', () => ({ default: { all: () => [] }, markerStateFor: () => ({}) }));
 
 import listingPriceDisplay, { parseQuantityCell } from './listing-price-display.js';
+import { syncListingScroll } from './market-mobile-layout.js';
 import { _resetGameNumberSeparators } from '../../utils/number-parser.js';
 
 const ITEM = '/items/bag';
@@ -456,64 +457,43 @@ describe('parseQuantityCell', () => {
     });
 });
 
-describe('compact My Listings details', () => {
+describe('My Listings scrolls sideways on phones', () => {
     afterEach(() => {
         listingPriceDisplay.clearDisplays();
         document.body.innerHTML = '';
     });
 
-    test('preserves native price/actions, unknown values, sorting data, and a full-column escape hatch', () => {
+    function build(cells) {
+        const host = document.createElement('div');
         const table = document.createElement('table');
         table.innerHTML = `<thead><tr><th>Status</th><th>Type</th><th>Progress</th><th>Price</th><th class="mwi-listing-price-header">Top Order Price</th><th class="mwi-listing-price-header">Total Price</th><th>Cancel</th></tr></thead>
-            <tbody><tr data-price="18400000" data-mwi-total-price="17664000"><td>Active</td><td>Sell</td><td>0 / 1</td><td>18.4M</td><td class="mwi-listing-price-cell">N/A</td><td class="mwi-listing-price-cell">17.66M</td><td><button>Cancel</button></td></tr></tbody>`;
-        document.body.append(table);
-        const row = table.querySelector('tbody tr');
+            <tbody><tr data-price="18400000" data-mwi-total-price="17664000"><td>Active</td><td>Sell</td><td>0 / 1</td><td>18.4M</td>${cells}<td><button>Cancel</button></td></tr></tbody>`;
+        host.append(table);
+        document.body.append(host);
+        return { host, table };
+    }
+
+    test('keeps one row with every cell, the native button, and a scrolling container; disable removes it all', () => {
+        const { host, table } = build(
+            '<td class="mwi-listing-price-cell">N/A</td><td class="mwi-listing-price-cell">17.66M</td>'
+        );
         const cancel = table.querySelector('button');
-        listingPriceDisplay.syncMobileDetails(table);
-        const observer = new MutationObserver(() => {});
-        observer.observe(table, { childList: true, subtree: true, attributes: true });
-        listingPriceDisplay.syncMobileDetails(table);
-        expect(observer.takeRecords()).toHaveLength(0);
-        observer.disconnect();
-        expect(row.children[3].textContent).toBe('18.4M');
-        expect(row.dataset.mwiTotalPrice).toBe('17664000');
-        expect(row.querySelector('[data-value="N/A"]').getAttribute('aria-label')).toBe('Top Order Price: N/A');
-        expect(table.querySelectorAll('.mwi-market-mobile-note')).toHaveLength(2);
+        syncListingScroll(table);
+        expect(table.querySelectorAll('tbody tr')).toHaveLength(1);
+        expect(table.querySelectorAll('tbody tr > td')).toHaveLength(7);
         expect(table.querySelector('button')).toBe(cancel);
-        expect(document.querySelectorAll('.mwi-my-listings-columns-toggle')).toHaveLength(1);
-        const toggle = document.querySelector('.mwi-my-listings-columns-toggle');
-        toggle.click();
-        expect(table.hasAttribute('data-mwi-show-full-columns')).toBe(true);
-        expect(toggle.getAttribute('aria-pressed')).toBe('true');
-        toggle.click();
-        expect(table.hasAttribute('data-mwi-show-full-columns')).toBe(false);
+        expect(host.hasAttribute('data-mwi-listing-scroll')).toBe(true);
+        expect(document.getElementById('mwi-market-mobile-layout').textContent).toContain('overflow-x: auto');
+        expect(document.querySelector('.mwi-market-mobile-note, .mwi-my-listings-columns-toggle')).toBeNull();
         listingPriceDisplay.clearDisplays();
-        expect(document.querySelector('.mwi-market-mobile-note')).toBeNull();
-        expect(document.querySelector('.mwi-my-listings-columns-toggle')).toBeNull();
-        expect(table.hasAttribute('data-mwi-mobile-mwi-listing-price-cell')).toBe(false);
+        expect(host.hasAttribute('data-mwi-listing-scroll')).toBe(false);
         expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
     });
 
-    test('mirrored notes take color and title from the value span the cells really carry', () => {
-        const table = document.createElement('table');
-        table.innerHTML = `<thead><tr><th>Status</th><th>Type</th><th>Progress</th><th>Price</th><th class="mwi-listing-price-header">Top Order Price</th><th>Cancel</th></tr></thead>
-            <tbody><tr><td>Active</td><td>Sell</td><td>0 / 1</td><td>18.4M</td><td class="mwi-listing-price-cell"><span class="mwi-listing-price-value" style="color: rgb(255, 0, 0);" title="Updated 5m ago">17.9M</span></td><td><button>Cancel</button></td></tr></tbody>`;
-        document.body.append(table);
-        listingPriceDisplay.syncMobileDetails(table);
-        const note = table.querySelector('.mwi-market-mobile-note');
-        expect(note.style.color).toBe('rgb(255, 0, 0)');
-        expect(note.title).toBe('Updated 5m ago');
-    });
-
-    test('adds no toggle, marker or rules when no detail has a label to mirror', () => {
-        const table = document.createElement('table');
-        table.innerHTML = `<thead><tr><th>Status</th><th>Type</th><th>Progress</th><th>Price</th><th class="mwi-listing-price-header"></th><th>Cancel</th></tr></thead>
-            <tbody><tr><td>Active</td><td>Sell</td><td>0 / 1</td><td>18.4M</td><td class="mwi-listing-price-cell">N/A</td><td><button>Cancel</button></td></tr></tbody>`;
-        document.body.append(table);
-        listingPriceDisplay.syncMobileDetails(table);
-        expect(document.querySelector('.mwi-my-listings-columns-toggle')).toBeNull();
-        expect(table.hasAttribute('data-mwi-mobile-mwi-listing-price-cell')).toBe(false);
-        expect(document.querySelector('.mwi-market-mobile-note')).toBeNull();
+    test('adds no marker or rules when the table carries no Toolasha cell', () => {
+        const { host, table } = build('<td>N/A</td><td>17.66M</td>');
+        syncListingScroll(table);
+        expect(host.hasAttribute('data-mwi-listing-scroll')).toBe(false);
         expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
     });
 });

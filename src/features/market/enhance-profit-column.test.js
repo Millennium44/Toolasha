@@ -338,7 +338,7 @@ describe('the order-book column', () => {
     });
 });
 
-test('the order-book observer settles after notes render, and unchanged repaints emit no mutations', async () => {
+test('the order-book observer settles after the scroll marker is set, and unchanged repaints emit no mutations', async () => {
     const { container } = buildMarket({ askRows: 1 });
     feedBook('/items/iron_sword', 5, [14_000_000]);
     const repaint = vi.spyOn(column, 'repaint');
@@ -346,7 +346,7 @@ test('the order-book observer settles after notes render, and unchanged repaints
     await vi.advanceTimersByTimeAsync(500);
     const settledCount = repaint.mock.calls.length;
     expect(column._containerObserver).not.toBeNull();
-    expect(container.querySelector('.mwi-market-mobile-note')).not.toBeNull();
+    expect(container.querySelector('[data-mwi-listing-scroll]')).not.toBeNull();
     await vi.advanceTimersByTimeAsync(500);
     expect(repaint).toHaveBeenCalledTimes(settledCount);
     const observed = new MutationObserver(() => {});
@@ -357,14 +357,16 @@ test('the order-book observer settles after notes render, and unchanged repaints
     repaint.mockRestore();
 });
 
-test('disabling the column takes the mirrored phone notes, table markers and shared styles with it', async () => {
+test('disabling the column takes the scroll marker and shared styles with it', async () => {
     const { container, sellTable } = buildMarket({ askRows: 1 });
     feedBook('/items/iron_sword', 5, [14_000_000]);
     column.repaint();
     await vi.advanceTimersByTimeAsync(500);
-    expect(container.querySelector('.mwi-market-mobile-note')).not.toBeNull();
+    expect(sellTable.parentElement.hasAttribute('data-mwi-listing-scroll')).toBe(true);
+    expect(sellTable.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(sellTable.querySelectorAll('.mwi-enh-profit-cell')).toHaveLength(1);
+    expect(container.querySelector('.mwi-market-mobile-note')).toBeNull();
     column.disable();
-    expect(document.querySelector('.mwi-market-mobile-note')).toBeNull();
-    expect(sellTable.hasAttribute('data-mwi-mobile-mwi-enh-profit-cell')).toBe(false);
+    expect(document.querySelector('[data-mwi-listing-scroll]')).toBeNull();
     expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
 });

@@ -2,9 +2,9 @@
 import { afterEach, describe, expect, test } from 'vitest';
 import {
     ensureMarketMobileStyles,
+    releaseListingScroll,
     releaseMarketMobileStyles,
-    removeMobileListingNotes,
-    syncMobileListingNotes,
+    syncListingScroll,
 } from './market-mobile-layout.js';
 
 afterEach(() => {
@@ -13,83 +13,94 @@ afterEach(() => {
 });
 
 function makeTable() {
+    const host = document.createElement('div');
     const table = document.createElement('table');
     table.innerHTML = `<thead><tr><th>Quantity</th><th>Price</th><th class="mwi-enh-profit-header">Profit/h</th><th>Action</th><th class="mwi-estimated-age-header">~Age</th></tr></thead><tbody>
         <tr><td>3</td><td><span class="MarketplacePanel_price__x">17.7M</span></td><td class="mwi-enh-profit-cell" title="Exact profit">45.77K</td><td><button>Buy</button></td><td class="mwi-estimated-age-cell">~14h 8m</td></tr>
-        <tr class="MarketplacePanel_outsideRangeSeparator__x"><td colspan="3">Outside range</td><td class="mwi-enh-profit-cell"></td><td class="mwi-estimated-age-cell"></td></tr>
     </tbody>`;
-    document.body.append(table);
-    return table;
+    host.append(table);
+    document.body.append(host);
+    return { host, table };
 }
 
-describe('mobile order book annotations', () => {
-    test('keeps the native numeric text and action handler unchanged while retaining both extra values', () => {
-        const table = makeTable();
-        const price = table.querySelector('[class*="MarketplacePanel_price"]').parentElement;
+const rules = () => document.getElementById('mwi-market-mobile-layout')?.textContent ?? '';
+
+describe('phone listings scroll sideways', () => {
+    test('the row stays one row with every cell, the container scrolls, and the native button is untouched', () => {
+        const { host, table } = makeTable();
         const button = table.querySelector('button');
         let clicks = 0;
         button.addEventListener('click', () => clicks++);
-        syncMobileListingNotes(table, 'mwi-enh-profit-cell', 'Profit/h');
-        syncMobileListingNotes(table, 'mwi-estimated-age-cell', 'Age');
-        expect(price.textContent).toBe('17.7M');
-        expect([...price.querySelectorAll('.mwi-market-mobile-note')].map((note) => note.dataset.value)).toEqual([
-            '45.77K',
-            '~14h 8m',
-        ]);
-        expect(price.querySelector('[role="note"]').getAttribute('aria-label')).toBe('Profit/h: 45.77K');
-        expect(table.querySelector('[class*="outsideRangeSeparator"] .mwi-market-mobile-note')).toBeNull();
+        syncListingScroll(table);
+        expect(table.querySelectorAll('tbody tr')).toHaveLength(1);
+        expect(table.querySelectorAll('tbody tr > td')).toHaveLength(5);
+        expect(table.querySelector('.MarketplacePanel_price__x').textContent).toBe('17.7M');
+        expect(host.hasAttribute('data-mwi-listing-scroll')).toBe(true);
+        expect(table.querySelector('button')).toBe(button);
         button.click();
         expect(clicks).toBe(1);
+        const css = rules();
+        const media = css.indexOf('@media (max-width: 768px)');
+        expect(media).toBeGreaterThan(-1);
+        const rule = css.indexOf('[data-mwi-listing-scroll] { overflow-x: auto; -webkit-overflow-scrolling: touch');
+        expect(rule).toBeGreaterThan(media);
+        expect(css).not.toContain('mwi-market-mobile-note');
     });
 
-    test('rerender replaces notes, cleanup removes only the owning column and the last owner releases CSS', () => {
-        const table = makeTable();
-        syncMobileListingNotes(table, 'mwi-enh-profit-cell', 'Profit/h');
-        syncMobileListingNotes(table, 'mwi-estimated-age-cell', 'Age');
-        table.querySelector('.mwi-enh-profit-cell').textContent = 'Unknown';
-        syncMobileListingNotes(table, 'mwi-enh-profit-cell', 'Profit/h');
-        expect(table.querySelectorAll('[data-mwi-mobile-column="mwi-enh-profit-cell"]')).toHaveLength(1);
-        expect(table.querySelector('[data-mwi-mobile-column="mwi-enh-profit-cell"]').dataset.value).toBe('Unknown');
-        removeMobileListingNotes(table, 'mwi-enh-profit-cell');
-        expect(table.hasAttribute('data-mwi-mobile-mwi-enh-profit-cell')).toBe(false);
-        expect(table.querySelectorAll('.mwi-market-mobile-note')).toHaveLength(1);
-        expect(document.getElementById('mwi-market-mobile-layout')).not.toBeNull();
-        removeMobileListingNotes(table, 'mwi-estimated-age-cell');
+    test('above the phone breakpoint the scroll rules are not applied outside the media query', () => {
+        const { table } = makeTable();
+        syncListingScroll(table);
+        const css = rules();
+        expect(css.slice(0, css.indexOf('@media (max-width: 768px)'))).not.toContain('overflow-x');
+    });
+
+    test('repeated syncs write nothing once settled', () => {
+        const { host, table } = makeTable();
+        syncListingScroll(table);
+        const observer = new MutationObserver(() => {});
+        observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+        syncListingScroll(table);
+        expect(observer.takeRecords()).toHaveLength(0);
+        observer.disconnect();
+        expect(host.hasAttribute('data-mwi-listing-scroll')).toBe(true);
+    });
+
+    test('a table with no Toolasha column gets no marker and no rules', () => {
+        const { host, table } = makeTable();
+        table.querySelectorAll('.mwi-enh-profit-cell, .mwi-estimated-age-cell').forEach((el) => el.remove());
+        syncListingScroll(table);
+        expect(host.hasAttribute('data-mwi-listing-scroll')).toBe(false);
         expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
     });
 
-    test('release keeps the shared rules while a columns toggle or a table marker still owns them', () => {
+    test('the marker stays while another feature still has a column, and the last owner releases the rules', () => {
+        const { host, table } = makeTable();
+        syncListingScroll(table);
+        table.querySelector('.mwi-enh-profit-cell').remove();
+        releaseListingScroll(host);
+        expect(host.hasAttribute('data-mwi-listing-scroll')).toBe(true);
+        expect(document.getElementById('mwi-market-mobile-layout')).not.toBeNull();
+        table.querySelector('.mwi-estimated-age-cell').remove();
+        releaseListingScroll(document.documentElement);
+        expect(host.hasAttribute('data-mwi-listing-scroll')).toBe(false);
+        expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
+    });
+
+    test('release keeps the shared rules while another owner remains', () => {
         ensureMarketMobileStyles();
-        const toggle = document.createElement('button');
-        toggle.className = 'mwi-my-listings-columns-toggle';
-        document.body.append(toggle);
+        const totals = document.createElement('div');
+        totals.className = 'mwi-market-order-totals';
+        document.body.append(totals);
         releaseMarketMobileStyles();
         expect(document.getElementById('mwi-market-mobile-layout')).not.toBeNull();
-        toggle.remove();
-        const table = document.createElement('table');
-        table.setAttribute('data-mwi-mobile-mwi-listing-price-cell', '');
-        document.body.append(table);
-        releaseMarketMobileStyles();
-        expect(document.getElementById('mwi-market-mobile-layout')).not.toBeNull();
-        table.removeAttribute('data-mwi-mobile-mwi-listing-price-cell');
+        totals.remove();
         releaseMarketMobileStyles();
         expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
     });
 
-    test('missing native price cells retain the original column rather than hiding its information', () => {
-        const table = makeTable();
-        table.querySelector('[class*="MarketplacePanel_price"]').remove();
-        syncMobileListingNotes(table, 'mwi-enh-profit-cell', 'Profit/h');
-        expect(table.hasAttribute('data-mwi-mobile-mwi-enh-profit-cell')).toBe(false);
-        expect(table.querySelector('.mwi-enh-profit-cell').textContent).toBe('45.77K');
-    });
-
-    test('rules only collapse columns in the phone media query and install once', () => {
+    test('rules install once', () => {
         ensureMarketMobileStyles();
         ensureMarketMobileStyles();
         expect(document.querySelectorAll('#mwi-market-mobile-layout')).toHaveLength(1);
-        const rules = document.getElementById('mwi-market-mobile-layout').textContent;
-        expect(rules.indexOf('@media (max-width: 768px)')).toBeLessThan(rules.indexOf('table[data-mwi-mobile-'));
-        expect(rules).toContain('overflow-x: auto');
     });
 });

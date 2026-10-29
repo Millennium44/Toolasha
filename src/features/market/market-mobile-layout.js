@@ -2,6 +2,8 @@
 export const MARKET_MOBILE_QUERY = '(max-width: 768px)';
 
 const STYLE_ID = 'mwi-market-mobile-layout';
+const SCROLL_ATTR = 'data-mwi-listing-scroll';
+const COLUMN_CELLS = '.mwi-enh-profit-cell, .mwi-estimated-age-cell, .mwi-listing-price-cell';
 
 /** Install the rules once. They match only nodes owned by these features. */
 export function ensureMarketMobileStyles() {
@@ -9,7 +11,7 @@ export function ensureMarketMobileStyles() {
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-        .mwi-market-pricing-disclosure, .mwi-market-mobile-note, .mwi-my-listings-columns-toggle { display: none; }
+        .mwi-market-pricing-disclosure { display: none; }
         #mwi-market-pricing-fields { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
         @media ${MARKET_MOBILE_QUERY} {
             #mwi-market-pricing-controls { margin-left: 0 !important; flex: 1 1 100%; min-width: 0; }
@@ -24,24 +26,8 @@ export function ensureMarketMobileStyles() {
                 box-sizing: border-box; flex: 1 1 130px; min-width: 0; max-width: 100%;
                 min-height: 44px; padding: 6px !important; font-size: 16px !important;
             }
-            .mwi-market-mobile-note {
-                display: block; font-size: 11px; line-height: 1.25; white-space: normal;
-                overflow-wrap: anywhere; margin-top: 3px;
-            }
-            .mwi-market-mobile-note::before { content: attr(data-label); display: block; color: #aaa; }
-            .mwi-market-mobile-note::after { content: attr(data-value); }
-            table[data-mwi-mobile-mwi-enh-profit-cell] .mwi-enh-profit-header,
-            table[data-mwi-mobile-mwi-enh-profit-cell] .mwi-enh-profit-cell,
-            table[data-mwi-mobile-mwi-estimated-age-cell] .mwi-estimated-age-header,
-            table[data-mwi-mobile-mwi-estimated-age-cell] .mwi-estimated-age-cell { display: none; }
-            table[data-mwi-mobile-mwi-listing-price-cell]:not([data-mwi-show-full-columns]) .mwi-listing-price-header,
-            table[data-mwi-mobile-mwi-listing-price-cell]:not([data-mwi-show-full-columns]) .mwi-listing-price-cell { display: none; }
-            table[data-mwi-show-full-columns] [data-mwi-mobile-column="mwi-listing-price-cell"] { display: none; }
-            .mwi-my-listings-columns-toggle {
-                display: block; min-height: 44px; max-width: 100%; margin: 4px 0;
-                color: inherit; background: transparent; border: 1px solid #666; border-radius: 4px;
-                padding: 6px 10px; font-size: 14px;
-            }
+            [${SCROLL_ATTR}] { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+            [${SCROLL_ATTR}] > table { width: max-content; min-width: 100%; }
             .mwi-market-order-totals {
                 flex-wrap: wrap; justify-content: flex-end !important; min-width: 0;
                 max-width: var(--mwi-market-header-width, 100%);
@@ -75,78 +61,43 @@ export function ensureMarketMobileStyles() {
 
 /** Remove the shared rules only when the last owning UI has gone away. */
 export function releaseMarketMobileStyles() {
-    const owned =
-        document.querySelector(
-            '#mwi-market-pricing-controls, .mwi-market-mobile-note, .mwi-market-order-totals, .mwi-volume-stats, .mwi-my-listings-columns-toggle'
-        ) ||
-        [...document.querySelectorAll('table')].some((table) =>
-            table.getAttributeNames().some((name) => name.startsWith('data-mwi-mobile-'))
-        );
+    const owned = document.querySelector(
+        `#mwi-market-pricing-controls, .mwi-market-order-totals, .mwi-volume-stats, [${SCROLL_ATTR}]`
+    );
     if (!owned) {
         document.getElementById(STYLE_ID)?.remove();
     }
 }
 
 /**
- * Mirror an injected column below the native price on phones instead of widening the table.
- * Keep the price span itself untouched: several consumers parse its text as a number.
+ * Let a listings table that carries Toolasha columns scroll sideways on phones.
+ * The game's single row and its native buttons stay as they are; the table's own
+ * container gets the overflow. The marker is inert above the phone breakpoint.
+ * Safe to call after every repaint: it writes only when the state changes.
  * @param {HTMLTableElement} table
- * @param {string} cellClass
- * @param {string} label
  */
-export function syncMobileListingNotes(table, cellClass, label) {
-    ensureMarketMobileStyles();
-    const notes = new Set(table.querySelectorAll(`[data-mwi-mobile-column="${cellClass}"]`));
-    const marker = `data-mwi-mobile-${cellClass}`;
-    const cells = [...table.querySelectorAll(`td.${cellClass}`)].filter(
-        (cell) =>
-            !cell.parentElement.matches('[class*="MarketplacePanel_outsideRangeSeparator"]') &&
-            cell.textContent.trim() &&
-            cell.textContent.trim() !== '· · ·'
-    );
-    if (
-        !cells.length ||
-        cells.some((cell) => !cell.parentElement.querySelector('[class*="MarketplacePanel_price"]')?.closest('td'))
-    ) {
-        notes.forEach((note) => note.remove());
-        if (table.hasAttribute(marker)) table.removeAttribute(marker);
-        return;
+export function syncListingScroll(table) {
+    const host = table?.parentElement;
+    if (!host) return;
+    if (table.querySelector(COLUMN_CELLS)) {
+        ensureMarketMobileStyles();
+        if (!host.hasAttribute(SCROLL_ATTR)) host.setAttribute(SCROLL_ATTR, '');
+    } else {
+        releaseListingScroll(host);
     }
-    if (!table.hasAttribute(marker)) table.setAttribute(marker, '');
-    for (const cell of cells) {
-        const price = cell.parentElement.querySelector('[class*="MarketplacePanel_price"]')?.closest('td');
-        if (!price || price === cell) continue;
-        let note = price.querySelector(`[data-mwi-mobile-column="${cellClass}"]`);
-        if (!note) {
-            note = document.createElement('span');
-            note.className = 'mwi-market-mobile-note';
-            note.dataset.mwiMobileColumn = cellClass;
-            note.setAttribute('role', 'note');
-            price.appendChild(note);
-        }
-        notes.delete(note);
-        // This helper runs from a childList observer's repaint path. Update only
-        // changed attributes; never replace settled notes and retrigger that observer.
-        const values = {
-            title: cell.title,
-            'data-label': label,
-            'data-value': cell.textContent,
-            'aria-label': `${label}: ${cell.textContent}`,
-        };
-        for (const [name, value] of Object.entries(values)) {
-            if (note.getAttribute(name) !== value) note.setAttribute(name, value);
-        }
-        if (note.style.color !== cell.style.color) note.style.color = cell.style.color;
-    }
-    notes.forEach((note) => note.remove());
 }
 
-/** Remove one feature's mirrored values, leaving the other feature's notes alone. */
-export function removeMobileListingNotes(root, cellClass) {
-    root.querySelectorAll(`[data-mwi-mobile-column="${cellClass}"]`).forEach((note) => note.remove());
-    root.querySelectorAll(`[data-mwi-mobile-${cellClass}]`).forEach((table) =>
-        table.removeAttribute(`data-mwi-mobile-${cellClass}`)
-    );
-    root.removeAttribute?.(`data-mwi-mobile-${cellClass}`);
+/**
+ * Drop the scroll marker from every container under root (or root itself) that no
+ * longer holds a Toolasha column, then release the shared rules if nothing else owns them.
+ * Call after the feature's cells are removed.
+ * @param {ParentNode & Element} root
+ */
+export function releaseListingScroll(root) {
+    const hosts = [...root.querySelectorAll(`[${SCROLL_ATTR}]`)];
+    if (root.hasAttribute?.(SCROLL_ATTR)) hosts.push(root);
+    for (const host of hosts) {
+        if (!host.querySelector(COLUMN_CELLS)) host.removeAttribute(SCROLL_ATTR);
+    }
     releaseMarketMobileStyles();
 }

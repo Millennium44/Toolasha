@@ -15,7 +15,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The narrow Combat and Labyrinth tab strips scroll horizontally so every tab, including Statistics and Lab Sim, stays reachable on a phone. Wider panels retain the native layout.
 - The Per-player button gets its own row above the battle on narrow screens instead of covering combat text, and returns to its original position on wider screens.
 - Narrow layouts give the Labyrinth controls their own row above the map and keep task reroll tools in the page flow instead of covering game controls. Task estimate controls wrap below the title, while wider layouts restore their original placement.
-- Marketplace pricing options collapse into an expandable strip, history statistics stay within the content area, and extra order statistics become compact price details on narrow screens. My Listings retains an option to show the full sortable columns, and header order totals wrap within the native header width on mobile.
+- Marketplace pricing options collapse into an expandable strip and history statistics stay within the content area on narrow screens. Order-book and My Listings tables keep the game's single row and Toolasha's columns, and scroll sideways on a phone so every column is reachable; header order totals wrap within the native header width.
 
 ### Sync: incomplete downloads
 
