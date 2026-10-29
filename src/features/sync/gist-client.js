@@ -1145,6 +1145,24 @@ export async function writeSyncGist(
             }
         }
 
+        // Both servers' markers on one gist (hand-made, or two racing pushes) say nothing about whose it is.
+        // A pressed push asks before taking it over, like the other server's gist; an automatic push or a
+        // restore only writes its own marker and deletes neither
+        const bothMarkers =
+            Boolean(listing?.files) &&
+            Object.hasOwn(listing.files, serverMarkerFile('live')) &&
+            Object.hasOwn(listing.files, serverMarkerFile('test'));
+        let bothMarkersConfirmed = false;
+        if (bothMarkers && isServerKind(server) && gistId && !unattended && confirmServer) {
+            if (!serverConfirmed) {
+                if (!(await confirmServer(server === 'live' ? 'test' : 'live'))) {
+                    throw new GistError('cancelled', 'The push was cancelled.');
+                }
+                serverConfirmed = true;
+            }
+            bothMarkersConfirmed = true;
+        }
+
         // Unknown counts as encrypted: an unreadable manifest, or no listing for a pressed push, must
         // not let plaintext replace what may be an encrypted gist without asking
         if (gistId && listing?.encrypted !== false && !manifest?.encrypted) {
@@ -1190,17 +1208,23 @@ export async function writeSyncGist(
                 ? manifest
                 : { ...manifest, syncSeq, ...(basedOn ? { basedOn } : {}) };
 
-        const otherMarker = serverMarkerFile(server === 'live' ? 'test' : 'live');
+        // The server the written marker names: this push's, or for a restore (no server named) the restored
+        // manifest's own, so the marker never contradicts the data put back. None leaves the markers alone
+        let markerFor = null;
+        if (isServerKind(server)) markerFor = server;
+        else if (isServerKind(writtenManifest?.server)) markerFor = writtenManifest.server;
+        const otherMarker = serverMarkerFile(markerFor === 'live' ? 'test' : 'live');
         const dropsOtherMarker =
-            isServerKind(server) && Boolean(existingFiles && Object.hasOwn(existingFiles, otherMarker));
+            markerFor !== null &&
+            Boolean(existingFiles && Object.hasOwn(existingFiles, otherMarker)) &&
+            (!bothMarkers || bothMarkersConfirmed);
         const orphanKey = `${orphans.join('\n')}|${syncSeq}|${basedOn}|${dropsOtherMarker}`;
         if (serialized?.orphanKey !== orphanKey) {
             const withOrphans = { [MANIFEST_FILE]: { content: JSON.stringify(writtenManifest, null, 2) }, ...files };
             for (const name of orphans) withOrphans[name] = null;
-            // The server marker: this push's own, and the other server's removed if present. Only a push that
-            // knows its server touches markers; the writes that put a revision back (server null) leave them
-            if (isServerKind(server)) {
-                withOrphans[serverMarkerFile(server)] = { content: serverMarkerContent(server) };
+            // The server marker: the written server's own, and the other's removed if present
+            if (markerFor !== null) {
+                withOrphans[serverMarkerFile(markerFor)] = { content: serverMarkerContent(markerFor) };
                 if (dropsOtherMarker) withOrphans[otherMarker] = null;
             }
             const body = {

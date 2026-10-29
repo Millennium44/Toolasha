@@ -1740,7 +1740,7 @@ describe('the server marker file', () => {
         expect(error?.kind).toBe('wrong-server');
     });
 
-    test('a revision restore (no server named) leaves the markers alone', async () => {
+    test('a restore of a manifest with no server leaves the markers alone', async () => {
         responses.push({
             status: 200,
             body: {
@@ -1752,9 +1752,64 @@ describe('the server marker file', () => {
             },
         });
         responses.push({ status: 200, body: { id: 'abc' } });
-        await writeSyncGist('tok', 'abc', { chunks: 1, server: 'test' }, ['data'], 0, null, { unattended: true });
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 0, null, { unattended: true });
         const { files } = JSON.parse(calls.at(-1).data);
         expect(Object.keys(files).some((name) => name.startsWith('toolasha-server-'))).toBe(false);
+    });
+
+    const plainListing = (markers) => ({
+        status: 200,
+        body: {
+            description: LEGACY,
+            files: {
+                [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) },
+                ...Object.fromEntries(markers.map((marker) => listed(serverMarkerFile(marker)))),
+            },
+        },
+    });
+
+    test('a restore re-asserts the marker of the manifest it puts back and drops the other', async () => {
+        // A confirmed override flipped the marker to live; the restore puts the test server's data back
+        responses.push(plainListing(['live']));
+        responses.push({ status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1, server: 'test' }, ['data'], 0, null, { unattended: true });
+        const { files } = JSON.parse(calls.at(-1).data);
+        expect(files[serverMarkerFile('test')].content).toMatch(/test server/);
+        expect(files[serverMarkerFile('live')]).toBeNull();
+    });
+
+    test('both markers present: a pressed push asks, and a no writes nothing', async () => {
+        const confirmServer = vi.fn(async () => false);
+        responses.push(plainListing(['live', 'test']));
+        const error = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 0, null, {
+            server: 'live',
+            confirmServer,
+        }).catch((caught) => caught);
+        expect(error.kind).toBe('cancelled');
+        expect(confirmServer).toHaveBeenCalledWith('test');
+        expect(calls.map((call) => call.method)).toEqual(['GET']);
+
+        confirmServer.mockImplementation(async () => true);
+        responses.push(plainListing(['live', 'test']));
+        responses.push({ status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 0, null, { server: 'live', confirmServer });
+        const { files } = JSON.parse(calls.at(-1).data);
+        expect(files[serverMarkerFile('test')]).toBeNull();
+    });
+
+    test('both markers present: an automatic push or restore deletes neither', async () => {
+        responses.push(plainListing(['live', 'test']));
+        responses.push({ status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 0, null, { server: 'live', unattended: true });
+        let { files } = JSON.parse(calls.at(-1).data);
+        expect(files[serverMarkerFile('live')].content).toMatch(/live game/);
+        expect(Object.hasOwn(files, serverMarkerFile('test'))).toBe(false);
+
+        responses.push(plainListing(['live', 'test']));
+        responses.push({ status: 200, body: { id: 'abc' } });
+        await writeSyncGist('tok', 'abc', { chunks: 1, server: 'test' }, ['data'], 0, null, { unattended: true });
+        ({ files } = JSON.parse(calls.at(-1).data));
+        expect(Object.hasOwn(files, serverMarkerFile('live'))).toBe(false);
     });
 
     test('the marker is not an orphan chunk and does not count against the size ceiling', async () => {
