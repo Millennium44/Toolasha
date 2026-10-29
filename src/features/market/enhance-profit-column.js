@@ -485,6 +485,8 @@ class EnhanceProfitColumn {
     clearDisplays() {
         document.querySelectorAll(`.${HEADER_CLASS}, .${CELL_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll(`[${STAMP_ATTR}]`).forEach((el) => el.removeAttribute(STAMP_ATTR));
+        // The phone layout mirrors each value as a note under the price; those outlive the column otherwise
+        removeMobileListingNotes(document, CELL_CLASS);
     }
 
     disable() {

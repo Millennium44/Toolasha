@@ -356,3 +356,15 @@ test('the order-book observer settles after notes render, and unchanged repaints
     observed.disconnect();
     repaint.mockRestore();
 });
+
+test('disabling the column takes the mirrored phone notes, table markers and shared styles with it', async () => {
+    const { container, sellTable } = buildMarket({ askRows: 1 });
+    feedBook('/items/iron_sword', 5, [14_000_000]);
+    column.repaint();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(container.querySelector('.mwi-market-mobile-note')).not.toBeNull();
+    column.disable();
+    expect(document.querySelector('.mwi-market-mobile-note')).toBeNull();
+    expect(sellTable.hasAttribute('data-mwi-mobile-mwi-enh-profit-cell')).toBe(false);
+    expect(document.getElementById('mwi-market-mobile-layout')).toBeNull();
+});
