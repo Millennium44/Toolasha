@@ -592,7 +592,19 @@ class ExpectedValueCalculator {
                 'profitCalc_pricingMode',
                 'expectedValue_respectPricingMode'
             );
-            return value !== null ? { value, source: 'dungeonToken', needsTax: false } : null;
+            if (value === null) return null;
+            // The token is worth what its best shop item sells for, and selling that pays the market
+            // tax (as the loot log and the dungeon ROI board value it). The result is netted here and
+            // flagged needsTax:false so callers don't tax it twice. The gross (personal-use) traversal
+            // sells nothing, so it takes the token untaxed, as the Cowbell branch does; an Iron Cow
+            // character pays no tax (calculatePriceAfterTax waives it).
+            const net =
+                context?.gross || context?.saleTaxRate === 0
+                    ? value
+                    : Number.isFinite(context?.saleTaxRate)
+                      ? value * (1 - context.saleTaxRate)
+                      : calculatePriceAfterTax(value, this.MARKET_TAX);
+            return { value: net, source: 'dungeonToken', needsTax: false };
         }
 
         // Nested container: worth its contents, computed on demand rather than read out of
