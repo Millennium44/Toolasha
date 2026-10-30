@@ -416,8 +416,13 @@ class LabyrinthClearRate {
             },
         });
 
-        const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>
-            this.injectOverlays()
+        // Debounced like the tile watcher below: the panel inserts one skip-threshold element per skill at once
+        // (~20), and each call redrew every overlay - ~580 ms per Labyrinth visit, measured live
+        const unregister = domObserver.onClass(
+            'LabyrinthClearRate',
+            'LabyrinthPanel_skipThreshold',
+            () => this.injectOverlays(),
+            { debounce: true, debounceDelay: 50, debounceMaxWait: 500 }
         );
         this.unregisterHandlers.push(unregister);
 
