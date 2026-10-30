@@ -137,6 +137,23 @@ export function readinessText(res, ready, clientData, ownCombatLevel, progress =
         return parts.join(' · ');
     }
 
+    if (res.kind === 'ability') {
+        if (ready.abilitiesUnknown) return 'abilities not loaded';
+        if (ready.allLearned) return 'every book learned';
+        // A book with no level requirement is met, not unknown
+        if (lv?.met === false) parts.push(`needs ${skillName(clientData, lv.skillHrid)} ${lv.need} (you ${lv.have})`);
+        else parts.push(lv?.met === true || (!lv && ready.levelMet === true) ? 'level met' : 'level unknown');
+        if (ready.owned === true) parts.push(`book owned: ${itemName(clientData, ready.ownedHrid)}`);
+        else if (ready.owned === null) parts.push('inventory not loaded');
+        else if (ready.buyHrid)
+            parts.push(
+                `buy ${itemName(clientData, ready.buyHrid)} ~${formatKMB(ready.cost)}${COIN_MARK}${ready.estimated ? ' (est.)' : ''}`
+            );
+        else if (ready.unpriced.length > 0) parts.push('no price for any book');
+        else parts.push('no book owned');
+        return parts.join(' · ');
+    }
+
     if (lv?.met === true) parts.push('level met');
     else if (lv?.met === false) parts.push(`needs ${skillName(clientData, lv.skillHrid)} ${lv.need} (you ${lv.have})`);
     else parts.push('level unknown');
@@ -282,6 +299,7 @@ function clickNav(ariaLabel) {
 export function hasGoButton(res, ready) {
     // No verified way to open the House from script: the hint stands alone
     if (res.kind === 'place') return res.place !== 'house';
+    if (res.kind === 'ability') return Boolean(ready?.buyHrid);
     if (res.kind !== 'equip') return true;
     return Boolean(ready?.buyHrid);
 }
@@ -539,6 +557,9 @@ class AchievementFinisher {
             inventory: dataManager.getInventory?.() ?? null,
             // Rooms are unknown, not none, until the character has loaded
             houseRooms: dataManager.characterData ? (dataManager.getHouseRooms?.() ?? null) : null,
+            learnedAbilities: dataManager.characterData
+                ? new Set((dataManager.getLearnedAbilities?.() || []).map((entry) => entry?.abilityHrid))
+                : null,
             ironCow: isIronCowCharacter(),
             buyPrice: (itemHrid) => {
                 const info = getItemPriceInfo(itemHrid, { context: 'profit', side: 'buy', marketQuote: true });
@@ -604,6 +625,7 @@ class AchievementFinisher {
                     );
                     break;
                 case 'equip':
+                case 'ability':
                     if (ready?.buyHrid) navigateToMarketplace(ready.buyHrid, 0);
                     break;
                 case 'place':
