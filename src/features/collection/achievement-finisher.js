@@ -157,6 +157,10 @@ export function readinessText(res, ready, clientData, ownCombatLevel, progress =
         return parts.join(' · ');
     }
 
+    // A row that picks one action among several names the pick; a single-action row has nothing to name
+    if (res.kind === 'production' && res.candidates?.length > 1 && ready.actionHrid) {
+        parts.push(clientData?.actionDetailMap?.[ready.actionHrid]?.name || nameFromHrid(ready.actionHrid));
+    }
     if (lv?.met === true) parts.push('level met');
     else if (lv?.met === false) parts.push(`needs ${skillName(clientData, lv.skillHrid)} ${lv.need} (you ${lv.have})`);
     else parts.push('level unknown');
