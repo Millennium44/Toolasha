@@ -15,6 +15,7 @@ import {
 } from './combat-sim-export.js';
 import { sharedProfileStatus, sharedProfileWarning } from '../../utils/shared-profile-status.js';
 import { gmGetValue } from '../../utils/gm-traffic.js';
+import { getMetzLoadouts } from './combat-sim-loadouts-metz.js';
 
 const ENHANCING_TOOL_LOCATION = '/item_locations/enhancing_tool';
 const ALCHEMY_TOOL_LOCATION = '/item_locations/alchemy_tool';
@@ -274,7 +275,7 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
     const equippedAbilityHrids = new Set(
         (characterObj.combatUnit?.combatAbilities || []).map((ability) => ability.abilityHrid).filter(Boolean)
     );
-    return toMetzCharacter(characterObj.character?.name || 'Player 1', source, {
+    const character = toMetzCharacter(characterObj.character?.name || 'Player 1', source, {
         hasMooPass: resolveHasMooPass(mooPassExpireTime, mooPassBuffs),
         skills: characterObj.characterSkills,
         speedGear: buildSpeedGear(source.player?.equipment, inventoryItems, itemDetailMap),
@@ -286,6 +287,13 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
             capturedAt: hasLiveData ? new Date().toISOString() : bridgedSnapshotTime(),
         }),
     });
+
+    // Saved combat loadouts, for Metz's loadout picker. Self-only: a shared profile never carries them.
+    const loadouts = getMetzLoadouts(characterObj.character?.id);
+    if (loadouts.length) {
+        character.loadouts = loadouts;
+    }
+    return character;
 }
 
 /**
