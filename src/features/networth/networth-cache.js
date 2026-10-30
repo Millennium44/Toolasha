@@ -32,8 +32,17 @@ function fingerprintParams(params) {
         .join('|');
 }
 
+/**
+ * Entries kept before the least recently used is evicted. The inventory badges walk every tile in
+ * order on each pass, and a cache smaller than the set of +N pieces they price is evicted entry by
+ * entry before the next pass reads it back — every pass then recomputed every enhancement path
+ * (100+ ms for a +20 piece). An entry is a short key and a {cost, partial} pair, so even a few
+ * thousand cost a few hundred KB.
+ */
+const DEFAULT_MAX_SIZE = 5000;
+
 class NetworthCache {
-    constructor(maxSize = 100) {
+    constructor(maxSize = DEFAULT_MAX_SIZE) {
         this.maxSize = maxSize;
         this.cache = new Map();
         this.marketDataHash = null;
