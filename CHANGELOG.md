@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Untradable capes valued, and token values on shop tiles
+
+- A new "Untradable capes: base value" setting (nothing, or one Mirror of Protection) prices capes that have no recipe or listing in alchemy, chests, net worth and enhancing; with "nothing" those values stay flagged incomplete instead of a silent 0 (from upstream).
+- Dungeon and Labyrinth shop tiles show gold per token after tax, with the best buy marked (from upstream).
+
 ### Upstream fixes: quick-input loadout, offline limit for endless combat
 
 - The action panel's speed, efficiency and queue sizing now use the saved loadout for that action throughout, instead of mixing worn gear with the loadout's drinks.
