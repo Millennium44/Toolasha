@@ -40,7 +40,7 @@ const REFRESH_DEBOUNCE_MS = 100;
 const WATCHED_SETTINGS = ['profitCalc_pricingMode', 'expectedValue_respectPricingMode', CAPE_BASE_VALUE_SETTING];
 
 const DUNGEON_TILE_SELECTOR = '[class*="ShopPanel_shopItems"] [class*="ShopPanel_shopItem__"]';
-const LABYRINTH_TILE_SELECTOR = '[class*="LabyrinthPanel_buyableGrid"] [class*="LabyrinthPanel_item"]';
+const LABYRINTH_TILE_SELECTOR = '[class*="LabyrinthPanel_buyableGrid"] [class*="LabyrinthPanel_item__"]';
 const COST_SELECTOR = '[class*="costs"], [class*="cost"]';
 
 /**
@@ -104,7 +104,7 @@ class ShopTokenValues {
         this.isInitialized = true;
 
         // Tiles are added when a tab opens (partial class match: a tile or the grid that holds them)
-        for (const className of ['ShopPanel_shopItem', 'LabyrinthPanel_buyableGrid', 'LabyrinthPanel_item']) {
+        for (const className of ['ShopPanel_shopItem', 'LabyrinthPanel_buyableGrid', 'LabyrinthPanel_item__']) {
             this.unregisterHandlers.push(
                 domObserver.onClass(`${OBSERVER_NAME}_${className}`, className, () => this.scheduleRefresh())
             );

@@ -12,7 +12,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPrice } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { tokenPricingSide, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
 import { isUntradableCape } from '../../utils/untradable-cape.js';
@@ -38,6 +38,18 @@ export function badgeSide() {
 }
 
 /**
+ * One unit's price on the badge side, from the same source the token valuation reads: a custom
+ * price counts, and the side is forced.
+ * @param {string} itemHrid - Item HRID
+ * @param {'ask'|'bid'} side - Book side
+ * @returns {number|null} Price, or null when unquoted
+ */
+function unitPriceOf(itemHrid, side) {
+    const price = getItemPrice(itemHrid, { mode: side });
+    return price > 0 ? price : null;
+}
+
+/**
  * One shop line's value per token.
  *
  * @param {Object} line - The shop line
@@ -48,7 +60,7 @@ export function badgeSide() {
  * @returns {{perToken: number, assumed: boolean, assumedValue: number, partial: boolean}|null} null
  *   when the item has no price and is not an untradable cape (nothing to say about it)
  */
-function valueLine({ itemHrid, cost, outputCount }, unitPrice) {
+function valueLine({ itemHrid, cost, outputCount }, unitPrice, side) {
     if (unitPrice > 0) {
         return {
             perToken: (calculatePriceAfterTax(unitPrice) * outputCount) / cost,
@@ -59,7 +71,8 @@ function valueLine({ itemHrid, cost, outputCount }, unitPrice) {
     }
     if (!isUntradableCape(itemHrid)) return null;
     // A cape cannot be sold, so its assumed value is not taxed
-    const cape = getUntradableCapeBaseCost(itemHrid);
+    // The mirror stand-in is read on the badge's own side
+    const cape = getUntradableCapeBaseCost(itemHrid, { mode: side });
     const assumedValue = cape?.value > 0 ? cape.value : 0;
     return {
         perToken: (assumedValue * outputCount) / cost,
@@ -85,12 +98,11 @@ export function shopLineValues(currencyHrid, side = badgeSide()) {
         for (const line of Object.values(shopMap || {})) {
             const cost = line?.cost?.count || 0;
             if (!line?.itemHrid || !(cost > 0)) continue;
-            const book = getItemPrices(line.itemHrid, 0);
             lines.push({
                 itemHrid: line.itemHrid,
                 cost,
                 outputCount: line.outputCount > 0 ? line.outputCount : 1,
-                unitPrice: book?.[side] > 0 ? book[side] : null,
+                unitPrice: unitPriceOf(line.itemHrid, side),
             });
         }
     } else {
@@ -99,14 +111,14 @@ export function shopLineValues(currencyHrid, side = badgeSide()) {
                 itemHrid: offer.itemHrid,
                 cost: offer.cost,
                 outputCount: offer.outputCount,
-                unitPrice: offer.askPrice,
+                unitPrice: unitPriceOf(offer.itemHrid, side),
             });
         }
     }
 
     const values = [];
     for (const line of lines) {
-        const value = valueLine(line, line.unitPrice);
+        const value = valueLine(line, line.unitPrice, side);
         if (value)
             values.push({
                 itemHrid: line.itemHrid,

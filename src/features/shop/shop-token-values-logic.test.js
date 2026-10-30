@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
     settings: {},
     /** hrid -> {value, partial} the cape valuation answers */
     capeCosts: {},
+    custom: {},
+    capeCalls: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -27,8 +29,10 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({
+    // The token valuation's source: a custom price wins, the side is forced by `mode`
+    getItemPrice: (hrid, { mode } = {}) => mocks.custom[hrid] ?? mocks.books[hrid]?.[mode] ?? null,
+    // dungeonShopOffers still reads the raw book for its own `askPrice`, which the badge ignores
     getItemPrices: (hrid) => mocks.books[hrid] ?? null,
-    getItemPrice: () => null,
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     calculatePriceAfterTax: (price) => (mocks.ironCow ? price : price * 0.96),
@@ -43,7 +47,10 @@ vi.mock('../../utils/token-valuation.js', () => ({
     tokenPricingSide: () => mocks.side,
 }));
 vi.mock('../../utils/untradable-cape-cost.js', () => ({
-    getUntradableCapeBaseCost: (hrid) => mocks.capeCosts[hrid] ?? null,
+    getUntradableCapeBaseCost: (hrid, options) => {
+        mocks.capeCalls.push([hrid, options]);
+        return mocks.capeCosts[hrid] ?? null;
+    },
 }));
 
 const { shopLineValues, bestLine, badgedCurrencies, badgeSide, LABYRINTH_TOKEN_HRID } =
@@ -64,6 +71,8 @@ beforeEach(() => {
     mocks.ironCow = false;
     mocks.settings = {};
     mocks.capeCosts = {};
+    mocks.custom = {};
+    mocks.capeCalls = [];
     mocks.books = {
         '/items/essence': { ask: 1000, bid: 800 },
         '/items/bulk': { ask: 50, bid: 40 },
@@ -174,6 +183,19 @@ describe('shopLineValues', () => {
 
         expect(cape.assumed).toBe(false);
         expect(cape.perToken).toBeCloseTo((2_000_000 * 0.96) / 35_000, 8);
+    });
+
+    test('a custom price counts, as it does in the token valuation', () => {
+        mocks.custom['/items/essence'] = 5000;
+        const essence = shopLineValues(CHIM).find((line) => line.itemHrid === '/items/essence');
+        expect(essence.perToken).toBeCloseTo((5000 * 0.96) / 10, 8);
+    });
+
+    test('the cape stand-in is read on the badge side', () => {
+        mocks.side = 'bid';
+        mocks.capeCosts['/items/chimerical_quiver'] = { value: 1, partial: false };
+        shopLineValues(CHIM);
+        expect(mocks.capeCalls).toContainEqual(['/items/chimerical_quiver', { mode: 'bid' }]);
     });
 
     test('a shop with no data, or a currency nothing sells for, has no lines', () => {

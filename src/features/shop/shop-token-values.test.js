@@ -93,7 +93,7 @@ const dungeonTile = (slug, currencySlug, count, name = slug) =>
         <div class="ShopPanel_costs__x"><div>${icon(currencySlug)}<span>${count}</span></div></div></div>`;
 
 const labyrinthTile = (slug) =>
-    `<div class="LabyrinthPanel_item__x"><div>${slug}</div>${icon(slug)}<div class="LabyrinthPanel_cost__x">x</div></div>`;
+    `<div class="LabyrinthPanel_item__x"><div class="LabyrinthPanel_itemName__x">${slug}</div>${icon(slug)}<div class="LabyrinthPanel_cost__x">x</div></div>`;
 
 const badges = () => [...document.querySelectorAll('.mwi-shop-token-value')];
 
@@ -238,6 +238,19 @@ describe('Labyrinth shop tiles', () => {
         expect(rare.textContent).toBe('★ 2880/token');
         expect(essence.textContent).toBe('1200/token');
         expect(essence.dataset.mwiBest).toBe('false');
+    });
+});
+
+describe('Labyrinth tile selection', () => {
+    test('only the tile itself is badged, never a node inside it whose class starts the same', () => {
+        document.body.innerHTML = `<div class="LabyrinthPanel_buyableGrid__x">
+            <div class="LabyrinthPanel_item__y">${icon('rare')}<div class="LabyrinthPanel_itemName__z">rare</div></div>
+        </div>`;
+        feature.isInitialized = true;
+        feature.refreshAll();
+
+        expect(badges()).toHaveLength(1);
+        expect(badges()[0].parentElement.className).toBe('LabyrinthPanel_item__y');
     });
 });
 
