@@ -6,7 +6,7 @@ const shop = vi.hoisted(() => ({ costs: {} }));
 // What the main thread's shared input rule reads: this suite has no market feed, so the price map
 // each test hands the batch stands in for the book, and the recipes for the craft-cost walk
 const yielded = vi.hoisted(() => ({ count: 0 }));
-const ctx = vi.hoisted(() => ({ priceMap: {}, recipes: {}, assumedBases: new Set() }));
+const ctx = vi.hoisted(() => ({ priceMap: {}, recipes: {}, assumedBases: new Set(), capeBase: 0, capes: new Set() }));
 // The player's Artisan bonus per action type, and every task the pool was handed
 const artisan = vi.hoisted(() => ({ byType: {}, asked: [], tasks: [] }));
 
@@ -25,6 +25,13 @@ vi.mock('./yield-to-browser.js', () => ({
     yieldToBrowser: async () => {
         yielded.count++;
     },
+}));
+
+// The cape setting's value and which items are untradable capes, as the main thread reads them
+vi.mock('./untradable-cape.js', () => ({
+    isUntradableCape: (hrid) => ctx.capes.has(hrid),
+    isRefinedCape: (hrid) => hrid.endsWith('_refined'),
+    getCapeBaseValue: () => ctx.capeBase,
 }));
 
 // The shared enhancement input rule, emulated over the test's own price map: the main thread resolves
@@ -450,5 +457,48 @@ describe('networth enhancement cost of an untradable cape whose base is an assum
         const result = await cost();
 
         expect(result.value).toBe(0);
+    });
+});
+
+describe('an untradable cape whose path fails falls back as the main thread does', () => {
+    const CAPE = '/items/gatherer_cape';
+    const params = { enhancingLevel: 60, toolBonus: 10, blessedTeaBonus: 0, guzzlingBonus: 1 };
+    // A material nobody can price: the path is a partial bill, so the fallback decides the value
+    const gameData = {
+        itemDetailMap: {
+            [CAPE]: {
+                itemLevel: 10,
+                enhancementCosts: [{ itemHrid: '/items/rare_mat', count: 2 }],
+                protectionItemHrids: [],
+            },
+            '/items/rare_mat': { name: 'Rare Mat' },
+        },
+        actionDetailMap: {},
+    };
+
+    async function fallback() {
+        ctx.priceMap = {};
+        ctx.recipes = {};
+        ctx.capes = new Set([CAPE]);
+        const partial = new Set();
+        const [value] = await calculateItemValueBatch(
+            [{ itemHrid: CAPE, enhancementLevel: 5, count: 1 }],
+            {},
+            { useHighEnhancementCost: false, minLevel: 99, enhancementParams: params },
+            gameData,
+            partial
+        );
+        terminateItemValueWorkerPool();
+        return { value, partial: partial.has(0) };
+    }
+
+    test('on the mirror setting the cape is worth the mirror, not a silent 0', async () => {
+        ctx.capeBase = 750_000;
+        expect(await fallback()).toEqual({ value: 750_000, partial: false });
+    });
+
+    test('on "nothing" the value is 0 but flagged partial, as on the main thread', async () => {
+        ctx.capeBase = 0;
+        expect(await fallback()).toEqual({ value: 0, partial: true });
     });
 });
