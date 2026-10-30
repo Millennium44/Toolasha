@@ -269,6 +269,18 @@ describe('a pass over unchanged inputs', () => {
         expect(await pricedTiles()).toBe(tiles.length);
     });
 
+    test('a pass that priced nothing (game data not in yet) leaves nothing to reuse', async () => {
+        await pricedTiles();
+        mocks.priceVersion += 1;
+        const held = mocks.initData;
+        mocks.initData = null;
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        expect(await pricedTiles()).toBe(0);
+        mocks.initData = held;
+        // The tiles still carry the old version's values: every one is priced
+        expect(await pricedTiles()).toBe(tiles.length);
+    });
+
     test('a market without a version is never trusted', async () => {
         await pricedTiles();
         mocks.priceVersion = undefined;
