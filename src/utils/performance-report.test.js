@@ -313,6 +313,22 @@ describe('panel delays and in-flight work in the trace', () => {
         expect(reportData({ panelDelays }).panelDelays).toEqual(panelDelays);
     });
 
+    test('a stall just after a game message still names our async work pending then', () => {
+        const text = formatReport({
+            stalls: [
+                {
+                    duration: 400,
+                    sinceBoot: 9000,
+                    suspects: [],
+                    recentEvents: ['ws:profile_shared'],
+                    inFlight: ['Combat score'],
+                },
+            ],
+        });
+        expect(text).toContain('ws:profile_shared');
+        expect(text).toContain('Combat score was pending');
+    });
+
     test('a stall with only async work pending names it instead of saying nothing was instrumented', () => {
         const text = formatReport({
             stalls: [{ duration: 400, sinceBoot: 9000, suspects: [], recentEvents: [], inFlight: ['Combat score'] }],

@@ -1716,6 +1716,18 @@ describe('panel delays', () => {
         expect(performanceMonitor.getPanelDelays()[0].count).toBe(1);
     });
 
+    test('a draw closes only its own trigger: an earlier slow run cannot consume a later one', () => {
+        const first = performanceMonitor.markTrigger('Item tooltip');
+        vi.advanceTimersByTime(100);
+        const second = performanceMonitor.markTrigger('Item tooltip');
+        vi.advanceTimersByTime(50);
+        // The first hover finishes while the second is still pending: it records nothing
+        expect(performanceMonitor.markDrawn('Item tooltip', first)).toBeNull();
+        vi.advanceTimersByTime(4000);
+        expect(performanceMonitor.markDrawn('Item tooltip', second)).toBeCloseTo(4050, -1);
+        expect(performanceMonitor.getPanelDelays()[0].count).toBe(1);
+    });
+
     test('keepEarliest keeps the first clock; a plain trigger restarts it', () => {
         performanceMonitor.markTrigger('Achievement hints', true);
         vi.advanceTimersByTime(1000);

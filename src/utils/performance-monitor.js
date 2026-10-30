@@ -551,14 +551,18 @@ class PerformanceMonitor {
      * @param {boolean} [keepEarliest] - Keep an older pending trigger of this
      *   name instead of restarting its clock (for triggers that repeat until
      *   the draw lands, such as a mount pass that runs on every DOM change)
+     * @returns {Object|null} A token naming this trigger, for a `markDrawn` that must only
+     *   close its own trigger (overlapping runs of one name), or null when not measuring
      */
     markTrigger(name, keepEarliest = false) {
-        if (!this.enabled) return;
+        if (!this.enabled) return null;
         const now = monotonicNow();
         this.pendingPanels = this.pendingPanels || new Map();
         const existing = this.pendingPanels.get(name);
-        if (keepEarliest && existing !== undefined && now - existing <= PANEL_PENDING_MAX_MS) return;
-        this.pendingPanels.set(name, now);
+        if (keepEarliest && existing !== undefined && now - existing.at <= PANEL_PENDING_MAX_MS) return existing;
+        const token = { at: now };
+        this.pendingPanels.set(name, token);
+        return token;
     }
 
     /**
@@ -567,14 +571,18 @@ class PerformanceMonitor {
      * (a refresh, a redraw) records nothing.
      *
      * @param {string} name - The name given to `markTrigger`
+     * @param {Object|null} [token] - The token its own `markTrigger` returned: a later trigger of the
+     *   same name (another hover while this one was still working) is then left for its own draw.
+     *   Omitted, the pending trigger of that name is closed whichever it is
      * @returns {number|null} The latency in ms, or null if nothing was pending
      */
-    markDrawn(name) {
+    markDrawn(name, token) {
         if (!this.enabled || !this.pendingPanels) return null;
-        const startedAt = this.pendingPanels.get(name);
-        if (startedAt === undefined) return null;
+        const pending = this.pendingPanels.get(name);
+        if (pending === undefined) return null;
+        if (token !== undefined && pending !== token) return null;
         this.pendingPanels.delete(name);
-        const latency = monotonicNow() - startedAt;
+        const latency = monotonicNow() - pending.at;
         if (latency > PANEL_PENDING_MAX_MS) return null;
         this.panelDelays = this.panelDelays || new Map();
         let row = this.panelDelays.get(name);

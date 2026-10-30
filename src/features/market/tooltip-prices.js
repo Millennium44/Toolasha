@@ -644,9 +644,10 @@ class TooltipPrices {
         tooltipObserver.subscribe('TooltipPrices', async (tooltipElement, eventType, info) => {
             if (eventType !== 'opened' || !info?.isTooltipPopper) return;
             const timed = info.isItemTooltip || info.isCollectionTooltip;
-            if (timed) performanceMonitor.markTrigger('Item tooltip');
+            // Each hover closes only its own trigger: a slower earlier tooltip must not consume a later one's
+            const trigger = timed ? performanceMonitor.markTrigger('Item tooltip') : null;
             await performanceMonitor.traceAsync('Item tooltip', () => this.handleTooltip(tooltipElement, info));
-            if (timed) performanceMonitor.markDrawn('Item tooltip');
+            if (trigger) performanceMonitor.markDrawn('Item tooltip', trigger);
         });
         this.unregisterObserver = () => tooltipObserver.unsubscribe('TooltipPrices');
 

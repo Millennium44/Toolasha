@@ -514,7 +514,9 @@ class PFormancePanel {
                     (stall.suspects?.length
                         ? stall.suspects.map((suspect) => `${suspect.name} ${suspect.ms}ms`).join(', ')
                         : stall.recentEvents?.length
-                          ? `after ${stall.recentEvents.join(', ')} (likely the game)`
+                          ? `after ${stall.recentEvents.join(', ')} (likely the game)` +
+                            // Async work of ours still running then is named too: it may be the cause
+                            (stall.inFlight?.length ? `; ${stall.inFlight.join(', ')} pending (async)` : '')
                           : stall.inFlight?.length
                             ? `${stall.inFlight.join(', ')} pending (async, not proven)`
                             : 'nothing instrumented') +
