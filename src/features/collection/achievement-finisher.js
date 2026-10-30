@@ -657,7 +657,12 @@ class AchievementFinisher {
             isEstimated: (itemHrid) => estimated.has(itemHrid),
             // Any-of production: what one unit sells for after the tax (a value-map estimate is no bid)
             sellPrice: (itemHrid) => {
-                const info = getItemPriceInfo(itemHrid, { context: 'profit', side: 'sell', marketQuote: true });
+                const info = getItemPriceInfo(itemHrid, {
+                    context: 'profit',
+                    side: 'sell',
+                    mode: 'bid',
+                    marketQuote: true,
+                });
                 if (!Number.isFinite(info.price) || info.estimated) return null;
                 return info.price * (1 - MARKET_TAX);
             },
