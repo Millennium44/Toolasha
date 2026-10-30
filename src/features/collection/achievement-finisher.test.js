@@ -34,10 +34,11 @@ const nav = vi.hoisted(() => ({
     navigateToAction: vi.fn(() => true),
     navigateToMarketplace: vi.fn(),
     openCombatZoneAtTier: vi.fn(async () => ({ opened: true, tierConfirmed: true, filled: false })),
-    getItemPriceInfo: vi.fn((hrid) => ({
-        price: hrid in game.prices ? game.prices[hrid] : null,
-        estimated: game.estimated.has(hrid),
-    })),
+    // Enhanced levels are keyed `hrid+level`; +0 is the bare hrid
+    getItemPriceInfo: vi.fn((hrid, opts) => {
+        const key = opts?.enhancementLevel > 0 ? `${hrid}+${opts.enhancementLevel}` : hrid;
+        return { price: key in game.prices ? game.prices[key] : null, estimated: game.estimated.has(key) };
+    }),
     openMissingMaterials: vi.fn(async () => {}),
     openAlchemyMissingMaterials: vi.fn(async () => {}),
     marketOn: vi.fn(),
@@ -118,6 +119,20 @@ vi.mock('../../utils/combat-zone-open.js', () => ({ openCombatZoneAtTier: nav.op
 vi.mock('../../utils/market-data.js', () => ({ getItemPriceInfo: nav.getItemPriceInfo }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
 vi.mock('../../utils/tester-shop-nav.js', () => ({ setShopFilter: nav.setShopFilter }));
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({
+    perAttemptMaterialCost: () => ({ cost: 100, hasCost: true, hasMissingPrices: false, hasPartialPrices: false }),
+    priceProtection: () => ({ price: 50, itemHrid: '/items/cheese', unpriced: false, estimated: false }),
+}));
+vi.mock('../../utils/enhancement-config.js', () => ({
+    getAutoDetectedParams: () => ({
+        enhancingLevel: 100,
+        toolBonus: 0,
+        speedBonus: 0,
+        teas: { blessed: false },
+        guzzlingBonus: 1,
+        blessedTeaBonus: 0.01,
+    }),
+}));
 
 import finisher, { findAchievementsHost, PANEL_CLASS } from './achievement-finisher.js';
 import { buildTierChecklists } from './achievement-finisher-model.js';
@@ -135,6 +150,7 @@ import {
 import { ANY_OF_ACHIEVEMENTS, ANY_OF_DATA } from './__fixtures__/achievement-finisher-anyof.js';
 import { PLACE_ACHIEVEMENTS, PLACE_DATA } from './__fixtures__/achievement-finisher-places.js';
 import { ABILITY_ACHIEVEMENTS, ABILITY_DATA } from './__fixtures__/achievement-finisher-abilities.js';
+import { ENHANCE_ACHIEVEMENTS, ENHANCE_DATA } from './__fixtures__/achievement-finisher-enhance.js';
 
 const DETAIL = {
     '/achievements/a1': { hrid: '/achievements/a1', name: 'A1', tierHrid: '/achievement_tiers/beginner' },
@@ -931,5 +947,51 @@ describe('hints on the game achievement cards', () => {
         game.handlers.abilities_updated.forEach((fn) => fn());
         vi.advanceTimersByTime(1500);
         expect(lineOf('Student').textContent).toContain('[level met · no price for any book]');
+    });
+    test('enhancer cards: the cheapest piece and level, Go opens that listing; an estimate is no listing; Iron Cow gets nothing', () => {
+        game.detail = ENHANCE_ACHIEVEMENTS;
+        game.clientData = { ...ENHANCE_DATA, achievementDetailMap: ENHANCE_ACHIEVEMENTS };
+        game.prices = {
+            '/items/cheese_gloves': 500,
+            '/items/cheese': 50,
+            // Only a value-map estimate at +3: nobody lists it
+            '/items/cheese_gloves+3': 10,
+            '/items/magnetic_gloves+10': 2_000_000,
+            '/items/chrono_gloves': 90_000_000,
+        };
+        game.estimated = new Set(['/items/cheese_gloves+3']);
+        achievementsTab(ENHANCE_ACHIEVEMENTS);
+        finisher.initialize();
+        // +3 at 10 coins would win if an estimate counted as a listing
+        expect(lineOf('Enhancer I').textContent).toContain(
+            '[buy Cheese Gloves +0 & enhance ~1.9K coin · protect with Cheese]'
+        );
+        goOf('Enhancer I').click();
+        expect(nav.navigateToMarketplace).toHaveBeenLastCalledWith('/items/cheese_gloves', 0);
+        expect(lineOf('Enhancer IV').textContent).toContain('[buy Magnetic Gloves +10 & enhance ~2.');
+        goOf('Enhancer IV').click();
+        expect(nav.navigateToMarketplace).toHaveBeenLastCalledWith('/items/magnetic_gloves', 10);
+
+        game.ironCow = true;
+        finisher.readinessChanged();
+        vi.advanceTimersByTime(1500);
+        expect(lineOf('Enhancer I')).toBeNull();
+        expect(lineOf('Enhancer IV')).toBeNull();
+    });
+
+    test('enhancer cards with no listing, or before skills load, say so with no Go', () => {
+        game.detail = ENHANCE_ACHIEVEMENTS;
+        game.clientData = { ...ENHANCE_DATA, achievementDetailMap: ENHANCE_ACHIEVEMENTS };
+        game.prices = {};
+        achievementsTab(ENHANCE_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Enhancer III').textContent).toBe('[no listing for any piece to take to +10]');
+        expect(goOf('Enhancer III')).toBeNull();
+        game.skills = null;
+        game.prices = { '/items/cheese_gloves': 500 };
+        finisher.readinessChanged();
+        vi.advanceTimersByTime(1500);
+        expect(lineOf('Enhancer III').textContent).toBe('[enhancing stats not loaded]');
+        expect(goOf('Enhancer III')).toBeNull();
     });
 });

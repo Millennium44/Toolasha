@@ -35,6 +35,8 @@ import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigation.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
 import { setShopFilter } from '../../utils/tester-shop-nav.js';
+import { perAttemptMaterialCost, priceProtection } from '../../utils/enhancement-input-pricing.js';
+import { getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { combatLevel } from '../../utils/combat-level.js';
@@ -124,6 +126,7 @@ export function readinessText(res, ready, clientData, ownCombatLevel, progress =
     const parts = [];
     const lv = ready.level;
     if (res.kind === 'place') return placeText(res, ready, clientData, progress);
+    if (res.kind === 'enhance') return enhanceText(res, ready, clientData);
     if (res.kind === 'combat') {
         if (res.dungeon) parts.push('dungeon');
         parts.push(`T${res.tier}`);
@@ -250,6 +253,28 @@ function placeText(res, ready, clientData, progress) {
 }
 
 /**
+ * The hint for an Enhancer row: the cheapest piece and level to buy, the total with the expected
+ * enhancing, and the protection the route uses.
+ * @param {Object} res - An `enhance` resolution
+ * @param {Object} ready
+ * @param {Object|null} clientData
+ * @returns {string}
+ */
+function enhanceText(res, ready, clientData) {
+    if (ready.levelMet === null) return 'enhancing stats not loaded';
+    if (ready.noListing) return `no listing for any piece to take to +${res.target}`;
+    if (!ready.buyHrid) return `enhance a piece to +${res.target}`;
+    const piece = `${itemName(clientData, ready.buyHrid)} +${ready.buyLevel}`;
+    if (!Number.isFinite(ready.cost)) {
+        return `buy ${piece} ≥ ~${formatKMB(ready.partialCost)}${COIN_MARK} · enhancing materials unpriced`;
+    }
+    const parts = [`buy ${piece} & enhance ~${formatKMB(ready.cost)}${COIN_MARK}`];
+    if (ready.protectionHrid) parts.push(`protect with ${itemName(clientData, ready.protectionHrid)}`);
+    else if (ready.protectionUnpriced) parts.push('no protection price');
+    return parts.join(' · ');
+}
+
+/**
  * A readiness hint as a span, with each gold amount followed by the game's coin icon
  * (the word "coin" until the game has drawn from its item sheet).
  * @param {string} text - From `readinessText`
@@ -299,7 +324,7 @@ function clickNav(ariaLabel) {
 export function hasGoButton(res, ready) {
     // No verified way to open the House from script: the hint stands alone
     if (res.kind === 'place') return res.place !== 'house';
-    if (res.kind === 'ability') return Boolean(ready?.buyHrid);
+    if (res.kind === 'ability' || res.kind === 'enhance') return Boolean(ready?.buyHrid);
     if (res.kind !== 'equip') return true;
     return Boolean(ready?.buyHrid);
 }
@@ -551,6 +576,7 @@ class AchievementFinisher {
         }
         // Prices read off the game's value map rather than a live book, so the hint can say so
         const estimated = new Set();
+        let enhanceParams;
         return {
             skillLevels,
             combatLevel: ownCombat,
@@ -568,6 +594,35 @@ class AchievementFinisher {
                 return info.price;
             },
             isEstimated: (itemHrid) => estimated.has(itemHrid),
+            // Enhancer routes: a listing at one level (a value-map estimate is no listing), the shared
+            // enhancing material and protection rules, and the character's own bench (nobody else can
+            // land the success for them)
+            buyPriceAt: (itemHrid, enhancementLevel) => {
+                const info = getItemPriceInfo(itemHrid, {
+                    context: 'profit',
+                    side: 'buy',
+                    marketQuote: true,
+                    enhancementLevel,
+                });
+                return Number.isFinite(info.price) && !info.estimated ? info.price : null;
+            },
+            enhanceMaterialCost: (itemHrid) => {
+                const details = dataManager.getInitClientData?.()?.itemDetailMap?.[itemHrid];
+                return perAttemptMaterialCost(details, { context: 'profit' });
+            },
+            protectionFor: (itemHrid) => priceProtection(itemHrid, { context: 'profit' }),
+            enhanceParams: () => {
+                if (enhanceParams === undefined) {
+                    try {
+                        enhanceParams = skills ? getAutoDetectedParams() : null;
+                    } catch (error) {
+                        console.error('[AchievementFinisher] Enhancing params failed:', error);
+                        enhanceParams = null;
+                    }
+                }
+                return enhanceParams;
+            },
+            enhanceCache: new Map(),
         };
     }
 
@@ -630,6 +685,10 @@ class AchievementFinisher {
                     break;
                 case 'place':
                     this.goPlace(res, ready);
+                    break;
+                case 'enhance':
+                    // The listing at the level the route starts from
+                    if (ready?.buyHrid) navigateToMarketplace(ready.buyHrid, ready.buyLevel ?? 0);
                     break;
                 default:
                     break;
@@ -890,6 +949,8 @@ class AchievementFinisher {
         if (!res) return null;
         const ready = this.readinessFor(hrid, res, getContext);
         if (!ready) return null;
+        // An Iron Cow has no market to buy a piece from: no Enhancer hint at all
+        if (res.kind === 'enhance' && ready.ironCow) return null;
         const text = `[${readinessText(res, ready, clientData, getContext().combatLevel, progress)}]`;
         const go = hasGoButton(res, ready);
         const ironCow = getContext().ironCow;
