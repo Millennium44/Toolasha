@@ -161,6 +161,19 @@ describe('targeted invalidation', () => {
         networthCache.clear();
         expect(marketAPI._readRecorders.size).toBe(0);
     });
+
+    test('a miss that never reaches set() stops recording at the end of the tick', async () => {
+        expect(networthCache.get('/items/holy_sword', 13)).toBeNull();
+        expect(marketAPI._readRecorders.size).toBe(1);
+        await Promise.resolve();
+        expect(marketAPI._readRecorders.size).toBe(0);
+        // A cost set after that has no known reads: it is dropped on any move
+        networthCache.set('/items/holy_sword', 13, 500);
+        validateNetworthCache();
+        marketAPI.updatePrice('/items/lumber', 0, 410, 390);
+        validateNetworthCache();
+        expect(networthCache.get('/items/holy_sword', 13)).toBeNull();
+    });
 });
 
 describe('what still empties the cache', () => {

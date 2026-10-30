@@ -522,7 +522,9 @@ class InventoryBadgeManager {
             }
             // A pass that threw never gets here, so the next one prices everything
             // A reused tile is as old as the pass that priced it, so the backstop runs from there
-            if (fingerprint !== null) this._lastPricing = { fingerprint, at: pass.reuseTiles ? previous.at : now };
+            if (fingerprint !== null && pass.priced === true) {
+                this._lastPricing = { fingerprint, at: pass.reuseTiles ? previous.at : now };
+            }
         } finally {
             // Clear guard even on error so later calculations are not blocked forever
             this.isCalculating = false;
@@ -689,6 +691,8 @@ class InventoryBadgeManager {
 
         // All market prices in one batch, shared by every category of the pass
         const pricing = pass?.priceCache ? pass : this.createPricingPass(inventory);
+        // Past the early returns: a pass that never got here priced nothing, and leaves nothing to reuse
+        pricing.priced = true;
         const priceCache = pricing.priceCache;
 
         // Get settings for high enhancement cost mode. The expensive

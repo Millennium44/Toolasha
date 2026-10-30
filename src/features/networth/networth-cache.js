@@ -233,6 +233,12 @@ class NetworthCache {
                 key: this.generateKey(itemHrid, enhancementLevel),
                 recorder: marketAPI.recordPriceReads(),
             };
+            // A miss whose path could not be priced never reaches set(); close it at the end of this
+            // tick rather than leave every getPrice() in the page feeding it until the next lookup
+            const recording = this._recording;
+            queueMicrotask(() => {
+                if (this._recording === recording) this._closeRecording();
+            });
         }
         return null;
     }
