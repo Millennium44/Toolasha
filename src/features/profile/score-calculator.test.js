@@ -294,6 +294,71 @@ describe('equipment the market cannot price', () => {
     });
 });
 
+describe('crafting-cost fallback for a piece with no ask', () => {
+    function worldWithRecipes() {
+        const actionDetailMap = {};
+        for (let i = 0; i < 300; i++) {
+            actionDetailMap[`/actions/filler_${i}`] = { outputItems: [{ itemHrid: `/items/filler_${i}`, count: 1 }] };
+        }
+        // Earlier action has the blade as a SECOND output and prices to nothing (input nobody prices);
+        // the scan must go on to the later action that does price it
+        actionDetailMap['/actions/a_dud'] = {
+            inputItems: [{ itemHrid: '/items/mystery_dust', count: 2 }],
+            outputItems: [
+                { itemHrid: '/items/other', count: 1 },
+                { itemHrid: '/items/blade', count: 1 },
+            ],
+        };
+        actionDetailMap['/actions/b_real'] = {
+            inputItems: [
+                { itemHrid: '/items/ingot', count: 4 },
+                { itemHrid: '/items/mystery_dust', count: 1 },
+            ],
+            upgradeItemHrid: '/items/old_blade',
+            outputItems: [{ itemHrid: '/items/blade', count: 2 }],
+        };
+        // the ingot has no ask either and is itself crafted (recursion), by two actions, the first priced 0
+        actionDetailMap['/actions/c_ingot_dud'] = {
+            inputItems: [],
+            outputItems: [{ itemHrid: '/items/ingot', count: 1 }],
+        };
+        actionDetailMap['/actions/d_ingot'] = {
+            inputItems: [{ itemHrid: '/items/ore', count: 5 }],
+            outputItems: [{ itemHrid: '/items/ingot', count: 1 }],
+        };
+        mocks.clientData.actionDetailMap = actionDetailMap;
+        mocks.clientData.itemDetailMap['/items/blade'] = { name: 'Blade', equipmentDetail: {} };
+        mocks.askPrices['/items/ore'] = 10;
+        mocks.askPrices['/items/old_blade'] = 1_000_000;
+        return actionDetailMap;
+    }
+
+    const wearing = (...hrids) => ({
+        profile: {
+            equippedAbilities: [],
+            wearableItemMap: Object.fromEntries(
+                hrids.map((itemHrid, i) => [`/item_locations/slot_${i}`, { itemHrid, enhancementLevel: 0 }])
+            ),
+        },
+    });
+
+    test('prices from the first action that prices it, recursing into inputs, and does not rescan the map per piece', async () => {
+        const map = worldWithRecipes();
+        mocks.clientData.itemDetailMap['/items/blade2'] = { name: 'Blade Two', equipmentDetail: {} };
+        const spy = vi.spyOn(Object, 'values');
+
+        const score = await calculateCombatScore(wearing('/items/blade', '/items/blade2'));
+        const scans = spy.mock.calls.filter((c) => c[0] === map).length;
+        spy.mockRestore();
+
+        // ingot = 5 ore * 10 * 0.9 = 45; blade = ((4 * 45 + 0) * 0.9 + 1,000,000) / 2
+        const expected = (4 * 45 * 0.9 + 1_000_000) / 2;
+        expect(score.equipment).toBeCloseTo(expected / 1_000_000, 10);
+        expect(score.equipmentUnpriced).toBe(1); // blade2 has no recipe at all
+        expect(scans).toBeLessThanOrEqual(1);
+    });
+});
+
 describe('enhancement material pricing', () => {
     // Audit round 30: `getItemPrices` reports a missing side of the book as
     // `null`, never as a negative, so the calculator's `< 0` normalisation never

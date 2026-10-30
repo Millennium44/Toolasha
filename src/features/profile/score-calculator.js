@@ -241,6 +241,36 @@ export async function calculateCombatScore(profileData) {
     }
 }
 
+/** @type {WeakMap<Object, Map<string, Array<{action: Object, output: Object}>>>} actionDetailMap → item → producers */
+const producerIndexes = new WeakMap();
+const NO_PRODUCERS = Object.freeze([]);
+
+/**
+ * Every `{action, output}` pair that produces an item, in the order a scan of `actionDetailMap` meets
+ * them. Built once per map object, so a new init_client_data rebuilds it and nothing has to invalidate.
+ * @param {Object} gameData - init_client_data
+ * @param {string} itemHrid - The item
+ * @returns {ReadonlyArray<{action: Object, output: Object}>}
+ */
+function actionsProducing(gameData, itemHrid) {
+    const map = gameData?.actionDetailMap;
+    if (!map || typeof map !== 'object') return NO_PRODUCERS;
+    let index = producerIndexes.get(map);
+    if (!index) {
+        index = new Map();
+        for (const action of Object.values(map)) {
+            if (!action?.outputItems) continue;
+            for (const output of action.outputItems) {
+                let list = index.get(output.itemHrid);
+                if (!list) index.set(output.itemHrid, (list = []));
+                list.push({ action, output });
+            }
+        }
+        producerIndexes.set(map, index);
+    }
+    return index.get(itemHrid) ?? NO_PRODUCERS;
+}
+
 /**
  * Get market price for an item with crafting cost fallback
  * @param {string} itemHrid - Item HRID
@@ -259,42 +289,37 @@ function getMarketPriceWithFallback(itemHrid, enhancementLevel = 0) {
 
     // For base items (enhancement 0), try crafting cost fallback
     if (enhancementLevel === 0 && gameData) {
-        // Find the action that produces this item
-        for (const action of Object.values(gameData.actionDetailMap || {})) {
-            if (action.outputItems) {
-                for (const output of action.outputItems) {
-                    if (output.itemHrid === itemHrid) {
-                        // Found the crafting action, calculate material costs
-                        let inputCost = 0;
+        // Every action that produces this item, in the map's order (the once-built index replaces
+        // a scan of every action in the game per unpriced piece)
+        for (const { action, output } of actionsProducing(gameData, itemHrid)) {
+            // Found the crafting action, calculate material costs
+            let inputCost = 0;
 
-                        // Add input items
-                        if (action.inputItems && action.inputItems.length > 0) {
-                            for (const input of action.inputItems) {
-                                const inputPrice = getMarketPriceWithFallback(input.itemHrid, 0);
-                                inputCost += inputPrice * input.count;
-                            }
-                        }
-
-                        // Apply Artisan Tea reduction (0.9x) to input materials
-                        inputCost *= 0.9;
-
-                        // Add upgrade item cost (not affected by Artisan Tea)
-                        let upgradeCost = 0;
-                        if (action.upgradeItemHrid) {
-                            const upgradePrice = getMarketPriceWithFallback(action.upgradeItemHrid, 0);
-                            upgradeCost = upgradePrice;
-                        }
-
-                        const totalCost = inputCost + upgradeCost;
-
-                        // Divide by output count to get per-item cost
-                        const perItemCost = totalCost / (output.count || 1);
-
-                        if (perItemCost > 0) {
-                            return perItemCost;
-                        }
-                    }
+            // Add input items
+            if (action.inputItems && action.inputItems.length > 0) {
+                for (const input of action.inputItems) {
+                    const inputPrice = getMarketPriceWithFallback(input.itemHrid, 0);
+                    inputCost += inputPrice * input.count;
                 }
+            }
+
+            // Apply Artisan Tea reduction (0.9x) to input materials
+            inputCost *= 0.9;
+
+            // Add upgrade item cost (not affected by Artisan Tea)
+            let upgradeCost = 0;
+            if (action.upgradeItemHrid) {
+                const upgradePrice = getMarketPriceWithFallback(action.upgradeItemHrid, 0);
+                upgradeCost = upgradePrice;
+            }
+
+            const totalCost = inputCost + upgradeCost;
+
+            // Divide by output count to get per-item cost
+            const perItemCost = totalCost / (output.count || 1);
+
+            if (perItemCost > 0) {
+                return perItemCost;
             }
         }
 
