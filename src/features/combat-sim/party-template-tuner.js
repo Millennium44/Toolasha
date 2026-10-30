@@ -221,8 +221,9 @@ function stampOf(score) {
  * @param {{id: string, role: string, playerDto: Object}} template
  * @param {Object} levels - The character's combat levels (a player DTO carries them)
  * @param {Object} [deps] - See {@link liveDeps}
- * @returns {Promise<{status: 'ok'|'clampedLow'|'clampedHigh'|'noScore'|'failed'|'aborted', dto: Object,
- *   k: number|null, templateScore: number|null, ownScore: number|null, cached: boolean}>} `dto` is always usable:
+ * @returns {Promise<{status: 'ok'|'partial'|'clampedLow'|'clampedHigh'|'noScore'|'failed'|'aborted', dto: Object,
+ *   k: number|null, templateScore: number|null, ownScore: number|null, cached: boolean}>} `partial`: gear in either score was unpriced, so the match is approximate (the tuned build
+ *   is still returned, never reported as `ok`). `dto` is always usable:
  *   with `noScore` (the character's score is not loaded), `failed` or `aborted` it is the standardized template with
  *   only the matched combat levels
  */
@@ -249,15 +250,23 @@ export async function tuneTemplate(template, levels, deps = liveDeps()) {
     const hit = cache.get(key);
     if (hit) return { ...hit, dto: applyOffset(leveled, hit.k), cached: true };
 
+    // A piece nothing could price counts as zero in either score, so a match through it is only approximate
+    let unpriced = Number(own.equipmentUnpriced) > 0;
     const scoreAt = async (k) => {
         const result = await deps.scoreProfile(profileDataFor(applyOffset(template.playerDto, k)));
+        if (Number(result?.equipmentUnpriced) > 0) unpriced = true;
         return comparableScore(result);
     };
     const solved = await solveOffset({ scoreAt, target, stillCurrent });
     if (!stillCurrent() || solved.status === 'aborted') return fallback('aborted');
     if (solved.status === 'failed') return fallback('failed');
 
-    const result = { status: solved.status, k: solved.k, templateScore: solved.score, ownScore: target };
+    const result = {
+        status: unpriced ? 'partial' : solved.status,
+        k: solved.k,
+        templateScore: solved.score,
+        ownScore: target,
+    };
     cache.set(key, result);
     return { ...result, dto: applyOffset(leveled, solved.k), cached: false };
 }

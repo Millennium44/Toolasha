@@ -1439,6 +1439,18 @@ describe('saved builds', () => {
             );
         });
 
+        test('a match through unpriced gear says it is approximate', async () => {
+            await mountTab();
+            toggle().click();
+            state.tune = async (template) => tuned(template, { status: 'partial' });
+            add(t().id);
+            await flush();
+            expect(tab.root.querySelector('[data-pf-template-score]').textContent).toBe(
+                'score 1,234M ≈ yours 1,250M. Some gear is unpriced, so the match is approximate.'
+            );
+            expect(tab.root.querySelector('[data-pf-template-score]').style.color).not.toBe('');
+        });
+
         test('a character switch while matching adds nothing and leaves no score line for the new character', async () => {
             await mountTab();
             toggle().click();

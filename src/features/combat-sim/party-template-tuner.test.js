@@ -216,6 +216,20 @@ describe('tuneTemplate', () => {
         expect(result.dto.meleeLevel).toBe(136);
     });
 
+    test('unpriced gear in the template score or in the character score is never reported as a match', async () => {
+        const a = world();
+        const inner = a.deps.scoreProfile;
+        a.deps.scoreProfile = async (p) => ({ ...(await inner(p)), equipmentUnpriced: 1 });
+        const templateSide = await tuneTemplate(smash, LEVELS, a.deps);
+        expect(templateSide.status).toBe('partial');
+        expect(templateSide.k).toBe(-3);
+        clearTunerCache();
+        const b = world({ score: { total: 1, equipment: 1900, ability: 0, equipmentUnpriced: 2 } });
+        expect((await tuneTemplate(smash, LEVELS, b.deps)).status).toBe('partial');
+        // A cached answer keeps its partial status
+        expect((await tuneTemplate(smash, LEVELS, b.deps)).status).toBe('partial');
+    });
+
     test('a character below the lowest or above the highest reachable score is clamped', async () => {
         const low = await tuneTemplate(smash, LEVELS, world({ score: { equipment: 5, ability: 0 } }).deps);
         expect(low).toMatchObject({ status: 'clampedLow', k: OFFSET_MIN });

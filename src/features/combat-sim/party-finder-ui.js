@@ -133,6 +133,8 @@ function tunedText(tuned) {
     switch (tuned.status) {
         case 'ok':
             return figures;
+        case 'partial':
+            return `${figures}. Some gear is unpriced, so the match is approximate.`;
         case 'clampedLow':
             return `${figures}. Even the lowest setting scores above your build, so the template is stronger than you.`;
         case 'clampedHigh':
