@@ -110,7 +110,11 @@ function buildMenu(name, itemHrid) {
     return menu;
 }
 
-function buildInventory(itemHrids) {
+/**
+ * Inventory tiles whose click opens that item's menu, as the game does. `ignoredClicks` clicks
+ * are swallowed first, like a click landing while an old menu closes or a dialog covers the tile.
+ */
+function buildInventory(itemHrids, { ignoredClicks = 0 } = {}) {
     const inventory = document.createElement('div');
     inventory.className = 'Inventory_items__x';
     const clicks = [];
@@ -119,7 +123,12 @@ function buildInventory(itemHrids) {
         tile.className = 'Item_itemContainer__x';
         tile.innerHTML = `<div class="Item_item__x Item_clickable__x"><svg aria-label="?"><use xlink:href="${SPRITE}#${hrid.split('/').pop()}"></use></svg></div>`;
         tile.getClientRects = () => [{}];
-        tile.querySelector('[class*="Item_item"]').addEventListener('click', () => clicks.push(hrid));
+        tile.querySelector('[class*="Item_item"]').addEventListener('click', () => {
+            clicks.push(hrid);
+            if (clicks.length <= ignoredClicks) return;
+            document.querySelectorAll('[class*="Item_actionMenu"]').forEach((menu) => menu.remove());
+            buildMenu(ITEM_DETAIL_MAP[hrid].name, hrid);
+        });
         inventory.appendChild(tile);
     }
     document.body.appendChild(inventory);
@@ -269,8 +278,52 @@ describe('ScrollPlanner', () => {
 
         mocks.characterItems = [inv(DAMAGE, 2), inv(GATHERING, 8)];
         mocks.listeners.items_updated();
-        await vi.advanceTimersByTimeAsync(300);
+        await vi.advanceTimersByTimeAsync(1500);
         expect(clicks).toEqual([DAMAGE, GATHERING]);
+    });
+
+    test('a first attempt that opens nothing is retried, and retries stop once the menu is open', async () => {
+        const clicks = buildInventory([DAMAGE], { ignoredClicks: 1 });
+        await planner.initialize();
+        await planner.startRun({ [DAMAGE]: 3 });
+
+        await vi.advanceTimersByTimeAsync(200);
+        expect(clicks).toEqual([DAMAGE]);
+        expect(document.querySelector('[class*="Item_actionMenu"]')).toBeNull();
+
+        await vi.advanceTimersByTimeAsync(400);
+        expect(clicks).toEqual([DAMAGE, DAMAGE]);
+        expect(document.querySelector('[class*="Item_actionMenu"]')).not.toBeNull();
+
+        // The third attempt finds the menu open and does not click (which could close it again)
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(clicks).toEqual([DAMAGE, DAMAGE]);
+    });
+
+    test('a menu already open for the scroll that stays open is filled in, not clicked', async () => {
+        const clicks = buildInventory([DAMAGE]);
+        const menu = buildMenu('Scroll Of Damage', DAMAGE);
+        await planner.initialize();
+        await planner.startRun({ [DAMAGE]: 3 });
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(clicks).toEqual([]);
+        expect(menu.querySelector('input').value).toBe('3');
+        expect(menu.querySelector('button').style.outline).toContain('solid');
+    });
+
+    test('the menu Start was pressed from closing after the first look is reopened', async () => {
+        const clicks = buildInventory([DAMAGE]);
+        const menu = buildMenu('Scroll Of Damage', DAMAGE);
+        await planner.initialize();
+        await planner.startRun({ [DAMAGE]: 3 });
+        await vi.advanceTimersByTimeAsync(200);
+        expect(clicks).toEqual([]);
+
+        menu.remove();
+        await vi.advanceTimersByTimeAsync(400);
+        expect(clicks).toEqual([DAMAGE]);
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(clicks).toEqual([DAMAGE]);
     });
 
     test('counts every stack of a scroll, and advances to the end of the run', async () => {

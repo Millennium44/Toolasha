@@ -40,7 +40,15 @@ const HIGHLIGHT_ATTR = 'data-toolasha-scroll-highlight';
 const HIGHLIGHT_OUTLINE = '2px solid #fbbf24';
 const RUN_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const PREFILL_CHECK_DELAY_MS = 150;
-const AUTO_OPEN_DELAY_MS = 150;
+/**
+ * When to try opening the current scroll's menu, from the moment a step begins. One attempt is not
+ * enough: right after Start the menu the modal was opened from is still closing, or another dialog
+ * covers the tile, and the click lands on nothing. Each attempt first looks for the scroll's menu:
+ * open after our click means done (a step is opened at most once); open before any click (the menu
+ * Start was pressed from) is filled in but watched, since it may be the one closing; not open means
+ * click the tile.
+ */
+const AUTO_OPEN_DELAYS_MS = [150, 500, 1000];
 
 const CSS_FONT = 'font-family: inherit; font-size: 13px;';
 
@@ -80,6 +88,7 @@ class ScrollPlanner {
         this.autoOpenedHrid = null;
         this.prefillFailedHrid = null;
         this.filledMenu = null;
+        this.autoOpenToken = 0;
         // Bumped by every cleanup, so work resumed after an await can tell it was torn down
         this.generation = 0;
     }
@@ -486,15 +495,53 @@ class ScrollPlanner {
             return;
         }
         this.autoOpenedHrid = itemHrid;
+        // A newer call (next step, Show scroll) supersedes this one's remaining attempts
+        this.autoOpenToken += 1;
+        const token = this.autoOpenToken;
         const generation = this.generation;
-        this.schedule(() => {
-            if (generation !== this.generation) {
+        const attempt = (index, clicked) => {
+            if (generation !== this.generation || token !== this.autoOpenToken) {
                 return;
             }
-            this.findInventoryTile(itemHrid)?.dispatchEvent(
-                new MouseEvent('click', { bubbles: true, cancelable: true })
-            );
-        }, AUTO_OPEN_DELAY_MS);
+            const items = this.getItems();
+            const step = this.run && items ? getCurrentStep(this.run.steps, items) : null;
+            if (step?.step.itemHrid !== itemHrid) {
+                return;
+            }
+            const openMenu = this.findOpenMenu(itemHrid);
+            if (openMenu && clicked) {
+                return;
+            }
+            if (openMenu) {
+                // Open before we clicked: fill it in, and look again in case it is closing
+                if (this.filledMenu !== openMenu) {
+                    this.applyStepToMenu(openMenu, itemHrid);
+                }
+            } else {
+                this.findInventoryTile(itemHrid)?.dispatchEvent(
+                    new MouseEvent('click', { bubbles: true, cancelable: true })
+                );
+            }
+            if (index + 1 < AUTO_OPEN_DELAYS_MS.length) {
+                const wait = AUTO_OPEN_DELAYS_MS[index + 1] - AUTO_OPEN_DELAYS_MS[index];
+                this.schedule(() => attempt(index + 1, clicked || !openMenu), wait);
+            }
+        };
+        this.schedule(() => attempt(0, false), AUTO_OPEN_DELAYS_MS[0]);
+    }
+
+    /**
+     * The item action menu open now for this scroll, if any.
+     * @param {string} itemHrid
+     * @returns {HTMLElement|null}
+     */
+    findOpenMenu(itemHrid) {
+        for (const menu of document.querySelectorAll('[class*="Item_actionMenu"]')) {
+            if (menu.isConnected && this.resolveScrollHrid(menu) === itemHrid) {
+                return menu;
+            }
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------------
