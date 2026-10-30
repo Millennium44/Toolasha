@@ -90,6 +90,21 @@ class MarketAPI {
         /** How long a burst of price patches is gathered before the listeners hear once */
         this.NOTIFY_COALESCE_MS = 100;
         this._notifyTimer = null;
+        /** What the burst waiting on that timer changed, handed to the listeners with it */
+        this._pendingChange = null;
+
+        // A versioned log of what moved, for readers that keep derived figures of their own (the
+        // net-worth enhancement costs) and need to drop only the ones a change reached. See
+        // changesSince(). Bumped only when a price getPrice() returns can actually differ.
+        this.priceVersion = 0;
+        this._changeLog = [];
+        /** Entries kept; a reader further behind than this is told everything changed */
+        this.CHANGE_LOG_LIMIT = 512;
+        /** The newest version that has dropped out of the log */
+        this._changeLogFloor = 0;
+
+        /** Active getPrice() read recorders, see recordPriceReads() */
+        this._readRecorders = new Set();
 
         /** The fetch currently running, shared by every concurrent caller */
         this._inFlightFetch = null;
@@ -237,6 +252,7 @@ class MarketAPI {
         this.lastFetchTimestamp = null;
         this.pricePatchs = {};
         this._cacheExpiresAt = null;
+        this._recordChange({ full: true });
         // Whatever the new source then yields (or fails to), consumers must drop the old economy's figures
         this.notifyListeners();
         // and hear again when a fallback cache of the new source is installed below, which notifies nothing itself
@@ -313,15 +329,16 @@ class MarketAPI {
             if (cached) {
                 this._cacheExpiresAt = cached.cachedAt + this.CACHE_DURATION;
                 this._alignAutoRefresh();
-                this.marketData = cached.data;
-                // API timestamp is in seconds, convert to milliseconds for comparison with Date.now()
-                this.lastFetchTimestamp = cached.timestamp * 1000;
+                // API timestamp is in seconds, converted for comparison with Date.now(). A re-read
+                // of the snapshot already in memory (most fetch() calls, behind no isLoaded check)
+                // replaces nothing.
+                const replaced = this._installSnapshot(cached.data, cached.timestamp);
                 // Load patches from storage
                 await this.loadPatches();
                 // Hide alert on successful cache load
                 networkAlert.hide();
-                // Notify listeners (initial load)
-                this.notifyListeners();
+                // Notify listeners (initial load). A re-read tells them only what the patch merge moved.
+                this.notifyListeners(replaced ? undefined : { full: false });
                 return this.marketData;
             }
         }
@@ -331,9 +348,7 @@ class MarketAPI {
         if (!connectionState.isConnected()) {
             const cachedFallback = await storage.getJSON(this.CACHE_KEY_DATA, 'settings', null);
             if (cachedFallback?.marketData) {
-                this.marketData = cachedFallback.marketData;
-                // API timestamp is in seconds, convert to milliseconds
-                this.lastFetchTimestamp = cachedFallback.timestamp * 1000;
+                this._installSnapshot(cachedFallback.marketData, cachedFallback.timestamp);
                 // Load patches from storage
                 await this.loadPatches();
                 this._notifyAfterSwitch();
@@ -367,15 +382,14 @@ class MarketAPI {
             if (response) {
                 // Cache the fresh data
                 const cacheWritten = this.cacheData(response);
-                this.marketData = response.marketData;
-                // API timestamp is in seconds, convert to milliseconds
-                this.lastFetchTimestamp = response.timestamp * 1000;
+                // A fetch can land the very snapshot already held (the feed has not moved on yet)
+                const replaced = this._installSnapshot(response.marketData, response.timestamp);
                 // Load patches from storage (they may still be fresher than new API data)
                 await this.loadPatches();
                 // Hide alert on successful fetch
                 networkAlert.hide();
                 // Notify listeners of price update
-                this.notifyListeners();
+                this.notifyListeners(replaced ? undefined : { full: false });
                 // Settled before returning, so a tab waiting on the refresh lock reads this copy
                 await cacheWritten;
                 await this.clearDeferral(requestStartedAt);
@@ -392,9 +406,7 @@ class MarketAPI {
         const expiredCache = await storage.getJSON(this.CACHE_KEY_DATA, 'settings', null);
         if (expiredCache) {
             console.warn('[MarketAPI] Using expired cache as fallback');
-            this.marketData = expiredCache.marketData;
-            // API timestamp is in seconds, convert to milliseconds
-            this.lastFetchTimestamp = expiredCache.timestamp * 1000;
+            this._installSnapshot(expiredCache.marketData, expiredCache.timestamp);
             // Load patches from storage
             await this.loadPatches();
             this._notifyAfterSwitch();
@@ -639,6 +651,9 @@ class MarketAPI {
 
         // Check for fresh patch first
         const patchKey = `${itemHrid}:${enhancementLevel}`;
+        if (this._readRecorders.size !== 0) {
+            for (const recorder of this._readRecorders) recorder.keys.add(patchKey);
+        }
         const patch = this.pricePatchs[patchKey];
 
         if (patch && patch.timestamp > this.lastFetchTimestamp) {
@@ -834,6 +849,8 @@ class MarketAPI {
 
         const now = Date.now();
         let changed = false;
+        const touched = new Set();
+        const moved = new Set();
         for (const entry of entries) {
             if (!entry || !entry.itemHrid) continue;
             const key = `${entry.itemHrid}:${entry.enhancementLevel}`;
@@ -843,23 +860,143 @@ class MarketAPI {
             // Compare observation times, not the order the responses reached us.
             const existing = this.pricePatchs[key];
             if (existing?.timestamp > observed && existing.timestamp <= now) continue;
+            const before = this._priceSignature(key);
             this.pricePatchs[key] = {
                 a: entry.ask,
                 b: entry.bid,
                 timestamp: observed,
             };
             changed = true;
+            touched.add(key);
+            // Re-opening a book whose top has not moved only refreshes the patch's age
+            if (this._priceSignature(key) !== before) moved.add(key);
         }
 
         if (!changed) {
             return;
         }
 
+        if (moved.size > 0) this._recordChange({ keys: moved });
+
         // Save patches to storage (debounced via storage module)
         this.savePatches();
 
         // Notify listeners of price update, coalesced across a burst
-        this.scheduleNotify();
+        this.scheduleNotify({ keys: moved, touched });
+    }
+
+    /**
+     * What getPrice() would answer for a `hrid:level` key, before the band clamp (which depends on
+     * the raw figure alone), as a comparable string. Mirrors getPrice's own choice between a patch
+     * and the snapshot, and its reading of a missing or non-positive side as absent.
+     * @param {string} key - `${itemHrid}:${enhancementLevel}`
+     * @returns {string}
+     * @private
+     */
+    _priceSignature(key) {
+        const side = (value) => (typeof value === 'number' && value > 0 ? String(value) : '-');
+        const patch = this.pricePatchs[key];
+        if (patch && patch.timestamp > this.lastFetchTimestamp) return `${side(patch.a)}|${side(patch.b)}`;
+        if (!this.marketData) return 'none';
+        const split = key.lastIndexOf(':');
+        const priceData = this.marketData[key.slice(0, split)];
+        if (!priceData || typeof priceData !== 'object') return 'none';
+        const price = priceData[key.slice(split + 1)];
+        if (!price) return 'none';
+        return `${side(price.a)}|${side(price.b)}`;
+    }
+
+    /**
+     * Put a snapshot in place, unless it is the one already held.
+     * @param {Object} data - The snapshot's per-item price map
+     * @param {number} timestampSec - Its API timestamp, in seconds
+     * @returns {boolean} Whether the held snapshot was replaced
+     * @private
+     */
+    _installSnapshot(data, timestampSec) {
+        const at = timestampSec * 1000;
+        // One API timestamp is one snapshot: re-reading it from the cache changes no price
+        if (this.marketData && data && this.lastFetchTimestamp === at) return false;
+        this.marketData = data;
+        this.lastFetchTimestamp = at;
+        this._recordChange({ full: true });
+        return true;
+    }
+
+    /**
+     * Log one change to the prices getPrice() returns.
+     * @param {Object} change
+     * @param {boolean} [change.full] - Anything may have moved (a new snapshot, a source switch)
+     * @param {Set<string>} [change.keys] - The `hrid:level` keys whose price moved
+     * @private
+     */
+    _recordChange({ full = false, keys = null } = {}) {
+        this.priceVersion += 1;
+        this._changeLog.push({ version: this.priceVersion, full, keys: full ? null : new Set(keys || []) });
+        while (this._changeLog.length > this.CHANGE_LOG_LIMIT) {
+            this._changeLogFloor = this._changeLog.shift().version;
+        }
+    }
+
+    /**
+     * Everything that moved after a version of priceVersion, for a reader catching up.
+     *
+     * Covers the market's own prices only: a snapshot, a source switch, an order-book patch. A
+     * custom price or a setting is the reader's own business (the net-worth cache salts on them).
+     * @param {number} version - The priceVersion the reader last saw
+     * @returns {{full: boolean, keys: Set<string>, hrids: Set<string>}} `full` when a snapshot
+     *   landed, the source switched, or the reader is further behind than the log reaches
+     */
+    changesSince(version) {
+        const keys = new Set();
+        const hrids = new Set();
+        if (!Number.isFinite(version) || version < this._changeLogFloor || version > this.priceVersion) {
+            return { full: true, keys, hrids };
+        }
+        for (const record of this._changeLog) {
+            if (record.version <= version) continue;
+            if (record.full) return { full: true, keys: new Set(), hrids: new Set() };
+            for (const key of record.keys) {
+                keys.add(key);
+                hrids.add(key.slice(0, key.lastIndexOf(':')));
+            }
+        }
+        return { full: false, keys, hrids };
+    }
+
+    /**
+     * Start recording every `hrid:level` getPrice() is asked for, so a derived figure can be
+     * dropped when one of its inputs moves. Meant for synchronous work: anything else that reads
+     * a price before stop() is recorded too, which is safe (it only widens what drops the figure).
+     * @returns {{keys: Set<string>, wide: boolean, stop: Function}} The recorder; `wide` is set
+     *   when a memo replayed reads it never recorded (see notePriceReads)
+     */
+    recordPriceReads() {
+        const recorder = {
+            keys: new Set(),
+            wide: false,
+            stop: () => {
+                this._readRecorders.delete(recorder);
+            },
+        };
+        this._readRecorders.add(recorder);
+        return recorder;
+    }
+
+    /**
+     * Credit the active recorders with reads a memo answered without calling getPrice().
+     * @param {Iterable<string>|null} keys - The reads behind the memoised figure; null when they
+     *   are not known, which marks every active recorder wide
+     */
+    notePriceReads(keys) {
+        if (this._readRecorders.size === 0) return;
+        for (const recorder of this._readRecorders) {
+            if (!keys) {
+                recorder.wide = true;
+                continue;
+            }
+            for (const key of keys) recorder.keys.add(key);
+        }
     }
 
     /**
@@ -871,14 +1008,29 @@ class MarketAPI {
      * trailing timer folds a run into one notification; a lone patch still
      * notifies, just that much later.
      */
-    scheduleNotify() {
+    scheduleNotify(change) {
+        // A caller naming nothing (a custom price edit) may have moved anything
+        this._addPendingChange(change ?? { full: true });
         if (this._notifyTimer) {
             return;
         }
         this._notifyTimer = setTimeout(() => {
             this._notifyTimer = null;
-            this.notifyListeners();
+            this.notifyListeners({ full: false });
         }, this.NOTIFY_COALESCE_MS);
+    }
+
+    /**
+     * Fold a change into the one the next notification carries.
+     * @param {{full?: boolean, keys?: Iterable<string>, touched?: Iterable<string>}} change
+     * @private
+     */
+    _addPendingChange(change) {
+        if (!this._pendingChange) this._pendingChange = { full: false, keys: new Set(), touched: new Set() };
+        const pending = this._pendingChange;
+        if (change.full) pending.full = true;
+        for (const key of change.keys || []) pending.keys.add(key);
+        for (const key of change.touched || []) pending.touched.add(key);
     }
 
     /**
@@ -903,6 +1055,8 @@ class MarketAPI {
 
             // Load patches normally
             const patches = await storage.getJSON(this.CACHE_KEY_PATCHES, 'settings', {});
+            const touched = new Set();
+            const moved = new Set();
             // The read may return a snapshot from before a live book arrived.
             // Merge per item so that read cannot erase newer in-memory quotes.
             const now = Date.now();
@@ -910,11 +1064,18 @@ class MarketAPI {
                 if (!Number.isFinite(patch?.timestamp) || patch.timestamp <= 0 || patch.timestamp > now) continue;
                 const existing = this.pricePatchs[key];
                 if (existing?.timestamp >= patch.timestamp && existing.timestamp <= now) continue;
+                const before = this._priceSignature(key);
                 this.pricePatchs[key] = patch;
+                // Another tab's book, or this tab's own from before a reload
+                touched.add(key);
+                if (this._priceSignature(key) !== before) moved.add(key);
             }
 
             // Purge stale patches (older than API data)
-            this.purgeStalePatches();
+            this.purgeStalePatches(moved);
+            if (moved.size > 0) this._recordChange({ keys: moved });
+            // Heard with whatever notification the caller sends next (a fetch notifies right after)
+            if (touched.size > 0 || moved.size > 0) this._addPendingChange({ keys: moved, touched });
         } catch (error) {
             console.error('[MarketAPI] Failed to load price patches:', error);
         }
@@ -924,7 +1085,7 @@ class MarketAPI {
      * Remove patches older than the current API data
      * Called after loadPatches() to clean up stale patches
      */
-    purgeStalePatches() {
+    purgeStalePatches(moved = null) {
         if (!this.lastFetchTimestamp) {
             return; // No API data loaded yet
         }
@@ -940,9 +1101,12 @@ class MarketAPI {
             }
         }
 
-        // Remove stale patches
+        // Remove stale patches. A stale one is already ignored by getPrice, so this moves no price;
+        // checked anyway, so a caller collecting what moved never misses one.
         for (const key of keysToDelete) {
+            const before = moved ? this._priceSignature(key) : null;
             delete this.pricePatchs[key];
+            if (moved && this._priceSignature(key) !== before) moved.add(key);
         }
 
         if (purgedCount > 0) {
@@ -993,9 +1157,6 @@ class MarketAPI {
     }
 
     /**
-     * Notify all listeners that prices have been updated
-     */
-    /**
      * After a source switch, tell listeners once that fallback data of the new source is in.
      * A normal fetch or a fresh cache notifies by itself, so this only covers the fallbacks.
      * @private
@@ -1006,16 +1167,43 @@ class MarketAPI {
         this.notifyListeners();
     }
 
-    notifyListeners() {
+    /**
+     * Notify all listeners that prices have been updated.
+     *
+     * Each listener is handed what changed, so one that keeps derived figures can skip work a
+     * change cannot reach (see utils/price-change.js). Listeners that take no argument keep
+     * working as before.
+     *   - `full`: anything may have moved: a snapshot landed, the source switched, or a caller
+     *     named nothing (a custom price edit). Reprice everything.
+     *   - `keys` / `hrids`: otherwise, the `hrid:level` keys (and their hrids) whose getPrice()
+     *     answer moved. Empty when a burst only re-confirmed prices already held.
+     *   - `touched`: every patched key, moved or not, for readers of a price's age.
+     * The sets are shared by every listener: read them, never change them.
+     * @param {{full?: boolean}} [change] - Omitted for a full change
+     */
+    notifyListeners(change) {
         // A direct notification (a fetch landing) covers any patch still waiting
         // on the coalescing timer
         if (this._notifyTimer) {
             clearTimeout(this._notifyTimer);
             this._notifyTimer = null;
         }
-        for (const callback of this.listeners) {
+        const pending = this._pendingChange;
+        this._pendingChange = null;
+        const full = !change || change.full !== false || pending?.full === true;
+        const keys = full ? new Set() : new Set(pending?.keys || []);
+        const hrids = new Set();
+        for (const key of keys) hrids.add(key.slice(0, key.lastIndexOf(':')));
+        const descriptor = {
+            full,
+            keys,
+            hrids,
+            touched: full ? new Set() : new Set(pending?.touched || []),
+            version: this.priceVersion,
+        };
+        for (const callback of [...this.listeners]) {
             try {
-                callback();
+                callback(descriptor);
             } catch (error) {
                 console.error('[MarketAPI] Listener error:', error);
             }

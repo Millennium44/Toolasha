@@ -821,6 +821,164 @@ describe('MarketAPI price patch notifications', () => {
     });
 });
 
+describe('MarketAPI change descriptor', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000_000);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    /** A real-shaped snapshot: hrid -> level -> {a, b} */
+    const book = () => ({
+        '/items/holy_cheese': { 0: { a: 900, b: 850 } },
+        '/items/holy_sword': { 0: { a: 2_000_000, b: 1_900_000 }, 13: { a: 90_000_000, b: 80_000_000 } },
+    });
+
+    test('a patch burst hands listeners the keys whose price moved', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI._installSnapshot(book(), 999_000);
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        marketAPI.updatePrices([
+            { itemHrid: '/items/holy_sword', enhancementLevel: 13, ask: 95_000_000, bid: 80_000_000 },
+            // Same top of book as the snapshot: its age refreshes, its price does not move
+            { itemHrid: '/items/holy_cheese', enhancementLevel: 0, ask: 900, bid: 850 },
+        ]);
+        marketAPI.updatePrice('/items/holy_sword', 14, 120_000_000, null);
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        expect(listener).toHaveBeenCalledTimes(1);
+        const change = listener.mock.calls[0][0];
+        expect(change.full).toBe(false);
+        expect([...change.keys].sort()).toEqual(['/items/holy_sword:13', '/items/holy_sword:14']);
+        expect([...change.hrids]).toEqual(['/items/holy_sword']);
+        expect(change.touched.has('/items/holy_cheese:0')).toBe(true);
+    });
+
+    test('re-confirming prices already held notifies with nothing moved', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI._installSnapshot(book(), 999_000);
+        const listener = vi.fn();
+        marketAPI.on(listener);
+        const before = marketAPI.priceVersion;
+
+        marketAPI.updatePrice('/items/holy_cheese', 0, 900, 850);
+        // A zero side reads as absent, so it equals a missing one
+        marketAPI.updatePrice('/items/holy_sword', 0, 2_000_000, 1_900_000);
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        const change = listener.mock.calls[0][0];
+        expect(change.full).toBe(false);
+        expect(change.keys.size).toBe(0);
+        expect(marketAPI.priceVersion).toBe(before);
+    });
+
+    test('a book with no price where the snapshot had none still counts when it now has one', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI._installSnapshot(book(), 999_000);
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        // An empty book where the snapshot had no level at all: {ask: null, bid: null} is not "none"
+        marketAPI.updatePrice('/items/holy_cheese', 5, null, null);
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        expect([...listener.mock.calls[0][0].keys]).toEqual(['/items/holy_cheese:5']);
+    });
+
+    test('a keyless scheduleNotify (a custom price edit) is a full change', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        marketAPI.updatePrice('/items/holy_cheese', 0, 950, 850);
+        marketAPI.scheduleNotify();
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(listener.mock.calls[0][0].full).toBe(true);
+    });
+
+    test('a direct notification is a full change and absorbs the pending keys', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        marketAPI.updatePrice('/items/holy_cheese', 0, 950, 850);
+        marketAPI.notifyListeners();
+        marketAPI.updatePrice('/items/holy_cheese', 0, 960, 850);
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        expect(listener.mock.calls[0][0].full).toBe(true);
+        expect([...listener.mock.calls[1][0].keys]).toEqual(['/items/holy_cheese:0']);
+    });
+
+    test('changesSince reports moved keys, and a new snapshot as full', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI._installSnapshot(book(), 999_000);
+        const seen = marketAPI.priceVersion;
+
+        marketAPI.updatePrice('/items/holy_cheese', 0, 950, 850);
+        expect(marketAPI.changesSince(seen)).toMatchObject({ full: false });
+        expect([...marketAPI.changesSince(seen).hrids]).toEqual(['/items/holy_cheese']);
+        expect(marketAPI.changesSince(marketAPI.priceVersion).keys.size).toBe(0);
+
+        // Same API timestamp: the snapshot already held, nothing replaced
+        expect(marketAPI._installSnapshot(book(), 999_000)).toBe(false);
+        expect(marketAPI.changesSince(seen).full).toBe(false);
+        expect(marketAPI._installSnapshot(book(), 999_600)).toBe(true);
+        expect(marketAPI.changesSince(seen).full).toBe(true);
+    });
+
+    test('a re-read of the cached snapshot notifies without a full change', async () => {
+        const { get, getJSON } = createMocks(true);
+        const cachedAt = Date.now();
+        get.mockImplementation(async (key) => (key === 'Toolasha_marketAPI_timestamp' ? cachedAt : 1));
+        getJSON.mockImplementation(async (key) =>
+            key === 'Toolasha_marketAPI_json' ? { marketData: book(), timestamp: 999_000 } : {}
+        );
+        const { default: marketAPI } = await import('./marketplace.js');
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        await marketAPI.fetch();
+        await marketAPI.fetch();
+
+        expect(listener).toHaveBeenCalledTimes(2);
+        expect(listener.mock.calls[0][0].full).toBe(true);
+        expect(listener.mock.calls[1][0]).toMatchObject({ full: false });
+        expect(listener.mock.calls[1][0].keys.size).toBe(0);
+    });
+
+    test('recordPriceReads sees every getPrice key until stopped', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI._installSnapshot(book(), 999_000);
+
+        const recorder = marketAPI.recordPriceReads();
+        marketAPI.getPrice('/items/holy_cheese');
+        marketAPI.getPrice('/items/holy_sword', 13);
+        marketAPI.getPrice('/items/holy_sword', 13);
+        marketAPI.notePriceReads(['/items/lumber:0']);
+        recorder.stop();
+        marketAPI.getPrice('/items/holy_sword', 0);
+
+        expect([...recorder.keys].sort()).toEqual(['/items/holy_cheese:0', '/items/holy_sword:13', '/items/lumber:0']);
+        expect(recorder.wide).toBe(false);
+    });
+});
+
 describe('MarketAPI patch freshness ordering', () => {
     beforeEach(() => {
         vi.resetModules();
