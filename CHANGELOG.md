@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upstream fixes: quick-input loadout, offline limit for endless combat
+
+- The action panel's speed, efficiency and queue sizing now use the saved loadout for that action throughout, instead of mixing worn gear with the loadout's drinks.
+- A queue that ends in endless combat now shows the offline limit instead of an uncertain end. Both come from upstream.
+
 ### Party finder: your own auras and saved builds
 
 - "Also try my auras" makes the party search try each aura you own on you, in every party and alone, against your as-worn solo baseline (off by default; it multiplies the sims).
