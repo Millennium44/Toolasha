@@ -243,25 +243,18 @@ const COMBAT_SKILLS = new Set(
  */
 const JEWELRY_SLOTS = new Set(['/equipment_types/neck', '/equipment_types/earrings', '/equipment_types/ring']);
 
-let dungeonItemsCache = { source: null, items: null };
+let refineBasesCache = { source: null, items: null };
 
-/** Every item hrid that appears anywhere inside a dungeon zone's own data */
-function dungeonItems(data) {
-    if (dungeonItemsCache.source === data.actionDetailMap) return dungeonItemsCache.items;
+const isRefinedOutput = (action) => (action?.outputItems || []).some((out) => /_refined$/.test(slugOf(out?.itemHrid)));
+
+/** The unrefined pieces: every item that is the upgrade item of an action making a `_refined` item */
+function refineBases(data) {
+    if (refineBasesCache.source === data.actionDetailMap) return refineBasesCache.items;
     const found = new Set();
-    const walk = (node) => {
-        if (Array.isArray(node)) node.forEach(walk);
-        else if (node && typeof node === 'object') {
-            for (const [key, value] of Object.entries(node)) {
-                if (key === 'itemHrid' && typeof value === 'string') found.add(value);
-                else walk(value);
-            }
-        }
-    };
     for (const action of Object.values(data.actionDetailMap || {})) {
-        if (action?.combatZoneInfo?.isDungeon === true) walk(action);
+        if (action?.upgradeItemHrid && isRefinedOutput(action)) found.add(action.upgradeItemHrid);
     }
-    dungeonItemsCache = { source: data.actionDetailMap, items: found };
+    refineBasesCache = { source: data.actionDetailMap, items: found };
     return found;
 }
 
@@ -312,14 +305,11 @@ const ANY_OF_GROUPS = [
             Boolean(action.upgradeItemHrid) && (action.outputItems || []).some((out) => outputs.has(out?.itemHrid)),
     },
     {
-        // Make any dungeon equipment from its components: crafted equipment with an input found only
-        // in a dungeon's own data (its spawns, keys and reward tables)
-        matches: ({ steam, text }) => /dungeon_equipment/.test(steam) || /\bdungeon equipment\b/i.test(text),
-        accepts: (hrid, item) => Boolean(item?.equipmentDetail) && !/_refined$/.test(slugOf(hrid)),
-        actionOk: (action, outputs, data) =>
-            action.type === '/action_types/crafting' &&
-            !action.upgradeItemHrid &&
-            inputsOf(action).some((input) => dungeonItems(data).has(input.itemHrid)),
+        // Make any dungeon equipment from its components: the pieces that can be refined are the
+        // dungeon and labyrinth equipment; any non-refine recipe making one counts, upgrade item or not
+        matches: ({ steam, text }) => /dungeon_equipment/.test(steam) || /dungeon equipment/i.test(text),
+        accepts: (hrid, item, { data }) => refineBases(data).has(hrid),
+        actionOk: (action) => !isRefinedOutput(action),
     },
     {
         // Any Master charm
@@ -335,7 +325,7 @@ function resolveAnyOf(detail, data) {
     if (!group || !data?.itemDetailMap) return null;
     const outputs = new Set(
         Object.entries(data.itemDetailMap)
-            .filter(([hrid, item]) => group.accepts(hrid, item, { text }))
+            .filter(([hrid, item]) => group.accepts(hrid, item, { text, data }))
             .map(([hrid]) => hrid)
     );
     if (outputs.size === 0) return null;

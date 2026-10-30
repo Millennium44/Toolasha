@@ -76,19 +76,33 @@ export const MORE_ANY_OF_DATA = {
             [{ itemHrid: '/items/pearl', count: 2 }],
             '/items/pearl_necklace'
         ),
-        '/actions/combat/chimerical_den': zoneAct('chimerical_den', {
-            combatZoneInfo: {
-                isDungeon: true,
-                fightInfo: { randomSpawnInfo: { spawns: [] }, bossSpawns: [] },
-                dungeonInfo: { rewardDropTable: [{ itemHrid: '/items/chimerical_part', dropRate: 1 }] },
-            },
-        }),
-        '/actions/crafting/chimerical_quiver': makeAct(
-            'crafting',
-            'chimerical_quiver',
-            60,
-            [{ itemHrid: '/items/chimerical_part', count: 3 }],
-            '/items/chimerical_quiver'
+        // Real shapes (test server, 2026-10-30): recipes may or may not carry an upgrade item, and the
+        // components are plain resources that appear in no dungeon zone's data
+        '/actions/cheesesmithing/chaotic_flail': makeAct(
+            'cheesesmithing',
+            'chaotic_flail',
+            90,
+            [
+                { itemHrid: '/items/chaotic_chain', count: 20 },
+                { itemHrid: '/items/holy_mace', count: 60 },
+            ],
+            '/items/chaotic_flail',
+            { upgradeItemHrid: '/items/granite_bludgeon' }
+        ),
+        '/actions/cheesesmithing/dodocamel_gauntlets': makeAct(
+            'cheesesmithing',
+            'dodocamel_gauntlets',
+            85,
+            [{ itemHrid: '/items/dodocamel_plume', count: 6 }],
+            '/items/dodocamel_gauntlets'
+        ),
+        '/actions/tailoring/kraken_tunic': makeAct(
+            'tailoring',
+            'kraken_tunic',
+            88,
+            [{ itemHrid: '/items/kraken_leather', count: 10 }],
+            '/items/kraken_tunic',
+            { upgradeItemHrid: '/items/revenant_tunic' }
         ),
         '/actions/crafting/plain_sword': makeAct(
             'crafting',
@@ -97,13 +111,30 @@ export const MORE_ANY_OF_DATA = {
             [{ itemHrid: '/items/iron', count: 3 }],
             '/items/plain_sword'
         ),
-        '/actions/crafting/chimerical_quiver_refined': makeAct(
-            'crafting',
-            'chimerical_quiver_refined',
-            80,
+        // Refine actions: the upgrade item is the unrefined piece
+        '/actions/cheesesmithing/chaotic_flail_refined': makeAct(
+            'cheesesmithing',
+            'chaotic_flail_refined',
+            100,
             [],
-            '/items/chimerical_quiver_refined',
-            { upgradeItemHrid: '/items/chimerical_quiver' }
+            '/items/chaotic_flail_refined',
+            { upgradeItemHrid: '/items/chaotic_flail' }
+        ),
+        '/actions/cheesesmithing/dodocamel_gauntlets_refined': makeAct(
+            'cheesesmithing',
+            'dodocamel_gauntlets_refined',
+            100,
+            [],
+            '/items/dodocamel_gauntlets_refined',
+            { upgradeItemHrid: '/items/dodocamel_gauntlets' }
+        ),
+        '/actions/tailoring/kraken_tunic_refined': makeAct(
+            'tailoring',
+            'kraken_tunic_refined',
+            100,
+            [],
+            '/items/kraken_tunic_refined',
+            { upgradeItemHrid: '/items/kraken_tunic' }
         ),
     },
     itemDetailMap: {
@@ -113,8 +144,12 @@ export const MORE_ANY_OF_DATA = {
         '/items/azure_plate': equipment('Azure Plate', '/equipment_types/legs', 'defense', 10),
         '/items/ruby_ring': equipment('Ruby Ring', '/equipment_types/ring', 'crafting', 30),
         '/items/pearl_necklace': equipment('Pearl Necklace', '/equipment_types/neck', 'crafting', 50),
-        '/items/chimerical_quiver': equipment('Chimerical Quiver', '/equipment_types/back', 'ranged', 60),
-        '/items/chimerical_quiver_refined': equipment('Chimerical Quiver', '/equipment_types/back', 'ranged', 60),
+        '/items/chaotic_flail': equipment('Chaotic Flail', '/equipment_types/two_hand', 'melee', 90),
+        '/items/chaotic_flail_refined': equipment('Chaotic Flail', '/equipment_types/two_hand', 'melee', 90),
+        '/items/dodocamel_gauntlets': equipment('Dodocamel Gauntlets', '/equipment_types/hands', 'ranged', 85),
+        '/items/dodocamel_gauntlets_refined': equipment('Dodocamel Gauntlets', '/equipment_types/hands', 'ranged', 85),
+        '/items/kraken_tunic': equipment('Kraken Tunic', '/equipment_types/body', 'defense', 88),
+        '/items/kraken_tunic_refined': equipment('Kraken Tunic', '/equipment_types/body', 'defense', 88),
         '/items/plain_sword': equipment('Plain Sword', '/equipment_types/main_hand', 'melee', 1),
     },
 };
