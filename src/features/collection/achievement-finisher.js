@@ -36,6 +36,7 @@ import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigat
 import { getItemPriceInfo } from '../../utils/market-data.js';
 import { setShopFilter } from '../../utils/tester-shop-nav.js';
 import { perAttemptMaterialCost, priceProtection } from '../../utils/enhancement-input-pricing.js';
+import { getRareFindParts } from '../../utils/bonus-revenue-calculator.js';
 import { getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
@@ -100,6 +101,9 @@ const READINESS_EVENTS = [
     'market_item_values_updated',
     'abilities_updated',
     'house_rooms_updated',
+    // Rare Find: achievement, personal, guild and equipment buffs each land as buffs_updated (worn gear
+    // itself arrives as items_updated)
+    'buffs_updated',
     // Enhancing teas change the Enhancer routes' cost
     'consumables_updated',
 ];
@@ -584,6 +588,7 @@ class AchievementFinisher {
 
     /** What readiness reads, gathered once per render */
     readinessContext() {
+        const clientData = dataManager.getInitClientData?.() ?? null;
         const skills = dataManager.getSkills?.() ?? null;
         const skillLevels = skills ? new Map(skills.map((skill) => [skill.skillHrid, skill.level])) : null;
         let ownCombat = null;
@@ -647,6 +652,19 @@ class AchievementFinisher {
                 return enhanceParams;
             },
             enhanceCache: new Map(),
+            // Rare Find (%) on an action, from the same sources the profit calculators use; null when unreadable
+            rareFindFor: (actionHrid) => {
+                try {
+                    const type = clientData?.actionDetailMap?.[actionHrid]?.type;
+                    if (!type) return null;
+                    const equipment = dataManager.getEquipment?.();
+                    if (!equipment) return null;
+                    return getRareFindParts(type, equipment, clientData.itemDetailMap || {}).total;
+                } catch (error) {
+                    console.error('[AchievementFinisher] Rare Find unreadable:', error);
+                    return null;
+                }
+            },
         };
     }
 

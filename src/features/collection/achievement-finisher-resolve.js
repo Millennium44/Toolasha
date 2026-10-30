@@ -934,7 +934,14 @@ const compareTuples = (a, b) => {
  */
 function candidateReadiness(res, ctx, out) {
     const rare = res.candidates.some((cand) => Number.isFinite(cand.dropRate));
-    const scored = res.candidates.map((cand) => {
+    const scored = res.candidates.map((raw) => {
+        // The odds the character really has: Rare Find lifts the table's rate, per action type
+        let cand = raw;
+        if (rare && typeof ctx.rareFindFor === 'function') {
+            const bonus = Number(ctx.rareFindFor(raw.actionHrid));
+            if (Number.isFinite(bonus) && bonus > 0)
+                cand = { ...raw, dropRate: Math.min(1, raw.dropRate * (1 + bonus / 100)) };
+        }
         const ready = actionReadiness({ ...cand, kind: 'production' }, ctx, emptyReadiness());
         return { cand, ready };
     });

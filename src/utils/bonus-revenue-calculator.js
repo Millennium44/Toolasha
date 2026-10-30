@@ -11,6 +11,35 @@ import { calculateHouseRareFind } from './house-efficiency.js';
 import { getItemPrice } from './market-data.js';
 
 /**
+ * Rare Find (%) one action type gets: equipment, house rooms, achievements, personal and guild buffs.
+ * The single source for every reader of a rare drop's real odds (x (1 + total / 100)).
+ * @param {string} actionType - e.g. '/action_types/milking'
+ * @param {Map} characterEquipment - Equipment map
+ * @param {Object} itemDetailMap - Item details map
+ * @returns {{equipment: number, house: number, achievement: number, personal: number, guild: number, total: number}}
+ */
+export function getRareFindParts(actionType, characterEquipment, itemDetailMap) {
+    const equipment = parseRareFindBonus(characterEquipment, actionType, itemDetailMap);
+    const house = calculateHouseRareFind();
+    const achievement = dataManager.getAchievementBuffFlatBoost(actionType, '/buff_types/rare_find') * 100;
+    const personal = dataManager.getPersonalBuffFlatBoost(actionType, '/buff_types/rare_find') * 100;
+    const guildBuffs = dataManager.characterData?.guildActionTypeBuffsMap?.[actionType] || [];
+    const guild =
+        guildBuffs.reduce(
+            (sum, b) => (b.typeHrid === '/buff_types/rare_find' ? sum + (b.flatBoost || 0) + (b.ratioBoost || 0) : sum),
+            0
+        ) * 100;
+    return {
+        equipment,
+        house,
+        achievement,
+        personal,
+        guild,
+        total: equipment + house + achievement + personal + guild,
+    };
+}
+
+/**
  * Calculate bonus revenue from essence and rare find drops
  * Display totals include raw market prices and already-net container EV. Each
  * container drop carries `taxExempt`; `taxExemptBonusRevenue` sums that portion
@@ -34,20 +63,16 @@ export function calculateBonusRevenue(
     // Get Essence Find bonus from equipment
     const essenceFindBonus = parseEssenceFindBonus(characterEquipment, itemDetailMap);
 
-    // Get Rare Find bonus from BOTH equipment and house rooms
-    const equipmentRareFindBonus = parseRareFindBonus(characterEquipment, actionDetails.type, itemDetailMap);
-    const houseRareFindBonus = calculateHouseRareFind();
-    const achievementRareFindBonus =
-        dataManager.getAchievementBuffFlatBoost(actionDetails.type, '/buff_types/rare_find') * 100;
-    const personalRareFindBonus =
-        dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/rare_find') * 100;
-
+    const rareParts = getRareFindParts(actionDetails.type, characterEquipment, itemDetailMap);
+    const {
+        equipment: equipmentRareFindBonus,
+        house: houseRareFindBonus,
+        achievement: achievementRareFindBonus,
+        personal: personalRareFindBonus,
+        guild: guildRareFindBonus,
+    } = rareParts;
+    const rareFindBonus = rareParts.total;
     const guildBuffs = dataManager.characterData?.guildActionTypeBuffsMap?.[actionDetails.type] || [];
-    const guildRareFindBonus =
-        guildBuffs.reduce(
-            (sum, b) => (b.typeHrid === '/buff_types/rare_find' ? sum + (b.flatBoost || 0) + (b.ratioBoost || 0) : sum),
-            0
-        ) * 100;
     const guildEssenceFindBonus =
         guildBuffs.reduce(
             (sum, b) =>
@@ -56,12 +81,6 @@ export function calculateBonusRevenue(
         ) * 100;
 
     const totalEssenceFindBonus = essenceFindBonus + guildEssenceFindBonus;
-    const rareFindBonus =
-        equipmentRareFindBonus +
-        houseRareFindBonus +
-        achievementRareFindBonus +
-        personalRareFindBonus +
-        guildRareFindBonus;
     const equipmentRareFindItems = parseRareFindBreakdown(characterEquipment, actionDetails.type, itemDetailMap);
     const rareFindBreakdown = {
         equipment: equipmentRareFindBonus,
