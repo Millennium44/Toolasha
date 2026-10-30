@@ -181,12 +181,14 @@ export function enhanceReadiness(res, ctx, out) {
     for (const listing of listings) {
         if (best && listing.price >= best.cost) break;
         const material = materialOf(listing.cand.itemHrid);
-        if (!material || material.hasMissingPrices || !Number.isFinite(material.cost)) {
+        // A partial bill (a craft-priced material with an unpriced input) is not a full price either
+        if (!material || material.hasMissingPrices || material.hasPartialPrices || !Number.isFinite(material.cost)) {
             firstUnpriced ||= listing;
             continue;
         }
         const protection = protectionOf(listing.cand.itemHrid);
-        const protectionPrice = protection.price > 0 ? protection.price : null;
+        // A partial protection price is treated as unpriced: the route is costed without protection
+        const protectionPrice = protection.price > 0 && !protection.partial ? protection.price : null;
         const run = enhanceRunCost({
             params,
             itemLevel: listing.cand.itemLevel,

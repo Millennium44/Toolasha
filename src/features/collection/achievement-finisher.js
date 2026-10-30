@@ -100,6 +100,8 @@ const READINESS_EVENTS = [
     'market_item_values_updated',
     'abilities_updated',
     'house_rooms_updated',
+    // Enhancing teas change the Enhancer routes' cost
+    'consumables_updated',
 ];
 
 /** Toolasha settings that change a buy cost */

@@ -1006,6 +1006,20 @@ describe('hints on the game achievement cards', () => {
         vi.advanceTimersByTime(1500);
         expect(lineOf('Student').textContent).toContain('[level met · no price for any book]');
     });
+
+    test('a tea change (consumables_updated) recomputes the cached readiness', () => {
+        game.detail = ABILITY_ACHIEVEMENTS;
+        game.clientData = { ...ABILITY_DATA, achievementDetailMap: ABILITY_ACHIEVEMENTS };
+        game.learned = null;
+        game.prices = { '/items/scratch': 4000 };
+        achievementsTab(ABILITY_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Student').textContent).toBe('[abilities not loaded]');
+        game.learned = [{ abilityHrid: '/abilities/scratch' }];
+        (game.handlers.consumables_updated || []).forEach((fn) => fn());
+        vi.advanceTimersByTime(1500);
+        expect(lineOf('Student').textContent).toContain('[level met · no price for any book]');
+    });
     test('enhancer cards: the cheapest piece and level, Go opens that listing; an estimate is no listing; Iron Cow gets nothing', () => {
         game.detail = ENHANCE_ACHIEVEMENTS;
         game.clientData = { ...ENHANCE_DATA, achievementDetailMap: ENHANCE_ACHIEVEMENTS };

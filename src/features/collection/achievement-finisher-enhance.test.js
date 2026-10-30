@@ -272,6 +272,29 @@ describe('enhancer: the cheapest route', () => {
         expect(ready.cost).toBeCloseTo(1_000 + bestRun(85, 0, 10, 100, 0), 3);
     });
 
+    test('a partial bill never wins as a priced route: partial materials rank as unpriced, partial protection is not used', () => {
+        // The cheap piece's materials are craft-priced with an unpriced input (cost understated)
+        const ctx = ctxWith({
+            listings: { '/items/magnetic_gloves': { 0: 1_000 }, '/items/chrono_gloves': { 0: 9_000_000 } },
+            materials: {
+                '/items/magnetic_gloves': { cost: 10, hasMissingPrices: false, hasPartialPrices: true },
+                '/items/chrono_gloves': { cost: 10, hasMissingPrices: false, hasPartialPrices: false },
+            },
+        });
+        expect(readiness(res(), ctx).buyHrid).toBe('/items/chrono_gloves');
+        // A protection priced from a partial bill: the route is costed unprotected and says so
+        const partialProt = readiness(
+            res(),
+            ctxWith({
+                listings: { '/items/magnetic_gloves': { 0: 1_000 } },
+                materials: { '/items/magnetic_gloves': { cost: 100, hasMissingPrices: false } },
+                protection: { '/items/magnetic_gloves': { price: 1, itemHrid: '/items/cheese', partial: true } },
+            })
+        );
+        expect(partialProt).toMatchObject({ protectionHrid: null, protectionUnpriced: true });
+        expect(partialProt.cost).toBeCloseTo(1_000 + bestRun(85, 0, 10, 100, 0), 3);
+    });
+
     test('unpriced materials rank after any priced route; with none priced the cheapest listing is named, no total', () => {
         const unpricedMats = { cost: 10, hasMissingPrices: true };
         const ctx = ctxWith({
