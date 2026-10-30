@@ -189,6 +189,8 @@ const utilsExternalGlobals = new Map([
     // zone, set the Difficulty combobox" seam — stateless, but bundled once
     // so check-bundle-sharing has a single owner to point at.
     [normalize(join(__dirname, 'src/utils/combat-zone-open.js')), 'Toolasha.Utils.combatZoneOpen'],
+    // "Open Alchemy on this item": Missing Materials (actions) and the achievement finisher (market)
+    [normalize(join(__dirname, 'src/utils/alchemy-navigation.js')), 'Toolasha.Utils.alchemyNavigation'],
     [normalize(join(__dirname, 'src/utils/marketplace-tabs.js')), 'Toolasha.Utils.marketplaceTabs'],
     [normalize(join(__dirname, 'src/utils/marketplace-autofill.js')), 'Toolasha.Utils.marketplaceAutofill'],
     // One marketplace tab bar, so one list watching it. The consumables panel is

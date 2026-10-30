@@ -94,6 +94,7 @@ vi.mock('./all-zones-runner.js', () => ({
 
 const { PartyFinderTab, displayNames } = await import('./party-finder-ui.js');
 const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
+const { PARTY_TEMPLATES, templateTeammateName } = await import('./party-templates.js');
 
 const HOUR = 3600 * 1e9;
 const ZONE = { hrid: '/actions/combat/swamp_planet', name: 'Swamp Planet', isDungeon: false };
@@ -1253,6 +1254,67 @@ describe('saved builds', () => {
         rowButton(id, 'Add as teammate').click();
         await flush();
         expect(state.db.entries).toHaveLength(2);
+    });
+
+    describe('templates', () => {
+        const toggle = () => tab.root.querySelector('[data-pf-templates-toggle]');
+        const tplRow = (id) => tab.root.querySelector(`[data-pf-template="${id}"]`);
+        const tplAdd = (id) =>
+            [...tplRow(id).querySelectorAll('button')].find((b) => b.textContent === 'Add as teammate');
+
+        test('the group sits above the saved builds and starts collapsed', async () => {
+            await mountTab();
+            expect(toggle()).not.toBeNull();
+            expect(tab.root.querySelector('[data-pf-templates-body]')).toBeNull();
+            expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(0);
+            const templates = el('templates');
+            const builds = el('builds');
+            // DOCUMENT_POSITION_FOLLOWING: builds comes after templates
+            expect(templates.compareDocumentPosition(builds) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        });
+
+        test('opening lists every template by role, with tier in the label and the source in a tooltip', async () => {
+            await mountTab();
+            toggle().click();
+            expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(PARTY_TEMPLATES.length);
+            const body = tab.root.querySelector('[data-pf-templates-body]').textContent;
+            for (const label of ['Ranger', 'Nature', 'Fire', 'Water', 'Tank', 'Melee']) expect(body).toContain(label);
+            const t = PARTY_TEMPLATES[0];
+            expect(tplRow(t.id).textContent).toContain(t.tier);
+            expect(tplRow(t.id).querySelector('span').title).toBe(t.source);
+            // No rename or delete on a template
+            const labels = [...tplRow(t.id).querySelectorAll('button')].map((b) => b.textContent);
+            expect(labels).toEqual(['Add as teammate']);
+            toggle().click();
+            expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(0);
+        });
+
+        test('add as teammate makes an ordinary roster entry, twice with distinct names, and no saved build', async () => {
+            await mountTab();
+            toggle().click();
+            const t = PARTY_TEMPLATES[1];
+            tplAdd(t.id).click();
+            await flush();
+            tplAdd(t.id).click();
+            await flush();
+            expect(state.db.entries).toHaveLength(2);
+            expect(state.db.entries[0]).toMatchObject({
+                name: templateTeammateName(t),
+                source: 'template',
+                includeAsBuilt: true,
+            });
+            expect(state.db.entries[0].gameMode).toBeNull();
+            const rows = [...tab.root.querySelectorAll('[data-pf-member]')];
+            expect(rows).toHaveLength(2);
+            const names = rows.map((r) => r.querySelector('[data-pf-name]').textContent);
+            expect(new Set(names).size).toBe(2);
+            expect(rows[0].querySelector('[data-pf-choice]')).not.toBeNull();
+            expect([...rows[0].querySelectorAll('button')].some((b) => b.textContent.startsWith('Auras'))).toBe(true);
+            // Templates never reach the record's builds
+            expect(state.db.builds).toEqual([]);
+            // Templates stay open and untouched
+            expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(PARTY_TEMPLATES.length);
+        });
     });
 
     test('rename keeps names unique; delete takes two clicks and survives a re-read', async () => {

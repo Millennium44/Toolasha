@@ -36,6 +36,22 @@ function isUncertainAction(actionObj, actionDetails) {
 }
 
 /**
+ * Regular-zone combat with no count never ends on its own (a death revives and resumes), so it is
+ * a true-infinite tail. A dungeon can end or restart on a party wipe, and a counted combat run
+ * depends on kills, so both stay uncertain.
+ * @param {Object} actionObj - Entry from `dataManager.getCurrentActions()`
+ * @param {Object} actionDetails - `dataManager.getActionDetails(actionObj.actionHrid)`
+ * @returns {boolean}
+ */
+function isInfiniteCombat(actionObj, actionDetails) {
+    return (
+        Boolean(actionObj.actionHrid?.includes('/combat/')) &&
+        !actionObj.hasMaxCount &&
+        actionDetails?.combatZoneInfo?.isDungeon !== true
+    );
+}
+
+/**
  * Build one queue segment for the persisted record.
  *
  * Kept deliberately small — this is written to IndexedDB once per queue change per character,
@@ -88,6 +104,25 @@ export function computeLiveProjection(now = Date.now()) {
     for (let i = 0; i < actions.length; i++) {
         const actionObj = actions[i];
         const actionDetails = dataManager.getActionDetails(actionObj.actionHrid);
+
+        // Skips the timing math on purpose: combat has no duration to project, and the display
+        // shows the offline cap for an infinite tail.
+        if (actionDetails && isInfiniteCombat(actionObj, actionDetails)) {
+            segments.push(
+                buildSegment({
+                    actionObj,
+                    actionDetails,
+                    queuedIndex: i,
+                    startAt: currentTime,
+                    endAt: null,
+                    certainty: 'trustworthy',
+                    stopCause: 'infinite',
+                })
+            );
+            terminalCause = 'infinite';
+            terminalAt = null;
+            break;
+        }
 
         if (!actionDetails || isUncertainAction(actionObj, actionDetails)) {
             segments.push(

@@ -198,3 +198,84 @@ describe('computeLiveProjection output credit', () => {
         expect(projection.terminalAt).toBe(NOW + 50_000);
     });
 });
+
+/**
+ * Infinite regular-zone combat never ends on its own, so a queue that ends in it shows the offline
+ * limit rather than "uncertain". A dungeon and a counted combat run stay uncertain.
+ */
+describe('computeLiveProjection combat', () => {
+    const ZONE = '/actions/combat/aqua_planet';
+    const DUNGEON = '/actions/combat/chimerical_den';
+
+    function combat(id, actionHrid, extra = {}) {
+        return {
+            id,
+            ordinal: id,
+            actionHrid,
+            hasMaxCount: false,
+            maxCount: 0,
+            currentCount: 0,
+            isDone: false,
+            ...extra,
+        };
+    }
+
+    beforeEach(() => {
+        game.actionDetails[ZONE] = { hrid: ZONE, name: 'Aqua Planet', type: '/action_types/combat' };
+        game.actionDetails[DUNGEON] = {
+            hrid: DUNGEON,
+            name: 'Chimerical Den',
+            type: '/action_types/combat',
+            combatZoneInfo: { isDungeon: true },
+        };
+    });
+
+    test('infinite zone combat as the only action is an infinite tail', () => {
+        game.currentActions = [combat(1, ZONE)];
+
+        const projection = computeLiveProjection(NOW);
+
+        expect(projection.terminalCause).toBe('infinite');
+        expect(projection.terminalAt).toBeNull();
+        expect(projection.certainty).toBe('trustworthy');
+        expect(projection.segments).toHaveLength(1);
+        expect(projection.segments[0].stopCause).toBe('infinite');
+    });
+
+    test('infinite zone combat queued behind a finite action keeps the finite prefix', () => {
+        game.currentActions = [{ ...coinifyAction(1), hasMaxCount: true, maxCount: 3 }, combat(2, ZONE)];
+
+        const projection = computeLiveProjection(NOW);
+
+        expect(projection.terminalCause).toBe('infinite');
+        expect(projection.segments).toHaveLength(2);
+        expect(projection.segments[0].endAt).toBe(NOW + 30_000);
+        expect(projection.segments[1].startAt).toBe(NOW + 30_000);
+        expect(projection.segments[1].stopCause).toBe('infinite');
+    });
+
+    test('a dungeon stays uncertain', () => {
+        game.currentActions = [combat(1, DUNGEON)];
+
+        const projection = computeLiveProjection(NOW);
+
+        expect(projection.terminalCause).toBe('unknown');
+        expect(projection.certainty).toBe('uncertain');
+        expect(projection.segments[0].stopCause).toBe('unknown');
+    });
+
+    test('a counted combat run stays uncertain', () => {
+        game.currentActions = [combat(1, ZONE, { hasMaxCount: true, maxCount: 10 })];
+
+        const projection = computeLiveProjection(NOW);
+
+        expect(projection.terminalCause).toBe('unknown');
+        expect(projection.certainty).toBe('uncertain');
+    });
+
+    test('missing action details stay uncertain', () => {
+        game.currentActions = [combat(1, '/actions/combat/unknown_zone')];
+
+        expect(computeLiveProjection(NOW).terminalCause).toBe('unknown');
+    });
+});

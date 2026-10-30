@@ -1626,9 +1626,17 @@ class TaskProfitDisplay {
         }
         if (tied.length === 1) return tied[0].zoneHrid;
 
-        // No other tracked task disambiguated the candidates — fall back to
-        // the game's own zone ordering rather than map iteration order.
-        return tied.reduce((a, b) => (b.sortIndex < a.sortIndex ? b : a)).zoneHrid;
+        // No other tracked task disambiguated the candidates. Zone mode means
+        // the real multi-monster zone, so prefer the candidate with more
+        // distinct monsters (a monster's own single-monster action, like
+        // "Eyes" beside Planet Of The Eyes, must not win a tie). A single-
+        // monster action can never score higher on shared tasks: it holds only
+        // the card's own monster, which scoring skips. Then fall back to the
+        // game's own zone ordering rather than map iteration order.
+        return tied.reduce((a, b) => {
+            if (b.zoneMonsters.size !== a.zoneMonsters.size) return b.zoneMonsters.size > a.zoneMonsters.size ? b : a;
+            return b.sortIndex < a.sortIndex ? b : a;
+        }).zoneHrid;
     }
 
     /**

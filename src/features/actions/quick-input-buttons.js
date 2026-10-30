@@ -528,9 +528,13 @@ class QuickInputButtons {
             );
 
             // Calculate action duration and efficiency
+            // One atomic equipment+drinks context for the whole panel, so speed, efficiency and the
+            // displayed breakdown never mix worn gear with saved-loadout drinks (or vice versa).
+            const actionContext = resolveActionContext(actionDetails.type);
             const { actionTime, totalEfficiency, efficiencyBreakdown } = this.calculateActionMetrics(
                 actionDetails,
-                gameData
+                gameData,
+                actionContext
             );
             const efficiencyMultiplier = 1 + totalEfficiency / 100;
             // Level efficiency is clamped at zero, so while the effective level is still below
@@ -549,7 +553,7 @@ class QuickInputButtons {
             }
 
             // Get equipment details for display
-            const equipment = dataManager.getEquipment();
+            const equipment = actionContext.equipment;
             const itemDetailMap = gameData.itemDetailMap || {};
 
             // Calculate speed breakdown
@@ -597,7 +601,12 @@ class QuickInputButtons {
                 }
 
                 // Add speed breakdown
-                const speedBreakdown = this.calculateSpeedBreakdown(actionDetails, equipment, itemDetailMap);
+                const speedBreakdown = this.calculateSpeedBreakdown(
+                    actionDetails,
+                    equipment,
+                    itemDetailMap,
+                    actionContext.drinks
+                );
                 if (speedBreakdown.total > 0) {
                     // Equipment and tools (combined from debugEquipmentSpeedBonuses)
                     for (const item of speedBreakdown.equipmentAndTools) {
@@ -1043,10 +1052,12 @@ class QuickInputButtons {
      * Uses shared calculator with community buffs and detailed breakdown
      * @param {Object} actionDetails - Action details from game data
      * @param {Object} gameData - Cached game data from dataManager
+     * @param {{equipment: Map, drinks: Array}} [actionContext] - Atomic equipment+drinks context;
+     *   resolved from the action type when omitted
      * @returns {Object} {actionTime, totalEfficiency, efficiencyBreakdown}
      */
-    calculateActionMetrics(actionDetails, gameData) {
-        const equipment = dataManager.getEquipment();
+    calculateActionMetrics(actionDetails, gameData, actionContext = resolveActionContext(actionDetails.type)) {
+        const equipment = actionContext.equipment;
         const skills = dataManager.getSkills();
         const itemDetailMap = gameData?.itemDetailMap || {};
 
@@ -1054,6 +1065,7 @@ class QuickInputButtons {
         const stats = calculateActionStats(actionDetails, {
             skills,
             equipment,
+            actionContext,
             itemDetailMap,
             actionHrid: actionDetails.hrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
@@ -1123,9 +1135,10 @@ class QuickInputButtons {
      * @param {Object} actionData - Action data
      * @param {Map} equipment - Equipment map
      * @param {Object} itemDetailMap - Item detail map from game data
+     * @param {Array} [drinks] - Active drinks; current drink slots when omitted
      * @returns {Object} Speed breakdown by source
      */
-    calculateSpeedBreakdown(actionData, equipment, itemDetailMap) {
+    calculateSpeedBreakdown(actionData, equipment, itemDetailMap, drinks) {
         const breakdown = {
             equipmentAndTools: [],
             consumables: [],
@@ -1152,7 +1165,7 @@ class QuickInputButtons {
         }
 
         // Consumables (teas)
-        const consumableSpeed = this.getConsumableSpeed(actionData, equipment, itemDetailMap);
+        const consumableSpeed = this.getConsumableSpeed(actionData, equipment, itemDetailMap, drinks);
         breakdown.consumables = consumableSpeed;
         breakdown.total += consumableSpeed.reduce((sum, c) => sum + c.speed, 0);
 
@@ -1177,11 +1190,12 @@ class QuickInputButtons {
      * @param {Object} actionData - Action data
      * @param {Map} equipment - Equipment map
      * @param {Object} itemDetailMap - Item detail map
+     * @param {Array} [drinks] - Active drinks; current drink slots when omitted
      * @returns {Array} Consumable speed info
      */
-    getConsumableSpeed(actionData, equipment, itemDetailMap) {
+    getConsumableSpeed(actionData, equipment, itemDetailMap, drinks) {
         const actionType = actionData.type;
-        const drinkSlots = dataManager.getActionDrinkSlots(actionType);
+        const drinkSlots = drinks ?? dataManager.getActionDrinkSlots(actionType);
         if (!drinkSlots || drinkSlots.length === 0) return [];
 
         const consumables = [];

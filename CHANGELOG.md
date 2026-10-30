@@ -10,11 +10,26 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A "Plan scrolls" button on Labyrinth scroll menus lets you set how many of each to open, then steps you through them: it opens each scroll's menu, fills the quantity and highlights Open, which you press yourself (from upstream).
 
+### Upstream fixes: quick-input loadout, offline limit for endless combat
+
+- The action panel's speed, efficiency and queue sizing now use the saved loadout for that action throughout, instead of mixing worn gear with the loadout's drinks.
+- A queue that ends in endless combat now shows the offline limit instead of an uncertain end. Both come from upstream.
+
 ### Party finder: your own auras and saved builds
 
 - "Also try my auras" makes the party search try each aura you own on you, in every party and alone, against your as-worn solo baseline (off by default; it multiplies the sims).
 - Save any build by name in the Party tab and add it as a teammate later; saved builds sync with the roster.
 - The aura options now include Insanity, Invincible and Revive, which fill the same slot.
+- A Templates list in the Party tab adds ready-made teammates: ranged, nature, fire, water and tank builds from community guides, plus endgame builds for every class.
+
+### Achievement hints on the game's cards
+
+- Each unfinished achievement card now shows whether you can do it (level met, materials owned, or a rough buy cost with the coin icon), with a Go button that opens the right screen and a Missing Mats button that opens the marketplace on what you lack. Go and Missing Mats only navigate.
+- A "Toolasha hints" checkbox beside "Show Incomplete Only" turns them on or off; the separate finisher panel is gone.
+
+### Zone mode simulates the real zone
+
+- A combat task's Zone estimate now picks the multi-monster zone (Planet Of The Eyes, Bear With It) instead of the monster's own single-monster fight, unless another task shares a different zone.
 
 ### Guild trial readout fits beside the swarm
 
@@ -61,9 +76,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Lighter storage traffic in combat
 
-- The Party Loot panel no longer re-reads the whole session archive every 5 seconds while open, slow storage checks no longer pile up, and unchanged party consumable records are no longer rewritten after every wave; on a phone these were thousands of database calls per session.
-- Live damage graphs save every 10 seconds instead of 4 (a normal close still saves at once), and the two combat timing tallies save once a minute and on page hide or close.
-- The health dialog reads "Toolasha health" when nothing failed, and the guild history store's soft budget covers the guild trial diagnostic trace.
+- Combat makes far fewer database calls, which matters most on phones: the Party Loot panel stops re-reading its history every 5 seconds, unchanged records are not rewritten, and live graphs save every 10 seconds.
+- The health dialog reads "Toolasha health" when nothing failed.
 
 ### Sync: one gist per game server
 
