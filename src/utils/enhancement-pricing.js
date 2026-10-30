@@ -94,6 +94,15 @@ function _customVersion() {
     return `${custom}|${values}`;
 }
 
+// The market's own price version moves the moment a price does; the listener counter below moves
+// only on the notification, which a burst of patches coalesces for 100 ms (and a fetch sends after
+// it has loaded patches). A cost computed in that window would otherwise be stored under the old
+// counter with new-price inputs, then served after the notification as if it were fresh. Both are
+// kept: a stub without the version still invalidates on its listener.
+function _feedVersion() {
+    return `${_priceVersion}|${marketAPI?.priceVersion ?? ''}`;
+}
+
 function _buffVersion() {
     return dataManager.getBuffStateVersion?.() ?? 0;
 }
@@ -280,12 +289,13 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask') {
     if (!dataManager.getInitClientData()) return { cost: 0, partial: true };
     // The cape setting is part of the key: a refined cape's upgrade item is priced by it
     const cacheKey = `${itemHrid}|${mode}|${getCapeBaseValueMode()}`;
+    const feedVersion = _feedVersion();
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
     const cached = _costCache.get(cacheKey);
     if (
         cached &&
-        cached.version === _priceVersion &&
+        cached.version === feedVersion &&
         cached.buffVersion === buffVersion &&
         cached.customVersion === customVersion
     ) {
@@ -303,7 +313,7 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask') {
         recorder?.stop();
     }
     const reads = recorder && !recorder.wide ? recorder.keys : null;
-    _costCache.set(cacheKey, { version: _priceVersion, buffVersion, customVersion, value: result, reads });
+    _costCache.set(cacheKey, { version: feedVersion, buffVersion, customVersion, value: result, reads });
     return result;
 }
 
@@ -383,19 +393,20 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
  * @returns {number} Total chain time in seconds (base times, no speed bonuses applied)
  */
 export function getProductionChainTime(itemHrid) {
+    const feedVersion = _feedVersion();
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
     const cached = _chainTimeCache.get(itemHrid);
     if (
         cached &&
-        cached.version === _priceVersion &&
+        cached.version === feedVersion &&
         cached.buffVersion === buffVersion &&
         cached.customVersion === customVersion
     ) {
         return cached.value;
     }
     const result = _computeProductionChainTime(itemHrid);
-    _chainTimeCache.set(itemHrid, { version: _priceVersion, buffVersion, customVersion, value: result });
+    _chainTimeCache.set(itemHrid, { version: feedVersion, buffVersion, customVersion, value: result });
     return result;
 }
 

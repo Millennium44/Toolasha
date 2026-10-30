@@ -31,6 +31,8 @@ const game = vi.hoisted(() => ({
     customSides: {},
     // When true the game data has not loaded: getInitClientData() answers null
     noInit: false,
+    // The market's own price version (moves at once; the listener fires later, coalesced)
+    apiVersion: 0,
 }));
 
 vi.mock('../core/data-manager.js', () => ({
@@ -50,7 +52,14 @@ vi.mock('./action-context.js', () => ({
         drinks: game.resolvedDrinks !== undefined ? game.resolvedDrinks : game.drinks,
     }),
 }));
-vi.mock('../api/marketplace.js', () => ({ default: { on: () => {} } }));
+vi.mock('../api/marketplace.js', () => ({
+    default: {
+        on: () => {},
+        get priceVersion() {
+            return game.apiVersion;
+        },
+    },
+}));
 // The override store's own counter: a custom price changes what a recipe's inputs cost
 vi.mock('../features/settings/custom-price-overrides.js', () => ({
     getCustomPriceVersion: () => game.customVersion,
@@ -67,6 +76,7 @@ const {
     getCheapestProtectionPrice,
     getProductionCost,
     getProductionCostDetailed,
+    getProductionChainTime,
     TRAINEE_SHOP_PRICE,
 } = await import('./enhancement-pricing.js');
 
@@ -262,6 +272,21 @@ describe('production-cost memo invalidation', () => {
         applyMarketValuesMessage({ marketValuesVersion: 9, marketItemValues: { '/items/vmap_ore': { 0: 1_000 } } });
         expect(getProductionCost('/items/vmap_mat')).toBe(2_000);
         _resetMarketValues();
+    });
+
+    test('a price that moved but has not been announced yet is not served from the memo', () => {
+        makeRecipe('/items/window_mat', '/items/window_ore');
+        expect(getProductionCost('/items/window_mat')).toBe(500);
+        // getPrice() answers the new figure the moment the market's version moves; the listeners
+        // are told 100 ms later, so a recompute here must not be stored as if it were current
+        game.prices['/items/window_ore:0'] = { ask: 1_000, bid: 990 };
+        game.apiVersion++;
+        expect(getProductionCost('/items/window_mat')).toBe(2_000);
+        expect(getProductionChainTime('/items/window_mat')).toBe(0);
+        // and the next move is seen too
+        game.prices['/items/window_ore:0'] = { ask: 300, bid: 290 };
+        game.apiVersion++;
+        expect(getProductionCost('/items/window_mat')).toBe(600);
     });
 
     test('inputs are priced at the custom buy figure, not the custom sell one', () => {
