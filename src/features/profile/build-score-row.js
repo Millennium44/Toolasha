@@ -105,7 +105,10 @@ export function ownProfileData() {
  * @returns {string}
  */
 export function scorePricingStamp() {
-    return `${pricingStamp()}|${marketAPI.priceVersion}`;
+    // The high-enhancement valuation settings change what a worn piece costs but are not in pricingStamp()
+    const useCost = config.getSetting('networth_highEnhancementUseCost') ? 'cost' : 'market';
+    const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
+    return `${pricingStamp()}|${marketAPI.priceVersion}|${useCost}|${minLevel}`;
 }
 
 class BuildScore {

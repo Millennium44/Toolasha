@@ -12,12 +12,13 @@ const game = vi.hoisted(() => ({
     scoreResult: { total: 42 },
     toggles: 0,
     scoreSource: null,
+    networth: {},
     stamp: 'a',
     priceVersion: 1,
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => game.setting },
+    default: { getSetting: (key) => (key.startsWith('networth_') ? game.networth[key] : game.setting) },
 }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -379,6 +380,7 @@ describe('ensureOwnScore', () => {
         game.scoreResult = { total: 42 };
         game.stamp = 'a';
         game.priceVersion = 1;
+        game.networth = {};
         buildScore.disable();
         vi.useFakeTimers();
     });
@@ -388,9 +390,19 @@ describe('ensureOwnScore', () => {
     });
 
     test('the stamp is the pricing inputs plus the order-book version', () => {
-        expect(scorePricingStamp()).toBe('a|1');
+        expect(scorePricingStamp()).toBe('a|1|market|13');
         game.priceVersion = 2;
-        expect(scorePricingStamp()).toBe('a|2');
+        expect(scorePricingStamp()).toBe('a|2|market|13');
+    });
+
+    test('the high-enhancement valuation settings are in the stamp, since pricingStamp() lacks them', () => {
+        const before = scorePricingStamp();
+        game.networth = { networth_highEnhancementUseCost: true };
+        const useCost = scorePricingStamp();
+        expect(useCost).not.toBe(before);
+        game.networth = { networth_highEnhancementUseCost: true, networth_highEnhancementMinLevel: 11 };
+        expect(scorePricingStamp()).not.toBe(useCost);
+        game.networth = {};
     });
 
     test('a score held under the same stamp is returned without recomputing', async () => {
@@ -422,6 +434,6 @@ describe('ensureOwnScore', () => {
         game.stamp = 'b';
         game.scoreResult = { total: 99 };
         expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 99 });
-        expect(buildScore.stamp).toBe('b|1');
+        expect(buildScore.stamp).toBe('b|1|market|13');
     });
 });
