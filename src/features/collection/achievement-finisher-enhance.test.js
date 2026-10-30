@@ -7,6 +7,7 @@ import { describe, test, expect, vi } from 'vitest';
 
 import { resolveAchievement, readiness } from './achievement-finisher-resolve.js';
 import { enhanceRunCost } from './achievement-finisher-enhance.js';
+import * as F from './__fixtures__/achievement-finisher-enhance.js';
 import {
     BASE_SUCCESS_RATES,
     calculateEnhancement,
@@ -386,5 +387,119 @@ describe('enhancer: a live-typical bench (Enhancing ~100-130, below the piece le
         expect(Number.isFinite(weak)).toBe(true);
         expect(weak).toBeGreaterThan(0);
         expect(strong).toBeLessThan(weak);
+    });
+});
+
+describe('enhancer: an Iron Cow cannot buy (owned piece, else craft)', () => {
+    const C = F.ENHANCE_CRAFT_DATA;
+    const row = (itemHrid, enhancementLevel, extra = {}) => ({
+        itemHrid,
+        count: 1,
+        enhancementLevel,
+        itemLocationHrid: '/item_locations/inventory',
+        ...extra,
+    });
+    const stock = (...pairs) => pairs.map(([itemHrid, count]) => row(itemHrid, 0, { count }));
+    const cowCtx = (inventory, over = {}) => ctxWith({ over: { ironCow: true, inventory, ...over } });
+    const resOf = (slug) => resolveAchievement(get(slug), C);
+
+    test('a held piece: the highest enhancement level wins, with attempts for the gap', () => {
+        const ready = readiness(
+            resOf('enhance_to_10'),
+            cowCtx([row('/items/cheese_gloves', 3), row('/items/cheese_gloves', 7), ...stock(['/items/coin', 1e9])])
+        );
+        expect(ready).toMatchObject({ cowRoute: true, owned: true, ownedHrid: '/items/cheese_gloves', ownedLevel: 7 });
+        expect(ready.ironCow).toBeUndefined();
+        expect(ready.attempts).toBeGreaterThan(0);
+        // No essence in the bag: the per-attempt material is short
+        expect(ready.shortfall.map((s) => s.itemHrid)).toEqual(['/items/enhancing_essence']);
+    });
+
+    test('a worn piece counts, flagged so Go cannot preselect it; a bag copy wins a tie', () => {
+        const worn = readiness(
+            resOf('enhance_to_3'),
+            cowCtx([row('/items/cheese_gloves', 5, { itemLocationHrid: '/item_locations/hands', count: undefined })])
+        );
+        expect(worn).toMatchObject({ owned: true, ownedLevel: 5, ownedEquipped: true });
+        const hash = '7::/item_locations/inventory::/items/cheese_gloves::5';
+        const tie = readiness(
+            resOf('enhance_to_3'),
+            cowCtx([
+                row('/items/cheese_gloves', 5, { itemLocationHrid: '/item_locations/hands' }),
+                row('/items/cheese_gloves', 5, { hash }),
+            ])
+        );
+        expect(tie).toMatchObject({ ownedEquipped: false, ownedHash: hash });
+    });
+
+    test('ties on level go to the higher item level; a consumed stack is not held', () => {
+        const ready = readiness(
+            resOf('enhance_to_10'),
+            cowCtx([
+                row('/items/cheese_gloves', 4),
+                row('/items/magnetic_gloves', 4),
+                row('/items/chrono_gloves', 6, { count: 0 }),
+            ])
+        );
+        expect(ready).toMatchObject({ ownedHrid: '/items/magnetic_gloves', ownedLevel: 4 });
+    });
+
+    test('a piece under the item-level threshold is not held: it falls to crafting', () => {
+        const ready = readiness(
+            resOf('enhance_level_80_to_10'),
+            cowCtx([row('/items/marsh_gloves', 9), ...stock(['/items/cheese', 100], ['/items/enhancing_essence', 100])])
+        );
+        expect(ready.ownedHrid).toBeNull();
+        expect(ready).toMatchObject({ cowRoute: true, owned: true, craftHrid: '/items/magnetic_gloves' });
+        expect(ready.actionHrid).toBe('/actions/cheesesmithing/magnetic_gloves');
+    });
+
+    test('crafting: the level gate decides first, then the fewest missing input units', () => {
+        const levels = (crafting, smithing) =>
+            new Map([
+                ['/skills/crafting', crafting],
+                ['/skills/cheesesmithing', smithing],
+            ]);
+        const cheap = readiness(resOf('enhance_to_3'), cowCtx([], { skillLevels: levels(50, 100) }));
+        expect(cheap).toMatchObject({ craftHrid: '/items/cheese_gloves', owned: false });
+        expect(cheap.shortfall).toEqual([{ itemHrid: '/items/cheese', need: 4, have: 0 }]);
+        // Nothing met: the fewest levels short
+        const none = readiness(resOf('enhance_level_80_to_10'), cowCtx([], { skillLevels: levels(1, 80) }));
+        expect(none).toMatchObject({ levelMet: false, craftHrid: '/items/magnetic_gloves' });
+        expect(none.level).toMatchObject({ need: 85, have: 80 });
+        // Both gates met: the fewer missing units beat the lower level
+        const units = readiness(
+            resOf('enhance_level_80_to_10'),
+            cowCtx(stock(['/items/cheese', 50]), { skillLevels: levels(1, 100) })
+        );
+        expect(units.craftHrid).toBe('/items/chrono_gloves');
+        expect(units.shortfall).toEqual([{ itemHrid: '/items/magnetic_gloves', need: 1, have: 0 }]);
+        // A met gate beats a closer-to-owned recipe whose gate is not met
+        const gate = readiness(
+            resOf('enhance_to_3'),
+            cowCtx(stock(['/items/cheese', 4]), { skillLevels: levels(50, 10) })
+        );
+        expect(gate).toMatchObject({ levelMet: true, owned: true, craftHrid: '/items/cheese_gloves' });
+        const gateTwo = readiness(
+            resOf('enhance_to_3'),
+            cowCtx(stock(['/items/cheese', 10], ['/items/enhancing_essence', 5]), { skillLevels: levels(0, 100) })
+        );
+        // Crafting 0 < 1 is unmet, smithing 100 is met: Magnetic Gloves (all inputs owned) is first
+        expect(gateTwo).toMatchObject({ levelMet: true, craftHrid: '/items/magnetic_gloves' });
+    });
+
+    test('endings: no candidate action is no line, nothing loaded is inventory not loaded', () => {
+        const none = readiness(resolveAchievement(get('enhance_to_3'), D), cowCtx([]));
+        expect(none.ironCow).toBe(true);
+        const unloaded = readiness(resOf('enhance_to_3'), cowCtx(null));
+        expect(unloaded).toMatchObject({ cowRoute: true, owned: null });
+        expect(unloaded.ironCow).toBeUndefined();
+    });
+
+    test('a market character is unchanged: the same listings route, no Iron Cow fields', () => {
+        const ready = readiness(resOf('enhance_to_3'), ctxWith({ listings: { '/items/cheese_gloves': { 0: 500 } } }));
+        expect(ready).toMatchObject({ buyHrid: '/items/cheese_gloves', buyLevel: 0 });
+        expect(ready.cowRoute).toBeUndefined();
+        expect(ready.actionHrid).toBeUndefined();
     });
 });

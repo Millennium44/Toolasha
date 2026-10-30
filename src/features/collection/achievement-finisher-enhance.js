@@ -118,6 +118,26 @@ export function enhanceRunCost({ params, itemLevel, start, target, materialCost,
 }
 
 /**
+ * Expected attempts from +start to the first time the piece reaches +target, on the strategy that needs
+ * the fewest (the most protected one): for a character that holds the piece and prices nothing. Null at
+ * or above the target, where one more success is all that is left.
+ * @param {Object} params - Enhancing params
+ * @param {number} itemLevel
+ * @param {number} start
+ * @param {number} target
+ * @param {Map} [cache] - Chain solves to share across this render's rows
+ * @returns {number|null}
+ */
+export function expectedAttempts(params, itemLevel, start, target, cache = new Map()) {
+    if (!(start < target)) return null;
+    let best = null;
+    for (const row of strategies(params, itemLevel, start, target, cache)) {
+        if (Number.isFinite(row.attempts) && (best === null || row.attempts < best)) best = row.attempts;
+    }
+    return best;
+}
+
+/**
  * Readiness of an Enhancer achievement: the cheapest route over every qualifying piece and start level.
  *
  * Fills `buyHrid`, `buyLevel`, `cost` (listing + expected enhancing), `listingPrice`,
