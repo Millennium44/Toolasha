@@ -41,6 +41,20 @@ import { SCROLL_BUFF_ITEMS, SELECTION_CHANGED_EVENT } from '../../utils/scroll-b
 import { estimateUnlimitedAction, formatUnlimitedTimeText } from './unlimited-action-estimate.js';
 
 /**
+ * Guild shrine action-speed bonus for an action type, as a fraction (0.1 = +10%).
+ * The same buff calculateActionStats applies, so the displayed total matches the stats.
+ * @param {string} actionType - Action type hrid
+ * @returns {number} Summed flat + ratio boost
+ */
+function getGuildShrineSpeedBonus(actionType) {
+    const guildBuffs = dataManager.characterData?.guildActionTypeBuffsMap?.[actionType] || [];
+    return guildBuffs.reduce(
+        (sum, b) => (b.typeHrid === '/buff_types/action_speed' ? sum + (b.flatBoost || 0) + (b.ratioBoost || 0) : sum),
+        0
+    );
+}
+
+/**
  * Paint the add-mode toggle for the state it is in.
  * @param {HTMLElement} btn - The toggle button
  * @param {boolean} active - Whether add mode is on
@@ -563,7 +577,8 @@ class QuickInputButtons {
                 actionDetails.type,
                 '/buff_types/action_speed'
             );
-            const speedBonus = equipmentSpeedBonus + personalSpeedBonus;
+            const guildSpeedBonus = getGuildShrineSpeedBonus(actionDetails.type);
+            const speedBonus = equipmentSpeedBonus + personalSpeedBonus + guildSpeedBonus;
 
             let speedSection = null;
 
@@ -1170,13 +1185,7 @@ class QuickInputButtons {
         breakdown.total += consumableSpeed.reduce((sum, c) => sum + c.speed, 0);
 
         // Guild shrine action speed
-        const guildBuffs = dataManager.characterData?.guildActionTypeBuffsMap?.[actionData.type] || [];
-        const guildSpeed =
-            guildBuffs.reduce(
-                (sum, b) =>
-                    b.typeHrid === '/buff_types/action_speed' ? sum + (b.flatBoost || 0) + (b.ratioBoost || 0) : sum,
-                0
-            ) * 100;
+        const guildSpeed = getGuildShrineSpeedBonus(actionData.type) * 100;
         if (guildSpeed > 0) {
             breakdown.guild = guildSpeed;
             breakdown.total += guildSpeed;

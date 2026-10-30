@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Your saved combat loadouts now travel with the Metz simulator export, so its loadout picker can switch between them (from upstream); written only when a loadout changes.
 
+### Quick-input speed counts the guild shrine
+
+- The action panel's speed total and base-to-actual time now include the guild shrine's action speed, which the breakdown already listed (from upstream).
+
 ### Upstream fixes: quick-input loadout, offline limit for endless combat
 
 - The action panel's speed, efficiency and queue sizing now use the saved loadout for that action throughout, instead of mixing worn gear with the loadout's drinks.
