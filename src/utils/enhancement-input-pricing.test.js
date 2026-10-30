@@ -34,7 +34,12 @@ vi.mock('../core/data-manager.js', () => ({
 vi.mock('../core/config.js', () => ({
     default: {
         isFeatureEnabled: (key) => key === 'enhanceSim_baseItemCraftingCost' && game.craftingSetting,
-        getSettingValue: (key) => (key === 'profitCalc_ironCowValuation' ? game.ironCowMode : ''),
+        getSettingValue: (key) =>
+            key === 'profitCalc_ironCowValuation'
+                ? game.ironCowMode
+                : key === 'untradableCapeBaseValue'
+                  ? (game.capeMode ?? 'zero')
+                  : '',
         getSetting: (key) => (key === 'profitCalc_patientTickBuy' ? game.patientTickBuy === true : undefined),
     },
 }));
@@ -88,7 +93,7 @@ vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid, { mode = 'ask' } = {}) => reconciled(hrid)?.[mode] || 0,
 }));
 
-const { priceMaterial, priceProtection, priceMirror, priceBase, priceGuarded, perAttemptMaterialCost } =
+const { priceMaterial, priceProtection, priceMirror, priceBase, priceGuarded, perAttemptMaterialCost, pricingStamp } =
     await import('./enhancement-input-pricing.js');
 const { TRAINEE_SHOP_PRICE } = await import('./enhancement-pricing.js');
 
@@ -113,6 +118,7 @@ beforeEach(() => {
     game.mode = 'hybrid';
     game.networthMode = 'ask';
     game.craftingSetting = false;
+    game.capeMode = 'zero';
     game.buffVersion++;
 });
 
@@ -600,5 +606,87 @@ describe('partial: a craft cost that skipped an unpriced input', () => {
         craftable(PROTECTION, true);
         game.buffVersion++;
         expect(priceProtection(SWORD).partial).toBe(false);
+    });
+});
+
+describe('untradable capes', () => {
+    const CAPE = '/items/gatherer_cape';
+    const REFINED = '/items/gatherer_cape_refined';
+    const back = { equipmentDetail: { type: '/equipment_types/back' } };
+
+    beforeEach(() => {
+        game.items[CAPE] = { name: 'Gatherer Cape', ...back };
+        game.items[REFINED] = { name: 'Gatherer Cape (Refined)', ...back };
+        game.books[PROTECTION] = { ask: 1000, bid: 900 };
+    });
+
+    function addRefineRecipe() {
+        game.books[SHARD] = { ask: 100, bid: 90 };
+        game.actions['/actions/refine'] = {
+            type: '/action_types/alchemy',
+            inputItems: [{ itemHrid: SHARD, count: 10 }],
+            outputItems: [{ itemHrid: REFINED, count: 1 }],
+            upgradeItemHrid: CAPE,
+        };
+    }
+
+    test('on "nothing" the base cape is an assumed zero: still unpriced, but flagged assumed and partial', () => {
+        expect(priceBase(CAPE)).toMatchObject({ price: null, unpriced: true, assumed: true, partial: true });
+    });
+
+    test('on the mirror setting the base cape is the mirror price, marked assumed and estimated', () => {
+        game.capeMode = 'mirror';
+        expect(priceBase(CAPE)).toMatchObject({
+            price: 1000,
+            unpriced: false,
+            estimated: true,
+            assumed: true,
+            partial: false,
+        });
+    });
+
+    test('a cape with a real quote (an Iron Cow vendor value, a listing) is that quote, not an assumption', () => {
+        game.capeMode = 'mirror';
+        game.books[CAPE] = { ask: 100000, bid: 100000 };
+        const priced = priceBase(CAPE);
+        expect(priced.price).toBe(100000);
+        expect(priced.assumed).toBeUndefined();
+    });
+
+    test("a custom price of 0 is the player's own unpriced and is not replaced by the setting", () => {
+        game.capeMode = 'mirror';
+        game.custom[`${CAPE}:buy`] = 0;
+        expect(priceBase(CAPE)).toMatchObject({ price: null, unpriced: true, custom: true });
+        expect(priceBase(CAPE).assumed).toBeUndefined();
+    });
+
+    test('a tradable back piece or a non-back untradable item is never assumed', () => {
+        game.capeMode = 'mirror';
+        game.items['/items/cloak'] = { name: 'Cloak', isTradable: true, ...back };
+        game.items['/items/charm'] = { name: 'Charm', equipmentDetail: { type: '/equipment_types/charm' } };
+        expect(priceBase('/items/cloak')).toMatchObject({ price: null, unpriced: true });
+        expect(priceBase('/items/charm')).toMatchObject({ price: null, unpriced: true });
+        expect(priceBase('/items/cloak').assumed).toBeUndefined();
+    });
+
+    test('a refined cape is its refinement bill plus the base per the setting, and the setting is in the cost cache key', () => {
+        addRefineRecipe();
+        // Nothing for the base: the bill is the materials only, and says it is a floor
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: true });
+        expect(priceBase(REFINED).assumed).toBeUndefined();
+        game.capeMode = 'mirror';
+        // The mirror inside the bill is an assumption, not something a player could pay for
+        expect(priceBase(REFINED)).toMatchObject({ price: 2000, partial: false, assumed: true });
+        game.craftingSetting = true;
+        expect(priceBase(REFINED)).toMatchObject({ price: 2000, assumed: true });
+        game.craftingSetting = false;
+        game.capeMode = 'zero';
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: true });
+    });
+
+    test('the cape setting is part of the pricing stamp, so cached enhancement costs are dropped when it moves', () => {
+        const zero = pricingStamp();
+        game.capeMode = 'mirror';
+        expect(pricingStamp()).not.toBe(zero);
     });
 });

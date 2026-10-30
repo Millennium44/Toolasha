@@ -14,6 +14,12 @@ import { calculateEVBatch, terminateEVWorkerPool } from '../../utils/ev-worker-m
 import { MARKET_TAX, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import {
+    CAPE_BASE_VALUE_SETTING,
+    getCapeBaseValue,
+    isRefinedCape,
+    isUntradableCape,
+} from '../../utils/untradable-cape.js';
 
 /**
  * ExpectedValueCalculator class handles EV calculations for openable containers
@@ -101,6 +107,8 @@ class ExpectedValueCalculator {
             config.onSettingChange(IRONCOW_VALUATION_SETTING, trigger),
             config.onSettingChange('expectedValue_respectPricingMode', trigger),
             config.onSettingChange('expectedValue_includeCowbells', trigger),
+            // What an unrefined untradable cape is assumed to be worth
+            config.onSettingChange(CAPE_BASE_VALUE_SETTING, trigger),
         ];
 
         this._priceUpdateHandler = trigger;
@@ -627,7 +635,19 @@ class ExpectedValueCalculator {
         // character can realize through an actual market sale, so it needs no tax either.
         const priceInfo = getItemPriceInfo(itemHrid, { enhancementLevel, context: 'profit', side: 'sell' });
         const dropPrice = priceInfo.price;
-        if (!(dropPrice > 0)) return null;
+        if (!(dropPrice > 0)) {
+            // An untradable cape has no market at all: last resort is the cape setting's value for an
+            // unrefined one. It is never sold, so it is never taxed, and it is an assumption by
+            // construction (estimated). A refined cape's value is a refinement bill the chest worker
+            // has no recipe for, and a base of nothing stays unpriced, never 0.
+            const capeValue =
+                enhancementLevel === 0 && isUntradableCape(itemHrid) && !isRefinedCape(itemHrid)
+                    ? getCapeBaseValue()
+                    : 0;
+            return capeValue > 0
+                ? { value: capeValue, source: 'untradableCape', needsTax: false, estimated: true }
+                : null;
+        }
         const hasOverride = getCustomPrice(itemHrid, enhancementLevel, 'sell') !== null;
         return {
             value: dropPrice,

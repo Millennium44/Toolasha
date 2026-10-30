@@ -1047,6 +1047,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a Max button to the Shop, Task Shop, Labyrinth Shop, and Cowbell Store buy dialogs that fills in the most you can afford. It only types the quantity; you press Buy',
             },
+            shopTokenValues: {
+                id: 'shopTokenValues',
+                label: 'Shop: Show value per token',
+                type: 'checkbox',
+                default: true,
+                help: 'Shows what one token is worth in each entry of the Dungeon and Labyrinth shops (the market value of what it buys, after market tax, per token) and stars the best entry for each token. Untradable capes show the untradable-cape base value setting with an asterisk and are never starred.',
+            },
             dungeonShopPlanner: {
                 id: 'dungeonShopPlanner',
                 label: 'Dungeon shop: Plan token spend (volume-capped)',
@@ -2116,6 +2123,17 @@ export const settingsGroups = {
                     { value: 'optimistic', label: 'Buy: Bid / Sell: Ask (Patient Buy / Patient Sell)' },
                     { value: 'patientBuy', label: 'Buy: Bid / Sell: Bid (Patient Buy / Instant Sell)' },
                 ],
+            },
+            untradableCapeBaseValue: {
+                id: 'untradableCapeBaseValue',
+                label: 'Untradable capes: base value',
+                type: 'select',
+                default: 'zero',
+                options: [
+                    { value: 'zero', label: 'Nothing (0)' },
+                    { value: 'mirror', label: 'Same as a Mirror of Protection' },
+                ],
+                help: 'Capes (including the Chimerical Quiver and Enchanted Cloak) cannot be traded, so they have no market price. Sets what an unrefined cape is assumed to be worth in alchemy profit, enhancement costs, net worth and chest values. Refined and enhanced capes add their refinement cost and average enhancement cost (using your own stats) on top. Capes are never taxed, since they cannot be sold. Anywhere the base counts as nothing, the figure is marked as a floor.',
             },
             profitCalc_patientTickBuy: {
                 id: 'profitCalc_patientTickBuy',

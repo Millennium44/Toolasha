@@ -21,6 +21,7 @@ import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profi
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
+import { enhancementParamsFor } from '../enhancement/enhancement-params-source.js';
 import { calculateTaskTokenValue } from '../tasks/task-profit-calculator.js';
 import { calculateDungeonTokenValueDetail, calculateLabyrinthTokenValueDetail } from '../../utils/token-valuation.js';
 import { explainGuildTokenValue, isGuildTokenHrid } from '../guild/guild-token-value.js';
@@ -40,9 +41,42 @@ import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { getArtisanBonus } from '../../utils/artisan-bonus.js';
+import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/untradable-cape.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
 import { guildCreditPricingMode } from '../../utils/guild-credit-networth-side.js';
+
+/**
+ * The enhancing bench an item's enhancement cost is computed on. An untradable cape is valued on the
+ * character's own bench (the same 'valuation' bench alchemy uses), since nobody could enhance one for
+ * the player; everything else takes the simulator's params, as before.
+ * @param {string} itemHrid - Item HRID
+ * @returns {Object} Enhancement parameters
+ */
+function benchParamsFor(itemHrid) {
+    return isUntradableCape(itemHrid) ? enhancementParamsFor('valuation', itemHrid) : getEnhancingParams();
+}
+
+/**
+ * Whether an enhancement path can stand as an item's value. An unpriced input makes it a partial
+ * bill rather than a price; the one exception is an untradable cape whose base is the cape
+ * setting's assumed value, where the path is the cost of the run and says so through its flag.
+ * @param {Object|null} path - Result of calculateEnhancementPath
+ * @returns {boolean}
+ */
+function usablePath(path) {
+    return Boolean(path?.optimalStrategy) && (!path.pricesPartial || path.pricesPartialOnlyByAssumedBase === true);
+}
+
+/**
+ * Whether a usable path's figure is a floor: a selected input is a partial bill, or the base was an
+ * assumed value of nothing.
+ * @param {Object} path - A path accepted by {@link usablePath}
+ * @returns {boolean}
+ */
+function pathPartial(path) {
+    return path.inputsPartial === true || path.pricesPartialOnlyByAssumedBase === true;
+}
 
 /**
  * Calculate the value of a single item
@@ -63,6 +97,9 @@ export async function calculateItemValue(item, priceCache = null) {
  */
 export async function calculateItemValueDetailed(item, priceCache = null) {
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
+    // The enhancement-cost cache is keyed on the simulator bench; an untradable cape is costed on the
+    // character's own bench, which that key does not see, so a cape is never cached
+    const cacheable = !isUntradableCape(itemHrid);
 
     let itemValue = 0;
     let partial = false;
@@ -83,26 +120,26 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
             itemValue = officialValue;
         } else if (useHighEnhancementCost && enhancementLevel >= minLevel) {
             // Check cache first
-            const cachedCost = networthCache.get(itemHrid, enhancementLevel);
+            const cachedCost = cacheable ? networthCache.get(itemHrid, enhancementLevel) : null;
             if (cachedCost !== null) {
                 itemValue = cachedCost;
                 partial = networthCache.isPartial(itemHrid, enhancementLevel);
             } else {
                 // Calculate enhancement cost (ignore market price)
-                const enhancementParams = getEnhancingParams();
+                const enhancementParams = benchParamsFor(itemHrid);
                 const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
                     priceContext: 'networth',
                 });
 
                 // A path with an unpriced material or base is a partial bill, not a value: fall back to the
                 // base item's price, as the worker does
-                if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
+                if (usablePath(enhancementPath)) {
                     itemValue = enhancementPath.optimalStrategy.totalCost;
                     // Partial when an input the path SELECTED is a partial crafting bill, as the path itself
                     // reports it
-                    partial = enhancementPath.inputsPartial === true;
+                    partial = pathPartial(enhancementPath);
                     // Cache the result
-                    networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
+                    if (cacheable) networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
                 } else {
                     // Enhancement calculation failed, fallback to base item price
                     console.warn('[Networth] Enhancement calculation failed for:', itemHrid, '+' + enhancementLevel);
@@ -117,22 +154,22 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
                 itemValue = marketPrice;
             } else {
                 // No market data, calculate enhancement cost
-                const cachedCost = networthCache.get(itemHrid, enhancementLevel);
+                const cachedCost = cacheable ? networthCache.get(itemHrid, enhancementLevel) : null;
                 if (cachedCost !== null) {
                     itemValue = cachedCost;
                     partial = networthCache.isPartial(itemHrid, enhancementLevel);
                 } else {
-                    const enhancementParams = getEnhancingParams();
+                    const enhancementParams = benchParamsFor(itemHrid);
                     const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
                         priceContext: 'networth',
                     });
 
                     // A path with an unpriced material or base is a partial bill, not a value: fall back to the
                     // base item's price, as the worker does
-                    if (enhancementPath && enhancementPath.optimalStrategy && !enhancementPath.pricesPartial) {
+                    if (usablePath(enhancementPath)) {
                         itemValue = enhancementPath.optimalStrategy.totalCost;
-                        partial = enhancementPath.inputsPartial === true;
-                        networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
+                        partial = pathPartial(enhancementPath);
+                        if (cacheable) networthCache.set(itemHrid, enhancementLevel, itemValue, partial);
                     } else {
                         console.warn(
                             '[Networth] Enhancement calculation failed for:',
@@ -405,6 +442,16 @@ function priceWithPartial(itemHrid, enhancementLevel, priceCache = null) {
         const shopCost = getShopCoinCost(itemHrid);
         if (shopCost > 0) {
             return { price: shopCost, partial: false };
+        }
+
+        // An untradable cape nothing else prices (no listing, no recipe): the cape setting's value.
+        // On "nothing" it is 0 and says so: a total with such a cape in it is a floor, never silently
+        // complete. (A refined cape with no bill stays 0 and partial: its base is not the whole of it.)
+        if (isUntradableCape(itemHrid)) {
+            const capeValue = isRefinedCape(itemHrid)
+                ? 0
+                : getCapeBaseValue({ context: 'networth', mode: pricingMode });
+            return { price: capeValue, partial: !(capeValue > 0) };
         }
     }
 
@@ -928,6 +975,16 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
         itemsNeedingWorkers.length > 0
             ? (async () => {
                   const priceMap = await priceMapFor(priceCache, pricingMode);
+                  // The worker cannot walk an untradable cape's recipe with the cape setting, so it is
+                  // handed this thread's own fallback bill for each such cape it may have to fall back on
+                  const capeFallbacks = {};
+                  // Untradable capes are costed on the character's own bench in the worker too
+                  let capeParams = null;
+                  for (const item of itemsNeedingWorkers) {
+                      if (capeFallbacks[item.itemHrid] || !isUntradableCape(item.itemHrid)) continue;
+                      capeFallbacks[item.itemHrid] = priceWithPartial(item.itemHrid, 0, priceCache);
+                      capeParams ??= benchParamsFor(item.itemHrid);
+                  }
 
                   try {
                       // The worker reports which of its items are partial crafting bills
@@ -936,7 +993,7 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
                       const values = await calculateItemValueBatch(
                           itemsNeedingWorkers,
                           priceMap,
-                          { useHighEnhancementCost, minLevel, enhancementParams },
+                          { useHighEnhancementCost, minLevel, enhancementParams, capeFallbacks, capeParams },
                           gameData,
                           partialIndexes
                       );

@@ -82,6 +82,11 @@ export function toggleProRates() {
 const SURFACE_RULES = {
     /** Item tooltips, on a listing or in the inventory. */
     tooltip: { ownBench: 'unbuyable' },
+    /**
+     * Valuing an untradable cape someone holds or is offered (alchemy profit, chest values, Best
+     * Items): nobody can sell one finished, so the character's own bench is the honest one.
+     */
+    valuation: { ownBench: 'unbuyable' },
     /** Combat-sim upgrade advisor rows. */
     advisor: { ownBench: 'unbuyable' },
     /** Equipment savings card — see `equipment-savings-row.js`, `enhancementCost`. */

@@ -2147,6 +2147,14 @@ function registerFeatures() {
             liveStop: true,
         },
         {
+            key: 'shopTokenValues',
+            name: 'Shop Token Values',
+            category: 'Shop',
+            module: UI.shopTokenValues,
+            async: false,
+            liveStop: true,
+        },
+        {
             key: 'chatHistoryExtender',
             name: 'Chat History Extender',
             category: 'Chat',

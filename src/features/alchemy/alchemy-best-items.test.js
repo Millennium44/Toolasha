@@ -2047,3 +2047,55 @@ describe('Include shop prices', () => {
         bestItems.unsubscribePricingChanges();
     });
 });
+
+describe('untradable capes in the table', () => {
+    const CAPE = '/items/gatherer_cape';
+    const entry = (itemHrid, name) => ({
+        itemHrid,
+        name,
+        itemLevel: 10,
+        itemPrice: 0,
+        profitPerHour: 1,
+        xpPerHour: 0,
+    });
+
+    function draw(rows) {
+        bestItems.createModal();
+        bestItems.currentType = 'coinify';
+        bestItems.cachedRankings.coinify = rows;
+        bestItems.renderTable();
+    }
+
+    beforeEach(() => {
+        game.items = {
+            [CAPE]: { name: 'Gatherer Cape', equipmentDetail: { type: '/equipment_types/back' } },
+            [`${CAPE}_refined`]: {
+                name: 'Gatherer Cape (Refined)',
+                equipmentDetail: { type: '/equipment_types/back' },
+            },
+            '/items/cheese': { name: 'Cheese', isTradable: true },
+        };
+    });
+
+    test('a cape row is marked as an assumed value; an ordinary row is not', () => {
+        draw([entry(CAPE, 'Gatherer Cape'), entry('/items/cheese', 'Cheese')]);
+
+        const marks = bestItems.modal.querySelectorAll('[data-mwi-assumed-value]');
+        expect(marks).toHaveLength(1);
+        expect(marks[0].textContent).toBe('*');
+        expect(marks[0].closest('tr').textContent).toContain('Gatherer Cape');
+        expect(marks[0].title).toContain('floor');
+    });
+
+    test('on the mirror setting the marker names the base value it assumed, and a refined cape still gets one', () => {
+        settings.values.untradableCapeBaseValue = 'mirror';
+        market.prices['/items/mirror_of_protection'] = 5_000_000;
+        draw([entry(CAPE, 'Gatherer Cape'), entry(`${CAPE}_refined`, 'Gatherer Cape (Refined)')]);
+
+        const marks = [...bestItems.modal.querySelectorAll('[data-mwi-assumed-value]')];
+        expect(marks).toHaveLength(2);
+        expect(marks[0].title).toContain('5,000,000');
+        expect(marks[0].title).not.toContain('floor');
+        delete settings.values.untradableCapeBaseValue;
+    });
+});

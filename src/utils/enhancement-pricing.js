@@ -32,6 +32,7 @@ import marketAPI from '../api/marketplace.js';
 import { getItemPrice, getItemPrices } from './market-data.js';
 import { getArtisanBonus } from './artisan-bonus.js';
 import { findProducingAction } from './production-index.js';
+import { getCapeBaseValue, getCapeBaseValueMode, isUntradableCape } from './untradable-cape.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 
 /**
@@ -267,7 +268,8 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask') {
     // Game data not loaded yet: nothing can be priced. Unpriced (cost 0, flagged partial), never a
     // throw, and not cached, so the answer is recomputed once the data arrives
     if (!dataManager.getInitClientData()) return { cost: 0, partial: true };
-    const cacheKey = `${itemHrid}|${mode}`;
+    // The cape setting is part of the key: a refined cape's upgrade item is priced by it
+    const cacheKey = `${itemHrid}|${mode}|${getCapeBaseValueMode()}`;
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
     const cached = _costCache.get(cacheKey);
@@ -340,6 +342,11 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
         } else {
             upgradePrice = upgradeMarketPrice || upgradeCraftPrice;
             if (!upgradeMarketPrice && upgradeCraft.partial) partial = true;
+        }
+        // An untradable cape has no market and no recipe: the base of a refined one is what the cape
+        // setting assumes (nothing by default, which stays a partial bill below)
+        if (!(upgradePrice > 0) && isUntradableCape(action.upgradeItemHrid)) {
+            upgradePrice = getCapeBaseValue({ mode });
         }
         if (!(upgradePrice > 0)) partial = true;
         totalPrice += upgradePrice;

@@ -289,6 +289,9 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/guild-credit-pricing.js')), 'Toolasha.Utils.guildCreditPricing'],
     [normalize(join(__dirname, 'src/utils/item-icon.js')), 'Toolasha.Utils.itemIcon'],
     [normalize(join(__dirname, 'src/utils/key-ledger.js')), 'Toolasha.Utils.keyLedger'],
+    // What an untradable cape is worth: read by the ui, market, actions and sim bundles through one setting
+    [normalize(join(__dirname, 'src/utils/untradable-cape.js')), 'Toolasha.Utils.untradableCape'],
+    [normalize(join(__dirname, 'src/utils/untradable-cape-cost.js')), 'Toolasha.Utils.untradableCapeCost'],
     [normalize(join(__dirname, 'src/utils/mobile.js')), 'Toolasha.Utils.mobile'],
     [normalize(join(__dirname, 'src/utils/number-parser.js')), 'Toolasha.Utils.numberParser'],
     [normalize(join(__dirname, 'src/utils/party-lint.js')), 'Toolasha.Utils.partyLint'],

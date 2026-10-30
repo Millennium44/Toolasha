@@ -3035,7 +3035,10 @@ function cappedResale(credit, spend, built) {
  *   either side does not resolve
  */
 function enhancementMarketTrade(candidate) {
-    const buy = priceAtLevel(candidate.currentHrid, candidate.upgradeLevel).price;
+    const bought = priceAtLevel(candidate.currentHrid, candidate.upgradeLevel);
+    // A cape's assumed value is what it is worth owned, not an offer to sell it: no trade to open
+    if (bought.assumed) return null;
+    const buy = bought.price;
     if (!(buy > 0)) return null;
     // The profit context, as `priceAtLevel` reads the buy: with no context the resolver reads the ask whatever the
     // mode, which would sell the worn level at its ask even when the mode sells into the bid
@@ -3329,6 +3332,17 @@ function resolveRefineRoute(itemHrid, targetLevel, gameData, { isSelf = true, ca
  */
 function completePrice(priced) {
     return priced && !priced.partial && priced.price > 0 ? priced.price : null;
+}
+
+/**
+ * {@link completePrice} for something the row would BUY. An untradable cape cannot be bought at any
+ * price, so the untradable-cape setting's assumed value (what a cape is worth owned, `assumed` on the
+ * priced result) must never turn into a purchase price here.
+ * @param {{price: number|null, partial?: boolean, assumed?: boolean}} priced - From the shared input-pricing rule
+ * @returns {number|null}
+ */
+function completeBuyPrice(priced) {
+    return priced?.assumed ? null : completePrice(priced);
 }
 
 /**
@@ -3914,7 +3928,7 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
         }
 
         // No listing at the target level: base item price + enhancement cost
-        const basePrice = completePrice(priceBase(itemHrid));
+        const basePrice = completeBuyPrice(priceBase(itemHrid));
         // Enhancement materials do not buy the base item. If that piece has no
         // price, its completed version cannot be priced from the sweep alone.
         if (!(basePrice > 0)) return { price: null, source: null };
@@ -3938,7 +3952,7 @@ function resolveUpgradeBuyPriceDirect(itemHrid, enhancementLevel, gameData, { is
 
     // The +0 rung follows the same base rule as the +N rung above (guard, custom price, crafting setting)
     const base = priceBase(itemHrid);
-    const direct = completePrice(base);
+    const direct = completeBuyPrice(base);
     if (!(direct > 0)) return { price: null, source: null };
     // A listing beats the production-cost fallback inside resolveItemPrice, so
     // an ask at +0 is the market speaking and anything else is a craft estimate
@@ -4025,7 +4039,7 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
         const data = dataManager.getInitClientData?.() || {};
         const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
         base = shopPurchasePriceByMode(itemHrid, shops) || 0;
-        if (!(base > 0)) base = completePrice(priceBase(itemHrid));
+        if (!(base > 0)) base = completeBuyPrice(priceBase(itemHrid));
         if (!(base > 0)) return { price: null, source: null, ladder };
         ladder.baseCost = base;
     }

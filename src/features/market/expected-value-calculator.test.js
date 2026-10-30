@@ -1284,3 +1284,68 @@ describe('cleanup', () => {
         expect(expectedValueCalculator.containerEstimatedCounts.size).toBe(0);
     });
 });
+
+describe('untradable capes in a chest', () => {
+    const CAPE = '/items/chimerical_quiver';
+    const REFINED = '/items/chimerical_quiver_refined';
+    const MIRROR = '/items/mirror_of_protection';
+    const back = { equipmentDetail: { type: '/equipment_types/back' } };
+
+    beforeEach(() => {
+        mocks.itemDetails[CAPE] = { name: 'Chimerical Quiver', ...back };
+        mocks.itemDetails[REFINED] = { name: 'Chimerical Quiver (Refined)', ...back };
+        mocks.prices[MIRROR] = 800_000;
+        mocks.initData = {
+            openableLootDropMap: {
+                [CHEST_HRID]: [
+                    { itemHrid: CAPE, dropRate: 0.5, minCount: 2, maxCount: 2 },
+                    { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+                ],
+            },
+        };
+    });
+
+    test('with the base cape at nothing, an unlisted cape drop is unpriced (a lower bound), never free', () => {
+        expect(expectedValueCalculator.resolveSellSideValue(CAPE)).toBeNull();
+        const chest = expectedValueCalculator.calculateContainerValue(CHEST_HRID, mocks.initData);
+        expect(chest.missingCount).toBe(1);
+        expect(chest.isPartial).toBe(true);
+    });
+
+    test('on the mirror setting the drop is worth the mirror, untaxed, and the chest counts it as an estimate', () => {
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        expect(expectedValueCalculator.resolveSellSideValue(CAPE)).toEqual({
+            value: 800_000,
+            source: 'untradableCape',
+            needsTax: false,
+            estimated: true,
+        });
+        const chest = expectedValueCalculator.calculateContainerValue(CHEST_HRID, mocks.initData);
+        // 0.5 x 2 capes x 800,000 untaxed, plus the gem taxed as a sale
+        expect(chest.expectedValue).toBeCloseTo(800_000 + 1000 * (1 - MARKET_TAX), 6);
+        expect(chest.estimatedCount).toBe(1);
+        expect(chest.missingCount).toBe(0);
+    });
+
+    test('a cape the book quotes (an Iron Cow vendor value) keeps that quote', () => {
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        mocks.prices[CAPE] = 100_000;
+        expect(expectedValueCalculator.resolveSellSideValue(CAPE)).toMatchObject({
+            value: 100_000,
+            source: 'market',
+        });
+    });
+
+    test('a refined cape, an enhanced cape or a tradable back piece is not given the base cape value', () => {
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        mocks.itemDetails['/items/cloak'] = { name: 'Cloak', isTradable: true, ...back };
+        expect(expectedValueCalculator.resolveSellSideValue(REFINED)).toBeNull();
+        expect(expectedValueCalculator.resolveSellSideValue(CAPE, 5)).toBeNull();
+        expect(expectedValueCalculator.resolveSellSideValue('/items/cloak')).toBeNull();
+    });
+
+    test('a change of the cape setting invalidates the cached container values', () => {
+        expectedValueCalculator.setupInvalidationListeners();
+        expect(mocks.settingChangeCallbacks.get('untradableCapeBaseValue')?.size).toBeGreaterThan(0);
+    });
+});

@@ -17,6 +17,8 @@ import { yieldToBrowser } from './yield-to-browser.js';
 import { TRAINEE_SHOP_PRICE } from './enhancement-pricing.js';
 import { getArtisanBonus } from './artisan-bonus.js';
 import { priceBase, priceGuarded, priceMaterial } from './enhancement-input-pricing.js';
+import { getCapeBaseValue, isRefinedCape, isUntradableCape } from './untradable-cape.js';
+import config from '../core/config.js';
 
 // Worker pool instance
 let workerPool = null;
@@ -141,7 +143,10 @@ function calculateEnhancementCost(params) {
     // Together with an unpriced material (below) it makes the bill a partial one, not a price:
     // return null and the caller falls back to the base item's price, as the main thread does
     // when the path reports pricesPartial.
-    if (!(basePrice > 0)) return null;
+    // An untradable cape's base is the cape setting's assumption: at its 0 the run is just the
+    // materials, flagged partial through basePartial above, not an unpriced input
+    const baseAssumed = Boolean(inputPrices && inputPrices.baseAssumed && inputPrices.baseAssumed[itemHrid]);
+    if (!(basePrice > 0) && !baseAssumed) return null;
     let hasUnpricedMaterial = false;
 
     // Build cost array for each level by testing all protection strategies
@@ -481,8 +486,16 @@ function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes, outFlags
  * main thread (an openable's expected value never reaches an enhanced piece). Without the shop
  * step a shop-sold piece with no market quote was worth 0 here and its shop price there.
  */
-function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags) {
+function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags, inputPrices) {
     let basePrice = priceMap[itemHrid + ':0'] || 0;
+    // An untradable cape's whole fallback bill is the main thread's own figure, shipped in the payload:
+    // the worker's recipe walk cannot know the cape setting's value for the recipe's base cape, so it
+    // would price a refined cape at its refinement materials alone
+    const shippedCape = inputPrices && inputPrices.capeFallback ? inputPrices.capeFallback[itemHrid] : null;
+    if (basePrice === 0 && shippedCape) {
+        if (outFlags && shippedCape.partial) outFlags.partial = true;
+        return shippedCape.price;
+    }
     if (basePrice === 0) {
         // A craft cost that skipped an unpriced input is a partial bill: still the value (the
         // main thread counts the priced inputs too), but reported so the display can say so
@@ -493,6 +506,13 @@ function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags) {
     if (!(basePrice > 0)) {
         basePrice = (shopCosts && shopCosts[itemHrid]) || 0;
     }
+    // An untradable cape nothing else prices: the cape setting's value, or 0 flagged partial, as the
+    // main thread's fallback ends (shipped in inputPrices, since the worker cannot read settings)
+    const cape = inputPrices && inputPrices.capeFallback ? inputPrices.capeFallback[itemHrid] : null;
+    if (!(basePrice > 0) && cape) {
+        basePrice = cape.price;
+        if (outFlags && cape.partial) outFlags.partial = true;
+    }
     return basePrice;
 }
 
@@ -502,7 +522,12 @@ function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags) {
  * @returns {Object} {itemIndex, value}
  */
 function calculateItemValue(data) {
-    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, recipes, shopCosts, inputPrices } = data;
+    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, itemDetails, recipes, shopCosts, inputPrices } = data;
+    // An untradable cape is costed on the character's own bench, shipped beside the batch's
+    const enhancementParams =
+        inputPrices && inputPrices.capeParams && inputPrices.capeFallback && inputPrices.capeFallback[item.itemHrid]
+            ? inputPrices.capeParams
+            : data.enhancementParams;
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
 
     let itemValue = 0;
@@ -530,7 +555,7 @@ function calculateItemValue(data) {
                 if (pathFlags.partial) flags.partial = true;
             } else {
                 // Fallback to base item price, production cost or shop price
-                itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags);
+                itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags, inputPrices);
             }
         } else {
             // Normal logic: try market price first
@@ -556,13 +581,13 @@ function calculateItemValue(data) {
                     itemValue = cost;
                     if (pathFlags.partial) flags.partial = true;
                 } else {
-                    itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags);
+                    itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags, inputPrices);
                 }
             }
         }
     } else {
         // Unenhanced items: use market price or production cost
-        itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags);
+        itemValue = fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, flags, inputPrices);
     }
 
     return { itemIndex, value: itemValue * count, partial: flags.partial };
@@ -794,6 +819,12 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
         materialPartial: {},
         guardedPartial: {},
         basePartial: {},
+        // Which base is an assumed value (an untradable cape's), not a quote or an unpriced input
+        baseAssumed: {},
+        // An untradable cape's last-resort value, {price, partial}, where its path fails
+        capeFallback: {},
+        // The bench untradable capes are costed on (null when the batch holds none)
+        capeParams: configOptions.capeParams || null,
         // A refined piece's mirror route consumes copies of the unrefined base: its price and whether
         // that base is a partial crafting bill, keyed by the refined item
         copyPrice: {},
@@ -823,6 +854,21 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
         const base = priceBase(item.itemHrid, { context: 'networth' });
         inputPrices.base[item.itemHrid] = base.price;
         inputPrices.basePartial[item.itemHrid] = Boolean(base.partial);
+        inputPrices.baseAssumed[item.itemHrid] = Boolean(base.assumed);
+        if (isUntradableCape(item.itemHrid)) {
+            const price = isRefinedCape(item.itemHrid)
+                ? 0
+                : getCapeBaseValue({
+                      context: 'networth',
+                      mode: config.getSettingValue('networth_pricingMode') || 'ask',
+                  });
+            // The caller's figure is the main thread's complete fallback bill (a refined cape's base and
+            // refinement together); without one, only the unrefined base can be read here
+            inputPrices.capeFallback[item.itemHrid] = configOptions.capeFallbacks?.[item.itemHrid] ?? {
+                price,
+                partial: !(price > 0),
+            };
+        }
         const copyHrid = unrefinedBaseOf(item.itemHrid, gameData);
         if (copyHrid) {
             const copy = priceBase(copyHrid, { context: 'networth' });

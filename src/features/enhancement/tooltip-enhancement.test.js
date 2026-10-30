@@ -90,6 +90,25 @@ const gameData = {
     actionDetailMap: {},
 };
 gameData.itemDetailMap['/items/crafted_material'] = { name: 'Crafted Material' };
+// An untradable cape: back slot, no isTradable, no listing and no recipe. UNPRICED_CAPE needs a
+// material nobody can price as well
+const CAPE = '/items/test_cape';
+const UNPRICED_CAPE = '/items/test_cape_unpriced';
+gameData.itemDetailMap[CAPE] = {
+    name: 'Test Cape',
+    itemLevel: 10,
+    equipmentDetail: { type: '/equipment_types/back' },
+    enhancementCosts: [{ itemHrid: MATERIAL, count: 1 }],
+};
+gameData.itemDetailMap[UNPRICED_CAPE] = {
+    name: 'Test Cape Two',
+    itemLevel: 10,
+    equipmentDetail: { type: '/equipment_types/back' },
+    enhancementCosts: [
+        { itemHrid: MATERIAL, count: 1 },
+        { itemHrid: UNPRICED_MATERIAL, count: 2 },
+    ],
+};
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -1009,5 +1028,54 @@ describe('enhancement tooltip prices follow the number-format precision setting'
         } finally {
             delete enhancedPrices[`${ITEM}::5`];
         }
+    });
+});
+
+describe('an untradable cape whose base nothing prices', () => {
+    test('on "nothing" the base is an assumed zero: the run is its materials, still flagged as a floor', () => {
+        const path = calculateEnhancementPath(CAPE, 3, enhancingConfig);
+
+        expect(path.optimalStrategy.baseCost).toBe(0);
+        expect(path.optimalStrategy.totalCost).toBeGreaterThan(0);
+        // Unchanged for the tooltip: it still warns that a cost is understated
+        expect(path.pricesPartial).toBe(true);
+        expect(path.pricesPartialOnlyByAssumedBase).toBe(true);
+        expect(path.inputsPartial).toBe(true);
+    });
+
+    test('on the mirror setting the base is the Mirror of Protection price and nothing is partial', () => {
+        settings.values.untradableCapeBaseValue = 'mirror';
+        const zero = calculateEnhancementPath(CAPE, 3, enhancingConfig);
+        settings.values.untradableCapeBaseValue = 'zero';
+        const withZero = calculateEnhancementPath(CAPE, 3, enhancingConfig);
+
+        expect(zero.optimalStrategy.baseCost).toBe(prices[PROTECTION].ask);
+        expect(zero.pricesPartial).toBe(false);
+        expect(zero.pricesPartialOnlyByAssumedBase).toBe(false);
+        expect(zero.inputsPartial).toBe(false);
+        // At least the base cape itself is paid for; a plan that mirrors buys further copies of it
+        expect(zero.optimalStrategy.totalCost - withZero.optimalStrategy.totalCost).toBeGreaterThanOrEqual(
+            prices[PROTECTION].ask - 1e-6
+        );
+    });
+
+    test('an unpriced material is not excused by the assumed base', () => {
+        const path = calculateEnhancementPath(UNPRICED_CAPE, 3, enhancingConfig);
+
+        expect(path.pricesPartial).toBe(true);
+        expect(path.pricesPartialOnlyByAssumedBase).toBe(false);
+    });
+
+    test('an ordinary unpriced base is not an assumption', () => {
+        gameData.itemDetailMap['/items/test_unlisted_sword'] = {
+            name: 'Unlisted Sword',
+            itemLevel: 10,
+            enhancementCosts: [{ itemHrid: MATERIAL, count: 1 }],
+        };
+
+        const path = calculateEnhancementPath('/items/test_unlisted_sword', 3, enhancingConfig);
+
+        expect(path.pricesPartial).toBe(true);
+        expect(path.pricesPartialOnlyByAssumedBase).toBe(false);
     });
 });

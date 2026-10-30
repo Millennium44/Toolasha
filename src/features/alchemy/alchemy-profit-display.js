@@ -17,6 +17,7 @@ import { calculateMultiLevelProgress } from '../../utils/experience-calculator.j
 import { setReactInputValue } from '../../utils/react-input.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 import { describeShopValue } from '../../utils/alchemy-shop-value.js';
+import { CAPE_BASE_VALUE_SETTING, describeAssumedCape } from '../../utils/untradable-cape.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
@@ -136,6 +137,7 @@ class AlchemyProfitDisplay {
             config.onSettingChange('profitCalc_pricingNaming', onPricingChange),
             ...PATIENT_TICK_SETTING_KEYS.map((key) => config.onSettingChange(key, onPricingChange)),
             config.onSettingChange(IRONCOW_VALUATION_SETTING, onPricingChange),
+            config.onSettingChange(CAPE_BASE_VALUE_SETTING, onPricingChange),
             config.onSettingsLoaded(onPricingChange),
             // The two section switches are read only when the panel is built, so a change
             // has to force a rebuild of a panel already on screen
@@ -740,6 +742,16 @@ class AlchemyProfitDisplay {
             const note = document.createElement('div');
             note.style.cssText = 'margin-left: 8px; opacity: 0.7;';
             note.textContent = `• ${name}: ${describeShopValue(entry, (n) => formatLargeNumber(Math.round(n)))}`;
+            revenueDiv.appendChild(note);
+        }
+
+        // An untradable cape has no market: its figure is an assumption, so say so
+        const assumedCapes = Array.isArray(profitData.assumedCapes) ? profitData.assumedCapes : [];
+        for (const entry of assumedCapes) {
+            const name = dataManager.getItemDetails(entry.itemHrid)?.name || entry.itemHrid;
+            const note = document.createElement('div');
+            note.style.cssText = 'margin-left: 8px; opacity: 0.7;';
+            note.textContent = `• ${describeAssumedCape(entry, name, (n) => formatLargeNumber(Math.round(n)))}`;
             revenueDiv.appendChild(note);
         }
 

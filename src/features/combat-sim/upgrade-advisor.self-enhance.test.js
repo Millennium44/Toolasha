@@ -18,7 +18,9 @@ vi.mock('../../utils/enhancement-input-pricing.js', async () => {
     };
     return {
         priceMirror: () => via('/items/philosophers_mirror'),
-        priceBase: (hrid) => via(hrid),
+        // `assumedBase`: the untradable-cape setting's value, which the shared rule marks `assumed`
+        priceBase: (hrid) =>
+            state.assumedBase ? { price: 5_000_000, unpriced: false, estimated: true, assumed: true } : via(hrid),
         priceAtLevel: (hrid, level) => {
             if (!(level > 0)) return via(hrid);
             const ask = getItemPrices(hrid, level)?.ask;
@@ -40,6 +42,8 @@ const state = vi.hoisted(() => ({
     shops: {},
     /** Overrides for config.getSettingValue */
     settings: {},
+    /** priceBase answers the cape setting's assumed value */
+    assumedBase: false,
 }));
 
 const CAPE = '/items/sinister_cape';
@@ -173,6 +177,7 @@ describe('self-enhanced upgrade pricing', () => {
         state.sweeps = [];
         state.shops = {};
         state.settings = {};
+        state.assumedBase = false;
     });
 
     test('best copy at +6 and second at +3: a +5 row ladders the +3 up, never the ask', () => {
@@ -211,6 +216,14 @@ describe('self-enhanced upgrade pricing', () => {
         const detail = explainUpgradeCost(tier(CAPE, 5), gameData);
         expect(detail.ladder).toMatchObject({ fromLevel: 0, fresh: true, baseCost: 5_000_000 });
         expect(detail.net).toBe(5_000_000 + 5_000_000);
+    });
+
+    test('no copy held: the assumed cape base is not a price anyone can pay, so the row stays unpriced', () => {
+        state.assumedBase = true;
+        const detail = explainUpgradeCost(tier(CAPE, 5), gameData);
+        expect(detail.net).toBeNull();
+        expect(detail.unpriced).toEqual(['Sinister Cape']);
+        expect(calculateUpgradeCost(tier(CAPE, 5), gameData)).toBeNull();
     });
 
     test('no copy held: a cape sold only for task tokens is priced from the token shop, not the estimate', () => {

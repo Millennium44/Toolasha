@@ -352,6 +352,9 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         // Whether anything the quote is built on could not be priced; the tooltip says so
         // rather than presenting a partial bill as a full one
         pricesPartial: prices.pricesPartial,
+        // True when the only unpriced input is an untradable cape's base, valued at the cape setting's
+        // 0: the figure is the cost of the run itself and a caller that can flag it may use it
+        pricesPartialOnlyByAssumedBase: prices.onlyBaseAssumed === true,
         // Whether the inputs the plan SELECTED include a partial crafting bill; net worth flags its value
         inputsPartial,
         optimalStrategy,
@@ -453,13 +456,18 @@ function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') 
     // XP/hr table and the enhancing panel. The tooltip colors its Total green against the
     // enhanced item's ask, so an unnoticed under-quote reads as "this is profitable".
     let pricesPartial = false;
+    // Whether a material (not the base item) went unpriced
+    let materialsUnpriced = false;
     // Whether a priced input is itself a partial crafting bill (a recipe input nothing prices)
     let materialsPartial = false;
     for (const material of itemDetails.enhancementCosts || []) {
         const materialDetail = gameData.itemDetailMap[material.itemHrid];
         const priced = priceMaterial(material.itemHrid, pricingOf(priceContext));
         const price = priced.price || 0;
-        if (!(price > 0) && material.count > 0) pricesPartial = true;
+        if (!(price > 0) && material.count > 0) {
+            pricesPartial = true;
+            materialsUnpriced = true;
+        }
         if (price > 0 && priced.partial && material.count > 0) materialsPartial = true;
         materialCostPerAttempt += price * material.count;
         materials.push({
@@ -492,8 +500,12 @@ function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') 
 
     // The base item is paid once whatever happens, so an unpriced one understates every level
     if (!(baseAskPrice > 0)) pricesPartial = true;
+    // An untradable cape's base is an assumption (the cape setting), not an unpriced input: on the
+    // "nothing" setting it is 0, and the run is then exactly its materials, flagged partial
+    const onlyBaseAssumed = Boolean(askBase.assumed) && !(baseAskPrice > 0) && !materialsUnpriced;
 
     return {
+        onlyBaseAssumed,
         materials,
         materialCostPerAttempt,
         protectionOptions,

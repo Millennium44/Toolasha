@@ -76,6 +76,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { PATIENT_TICK_SETTING_KEYS, isPatientTickOn } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { CAPE_BASE_VALUE_SETTING, getCapeBaseValueMode } from '../../utils/untradable-cape.js';
 
 /** The three alchemy actions an item can be put through */
 export const ALCHEMY_TYPES = ['coinify', 'decompose', 'transmute'];
@@ -321,6 +322,13 @@ function collectRankings(type, method, gameData, level, shopPrices, results) {
         const marketPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
         const shopPrice = shopPrices ? shopUnitPrice(itemHrid) : null;
         const shopPriced = shopBeatsMarket(marketPrice, shopPrice);
+        // An untradable cape has no market price; the calculator costed it at its assumed value, and
+        // the row's price (and the price filters) read that rather than a 0 beside an asterisk
+        const assumedPrice =
+            marketPrice === null
+                ? profitData.assumedCapes?.find((cape) => cape.itemHrid === itemHrid && !(cape.enhancementLevel > 0))
+                      ?.value
+                : null;
 
         results.push({
             action: type,
@@ -328,7 +336,7 @@ function collectRankings(type, method, gameData, level, shopPrices, results) {
             itemHrid,
             name: itemDetails.name,
             itemLevel,
-            itemPrice: (shopPriced ? shopPrice : marketPrice) || 0,
+            itemPrice: (shopPriced ? shopPrice : (marketPrice ?? assumedPrice)) || 0,
             shopPriced,
             shopPrice: shopPrice ?? null,
             marketPrice: marketPrice ?? null,
@@ -399,7 +407,7 @@ function stateFingerprint(priceStamp) {
         .sort()
         .join(',');
 
-    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}|${pricingMode}|${house}|${community}`;
+    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}|${pricingMode}|${getCapeBaseValueMode()}|${house}|${community}`;
 }
 
 /**
@@ -420,7 +428,7 @@ export function clearAlchemyRateCache() {
 // The pricing mode decides what every alchemy output is worth. Registered once,
 // at import, because this module has no lifecycle of its own to hang it on.
 config.onSettingChange?.('profitCalc_pricingMode', clearAlchemyRateCache);
-for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, CAPE_BASE_VALUE_SETTING]) {
     config.onSettingChange?.(key, clearAlchemyRateCache);
 }
 

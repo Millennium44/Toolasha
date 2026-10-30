@@ -109,6 +109,13 @@ describe('the active source', () => {
         expect(enhancementParamsFor('savings', TRADEABLE).kit).toBe('detected');
     });
 
+    test('the cape valuation surface is on the character’s own bench for an untradable cape, and market-facing for a tradable one', () => {
+        setProRatesActive(true);
+
+        expect(enhancementParamsFor('valuation', UNTRADEABLE).kit).toBe('detected');
+        expect(enhancementParamsFor('valuation', TRADEABLE).kit).toBe('pro');
+    });
+
     test('the savings card is on its own bench whatever the simulator says', () => {
         // Its enhancing path only fires when the finished piece has no ask at any price
         expect(enhancementParamsFor('savings', TRADEABLE).kit).toBe('detected');

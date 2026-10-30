@@ -15,6 +15,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A "Plan scrolls" button on Labyrinth scroll menus lets you set how many of each to open, then steps you through them: it opens each scroll's menu, fills the quantity and highlights Open, which you press yourself (from upstream).
 - Quick fill: type one number, then click scroll names, or a skill icon to pick every scroll that helps that skill. Each row shows the skills it affects.
 
+### Untradable capes valued, and token values on shop tiles
+
+- A new "Untradable capes: base value" setting (nothing, or one Mirror of Protection) prices capes that have no recipe or listing in alchemy, chests, net worth and enhancing; with "nothing" those values stay flagged incomplete instead of a silent 0 (from upstream).
+- Dungeon and Labyrinth shop tiles show gold per token after tax, with the best buy marked (from upstream).
+
 ### Quick-input speed counts the guild shrine
 
 - The action panel's speed total and base-to-actual time now include the guild shrine's action speed, which the breakdown already listed (from upstream).
