@@ -907,7 +907,8 @@ class AchievementFinisher {
         const completed = new Set(
             achievements.filter((row) => row?.isCompleted === true).map((row) => row.achievementHrid)
         );
-        // Live progress per achievement (dungeon clears, coins coinified); absent rows are unknown
+        // Live progress per achievement (dungeon clears, coins coinified). The list holds only achievements
+        // with progress, so once it is loaded a missing row is 0, not unknown
         const progress = new Map();
         for (const row of achievements) {
             const value = Number(row?.progress);
@@ -923,7 +924,7 @@ class AchievementFinisher {
             const hrid = this.hridOfCard(card, detailMap);
             const spec =
                 hrid && !completed.has(hrid)
-                    ? this.lineFor(hrid, clientData, getContext, progress.get(hrid) ?? null)
+                    ? this.lineFor(hrid, clientData, getContext, progress.get(hrid) ?? 0)
                     : null;
             if (!spec) {
                 own?.remove();
