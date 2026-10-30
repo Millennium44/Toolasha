@@ -112,7 +112,11 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     },
 }));
 vi.mock('../../utils/bonus-revenue-calculator.js', () => ({
-    getRareFindParts: () => ({ total: game.rareFind }),
+    // Gear tagged with its own Rare Find wins, so a test can tell which gear was read
+    getRareFindParts: (type, equipment) => ({ total: equipment?.rareFind ?? game.rareFind }),
+}));
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: (type) => ({ equipment: game.loadoutGear?.[type] ?? game.equipment, drinks: [] }),
 }));
 vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
     ...(await importOriginal()),
@@ -363,6 +367,7 @@ describe('hints on the game achievement cards', () => {
         game.houseRooms = null;
         game.learned = null;
         game.rareFind = 0;
+        game.loadoutGear = null;
         game.loadoutListeners = [];
         game.settingHandlers = [];
         game.handlers = {};
@@ -454,6 +459,21 @@ describe('hints on the game achievement cards', () => {
         game.handlers.buffs_updated.forEach((fn) => fn());
         vi.advanceTimersByTime(1500);
         expect(lineOf('Buttered Up').textContent).toContain('~1 in 25.0K actions');
+    });
+
+    test('rare-drop odds read Rare Find from the gear the saved loadout of the action, not what is worn', () => {
+        game.detail = ANY_OF_ACHIEVEMENTS;
+        game.clientData = { ...ANY_OF_DATA, achievementDetailMap: ANY_OF_ACHIEVEMENTS };
+        game.skills = [
+            { skillHrid: '/skills/milking', level: 70 },
+            { skillHrid: '/skills/cheesesmithing', level: 1 },
+        ];
+        game.inventory = [];
+        game.equipment = { rareFind: 0 };
+        game.loadoutGear = { '/action_types/milking': { rareFind: 100 } };
+        achievementsTab(ANY_OF_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Buttered Up').textContent).toContain('~1 in 50.0K actions');
     });
 
     test('a saved loadout edit invalidates readiness, and disable stops listening', () => {

@@ -38,6 +38,7 @@ import { setShopFilter } from '../../utils/tester-shop-nav.js';
 import { perAttemptMaterialCost, priceProtection } from '../../utils/enhancement-input-pricing.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { getRareFindParts } from '../../utils/bonus-revenue-calculator.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { loadoutSnapshot, missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
@@ -663,7 +664,8 @@ class AchievementFinisher {
                 try {
                     const type = clientData?.actionDetailMap?.[actionHrid]?.type;
                     if (!type) return null;
-                    const equipment = dataManager.getEquipment?.();
+                    // The gear the game equips for that action (its saved loadout), else what is worn
+                    const equipment = resolveActionContext(type)?.equipment;
                     if (!equipment) return null;
                     return getRareFindParts(type, equipment, clientData.itemDetailMap || {}).total;
                 } catch (error) {
