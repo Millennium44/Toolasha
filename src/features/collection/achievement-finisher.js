@@ -9,7 +9,8 @@
  * get nothing either: the game card shows that progress itself.
  *
  * Go and Missing Mats only navigate: they open the action, the alchemy tab, the
- * combat zone at its tier, or the marketplace, and never start, queue or buy.
+ * combat zone at its tier, the marketplace, the Labyrinth or the Shop, and never
+ * start, queue or buy.
  *
  * A "Toolasha hints" checkbox beside the game's "Show Incomplete Only" control
  * flips the feature's own setting. The checkbox is drawn whenever the tier list
@@ -33,6 +34,7 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigation.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
+import { setShopFilter } from '../../utils/tester-shop-nav.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { combatLevel } from '../../utils/combat-level.js';
@@ -94,6 +96,8 @@ const READINESS_EVENTS = [
     'skills_updated',
     'market_item_order_books_updated',
     'market_item_values_updated',
+    'abilities_updated',
+    'house_rooms_updated',
 ];
 
 /** Toolasha settings that change a buy cost */
@@ -116,9 +120,10 @@ const COIN_MARK = '';
  * @param {number|null} ownCombatLevel
  * @returns {string}
  */
-export function readinessText(res, ready, clientData, ownCombatLevel) {
+export function readinessText(res, ready, clientData, ownCombatLevel, progress = null) {
     const parts = [];
     const lv = ready.level;
+    if (res.kind === 'place') return placeText(res, ready, clientData, progress);
     if (res.kind === 'combat') {
         if (res.dungeon) parts.push('dungeon');
         parts.push(`T${res.tier}`);
@@ -171,6 +176,62 @@ export function readinessText(res, ready, clientData, ownCombatLevel) {
     return parts.join(' · ');
 }
 
+/** `n / target`, or null when the character's progress is not known */
+const progressOf = (progress, target) =>
+    Number.isFinite(progress) && Number.isFinite(target) ? `${formatKMB(progress)} / ${formatKMB(target)}` : null;
+
+/**
+ * The hint for a place-to-go row.
+ * @param {Object} res - A `place` resolution
+ * @param {Object} ready
+ * @param {Object|null} clientData
+ * @param {number|null} progress - The character's `progress` on this achievement, null when unknown
+ * @returns {string}
+ */
+function placeText(res, ready, clientData, progress) {
+    const parts = [];
+    switch (res.place) {
+        case 'house':
+            parts.push(`build any room to Lv ${res.target}`);
+            parts.push(
+                Number.isFinite(ready.houseLevel) ? `your highest room Lv ${ready.houseLevel}` : 'rooms not loaded'
+            );
+            break;
+        case 'labyrinth':
+            parts.push(`reach Labyrinth floor ${res.target}`);
+            break;
+        case 'dungeon': {
+            const lv = ready.level;
+            parts.push(`dungeon T${res.tier}`);
+            const done = progressOf(progress, res.target);
+            parts.push(done ? `${done} clears` : 'clears unknown');
+            if (lv && lv.met === false) parts.push(`needs Lv ${lv.need} (you ${lv.have})`);
+            else if (lv && lv.met === null) parts.push('level unknown');
+            else if (lv) parts.push('level met');
+            else parts.push('no level requirement');
+            break;
+        }
+        case 'shop':
+            parts.push(
+                ready.charmHrid && Number.isFinite(ready.cost)
+                    ? `Shop: ${itemName(clientData, ready.charmHrid)} ~${formatKMB(ready.cost)}${COIN_MARK}`
+                    : 'buy any trainee charm at the Shop'
+            );
+            break;
+        case 'coinify':
+            const done = progressOf(progress, res.target);
+            parts.push(
+                done
+                    ? `coinified ${done}${COIN_MARK}`
+                    : `coinify ${formatKMB(res.target)}${COIN_MARK} · progress unknown`
+            );
+            break;
+        default:
+            break;
+    }
+    return parts.join(' · ');
+}
+
 /**
  * A readiness hint as a span, with each gold amount followed by the game's coin icon
  * (the word "coin" until the game has drawn from its item sheet).
@@ -196,13 +257,31 @@ function hintWithCoins(text) {
 }
 
 /**
+ * Click the game's own navigation entry by the icon it carries (`navigationBar.labyrinth`). A
+ * navigation click, not a spend: a plain click is what the game's own nav takes.
+ * @param {string} ariaLabel
+ * @returns {boolean} Whether the entry was there
+ */
+function clickNav(ariaLabel) {
+    const target = [...document.querySelectorAll('[class*="NavigationBar_nav__"]')].find((nav) =>
+        nav.querySelector(`svg[aria-label="${ariaLabel}"]`)
+    );
+    if (!target) return false;
+    target.click();
+    return true;
+}
+
+/**
  * Whether a resolved row gets a Go button: every kind does, except an equip row with nothing to buy
- * (already owned, unpriced everywhere, or an Iron Cow character).
+ * (already owned, unpriced everywhere, or an Iron Cow character) and the House, which has no verified
+ * opener.
  * @param {Object} res
  * @param {Object|null} ready
  * @returns {boolean}
  */
 export function hasGoButton(res, ready) {
+    // No verified way to open the House from script: the hint stands alone
+    if (res.kind === 'place') return res.place !== 'house';
     if (res.kind !== 'equip') return true;
     return Boolean(ready?.buyHrid);
 }
@@ -431,6 +510,8 @@ class AchievementFinisher {
                     actionDetailMap: clientData?.actionDetailMap,
                     itemDetailMap: clientData?.itemDetailMap,
                     combatMonsterDetailMap: clientData?.combatMonsterDetailMap,
+                    abilityDetailMap: clientData?.abilityDetailMap,
+                    shopItemDetailMap: clientData?.shopItemDetailMap,
                 });
             } catch (error) {
                 console.error('[AchievementFinisher] Resolving failed for', hrid, error);
@@ -456,6 +537,8 @@ class AchievementFinisher {
             skillLevels,
             combatLevel: ownCombat,
             inventory: dataManager.getInventory?.() ?? null,
+            // Rooms are unknown, not none, until the character has loaded
+            houseRooms: dataManager.characterData ? (dataManager.getHouseRooms?.() ?? null) : null,
             ironCow: isIronCowCharacter(),
             buyPrice: (itemHrid) => {
                 const info = getItemPriceInfo(itemHrid, { context: 'profit', side: 'buy', marketQuote: true });
@@ -523,12 +606,63 @@ class AchievementFinisher {
                 case 'equip':
                     if (ready?.buyHrid) navigateToMarketplace(ready.buyHrid, 0);
                     break;
+                case 'place':
+                    this.goPlace(res, ready);
+                    break;
                 default:
                     break;
             }
         } catch (error) {
             console.error('[AchievementFinisher] Navigation failed:', error);
         }
+    }
+
+    /**
+     * Open the screen a place-to-go achievement is done on. Navigation only.
+     * @param {Object} res - A `place` resolution
+     * @param {Object|null} ready
+     */
+    goPlace(res, ready) {
+        switch (res.place) {
+            case 'labyrinth':
+                clickNav('navigationBar.labyrinth');
+                break;
+            case 'dungeon':
+                if (!ready?.actionHrid) break;
+                openCombatZoneAtTier(ready.actionHrid, res.tier).catch((error) =>
+                    console.error('[AchievementFinisher] Opening the dungeon failed:', error)
+                );
+                break;
+            case 'shop': {
+                if (!clickNav('navigationBar.shop')) break;
+                // Narrow the shop to the cheapest charm once its filter box is on screen; typing in a
+                // filter buys nothing. A tab the charm is not on just shows no match.
+                const name = ready?.charmHrid
+                    ? dataManager.getInitClientData?.()?.itemDetailMap?.[ready.charmHrid]?.name
+                    : null;
+                if (name) this.fillShopFilter(name, dataManager.getCurrentCharacterId?.(), 0);
+                break;
+            }
+            case 'coinify': {
+                const characterId = dataManager.getCurrentCharacterId?.();
+                if (!openAlchemyOnItem(getGameObject(), { itemHrid: null, actionType: 'coinify' })) break;
+                selectAlchemyTab(
+                    'coinify',
+                    this.timers.scheduleTimeout,
+                    () => this.isInitialized && dataManager.getCurrentCharacterId?.() === characterId
+                ).catch((error) => console.error('[AchievementFinisher] Alchemy tab failed:', error));
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    /** Type the item into the Shop's filter once it is on screen, for up to 3 s */
+    fillShopFilter(name, characterId, attempt) {
+        if (!this.isInitialized || dataManager.getCurrentCharacterId?.() !== characterId) return;
+        if (setShopFilter(name) || attempt >= 30) return;
+        this.timers.scheduleTimeout(() => this.fillShopFilter(name, characterId, attempt + 1), 100);
     }
 
     /**
@@ -682,13 +816,24 @@ class AchievementFinisher {
         const completed = new Set(
             achievements.filter((row) => row?.isCompleted === true).map((row) => row.achievementHrid)
         );
+        // Live progress per achievement (dungeon clears, coins coinified); absent rows are unknown
+        const progress = new Map();
+        for (const row of achievements) {
+            const value = Number(row?.progress);
+            if (row?.achievementHrid && row.progress != null && Number.isFinite(value)) {
+                progress.set(row.achievementHrid, value);
+            }
+        }
         let context = null;
         const getContext = () => (context ||= this.readinessContext());
 
         for (const card of findCards(host)) {
             const own = card.querySelector(`.${LINE_CLASS}`);
             const hrid = this.hridOfCard(card, detailMap);
-            const spec = hrid && !completed.has(hrid) ? this.lineFor(hrid, clientData, getContext) : null;
+            const spec =
+                hrid && !completed.has(hrid)
+                    ? this.lineFor(hrid, clientData, getContext, progress.get(hrid) ?? null)
+                    : null;
             if (!spec) {
                 own?.remove();
                 continue;
@@ -710,16 +855,20 @@ class AchievementFinisher {
 
     /**
      * What a card's line says and does, or null for nothing.
+     * @param {string} hrid
+     * @param {Object|null} clientData
+     * @param {() => Object} getContext
+     * @param {number|null} [progress] - The character's live progress on this achievement
      * @returns {{key: string, build: () => HTMLElement}|null}
      */
-    lineFor(hrid, clientData, getContext) {
+    lineFor(hrid, clientData, getContext, progress = null) {
         // The game card shows the point-total achievements' progress itself
         if (plannerFor(hrid)) return null;
         const res = this.resolutionFor(hrid, clientData);
         if (!res) return null;
         const ready = this.readinessFor(hrid, res, getContext);
         if (!ready) return null;
-        const text = `[${readinessText(res, ready, clientData, getContext().combatLevel)}]`;
+        const text = `[${readinessText(res, ready, clientData, getContext().combatLevel, progress)}]`;
         const go = hasGoButton(res, ready);
         const ironCow = getContext().ironCow;
         const matsLines = missingMatsLines(res, ready, clientData, ironCow);
