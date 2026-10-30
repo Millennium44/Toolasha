@@ -9,7 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Scroll Planner
 
 - A "Plan scrolls" button on Labyrinth scroll menus lets you set how many of each to open, then steps you through them: it opens each scroll's menu, fills the quantity and highlights Open, which you press yourself (from upstream).
-- Quick fill: type one number, then click scroll names to plan that many of each.
+- Quick fill: type one number, then click scroll names, or a skill icon to pick every scroll that helps that skill. Each row shows the skills it affects.
 
 ### Upstream fixes: quick-input loadout, offline limit for endless combat
 
