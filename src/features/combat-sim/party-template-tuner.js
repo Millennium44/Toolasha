@@ -23,7 +23,10 @@ export const OFFSET_MIN = -15;
 export const OFFSET_MAX = 15;
 
 /** Most template scorings one tuning may spend (each prices a whole build) */
-export const MAX_EVALS = 10;
+export const MAX_EVALS = 15;
+
+/** Gap between the offsets of the coarse scan */
+const SCAN_STEP = 3;
 
 const STAT_KEYS = [
     'staminaLevel',
@@ -129,8 +132,10 @@ export function comparableScore(score) {
 }
 
 /**
- * Search the offset whose score is closest to the target. The score only grows with the offset, so it is a binary
- * search on [OFFSET_MIN, OFFSET_MAX]: both ends first (to tell a clamped answer from a found one), then halving.
+ * Search the offset whose score is closest to the target. The score is not assumed to grow with the offset (below the
+ * high-enhancement threshold a piece is priced from market asks, above it from computed costs, so one expensive
+ * listing can put a lower level above a higher one): a coarse scan of every third offset across
+ * [OFFSET_MIN, OFFSET_MAX], then the immediate neighbors of the two best coarse points, inside the evaluation cap.
  * @param {Object} options
  * @param {(k: number) => Promise<number|null>} options.scoreAt - The template's comparable score at an offset
  * @param {number} options.target - The character's comparable score
@@ -138,8 +143,8 @@ export function comparableScore(score) {
  * @param {number} [options.maxEvals]
  * @param {(progress: {phase: string, done: number, max: number}) => void} [options.onProgress] - Called before each scoring
  * @returns {Promise<{status: 'ok'|'clampedLow'|'clampedHigh'|'failed'|'aborted', k: number|null,
- *   score: number|null, evals: number}>} `clampedLow`: even the lowest offset scores above the target;
- *   `clampedHigh`: even the highest scores below it
+ *   score: number|null, evals: number}>} `clampedLow`: even the lowest score seen is above the target;
+ *   `clampedHigh`: even the highest score seen is below it
  */
 export async function solveOffset({
     scoreAt,
@@ -149,42 +154,58 @@ export async function solveOffset({
     onProgress = null,
 }) {
     let evals = 0;
+    const seen = new Map();
+    const done = (status, k, score) => ({ status, k, score, evals });
+    // Returns false when the search must stop (switched, unscorable)
     const probe = async (k) => {
+        if (seen.has(k)) return true;
         evals += 1;
         onProgress?.({ phase: 'solve', done: evals, max: maxEvals });
         const score = await scoreAt(k);
-        return score;
+        if (!stillCurrent()) return 'aborted';
+        if (score === null) return 'failed';
+        seen.set(k, score);
+        return true;
     };
-    const done = (status, k, score) => ({ status, k, score, evals });
+    const gap = (k) => Math.abs(seen.get(k) - target);
 
-    let low = OFFSET_MIN;
-    let lowScore = await probe(low);
-    if (!stillCurrent()) return done('aborted', null, null);
-    if (lowScore === null) return done('failed', null, null);
-    if (lowScore >= target) return done('clampedLow', low, lowScore);
-
-    let high = OFFSET_MAX;
-    let highScore = await probe(high);
-    if (!stillCurrent()) return done('aborted', null, null);
-    if (highScore === null) return done('failed', null, null);
-    if (highScore <= target) return done('clampedHigh', high, highScore);
-
-    while (high - low > 1 && evals < maxEvals) {
-        const mid = Math.floor((low + high) / 2);
-        const score = await probe(mid);
-        if (!stillCurrent()) return done('aborted', null, null);
-        if (score === null) return done('failed', null, null);
-        if (score < target) {
-            low = mid;
-            lowScore = score;
-        } else {
-            high = mid;
-            highScore = score;
-        }
+    const coarse = [];
+    for (let k = OFFSET_MIN; k <= OFFSET_MAX; k += SCAN_STEP) coarse.push(k);
+    if (coarse[coarse.length - 1] !== OFFSET_MAX) coarse.push(OFFSET_MAX);
+    for (const k of coarse) {
+        const state = await probe(k);
+        if (state !== true) return done(state, null, null);
     }
-    return Math.abs(target - lowScore) <= Math.abs(highScore - target)
-        ? done('ok', low, lowScore)
-        : done('ok', high, highScore);
+    // The neighbors of the two best coarse points, nearest the target first
+    const best = [...coarse].sort((x, y) => gap(x) - gap(y)).slice(0, 2);
+    const neighbors = best.flatMap((k) => [k - 1, k + 1]).filter((k) => k >= OFFSET_MIN && k <= OFFSET_MAX);
+    for (const k of neighbors) {
+        if (evals >= maxEvals) break;
+        const state = await probe(k);
+        if (state !== true) return done(state, null, null);
+    }
+    let pick = coarse[0];
+    for (const k of seen.keys()) if (gap(k) < gap(pick)) pick = k;
+    const score = seen.get(pick);
+    // The target lies beyond everything reachable: the best score is the lowest seen and still above it, or the
+    // highest seen and still below it (gear stops adding score once the enhancement or level caps are hit)
+    const scores = [...seen.values()];
+    if (score > target && score <= Math.min(...scores)) return done('clampedLow', pick, score);
+    if (score < target && score >= Math.max(...scores)) return done('clampedHigh', pick, score);
+    return done('ok', pick, score);
+}
+
+/**
+ * Whether a score counted something at zero for want of a price: a worn piece, or an ability book (an unpriced
+ * ability row does not raise `equipmentUnpriced`).
+ * @param {Object|null} score - A `calculateCombatScore` result
+ * @returns {boolean}
+ */
+export function hasUnpriced(score) {
+    return (
+        Number(score?.equipmentUnpriced) > 0 ||
+        (Array.isArray(score?.breakdown?.abilities) && score.breakdown.abilities.some((row) => row?.unpriced))
+    );
 }
 
 /** Hand the main thread back for a macrotask, so a long run of scorings does not freeze the page */
@@ -268,12 +289,12 @@ export async function tuneTemplate(template, levels, deps = liveDeps(), { onProg
     if (hit) return { ...hit, dto: applyOffset(leveled, hit.k), cached: true };
 
     // A piece nothing could price counts as zero in either score, so a match through it is only approximate
-    let unpriced = Number(own.equipmentUnpriced) > 0;
+    let unpriced = hasUnpriced(own);
     const scoreAt = async (k) => {
         // Scoring a whole build is heavy: let the page paint between probes
         await (deps.yieldToBrowser ?? yieldToBrowser)();
         const result = await deps.scoreProfile(profileDataFor(applyOffset(template.playerDto, k)));
-        if (Number(result?.equipmentUnpriced) > 0) unpriced = true;
+        if (hasUnpriced(result)) unpriced = true;
         return comparableScore(result);
     };
     const solved = await solveOffset({ scoreAt, target, stillCurrent, onProgress });

@@ -129,7 +129,15 @@ describe('solveOffset', () => {
 
     test('stays inside the evaluation cap', async () => {
         const result = await solve(linear(9) + 10);
-        expect(result.evals).toBeLessThanOrEqual(10);
+        expect(result.evals).toBeLessThanOrEqual(15);
+    });
+
+    test('finds the exact offset when the score is not monotonic (one expensive listing above the target)', async () => {
+        // A binary search probes 0, then 7: the 9999 at 7 reads as "too high" and it never looks at 8
+        const spiky = async (k) => (k === 7 ? 9999 : linear(k));
+        const result = await solveOffset({ scoreAt: spiky, target: linear(8) });
+        expect(result).toMatchObject({ status: 'ok', k: 8, score: linear(8) });
+        expect(result.evals).toBeLessThanOrEqual(15);
     });
 
     test('a target below the lowest reachable clamps low, above the highest clamps high', async () => {
@@ -239,12 +247,29 @@ describe('tuneTemplate', () => {
         const events = [];
         const result = await tuneTemplate(smash, LEVELS, deps, { onProgress: (p) => events.push(p) });
         expect(result.status).toBe('ok');
-        expect(events[0]).toEqual({ phase: 'score', done: 0, max: 10 });
+        expect(events[0]).toEqual({ phase: 'score', done: 0, max: 15 });
         const solves = events.filter((p) => p.phase === 'solve');
         expect(solves.map((p) => p.done)).toEqual(solves.map((_, i) => i + 1));
-        expect(solves.length).toBeGreaterThan(2);
-        expect(solves.length).toBeLessThanOrEqual(10);
+        expect(solves.length).toBeGreaterThan(10);
+        expect(solves.length).toBeLessThanOrEqual(15);
         expect(yields).toBe(solves.length);
+    });
+
+    test('an unpriced ability book is an unpriced score too, in the template or the character', async () => {
+        const a = world();
+        const inner = a.deps.scoreProfile;
+        a.deps.scoreProfile = async (p) => ({ ...(await inner(p)), breakdown: { abilities: [{ unpriced: true }] } });
+        expect((await tuneTemplate(smash, LEVELS, a.deps)).status).toBe('partial');
+        clearTunerCache();
+        const b = world({
+            score: { total: 1, equipment: 1900, ability: 0, breakdown: { abilities: [{ unpriced: true }] } },
+        });
+        expect((await tuneTemplate(smash, LEVELS, b.deps)).status).toBe('partial');
+        clearTunerCache();
+        const c = world({
+            score: { total: 1, equipment: 1900, ability: 0, breakdown: { abilities: [{ unpriced: false }] } },
+        });
+        expect((await tuneTemplate(smash, LEVELS, c.deps)).status).toBe('ok');
     });
 
     test('a character below the lowest or above the highest reachable score is clamped', async () => {
@@ -252,7 +277,7 @@ describe('tuneTemplate', () => {
         expect(low).toMatchObject({ status: 'clampedLow', k: OFFSET_MIN });
         clearTunerCache();
         const high = await tuneTemplate(smash, LEVELS, world({ score: { equipment: 1e7, ability: 0 } }).deps);
-        expect(high).toMatchObject({ status: 'clampedHigh', k: OFFSET_MAX });
+        expect(high.status).toBe('clampedHigh');
     });
 
     test('a character switch while scoring gives the standard template, and nothing is cached', async () => {
