@@ -1149,6 +1149,15 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'scrollPlanner',
+            name: 'Scroll Planner',
+            category: 'Inventory',
+            module: Market.scrollPlanner,
+            async: false,
+            // Switched off mid-run, the progress bar and the menu buttons come off at once
+            liveStop: true,
+        },
+        {
             key: 'inventoryTabs',
             name: 'Custom Inventory Tabs',
             category: 'Inventory',

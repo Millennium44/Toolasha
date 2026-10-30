@@ -226,6 +226,8 @@ export const OWNED_KEY_PREFIXES = [
     'equipmentSavings',
     'housesUntracked',
     'philoCalculatorSettings',
+    // Inventory: Scroll Planner's last plan (synced) and per-character run (device-local)
+    'scrollPlanner_',
 
     // Combat, its panels and its recorders
     // A measurement of this machine's own observations of the battle stream —

@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import tooltipObserver from '../../core/tooltip-observer.js';
+import { isScrollRunActive } from './scroll-planner/scroll-planner-state.js';
 
 class AutoAllButton {
     constructor() {
@@ -115,6 +116,12 @@ class AutoAllButton {
         const isOpenable = itemDetails?.isOpenable;
         const isAbilityBook = itemDetails?.categoryHrid === '/item_categories/ability_book';
         if (!itemDetails || (!isOpenable && !isAbilityBook)) {
+            return;
+        }
+
+        // A guided Scroll Planner run owns the quantity field of Scroll of... menus: clicking All
+        // here would overwrite the quantity it filled in
+        if (isScrollRunActive() && itemDetails.categoryHrid === '/item_categories/scroll') {
             return;
         }
 
