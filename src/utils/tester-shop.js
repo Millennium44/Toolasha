@@ -30,6 +30,7 @@
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import { isTestServer } from './game-server.js';
+import { shopEntriesFor } from './shop-index.js';
 
 /** The setting that turns the shop on as a price source */
 export const TESTER_SHOP_SETTING = 'pricing_testerShop';
@@ -77,7 +78,7 @@ export function testerShopEnabled({ testServer, setting } = {}) {
 export function testerShopEntry(itemHrid, shopMap = dataManager.getInitClientData?.()?.shopItemDetailMap) {
     if (!itemHrid || !shopMap) return null;
     let best = null;
-    for (const [key, entry] of Object.entries(shopMap)) {
+    for (const [key, entry] of shopEntriesFor(shopMap, itemHrid)) {
         if (entry?.itemHrid !== itemHrid || !isTesterShopEntry(entry, key)) continue;
         const coins = (entry.costs || []).find((cost) => cost?.itemHrid === '/items/coin');
         const coinCost = Number(coins?.count) || 0;

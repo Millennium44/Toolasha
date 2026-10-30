@@ -186,6 +186,86 @@ describe('getShopCoinCost', () => {
     });
 });
 
+describe('shop lookups read only the entries that sell the item', () => {
+    // Two entries for one item, the Tester one first, behind a test-server-sized tab of others
+    function shopMap({ filler = 2000 } = {}) {
+        const map = {};
+        for (let i = 0; i < filler; i++) {
+            map[`/shop_items/tester_${i}`] = {
+                hrid: `/shop_items/tester_${i}`,
+                category: '/shop_categories/tester',
+                itemHrid: `/items/filler_${i}`,
+                costs: [{ itemHrid: '/items/coin', count: 1 }],
+            };
+        }
+        Object.assign(map, {
+            '/shop_items/tester_cheese': {
+                hrid: '/shop_items/tester_cheese',
+                category: '/shop_categories/tester',
+                itemHrid: '/items/cheese',
+                costs: [{ itemHrid: '/items/coin', count: 5 }],
+            },
+            '/shop_items/cheese': {
+                hrid: '/shop_items/cheese',
+                category: '/shop_categories/general',
+                itemHrid: '/items/cheese',
+                costs: [{ itemHrid: '/items/coin', count: 9 }],
+            },
+        });
+        return map;
+    }
+
+    beforeEach(() => {
+        state.testerOn = false;
+    });
+
+    test('first match in map order, with the Tester tab skipped or counted by the setting', () => {
+        state.gameData = { shopItemDetailMap: shopMap(), itemDetailMap: {} };
+        expect(getShopCoinCost('/items/cheese')).toBe(9);
+        expect(getShopCoinOnlyCost('/items/cheese')).toEqual({ coins: 9, units: 1 });
+        state.testerOn = true;
+        expect(getShopCoinCost('/items/cheese')).toBe(5);
+        expect(getShopCoinOnlyCost('/items/cheese')).toEqual({ coins: 5, units: 1 });
+        expect(getShopCoinCost('/items/filler_1999')).toBe(1);
+        expect(getShopCoinCost('/items/nothing')).toBe(0);
+    });
+
+    test('a new shop map is read afresh, not answered from the last one', () => {
+        state.gameData = { shopItemDetailMap: shopMap({ filler: 0 }), itemDetailMap: {} };
+        expect(getShopCoinCost('/items/cheese')).toBe(9);
+        state.gameData = {
+            shopItemDetailMap: {
+                '/shop_items/cheese': { itemHrid: '/items/cheese', costs: [{ itemHrid: '/items/coin', count: 12 }] },
+            },
+            itemDetailMap: {},
+        };
+        expect(getShopCoinCost('/items/cheese')).toBe(12);
+        state.gameData = null;
+        expect(getShopCoinCost('/items/cheese')).toBe(0);
+    });
+
+    test('a lookup does not test every entry in the shop', () => {
+        // Each entry the scan visits off the Tester filter reads its category; count those reads
+        const map = shopMap();
+        const reads = { count: 0 };
+        for (const entry of Object.values(map)) {
+            const { category } = entry;
+            Object.defineProperty(entry, 'category', {
+                get: () => {
+                    reads.count += 1;
+                    return category;
+                },
+            });
+        }
+        state.gameData = { shopItemDetailMap: map, itemDetailMap: {} };
+        getShopCoinCost('/items/cheese');
+        reads.count = 0;
+        for (let i = 0; i < 100; i++) getShopCoinCost('/items/cheese');
+        // Two entries sell cheese; a full walk would read 2,002 per lookup
+        expect(reads.count).toBeLessThanOrEqual(100 * 2);
+    });
+});
+
 describe('name lookups are memoised per detail map', () => {
     test('the first hrid in map order wins a shared display name', () => {
         state.gameData = {
