@@ -920,6 +920,12 @@ class MarketAPI {
         this.marketData = data;
         this.lastFetchTimestamp = at;
         this._recordChange({ full: true });
+        // The notification that follows (often none, on the silent cache fallbacks) must say a
+        // snapshot landed: a pending change that only names patched keys would let listeners that
+        // skip a notification no price moved in miss it. A fetch's own notifyListeners() sends
+        // this at once and clears the timer.
+        this._addPendingChange({ full: true });
+        this._armNotify();
         return true;
     }
 
@@ -1014,6 +1020,14 @@ class MarketAPI {
         // full change in the log too: a reader keyed on priceVersion must see it
         if (!change) this._recordChange({ full: true });
         this._addPendingChange(change ?? { full: true });
+        this._armNotify();
+    }
+
+    /**
+     * Make sure a trailing notification is scheduled.
+     * @private
+     */
+    _armNotify() {
         if (this._notifyTimer) {
             return;
         }

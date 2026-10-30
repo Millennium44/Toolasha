@@ -842,6 +842,8 @@ describe('MarketAPI change descriptor', () => {
         createMocks(true);
         const { default: marketAPI } = await import('./marketplace.js');
         marketAPI._installSnapshot(book(), 999_000);
+        // A fetch sends its notification right after installing; only patches follow
+        marketAPI.notifyListeners();
         const listener = vi.fn();
         marketAPI.on(listener);
 
@@ -865,6 +867,8 @@ describe('MarketAPI change descriptor', () => {
         createMocks(true);
         const { default: marketAPI } = await import('./marketplace.js');
         marketAPI._installSnapshot(book(), 999_000);
+        // A fetch sends its notification right after installing; only patches follow
+        marketAPI.notifyListeners();
         const listener = vi.fn();
         marketAPI.on(listener);
         const before = marketAPI.priceVersion;
@@ -884,6 +888,8 @@ describe('MarketAPI change descriptor', () => {
         createMocks(true);
         const { default: marketAPI } = await import('./marketplace.js');
         marketAPI._installSnapshot(book(), 999_000);
+        // A fetch sends its notification right after installing; only patches follow
+        marketAPI.notifyListeners();
         const listener = vi.fn();
         marketAPI.on(listener);
 
@@ -962,6 +968,40 @@ describe('MarketAPI change descriptor', () => {
         expect(listener.mock.calls[0][0].full).toBe(true);
         expect(listener.mock.calls[1][0]).toMatchObject({ full: false });
         expect(listener.mock.calls[1][0].keys.size).toBe(0);
+    });
+
+    test('a snapshot installed by the silent cache fallbacks still reads as a full change', async () => {
+        for (const connected of [false, true]) {
+            vi.resetModules();
+            const { getJSON } = createMocks(connected);
+            getJSON.mockImplementation(async (key) =>
+                key === 'Toolasha_marketAPI_json' ? { marketData: book(), timestamp: 999_000 } : {}
+            );
+            // Connected: a failed fetch falls back to the expired cache (a refusal ends in the catch)
+            vi.stubGlobal(
+                'fetch',
+                vi.fn(async () => {
+                    throw new Error('offline');
+                })
+            );
+            vi.spyOn(console, 'warn').mockImplementation(() => {});
+            vi.spyOn(console, 'error').mockImplementation(() => {});
+            const { default: marketAPI } = await import('./marketplace.js');
+            const listener = vi.fn();
+            marketAPI.on(listener);
+
+            await marketAPI.fetch(true);
+            // A patch burst follows before anything else notifies
+            marketAPI.updatePrice('/items/holy_cheese', 0, 950, 850);
+            vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+            expect(listener, `connected=${connected}`).toHaveBeenCalled();
+            expect(
+                listener.mock.calls.some(([change]) => change.full),
+                `connected=${connected}`
+            ).toBe(true);
+            vi.unstubAllGlobals();
+        }
     });
 
     test('recordPriceReads sees every getPrice key until stopped', async () => {
