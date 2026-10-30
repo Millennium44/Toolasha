@@ -91,12 +91,34 @@ export function maxAbilityLevel(gameData) {
  * @param {Object|null} gameData - Without it nothing can be judged, and the option is taken as given
  * @returns {{ok: boolean, reason?: string, name: string}}
  */
+/**
+ * Whether an ability can fill a player's special slot: a special ability a player can learn, i.e.
+ * one with an ability book. The five party auras plus Insanity, Invincible and Revive qualify;
+ * Promote is a monster-only special with no book (measured on the test server, 2026-10-29).
+ * @param {string} hrid
+ * @param {Object|null} gameData
+ * @returns {boolean}
+ */
+export function isPlayerSpecialAbility(hrid, gameData) {
+    const detail = gameData?.abilityDetailMap?.[hrid];
+    if (detail?.isSpecialAbility !== true) return false;
+    // Without ability books in the item data there is no way to tell a monster-only special
+    // (Promote) apart; allow it
+    const books = Object.values(gameData?.itemDetailMap || {}).filter((item) => item?.abilityBookDetail);
+    if (books.length === 0) return true;
+    return books.some((item) => item.abilityBookDetail.abilityHrid === hrid);
+}
+
 export function checkAuraOption(option, gameData) {
     if (!gameData?.abilityDetailMap) return { ok: true, name: option.hrid.split('/').pop() };
     const detail = gameData.abilityDetailMap[option.hrid];
     if (!detail) return { ok: false, name: option.hrid, reason: `${option.hrid} is not in the game data` };
     const name = detail.name || option.hrid;
-    if (!isAuraAbility(detail)) return { ok: false, name, reason: `${name} is not an aura` };
+    // Any special-slot ability a player can learn: the five party auras, and Insanity, Invincible
+    // and Revive, which take the same slot
+    if (!isPlayerSpecialAbility(option.hrid, gameData)) {
+        return { ok: false, name, reason: `${name} is not a special-slot ability a player can use` };
+    }
     const max = maxAbilityLevel(gameData);
     if (!(option.level >= 1 && option.level <= max)) {
         return { ok: false, name, reason: `${name} level ${option.level} is outside 1-${max}` };
@@ -126,6 +148,43 @@ export function applyAura(dto, aura) {
     };
     copy.abilities = abilities;
     return { dto: copy, replaced: previous?.hrid && previous.hrid !== aura.hrid ? previous.hrid : null };
+}
+
+/**
+ * The variants of YOU a sweep tries: as worn always, then once per usable aura option. An option the game data cannot
+ * run is left out with a note; one that is already what the build wears (same aura, same level) is the as-worn
+ * variant and is not tried twice; the same aura at another level is a different build and is kept.
+ * @param {Array<{hrid: string, level: number}>} options - Auras the simming player may wear (owned, or picked)
+ * @param {Object|null} selfDto - The build, to tell what it already wears; without it nothing is folded away
+ * @param {Object|null} gameData - Judges the options and names them
+ * @returns {{variants: Array<{key: string, aura: ({hrid: string, level: number, name: string,
+ *   replaced: string|null}|null)}>, notes: Array<string>}} The as-worn variant first (`aura: null`, key `worn`)
+ */
+export function buildSelfVariants(options, selfDto, gameData) {
+    const variants = [{ key: 'worn', aura: null }];
+    const notes = [];
+    const worn = selfDto?.abilities?.[0];
+    const seen = new Set();
+    for (const option of Array.isArray(options) ? options : []) {
+        const hrid = typeof option?.hrid === 'string' ? option.hrid : '';
+        const level = Math.floor(Number(option?.level));
+        if (!hrid || !Number.isFinite(level) || level < 1) continue;
+        const key = `me:${hrid}:${level}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const check = checkAuraOption({ hrid, level }, gameData);
+        if (!check.ok) {
+            notes.push(`You: ${check.reason}, skipped`);
+            continue;
+        }
+        if (worn?.hrid === hrid && Number(worn.level) === level) continue;
+        const replacedHrid = worn?.hrid && worn.hrid !== hrid ? worn.hrid : null;
+        const replaced = replacedHrid
+            ? gameData?.abilityDetailMap?.[replacedHrid]?.name || replacedHrid.split('/').pop()
+            : null;
+        variants.push({ key, aura: { hrid, level, name: check.name, replaced } });
+    }
+    return { variants, notes };
 }
 
 /**
@@ -204,9 +263,12 @@ export function narrowRoster(roster, choices = {}, gameData = null, selfMode = n
  * @param {Array<number>} variantCounts - Variants per teammate that may be picked (must-includes included)
  * @param {Array<boolean>} mustFlags - Same order: whether every party holds that teammate
  * @param {number} maxMembers - Most teammates beside you
- * @returns {number} Including the solo baseline
+ * @param {number} [selfVariants=1] - Variants of you (as worn, plus one per aura of yours tried): every party, and
+ *   the solo row, is tried once per variant
+ * @returns {number} Including the solo baseline and the solo rows of your aura variants; 0 when the required
+ *   teammates cannot all fit
  */
-export function countCompositionsUpperBound(variantCounts, mustFlags, maxMembers) {
+export function countCompositionsUpperBound(variantCounts, mustFlags, maxMembers, selfVariants = 1) {
     const mustCount = mustFlags.filter(Boolean).length;
     if (mustCount > maxMembers) return 0;
     // ways[k]: parties of k teammates, each teammate taken as one of their variants
@@ -221,7 +283,8 @@ export function countCompositionsUpperBound(variantCounts, mustFlags, maxMembers
         ways = next;
     });
     // ways[0] is the empty party, possible only when nobody is required; the solo baseline is run either way
-    return ways.slice(1).reduce((sum, n) => sum + n, 0) + 1;
+    const parties = ways.slice(1).reduce((sum, n) => sum + n, 0) + 1;
+    return parties * Math.max(1, Math.floor(Number(selfVariants)) || 1);
 }
 
 /**
@@ -285,6 +348,9 @@ export function enumerateCompositions(pool, mustInclude, maxMembers) {
  * @param {number} [options.maxPartySize] - Largest party to try, you included; capped by each zone's own
  * @param {Object|null} [options.gameData] - Judges aura options
  * @param {'market'|'ironcow'|null} [options.selfMode] - The live character's party pool (see {@link narrowRoster})
+ * @param {Array<{hrid: string, level: number}>} [options.selfAuras] - Auras YOU may wear: each adds a variant of
+ *   you, tried solo and in every party, beside you as worn (see {@link buildSelfVariants})
+ * @param {Object|null} [options.selfDto] - Your build, to tell which aura option is already worn
  * @returns {{tasks: Array<{zone: Object, zoneKey: string, comp: Object}>, perZone: Array<{zone: Object,
  *   zoneKey: string, count: number, note: string|null}>, total: number, refused: string|null,
  *   notes: Array<string>, excluded: Array<Object>}} `refused` explains a sweep too large to plan; `notes` names aura
@@ -297,8 +363,13 @@ export function planSweep({
     maxPartySize = DUNGEON_MAX_PARTY,
     gameData = null,
     selfMode = null,
+    selfAuras = [],
+    selfDto = null,
 }) {
     const { pool, mustInclude, notes, excluded } = narrowRoster(roster, choices, gameData, selfMode);
+    const self = buildSelfVariants(selfAuras, selfDto, gameData);
+    notes.push(...self.notes);
+    const selfVariants = self.variants;
     const mustIds = new Set(mustInclude.map((m) => m.id));
     const variantCounts = pool.map((t) => t.variants.length);
     const mustFlags = pool.map((t) => mustIds.has(t.id));
@@ -315,14 +386,23 @@ export function planSweep({
     let bound = 0;
     for (const zone of uniqueZones) {
         const maxMembers = Math.max(0, Math.min(Number(maxPartySize) || DUNGEON_MAX_PARTY, zoneMaxParty(zone)) - 1);
-        bound += countCompositionsUpperBound(variantCounts, mustFlags, maxMembers);
+        bound += countCompositionsUpperBound(variantCounts, mustFlags, maxMembers, selfVariants.length);
         perZone.push({ zone, zoneKey: zoneTierKey(zone), maxMembers, count: 0, note: null });
     }
     if (bound > MAX_QUICK_RUNS * 20) {
-        return { tasks: [], perZone, total: bound, refused: tooManyText(bound), notes, excluded };
+        return {
+            tasks: [],
+            perZone,
+            total: bound,
+            refused: tooManyText(bound),
+            selfAuraCount: selfVariants.length - 1,
+            notes,
+            excluded,
+        };
     }
 
     const baselines = [];
+    const selfSolos = [];
     const parties = [];
     const compsByCap = new Map();
     for (const entry of perZone) {
@@ -343,20 +423,37 @@ export function planSweep({
                 : excluded.length && excluded.length === (Array.isArray(roster) ? roster.length : 0)
                   ? "no teammates of this character's mode"
                   : 'no teammates to try';
-            continue;
+            // Your aura variants alone are still answers: whether an aura helps you solo
+            if (selfVariants.length === 1) continue;
         }
-        entry.count = comps.length;
+        entry.count = 0;
         for (const comp of comps) {
-            const task = { zone: entry.zone, zoneKey: entry.zoneKey, comp };
-            (comp.isBaseline ? baselines : parties).push(task);
+            // The solo baseline is you as worn alone; every "vs solo" compares against it. Your aura variants
+            // alone are rows of their own, so a player sees whether an aura helps solo too
+            for (const variant of selfVariants) {
+                entry.count += 1;
+                if (comp.isBaseline && !variant.aura) {
+                    baselines.push({ zone: entry.zone, zoneKey: entry.zoneKey, comp: { ...comp, selfAura: null } });
+                    continue;
+                }
+                const withSelf = variant.aura
+                    ? { ...comp, key: `${comp.key}~${variant.key}`, isBaseline: false, selfAura: variant.aura }
+                    : { ...comp, selfAura: null };
+                (comp.isBaseline ? selfSolos : parties).push({
+                    zone: entry.zone,
+                    zoneKey: entry.zoneKey,
+                    comp: withSelf,
+                });
+            }
         }
     }
-    const tasks = [...baselines, ...parties];
+    const tasks = [...baselines, ...selfSolos, ...parties];
     return {
         tasks,
         perZone,
         total: tasks.length,
         refused: tasks.length > MAX_QUICK_RUNS ? tooManyText(tasks.length) : null,
+        selfAuraCount: selfVariants.length - 1,
         notes,
         excluded,
     };
@@ -379,10 +476,13 @@ function tooManyText(count) {
  * penalties worked out for this party (none alone).
  * @param {Object} selfDTO
  * @param {Array<{dto: Object}>} members
+ * @param {{hrid: string, level: number}|null} [selfAura] - An aura you wear in this party, in your special ability
+ *   slot (see {@link applyAura}), instead of what the build wears
  * @returns {Array<Object>}
  */
-export function buildCompositionParty(selfDTO, members) {
-    const party = [selfDTO, ...members.map((m) => m.dto)].map((dto, index) => ({
+export function buildCompositionParty(selfDTO, members, selfAura = null) {
+    const me = selfAura ? applyAura(selfDTO, selfAura).dto : selfDTO;
+    const party = [me, ...members.map((m) => m.dto)].map((dto, index) => ({
         ...structuredClone(dto),
         hrid: `player${index + 1}`,
         debuffOnLevelGap: 0,
@@ -648,13 +748,15 @@ export function memberLabel(member) {
 }
 
 /**
- * The names a party shows: you alone, or the teammates beside you (with the aura each was tried with).
+ * The names a party shows: you alone, or the teammates beside you (with the aura each was tried with); an aura
+ * of yours that differs from what you wear is named after them.
  * @param {Object} comp
  * @returns {string}
  */
 export function partyLabel(comp) {
-    if (!comp || comp.isBaseline || !comp.members?.length) return 'Solo';
-    return comp.members.map(memberLabel).join(' + ');
+    const mine = comp?.selfAura ? ` (you: ${comp.selfAura.name} ${comp.selfAura.level})` : '';
+    if (!comp || comp.isBaseline || !comp.members?.length) return `Solo${mine}`;
+    return comp.members.map(memberLabel).join(' + ') + mine;
 }
 
 /**

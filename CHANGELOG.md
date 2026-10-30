@@ -10,6 +10,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Your saved combat loadouts now travel with the Metz simulator export, so its loadout picker can switch between them (from upstream); written only when a loadout changes.
 
+### Party finder: your own auras and saved builds
+
+- "Also try my auras" makes the party search try each aura you own on you, in every party and alone, against your as-worn solo baseline (off by default; it multiplies the sims).
+- Save any build by name in the Party tab and add it as a teammate later; saved builds sync with the roster.
+- The aura options now include Insanity, Invincible and Revive, which fill the same slot.
+
 ### Guild trial readout fits beside the swarm
 
 - On a four-monster trial the readout no longer spills past the monster grid, so the In Progress tab has no side scroll and the monsters sit without a blank gap to their left.
