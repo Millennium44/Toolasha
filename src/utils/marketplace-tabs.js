@@ -784,15 +784,31 @@ function getGameObject() {
 }
 
 /**
- * Navigate to marketplace for a specific item
+ * Whether an item may be opened in the Marketplace. The game only links tradable
+ * items (untradable ones carry no `isTradable` field at all); opening one would
+ * expose listing dialogs the game never offers for it. Unknown items are allowed.
+ * @param {string} itemHrid - Item HRID
+ * @returns {boolean} False when the item is known and not tradable
+ */
+export function canOpenInMarketplace(itemHrid) {
+    const itemDetails = dataManager.getItemDetails(itemHrid);
+    return !itemDetails || itemDetails.isTradable === true;
+}
+
+/**
+ * Navigate to marketplace for a specific item. Untradable items are refused.
  * @param {string} itemHrid - Item HRID to navigate to
  * @param {number} enhancementLevel - Enhancement level (default 0)
+ * @returns {boolean} True when the native Marketplace handler was invoked
  */
 export function navigateToMarketplace(itemHrid, enhancementLevel = 0) {
+    if (!canOpenInMarketplace(itemHrid)) return false;
     const game = getGameObject();
     if (game?.handleGoToMarketplace) {
         game.handleGoToMarketplace(itemHrid, enhancementLevel);
+        return true;
     }
+    return false;
     // Silently fail if game API unavailable - feature still provides value without auto-navigation
 }
 

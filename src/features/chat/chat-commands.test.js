@@ -41,6 +41,7 @@ vi.mock('../../core/data-manager.js', () => ({
         get guildBuildingLevelMap() {
             return game.guildBuildingLevelMap;
         },
+        getItemDetails: (hrid) => game.itemDetailMap?.[hrid] ?? null,
         getGuildShrineCapturedAt: () => game.shrineCapturedAt,
         isGuildShrineHydrated: () => game.shrineHydrated,
         on: () => {},
@@ -166,7 +167,7 @@ describe('normalizeItemName', () => {
     beforeEach(async () => {
         game.setting = true;
         game.itemDetailMap = {
-            '/items/radiant_fiber': { name: 'Radiant Fiber' },
+            '/items/radiant_fiber': { name: 'Radiant Fiber', isTradable: true },
             '/items/radiant_fabric': { name: 'Radiant Fabric' },
             '/items/coin': { name: 'Coin' },
         };
@@ -206,7 +207,7 @@ describe('executeCommand', () => {
     beforeEach(async () => {
         game.setting = true;
         game.itemDetailMap = {
-            '/items/radiant_fiber': { name: 'Radiant Fiber' },
+            '/items/radiant_fiber': { name: 'Radiant Fiber', isTradable: true },
         };
         cmd = await makeInstance();
         openSpy = vi.spyOn(window, 'open').mockImplementation(() => {});
@@ -228,6 +229,22 @@ describe('executeCommand', () => {
 
         expect(cmd.gameCore.handleOpenItemDictionary).not.toHaveBeenCalled();
         expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('not found in game data'));
+    });
+
+    test('/market refuses an untradable item and opens a tradable one', () => {
+        game.itemDetailMap = {
+            '/items/radiant_fiber': { name: 'Radiant Fiber', isTradable: true },
+            '/items/gatherer_cape_refined': { name: 'Gatherer Cape Refined' },
+        };
+        cmd.gameCore = { handleGoToMarketplace: vi.fn() };
+        const errorSpy = vi.spyOn(cmd, 'showError').mockImplementation(() => {});
+
+        cmd.openMarketplace('/items/gatherer_cape_refined', 0);
+        expect(cmd.gameCore.handleGoToMarketplace).not.toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledWith('That item is not tradable');
+
+        cmd.openMarketplace('/items/radiant_fiber', 2);
+        expect(cmd.gameCore.handleGoToMarketplace).toHaveBeenCalledWith('/items/radiant_fiber', 2);
     });
 
     test('/item with no game core available (post-2/21/26) reports feature-unavailable', () => {
@@ -255,7 +272,7 @@ describe('executeCommand', () => {
 
     test('an ambiguous item name shows the multiple-matches message and executes nothing', () => {
         game.itemDetailMap = {
-            '/items/radiant_fiber': { name: 'Radiant Fiber' },
+            '/items/radiant_fiber': { name: 'Radiant Fiber', isTradable: true },
             '/items/radiant_fabric': { name: 'Radiant Fabric' },
         };
         cmd.loadItemData();

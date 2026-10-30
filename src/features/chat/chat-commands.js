@@ -12,6 +12,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import { canOpenInMarketplace } from '../../utils/marketplace-tabs.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import {
     collectTokenExchangeDebug,
@@ -604,6 +605,11 @@ class ChatCommands {
     openMarketplace(itemHrid, enhancementLevel = 0) {
         if (!this.gameCore?.handleGoToMarketplace) {
             this.showError('Feature unavailable after 2/21/26 game update');
+            return;
+        }
+
+        if (!canOpenInMarketplace(itemHrid)) {
+            this.showError('That item is not tradable');
             return;
         }
 

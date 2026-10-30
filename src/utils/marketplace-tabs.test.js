@@ -6,6 +6,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const inventory = vi.hoisted(() => ({ items: [] }));
 const dataManagerListeners = vi.hoisted(() => new Map());
+const details = vi.hoisted(() => new Map());
 
 // watchTabForAcquisition reads inventory through dataManager, same as
 // missing-materials-button.js does — mocked here so tests control exactly
@@ -14,7 +15,8 @@ const dataManagerListeners = vi.hoisted(() => new Map());
 vi.mock('../core/data-manager.js', () => ({
     default: {
         getInventory: () => inventory.items,
-        getItemDetails: (itemHrid) => ({ name: itemHrid.split('/').pop() }),
+        getItemDetails: (itemHrid) =>
+            details.has(itemHrid) ? details.get(itemHrid) : { name: itemHrid.split('/').pop(), isTradable: true },
         on: (event, listener) => {
             if (!dataManagerListeners.has(event)) dataManagerListeners.set(event, []);
             dataManagerListeners.get(event).push(listener);
@@ -31,6 +33,7 @@ import {
     removeShrineMarketTabs,
     updateTabBadge,
     navigateToMarketplace,
+    canOpenInMarketplace,
     navigateToMarketListingsTab,
     createClearAllTabsControl,
     ensureClearAllTabsControl,
@@ -1217,5 +1220,45 @@ describe('watchTabForAcquisition', () => {
         // The pending timeout was cancelled, so runAllTimers must not fire it again
         vi.runAllTimers();
         expect(onRetire).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('navigateToMarketplace tradability guard', () => {
+    afterEach(() => {
+        details.clear();
+        document.body.innerHTML = '';
+    });
+
+    function mountGame() {
+        const handler = vi.fn();
+        const root = document.createElement('div');
+        root.id = 'root';
+        root._reactRootContainer = { current: { stateNode: { handleGoToMarketplace: handler } } };
+        document.body.appendChild(root);
+        return handler;
+    }
+
+    test('refuses an untradable item without calling the game handler', () => {
+        const handler = mountGame();
+        details.set('/items/gatherer_cape_refined', { name: 'Gatherer Cape Refined' });
+        expect(canOpenInMarketplace('/items/gatherer_cape_refined')).toBe(false);
+        expect(navigateToMarketplace('/items/gatherer_cape_refined')).toBe(false);
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    test('opens a tradable item', () => {
+        const handler = mountGame();
+        details.set('/items/cheese', { name: 'Cheese', isTradable: true });
+        expect(canOpenInMarketplace('/items/cheese')).toBe(true);
+        expect(navigateToMarketplace('/items/cheese', 3)).toBe(true);
+        expect(handler).toHaveBeenCalledWith('/items/cheese', 3);
+    });
+
+    test('an item with no details is allowed through', () => {
+        const handler = mountGame();
+        details.set('/items/mystery', null);
+        expect(navigateToMarketplace('/items/mystery')).toBe(true);
+        expect(handler).toHaveBeenCalledWith('/items/mystery', 0);
+        expect(canOpenInMarketplace('/items/mystery')).toBe(true);
     });
 });
