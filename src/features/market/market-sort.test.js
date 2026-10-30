@@ -32,6 +32,11 @@ const engine = vi.hoisted(() => ({
     estimated: new Set(),
     // itemHrid → decompose results, one per catalyst/tea candidate
     candidates: {},
+    // the actionContext each calculator call was handed, and how often the context was resolved
+    contexts: [],
+    contextResolves: 0,
+    yields: 0,
+    onYield: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -88,13 +93,35 @@ vi.mock('./alchemy-profit-calculator.js', () => {
     const answer = (itemHrid, action) => engine.answers[itemHrid]?.[action] ?? null;
     return {
         default: {
-            calculateCoinifyProfit: (itemHrid) => answer(itemHrid, 'coinify'),
-            calculateDecomposeProfit: (itemHrid) => answer(itemHrid, 'decompose'),
-            calculateTransmuteProfit: (itemHrid) => answer(itemHrid, 'transmute'),
+            calculateCoinifyProfit: (itemHrid, _level, _live, _tea, context) => {
+                engine.contexts.push(context);
+                return answer(itemHrid, 'coinify');
+            },
+            calculateDecomposeProfit: (itemHrid, _level, _live, _tea, context) => {
+                engine.contexts.push(context);
+                return answer(itemHrid, 'decompose');
+            },
+            calculateTransmuteProfit: (itemHrid, _live, _tea, _choice, context) => {
+                engine.contexts.push(context);
+                return answer(itemHrid, 'transmute');
+            },
             calculateCandidateResults: (action, itemHrid) => engine.candidates[itemHrid] ?? [],
         },
     };
 });
+
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => {
+        engine.contextResolves += 1;
+        return { equipment: new Map(), drinks: [], marker: 'sweep-context' };
+    },
+}));
+vi.mock('../../utils/yield-to-browser.js', () => ({
+    yieldToBrowser: async () => {
+        engine.yields += 1;
+        engine.onYield?.();
+    },
+}));
 
 vi.mock('../../utils/profit-helpers.js', () => ({ calculatePriceAfterTax: (price) => price * 0.96 }));
 
@@ -184,6 +211,10 @@ beforeEach(() => {
     engine.bids = {};
     engine.estimated = new Set();
     engine.candidates = {};
+    engine.contexts = [];
+    engine.contextResolves = 0;
+    engine.yields = 0;
+    engine.onYield = null;
 
     marketSort.clearCaches();
     marketSort.originalOrder = [];
@@ -740,5 +771,120 @@ describe('sort row layout', () => {
         expect(row.style.minWidth).toBe('0');
         expect(row.style.display).toBe('flex');
         expect(Array.from(row.querySelectorAll('button')).map((b) => b.textContent)).toContain('Reset Order');
+    });
+});
+
+describe('sort cost per tile', () => {
+    const names = Array.from({ length: 60 }, (_, i) => `tile_${i}`);
+
+    test('the alchemy modes resolve the gear and drinks once and hand them to every calculator pass', async () => {
+        buildGrid(names);
+        engine.answers = Object.fromEntries(
+            names.map((name, i) => [`/items/${name}`, { transmute: priced(i, i * 10), coinify: priced(i, 1) }])
+        );
+
+        marketSort.sortMode = 'alchemyProfit';
+        await marketSort.sortByProfitability();
+
+        expect(engine.contextResolves).toBe(1);
+        expect(engine.contexts).toHaveLength(names.length * 3);
+        expect(engine.contexts.every((context) => context?.marker === 'sweep-context')).toBe(true);
+    });
+
+    test('the production mode resolves no alchemy context at all', async () => {
+        buildGrid(names.slice(0, 5));
+        marketSort.sortMode = 'profit';
+        await marketSort.sortByProfitability();
+        expect(engine.contextResolves).toBe(0);
+    });
+
+    test('gathering actions come from one index: first action in map order wins, other types and empty tables are skipped', () => {
+        const actionDetailMap = {};
+        for (let i = 0; i < 300; i++) {
+            actionDetailMap[`/actions/foraging/filler_${i}`] = {
+                type: '/action_types/foraging',
+                dropTable: [{ itemHrid: `/items/filler_${i}`, dropRate: 1, minCount: 1, maxCount: 1 }],
+            };
+        }
+        actionDetailMap['/actions/cooking/not_gathering'] = {
+            type: '/action_types/cooking',
+            dropTable: [{ itemHrid: '/items/apple', dropRate: 1, minCount: 1, maxCount: 1 }],
+        };
+        actionDetailMap['/actions/foraging/no_table'] = { type: '/action_types/foraging' };
+        actionDetailMap['/actions/woodcutting/first_apple'] = {
+            type: '/action_types/woodcutting',
+            dropTable: [
+                { itemHrid: '/items/log', dropRate: 1, minCount: 1, maxCount: 1 },
+                { itemHrid: '/items/apple', dropRate: 1, minCount: 1, maxCount: 1 },
+            ],
+        };
+        actionDetailMap['/actions/milking/second_apple'] = {
+            type: '/action_types/milking',
+            dropTable: [{ itemHrid: '/items/apple', dropRate: 1, minCount: 1, maxCount: 1 }],
+        };
+        engine.gameData.actionDetailMap = actionDetailMap;
+
+        const spy = vi.spyOn(Object, 'entries');
+        const found = [];
+        for (let i = 0; i < 100; i++) found.push(marketSort.findGatheringAction('/items/apple', engine.gameData));
+        const missing = marketSort.findGatheringAction('/items/nothing', engine.gameData);
+        const scans = spy.mock.calls.filter((c) => c[0] === actionDetailMap).length;
+        spy.mockRestore();
+
+        expect(new Set(found)).toEqual(new Set(['/actions/woodcutting/first_apple']));
+        expect(missing).toBeNull();
+        expect(scans).toBeLessThanOrEqual(1);
+    });
+
+    test('hands the browser a frame when the sort runs long, and ranks exactly as it would without', async () => {
+        const container = buildGrid(names);
+        engine.answers = Object.fromEntries(
+            names.map((name, i) => [`/items/${name}`, { transmute: priced((i * 7) % 11, i) }])
+        );
+        marketSort.sortMode = 'alchemyProfit';
+        await marketSort.sortByProfitability();
+        const baseline = order(container);
+        expect(engine.yields).toBe(0);
+
+        marketSort.resetOrder();
+        marketSort.sortMode = 'alchemyProfit';
+        let now = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 6));
+        await marketSort.sortByProfitability();
+        clock.mockRestore();
+
+        expect(engine.yields).toBeGreaterThan(5);
+        expect(order(container)).toEqual(baseline);
+    });
+
+    test('a mode change during a yield abandons that sort without drawing or caching its figures', async () => {
+        const container = buildGrid(names);
+        engine.answers = Object.fromEntries(names.map((name, i) => [`/items/${name}`, { transmute: priced(i, i) }]));
+        marketSort.sortMode = 'alchemyProfit';
+        engine.onYield = () => {
+            marketSort.sortMode = 'alchemyProfitPerHour';
+        };
+        let now = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 6));
+        await marketSort.sortByProfitability();
+        clock.mockRestore();
+
+        expect(badges(container).every((text) => text === null)).toBe(true);
+        expect(order(container)).toEqual(names);
+        expect(engine.yields).toBe(1);
+    });
+
+    test('a price refresh during a yield abandons that sort too', async () => {
+        const container = buildGrid(names);
+        engine.answers = Object.fromEntries(names.map((name, i) => [`/items/${name}`, { transmute: priced(i, i) }]));
+        marketSort.sortMode = 'alchemyProfit';
+        engine.onYield = () => marketSort.clearCaches();
+        let now = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 6));
+        await marketSort.sortByProfitability();
+        clock.mockRestore();
+
+        expect(badges(container).every((text) => text === null)).toBe(true);
+        expect(marketSort.profitCache.size).toBe(0);
     });
 });
