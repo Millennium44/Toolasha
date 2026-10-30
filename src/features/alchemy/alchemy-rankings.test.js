@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => ({
     houseRooms: new Map(),
     /** Community buffs, which anyone donating can move */
     communityBuffs: [],
+    /** How many times anything asked for the alchemy action context */
+    contextCalls: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -83,7 +85,10 @@ vi.mock('../../utils/action-calculator.js', () => ({ calculateActionStats: () =>
 // alchemy-profit-calculator.js resolves this itself when no actionContext is passed; mirror the
 // raw dataManager mocks above so it behaves exactly as the un-mocked resolver would here.
 vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: new Map(), drinks: mocks.drinkSlots }),
+    resolveActionContext: () => {
+        mocks.contextCalls += 1;
+        return { equipment: new Map(), drinks: mocks.drinkSlots };
+    },
 }));
 vi.mock('../../utils/house-efficiency.js', () => ({ calculateHouseRareFind: () => 0 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null, on: () => () => {} } }));
@@ -189,6 +194,7 @@ beforeEach(() => {
     mocks.settings = {};
     mocks.houseRooms = new Map();
     mocks.communityBuffs = [];
+    mocks.contextCalls = 0;
     mocks.inventory = [
         { itemHrid: '/items/cheese', itemLocationHrid: INVENTORY, count: 100, enhancementLevel: 0 },
         { itemHrid: '/items/milk', itemLocationHrid: INVENTORY, count: 100, enhancementLevel: 0 },
@@ -653,5 +659,49 @@ describe('alchemyGoldRates', () => {
 
         expect(underLevelled.goldPerHour).toBeLessThan(atForty);
         expect(underLevelled.underLevelled).toBe(true);
+    });
+});
+
+describe('one sweep resolves the alchemy context once', () => {
+    test('a sweep over many items asks for the gear and drinks once, and ranks exactly as one call per item would', () => {
+        const overrides = {};
+        for (let i = 0; i < 40; i++) {
+            overrides[`/items/bulk_${i}`] = {
+                name: `Bulk ${i}`,
+                itemLevel: 1 + (i % 7),
+                sellPrice: 10 * (i + 1),
+                alchemyDetail: {
+                    isCoinifiable: true,
+                    decomposeItems: [{ itemHrid: '/items/whey', count: 1 + (i % 3) }],
+                    transmuteSuccessRate: 0.3,
+                    transmuteDropTable: [{ itemHrid: '/items/gem', dropRate: 1, minCount: 1, maxCount: 1 }],
+                    bulkMultiplier: 1,
+                },
+            };
+            mocks.itemPrices[`/items/bulk_${i}`] = 5 * (i % 5); // some free, some dear: ties and zeros
+        }
+        mocks.initClientData = gameData(overrides);
+
+        for (const type of ['coinify', 'decompose', 'transmute']) {
+            mocks.contextCalls = 0;
+            const ranked = rankAlchemyType(type);
+            expect(ranked.length).toBeGreaterThan(40);
+            expect(mocks.contextCalls).toBeLessThanOrEqual(1);
+
+            // The same items through the calculator one at a time, each resolving its own context
+            const method = {
+                coinify: 'calculateCoinifyProfit',
+                decompose: 'calculateDecomposeProfit',
+                transmute: 'calculateTransmuteProfit',
+            }[type];
+            for (const row of ranked) {
+                const alone =
+                    type === 'transmute'
+                        ? alchemyProfitCalculator[method](row.itemHrid)
+                        : alchemyProfitCalculator[method](row.itemHrid, 0);
+                expect(row.profitPerHour).toBe(alone.profitPerHour);
+                expect(row.profitData.successRate).toBe(alone.successRate);
+            }
+        }
     });
 });

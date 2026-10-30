@@ -72,6 +72,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { PATIENT_TICK_SETTING_KEYS, isPatientTickOn } from '../../utils/patient-tick.js';
@@ -298,6 +299,15 @@ export function rankAlchemyType(type, { shopPrices = false } = {}) {
  * @param {Array<Object>} results - Appended to
  */
 function collectRankings(type, method, gameData, level, shopPrices, results) {
+    // The gear and drinks every item in this sweep is costed with. The calculator resolves them itself
+    // for each call it is not handed one (a walk of the bag per slotted tea), and nothing here can change
+    // them between items, so they are resolved once for the whole sweep.
+    let actionContext = null;
+    try {
+        actionContext = resolveActionContext('/action_types/alchemy');
+    } catch {
+        // The calculator resolves its own, and fails per item as it always did
+    }
     for (const [itemHrid, itemDetails] of Object.entries(gameData.itemDetailMap)) {
         if (!isEligible(type, itemDetails)) continue;
 
@@ -306,8 +316,8 @@ function collectRankings(type, method, gameData, level, shopPrices, results) {
             // Transmute takes no enhancement level — the item goes in as it is
             profitData =
                 type === 'transmute'
-                    ? alchemyProfitCalculator[method](itemHrid)
-                    : alchemyProfitCalculator[method](itemHrid, 0);
+                    ? alchemyProfitCalculator[method](itemHrid, false, null, null, actionContext)
+                    : alchemyProfitCalculator[method](itemHrid, 0, false, null, actionContext);
         } catch {
             continue;
         }
