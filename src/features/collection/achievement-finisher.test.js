@@ -1005,6 +1005,27 @@ describe('hints on the game achievement cards', () => {
         expect(lineOf('Dairy Chef').textContent).not.toContain('buy ~200');
     });
 
+    test('a level gained mid-action (action_completed only, nothing dropped) redraws the level gate', () => {
+        game.skills = SKILLS.map((s) => ({ ...s }));
+        achievementsTab();
+        finisher.initialize();
+        const before = lines().map((line) => line.textContent);
+        expect(before.join(' ')).toContain('needs Cooking 70 (you 45)');
+        // The data manager writes the new levels into the same skill rows and emits action_completed alone
+        for (const skill of game.skills) skill.level = 200;
+        for (let i = 0; i < 5; i += 1) (game.handlers.action_completed || []).forEach((fn) => fn({}));
+        vi.advanceTimersByTime(1500);
+        const after = lines().map((line) => line.textContent);
+        expect(after).not.toEqual(before);
+        expect(after.join(' ')).not.toContain('needs');
+        // A burst of completions is one coalesced redraw, not one per action
+        const spy = vi.spyOn(finisher, 'decorateCards');
+        for (let i = 0; i < 20; i += 1) game.handlers.action_completed.forEach((fn) => fn({}));
+        vi.advanceTimersByTime(1500);
+        expect(spy).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
+    });
+
     test('the patient-tick buy setting redraws the visible hints', () => {
         achievementsTab();
         finisher.initialize();

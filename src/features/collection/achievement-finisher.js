@@ -116,6 +116,9 @@ const READINESS_EVENTS = [
     'buffs_updated',
     // Enhancing teas change the Enhancer routes' cost
     'consumables_updated',
+    // A level gained mid-action is written into the skills in place, with no skills_updated (and no
+    // items_updated on a completion that drops nothing); coalesced like the rest, so once a second at most
+    'action_completed',
 ];
 
 /** Toolasha settings that change a buy cost (the rest of the pricing rule is in the cache's `pricingStamp`) */
