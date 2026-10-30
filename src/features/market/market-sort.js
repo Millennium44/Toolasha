@@ -478,8 +478,11 @@ class MarketSort {
             await this.sortByProfitability();
         } finally {
             this.isSorting = false;
-            this.sortButton.textContent = this.sortButtonLabel(true);
-            this.sortButton.style.background = 'rgba(91, 141, 239, 0.2)';
+            // disable() can null the button while a yielding sort is still running
+            if (this.sortButton) {
+                this.sortButton.textContent = this.sortButtonLabel(true);
+                this.sortButton.style.background = 'rgba(91, 141, 239, 0.2)';
+            }
         }
     }
 
@@ -570,8 +573,13 @@ class MarketSort {
             return this.sortDirection === 'desc' ? b.profit - a.profit : a.profit - b.profit;
         });
 
+        // The grid may have re-rendered during a yield (a filter or category change): never re-insert tiles the
+        // game has dropped, nor draw into a container it replaced
+        if (!marketItemsContainer.isConnected) return;
+
         // Reorder DOM elements
         for (const item of itemsWithProfit) {
+            if (!item.element.isConnected || item.element.parentElement !== marketItemsContainer) continue;
             marketItemsContainer.appendChild(item.element);
 
             // Add profit indicator
