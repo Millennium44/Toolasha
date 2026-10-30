@@ -972,6 +972,12 @@ describe('hints on the game achievement cards', () => {
         goOf('Enhancer IV').click();
         expect(nav.navigateToMarketplace).toHaveBeenLastCalledWith('/items/magnetic_gloves', 10);
 
+        // Three Enhancer rows, one listing scan: Cheese Gloves +3 was priced once
+        const at3 = nav.getItemPriceInfo.mock.calls.filter(
+            ([hrid, opts]) => hrid === '/items/cheese_gloves' && opts?.enhancementLevel === 3
+        );
+        expect(at3).toHaveLength(1);
+
         game.ironCow = true;
         finisher.readinessChanged();
         vi.advanceTimersByTime(1500);

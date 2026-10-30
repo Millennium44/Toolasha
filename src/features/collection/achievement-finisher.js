@@ -577,6 +577,8 @@ class AchievementFinisher {
         // Prices read off the game's value map rather than a live book, so the hint can say so
         const estimated = new Set();
         let enhanceParams;
+        // Every Enhancer row scans the same listings: once per render, not once per row
+        const listings = new Map();
         return {
             skillLevels,
             combatLevel: ownCombat,
@@ -598,13 +600,17 @@ class AchievementFinisher {
             // enhancing material and protection rules, and the character's own bench (nobody else can
             // land the success for them)
             buyPriceAt: (itemHrid, enhancementLevel) => {
-                const info = getItemPriceInfo(itemHrid, {
-                    context: 'profit',
-                    side: 'buy',
-                    marketQuote: true,
-                    enhancementLevel,
-                });
-                return Number.isFinite(info.price) && !info.estimated ? info.price : null;
+                const key = `${itemHrid}|${enhancementLevel}`;
+                if (!listings.has(key)) {
+                    const info = getItemPriceInfo(itemHrid, {
+                        context: 'profit',
+                        side: 'buy',
+                        marketQuote: true,
+                        enhancementLevel,
+                    });
+                    listings.set(key, Number.isFinite(info.price) && !info.estimated ? info.price : null);
+                }
+                return listings.get(key);
             },
             enhanceMaterialCost: (itemHrid) => {
                 const details = dataManager.getInitClientData?.()?.itemDetailMap?.[itemHrid];
