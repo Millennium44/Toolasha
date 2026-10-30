@@ -271,3 +271,22 @@ describe('an open combat estimate follows the task progress', () => {
         taskProfitDisplay.unregisterHandlers = [];
     });
 });
+
+describe('a rerolled card', () => {
+    test('loses the estimate of the task it no longer shows, before any new rows are drawn', async () => {
+        stubGame();
+        taskProfitDisplay.isInitialized = true;
+        runSimulation.mockResolvedValue({ deaths: { '/monsters/gobo': 10 }, encounters: 10 });
+        const [{ card, container }] = buildBoard([['Gobo', 100, 0]]);
+        container.dataset.taskKey = 'Defeat - Gobo|100';
+        await taskProfitDisplay._runCombatSimEstimate(container, taskDataOf(card), '', 'solo');
+        expect(taskProfitDisplay._resolveGoEstimate(card)).not.toBeNull();
+
+        // Rerolled into another monster on the same node; the new rows are still queued
+        card.dataset.name = 'Ooze';
+        vi.spyOn(taskProfitDisplay, 'addProfitToTask').mockImplementation(() => {});
+        taskProfitDisplay.updateTaskProfits();
+
+        expect(taskProfitDisplay._cardEstimates.get(card)).toBeUndefined();
+    });
+});

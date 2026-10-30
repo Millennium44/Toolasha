@@ -1228,6 +1228,11 @@ class TaskProfitDisplay {
                     this.eventListeners.delete(existingProfit);
                 }
 
+                // The card now describes a different task (the node is reused on a reroll), so the
+                // estimate for the old one must not stay primed for Go while the new rows are drawn
+                // or queued behind other simulations
+                this._cardEstimates.delete(taskNode);
+
                 // Remove ALL old profit displays (visible + hidden markers)
                 taskNode.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => {
                     this._estimateLayouts.get(el)?.();
