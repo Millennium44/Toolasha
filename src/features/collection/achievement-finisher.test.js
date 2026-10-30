@@ -373,6 +373,29 @@ describe('hints on the game achievement cards', () => {
         game.gameObject = null;
     });
 
+    test('a candidate row names the action it picked; the line is rebuilt when the pick changes', () => {
+        game.detail = ANY_OF_ACHIEVEMENTS;
+        const named = { ...ANY_OF_DATA.actionDetailMap };
+        named['/actions/milking/unicow'] = { ...named['/actions/milking/unicow'], name: 'Unicow' };
+        named['/actions/milking/holy_cow'] = { ...named['/actions/milking/holy_cow'], name: 'Holy Cow' };
+        game.clientData = { ...ANY_OF_DATA, actionDetailMap: named, achievementDetailMap: ANY_OF_ACHIEVEMENTS };
+        game.skills = [
+            { skillHrid: '/skills/milking', level: 70 },
+            { skillHrid: '/skills/cheesesmithing', level: 1 },
+        ];
+        game.inventory = [];
+        achievementsTab(ANY_OF_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Buttered Up').textContent).toContain('[Unicow · level met · ~1 in 100.0K actions');
+        game.skills = [
+            { skillHrid: '/skills/milking', level: 90 },
+            { skillHrid: '/skills/cheesesmithing', level: 1 },
+        ];
+        finisher.readinessChanged();
+        vi.advanceTimersByTime(1500);
+        expect(lineOf('Buttered Up').textContent).toContain('[Holy Cow · level met · ~1 in 33.3K actions');
+    });
+
     test('a rare-drop card shows the odds and Go opens the chosen action; a re-pick redraws the line', () => {
         game.detail = ANY_OF_ACHIEVEMENTS;
         game.clientData = { ...ANY_OF_DATA, achievementDetailMap: ANY_OF_ACHIEVEMENTS };
