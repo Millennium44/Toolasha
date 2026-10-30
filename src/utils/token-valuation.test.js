@@ -164,10 +164,16 @@ describe('calculateDungeonTokenValue', () => {
         game.initClientData.shopItemDetailMap.cape.costs = [{ itemHrid: TOKEN, count: 10 }];
         expect(calculateDungeonTokenValue(TOKEN)).toBe(100);
 
-        game.initClientData.shopItemDetailMap.cape.costs = [
-            { itemHrid: '/items/other_token', count: 3 },
-            { itemHrid: TOKEN, count: 10 },
-        ];
+        // (the game's maps are replaced whole on a new init_client_data, never edited, and lookups are cached per map)
+        game.initClientData.shopItemDetailMap = {
+            cape: {
+                itemHrid: '/items/cape',
+                costs: [
+                    { itemHrid: '/items/other_token', count: 3 },
+                    { itemHrid: TOKEN, count: 10 },
+                ],
+            },
+        };
         // Two currencies say nothing clean about what one token alone is worth, so the
         // line is skipped and the essence fallback speaks instead
         expect(calculateDungeonTokenValue(TOKEN)).toBe(200);
@@ -362,5 +368,62 @@ describe('shopPurchasePriceByMode', () => {
     test('a token nothing prices leaves the piece unpriced, not free', () => {
         game.prices = {};
         expect(shopPurchasePriceByMode('/items/cape', shops)).toBeNull();
+    });
+});
+
+describe('shop line indexes', () => {
+    const TOKEN = '/items/chimerical_token';
+    const OTHER = '/items/sinister_token';
+
+    test('shopPurchasePrice keeps first-match order with duplicate lines, falls through maps, and scans each map once', () => {
+        const dup = {
+            first: { itemHrid: '/items/cape', costs: [{ itemHrid: '/items/coin', count: 5 }] },
+            second: { itemHrid: '/items/cape', costs: [{ itemHrid: '/items/coin', count: 99 }] },
+        };
+        const unpriced = { only: { itemHrid: '/items/hat', costs: [{ itemHrid: '/items/mystery', count: 1 }] } };
+        const tokenMap = {
+            a: { itemHrid: '/items/hat', costs: [{ itemHrid: TOKEN, count: 4 }] },
+            b: { itemHrid: '/items/gem', outputCount: 2, costs: [{ itemHrid: TOKEN, count: 2 }] },
+            c: { itemHrid: '/items/hat', costs: [{ itemHrid: OTHER, count: 4 }] },
+            n: null,
+        };
+        const price = (hrid) => ({ [TOKEN]: 10, '/items/gem': 100 })[hrid] ?? null;
+        expect(shopPurchasePrice('/items/cape', [dup], price)).toBe(5);
+        // the first map cannot price the hat, so the second answers, through the token's own price
+        expect(shopPurchasePrice('/items/hat', [unpriced, tokenMap], price)).toBe(40);
+        expect(shopPurchasePrice('/items/none', [dup, tokenMap], price)).toBeNull();
+
+        const spy = vi.spyOn(Object, 'values');
+        for (let i = 0; i < 20; i++) shopPurchasePrice('/items/hat', [unpriced, tokenMap], price);
+        const scans = spy.mock.calls.filter((c) => c[0] === unpriced || c[0] === tokenMap).length;
+        spy.mockRestore();
+        expect(scans).toBe(0);
+    });
+
+    test('a token valuation does not rescan the shop per call and ties keep the earlier line', () => {
+        const shop = {
+            x: { itemHrid: '/items/x', costs: [{ itemHrid: TOKEN, count: 10 }] },
+            y: { itemHrid: '/items/y', costs: [{ itemHrid: TOKEN, count: 10 }] },
+            z: {
+                itemHrid: '/items/z',
+                costs: [
+                    { itemHrid: TOKEN, count: 1 },
+                    { itemHrid: OTHER, count: 1 },
+                ],
+            },
+        };
+        game.initClientData = { shopItemDetailMap: shop };
+        game.prices = {
+            '/items/x': { ask: 1000, bid: 900 },
+            '/items/y': { ask: 1000, bid: 900 },
+            '/items/z': { ask: 99999, bid: 1 },
+        };
+        const first = calculateDungeonTokenValueDetail(TOKEN);
+        expect(first).toEqual({ value: 100, itemHrid: '/items/x', via: 'shop' });
+        const spy = vi.spyOn(Object, 'values');
+        for (let i = 0; i < 20; i++) calculateDungeonTokenValueDetail(TOKEN);
+        const scans = spy.mock.calls.filter((c) => c[0] === shop).length;
+        spy.mockRestore();
+        expect(scans).toBe(0);
     });
 });

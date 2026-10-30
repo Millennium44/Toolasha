@@ -93,10 +93,7 @@ export function calculateDungeonTokenValueDetail(
     const priceOf = tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide);
 
     // Only single-currency lines price a token cleanly
-    const tokenShop = Object.values(gameData.shopItemDetailMap || {}).filter((line) => {
-        const costs = shopCosts(line);
-        return costs.length === 1 && costs[0]?.itemHrid === tokenHrid;
-    });
+    const tokenShop = indexFor(gameData.shopItemDetailMap).singleCurrency.get(tokenHrid) || NO_LINES;
 
     const best = tokenValueDetailIn(tokenShop, priceOf, tokenHrid);
     if (best) return { ...best, via: 'shop' };
@@ -170,6 +167,66 @@ export function tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide 
     };
 }
 
+const NO_LINES = Object.freeze([]);
+
+/**
+ * @typedef {Object} ShopLineIndex
+ * @property {Map<string, Object>} firstByItem - itemHrid → the first line selling it
+ * @property {Map<string, Object[]>} byCurrency - currency → lines with it among their costs, in map order
+ * @property {Map<string, Object[]>} singleCurrency - currency → lines paid for with it alone, in map order
+ */
+
+/** @type {WeakMap<Object, ShopLineIndex>} shop map → its lines indexed once, so a lookup does not rescan the map */
+const lineIndexes = new WeakMap();
+
+/**
+ * The lines of a shop map indexed by item sold and by currency, built once per map object. Every
+ * list keeps the map's own order, so a lookup finds the same line a scan of the map always did.
+ * @param {Object|null|undefined} shopMap - One of the game's shop maps
+ * @returns {ShopLineIndex}
+ */
+function indexFor(shopMap) {
+    if (!shopMap || typeof shopMap !== 'object')
+        return { firstByItem: new Map(), byCurrency: new Map(), singleCurrency: new Map() };
+    let index = lineIndexes.get(shopMap);
+    if (index) return index;
+    index = { firstByItem: new Map(), byCurrency: new Map(), singleCurrency: new Map() };
+    for (const line of Object.values(shopMap)) {
+        if (line?.itemHrid && !index.firstByItem.has(line.itemHrid)) index.firstByItem.set(line.itemHrid, line);
+        const costs = shopCosts(line);
+        const seen = new Set();
+        for (const cost of costs) {
+            const currency = cost?.itemHrid;
+            if (!currency || seen.has(currency)) continue;
+            seen.add(currency);
+            let list = index.byCurrency.get(currency);
+            if (!list) index.byCurrency.set(currency, (list = []));
+            list.push(line);
+        }
+        if (costs.length === 1 && costs[0]?.itemHrid) {
+            const currency = costs[0].itemHrid;
+            let list = index.singleCurrency.get(currency);
+            if (!list) index.singleCurrency.set(currency, (list = []));
+            list.push(line);
+        }
+    }
+    lineIndexes.set(shopMap, index);
+    return index;
+}
+
+/**
+ * The first line of a shop map that sells an item.
+ * @param {Object} shopMap - One of the game's shop maps
+ * @param {string} itemHrid - The item
+ * @returns {Object|undefined}
+ */
+function firstLineSelling(shopMap, itemHrid) {
+    if (!shopMap) return undefined;
+    // Only a real item name is indexed; anything else keeps the plain scan
+    if (!itemHrid) return Object.values(shopMap).find((entry) => entry?.itemHrid === itemHrid);
+    return indexFor(shopMap).firstByItem.get(itemHrid);
+}
+
 /**
  * A shop line's costs, whichever shape the shop keeps them in.
  *
@@ -198,20 +255,20 @@ function shopCosts(line) {
  * @returns {number} Coins per token, or 0
  */
 function tokenValueIn(shopMap, priceOf, tokenHrid) {
-    return tokenValueDetailIn(shopMap, priceOf, tokenHrid)?.value || 0;
+    return tokenValueDetailIn(indexFor(shopMap).byCurrency.get(tokenHrid) || NO_LINES, priceOf, tokenHrid)?.value || 0;
 }
 
 /**
  * {@link tokenValueIn}, with the shop item the best value comes from.
- * @param {Object} shopMap - One of the game's shop maps
+ * @param {Iterable<Object>} lines - The shop lines to read, in map order
  * @param {Function} priceOf - `(itemHrid) => number|null`
  * @param {string} tokenHrid - The currency
  * @returns {{value: number, itemHrid: string}|null} Best coins per token, or null
  */
-function tokenValueDetailIn(shopMap, priceOf, tokenHrid) {
+function tokenValueDetailIn(lines, priceOf, tokenHrid) {
     let best = null;
 
-    for (const line of Object.values(shopMap || {})) {
+    for (const line of lines) {
         const cost = shopCosts(line).find((entry) => entry?.itemHrid === tokenHrid);
         if (!(cost?.count > 0)) continue;
 
@@ -240,7 +297,7 @@ function tokenValueDetailIn(shopMap, priceOf, tokenHrid) {
  */
 export function shopPurchasePrice(itemHrid, shopMaps, priceOf) {
     for (const shopMap of shopMaps || []) {
-        const line = Object.values(shopMap || {}).find((entry) => entry?.itemHrid === itemHrid);
+        const line = firstLineSelling(shopMap, itemHrid);
         const costs = shopCosts(line);
         if (!costs.length) continue;
 
