@@ -683,7 +683,9 @@ class AchievementFinisher {
                 return info.price * (1 - MARKET_TAX);
             },
             // Already-measured volume only; the lookup is made after the draw, under the history opt-in
+            // With the liquidity cap off, volume plays no part: unknown, whatever an earlier lookup cached
             dailyVolume: (itemHrid) => {
+                if (!liquidityCapEnabled()) return null;
                 this.volumeWanted.add(itemHrid);
                 return cachedItemVolume(itemHrid);
             },

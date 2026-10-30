@@ -592,6 +592,20 @@ describe('hints on the game achievement cards', () => {
             expect(game.prefetched.length).toBeGreaterThan(second);
         });
 
+        test('with the liquidity cap off a cached volume does not rank: the lowest net wins', () => {
+            // Pot nets less but is thin; with the cap on the liquid hammer would win
+            const prices = { '/items/celestial_pot': 2000, '/items/celestial_hammer': 1000 };
+            const text = celestial(prices, {
+                liquidityOn: false,
+                volumes: {
+                    '/items/celestial_pot': { known: true, unitsPerDay: 0.2 },
+                    '/items/celestial_hammer': { known: true, unitsPerDay: 50 },
+                },
+            });
+            expect(text).toContain('[celestial_pot');
+            expect(text).not.toContain('thin');
+        });
+
         test('the volume lookup stays off when the liquidity cap is off', async () => {
             celestial({ '/items/celestial_pot': 2000 }, { liquidityOn: false });
             await vi.advanceTimersByTimeAsync(0);
