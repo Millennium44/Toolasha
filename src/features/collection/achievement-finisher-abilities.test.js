@@ -87,7 +87,14 @@ describe('learn an ability', () => {
 
     test('an owned book of an unlearned ability: owned, nothing to buy; a book of a learned one does not count', () => {
         const res = resolveAchievement(any, D);
-        const owned = readiness(res, ctx({ inventory: [inv('/items/fireball', 3), inv('/items/poke')] }));
+        // No readable book on the market to beat it: only the unreadable ones have a price here
+        const owned = readiness(
+            res,
+            ctx({
+                inventory: [inv('/items/fireball', 3), inv('/items/poke')],
+                buyPrice: (hrid) => (['/items/fireball', '/items/mystic_aura'].includes(hrid) ? PRICES[hrid] : null),
+            })
+        );
         expect(owned).toMatchObject({ owned: true, ownedHrid: '/items/fireball', buyHrid: null, levelMet: false });
         // A held met book wins over a held unmet one
         const both = readiness(res, ctx({ inventory: [inv('/items/fireball'), inv('/items/scratch')] }));
@@ -121,5 +128,39 @@ describe('learn an ability', () => {
         expect(unpriced.unpriced).toHaveLength(5);
         const cow = readiness(res, ctx({ ironCow: true }));
         expect(cow).toMatchObject({ owned: false, buyHrid: null, cost: null });
+    });
+});
+
+describe('learn an ability: nothing readable, a live-typical character', () => {
+    test('every special book out of reach: the one fewest levels short, not the cheapest', () => {
+        const ready = readiness(
+            resolveAchievement(special, D),
+            ctx({ skillLevels: levels({ magic: 58, ranged: 10 }), learnedAbilities: new Set(['/abilities/revive']) })
+        );
+        expect(ready).toMatchObject({ buyHrid: '/items/mystic_aura', levelMet: false });
+        expect(ready.level).toMatchObject({ skillHrid: '/skills/magic', have: 58, need: 60 });
+    });
+
+    test('a held book the character cannot read gives way to a readable one on the market', () => {
+        // Fireball needs Magic 30 (the character has 10); Scratch needs Melee 5 (it has 10)
+        const ready = readiness(resolveAchievement(any, D), ctx({ inventory: [inv('/items/fireball')] }));
+        expect(ready).toMatchObject({ owned: false, buyHrid: '/items/scratch', levelMet: true });
+    });
+
+    test('a held unreadable book still beats buying another unreadable one, and stands for an Iron Cow', () => {
+        const allLow = ctx({
+            skillLevels: levels({ melee: 1, magic: 1, ranged: 10 }),
+            learnedAbilities: new Set(['/abilities/poke', '/abilities/revive']),
+            inventory: [inv('/items/speed_aura')],
+        });
+        expect(readiness(resolveAchievement(any, D), allLow)).toMatchObject({
+            owned: true,
+            ownedHrid: '/items/speed_aura',
+            levelMet: false,
+        });
+        expect(readiness(resolveAchievement(any, D), { ...allLow, ironCow: true })).toMatchObject({
+            owned: true,
+            ownedHrid: '/items/speed_aura',
+        });
     });
 });

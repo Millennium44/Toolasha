@@ -191,3 +191,28 @@ describe('"any of" production achievements', () => {
         expect(ready.actionHrid).toBe('/actions/crafting/master_foraging_charm');
     });
 });
+
+describe('nothing met, a live-typical character (skills uneven, around 130 at most)', () => {
+    test('any-of: the candidate fewest levels short, not the lowest recipe far out of reach', () => {
+        const ready = readiness(resolve('make_celestial'), ctx({ crafting: 89, cheesesmithing: 40, tailoring: 60 }));
+        expect(ready.actionHrid).toBe('/actions/crafting/celestial_hammer');
+        expect(ready.levelMet).toBe(false);
+        expect(ready.level).toMatchObject({ skillHrid: '/skills/crafting', have: 89, need: 90 });
+    });
+
+    test('rare drop: the action fewest levels short, whatever its own level', () => {
+        const ready = readiness(resolve('collect_butter_of_proficiency'), ctx({ milking: 20, cheesesmithing: 78 }));
+        expect(ready.actionHrid).toBe('/actions/cheesesmithing/holy_cheese');
+        expect(ready.level).toMatchObject({ skillHrid: '/skills/cheesesmithing', have: 78, need: 80 });
+    });
+
+    test('an unknown level ranks before an unmet one; equal gaps fall back to the lower level', () => {
+        // Tailoring missing from the map: that candidate may well be met
+        const unknown = readiness(resolve('make_celestial'), ctx({ crafting: 89, cheesesmithing: 87 }));
+        expect(unknown.actionHrid).toBe('/actions/tailoring/gatherers_top');
+        expect(unknown.levelMet).toBeNull();
+        // One short on both crafting (90) and cheesesmithing (88): the lower recipe
+        const tied = readiness(resolve('make_celestial'), ctx({ crafting: 89, cheesesmithing: 87, tailoring: 1 }));
+        expect(tied.actionHrid).toBe('/actions/cheesesmithing/celestial_pot');
+    });
+});

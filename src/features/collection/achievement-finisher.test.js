@@ -35,6 +35,7 @@ const game = vi.hoisted(() => ({
     lateVolumes: {},
     liquidityOn: true,
     prefetched: [],
+    pricingStamp: 'ask',
 }));
 
 const nav = vi.hoisted(() => ({
@@ -155,6 +156,7 @@ vi.mock('../../utils/tester-shop-nav.js', () => ({ setShopFilter: nav.setShopFil
 vi.mock('../../utils/enhancement-input-pricing.js', () => ({
     perAttemptMaterialCost: () => ({ cost: 100, hasCost: true, hasMissingPrices: false, hasPartialPrices: false }),
     priceProtection: () => ({ price: 50, itemHrid: '/items/cheese', unpriced: false, estimated: false }),
+    pricingStamp: () => game.pricingStamp,
 }));
 vi.mock('../../utils/enhancement-config.js', () => ({
     getAutoDetectedParams: () => ({
@@ -389,6 +391,7 @@ describe('hints on the game achievement cards', () => {
         game.lateVolumes = {};
         game.liquidityOn = true;
         game.prefetched = [];
+        game.pricingStamp = 'ask';
         game.loadoutGear = null;
         game.loadoutListeners = [];
         game.settingHandlers = [];
@@ -989,6 +992,49 @@ describe('hints on the game achievement cards', () => {
         expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(second);
     });
 
+    test('a pricing input that moves with no event (a settings-panel change) recomputes on the next draw', () => {
+        achievementsTab();
+        finisher.initialize();
+        expect(lineOf('Dairy Chef').textContent).toContain('buy ~200');
+        // Base-item crafting, the patient tick, a cape or Tester-shop setting: the pricing stamp moves
+        game.prices = { ...PRICES, '/items/peach': PRICES['/items/peach'] * 2 };
+        mountAgain();
+        expect(lineOf('Dairy Chef').textContent).toContain('buy ~200');
+        game.pricingStamp = 'ask|tick';
+        mountAgain();
+        expect(lineOf('Dairy Chef').textContent).not.toContain('buy ~200');
+    });
+
+    test('a level gained mid-action (action_completed only, nothing dropped) redraws the level gate', () => {
+        game.skills = SKILLS.map((s) => ({ ...s }));
+        achievementsTab();
+        finisher.initialize();
+        const before = lines().map((line) => line.textContent);
+        expect(before.join(' ')).toContain('needs Cooking 70 (you 45)');
+        // The data manager writes the new levels into the same skill rows and emits action_completed alone
+        for (const skill of game.skills) skill.level = 200;
+        for (let i = 0; i < 5; i += 1) (game.handlers.action_completed || []).forEach((fn) => fn({}));
+        vi.advanceTimersByTime(1500);
+        const after = lines().map((line) => line.textContent);
+        expect(after).not.toEqual(before);
+        expect(after.join(' ')).not.toContain('needs');
+        // A burst of completions is one coalesced redraw, not one per action
+        const spy = vi.spyOn(finisher, 'decorateCards');
+        for (let i = 0; i < 20; i += 1) game.handlers.action_completed.forEach((fn) => fn({}));
+        vi.advanceTimersByTime(1500);
+        expect(spy).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
+    });
+
+    test('the patient-tick buy setting redraws the visible hints', () => {
+        achievementsTab();
+        finisher.initialize();
+        const first = nav.getItemPriceInfo.mock.calls.length;
+        game.settingHandlers.filter((e) => e.key === 'profitCalc_patientTickBuy').forEach((e) => e.fn(true));
+        vi.advanceTimersByTime(1500);
+        expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(first);
+    });
+
     test('a gold amount is followed by the game coin icon once the item sheet is known', () => {
         const probe = document.createElement('div');
         probe.innerHTML = '<svg><use href="/static/media/items_sprite.abc.svg#milk"></use></svg>';
@@ -1018,6 +1064,7 @@ describe('hints on the game achievement cards', () => {
             'market_historySource',
             'market_pooledHistory',
             'profitCalc_liquidityCap',
+            'profitCalc_patientTickBuy',
             'profitCalc_pricingMode',
         ]);
         game.prices = { ...PRICES, '/items/peach': 300 };
@@ -1083,6 +1130,47 @@ describe('hints on the game achievement cards', () => {
             .setAttribute('href', '/static/media/achievements_sprite.abc.svg#decompose_bamboo_gloves');
         mountAgain();
         expect(cardOf('Dairy Chef').querySelector(`.${PANEL_CLASS}-line`)).toBeNull();
+    });
+
+    test('a reused card whose new achievement reads the same hint still gets its own Go', () => {
+        // Two single-action recipes with nothing to buy: both hints read "[level met · materials owned]"
+        const cook = (slug, name) => ({
+            hrid: `/achievements/cook_${slug}`,
+            name,
+            description: `Make a ${name} with Cooking`,
+            steamAchievementId: `ach_cook_${slug}`,
+            tierHrid: '/achievement_tiers/beginner',
+        });
+        const detail = {
+            '/achievements/cook_tea_x': cook('tea_x', 'Tea X'),
+            '/achievements/cook_tea_y': cook('tea_y', 'Tea Y'),
+        };
+        const action = (slug, name) => ({
+            hrid: `/actions/cooking/${slug}`,
+            name,
+            type: '/action_types/cooking',
+            levelRequirement: { skillHrid: '/skills/cooking', level: 1 },
+            inputItems: [],
+            outputItems: [{ itemHrid: `/items/${slug}`, count: 1 }],
+        });
+        game.detail = detail;
+        game.clientData = {
+            achievementDetailMap: detail,
+            actionDetailMap: {
+                '/actions/cooking/tea_x': action('tea_x', 'Tea X'),
+                '/actions/cooking/tea_y': action('tea_y', 'Tea Y'),
+            },
+            itemDetailMap: { '/items/tea_x': { name: 'Tea X' }, '/items/tea_y': { name: 'Tea Y' } },
+        };
+        achievementsTab(detail);
+        finisher.initialize();
+        const card = cardOf('Tea X');
+        expect(lineOf('Tea X').textContent).toBe(lineOf('Tea Y').textContent);
+        // The game re-renders the list into the same element: now it shows Tea Y
+        card.querySelector('use').setAttribute('href', '/static/media/achievements_sprite.abc.svg#cook_tea_y');
+        mountAgain();
+        card.querySelector(`.${PANEL_CLASS}-go`).click();
+        expect(nav.navigateToAction).toHaveBeenLastCalledWith('/actions/cooking/tea_y');
     });
 
     test('Missing Mats appears on a redraw once the actions bundle opener has loaded', () => {

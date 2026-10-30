@@ -629,6 +629,13 @@ export function ownedCount(inventory, itemHrid, { anyLocation = false } = {}) {
     return total;
 }
 
+/** Level met first, then unknown, then unmet */
+const levelRank = (met) => (met === true ? 0 : met === null ? 1 : 2);
+
+/** Levels still to gain for a check; 0 when met or unknown (only unmet checks are compared by it) */
+const levelGap = (check) =>
+    check?.met === false && Number.isFinite(check.have) ? Math.max(0, check.need - check.have) : 0;
+
 function levelCheck(skillLevels, skillHrid, level, combatLevel) {
     const have = skillLevels?.has(skillHrid) ? skillLevels.get(skillHrid) : null;
     if (have !== null) return { met: have >= level, have, need: level, skillHrid };
@@ -682,7 +689,6 @@ export function readiness(res, ctx) {
 
     if (res.kind === 'equip') {
         if (!ctx.inventory) return out;
-        const held = res.candidates.find((hrid) => ownedCount(ctx.inventory, hrid, { anyLocation: true }) > 0);
         const levelsFor = (hrid) => {
             const reqs = res.requirements[hrid] || [];
             const checks = reqs.map((req) => levelCheck(ctx.skillLevels, req.skillHrid, req.level || 1, null));
@@ -690,34 +696,50 @@ export function readiness(res, ctx) {
             const unknown = checks.some((check) => check.met === null);
             return { met: unmet ? false : unknown ? null : true, check: unmet || checks[0] || null };
         };
-        if (held) {
-            const lv = levelsFor(held);
-            Object.assign(out, { owned: true, ownedHrid: held, levelMet: lv.met, level: lv.check });
+        // A weapon the character can wield beats one it cannot: held ones first, then the cheapest
+        // level-met one to buy; a held piece whose level is unmet still beats buying another unmet one
+        const ranked = (hrids) =>
+            hrids
+                .map((hrid) => ({ hrid, lv: levelsFor(hrid) }))
+                .sort((a, b) => levelRank(a.lv.met) - levelRank(b.lv.met) || a.hrid.localeCompare(b.hrid));
+        const heldBest = ranked(
+            res.candidates.filter((hrid) => ownedCount(ctx.inventory, hrid, { anyLocation: true }) > 0)
+        )[0];
+        const ownIt = () => {
+            Object.assign(out, {
+                owned: true,
+                ownedHrid: heldBest.hrid,
+                levelMet: heldBest.lv.met,
+                level: heldBest.lv.check,
+            });
             return out;
-        }
-        out.owned = false;
-        if (ctx.ironCow) {
-            const lv = levelsFor(res.candidates[0]);
-            Object.assign(out, { levelMet: lv.met, level: lv.check });
+        };
+        if (heldBest && heldBest.lv.met !== false) return ownIt();
+        const fallback = () => {
+            if (heldBest) return ownIt();
+            const [first] = ranked(res.candidates);
+            Object.assign(out, { owned: false, levelMet: first.lv.met, level: first.lv.check });
             return out;
-        }
+        };
+        if (ctx.ironCow) return fallback();
         const priced = res.candidates
-            .map((hrid) => ({ hrid, price: ctx.buyPrice(hrid) }))
+            .map((hrid) => ({ hrid, price: ctx.buyPrice(hrid), lv: levelsFor(hrid) }))
             .filter((entry) => Number.isFinite(entry.price));
         if (priced.length === 0) {
-            out.unpriced = [...res.candidates];
-            const lv = levelsFor(res.candidates[0]);
-            Object.assign(out, { levelMet: lv.met, level: lv.check });
-            return out;
+            if (!heldBest) out.unpriced = [...res.candidates];
+            return fallback();
         }
-        priced.sort((a, b) => a.price - b.price || a.hrid.localeCompare(b.hrid));
-        const lv = levelsFor(priced[0].hrid);
+        priced.sort(
+            (a, b) => levelRank(a.lv.met) - levelRank(b.lv.met) || a.price - b.price || a.hrid.localeCompare(b.hrid)
+        );
+        if (heldBest && priced[0].lv.met === false) return ownIt();
         Object.assign(out, {
+            owned: false,
             buyHrid: priced[0].hrid,
             cost: priced[0].price,
             estimated: isEstimated(priced[0].hrid),
-            levelMet: lv.met,
-            level: lv.check,
+            levelMet: priced[0].lv.met,
+            level: priced[0].lv.check,
         });
         return out;
     }
@@ -769,8 +791,9 @@ function requirementsCheck(reqs, skillLevels) {
 
 /**
  * An ability book to learn from: abilities already learned are skipped; a book of an unlearned
- * ability in the bag is "owned" (the level-met one first); else the cheapest priced book, level-met
- * books before the rest. `allLearned` when every candidate is already known.
+ * ability in the bag is "owned" (the level-met one first), unless only an unreadable one is held and a
+ * readable one can be bought; else the cheapest priced book, level-met books before the rest and unmet
+ * ones fewest levels short first. `allLearned` when every candidate is already known.
  * @param {Object} res - An `ability` resolution
  * @param {Object} ctx - Also `learnedAbilities`: Set of ability hrids, null when not loaded
  * @param {Object} out - The result being filled
@@ -788,37 +811,45 @@ function abilityReadiness(res, ctx, out) {
         return out;
     }
     const withLevel = open.map((cand) => ({ cand, lv: requirementsCheck(cand.requirements, ctx.skillLevels) }));
-    // Level met first, then unknown, then unmet
-    const metRank = (entry) => (entry.lv.met === true ? 0 : entry.lv.met === null ? 1 : 2);
+    // Level met first, then unknown, then unmet; among unmet books the one closest to usable
+    const metRank = (entry) => levelRank(entry.lv.met);
+    const byLevel = (a, b) =>
+        metRank(a) - metRank(b) ||
+        (a.lv.met === false && b.lv.met === false ? levelGap(a.lv.check) - levelGap(b.lv.check) : 0);
     const apply = (entry) => Object.assign(out, { levelMet: entry.lv.met, level: entry.lv.check });
+    const first = () =>
+        [...withLevel].sort((a, b) => byLevel(a, b) || a.cand.itemHrid.localeCompare(b.cand.itemHrid))[0];
     if (!ctx.inventory) {
-        apply([...withLevel].sort((a, b) => metRank(a) - metRank(b))[0]);
+        apply(first());
         return out;
     }
     const held = withLevel
         .filter((entry) => ownedCount(ctx.inventory, entry.cand.itemHrid) > 0)
-        .sort((a, b) => metRank(a) - metRank(b) || a.cand.itemHrid.localeCompare(b.cand.itemHrid));
-    if (held.length > 0) {
+        .sort((a, b) => byLevel(a, b) || a.cand.itemHrid.localeCompare(b.cand.itemHrid));
+    const ownIt = () => {
         apply(held[0]);
         Object.assign(out, { owned: true, ownedHrid: held[0].cand.itemHrid });
         return out;
-    }
+    };
+    // A held book the character can read; one it cannot gives way to a readable one it can buy
+    if (held.length > 0 && held[0].lv.met !== false) return ownIt();
     out.owned = false;
     if (ctx.ironCow) {
-        apply([...withLevel].sort((a, b) => metRank(a) - metRank(b))[0]);
+        if (held.length > 0) return ownIt();
+        apply(first());
         return out;
     }
     const priced = withLevel
         .map((entry) => ({ ...entry, price: ctx.buyPrice(entry.cand.itemHrid) }))
         .filter((entry) => Number.isFinite(entry.price));
     if (priced.length === 0) {
+        if (held.length > 0) return ownIt();
         out.unpriced = open.map((cand) => cand.itemHrid);
-        apply([...withLevel].sort((a, b) => metRank(a) - metRank(b))[0]);
+        apply(first());
         return out;
     }
-    priced.sort(
-        (a, b) => metRank(a) - metRank(b) || a.price - b.price || a.cand.itemHrid.localeCompare(b.cand.itemHrid)
-    );
+    priced.sort((a, b) => byLevel(a, b) || a.price - b.price || a.cand.itemHrid.localeCompare(b.cand.itemHrid));
+    if (held.length > 0 && priced[0].lv.met === false) return ownIt();
     apply(priced[0]);
     Object.assign(out, {
         buyHrid: priced[0].cand.itemHrid,
@@ -979,7 +1010,7 @@ const compareTuples = (a, b) => {
  * Rare drop (candidates carry `dropRate`): the highest drop rate whose level is met; ties go to the lower
  * level, then a gathering action (no inputs) before a production one. Any-of production: the met candidate
  * worth crafting and selling back (`ctx.sellPrice`, `ctx.dailyVolume`; see {@link resaleRank}), else the one
- * whose inputs are cheapest to complete. With no level met, the lowest-level candidate, shortfall shown.
+ * whose inputs are cheapest to complete. With no level met, the one fewest levels short (then the lowest level), shortfall shown.
  */
 function candidateReadiness(res, ctx, out) {
     const rare = res.candidates.some((cand) => Number.isFinite(cand.dropRate));
@@ -1018,9 +1049,13 @@ function candidateReadiness(res, ctx, out) {
         });
         [chosen] = met;
     } else {
-        // Nothing met (or levels unknown): the easiest way in, the likelier drop on a tie
+        // Nothing met (or levels unknown): the easiest way in — an unknown level before an unmet one,
+        // then the fewest levels short (a 1-level gap in one skill beats a lower recipe 80 levels off),
+        // then the lower level, the likelier drop on a tie
         scored.sort(
             (a, b) =>
+                levelRank(a.ready.levelMet) - levelRank(b.ready.levelMet) ||
+                levelGap(a.ready.level) - levelGap(b.ready.level) ||
                 a.cand.level - b.cand.level ||
                 (b.cand.dropRate || 0) - (a.cand.dropRate || 0) ||
                 a.cand.actionHrid.localeCompare(b.cand.actionHrid)

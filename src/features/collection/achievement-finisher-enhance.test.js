@@ -335,3 +335,56 @@ describe('enhancer: the cheapest route', () => {
         expect(unloaded).toMatchObject({ levelMet: null, buyHrid: null });
     });
 });
+
+describe('enhancer: a live-typical bench (Enhancing ~100-130, below the piece level)', () => {
+    const res = (target) => ({
+        kind: 'enhance',
+        target,
+        minItemLevel: 0,
+        candidates: [{ itemHrid: '/items/void_gloves', itemLevel: 160 }],
+    });
+    const bench = (enhancingLevel) => ({ ...BENCH, enhancingLevel });
+
+    test.each([
+        [
+            'every level listed, protection priced',
+            { 0: 1e6, 5: 3e6, 9: 9e6, 10: 2e7 },
+            { price: 50, itemHrid: '/items/cheese' },
+        ],
+        ['only +10 listed (start equals target)', { 10: 2e7 }, { price: 50, itemHrid: '/items/cheese' }],
+        ['only +10 listed, no protection price', { 10: 2e7 }, { price: null, itemHrid: null }],
+        [
+            'listings only above the target are not starts',
+            { 12: 1e8, 15: 5e8 },
+            { price: 50, itemHrid: '/items/cheese' },
+        ],
+    ])('%s: finite, non-negative, never cheaper than its listing', (_name, levels, protection) => {
+        const ctx = ctxWith({
+            listings: { '/items/void_gloves': levels },
+            protection: { '/items/void_gloves': protection },
+            over: { enhanceParams: () => bench(110) },
+        });
+        const ready = readiness(res(10), ctx);
+        if (Object.keys(levels).every((level) => Number(level) > 10)) {
+            expect(ready.noListing).toBe(true);
+            return;
+        }
+        expect(Number.isFinite(ready.cost)).toBe(true);
+        expect(ready.cost).toBeGreaterThanOrEqual(ready.listingPrice);
+        if (protection.price === null) {
+            expect(ready.protectionHrid).toBeNull();
+            expect(ready.protectionUnpriced).toBe(true);
+        }
+    });
+
+    test('+19 at Enhancing 100 on a level 160 piece is finite, and a stronger bench costs less', () => {
+        const listings = { '/items/void_gloves': { 0: 1e6, 19: 5e9 } };
+        const at = (level) =>
+            readiness(res(19), ctxWith({ listings, over: { enhanceParams: () => bench(level) } })).cost;
+        const weak = at(100);
+        const strong = at(130);
+        expect(Number.isFinite(weak)).toBe(true);
+        expect(weak).toBeGreaterThan(0);
+        expect(strong).toBeLessThan(weak);
+    });
+});
