@@ -136,7 +136,7 @@ export function calculateLabyrinthTokenValueDetail(
  * @param {'ask'|'bid'|null} [forcedSide] - Quote exactly this book side (no patient tick), ignoring both settings
  * @returns {Function} `(itemHrid) => number|null`
  */
-function tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide = null) {
+export function tokenPriceOf(pricingModeSetting, respectModeSetting, forcedSide = null) {
     if (forcedSide === 'ask' || forcedSide === 'bid') {
         return (hrid) => (hrid ? getItemPrice(hrid, { mode: forcedSide }) : null);
     }

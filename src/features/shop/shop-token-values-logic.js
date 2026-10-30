@@ -12,9 +12,8 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import { getItemPrice } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
-import { tokenPricingSide, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
+import { tokenPricingSide, tokenPriceOf, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
 import { isUntradableCape } from '../../utils/untradable-cape.js';
 import { getUntradableCapeBaseCost } from '../../utils/untradable-cape-cost.js';
 import { dungeonShopOffers } from '../inventory/dungeon-shop-offers.js';
@@ -38,14 +37,22 @@ export function badgeSide() {
 }
 
 /**
- * One unit's price on the badge side, from the same source the token valuation reads: a custom
- * price counts, and the side is forced.
- * @param {string} itemHrid - Item HRID
- * @param {'ask'|'bid'} side - Book side
- * @returns {number|null} Price, or null when unquoted
+ * The pricer the token valuation itself reads shop lines through (custom prices, the side the
+ * settings pick, and the patient tick on a live ask), so a badge, the token tooltip and the
+ * inventory valuation quote one price.
+ * @returns {function(string): number|null}
  */
-function unitPriceOf(itemHrid, side) {
-    const price = getItemPrice(itemHrid, { mode: side });
+function badgePriceOf() {
+    return tokenPriceOf('profitCalc_pricingMode', 'expectedValue_respectPricingMode');
+}
+
+/**
+ * @param {function(string): number|null} priceOf - From {@link badgePriceOf}
+ * @param {string} itemHrid - Item HRID
+ * @returns {number|null} Price of one unit, or null when unquoted
+ */
+function unitPriceOf(priceOf, itemHrid) {
+    const price = priceOf(itemHrid);
     return price > 0 ? price : null;
 }
 
@@ -93,6 +100,7 @@ function valueLine({ itemHrid, cost, outputCount }, unitPrice, side) {
  */
 export function shopLineValues(currencyHrid, side = badgeSide()) {
     const lines = [];
+    const priceOf = badgePriceOf();
     if (currencyHrid === LABYRINTH_TOKEN_HRID) {
         const shopMap = dataManager.getInitClientData()?.labyrinthShopItemDetailMap;
         for (const line of Object.values(shopMap || {})) {
@@ -102,7 +110,7 @@ export function shopLineValues(currencyHrid, side = badgeSide()) {
                 itemHrid: line.itemHrid,
                 cost,
                 outputCount: line.outputCount > 0 ? line.outputCount : 1,
-                unitPrice: unitPriceOf(line.itemHrid, side),
+                unitPrice: unitPriceOf(priceOf, line.itemHrid),
             });
         }
     } else {
@@ -111,7 +119,7 @@ export function shopLineValues(currencyHrid, side = badgeSide()) {
                 itemHrid: offer.itemHrid,
                 cost: offer.cost,
                 outputCount: offer.outputCount,
-                unitPrice: unitPriceOf(offer.itemHrid, side),
+                unitPrice: unitPriceOf(priceOf, offer.itemHrid),
             });
         }
     }

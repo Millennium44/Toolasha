@@ -30,7 +30,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({
     // The token valuation's source: a custom price wins, the side is forced by `mode`
-    getItemPrice: (hrid, { mode } = {}) => mocks.custom[hrid] ?? mocks.books[hrid]?.[mode] ?? null,
+
     // dungeonShopOffers still reads the raw book for its own `askPrice`, which the badge ignores
     getItemPrices: (hrid) => mocks.books[hrid] ?? null,
 }));
@@ -45,6 +45,8 @@ vi.mock('../../utils/token-valuation.js', () => ({
         '/items/pirate_token',
     ]),
     tokenPricingSide: () => mocks.side,
+    // The valuation's own pricer, here a plain book read on the forced side
+    tokenPriceOf: () => (hrid) => mocks.custom[hrid] ?? mocks.books[hrid]?.[mocks.side] ?? null,
 }));
 vi.mock('../../utils/untradable-cape-cost.js', () => ({
     getUntradableCapeBaseCost: (hrid, options) => {
@@ -128,10 +130,6 @@ describe('shopLineValues', () => {
             8
         );
         expect(badgeSide()).toBe('bid');
-        expect(shopLineValues(CHIM, 'ask').find((line) => line.itemHrid === '/items/essence').perToken).toBeCloseTo(
-            96,
-            8
-        );
     });
 
     test('an Iron Cow character pays no tax, so the figure is gross', () => {

@@ -52,6 +52,9 @@ vi.mock('../../api/marketplace.js', () => ({
     },
 }));
 vi.mock('../../utils/formatters.js', () => ({ formatKMB: (value) => String(Math.round(value)) }));
+vi.mock('../../utils/patient-tick.js', () => ({
+    PATIENT_TICK_SETTING_KEYS: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'],
+}));
 vi.mock('../../utils/token-valuation.js', () => ({
     DUNGEON_TOKEN_HRIDS: new Set(['/items/chimerical_token', '/items/sinister_token']),
 }));
@@ -352,12 +355,19 @@ describe('lifecycle', () => {
                 expect.arrayContaining([
                     'profitCalc_pricingMode',
                     'expectedValue_respectPricingMode',
+                    'profitCalc_patientTickSell',
                     'untradableCapeBaseValue',
                 ])
             );
             mocks.settingListeners[0][1]();
             vi.advanceTimersByTime(200);
             expect(badges()[0].textContent).toBe('7/token');
+
+            // Each watched setting redraws, the patient sell tick included
+            mocks.lines[CHIM][1] = line('/items/bulk', 1, 9);
+            mocks.settingListeners.find(([key]) => key === 'profitCalc_patientTickSell')[1]();
+            vi.advanceTimersByTime(200);
+            expect(badges()[0].textContent).toBe('9/token');
         } finally {
             vi.useRealTimers();
         }

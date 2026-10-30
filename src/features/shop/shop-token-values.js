@@ -21,6 +21,7 @@ import marketAPI from '../../api/marketplace.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { CAPE_BASE_VALUE_SETTING } from '../../utils/untradable-cape.js';
 import { DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { itemHridFromIcon } from '../../utils/item-icon.js';
 import {
     badgeSide,
@@ -37,7 +38,12 @@ const CATCHUP_DELAY_MS = 500;
 const REFRESH_DEBOUNCE_MS = 100;
 
 // Settings that move a badge: the book side, and what a base cape is assumed to be worth
-const WATCHED_SETTINGS = ['profitCalc_pricingMode', 'expectedValue_respectPricingMode', CAPE_BASE_VALUE_SETTING];
+const WATCHED_SETTINGS = [
+    'profitCalc_pricingMode',
+    'expectedValue_respectPricingMode',
+    ...PATIENT_TICK_SETTING_KEYS,
+    CAPE_BASE_VALUE_SETTING,
+];
 
 const DUNGEON_TILE_SELECTOR = '[class*="ShopPanel_shopItems"] [class*="ShopPanel_shopItem__"]';
 const LABYRINTH_TILE_SELECTOR = '[class*="LabyrinthPanel_buyableGrid"] [class*="LabyrinthPanel_item__"]';
