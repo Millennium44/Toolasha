@@ -512,7 +512,7 @@ describe('hints on the game achievement cards', () => {
             expect(game.prefetched.sort()).toEqual(['/items/celestial_hammer', '/items/celestial_pot']);
         });
 
-        test('the sale price is the pricing-mode sell side less the 4% tax, once; a value-map estimate is no bid', () => {
+        test('the sale price is the top bid (an instant sell) less the 4% tax, once; a value-map estimate is no bid', () => {
             celestial({ '/items/celestial_pot': 1000, '/items/cheese': 500 });
             game.estimated = new Set(['/items/cheese']);
             const context = finisher.readinessContext();
@@ -522,6 +522,7 @@ describe('hints on the game achievement cards', () => {
             expect(nav.getItemPriceInfo).toHaveBeenCalledWith('/items/celestial_pot', {
                 context: 'profit',
                 side: 'sell',
+                mode: 'bid',
                 marketQuote: true,
             });
         });

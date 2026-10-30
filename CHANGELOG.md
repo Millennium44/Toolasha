@@ -50,6 +50,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Each unfinished achievement card now shows whether you can do it (level met, materials owned, or a rough buy cost with the coin icon), with a Go button that opens the right screen and a Missing Mats button that opens the marketplace on what you lack. Go and Missing Mats only navigate.
 - A "Toolasha hints" checkbox beside "Show Incomplete Only" turns them on or off; the separate finisher panel is gone.
 - Hints now cover almost every card: "any of" crafts and the rare-drop Collect cards name the action they picked (with the drop odds); Enhancer cards suggest the cheapest piece and start level to buy and protect up from; the ability cards price the cheapest unlearned book; House, Labyrinth, Dungeon Elitist, Charmed and Midas Touch get a Go and their progress. Shoebill Slayer now resolves.
+- The "any of" cards now pick the craft that costs least after selling the result back at the top bid, prefer results that trade at least once a day, and show the resale and net.
 
 ### Zone mode simulates the real zone
 
