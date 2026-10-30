@@ -14,6 +14,7 @@ import { BADGE_MODE_SETTING, showsItemPriceBadges } from './inventory-badge-mode
 import inventorySort from './inventory-sort.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { tileBadgeFontCSS, PAIRED_BADGE_ZOOM_CAP } from '../../utils/tile-badge-text.js';
+import { setTextIfChanged } from '../../utils/text-if-changed.js';
 
 /**
  * InventoryBadgePrices class manages price badge overlays on inventory items
@@ -170,7 +171,7 @@ class InventoryBadgePrices {
         const existingBid = itemElem.querySelector('.mwi-badge-price-bid');
         if (bidPrice > 0) {
             if (existingBid) {
-                existingBid.textContent = formatKMB(Math.round(bidPrice), 0);
+                setTextIfChanged(existingBid, formatKMB(Math.round(bidPrice), 0));
             } else {
                 this.renderPriceBadge(itemElem, bidPrice, 'bid');
             }
@@ -182,7 +183,7 @@ class InventoryBadgePrices {
         const existingAsk = itemElem.querySelector('.mwi-badge-price-ask');
         if (askPrice > 0) {
             if (existingAsk) {
-                existingAsk.textContent = formatKMB(Math.round(askPrice), 0);
+                setTextIfChanged(existingAsk, formatKMB(Math.round(askPrice), 0));
             } else {
                 this.renderPriceBadge(itemElem, askPrice, 'ask');
             }

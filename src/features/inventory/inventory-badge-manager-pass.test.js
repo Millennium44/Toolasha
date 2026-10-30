@@ -3,7 +3,8 @@
  * Inventory Badge Manager — what one full pricing pass costs, and what a second pass over unchanged
  * inputs does. A large enhanced inventory used to recompute every enhancement path on every pass
  * (the shared cost cache was smaller than the inventory, so a pass in tile order evicted each entry
- * before the next pass read it).
+ * before the next pass read it), and every pass rewrote every tile's data attributes and badge text
+ * even when nothing had changed.
  *
  * The real net-worth cost cache is used here, not a mock: its eviction is what this is about.
  */
@@ -263,5 +264,39 @@ describe('one pricing pass over a large enhanced inventory', () => {
         expect([chest.askPrice, chest.askValue]).toEqual(['500', '1500']);
         const unpriced = fixture.tiles[209].dataset;
         expect([unpriced.askValue, unpriced.expectPrice]).toEqual(['0', 'unpriced_thing']);
+    });
+});
+
+describe('a pass over unchanged inputs writes nothing', () => {
+    test('no tile attribute or badge is rewritten, and no further pass is queued', async () => {
+        // A provider shaped like the price badges: it sets badge text from the dataset
+        inventoryBadgeManager.registerProvider('test-badge', (el) => {
+            let badge = el.querySelector('.mwi-stack-price');
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.className = 'mwi-stack-price';
+                el.appendChild(badge);
+            }
+            const text = String(Math.round(parseFloat(el.dataset.askValue) || 0));
+            if (badge.textContent !== text) badge.textContent = text;
+        });
+        await pass();
+
+        const records = [];
+        const observer = new MutationObserver((m) => records.push(...m));
+        observer.observe(inventoryBadgeManager.currentInventoryElem, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            characterData: true,
+        });
+        await pass();
+        await Promise.resolve();
+        records.push(...observer.takeRecords());
+        observer.disconnect();
+
+        expect(records.map((r) => `${r.type}:${r.attributeName ?? ''}`)).toEqual([]);
+        expect(inventoryBadgeManager.rerenderRequested).toBe(false);
+        expect(inventoryBadgeManager.isRendering).toBe(false);
     });
 });

@@ -14,6 +14,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { tileBadgeFontCSS } from '../../utils/tile-badge-text.js';
+import { setTextIfChanged } from '../../utils/text-if-changed.js';
 
 /**
  * Wait for `promise`, but never past `timeoutMs`.
@@ -697,7 +698,7 @@ class InventorySort {
 
             if (stackValue > 0) {
                 if (existingBadge) {
-                    existingBadge.textContent = formatKMB(stackValue, 0);
+                    setTextIfChanged(existingBadge, formatKMB(stackValue, 0));
                 } else {
                     this.renderPriceBadge(itemElem, stackValue);
                 }
