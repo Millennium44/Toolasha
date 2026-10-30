@@ -35,6 +35,7 @@ const game = vi.hoisted(() => ({
     lateVolumes: {},
     liquidityOn: true,
     prefetched: [],
+    pricingStamp: 'ask',
 }));
 
 const nav = vi.hoisted(() => ({
@@ -155,6 +156,7 @@ vi.mock('../../utils/tester-shop-nav.js', () => ({ setShopFilter: nav.setShopFil
 vi.mock('../../utils/enhancement-input-pricing.js', () => ({
     perAttemptMaterialCost: () => ({ cost: 100, hasCost: true, hasMissingPrices: false, hasPartialPrices: false }),
     priceProtection: () => ({ price: 50, itemHrid: '/items/cheese', unpriced: false, estimated: false }),
+    pricingStamp: () => game.pricingStamp,
 }));
 vi.mock('../../utils/enhancement-config.js', () => ({
     getAutoDetectedParams: () => ({
@@ -389,6 +391,7 @@ describe('hints on the game achievement cards', () => {
         game.lateVolumes = {};
         game.liquidityOn = true;
         game.prefetched = [];
+        game.pricingStamp = 'ask';
         game.loadoutGear = null;
         game.loadoutListeners = [];
         game.settingHandlers = [];
@@ -989,6 +992,28 @@ describe('hints on the game achievement cards', () => {
         expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(second);
     });
 
+    test('a pricing input that moves with no event (a settings-panel change) recomputes on the next draw', () => {
+        achievementsTab();
+        finisher.initialize();
+        expect(lineOf('Dairy Chef').textContent).toContain('buy ~200');
+        // Base-item crafting, the patient tick, a cape or Tester-shop setting: the pricing stamp moves
+        game.prices = { ...PRICES, '/items/peach': PRICES['/items/peach'] * 2 };
+        mountAgain();
+        expect(lineOf('Dairy Chef').textContent).toContain('buy ~200');
+        game.pricingStamp = 'ask|tick';
+        mountAgain();
+        expect(lineOf('Dairy Chef').textContent).not.toContain('buy ~200');
+    });
+
+    test('the patient-tick buy setting redraws the visible hints', () => {
+        achievementsTab();
+        finisher.initialize();
+        const first = nav.getItemPriceInfo.mock.calls.length;
+        game.settingHandlers.filter((e) => e.key === 'profitCalc_patientTickBuy').forEach((e) => e.fn(true));
+        vi.advanceTimersByTime(1500);
+        expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(first);
+    });
+
     test('a gold amount is followed by the game coin icon once the item sheet is known', () => {
         const probe = document.createElement('div');
         probe.innerHTML = '<svg><use href="/static/media/items_sprite.abc.svg#milk"></use></svg>';
@@ -1018,6 +1043,7 @@ describe('hints on the game achievement cards', () => {
             'market_historySource',
             'market_pooledHistory',
             'profitCalc_liquidityCap',
+            'profitCalc_patientTickBuy',
             'profitCalc_pricingMode',
         ]);
         game.prices = { ...PRICES, '/items/peach': 300 };

@@ -35,7 +35,7 @@ import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigation.js';
 import { getItemPriceInfo } from '../../utils/market-data.js';
 import { setShopFilter } from '../../utils/tester-shop-nav.js';
-import { perAttemptMaterialCost, priceProtection } from '../../utils/enhancement-input-pricing.js';
+import { perAttemptMaterialCost, priceProtection, pricingStamp } from '../../utils/enhancement-input-pricing.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { getRareFindParts } from '../../utils/bonus-revenue-calculator.js';
 import { resolveActionContext } from '../../utils/action-context.js';
@@ -118,8 +118,8 @@ const READINESS_EVENTS = [
     'consumables_updated',
 ];
 
-/** Toolasha settings that change a buy cost */
-const READINESS_SETTINGS = ['profitCalc_pricingMode'];
+/** Toolasha settings that change a buy cost (the rest of the pricing rule is in the cache's `pricingStamp`) */
+const READINESS_SETTINGS = ['profitCalc_pricingMode', 'profitCalc_patientTickBuy'];
 
 /** Settings that decide whether, and from where, an output's sell volume can be measured */
 const VOLUME_SETTINGS = ['profitCalc_liquidityCap', 'market_pooledHistory', 'market_historySource'];
@@ -500,7 +500,7 @@ class AchievementFinisher {
         /** achievement hrid → resolution (or null), for the client data in `resolutionSource` */
         this.resolutions = new Map();
         this.resolutionSource = null;
-        /** `${characterId}|${achievement hrid}` → {version, value} */
+        /** `${characterId}|${achievement hrid}` → {version, stamp, value} */
         this.readinessCache = new Map();
         this.readinessVersion = 0;
         this.readinessRedrawPending = false;
@@ -752,15 +752,18 @@ class AchievementFinisher {
      */
     readinessFor(hrid, res, getContext) {
         const key = `${dataManager.getCurrentCharacterId?.() ?? ''}|${hrid}`;
+        // The pricing rule's own inputs (patient tick, base-item crafting, cape, Tester shop, custom prices,
+        // the value map) can move with no event this module hears: a settings-panel change, then a redraw
+        const stamp = pricingStamp();
         const hit = this.readinessCache.get(key);
-        if (hit && hit.version === this.readinessVersion) return hit.value;
+        if (hit && hit.version === this.readinessVersion && hit.stamp === stamp) return hit.value;
         let value = null;
         try {
             value = readiness(res, getContext());
         } catch (error) {
             console.error('[AchievementFinisher] Readiness failed for', hrid, error);
         }
-        this.readinessCache.set(key, { version: this.readinessVersion, value });
+        this.readinessCache.set(key, { version: this.readinessVersion, stamp, value });
         return value;
     }
 
