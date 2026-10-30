@@ -19,6 +19,9 @@ const state = vi.hoisted(() => ({
     imported: null,
     revenueTaxRates: [],
     owned: [],
+    /** Replaces the template tuner's answer, when a test sets it */
+    tune: null,
+    tuneCalls: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -81,6 +84,19 @@ vi.mock('./combat-sim-adapter.js', () => ({
         };
     },
     recomputeLevelGapDebuffs: () => {},
+}));
+vi.mock('./party-template-tuner.js', () => ({
+    tuneTemplate: async (template, levels) => {
+        state.tuneCalls.push({ id: template.id, levels });
+        if (state.tune) return state.tune(template, levels);
+        return {
+            status: 'noScore',
+            dto: structuredClone(template.playerDto),
+            k: null,
+            templateScore: null,
+            ownScore: null,
+        };
+    },
 }));
 vi.mock('./all-zones-runner.js', () => ({
     runAllZonesSimulation: (params, onProgress) =>
@@ -1317,6 +1333,113 @@ describe('saved builds', () => {
             expect(state.db.builds).toEqual([]);
             // Templates stay open and untouched
             expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(PARTY_TEMPLATES.length);
+        });
+    });
+
+    describe('Match my build', () => {
+        const toggle = () => tab.root.querySelector('[data-pf-templates-toggle]');
+        const matchBox = () => tab.root.querySelector('[data-pf-match-build]');
+        const add = (id) =>
+            [...tab.root.querySelector('[data-pf-template="' + id + '"]').querySelectorAll('button')]
+                .find((b) => b.textContent === 'Add as teammate')
+                .click();
+        const tuned = (template, extra = {}) => {
+            const dto = structuredClone(template.playerDto);
+            dto.meleeLevel = 136;
+            dto.equipment['/equipment_types/main_hand'].enhancementLevel = 9;
+            return { status: 'ok', dto, k: -3, templateScore: 1234, ownScore: 1250, ...extra };
+        };
+        const t = () => PARTY_TEMPLATES.find((x) => x.id === 'melee-smash');
+
+        beforeEach(() => {
+            state.tune = null;
+            state.tuneCalls = [];
+            state.selfDTO = { meleeLevel: 136, staminaLevel: 125 };
+        });
+
+        test('is on by default with the rule in its tooltip, and the toggle persists across redraws of the list', async () => {
+            await mountTab();
+            expect(matchBox().checked).toBe(true);
+            expect(matchBox().parentElement.title).toMatch(/highest of melee, ranged, magic and defense/);
+            matchBox().click();
+            expect(matchBox().checked).toBe(false);
+            toggle().click();
+            expect(matchBox().checked).toBe(false);
+        });
+
+        test('adding tunes the template to the character and shows its score against theirs', async () => {
+            await mountTab();
+            state.tune = async (template) => tuned(template);
+            toggle().click();
+            add(t().id);
+            await flush();
+            expect(state.tuneCalls[0].levels.meleeLevel).toBe(136);
+            const dto = state.db.entries[0].dto;
+            expect(dto.meleeLevel).toBe(136);
+            expect(dto.equipment['/equipment_types/main_hand'].enhancementLevel).toBe(9);
+            expect(dto.guildShrineLevels).toBeDefined();
+            const line = tab.root.querySelector('[data-pf-template-score]');
+            expect(line.textContent).toBe('score 1,234M ≈ yours 1,250M');
+            expect(el('roster-note').textContent).toContain('score 1,234M ≈ yours 1,250M');
+        });
+
+        test('switched off, the standard template is added and nothing is scored', async () => {
+            await mountTab();
+            toggle().click();
+            matchBox().click();
+            add(t().id);
+            await flush();
+            expect(state.tuneCalls).toEqual([]);
+            expect(state.db.entries[0].dto.equipment).toEqual(t().playerDto.equipment);
+            expect(tab.root.querySelector('[data-pf-template-score]')).toBeNull();
+        });
+
+        test('no score loaded, or no character build: the standard template and a note that says so', async () => {
+            await mountTab();
+            toggle().click();
+            add(t().id);
+            await flush();
+            expect(el('roster-note').textContent).toMatch(/build score is not loaded yet/);
+            expect(tab.root.querySelector('[data-pf-template-score]').textContent).toMatch(/standard template/);
+            state.selfDTO = null;
+            state.tuneCalls = [];
+            add(t().id);
+            await flush();
+            expect(state.tuneCalls).toEqual([]);
+            expect(state.db.entries).toHaveLength(2);
+        });
+
+        test('a build the template cannot reach says which way it is clamped', async () => {
+            await mountTab();
+            toggle().click();
+            state.tune = async (template) =>
+                tuned(template, { status: 'clampedLow', templateScore: 2000, ownScore: 500 });
+            add(t().id);
+            await flush();
+            expect(tab.root.querySelector('[data-pf-template-score]').textContent).toMatch(
+                /lowest setting scores above/
+            );
+            state.tune = async (template) =>
+                tuned(template, { status: 'clampedHigh', templateScore: 200, ownScore: 5000 });
+            add(t().id);
+            await flush();
+            expect(tab.root.querySelector('[data-pf-template-score]').textContent).toMatch(
+                /highest setting scores below/
+            );
+        });
+
+        test('a character switch while matching adds nothing and leaves no score line for the new character', async () => {
+            await mountTab();
+            toggle().click();
+            state.tune = async (template) => {
+                state.charId = 'someone-else';
+                return tuned(template);
+            };
+            add(t().id);
+            await flush();
+            expect(state.db?.entries ?? []).toHaveLength(0);
+            expect(tab.root.querySelector('[data-pf-template-score]')).toBeNull();
+            state.charId = 'me';
         });
     });
 

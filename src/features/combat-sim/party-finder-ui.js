@@ -57,6 +57,7 @@ import {
     modeMismatchReason,
     buildFingerprint,
 } from './party-roster.js';
+import { tuneTemplate } from './party-template-tuner.js';
 import { PARTY_TEMPLATES, TEMPLATE_ROLE_GROUPS, templatesForGroup, templateTeammateName } from './party-templates.js';
 import {
     planSweep,
@@ -103,6 +104,47 @@ const INPUT_STYLE =
     'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; font-family:inherit;';
 const BTN_STYLE = `background:${ACCENT_BTN_BG}; color:${ACCENT}; border:1px solid ${ACCENT_BTN_BORDER}; border-radius:4px; padding:3px 10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;`;
 const SMALL_BTN_STYLE = `background:transparent; color:#aaa; border:1px solid #444; border-radius:3px; padding:1px 6px; font-size:11px; cursor:pointer; font-family:inherit;`;
+
+/** What the "Match my build" switch does, for its tooltip */
+const MATCH_BUILD_HELP =
+    'A template added as a teammate is tuned to your current build. Combat levels: your own for each stat, except ' +
+    'the main stat of the template (melee, ranged, magic or defense), which is your highest of melee, ranged, magic and ' +
+    'defense. Gear enhancement and ability levels: raised or lowered together until the build score of the template ' +
+    '(combat gear plus abilities, the figure on the profile card) is closest to yours. House and shrines are not ' +
+    'compared. Without your build score the standard template is added.';
+
+/**
+ * A build score in millions of coins, for the template score line.
+ * @param {number} value
+ * @returns {string}
+ */
+function formatScoreM(value) {
+    return `${Math.round(value).toLocaleString('en-US')}M`;
+}
+
+/**
+ * The line saying what tuning a template came to.
+ * @param {{status: string, template?: number|null, own?: number|null}} tuned
+ * @returns {string}
+ */
+function tunedText(tuned) {
+    const both = tuned.template != null && tuned.own != null;
+    const figures = both ? `score ${formatScoreM(tuned.template)} ≈ yours ${formatScoreM(tuned.own)}` : '';
+    switch (tuned.status) {
+        case 'ok':
+            return figures;
+        case 'clampedLow':
+            return `${figures}. Even the lowest setting scores above your build, so the template is stronger than you.`;
+        case 'clampedHigh':
+            return `${figures}. Even the highest setting scores below your build, so the template is weaker than you.`;
+        case 'noScore':
+            return 'Your build score is not loaded yet, so the standard template was added (combat levels still match you).';
+        case 'aborted':
+            return 'The character changed while matching, so the standard template was added.';
+        default:
+            return 'The build could not be scored, so the standard template was added (combat levels still match you).';
+    }
+}
 const STOP_BTN_STYLE = `background:rgba(244, 67, 54, 0.2); border:1px solid rgba(244, 67, 54, 0.4); color:${RED}; border-radius:4px; padding:3px 10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;`;
 
 /**
@@ -219,6 +261,11 @@ export class PartyFinderTab {
         this._pendingConfirm = null;
         this._pendingDelete = null;
         this._templatesOpen = false;
+        /** "Match my build": on by default, like the finder's other options it is not stored between sessions */
+        this._matchBuild = true;
+        /** What tuning each template to the character came to, by template id: {ownerId, status, text} */
+        this._tuned = new Map();
+        this._tuning = false;
         this._pendingDeleteTimer = null;
         /** The teammate whose aura options are open, if any */
         this._auraOpen = null;
@@ -292,6 +339,9 @@ export class PartyFinderTab {
         this._zonesSeeded = false;
         this._pendingConfirm = null;
         this._pendingDelete = null;
+        this._tuned = new Map();
+        this._tuning = false;
+        this._matchBuild = true;
         this._auraOpen = null;
         this._trySelfAuras = false;
         this._selfAuraPicks = new Map();
@@ -671,6 +721,19 @@ export class PartyFinderTab {
             this._renderTemplates();
         });
         box.appendChild(head);
+        const match = document.createElement('label');
+        match.style.cssText = 'display:flex; gap:6px; align-items:center; font-size:11px; color:#aaa; margin-top:4px;';
+        match.title = MATCH_BUILD_HELP;
+        const matchBox = document.createElement('input');
+        matchBox.type = 'checkbox';
+        matchBox.dataset.pfMatchBuild = '';
+        matchBox.checked = this._matchBuild;
+        matchBox.addEventListener('change', () => {
+            this._matchBuild = matchBox.checked;
+            this._renderTemplates();
+        });
+        match.append(matchBox, document.createTextNode('Match my build'));
+        box.appendChild(match);
         if (!open) return;
         const body = document.createElement('div');
         body.dataset.pfTemplatesBody = '';
@@ -691,6 +754,9 @@ export class PartyFinderTab {
                     'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
                 name.textContent = template.label;
                 name.title = template.source;
+                const tuned = this._matchBuild ? this._tuned.get(template.id) : null;
+                const tunedLine =
+                    tuned && tuned.ownerId === dataManager.getCurrentCharacterId() ? this._tunedLine(tuned) : null;
                 const add = document.createElement('button');
                 add.style.cssText = SMALL_BTN_STYLE;
                 add.textContent = 'Add as teammate';
@@ -698,6 +764,7 @@ export class PartyFinderTab {
                 add.addEventListener('click', () => this._onAddTemplateAsTeammate(template));
                 row.append(name, add);
                 body.appendChild(row);
+                if (tunedLine) body.appendChild(tunedLine);
             }
         }
         box.appendChild(body);
@@ -708,9 +775,41 @@ export class PartyFinderTab {
      * @private
      */
     async _onAddTemplateAsTeammate(template) {
+        if (this._tuning) {
+            this._rosterNote('Still matching a template to your build. One moment.');
+            return;
+        }
         // No game mode: a template fits a market party and an Iron Cow one alike
+        let dto = structuredClone(template.playerDto);
+        let tuned = null;
+        if (this._matchBuild) {
+            const ownerId = dataManager.getCurrentCharacterId();
+            const levels = buildPlayerDTO();
+            this._tuning = true;
+            this._rosterNote('Matching the template to your build…');
+            try {
+                const result = levels ? await tuneTemplate(template, levels) : null;
+                // The character may have switched while the build was scored
+                if (!this.root || dataManager.getCurrentCharacterId() !== ownerId) return;
+                if (result) {
+                    dto = structuredClone(result.dto);
+                    tuned = {
+                        ownerId,
+                        status: result.status,
+                        k: result.k,
+                        template: result.templateScore,
+                        own: result.ownScore,
+                    };
+                    this._tuned.set(template.id, tuned);
+                    this._renderTemplates();
+                }
+            } catch (error) {
+                console.error('[PartyFinder] Matching a template to the build failed:', error);
+            } finally {
+                this._tuning = false;
+            }
+        }
         // The template carries shrine levels as an export does; the game's guild buffs are resolved when it is added
-        const dto = structuredClone(template.playerDto);
         if (template.guildCombatBuffLevels) {
             const { guildShrineLevels, guildCombatBuffs } = guildBuffsFromExportLevels(template.guildCombatBuffLevels);
             dto.guildShrineLevels = guildShrineLevels;
@@ -718,7 +817,21 @@ export class PartyFinderTab {
         }
         const result = await addTeammates([{ name: templateTeammateName(template), dto, source: 'template' }]);
         this._adoptRoster(result);
-        this._reportAdd(result);
+        this._reportAdd(result, tuned ? ` ${tunedText(tuned)}` : '');
+    }
+
+    /**
+     * The score line under a tuned template's row.
+     * @param {{status: string}} tuned
+     * @returns {HTMLElement}
+     * @private
+     */
+    _tunedLine(tuned) {
+        const line = document.createElement('div');
+        line.dataset.pfTemplateScore = '';
+        line.style.cssText = `font-size:11px; margin:0 0 2px 12px; color:${tuned.status === 'ok' ? '#888' : '#ff9800'};`;
+        line.textContent = tunedText(tuned);
+        return line;
     }
 
     /** The saved builds list. @private */
