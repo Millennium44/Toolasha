@@ -9,6 +9,7 @@
 import dataManager from '../core/data-manager.js';
 import { DEFAULT_SHOP_GEAR_LEVEL, isTesterShopEntry, testerShopEnabled } from './tester-shop.js';
 import { fiberFor } from './react-click.js';
+import { shopEntriesFor } from './shop-index.js';
 
 /*
  * Display names are translated client-side while every detail map stores the English name, so a
@@ -246,7 +247,7 @@ export function getShopCoinOnlyCost(itemHrid) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.shopItemDetailMap) return none;
     const testerOn = testerShopEnabled();
-    for (const [key, shopItem] of Object.entries(gameData.shopItemDetailMap)) {
+    for (const [key, shopItem] of shopEntriesFor(gameData.shopItemDetailMap, itemHrid)) {
         if (!testerOn && isTesterShopEntry(shopItem, key)) continue;
         if (shopItem.itemHrid !== itemHrid || !shopItem.costs?.length) continue;
         // A price for an enhanced copy is not the price of the +0 base the callers cost. The Tester tab sells
@@ -273,7 +274,8 @@ export function getShopCoinCost(itemHrid) {
     // The test server's Tester tab is a price source only when asked for —
     // see tester-shop.js — so its entries are skipped otherwise
     const testerOn = testerShopEnabled();
-    for (const [key, shopItem] of Object.entries(gameData.shopItemDetailMap)) {
+    // Only the entries that sell this item, in map order: the whole map was walked on every price
+    for (const [key, shopItem] of shopEntriesFor(gameData.shopItemDetailMap, itemHrid)) {
         if (!testerOn && isTesterShopEntry(shopItem, key)) continue;
         if (shopItem.itemHrid === itemHrid) {
             if (shopItem.costs && shopItem.costs.length > 0) {
