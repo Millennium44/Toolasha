@@ -140,6 +140,12 @@ const COLORS = {
  */
 const ELAPSED_SECTION = 'Elapsed (yields, not CPU)';
 
+/** Title of the trigger-to-draw latency section */
+const PANEL_DELAYS_SECTION = 'Panel delays';
+
+/** A panel that took this long to appear is shown in the warning color */
+const PANEL_DELAY_WARN_MS = 1000;
+
 class PFormancePanel {
     constructor() {
         this.panel = null;
@@ -153,6 +159,7 @@ class PFormancePanel {
         this.overlayRowSectionCollapsed = false;
         this.elapsedSectionCollapsed = false;
         this.stallSectionCollapsed = false;
+        this.panelDelaySectionCollapsed = false;
         this.startupCollapsed = false;
         this.attributionSectionCollapsed = false;
         this.leakSectionCollapsed = false;
@@ -495,6 +502,8 @@ class PFormancePanel {
             }
         }
 
+        const panelDelayEntries = (pm.getPanelDelays?.() || []).map((row) => ({ ...row }));
+
         const stallEntries = (pm.getStalls?.() || [])
             .slice(-12)
             .reverse()
@@ -506,7 +515,9 @@ class PFormancePanel {
                         ? stall.suspects.map((suspect) => `${suspect.name} ${suspect.ms}ms`).join(', ')
                         : stall.recentEvents?.length
                           ? `after ${stall.recentEvents.join(', ')} (likely the game)`
-                          : 'nothing instrumented') +
+                          : stall.inFlight?.length
+                            ? `${stall.inFlight.join(', ')} pending (async, not proven)`
+                            : 'nothing instrumented') +
                     // The partial-overlap rule made visible per row rather than
                     // rounded away into one of the two buckets
                     (this.attributionEnabled ? ` [${coverageTag(pm, stall)}]` : ''),
@@ -552,6 +563,15 @@ class PFormancePanel {
             this.contentEl.appendChild(
                 this._createSection('Overlay Rows', overlayRowEntries, this.overlayRowSectionCollapsed, (v) => {
                     this.overlayRowSectionCollapsed = v;
+                })
+            );
+        }
+        // Only once something has drawn: a session that has opened no
+        // instrumented panel has nothing to show
+        if (panelDelayEntries.length) {
+            this.contentEl.appendChild(
+                this._createSection(PANEL_DELAYS_SECTION, panelDelayEntries, this.panelDelaySectionCollapsed, (v) => {
+                    this.panelDelaySectionCollapsed = v;
                 })
             );
         }
@@ -1014,6 +1034,7 @@ class PFormancePanel {
             stats: pm.getAllStats(),
             stalls: pm.getStalls?.() || [],
             worstStallMs: pm.getWorstStallMs?.() || 0,
+            panelDelays: pm.getPanelDelays?.() || [],
             // Creation rate, which no duration in `stats` can show
             timerCounters: pm.timerCounters ? { ...pm.timerCounters } : null,
             environment: {
@@ -1120,13 +1141,15 @@ class PFormancePanel {
         const columns =
             title === 'Feature Init'
                 ? ['Name', 'Started', 'Time (ms)']
-                : title === 'Main-thread Stalls'
-                  ? ['Suspects', 'At', 'Stall ms']
-                  : title === 'Leak canary'
-                    ? ['Source', 'Lowest', 'Now']
-                    : title === ELAPSED_SECTION
-                      ? ['Name', 'Calls/s', 'Wall ms', 'Wall %']
-                      : ['Name', 'Calls/s', 'Total ms', 'CPU %'];
+                : title === PANEL_DELAYS_SECTION
+                  ? ['Name', 'Count', 'Last ms', 'Median ms', 'Worst ms']
+                  : title === 'Main-thread Stalls'
+                    ? ['Suspects', 'At', 'Stall ms']
+                    : title === 'Leak canary'
+                      ? ['Source', 'Lowest', 'Now']
+                      : title === ELAPSED_SECTION
+                        ? ['Name', 'Calls/s', 'Wall ms', 'Wall %']
+                        : ['Name', 'Calls/s', 'Total ms', 'CPU %'];
 
         for (const col of columns) {
             const th = document.createElement('th');
@@ -1159,6 +1182,18 @@ class PFormancePanel {
                 // Only monotonic growth is colored; a count that has ever
                 // fallen is normal and stays quiet
                 if (entry.growing) row.style.color = COLORS.warning;
+            } else if (title === PANEL_DELAYS_SECTION) {
+                row.appendChild(this._cell(entry.name, 'left'));
+                row.appendChild(this._cell(String(entry.count), 'right'));
+                const lastCell = this._cell(String(Math.round(entry.last)), 'right');
+                const medianCell = this._cell(String(Math.round(entry.median)), 'right');
+                const worstCell = this._cell(String(Math.round(entry.worst)), 'right');
+                if (entry.last >= PANEL_DELAY_WARN_MS) lastCell.style.color = COLORS.warning;
+                if (entry.median >= PANEL_DELAY_WARN_MS) medianCell.style.color = COLORS.warning;
+                if (entry.worst >= PANEL_DELAY_WARN_MS) worstCell.style.color = COLORS.warning;
+                row.appendChild(lastCell);
+                row.appendChild(medianCell);
+                row.appendChild(worstCell);
             } else if (title === 'Main-thread Stalls') {
                 row.appendChild(this._cell(entry.who, 'left'));
                 row.appendChild(this._cell((entry.at / 1000).toFixed(1) + 's', 'right'));

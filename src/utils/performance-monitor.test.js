@@ -1668,3 +1668,128 @@ describe('elapsed versus blocking measurements', () => {
         expect(performanceMonitor.isElapsedMetric('networth:recalculate')).toBe(false);
     });
 });
+
+describe('panel delays', () => {
+    beforeEach(() => {
+        performanceMonitor.reset();
+        performanceMonitor.enabled = true;
+        performanceMonitor._tabVisible = true;
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+        performanceMonitor.enabled = false;
+        performanceMonitor.reset();
+    });
+
+    test('disabled: markTrigger and markDrawn are no-ops and allocate nothing', () => {
+        performanceMonitor.reset();
+        performanceMonitor.pendingPanels = undefined;
+        performanceMonitor.panelDelays = undefined;
+        performanceMonitor.enabled = false;
+        performanceMonitor.markTrigger('Combat score panel');
+        expect(performanceMonitor.markDrawn('Combat score panel')).toBeNull();
+        expect(performanceMonitor.pendingPanels).toBeUndefined();
+        expect(performanceMonitor.panelDelays).toBeUndefined();
+        expect(performanceMonitor.getPanelDelays()).toEqual([]);
+    });
+
+    test('records the latency from trigger to draw: count, last, worst, median', () => {
+        for (const wait of [100, 5000, 300]) {
+            performanceMonitor.markTrigger('Item tooltip');
+            vi.advanceTimersByTime(wait);
+            performanceMonitor.markDrawn('Item tooltip');
+        }
+        const [row] = performanceMonitor.getPanelDelays();
+        expect(row.name).toBe('Item tooltip');
+        expect(row.count).toBe(3);
+        expect(row.last).toBeCloseTo(300, -1);
+        expect(row.worst).toBeCloseTo(5000, -1);
+        expect(row.median).toBeCloseTo(300, -1);
+    });
+
+    test('a draw with no pending trigger records nothing, and one trigger measures only one draw', () => {
+        expect(performanceMonitor.markDrawn('Action panel')).toBeNull();
+        performanceMonitor.markTrigger('Action panel');
+        performanceMonitor.markDrawn('Action panel');
+        expect(performanceMonitor.markDrawn('Action panel')).toBeNull();
+        expect(performanceMonitor.getPanelDelays()[0].count).toBe(1);
+    });
+
+    test('keepEarliest keeps the first clock; a plain trigger restarts it', () => {
+        performanceMonitor.markTrigger('Achievement hints', true);
+        vi.advanceTimersByTime(1000);
+        performanceMonitor.markTrigger('Achievement hints', true);
+        vi.advanceTimersByTime(1000);
+        expect(performanceMonitor.markDrawn('Achievement hints')).toBeCloseTo(2000, -1);
+        performanceMonitor.markTrigger('Item tooltip');
+        vi.advanceTimersByTime(1000);
+        performanceMonitor.markTrigger('Item tooltip');
+        vi.advanceTimersByTime(10);
+        expect(performanceMonitor.markDrawn('Item tooltip')).toBeCloseTo(10, -1);
+    });
+
+    test('a trigger that never drew is dropped rather than measured against a much later draw', () => {
+        performanceMonitor.markTrigger('Item tooltip');
+        vi.advanceTimersByTime(10 * 60 * 1000);
+        expect(performanceMonitor.markDrawn('Item tooltip')).toBeNull();
+    });
+});
+
+describe('async spans in stall attribution', () => {
+    beforeEach(() => {
+        performanceMonitor.reset();
+        performanceMonitor.enabled = true;
+        performanceMonitor._tabVisible = true;
+    });
+    afterEach(() => {
+        performanceMonitor.enabled = false;
+        performanceMonitor.openRuns = undefined;
+        performanceMonitor.finishedRuns = [];
+    });
+
+    test('disabled: traceAsync just runs the handler and records no run', async () => {
+        performanceMonitor.enabled = false;
+        performanceMonitor.openRuns = undefined;
+        expect(await performanceMonitor.traceAsync('Combat score', async () => 7)).toBe(7);
+        expect(performanceMonitor.openRuns).toBeUndefined();
+        expect(performanceMonitor.finishedRuns).toEqual([]);
+    });
+
+    test('a stall overlapping a still-open run names it, and coverage is not claimed', async () => {
+        let release;
+        const gate = new Promise((resolve) => (release = resolve));
+        const running = performanceMonitor.traceAsync('Combat score', () => gate);
+        const now = performance.now();
+        performanceMonitor._recordStall({ startTime: now - 20, duration: 200 });
+        const stall = performanceMonitor.getStalls().at(-1);
+        expect(stall.inFlight).toEqual(['Combat score']);
+        expect(stall.coveredMs).toBe(0);
+        release();
+        await running;
+        expect(performanceMonitor.openRuns.size).toBe(0);
+    });
+
+    test('a run that finished inside the stall is named; one that finished before it is not', async () => {
+        await performanceMonitor.traceAsync('Old work', async () => {});
+        const gap = performance.now() + 50;
+        await performanceMonitor.traceAsync('During', async () => {});
+        const entryStart = performance.now() - 100;
+        performanceMonitor._recordStall({ startTime: entryStart, duration: 150 });
+        const names = performanceMonitor.getStalls().at(-1).inFlight;
+        expect(names).toContain('During');
+        // a stall that starts after both have ended names neither
+        performanceMonitor._recordStall({ startTime: gap + 10000, duration: 100 });
+        expect(performanceMonitor.getStalls().at(-1).inFlight).toEqual([]);
+    });
+
+    test('a handler that throws still closes its run', async () => {
+        await expect(
+            performanceMonitor.traceAsync('Boom', async () => {
+                throw new Error('x');
+            })
+        ).rejects.toThrow('x');
+        expect(performanceMonitor.openRuns.size).toBe(0);
+        expect(performanceMonitor.finishedRuns.at(-1).name).toBe('Boom');
+    });
+});

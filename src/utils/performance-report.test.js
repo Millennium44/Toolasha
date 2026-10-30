@@ -297,3 +297,27 @@ describe('the rolling window, split by what it measures', () => {
         expect(data.rolling['networth:recalculate'].cpuPercent).toBeUndefined();
     });
 });
+
+describe('panel delays and in-flight work in the trace', () => {
+    const panelDelays = [{ name: 'Combat score panel', count: 1, last: 30000, worst: 30000, median: 30000 }];
+
+    test('the text trace lists panel delays and flags a slow one', () => {
+        const text = formatReport({ panelDelays });
+        expect(text).toContain('Panel delays');
+        expect(text).toContain('Combat score panel');
+        expect(text).toContain('(slow)');
+    });
+
+    test('no delays, no section; the data copy carries them', () => {
+        expect(formatReport({})).not.toContain('Panel delays');
+        expect(reportData({ panelDelays }).panelDelays).toEqual(panelDelays);
+    });
+
+    test('a stall with only async work pending names it instead of saying nothing was instrumented', () => {
+        const text = formatReport({
+            stalls: [{ duration: 400, sinceBoot: 9000, suspects: [], recentEvents: [], inFlight: ['Combat score'] }],
+        });
+        expect(text).toContain('Combat score was pending');
+        expect(text).not.toContain('nothing instrumented');
+    });
+});
