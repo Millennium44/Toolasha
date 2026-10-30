@@ -426,3 +426,49 @@ describe('registered count sources in the panel', () => {
         expect(onScreen().children[1].textContent).not.toContain('dungeon:processedMessages');
     });
 });
+
+describe('panel delays in the panel', () => {
+    const body = () => onScreen().children[1].textContent;
+    const delays = [
+        { name: 'Combat score panel', count: 2, last: 30000, worst: 30000, median: 15250 },
+        { name: 'Item tooltip', count: 9, last: 40, worst: 120, median: 35 },
+    ];
+
+    beforeEach(() => {
+        window.Toolasha = { Core: { performanceMonitor: { ...monitor, getPanelDelays: () => delays } } };
+    });
+
+    test('shows each name with count, last, median and worst', () => {
+        pformancePanel.show();
+        expect(body()).toContain('Panel delays');
+        const rows = [...onScreen().querySelectorAll('tbody tr')].filter((r) =>
+            /Combat score panel|Item tooltip/.test(r.textContent)
+        );
+        expect(rows.map((r) => [...r.children].map((c) => c.textContent))).toEqual([
+            ['Combat score panel', '2', '30000', '15250', '30000'],
+            ['Item tooltip', '9', '40', '35', '120'],
+        ]);
+    });
+
+    test('a delay of one second or more is in the warning color, a fast one is not', () => {
+        pformancePanel.show();
+        const cells = (name) =>
+            [...onScreen().querySelectorAll('tbody tr')].find((r) => r.textContent.startsWith(name)).children;
+        const slow = cells('Combat score panel');
+        expect(slow[2].style.color).not.toBe('');
+        expect(slow[4].style.color).toBe(slow[2].style.color);
+        const fast = cells('Item tooltip');
+        expect(fast[2].style.color).toBe('');
+        expect(fast[4].style.color).toBe('');
+    });
+
+    test('nothing drawn yet, or a monitor too old to answer: no section', () => {
+        window.Toolasha = { Core: { performanceMonitor: { ...monitor, getPanelDelays: () => [] } } };
+        pformancePanel.show();
+        expect(body()).not.toContain('Panel delays');
+        pformancePanel.hide();
+        window.Toolasha = { Core: { performanceMonitor: monitor } };
+        pformancePanel.show();
+        expect(body()).not.toContain('Panel delays');
+    });
+});

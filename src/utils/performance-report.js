@@ -137,6 +137,7 @@ export function formatReport({
     stats = new Map(),
     stalls = [],
     worstStallMs = 0,
+    panelDelays = [],
     environment = {},
 } = {}) {
     const lines = [];
@@ -246,10 +247,26 @@ export function formatReport({
                 ? stall.suspects.map((suspect) => `${suspect.name} ${suspect.ms}ms`).join(', ')
                 : stall.recentEvents?.length
                   ? `no measured work; just after ${stall.recentEvents.join(', ')} (likely the game's own processing)`
-                  : 'nothing instrumented overlapped it';
+                  : stall.inFlight?.length
+                    ? `no measured work; ${stall.inFlight.join(', ')} was pending (async, not proven)`
+                    : 'nothing instrumented overlapped it';
             lines.push(`${ms(stall.duration).padStart(9)}  at ${ms(stall.sinceBoot).padStart(8)}  ${who}`);
         }
         if (stalls.length > 15) lines.push(`           ...and ${stalls.length - 15} earlier`);
+        lines.push('');
+    }
+
+    // Trigger-to-draw latency, which no CPU figure above can show when the
+    // work happens in await continuations
+    if (panelDelays.length) {
+        lines.push('Panel delays (trigger to the panel on screen)');
+        lines.push('-'.repeat(60));
+        for (const row of panelDelays) {
+            lines.push(
+                `${ms(row.worst).padStart(9)}  ${row.name.padEnd(28)} ${row.count}x, last ${ms(row.last)}, median ${ms(row.median)}` +
+                    (row.worst >= 1000 ? '  (slow)' : '')
+            );
+        }
         lines.push('');
     }
 
@@ -269,11 +286,13 @@ export function reportData({
     stats = new Map(),
     stalls = [],
     worstStallMs = 0,
+    panelDelays = [],
     environment = {},
 } = {}) {
     return {
         environment,
         stalls,
+        panelDelays,
         worstStallMs,
         marks: [...marks].sort((a, b) => a.at - b.at),
         features: initTimeline(snapshots),

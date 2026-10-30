@@ -30,6 +30,17 @@ const MAX_ENTRIES_PER_METRIC = 1000;
  * either side is the one thing that would make this figure dishonest. A stall
  * we half-caused is shown as half-caused.
  */
+/**
+ * Panel-delay bookkeeping caps. A trigger that never draws (a tooltip with
+ * nothing to add) is dropped after PANEL_PENDING_MAX_MS rather than measured
+ * against an unrelated later draw; PANEL_SAMPLES_MAX bounds the per-name
+ * history the median is taken from; ASYNC_RUNS_MAX bounds the finished-run
+ * ring stalls are matched against.
+ */
+const PANEL_PENDING_MAX_MS = 120000;
+const PANEL_SAMPLES_MAX = 50;
+const ASYNC_RUNS_MAX = 100;
+
 const STALL_OURS_COVERAGE = 0.8;
 const STALL_NOT_OURS_COVERAGE = 0.2;
 
@@ -527,6 +538,122 @@ class PerformanceMonitor {
     }
 
     /**
+     * Note that something a player did (or the game sent) should now produce a
+     * Toolasha panel or line, and when.
+     *
+     * Paired with `markDrawn`: the gap is the panel's delay, which no duration
+     * in the rolling stats can show when the work runs in await continuations
+     * (the profile score panel took 30 s while every timer read as idle).
+     * Diagnostic only - a no-op, allocating nothing, unless the PFormance
+     * panel is measuring.
+     *
+     * @param {string} name - e.g. `Combat score panel`
+     * @param {boolean} [keepEarliest] - Keep an older pending trigger of this
+     *   name instead of restarting its clock (for triggers that repeat until
+     *   the draw lands, such as a mount pass that runs on every DOM change)
+     */
+    markTrigger(name, keepEarliest = false) {
+        if (!this.enabled) return;
+        const now = monotonicNow();
+        this.pendingPanels = this.pendingPanels || new Map();
+        const existing = this.pendingPanels.get(name);
+        if (keepEarliest && existing !== undefined && now - existing <= PANEL_PENDING_MAX_MS) return;
+        this.pendingPanels.set(name, now);
+    }
+
+    /**
+     * Note that the panel a `markTrigger` was waiting on is on screen. The
+     * latency is recorded under the same name; a draw with no pending trigger
+     * (a refresh, a redraw) records nothing.
+     *
+     * @param {string} name - The name given to `markTrigger`
+     * @returns {number|null} The latency in ms, or null if nothing was pending
+     */
+    markDrawn(name) {
+        if (!this.enabled || !this.pendingPanels) return null;
+        const startedAt = this.pendingPanels.get(name);
+        if (startedAt === undefined) return null;
+        this.pendingPanels.delete(name);
+        const latency = monotonicNow() - startedAt;
+        if (latency > PANEL_PENDING_MAX_MS) return null;
+        this.panelDelays = this.panelDelays || new Map();
+        let row = this.panelDelays.get(name);
+        if (!row) {
+            row = { count: 0, last: 0, worst: 0, samples: [] };
+            this.panelDelays.set(name, row);
+        }
+        row.count += 1;
+        row.last = latency;
+        if (latency > row.worst) row.worst = latency;
+        row.samples.push(latency);
+        if (row.samples.length > PANEL_SAMPLES_MAX) row.samples.shift();
+        return latency;
+    }
+
+    /**
+     * The recorded panel delays, worst first.
+     * @returns {Array<{name: string, count: number, last: number, worst: number, median: number}>}
+     */
+    getPanelDelays() {
+        const rows = [];
+        for (const [name, row] of this.panelDelays || []) {
+            const sorted = [...row.samples].sort((a, b) => a - b);
+            const mid = sorted.length >> 1;
+            const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+            rows.push({ name, count: row.count, last: row.last, worst: row.worst, median });
+        }
+        return rows.sort((a, b) => b.worst - a.worst);
+    }
+
+    /**
+     * Run an async handler, noting that it was in flight.
+     *
+     * A stall that overlaps a run recorded here carries its name in
+     * `inFlight`. This is not CPU coverage - an async run's wall time includes
+     * every await, so it never counts toward `coveredMs` - it is the answer to
+     * "what Toolasha work was pending while the thread was blocked", for
+     * handlers whose work happens in continuations nothing else attributes.
+     * While the PFormance panel is not measuring it just calls `fn`.
+     *
+     * @param {string} name - What the handler is
+     * @param {Function} fn - Returns the handler's promise (or value)
+     * @returns {Promise<*>} Whatever `fn` returned
+     */
+    traceAsync(name, fn) {
+        if (!this.enabled) return fn();
+        return this._traceRun(name, fn);
+    }
+
+    async _traceRun(name, fn) {
+        const run = { name, start: monotonicNow(), end: null };
+        this.openRuns = this.openRuns || new Set();
+        this.openRuns.add(run);
+        try {
+            return await fn();
+        } finally {
+            run.end = monotonicNow();
+            this.openRuns.delete(run);
+            this.finishedRuns = this.finishedRuns || [];
+            this.finishedRuns.push(run);
+            if (this.finishedRuns.length > ASYNC_RUNS_MAX) this.finishedRuns.shift();
+        }
+    }
+
+    /**
+     * The async runs that overlapped a stall's window.
+     * @param {PerformanceEntry} entry - The longtask
+     * @returns {string[]} Distinct names, at most five
+     */
+    _inFlightFor(entry) {
+        const from = entry.startTime;
+        const to = entry.startTime + entry.duration;
+        const names = new Set();
+        for (const run of this.openRuns || []) if (run.start <= to) names.add(run.name);
+        for (const run of this.finishedRuns || []) if (run.start <= to && run.end >= from) names.add(run.name);
+        return [...names].slice(0, 5);
+    }
+
+    /**
      * Wrap a function with automatic timing.
      *
      * A synchronous function is timed as blocking; one returning a promise is
@@ -698,6 +825,8 @@ class PerformanceMonitor {
             // still in the window — reading it later is then O(1) per stall.
             coveredMs: attribution.coveredMs,
             recentEvents: this._eventsFor(entry),
+            // Async work pending across the stall, which coverage cannot count
+            inFlight: this._inFlightFor(entry),
         });
         if (duration > this.worstStallMs) this.worstStallMs = duration;
         if (this.stalls.length > 200) this.stalls.shift();
@@ -903,6 +1032,9 @@ class PerformanceMonitor {
         this.elapsedMetrics.clear();
         this.stalls = [];
         this.worstStallMs = 0;
+        this.pendingPanels?.clear();
+        this.panelDelays?.clear();
+        this.finishedRuns = [];
         // Marks are the startup trace and cannot be taken again without a
         // reload, so resetting the rolling stats leaves them alone
     }
