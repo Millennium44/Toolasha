@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     ready: true,
     listeners: new Set(),
     characterListeners: new Set(),
+    inputListeners: new Set(),
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -26,8 +27,14 @@ vi.mock('../../core/data-manager.js', () => ({
             return mocks.items;
         },
         getCurrentCharacterId: vi.fn(() => mocks.characterId),
-        on: vi.fn((event, fn) => mocks.characterListeners.add(fn)),
-        off: vi.fn((event, fn) => mocks.characterListeners.delete(fn)),
+        on: vi.fn((event, fn) => {
+            if (event === 'character_initialized') mocks.characterListeners.add(fn);
+            else mocks.inputListeners.add(fn);
+        }),
+        off: vi.fn((event, fn) => {
+            mocks.characterListeners.delete(fn);
+            mocks.inputListeners.delete(fn);
+        }),
     },
 }));
 
@@ -210,6 +217,7 @@ describe('collect, stored copy and publisher', () => {
         mocks.characterId = 'char-1';
         mocks.listeners.clear();
         mocks.characterListeners.clear();
+        mocks.inputListeners.clear();
         delete globalThis.GM_getValue;
         delete globalThis.GM_setValue;
         stopMetzLoadoutPublisher();
@@ -341,5 +349,41 @@ describe('collect, stored copy and publisher', () => {
 
         expect(globalThis.GM_setValue).toHaveBeenCalledTimes(2);
         expect(JSON.parse(globalThis.GM_setValue.mock.calls[1][1])).toEqual({ characterId: 'char-2', loadouts: [] });
+    });
+
+    test('inventory and ability changes republish only when the built list changes', async () => {
+        vi.useFakeTimers();
+        globalThis.GM_getValue = vi.fn(() => null);
+        globalThis.GM_setValue = vi.fn();
+        mocks.snapshots = [MELEE_SET];
+        mocks.items = ownedFor(MELEE_SET);
+        mocks.abilities = [{ abilityHrid: '/abilities/pierce', level: 10 }];
+        await startMetzLoadoutPublisher();
+        vi.advanceTimersByTime(2100);
+        expect(globalThis.GM_setValue).toHaveBeenCalledTimes(1);
+        const fire = () => {
+            for (const fn of [...mocks.inputListeners]) fn();
+            vi.advanceTimersByTime(2100);
+        };
+
+        // unrelated item, no effect on any loadout
+        mocks.items = [...mocks.items, { itemHrid: '/items/cheese', enhancementLevel: 0, count: 5 }];
+        fire();
+        expect(globalThis.GM_setValue).toHaveBeenCalledTimes(1);
+
+        // a worn piece refined further
+        mocks.items = [...mocks.items, { itemHrid: '/items/holy_spear', enhancementLevel: 14, count: 1 }];
+        fire();
+        expect(globalThis.GM_setValue).toHaveBeenCalledTimes(2);
+        const spear = JSON.parse(globalThis.GM_setValue.mock.calls[1][1]).loadouts[0].equipment[0];
+        expect(spear.enhancementLevel).toBe(14);
+
+        // an ability level-up
+        mocks.abilities = [{ abilityHrid: '/abilities/pierce', level: 11 }];
+        fire();
+        expect(globalThis.GM_setValue).toHaveBeenCalledTimes(3);
+
+        stopMetzLoadoutPublisher();
+        expect(mocks.inputListeners.size).toBe(0);
     });
 });

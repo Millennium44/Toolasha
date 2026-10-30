@@ -25,12 +25,15 @@ const COMBAT_ACTION_TYPE = '/action_types/combat';
 const TOOL_SLOT_PATTERN = /_tool$/;
 const GM_LOADOUTS_KEY = 'toolasha_metz_loadouts';
 const PUBLISH_DEBOUNCE_MS = 2000;
+// action_completed re-emits items_updated, so these two cover inventory and abilities
+const INPUT_EVENTS = ['items_updated', 'abilities_updated'];
 
 const timerRegistry = createTimerRegistry();
 let publishTimeout = null;
 let lastPublished = null;
 let updateListener = null;
 let characterListener = null;
+let inputsListener = null;
 let generation = 0;
 
 const isObject = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -243,6 +246,10 @@ export async function startMetzLoadoutPublisher() {
         if (mine === generation) schedulePublish();
     };
     dataManager.on?.('character_initialized', characterListener);
+    // Owned levels and learned ability levels feed the built list without a snapshot update. The
+    // publish is debounced and deduplicated, so frequent inventory events cost no GM writes.
+    inputsListener = () => schedulePublish();
+    for (const event of INPUT_EVENTS) dataManager.on?.(event, inputsListener);
     await loadoutSnapshot.whenReady();
     if (mine === generation) schedulePublish();
 }
@@ -256,6 +263,10 @@ export function stopMetzLoadoutPublisher() {
     if (characterListener) {
         dataManager.off?.('character_initialized', characterListener);
         characterListener = null;
+    }
+    if (inputsListener) {
+        for (const event of INPUT_EVENTS) dataManager.off?.(event, inputsListener);
+        inputsListener = null;
     }
     timerRegistry.clearAll();
     publishTimeout = null;
