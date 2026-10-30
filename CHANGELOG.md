@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### No Marketplace for untradable items
+
+- Toolasha's market links and buttons no longer open the Marketplace for an item that can't be traded, matching the game (from upstream).
+
 ### Quick-input speed counts the guild shrine
 
 - The action panel's speed total and base-to-actual time now include the guild shrine's action speed, which the breakdown already listed (from upstream).
