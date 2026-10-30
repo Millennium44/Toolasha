@@ -38,12 +38,20 @@ describe('azure tools, jewelry, dungeon equipment and refining', () => {
         ]);
     });
 
-    test('dungeon equipment: crafted equipment with a dungeon component, not the plain sword', () => {
-        expect(hrids(resolveAchievement(A.dungeon, D))).toEqual(['/actions/crafting/chimerical_quiver']);
+    test('dungeon equipment: any non-refine recipe making a refinable piece, upgrade item or not', () => {
+        expect(hrids(resolveAchievement(A.dungeon, D))).toEqual([
+            '/actions/cheesesmithing/chaotic_flail',
+            '/actions/cheesesmithing/dodocamel_gauntlets',
+            '/actions/tailoring/kraken_tunic',
+        ]);
     });
 
     test('refining: the _refined piece made from an upgrade item, nothing else', () => {
-        expect(hrids(resolveAchievement(A.refine, D))).toEqual(['/actions/crafting/chimerical_quiver_refined']);
+        expect(hrids(resolveAchievement(A.refine, D))).toEqual([
+            '/actions/cheesesmithing/chaotic_flail_refined',
+            '/actions/cheesesmithing/dodocamel_gauntlets_refined',
+            '/actions/tailoring/kraken_tunic_refined',
+        ]);
     });
 
     test('the steam id alone selects the set when the description is in another language', () => {
