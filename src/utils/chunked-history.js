@@ -462,6 +462,8 @@ class ChunkedHistory {
         this._entries = [];
         /** chunkId → {json, count} last written for it, so a save can write only what moved */
         this._snapshot = new Map();
+        /** Chunk writes queued and not yet settled, so `onLanded` can wait for earlier saves too */
+        this._inFlightWrites = new Set();
         /**
          * The loaded character's deletions, `id → {at, fp, bulk}`.
          *
@@ -1332,6 +1334,10 @@ class ChunkedHistory {
      *   changed since the last save. An append knows exactly one — `groupOf(entry)` — and passing
      *   it skips serialising every other chunk just to discover they are identical. Omit it and
      *   every chunk is compared, which is always correct and always the full cost.
+     * @param {function(boolean): void} [options.onLanded] - Called once every write this save queued
+     *   (and any earlier write still in flight) has settled, with whether all of them landed. The
+     *   returned promise resolves at QUEUE time for a debounced store, so it cannot say whether the
+     *   write survived; this can. Not called when the save declined to write anything.
      * @returns {Promise<boolean>} False when there was nowhere to write it
      */
     async save(charId, entries, options = {}) {
@@ -1378,13 +1384,17 @@ class ChunkedHistory {
         }
 
         if (owns && this._legacy) {
-            storage.set(this.legacyKey(charId), list, this.storeName, this.immediate);
+            const legacyWrite = Promise.resolve(
+                storage.set(this.legacyKey(charId), list, this.storeName, this.immediate)
+            );
+            this._notifyLanded(options.onLanded, [legacyWrite]);
             return true;
         }
 
         const grouped = this._group(list);
         const next = new Map();
         const pending = [];
+        const queued = [];
 
         // A history of a year of hourly records is hundreds of chunks, and
         // appending one entry used to re-serialise all of them on every append
@@ -1440,6 +1450,10 @@ class ChunkedHistory {
                 console.error(`[${this.label}] Writing chunk ${chunkId} failed:`, error);
                 this._evictSnapshot(chunkId, serialized);
             });
+            queued.push(write);
+            this._inFlightWrites.add(write);
+            const forget = () => this._inFlightWrites.delete(write);
+            write.then(forget, forget);
             if (this.immediate) pending.push(write);
         }
 
@@ -1448,13 +1462,31 @@ class ChunkedHistory {
         for (const chunkId of snapshot.keys()) {
             if (next.has(chunkId)) continue;
             if (owns) this._noteKnown(chunkId, [], snapshot.get(chunkId));
-            pending.push(this._removeChunk(charId, chunkId, owns));
+            const removal = this._removeChunk(charId, chunkId, owns);
+            pending.push(removal);
+            queued.push(removal);
         }
 
         if (owns) this._snapshot = next;
+        this._notifyLanded(options.onLanded, queued);
 
         if (pending.length > 0) await Promise.all(pending);
         return true;
+    }
+
+    /**
+     * Tell a caller whether the writes behind a save actually landed.
+     * @param {function(boolean): void|undefined} onLanded - The callback, if one was given
+     * @param {Array<Promise>} queued - The writes the save queued
+     * @private
+     */
+    _notifyLanded(onLanded, queued) {
+        if (typeof onLanded !== 'function') return;
+        const all = [...queued, ...this._inFlightWrites];
+        Promise.all(all).then(
+            (results) => onLanded(results.every((ok) => ok !== false)),
+            () => onLanded(false)
+        );
     }
 
     /**
