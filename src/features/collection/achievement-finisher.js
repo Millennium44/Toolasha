@@ -322,8 +322,6 @@ class AchievementFinisher {
         this.readinessVersion = 0;
         this.readinessRedrawPending = false;
         this.marketListener = null;
-        /** card element → achievement hrid or null, so each card is identified once */
-        this.cardHrids = new WeakMap();
         this.catalogSource = null;
         this.catalog = null;
     }
@@ -386,7 +384,6 @@ class AchievementFinisher {
         this.resolutions = new Map();
         this.resolutionSource = null;
         this.readinessCache = new Map();
-        this.cardHrids = new WeakMap();
         this.catalogSource = null;
         this.catalog = null;
         this.isInitialized = false;
@@ -639,7 +636,9 @@ class AchievementFinisher {
      * @returns {string|null}
      */
     hridOfCard(card, detailMap) {
-        if (this.cardHrids.has(card)) return this.cardHrids.get(card);
+        // Read each time: the game may reuse one card element for another achievement when it
+        // re-renders the list (Show Incomplete Only, a tab switch), so an answer cached on the element
+        // goes stale
         let hrid = hridFromIcon(card, detailMap);
         if (!hrid) {
             const texts = leafTexts(card);
@@ -655,7 +654,6 @@ class AchievementFinisher {
                 }
             }
         }
-        this.cardHrids.set(card, hrid);
         return hrid;
     }
 
@@ -711,9 +709,13 @@ class AchievementFinisher {
         const text = `[${readinessText(res, ready, clientData, getContext().combatLevel)}]`;
         const go = hasGoButton(res, ready);
         const ironCow = getContext().ironCow;
-        const mats = missingMatsLines(res, ready, clientData, ironCow).length > 0;
+        const matsLines = missingMatsLines(res, ready, clientData, ironCow);
+        // The button needs the actions bundle's opener, which can arrive after the first draw, and its
+        // tooltip lists the amounts: both belong in the key or a redraw leaves the old button behind
+        const mats = matsLines.length > 0 && Boolean(missingMaterialsButton());
+        const matsKey = mats ? matsLines.map((m) => `${m.itemHrid}:${m.missing}`) : [];
         return {
-            key: JSON.stringify(['ready', text, go, mats, ready.buyHrid]),
+            key: JSON.stringify(['ready', text, go, matsKey, ready.buyHrid]),
             build: () => {
                 const hint = hintWithCoins(text);
                 hint.className = `${PANEL_CLASS}-ready`;
