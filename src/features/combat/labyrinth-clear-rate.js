@@ -26,7 +26,6 @@ import loadoutSnapshot from './loadout-snapshot.js';
 import { LOADOUT_ONLY_ABILITIES } from './labyrinth-fingerprint.js';
 import { hasCoarsePointer, isMobileMode } from '../../utils/mobile.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
-import { itemIcon, itemSpriteUrl } from '../../utils/overlay-format.js';
 import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/combat-level.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
@@ -59,7 +58,6 @@ import {
 } from './labyrinth-pathing.js';
 import { parseLabyrinthActionName, monsterHridByName, liveClearDisplay } from './labyrinth-live-readout.js';
 import {
-    SUPPLY_KINDS,
     resolveSupplyHrids,
     readSupplyCounts,
     readRunSupplyCounts,
@@ -151,8 +149,6 @@ const LIVE_SIM_REFRESH_MS = 4000;
  */
 const LIVE_SIM_MAX_AGE_MS = 30000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
-/** Only reached for when the game's item sheet has not been drawn from yet */
-const SUPPLY_EMOJI = { torch: '🔥', shroud: '👻', beacon: '📡' };
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 /** The room tooltips' headline row: one label, so the combat and skilling cards match */
 const CLEAR_CHANCE_LABEL = 'Clear Chance';
@@ -922,7 +918,6 @@ class LabyrinthClearRate {
                 refreshRoomDistribution();
             }
             this.injectTileControls();
-            this.refreshSupplyReadout();
             this.pruneClearedTileBadges();
             this.refreshAttemptBadges();
             // Re-run after React repaints the cleared tile (the WS message
@@ -3290,15 +3285,6 @@ class LabyrinthClearRate {
             group(distributionButton);
         }
 
-        // What is actually in the bag, beside the controls that spend it. The
-        // planners read this fresh at plan time; this is only so the numbers a
-        // plan is about to be measured against are visible before pressing.
-        const supplyEl = document.createElement('span');
-        supplyEl.className = `${TILE_CONTROLS_CLASS}-supplies`;
-        supplyEl.style.cssText = 'font-size:10px; color:#9ab0d8; white-space:nowrap;';
-        container.appendChild(supplyEl);
-        this.refreshSupplyReadout();
-
         const clearButton = document.createElement('button');
         clearButton.className = `${TILE_CONTROLS_CLASS}-clear-button`;
         clearButton.textContent = 'Clear';
@@ -3989,95 +3975,6 @@ class LabyrinthClearRate {
             bestOwnedTier(supplies.inventory, kind, supplies.hrids) ||
             null
         );
-    }
-
-    /**
-     * Redraw the toolbar's supply readout.
-     *
-     * Drawn with the game's own item sprites rather than emoji: 🔥👻📡 were three
-     * guesses at what the game means by a torch, a shroud and a beacon, in
-     * whatever font the browser picked, sitting a few pixels off the baseline
-     * beside the game's own artwork. The sprite for the best tier held is used,
-     * so the icon also says which tier the count is mostly made of.
-     *
-     * The label says which pile is being shown — "this run" and "held" are
-     * different numbers during a run and a readout that does not say which one
-     * it means is the bug this replaced.
-     *
-     * Cheap enough to run on every labyrinth update, which is what keeps it
-     * honest as supplies are spent mid-run.
-     */
-    refreshSupplyReadout() {
-        const el = document.querySelector(`.${TILE_CONTROLS_CLASS}-supplies`);
-        if (!el) return;
-
-        const supplies = this.getSupplyCounts();
-        if (!supplies.known) {
-            el.replaceChildren();
-            el.title = '';
-            return;
-        }
-
-        el.replaceChildren();
-        el.style.display = 'inline-flex';
-        el.style.alignItems = 'center';
-        el.style.gap = '4px';
-
-        const label = document.createElement('span');
-        label.textContent = `${supplies.label}:`;
-        el.appendChild(label);
-
-        for (const kind of SUPPLY_KINDS) {
-            const count = document.createElement('span');
-            count.textContent = String(supplies[kind]);
-            el.appendChild(count);
-            el.appendChild(this.supplyIcon(kind, supplies));
-        }
-
-        el.title = this.supplyReadoutTitle(supplies);
-    }
-
-    /**
-     * One supply's icon: the game's sprite for the best tier held, or the emoji
-     * while the game has not drawn from the item sheet yet and there is nothing
-     * to point `<use>` at.
-     *
-     * @param {string} kind - 'torch' | 'shroud' | 'beacon'
-     * @param {Object} supplies - As returned by getSupplyCounts
-     * @returns {Element} An icon
-     */
-    supplyIcon(kind, supplies) {
-        const hrid = bestOwnedTier(supplies, kind, supplies.hrids) || supplies.hrids?.[kind]?.[0];
-        if (hrid && itemSpriteUrl()) {
-            const icon = itemIcon(hrid, 14);
-            icon.style.verticalAlign = 'middle';
-            return icon;
-        }
-        const fallback = document.createElement('span');
-        fallback.textContent = SUPPLY_EMOJI[kind] || '';
-        return fallback;
-    }
-
-    /**
-     * What the readout says when you hover it — including, when a run is going
-     * but neither the payload nor the screen would say what it is carrying, that
-     * the figures are the bag's and the run may hold fewer.
-     *
-     * @param {Object} supplies - As returned by getSupplyCounts
-     * @returns {string}
-     */
-    supplyReadoutTitle(supplies) {
-        const figures = `Torches ${supplies.torch}, shrouds ${supplies.shroud}, beacons ${supplies.beacon} — all tiers`;
-        if (supplies.source === 'run') {
-            return `${figures}, as carried by this run. Plans are checked against these.`;
-        }
-        if (supplies.stale) {
-            return (
-                `${figures}, from your inventory — this run's own stock could not be read. A run takes its ` +
-                'supplies out of the bag when it starts, so it may be carrying fewer than these.'
-            );
-        }
-        return `${figures}, from your inventory. Plans are checked against these.`;
     }
 
     /**
