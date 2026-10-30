@@ -246,7 +246,8 @@ export function formatReport({
             const who = stall.suspects?.length
                 ? stall.suspects.map((suspect) => `${suspect.name} ${suspect.ms}ms`).join(', ')
                 : stall.recentEvents?.length
-                  ? `no measured work; just after ${stall.recentEvents.join(', ')} (likely the game's own processing)`
+                  ? `no measured work; just after ${stall.recentEvents.join(', ')} (likely the game's own processing)` +
+                    (stall.inFlight?.length ? `; ${stall.inFlight.join(', ')} was pending (async, not proven)` : '')
                   : stall.inFlight?.length
                     ? `no measured work; ${stall.inFlight.join(', ')} was pending (async, not proven)`
                     : 'nothing instrumented overlapped it';
