@@ -29,6 +29,7 @@ const game = vi.hoisted(() => ({
     houseRooms: null,
     learned: null,
     rareFind: 0,
+    loadoutListeners: [],
     equipment: new Map(),
 }));
 
@@ -102,6 +103,14 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+vi.mock('../combat/loadout-snapshot.js', () => ({
+    default: {
+        onUpdate: (fn) => game.loadoutListeners.push(fn),
+        offUpdate: (fn) => {
+            game.loadoutListeners = game.loadoutListeners.filter((f) => f !== fn);
+        },
+    },
+}));
 vi.mock('../../utils/bonus-revenue-calculator.js', () => ({
     getRareFindParts: () => ({ total: game.rareFind }),
 }));
@@ -354,6 +363,7 @@ describe('hints on the game achievement cards', () => {
         game.houseRooms = null;
         game.learned = null;
         game.rareFind = 0;
+        game.loadoutListeners = [];
         game.settingHandlers = [];
         game.handlers = {};
         game.observers = [];
@@ -444,6 +454,21 @@ describe('hints on the game achievement cards', () => {
         game.handlers.buffs_updated.forEach((fn) => fn());
         vi.advanceTimersByTime(1500);
         expect(lineOf('Buttered Up').textContent).toContain('~1 in 25.0K actions');
+    });
+
+    test('a saved loadout edit invalidates readiness, and disable stops listening', () => {
+        game.detail = ANY_OF_ACHIEVEMENTS;
+        game.clientData = { ...ANY_OF_DATA, achievementDetailMap: ANY_OF_ACHIEVEMENTS };
+        game.skills = [{ skillHrid: '/skills/milking', level: 70 }];
+        game.inventory = [];
+        achievementsTab(ANY_OF_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(game.loadoutListeners).toHaveLength(1);
+        const before = finisher.readinessVersion;
+        game.loadoutListeners.forEach((fn) => fn());
+        expect(finisher.readinessVersion).toBe(before + 1);
+        finisher.disable();
+        expect(game.loadoutListeners).toHaveLength(0);
     });
 
     test('Missing Mats on an any-of card opens the bill of the action it picked', () => {
