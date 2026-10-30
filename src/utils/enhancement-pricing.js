@@ -33,6 +33,7 @@ import { getItemPrice, getItemPrices } from './market-data.js';
 import { getArtisanBonus } from './artisan-bonus.js';
 import { findProducingAction } from './production-index.js';
 import { getCapeBaseValue, getCapeBaseValueMode, isUntradableCape } from './untradable-cape.js';
+import { getMarketValuesEpoch } from './market-values.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 
 /**
@@ -77,11 +78,20 @@ let _priceVersion = 0;
 // so the override store's own version is part of every entry too. A bundle or test without the store
 // has no custom prices to version.
 function _customVersion() {
+    let custom = 0;
+    let values = 0;
     try {
-        return getCustomPriceVersion();
+        custom = getCustomPriceVersion();
     } catch {
-        return 0;
+        // No override store
     }
+    try {
+        // The game's value map clamps and fills getPrice() without any order book moving
+        values = getMarketValuesEpoch();
+    } catch {
+        // A suite that mocks the value module without the counter has no map to version
+    }
+    return `${custom}|${values}`;
 }
 
 function _buffVersion() {

@@ -46,6 +46,7 @@ import { getItemPrices, getPricingMode } from './market-data.js';
 import { resolveItemPrice } from './profit-helpers.js';
 import { getShopCoinCost } from './game-lookups.js';
 import { testerShopEnabled } from './tester-shop.js';
+import { getMarketValuesEpoch } from './market-values.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 import { getCapeBaseValue, getCapeBaseValueMode, isRefinedCape, isUntradableCape } from './untradable-cape.js';
 import {
@@ -176,7 +177,7 @@ function guardQuotes(itemHrid, options) {
 
 /**
  * A short string that changes whenever something the rule reads outside the order book changes: the
- * profit pricing mode, the net-worth mode, the base-item crafting setting, and the custom prices. A
+ * profit pricing mode, the net-worth mode, the base-item crafting setting, the custom prices and the game's value map. A
  * cache over prices built by this rule puts it in its key.
  * @returns {string}
  */
@@ -186,6 +187,12 @@ export function pricingStamp() {
         custom = getCustomPriceVersion();
     } catch {
         // A bundle or test without the override store has no custom prices to version
+    }
+    let values = 0;
+    try {
+        values = getMarketValuesEpoch();
+    } catch {
+        // A suite that mocks the value module without the counter has no map to version
     }
     const setting = (key) => config.getSettingValue?.(key) ?? '';
     return [
@@ -201,6 +208,8 @@ export function pricingStamp() {
         // What an unrefined untradable cape is assumed to be worth moves every cape's base cost
         getCapeBaseValueMode(),
         custom,
+        // The game's value map clamps and fills getPrice() without any order book moving
+        values,
     ].join('|');
 }
 

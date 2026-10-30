@@ -251,6 +251,19 @@ describe('production-cost memo invalidation', () => {
         expect(getProductionCost('/items/custom_mat')).toBe(2_000);
     });
 
+    test('a game value-map swap recomputes the cost even when no price listener fired', async () => {
+        const { applyMarketValuesMessage, _resetMarketValues } = await import('./market-values.js');
+        _resetMarketValues();
+        makeRecipe('/items/vmap_mat', '/items/vmap_ore');
+        expect(getProductionCost('/items/vmap_mat')).toBe(500);
+        // The map clamps what the price lookup answers; here the lookup just changes behind the memo
+        game.prices['/items/vmap_ore:0'] = { ask: 1_000, bid: 990 };
+        expect(getProductionCost('/items/vmap_mat')).toBe(500);
+        applyMarketValuesMessage({ marketValuesVersion: 9, marketItemValues: { '/items/vmap_ore': { 0: 1_000 } } });
+        expect(getProductionCost('/items/vmap_mat')).toBe(2_000);
+        _resetMarketValues();
+    });
+
     test('inputs are priced at the custom buy figure, not the custom sell one', () => {
         makeRecipe('/items/side_mat', '/items/side_ore');
         game.customSides['/items/side_ore'] = { buy: 300, sell: 900 };
