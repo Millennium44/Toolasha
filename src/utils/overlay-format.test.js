@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import { describe, test, expect, beforeEach } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import {
     signedPercent,
     shortDuration,
@@ -11,6 +11,7 @@ import {
     GLYPHS,
     ROW_COLORS,
     resetSpriteSheetCache,
+    linkToMarketplace,
 } from './overlay-format.js';
 
 describe('signedPercent', () => {
@@ -347,5 +348,30 @@ describe('the identical-draw fast path', () => {
         row(container, [{ text: 'a' }]);
         expect(container.textContent).toBe('a');
         expect(container.childElementCount).toBe(1);
+    });
+});
+
+describe('linkToMarketplace', () => {
+    test('links an element and navigates on click', () => {
+        const el = document.createElement('span');
+        const navigate = vi.fn();
+        linkToMarketplace(el, '/items/cheese', navigate);
+        expect(el.style.cursor).toBe('pointer');
+        el.click();
+        expect(navigate).toHaveBeenCalledWith('/items/cheese');
+    });
+
+    test('an item the Marketplace refuses is not made a dead link', () => {
+        const el = document.createElement('span');
+        const navigate = Object.assign(vi.fn(), { canOpen: (hrid) => hrid !== '/items/gatherer_cape' });
+        linkToMarketplace(el, '/items/gatherer_cape', navigate);
+        expect(el.style.cursor).toBe('');
+        expect(el.title).toBe('');
+        el.click();
+        expect(navigate).not.toHaveBeenCalled();
+
+        const tradable = document.createElement('span');
+        linkToMarketplace(tradable, '/items/cheese', navigate);
+        expect(tradable.style.cursor).toBe('pointer');
     });
 });

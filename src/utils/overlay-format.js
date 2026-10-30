@@ -132,10 +132,13 @@ export function skillIcon(skill, size = 18) {
  *
  * @param {HTMLElement} element - Icon or name
  * @param {string} itemHrid - Item to open
- * @param {Function} navigate - `(itemHrid) => void`, injected so this file stays DOM-only
+ * @param {Function} navigate - `(itemHrid) => void`, injected so this file stays DOM-only. A
+ *   `navigate.canOpen(itemHrid)` that answers false (an untradable item, which the Marketplace
+ *   refuses) leaves the element as it was: no pointer, no tooltip, no dead click.
  */
 export function linkToMarketplace(element, itemHrid, navigate) {
     if (!element || !itemHrid) return;
+    if (typeof navigate?.canOpen === 'function' && !navigate.canOpen(itemHrid)) return;
 
     element.style.cursor = 'pointer';
     element.title = 'Open in the marketplace';

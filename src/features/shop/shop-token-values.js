@@ -23,6 +23,7 @@ import { formatKMB } from '../../utils/formatters.js';
 import { CAPE_BASE_VALUE_SETTING } from '../../utils/untradable-cape.js';
 import { DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { itemHridFromIcon } from '../../utils/item-icon.js';
 import {
     badgeSide,
@@ -38,11 +39,13 @@ const OBSERVER_NAME = 'ShopTokenValues';
 const CATCHUP_DELAY_MS = 500;
 const REFRESH_DEBOUNCE_MS = 100;
 
-// Settings that move a badge: the book side, and what a base cape is assumed to be worth
+// Settings that move a badge: the book side, how an Iron Cow values what a token buys, and what a base
+// cape is assumed to be worth
 const WATCHED_SETTINGS = [
     'profitCalc_pricingMode',
     'expectedValue_respectPricingMode',
     ...PATIENT_TICK_SETTING_KEYS,
+    IRONCOW_VALUATION_SETTING,
     CAPE_BASE_VALUE_SETTING,
 ];
 
@@ -129,6 +132,12 @@ class ShopTokenValues {
         marketAPI.on(this.priceHandler);
         for (const key of WATCHED_SETTINGS) {
             this.unregisterHandlers.push(config.onSettingChange(key, () => this.scheduleRefresh()));
+        }
+        // A settings load (a sync pull, an import, a copy from another character) swaps the whole map
+        // without firing the per-key channel
+        if (typeof config.onSettingsLoaded === 'function') {
+            const offLoaded = config.onSettingsLoaded(() => this.scheduleRefresh());
+            if (typeof offLoaded === 'function') this.unregisterHandlers.push(offLoaded);
         }
     }
 

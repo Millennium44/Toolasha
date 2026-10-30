@@ -27,6 +27,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Audit fixes before release
 
 - The Labyrinth toolbar no longer shows the "this run:" torch/shroud/beacon count, a diagnostic that is no longer needed.
+- Shop token badges redraw when the Iron Cow valuation setting changes or settings arrive by sync or import, and untradable items no longer look like Marketplace links.
 - Price updates no longer make every price-based feature recompute everything: notifications say which prices moved, net worth drops only enhancement costs that read a changed price, and inventory badges reuse tiles whose inputs did not change.
 - Opening the Achievements tab no longer redraws the hints about 700 times (once per card part the game added), and the Labyrinth no longer redraws its clear-rate overlays once per skill: each froze the page for close to a second.
 - Enhancement chain solves are remembered, so +20 tooltips, badges and planners stop re-solving the same steps; the marketplace profit sort no longer freezes the page (it pauses between items), and token values, Alchemy best items, tea suggestions and the profile score stop rescanning the whole shop or action list per item.

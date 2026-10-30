@@ -13,11 +13,18 @@ const mocks = vi.hoisted(() => ({
     settingListeners: [],
     marketListeners: [],
     marketOff: [],
+    loadedListeners: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: () => mocks.enabled,
+        onSettingsLoaded: (cb) => {
+            mocks.loadedListeners.push(cb);
+            return () => {
+                mocks.unregistered++;
+            };
+        },
         onSettingChange: (key, cb) => {
             mocks.settingListeners.push([key, cb]);
             return () => {
@@ -110,6 +117,7 @@ beforeEach(() => {
     mocks.unregistered = 0;
     mocks.ready = [];
     mocks.settingListeners = [];
+    mocks.loadedListeners = [];
     mocks.marketListeners = [];
     mocks.marketOff = [];
     mocks.items = Object.fromEntries(
@@ -312,7 +320,11 @@ describe('lifecycle', () => {
         try {
             document.body.innerHTML = `<div class="ShopPanel_shopItems__x">${dungeonTile('bulk', 'chimerical_token', '1')}</div>`;
             feature.initialize();
-            const registered = mocks.handlers.length + mocks.ready.length + mocks.settingListeners.length;
+            const registered =
+                mocks.handlers.length +
+                mocks.ready.length +
+                mocks.settingListeners.length +
+                mocks.loadedListeners.length;
             feature.refreshAll();
             expect(badges()).toHaveLength(1);
             feature.scheduleRefresh();
@@ -368,6 +380,29 @@ describe('lifecycle', () => {
             mocks.settingListeners.find(([key]) => key === 'profitCalc_patientTickSell')[1]();
             vi.advanceTimersByTime(200);
             expect(badges()[0].textContent).toBe('9/token');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('an Iron Cow valuation change or a settings load redraws', () => {
+        vi.useFakeTimers();
+        try {
+            document.body.innerHTML = `<div class="ShopPanel_shopItems__x">${dungeonTile('bulk', 'chimerical_token', '1')}</div>`;
+            feature.initialize();
+            mocks.marketListeners[0]();
+            vi.advanceTimersByTime(200);
+
+            mocks.lines[CHIM][1] = line('/items/bulk', 1, 11);
+            mocks.settingListeners.find(([key]) => key === 'profitCalc_ironCowValuation')[1]();
+            vi.advanceTimersByTime(200);
+            expect(badges()[0].textContent).toBe('11/token');
+
+            mocks.lines[CHIM][1] = line('/items/bulk', 1, 13);
+            expect(mocks.loadedListeners).toHaveLength(1);
+            mocks.loadedListeners[0]();
+            vi.advanceTimersByTime(200);
+            expect(badges()[0].textContent).toBe('13/token');
         } finally {
             vi.useRealTimers();
         }
