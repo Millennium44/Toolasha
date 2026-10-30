@@ -364,7 +364,18 @@ function calculateXpPerHour(actionDetails, buffs, playerLevel, otherEfficiency, 
  * @returns {number} Gold per hour (profit after market tax)
  */
 function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherEfficiency, gameData, context) {
-    const { equipment, itemDetailMap } = context;
+    const { equipment, itemDetailMap, priceMemo } = context;
+    // A drop's sell price does not depend on the tea combination, so one optimizer run quotes it once
+    // (the run's context carries the memo; a caller without one quotes every time, as before)
+    const sellPrice = (itemHrid) => {
+        if (!priceMemo) return getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) || 0;
+        let price = priceMemo.get(itemHrid);
+        if (price === undefined) {
+            price = getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) || 0;
+            priceMemo.set(itemHrid, price);
+        }
+        return price;
+    };
     const requiredLevel = actionDetails.levelRequirement?.level || 1;
     const skillName = actionDetails.type.split('/').pop();
 
@@ -421,14 +432,13 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
         const avgAmountPerAction = avgCount * gatheringBonus;
 
         // Get item price (use 'sell' side for output items to match tile calculation)
-        const rawPrice = getItemPrice(drop.itemHrid, { context: 'profit', side: 'sell' }) || 0;
+        const rawPrice = sellPrice(drop.itemHrid);
 
         // Check for processing conversion
         if (buffs.processing > 0) {
             const processedData = findProcessingConversion(drop.itemHrid, gameData);
             if (processedData) {
-                const processedPrice =
-                    getItemPrice(processedData.outputItemHrid, { context: 'profit', side: 'sell' }) || 0;
+                const processedPrice = sellPrice(processedData.outputItemHrid);
                 const conversionRatio = processedData.conversionRatio;
 
                 // Processing converts the whole stack after efficiency repeats.
@@ -806,23 +816,36 @@ function calculateAlchemyXpPerHour(
  * @returns {Object|null} Conversion data or null
  */
 function findProcessingConversion(itemHrid, gameData) {
-    const validProcessingTypes = ['/action_types/cheesesmithing', '/action_types/crafting', '/action_types/tailoring'];
+    const map = gameData?.actionDetailMap;
+    if (!map || typeof map !== 'object') return null;
+    return processingIndexFor(map).get(itemHrid) ?? null;
+}
 
-    for (const [_actionHrid, action] of Object.entries(gameData.actionDetailMap)) {
-        if (!validProcessingTypes.includes(action.type)) continue;
+const PROCESSING_ACTION_TYPES = ['/action_types/cheesesmithing', '/action_types/crafting', '/action_types/tailoring'];
 
+/** @type {WeakMap<Object, Map<string, {outputItemHrid: string, conversionRatio: number}>>} actionDetailMap → first conversion per raw item */
+const processingIndexes = new WeakMap();
+
+/**
+ * The first processing recipe that takes each raw item as its first input, in the map's own order (a
+ * scan of every action per drop, per tea combination, per action was the hot spot). Built once per map
+ * object, so a new init_client_data rebuilds it.
+ * @param {Object} actionDetailMap - `initClientData.actionDetailMap`
+ * @returns {Map<string, {outputItemHrid: string, conversionRatio: number}>}
+ */
+function processingIndexFor(actionDetailMap) {
+    let index = processingIndexes.get(actionDetailMap);
+    if (index) return index;
+    index = new Map();
+    for (const action of Object.values(actionDetailMap)) {
+        if (!PROCESSING_ACTION_TYPES.includes(action.type)) continue;
         const inputItem = action.inputItems?.[0];
         const outputItem = action.outputItems?.[0];
-
-        if (inputItem?.itemHrid === itemHrid && outputItem) {
-            return {
-                outputItemHrid: outputItem.itemHrid,
-                conversionRatio: inputItem.count,
-            };
-        }
+        if (!outputItem || inputItem?.itemHrid === undefined || index.has(inputItem.itemHrid)) continue;
+        index.set(inputItem.itemHrid, { outputItemHrid: outputItem.itemHrid, conversionRatio: inputItem.count });
     }
-
-    return null;
+    processingIndexes.set(actionDetailMap, index);
+    return index;
 }
 
 /**
@@ -1302,6 +1325,8 @@ export function findOptimalTeas(
     const calcContext = {
         equipment,
         itemDetailMap: gameData.itemDetailMap,
+        // This run's sell prices by item, quoted once however many combinations ask
+        priceMemo: new Map(),
     };
 
     // Whether each action's gold score depends on an unpriced item — combo-independent, so
