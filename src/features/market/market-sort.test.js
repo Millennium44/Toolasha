@@ -874,6 +874,40 @@ describe('sort cost per tile', () => {
         expect(engine.yields).toBe(1);
     });
 
+    test('a tile the game drops during a yield is not put back, nor badged', async () => {
+        const container = buildGrid(names);
+        engine.answers = Object.fromEntries(names.map((name, i) => [`/items/${name}`, { transmute: priced(i, i) }]));
+        marketSort.sortMode = 'alchemyProfit';
+        let dropped = null;
+        engine.onYield = () => {
+            if (dropped) return;
+            dropped = container.querySelector('div[class*="Item_itemContainer"]');
+            dropped.remove();
+        };
+        let now = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 6));
+        await marketSort.sortByProfitability();
+        clock.mockRestore();
+
+        expect(dropped.isConnected).toBe(false);
+        expect(container.contains(dropped)).toBe(false);
+        expect(order(container)).toHaveLength(names.length - 1);
+    });
+
+    test('disabling mid-sort leaves no error behind when the sort settles', async () => {
+        buildGrid(names);
+        engine.answers = Object.fromEntries(names.map((name, i) => [`/items/${name}`, { transmute: priced(i, i) }]));
+        marketSort.sortMode = 'alchemyProfit';
+        marketSort.sortButton = document.createElement('button');
+        engine.onYield = () => {
+            marketSort.sortButton = null;
+        };
+        let now = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 6));
+        await expect(marketSort.handleSortClick()).resolves.toBeUndefined();
+        clock.mockRestore();
+    });
+
     test('a price refresh during a yield abandons that sort too', async () => {
         const container = buildGrid(names);
         engine.answers = Object.fromEntries(names.map((name, i) => [`/items/${name}`, { transmute: priced(i, i) }]));
