@@ -192,7 +192,16 @@ export function collectMetzLoadouts() {
                     (equip) => TOOL_SLOT_PATTERN.test(equip.itemLocationHrid || '') || isOwned(snapshot, equip)
                 )
         )
-        .map((snapshot) => ({ ...snapshot, equipment: loadoutSnapshot.resolveEquipment(snapshot) }));
+        .map((snapshot) => ({
+            ...snapshot,
+            equipment: loadoutSnapshot.resolveEquipment(snapshot).map((equip) =>
+                // The shared resolver never goes below the stored level, so a sold +12 would still
+                // export. A free loadout wears the best copy owned now; with no inventory, keep stored.
+                snapshot.useExactEnhancement || !owned.size || !owned.has(equip.itemHrid)
+                    ? equip
+                    : { ...equip, enhancementLevel: owned.get(equip.itemHrid) }
+            ),
+        }));
 
     const abilityLevels = {};
     for (const ability of dataManager.characterData?.characterAbilities || []) {

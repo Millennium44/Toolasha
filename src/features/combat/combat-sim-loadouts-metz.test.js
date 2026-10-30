@@ -402,4 +402,22 @@ describe('collect, stored copy and publisher', () => {
         mocks.items = [...mocks.items, { itemHrid: '/items/holy_spear', enhancementLevel: 12, count: 1 }];
         expect(collectMetzLoadouts().map((l) => l.id)).toEqual(['12', '16']);
     });
+
+    test('a free loadout exports the best level owned now, not a sold stored level', () => {
+        mocks.snapshots = [MELEE_SET];
+        const spearLevel = () =>
+            collectMetzLoadouts()[0].equipment.find((e) => e.itemHrid === '/items/holy_spear').enhancementLevel;
+        const rest = ownedFor(MELEE_SET).filter((i) => i.itemHrid !== '/items/holy_spear');
+
+        // stored +12 sold, +2 kept
+        mocks.items = [...rest, { itemHrid: '/items/holy_spear', enhancementLevel: 2, count: 1 }];
+        expect(spearLevel()).toBe(2);
+
+        mocks.items = [...mocks.items, { itemHrid: '/items/holy_spear', enhancementLevel: 15, count: 1 }];
+        expect(spearLevel()).toBe(15);
+
+        // no inventory loaded: the stored level stands
+        mocks.items = [];
+        expect(spearLevel()).toBe(12);
+    });
 });
