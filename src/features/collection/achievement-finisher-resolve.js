@@ -629,6 +629,9 @@ export function ownedCount(inventory, itemHrid, { anyLocation = false } = {}) {
     return total;
 }
 
+/** Level met first, then unknown, then unmet */
+const levelRank = (met) => (met === true ? 0 : met === null ? 1 : 2);
+
 function levelCheck(skillLevels, skillHrid, level, combatLevel) {
     const have = skillLevels?.has(skillHrid) ? skillLevels.get(skillHrid) : null;
     if (have !== null) return { met: have >= level, have, need: level, skillHrid };
@@ -682,7 +685,6 @@ export function readiness(res, ctx) {
 
     if (res.kind === 'equip') {
         if (!ctx.inventory) return out;
-        const held = res.candidates.find((hrid) => ownedCount(ctx.inventory, hrid, { anyLocation: true }) > 0);
         const levelsFor = (hrid) => {
             const reqs = res.requirements[hrid] || [];
             const checks = reqs.map((req) => levelCheck(ctx.skillLevels, req.skillHrid, req.level || 1, null));
@@ -690,34 +692,50 @@ export function readiness(res, ctx) {
             const unknown = checks.some((check) => check.met === null);
             return { met: unmet ? false : unknown ? null : true, check: unmet || checks[0] || null };
         };
-        if (held) {
-            const lv = levelsFor(held);
-            Object.assign(out, { owned: true, ownedHrid: held, levelMet: lv.met, level: lv.check });
+        // A weapon the character can wield beats one it cannot: held ones first, then the cheapest
+        // level-met one to buy; a held piece whose level is unmet still beats buying another unmet one
+        const ranked = (hrids) =>
+            hrids
+                .map((hrid) => ({ hrid, lv: levelsFor(hrid) }))
+                .sort((a, b) => levelRank(a.lv.met) - levelRank(b.lv.met) || a.hrid.localeCompare(b.hrid));
+        const heldBest = ranked(
+            res.candidates.filter((hrid) => ownedCount(ctx.inventory, hrid, { anyLocation: true }) > 0)
+        )[0];
+        const ownIt = () => {
+            Object.assign(out, {
+                owned: true,
+                ownedHrid: heldBest.hrid,
+                levelMet: heldBest.lv.met,
+                level: heldBest.lv.check,
+            });
             return out;
-        }
-        out.owned = false;
-        if (ctx.ironCow) {
-            const lv = levelsFor(res.candidates[0]);
-            Object.assign(out, { levelMet: lv.met, level: lv.check });
+        };
+        if (heldBest && heldBest.lv.met !== false) return ownIt();
+        const fallback = () => {
+            if (heldBest) return ownIt();
+            const [first] = ranked(res.candidates);
+            Object.assign(out, { owned: false, levelMet: first.lv.met, level: first.lv.check });
             return out;
-        }
+        };
+        if (ctx.ironCow) return fallback();
         const priced = res.candidates
-            .map((hrid) => ({ hrid, price: ctx.buyPrice(hrid) }))
+            .map((hrid) => ({ hrid, price: ctx.buyPrice(hrid), lv: levelsFor(hrid) }))
             .filter((entry) => Number.isFinite(entry.price));
         if (priced.length === 0) {
-            out.unpriced = [...res.candidates];
-            const lv = levelsFor(res.candidates[0]);
-            Object.assign(out, { levelMet: lv.met, level: lv.check });
-            return out;
+            if (!heldBest) out.unpriced = [...res.candidates];
+            return fallback();
         }
-        priced.sort((a, b) => a.price - b.price || a.hrid.localeCompare(b.hrid));
-        const lv = levelsFor(priced[0].hrid);
+        priced.sort(
+            (a, b) => levelRank(a.lv.met) - levelRank(b.lv.met) || a.price - b.price || a.hrid.localeCompare(b.hrid)
+        );
+        if (heldBest && priced[0].lv.met === false) return ownIt();
         Object.assign(out, {
+            owned: false,
             buyHrid: priced[0].hrid,
             cost: priced[0].price,
             estimated: isEstimated(priced[0].hrid),
-            levelMet: lv.met,
-            level: lv.check,
+            levelMet: priced[0].lv.met,
+            level: priced[0].lv.check,
         });
         return out;
     }

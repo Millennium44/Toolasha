@@ -338,3 +338,92 @@ describe('sortRemaining', () => {
         expect(readinessGroup({ readiness: null })).toBe(5);
     });
 });
+
+describe('equip: a live-typical character (main combat stat 150, the others lower)', () => {
+    // Holy weapons, one per combat style, the way the game gates them: each on its own skill
+    const req = (skill, level) => [{ skillHrid: `/skills/${skill}`, level }];
+    const res = {
+        kind: 'equip',
+        candidates: ['/items/holy_bow', '/items/holy_nature_staff', '/items/holy_spear', '/items/holy_sword'],
+        requirements: {
+            '/items/holy_bow': req('ranged', 140),
+            '/items/holy_nature_staff': req('magic', 140),
+            '/items/holy_spear': req('melee', 140),
+            '/items/holy_sword': req('melee', 140),
+        },
+    };
+    const prices = {
+        '/items/holy_bow': 1000,
+        '/items/holy_nature_staff': 2000,
+        '/items/holy_spear': 9000,
+        '/items/holy_sword': 8000,
+    };
+    const live = (over = {}) => ({
+        skillLevels: new Map([
+            ['/skills/melee', 150],
+            ['/skills/ranged', 130],
+            ['/skills/magic', 130],
+        ]),
+        combatLevel: 150,
+        inventory: [],
+        ironCow: false,
+        buyPrice: (hrid) => prices[hrid] ?? null,
+        ...over,
+    });
+    const bag = (itemHrid, extra = {}) => ({
+        itemHrid,
+        count: 1,
+        itemLocationHrid: '/item_locations/inventory',
+        enhancementLevel: 0,
+        ...extra,
+    });
+
+    test('the cheapest weapon the character can wield, not a cheaper one it cannot', () => {
+        expect(readiness(res, live())).toMatchObject({
+            owned: false,
+            buyHrid: '/items/holy_sword',
+            cost: 8000,
+            levelMet: true,
+        });
+    });
+
+    test('an unknown level ranks before an unmet one', () => {
+        const low = live({ skillLevels: new Map([['/skills/melee', 90]]) });
+        // Ranged and magic unknown rank before an unmet melee
+        expect(readiness(res, low)).toMatchObject({ buyHrid: '/items/holy_bow', levelMet: null });
+    });
+
+    test('a held weapon the character can wield beats a held one it cannot', () => {
+        const ready = readiness(res, live({ inventory: [bag('/items/holy_bow'), bag('/items/holy_spear')] }));
+        expect(ready).toMatchObject({ owned: true, ownedHrid: '/items/holy_spear', levelMet: true });
+    });
+
+    test('a held weapon it cannot wield loses to a wieldable one on the market', () => {
+        const ready = readiness(res, live({ inventory: [bag('/items/holy_bow')] }));
+        expect(ready).toMatchObject({ owned: false, buyHrid: '/items/holy_sword', levelMet: true });
+    });
+
+    test('a held unwieldable weapon still beats buying another unwieldable one', () => {
+        const melee = live({
+            inventory: [bag('/items/holy_bow')],
+            skillLevels: new Map([
+                ['/skills/melee', 100],
+                ['/skills/ranged', 130],
+                ['/skills/magic', 130],
+            ]),
+        });
+        expect(readiness(res, melee)).toMatchObject({ owned: true, ownedHrid: '/items/holy_bow', levelMet: false });
+    });
+
+    test('an Iron Cow or an unpriced market names a wieldable piece for the level check', () => {
+        expect(readiness(res, live({ ironCow: true }))).toMatchObject({
+            owned: false,
+            buyHrid: null,
+            levelMet: true,
+            level: { skillHrid: '/skills/melee', need: 140, have: 150 },
+        });
+        const unpriced = readiness(res, live({ buyPrice: () => null }));
+        expect(unpriced).toMatchObject({ buyHrid: null, levelMet: true });
+        expect(unpriced.unpriced).toHaveLength(4);
+    });
+});
