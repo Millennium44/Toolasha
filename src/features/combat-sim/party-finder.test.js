@@ -136,6 +136,23 @@ describe('planSweep', () => {
         expect(plan.perZone[0].note).toBe('no teammates to try');
     });
 
+    test('no teammates but your own auras: the note says only your aura variants run, and they do', () => {
+        const gameData = {
+            abilityDetailMap: { '/abilities/fierce_aura': { name: 'Fierce Aura', isSpecialAbility: true } },
+            levelExperienceTable: Array.from({ length: 201 }, (_, i) => i * 10),
+        };
+        const plan = planSweep({
+            zones: [ZONE],
+            roster: [],
+            gameData,
+            selfAuras: [{ hrid: '/abilities/fierce_aura', level: 20 }],
+            selfDto: dto(90),
+        });
+        expect(plan.total).toBe(2);
+        expect(plan.perZone[0].count).toBe(2);
+        expect(plan.perZone[0].note).toBe('no teammates to try, so only your own aura variants run');
+    });
+
     test('zero zones plans nothing', () => {
         expect(planSweep({ zones: [], roster: four }).total).toBe(0);
     });

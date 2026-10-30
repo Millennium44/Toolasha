@@ -423,8 +423,10 @@ export function planSweep({
                 : excluded.length && excluded.length === (Array.isArray(roster) ? roster.length : 0)
                   ? "no teammates of this character's mode"
                   : 'no teammates to try';
-            // Your aura variants alone are still answers: whether an aura helps you solo
+            // Your aura variants alone are still answers: whether an aura helps you solo. The zone still runs
+            // those, so the note must not read as if nothing runs here
             if (selfVariants.length === 1) continue;
+            entry.note += ', so only your own aura variants run';
         }
         entry.count = 0;
         for (const comp of comps) {
