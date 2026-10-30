@@ -26,6 +26,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Audit fixes before release
 
+- Leftover fixes: untradable inputs no longer show as buy or Missing Mats lines, inventory badges price untradable capes and partly priced costs the way net worth does, a Labyrinth Stop stays stopped when another sim batch starts, task completions stay marked unsaved until their write lands, View Card ignores a result for a closed or changed profile, and the inventory sort, Alchemy own-stock sweep and loot-log luck cache do less repeat work.
 - The Labyrinth toolbar no longer shows the "this run:" torch/shroud/beacon count, a diagnostic that is no longer needed.
 - Shop token badges redraw when the Iron Cow valuation setting changes or settings arrive by sync or import, and untradable items no longer look like Marketplace links.
 - Achievement hints pick a weapon you can wield, name the candidate you are closest to when no level is met, refresh after a pricing-setting change or a level-up mid-action, and a reused card no longer keeps the previous achievement's Go.
