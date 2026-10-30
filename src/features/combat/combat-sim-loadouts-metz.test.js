@@ -386,4 +386,20 @@ describe('collect, stored copy and publisher', () => {
         stopMetzLoadoutPublisher();
         expect(mocks.inputListeners.size).toBe(0);
     });
+
+    test('an exact-level loadout is skipped when the pinned level is no longer owned', () => {
+        const exact = { ...MELEE_SET, useExactEnhancement: true };
+        mocks.snapshots = [exact, { ...MELEE_SET, id: '16', ordinal: 9 }];
+        // the +12 spear was sold; a +2 copy is kept
+        mocks.items = [
+            ...ownedFor(MELEE_SET).filter((i) => i.itemHrid !== '/items/holy_spear'),
+            { itemHrid: '/items/holy_spear', enhancementLevel: 2, count: 1 },
+        ];
+
+        // the non-exact loadout still exports (it wears the best copy owned)
+        expect(collectMetzLoadouts().map((l) => l.id)).toEqual(['16']);
+
+        mocks.items = [...mocks.items, { itemHrid: '/items/holy_spear', enhancementLevel: 12, count: 1 }];
+        expect(collectMetzLoadouts().map((l) => l.id)).toEqual(['12', '16']);
+    });
 });

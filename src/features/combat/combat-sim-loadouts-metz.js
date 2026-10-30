@@ -175,12 +175,21 @@ export function collectMetzLoadouts() {
         return [];
     }
     const owned = highestOwnedEnhancements();
+    // Exact-level loadouts wear precisely what they pin, so each piece must be owned at that level
+    const ownedPairs = new Set();
+    for (const item of dataManager.characterItems || dataManager.characterData?.characterItems || []) {
+        if (item?.itemHrid && item.count !== 0) ownedPairs.add(`${item.itemHrid}:${item.enhancementLevel || 0}`);
+    }
+    const isOwned = (snapshot, equip) =>
+        snapshot.useExactEnhancement
+            ? ownedPairs.has(`${equip.itemHrid}:${equip.enhancementLevel || 0}`)
+            : owned.has(equip.itemHrid);
     const usable = snapshots
         .filter(
             (snapshot) =>
                 !owned.size ||
                 (snapshot.equipment || []).every(
-                    (equip) => TOOL_SLOT_PATTERN.test(equip.itemLocationHrid || '') || owned.has(equip.itemHrid)
+                    (equip) => TOOL_SLOT_PATTERN.test(equip.itemLocationHrid || '') || isOwned(snapshot, equip)
                 )
         )
         .map((snapshot) => ({ ...snapshot, equipment: loadoutSnapshot.resolveEquipment(snapshot) }));
