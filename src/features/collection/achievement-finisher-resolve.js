@@ -335,7 +335,10 @@ function resolveAnyOf(detail, data) {
         if (!isSkillAction(action) || GATHERING_TYPES.has(action.type)) continue;
         if (group.actionOk && !group.actionOk(action, outputs, data)) continue;
         if ((action.outputItems || []).some((out) => outputs.has(out?.itemHrid))) {
-            candidates.push(candidateOf(actionHrid, action));
+            const made = (action.outputItems || [])
+                .filter((out) => out?.itemHrid && Number(out.count) > 0)
+                .map((out) => ({ itemHrid: out.itemHrid, count: Number(out.count) }));
+            candidates.push(candidateOf(actionHrid, action, { outputs: made }));
         }
     }
     if (candidates.length === 0) return null;
@@ -919,6 +922,51 @@ function costRank(ready) {
     return [3, ready.shortfall.length, 0];
 }
 
+/**
+ * What crafting a candidate and selling the output back is worth: the after-tax sale of every output
+ * with a bid (count included), the output's daily volume, and whether it sells too rarely to count on.
+ * No bid on any output is a resale of 0, flagged; an unknown volume is not thin.
+ */
+function resaleOf(cand, ctx, levelMet) {
+    let resale = 0;
+    let priced = false;
+    let primary = null;
+    let primaryValue = -1;
+    for (const out of cand.outputs || []) {
+        const unit = ctx.sellPrice(out.itemHrid);
+        if (!Number.isFinite(unit)) continue;
+        const value = unit * out.count;
+        resale += value;
+        priced = true;
+        if (value > primaryValue) {
+            primaryValue = value;
+            primary = out.itemHrid;
+        }
+    }
+    const volume = levelMet && primary && typeof ctx.dailyVolume === 'function' ? ctx.dailyVolume(primary) : null;
+    const known = volume?.known === true && Number.isFinite(volume.unitsPerDay);
+    return {
+        resale,
+        noBid: !priced,
+        unitsPerDay: known ? volume.unitsPerDay : null,
+        thin: priced && known && volume.unitsPerDay < 1,
+    };
+}
+
+/**
+ * Rank with resale in view: a bill that is owned or priced first — outputs with a bid, then ones that
+ * trade (an unknown volume counts as trading), then the lowest cost net of the resale; the rest as
+ * {@link costRank} has them.
+ */
+function resaleRank(ready, market) {
+    if (ready.owned === true || Number.isFinite(ready.cost)) {
+        const net = (ready.owned === true ? 0 : ready.cost) - market.resale;
+        return [0, market.noBid ? 1 : 0, market.thin ? 1 : 0, net];
+    }
+    const [group, a, b] = costRank(ready);
+    return [group, a, b, 0];
+}
+
 const compareTuples = (a, b) => {
     for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
     return 0;
@@ -930,6 +978,7 @@ const compareTuples = (a, b) => {
  *
  * Rare drop (candidates carry `dropRate`): the highest drop rate whose level is met; ties go to the lower
  * level, then a gathering action (no inputs) before a production one. Any-of production: the met candidate
+ * worth crafting and selling back (`ctx.sellPrice`, `ctx.dailyVolume`; see {@link resaleRank}), else the one
  * whose inputs are cheapest to complete. With no level met, the lowest-level candidate, shortfall shown.
  */
 function candidateReadiness(res, ctx, out) {
@@ -943,7 +992,12 @@ function candidateReadiness(res, ctx, out) {
                 cand = { ...raw, dropRate: Math.min(1, raw.dropRate * (1 + bonus / 100)) };
         }
         const ready = actionReadiness({ ...cand, kind: 'production' }, ctx, emptyReadiness());
-        return { cand, ready };
+        // Any-of production on a market character: the player crafts it and sells it back
+        const market =
+            !rare && !ctx.ironCow && typeof ctx.sellPrice === 'function'
+                ? resaleOf(cand, ctx, ready.levelMet === true)
+                : null;
+        return { cand, ready, market };
     });
     const met = scored.filter((entry) => entry.ready.levelMet === true);
     let chosen;
@@ -954,7 +1008,9 @@ function candidateReadiness(res, ctx, out) {
                 if (a.cand.level !== b.cand.level) return a.cand.level - b.cand.level;
                 if (a.cand.gathering !== b.cand.gathering) return a.cand.gathering ? -1 : 1;
             } else {
-                const byCost = compareTuples(costRank(a.ready), costRank(b.ready));
+                const byCost = a.market
+                    ? compareTuples(resaleRank(a.ready, a.market), resaleRank(b.ready, b.market))
+                    : compareTuples(costRank(a.ready), costRank(b.ready));
                 if (byCost) return byCost;
                 if (a.cand.level !== b.cand.level) return a.cand.level - b.cand.level;
             }
@@ -972,6 +1028,17 @@ function candidateReadiness(res, ctx, out) {
         [chosen] = scored;
     }
     Object.assign(out, chosen.ready, { actionHrid: chosen.cand.actionHrid });
+    if (chosen.market) {
+        const { resale, noBid, unitsPerDay, thin } = chosen.market;
+        const base = chosen.ready.owned === true ? 0 : chosen.ready.cost;
+        Object.assign(out, {
+            resale,
+            noBid,
+            unitsPerDay,
+            thin,
+            net: Number.isFinite(base) ? base - resale : null,
+        });
+    }
     if (rare) out.dropRate = chosen.cand.dropRate;
     return out;
 }

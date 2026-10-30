@@ -44,6 +44,13 @@ import { loadoutSnapshot, missingMaterialsButton } from '../../utils/bundle-brid
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { formatKMB } from '../../utils/formatters.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
+import {
+    cachedItemVolume,
+    hasMeasuredVolume,
+    liquidityCapEnabled,
+    prefetchLiquidity,
+} from '../../utils/liquidity-cap.js';
 import { spriteIcon, spriteUrl } from '../../utils/overlay-format.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -205,7 +212,22 @@ export function readinessText(res, ready, clientData, ownCombatLevel, progress =
                 : `unpriced: ${names}`
         );
     } else parts.push(`missing ${ready.shortfall.length} input${ready.shortfall.length === 1 ? '' : 's'}`);
+    parts.push(...resaleParts(ready));
     return parts.join(' · ');
+}
+
+/** The resale tail of an any-of production hint: what the output sells for, the net, how well it trades */
+function resaleParts(ready) {
+    if (!Number.isFinite(ready.resale)) return [];
+    if (ready.noBid) return ['no bid'];
+    const parts = [`resell ~${formatKMB(ready.resale)}${COIN_MARK}`];
+    if (Number.isFinite(ready.net) && ready.owned !== true) {
+        parts.push(
+            ready.net < 0 ? `profit ~${formatKMB(-ready.net)}${COIN_MARK}` : `net ~${formatKMB(ready.net)}${COIN_MARK}`
+        );
+    }
+    if (ready.thin) parts.push(`thin: ~${Number(ready.unitsPerDay.toFixed(1))}/day`);
+    return parts;
 }
 
 /** `n / target`, or null when the character's progress is not known */
@@ -475,6 +497,9 @@ class AchievementFinisher {
         this.readinessCache = new Map();
         this.readinessVersion = 0;
         this.readinessRedrawPending = false;
+        /** Items whose daily volume a draw asked about, and the ones already looked up this character */
+        this.volumeWanted = new Set();
+        this.volumeAsked = new Set();
         this.marketListener = null;
         this.catalogSource = null;
         this.catalog = null;
@@ -503,6 +528,8 @@ class AchievementFinisher {
         const clear = () => {
             this.readinessCache.clear();
             this.readinessVersion += 1;
+            this.volumeWanted.clear();
+            this.volumeAsked.clear();
             this.removeAll();
         };
         dataManager.on('character_switching', clear);
@@ -543,6 +570,8 @@ class AchievementFinisher {
         this.resolutions = new Map();
         this.resolutionSource = null;
         this.readinessCache = new Map();
+        this.volumeWanted.clear();
+        this.volumeAsked.clear();
         this.catalogSource = null;
         this.catalog = null;
         this.isInitialized = false;
@@ -626,6 +655,17 @@ class AchievementFinisher {
                 return info.price;
             },
             isEstimated: (itemHrid) => estimated.has(itemHrid),
+            // Any-of production: what one unit sells for after the tax (a value-map estimate is no bid)
+            sellPrice: (itemHrid) => {
+                const info = getItemPriceInfo(itemHrid, { context: 'profit', side: 'sell', marketQuote: true });
+                if (!Number.isFinite(info.price) || info.estimated) return null;
+                return info.price * (1 - MARKET_TAX);
+            },
+            // Already-measured volume only; the lookup is made after the draw, under the history opt-in
+            dailyVolume: (itemHrid) => {
+                this.volumeWanted.add(itemHrid);
+                return cachedItemVolume(itemHrid);
+            },
             // Enhancer routes: a listing at one level (a value-map estimate is no listing), the shared
             // enhancing material and protection rules, and the character's own bench (nobody else can
             // land the success for them)
@@ -979,6 +1019,28 @@ class AchievementFinisher {
             line.dataset.key = spec.key;
             this.placeLine(card, line);
         }
+        this.warmVolumes();
+    }
+
+    /**
+     * Look up the daily volume of the outputs a draw ranked, so a later draw can tell a thin market from a
+     * liquid one. Only under the existing opt-ins (the liquidity cap and pooled history; the history call
+     * itself refuses without the latter), once per item per character; a late answer redraws.
+     */
+    async warmVolumes() {
+        const items = [...this.volumeWanted].filter((hrid) => !this.volumeAsked.has(hrid));
+        this.volumeWanted.clear();
+        if (items.length === 0 || !liquidityCapEnabled()) return;
+        for (const hrid of items) this.volumeAsked.add(hrid);
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        try {
+            await prefetchLiquidity(items.map((itemHrid) => ({ itemHrid })));
+        } catch (error) {
+            console.error('[AchievementFinisher] Volume lookup failed:', error);
+            return;
+        }
+        if (!this.isInitialized || (dataManager.getCurrentCharacterId?.() ?? null) !== characterId) return;
+        if (items.some((hrid) => hasMeasuredVolume(hrid))) this.readinessChanged();
     }
 
     /** Insert the line right under the card's description (inside its left column), else at the end of the card */

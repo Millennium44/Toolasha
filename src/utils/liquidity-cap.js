@@ -202,6 +202,22 @@ export function hasMeasuredVolume(itemHrid, enhancementLevel = 0) {
 }
 
 /**
+ * An item's traded volume as already measured, read from the cache and never looked up.
+ * @param {string} itemHrid - The item
+ * @param {number} [enhancementLevel=0] - Which variant
+ * @returns {{itemHrid: string, unitsPerDay: number, days: number, known: boolean}|null}
+ *   `null` when nothing has measured it (not a measured zero)
+ */
+export function cachedItemVolume(itemHrid, enhancementLevel = 0) {
+    try {
+        return liquidity().cachedDailyVolume(itemHrid, enhancementLevel) || null;
+    } catch (error) {
+        console.error(`[LiquidityCap] Reading the cached volume for ${itemHrid} failed:`, error);
+        return null;
+    }
+}
+
+/**
  * Warm the shared volume cache for a batch of items, before bounding a lot of
  * rows one at a time.
  *
