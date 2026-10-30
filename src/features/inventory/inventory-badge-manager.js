@@ -24,6 +24,8 @@ import { yieldToEventLoop } from '../../utils/background-work.js';
 import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
 import { reconcileBook } from '../../utils/market-values.js';
+import { pricingStamp } from '../../utils/enhancement-input-pricing.js';
+import { GUILD_TOKEN_EXCHANGE_EVENT } from '../guild/guild-token-exchange-capture.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { calculateDungeonTokenValue, DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
 import { buildGoldPerCredit } from '../../utils/guild-credit-pricing.js';
@@ -203,6 +205,24 @@ class InventoryBadgeManager {
                 offSettings?.();
                 this._watchingSettings = false;
             });
+        }
+        // A settings load (a sync pull, an import, a copy from another character, the mirror restore)
+        // swaps the whole map without firing the any-setting channel
+        if (typeof config.onSettingsLoaded === 'function') {
+            const offLoaded = config.onSettingsLoaded(() => {
+                this._settingsEpoch += 1;
+            });
+            this.unregisterHandlers.push(() => {
+                if (typeof offLoaded === 'function') offLoaded();
+            });
+        }
+        // A newly captured guild token exchange rate re-prices held guild tokens; nothing else moves
+        if (typeof window !== 'undefined') {
+            const onTokenExchange = () => {
+                this._repriceEpoch += 1;
+            };
+            window.addEventListener(GUILD_TOKEN_EXCHANGE_EVENT, onTokenExchange);
+            this.unregisterHandlers.push(() => window.removeEventListener(GUILD_TOKEN_EXCHANGE_EVENT, onTokenExchange));
         }
 
         // The value source decides how +13 and above equipment is priced, and the game's value map
@@ -560,6 +580,12 @@ class InventoryBadgeManager {
             dataManager.getBuffStateVersion?.() ?? '',
             // The character and enhancing bench the +N costs are priced on
             context,
+            // The pricing modes, the base-item crafting and cape settings, the custom prices and the
+            // game's value map, which move without an any-setting change or a market notification
+            pricingStamp(),
+            // How a +N piece is valued
+            config.getSettingValue?.('networth_highEnhancementUseCost') ?? '',
+            config.getSettingValue?.('networth_highEnhancementMinLevel') ?? '',
         ].join('|');
     }
 
