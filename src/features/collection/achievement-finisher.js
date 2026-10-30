@@ -986,7 +986,7 @@ class AchievementFinisher {
                     line.appendChild(button);
                 }
                 const matsButton = createMissingMatsButton(res, ready, clientData, ironCow, () =>
-                    this.openMissingMats(res)
+                    this.openMissingMats(res, ready)
                 );
                 if (matsButton) line.appendChild(matsButton);
                 return line;
