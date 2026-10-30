@@ -442,21 +442,18 @@ describe('enhancer: an Iron Cow cannot buy (owned piece, else craft)', () => {
     });
 
     test('held pieces rank by expected attempts to a success at the target, not by level', () => {
-        // Enhancer I (+3): a +10 piece needs one success at +10, which is harder than at +3
+        // Enhancer I (+3) at Enhancing 100 on an 85 piece: +9 needs ~3.0 attempts, +10 ~3.1, +12 ~3.2 (a
+        // failure drops the piece, and the higher it sits the further it can fall below the target)
         const ready = readiness(
             resOf('enhance_to_3'),
-            cowCtx(
-                [
-                    row('/items/magnetic_gloves', 10),
-                    row('/items/magnetic_gloves', 3),
-                    row('/items/magnetic_gloves', 2),
-                    row('/items/chrono_gloves', 6, { count: 0 }),
-                ],
-                { enhanceParams: () => ({ ...BENCH, enhancingLevel: 1 }) }
-            )
+            cowCtx([
+                row('/items/magnetic_gloves', 12),
+                row('/items/magnetic_gloves', 9),
+                row('/items/magnetic_gloves', 10),
+                row('/items/chrono_gloves', 6, { count: 0 }),
+            ])
         );
-        // +3 lands another +3 in ~4.9 attempts, +10 needs ~6.6, and a +2 piece must climb back (~65)
-        expect(ready).toMatchObject({ ownedLevel: 3, oneMore: true });
+        expect(ready).toMatchObject({ ownedLevel: 9, oneMore: true });
         // Ties on attempts fall to level, then item level: the same piece twice, a stack of three at +4
         const stack = readiness(
             resOf('enhance_to_3'),
@@ -467,20 +464,9 @@ describe('enhancer: an Iron Cow cannot buy (owned piece, else craft)', () => {
 
     test('a held piece already at or above the target needs one more success at its level', () => {
         const ready = readiness(resOf('enhance_to_3'), cowCtx([row('/items/cheese_gloves', 10, { count: 3 })]));
-        expect(ready).toMatchObject({
-            ownedHrid: '/items/cheese_gloves',
-            ownedLevel: 10,
-            oneMore: true,
-            protectFrom: 10,
-        });
-        const success = Math.min(
-            1,
-            ((BASE_SUCCESS_RATES[10] ?? 0) / 100) *
-                calculateSuccessMultiplier({ enhancingLevel: BENCH.enhancingLevel, toolBonus: 0, itemLevel: 1 })
-        );
-        expect(ready.attempts).toBeCloseTo(1 / success, 9);
-        expect(ready.protections).toBe(Math.ceil(1 / success - 1));
-        // Nothing held of the protection item, and the stack of 3 is still one candidate
+        expect(ready).toMatchObject({ ownedHrid: '/items/cheese_gloves', ownedLevel: 10, oneMore: true });
+        expect(ready.protectFrom).toBeGreaterThan(0);
+        // Nothing held of any protection item, and the stack of 3 is still one candidate
         expect(ready.shortfall.find((s) => s.itemHrid === '/items/cheese_gloves')).toMatchObject({ have: 0 });
         expect(ready.protectionHrid).toBe('/items/cheese_gloves');
         const owned = readiness(
@@ -488,6 +474,7 @@ describe('enhancer: an Iron Cow cannot buy (owned piece, else craft)', () => {
             cowCtx([row('/items/cheese_gloves', 10), ...stock(['/items/cheese', 1000])])
         );
         expect(owned.shortfall.find((s) => s.itemHrid === '/items/cheese')).toBeUndefined();
+        expect(owned.protectionHrid).toBe('/items/cheese');
         // Without a bench nothing can be computed: the held piece is still named
         const blind = readiness(
             resOf('enhance_to_3'),
@@ -495,6 +482,42 @@ describe('enhancer: an Iron Cow cannot buy (owned piece, else craft)', () => {
         );
         expect(blind).toMatchObject({ ownedLevel: 10, oneMore: true });
         expect(blind.attempts).toBeUndefined();
+    });
+
+    test('failures drop a held piece: +10 for a +10 target needs ~317 attempts, not 1 / success', () => {
+        // Enhancing 100 on an 85 piece. Protected from +2 a failure at +10 drops to +9, and a success from
+        // +9 or +10 lands at +10: so 1 attempt, then (failure chance) times the shared chain's +9 -> +10 run
+        const ready = readiness(resOf('enhance_to_10'), cowCtx([row('/items/magnetic_gloves', 10)]));
+        const fail10 =
+            1 -
+            Math.min(
+                1,
+                (BASE_SUCCESS_RATES[10] / 100) *
+                    calculateSuccessMultiplier({ enhancingLevel: BENCH.enhancingLevel, toolBonus: 0, itemLevel: 85 })
+            );
+        const climb = chain(85, 9, 10, 2);
+        expect(ready.protectFrom).toBe(2);
+        expect(ready.attempts).toBeCloseTo(1 + fail10 * climb.attempts, 6);
+        expect(ready.attempts).toBeGreaterThan(300);
+        expect(ready.protections).toBeGreaterThan(0);
+        expect(ready.protections).toBeLessThan(ready.attempts);
+    });
+
+    test('protection stock counts the piece, the Mirror and the listed items, never the piece being enhanced', () => {
+        const cow = (inv) => readiness(resOf('enhance_to_10'), cowCtx(inv));
+        const mirror = '/items/mirror_of_protection';
+        // A spare +0 copy of the piece protects it too; the Mirror held most wins
+        const spare = cow([
+            row('/items/cheese_gloves', 7),
+            ...stock(['/items/cheese_gloves', 40], ['/items/cheese', 5]),
+        ]);
+        expect(spare.protectionHrid).toBe('/items/cheese_gloves');
+        expect(spare.shortfall.find((s) => s.itemHrid === '/items/cheese_gloves')).toMatchObject({ have: 40 });
+        const mirrors = cow([row('/items/cheese_gloves', 7), ...stock([mirror, 900], ['/items/cheese', 5])]);
+        expect(mirrors.protectionHrid).toBe(mirror);
+        // The +0 copy being enhanced is not its own protection
+        const lone = cow([row('/items/cheese_gloves', 0)]);
+        expect(lone.shortfall.find((s) => s.itemHrid === '/items/cheese_gloves')).toMatchObject({ have: 0 });
     });
 
     test('a piece under the item-level threshold is not held: it falls to crafting', () => {

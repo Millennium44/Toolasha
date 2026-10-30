@@ -1443,7 +1443,7 @@ describe('hints on the game achievement cards', () => {
         achievementsTab(ENHANCE_ACHIEVEMENTS);
         finisher.initialize();
         expect(lineOf('Enhancer I').textContent).toMatch(
-            /^\[you own Cheese Gloves \+10 · one more success counts · ~\d+ attempts · ~\d+ protections · protect from \+10 · missing:/
+            /^\[you own Cheese Gloves \+10 · one more success counts · ~\d+ attempts · ~\d+ protections · protect from \+2 · missing:/
         );
         finisher.disable();
 

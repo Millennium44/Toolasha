@@ -13,6 +13,7 @@
 
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { enhanceReadiness, expectedRun } from './achievement-finisher-enhance.js';
+import { protectionCandidates } from '../../utils/enhancement-protect-sweep.js';
 
 /** Production and gathering verbs → the skill whose action type they name */
 export const VERB_SKILLS = Object.freeze({
@@ -542,7 +543,10 @@ function resolveEnhance(detail, data) {
         pieces.set(itemHrid, {
             itemHrid,
             itemLevel: Math.max(1, itemLevel),
-            protections: Array.isArray(item.protectionItemHrids) ? item.protectionItemHrids : [],
+            // What can protect it: the piece itself, Mirror of Protection and the item's own list
+            protections: protectionCandidates({ itemHrid, itemDetails: item, priceOf: () => 0 }).map(
+                (cand) => cand.itemHrid
+            ),
             costs: item.enhancementCosts
                 .filter((cost) => cost?.itemHrid && Number(cost.count) > 0)
                 .map((cost) => ({ itemHrid: cost.itemHrid, count: Number(cost.count) })),
@@ -958,11 +962,15 @@ function ironCowEnhanceReadiness(res, ctx, out) {
                 if (have < need) out.shortfall.push({ itemHrid: cost.itemHrid, need, have });
             }
             if (protections > 0) {
-                // The protection item held most of; none held: the piece itself
+                // The protection item held most of (the order is the piece, the Mirror, then the item's own
+                // list); none held: the piece itself. A +0 copy of the piece being enhanced is that piece,
+                // not a spare, so it is not counted as its own protection.
                 let protectHrid = best.piece.itemHrid;
                 let most = 0;
+                const enhancedZero = best.level === 0 && !best.equipped ? 1 : 0;
                 for (const hrid of best.piece.protections) {
-                    const have = ownedCount(ctx.inventory, hrid);
+                    const spare = ownedCount(ctx.inventory, hrid) - (hrid === best.piece.itemHrid ? enhancedZero : 0);
+                    const have = Math.max(0, spare);
                     if (have > most) {
                         most = have;
                         protectHrid = hrid;
