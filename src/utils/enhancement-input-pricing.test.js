@@ -523,6 +523,21 @@ describe('drop-ins keep the side they are given', () => {
 });
 
 describe('pricingStamp', () => {
+    test('moves when the game value map is swapped, which no order book change records', async () => {
+        const { pricingStamp } = await import('./enhancement-input-pricing.js');
+        const { applyMarketValuesMessage, _resetMarketValues } = await import('./market-values.js');
+        _resetMarketValues();
+        const before = pricingStamp();
+        expect(applyMarketValuesMessage({ marketValuesVersion: 7, marketItemValues: { '/items/x': { 0: 5 } } })).toBe(
+            true
+        );
+        const after = pricingStamp();
+        expect(after).not.toBe(before);
+        // The same stamp until the map is swapped again
+        expect(pricingStamp()).toBe(after);
+        _resetMarketValues();
+    });
+
     test('moves with the profit mode, the net-worth mode, the crafting setting and the custom prices', async () => {
         const { pricingStamp } = await import('./enhancement-input-pricing.js');
         const base = pricingStamp();

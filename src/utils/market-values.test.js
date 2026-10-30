@@ -31,6 +31,7 @@ import {
     nextPriceUp,
     nextPriceDown,
     _resetMarketValues,
+    getMarketValuesEpoch,
 } from './market-values.js';
 
 const payload = (version, values) => ({ marketValuesVersion: version, marketItemValues: values });
@@ -645,5 +646,31 @@ describe('a foreign price feed', () => {
         expect(clampToBand(43, '/items/cheese')).toBe(904);
         expect(clampToBand(43, '/items/cheese', 0, { foreign: false })).toBe(904);
         expect(marketValueFor('/items/cheese')).toBe(1000);
+    });
+});
+
+describe('the value-map epoch', () => {
+    test('moves on the first load, a pushed map and a newer stored map, and stays put on a re-read', () => {
+        const start = getMarketValuesEpoch();
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+        const loaded = getMarketValuesEpoch();
+        expect(loaded).toBeGreaterThan(start);
+
+        // The same version re-read from storage replaces nothing
+        refreshMarketValues(31_000);
+        expect(getMarketValuesEpoch()).toBe(loaded);
+
+        expect(applyMarketValuesMessage(payload(2, { '/items/cheese': { 0: 2000 } }))).toBe(true);
+        const pushed = getMarketValuesEpoch();
+        expect(pushed).toBeGreaterThan(loaded);
+
+        // A rejected (older) push changes nothing
+        expect(applyMarketValuesMessage(payload(1, { '/items/cheese': { 0: 1 } }))).toBe(false);
+        expect(getMarketValuesEpoch()).toBe(pushed);
+
+        mocks.payload = payload(3, { '/items/cheese': { 0: 3000 } });
+        refreshMarketValues(Date.now() + 60_000);
+        expect(getMarketValuesEpoch()).toBeGreaterThan(pushed);
     });
 });

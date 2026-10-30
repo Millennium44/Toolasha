@@ -46,6 +46,22 @@ let cache = { version: null, values: null };
 let lastRefresh = 0;
 
 /**
+ * Moves every time the value map is swapped (first load, a pushed message, a newer stored map).
+ * The swap changes what getPrice() clamps and fills without any order book moving, so it never
+ * reaches the market's change log; a cache over derived prices keys on this instead.
+ */
+let valuesEpoch = 0;
+
+/**
+ * A counter that moves whenever the official value map (and so every band and every empty-side fill
+ * derived from it) is replaced.
+ * @returns {number}
+ */
+export function getMarketValuesEpoch() {
+    return valuesEpoch;
+}
+
+/**
  * Bands already computed for the current value map: itemHrid → band per
  * enhancement level (array index), `null` where the item has no value.
  * Every getItemPrice call goes through reconcileBook/clampToBand, and the band
@@ -76,6 +92,7 @@ export function refreshMarketValues(now = Date.now()) {
         if (values && version !== cache.version && newerVersion) {
             cache = { version, values };
             bandCache = new Map();
+            valuesEpoch += 1;
         }
         return cache.values;
     } catch (error) {
@@ -444,6 +461,7 @@ export function applyMarketValuesMessage(payload) {
     if (version !== null && cache.version !== null && version < cache.version) return false;
     cache = { version, values };
     bandCache = new Map();
+    valuesEpoch += 1;
     // The pushed map is newer than anything localStorage holds, so restart the
     // throttle window rather than letting the next price query re-read over it.
     lastRefresh = Date.now();
@@ -462,6 +480,7 @@ if (typeof dataManager?.on === 'function') {
 /** Reset the cache and refresh throttle. Tests only. */
 export function _resetMarketValues() {
     cache = { version: null, values: null };
+    valuesEpoch += 1;
     bandCache = new Map();
     wireBands = new Map();
     lastRefresh = 0;
