@@ -21,13 +21,13 @@ import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profi
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
-import { enhancementParamsFor } from '../enhancement/enhancement-params-source.js';
 import { calculateTaskTokenValue } from '../tasks/task-profit-calculator.js';
 import { calculateDungeonTokenValueDetail, calculateLabyrinthTokenValueDetail } from '../../utils/token-valuation.js';
 import { explainGuildTokenValue, isGuildTokenHrid } from '../guild/guild-token-value.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import config from '../../core/config.js';
 import networthCache from './networth-cache.js';
+import { benchParamsFor, usablePath, pathPartial, isCacheableEnhancementCost } from './enhancement-cost-rules.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { refreshMarketValues, marketValueFor, reconcileBook } from '../../utils/market-values.js';
 import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js';
@@ -45,38 +45,6 @@ import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/u
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
 import { guildCreditPricingMode } from '../../utils/guild-credit-networth-side.js';
-
-/**
- * The enhancing bench an item's enhancement cost is computed on. An untradable cape is valued on the
- * character's own bench (the same 'valuation' bench alchemy uses), since nobody could enhance one for
- * the player; everything else takes the simulator's params, as before.
- * @param {string} itemHrid - Item HRID
- * @returns {Object} Enhancement parameters
- */
-function benchParamsFor(itemHrid) {
-    return isUntradableCape(itemHrid) ? enhancementParamsFor('valuation', itemHrid) : getEnhancingParams();
-}
-
-/**
- * Whether an enhancement path can stand as an item's value. An unpriced input makes it a partial
- * bill rather than a price; the one exception is an untradable cape whose base is the cape
- * setting's assumed value, where the path is the cost of the run and says so through its flag.
- * @param {Object|null} path - Result of calculateEnhancementPath
- * @returns {boolean}
- */
-function usablePath(path) {
-    return Boolean(path?.optimalStrategy) && (!path.pricesPartial || path.pricesPartialOnlyByAssumedBase === true);
-}
-
-/**
- * Whether a usable path's figure is a floor: a selected input is a partial bill, or the base was an
- * assumed value of nothing.
- * @param {Object} path - A path accepted by {@link usablePath}
- * @returns {boolean}
- */
-function pathPartial(path) {
-    return path.inputsPartial === true || path.pricesPartialOnlyByAssumedBase === true;
-}
 
 /**
  * Calculate the value of a single item
@@ -99,7 +67,7 @@ export async function calculateItemValueDetailed(item, priceCache = null) {
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
     // The enhancement-cost cache is keyed on the simulator bench; an untradable cape is costed on the
     // character's own bench, which that key does not see, so a cape is never cached
-    const cacheable = !isUntradableCape(itemHrid);
+    const cacheable = isCacheableEnhancementCost(itemHrid);
 
     let itemValue = 0;
     let partial = false;
