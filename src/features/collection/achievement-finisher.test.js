@@ -123,6 +123,7 @@ import {
     PRICES,
     SKILLS,
 } from './__fixtures__/achievement-finisher-game.js';
+import { ANY_OF_ACHIEVEMENTS, ANY_OF_DATA } from './__fixtures__/achievement-finisher-anyof.js';
 
 const DETAIL = {
     '/achievements/a1': { hrid: '/achievements/a1', name: 'A1', tierHrid: '/achievement_tiers/beginner' },
@@ -341,6 +342,31 @@ describe('hints on the game achievement cards', () => {
         game.skills = null;
         game.inventory = null;
         game.gameObject = null;
+    });
+
+    test('a rare-drop card shows the odds and Go opens the chosen action; a re-pick redraws the line', () => {
+        game.detail = ANY_OF_ACHIEVEMENTS;
+        game.clientData = { ...ANY_OF_DATA, achievementDetailMap: ANY_OF_ACHIEVEMENTS };
+        game.skills = [
+            { skillHrid: '/skills/milking', level: 70 },
+            { skillHrid: '/skills/cheesesmithing', level: 1 },
+        ];
+        game.inventory = [];
+        achievementsTab(ANY_OF_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Buttered Up').textContent).toContain('level met · ~1 in 100.0K actions');
+        goOf('Buttered Up').click();
+        expect(nav.navigateToAction).toHaveBeenLastCalledWith('/actions/milking/unicow');
+        // Levelling up changes the pick: the line is rebuilt and Go follows it
+        game.skills = [
+            { skillHrid: '/skills/milking', level: 90 },
+            { skillHrid: '/skills/cheesesmithing', level: 1 },
+        ];
+        finisher.readinessChanged();
+        vi.advanceTimersByTime(1500);
+        expect(lineOf('Buttered Up').textContent).toContain('~1 in 33.3K actions');
+        goOf('Buttered Up').click();
+        expect(nav.navigateToAction).toHaveBeenLastCalledWith('/actions/milking/holy_cow');
     });
 
     test('unfinished resolvable cards get a hint line under the description; finished and unresolved get none', () => {

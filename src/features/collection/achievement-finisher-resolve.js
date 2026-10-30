@@ -130,6 +130,13 @@ function findOne(map, slug, filter = () => true) {
     return byName.length === 1 ? byName[0][0] : null;
 }
 
+/** The one entry whose slug ends in `_<slug>`, or null when none or several do */
+function findBySlugSuffix(map, slug) {
+    if (!map || !slug) return null;
+    const hits = Object.keys(map).filter((hrid) => slugOf(hrid).endsWith(`_${slug}`));
+    return hits.length === 1 ? hits[0] : null;
+}
+
 function inputsOf(action) {
     const inputs = [];
     for (const input of action.inputItems || []) {
@@ -234,10 +241,34 @@ const COMBAT_SKILLS = new Set(
  * "Any of" production achievements: which items count. Matched on structure (hrid pattern, equipment
  * slot, level requirement) so a translated game still resolves; the English description only picks the group.
  */
+const JEWELRY_SLOTS = new Set(['/equipment_types/neck', '/equipment_types/earrings', '/equipment_types/ring']);
+
+let dungeonItemsCache = { source: null, items: null };
+
+/** Every item hrid that appears anywhere inside a dungeon zone's own data */
+function dungeonItems(data) {
+    if (dungeonItemsCache.source === data.actionDetailMap) return dungeonItemsCache.items;
+    const found = new Set();
+    const walk = (node) => {
+        if (Array.isArray(node)) node.forEach(walk);
+        else if (node && typeof node === 'object') {
+            for (const [key, value] of Object.entries(node)) {
+                if (key === 'itemHrid' && typeof value === 'string') found.add(value);
+                else walk(value);
+            }
+        }
+    };
+    for (const action of Object.values(data.actionDetailMap || {})) {
+        if (action?.combatZoneInfo?.isDungeon === true) walk(action);
+    }
+    dungeonItemsCache = { source: data.actionDetailMap, items: found };
+    return found;
+}
+
 const ANY_OF_GROUPS = [
     {
         // Celestial tools or the level 90 skilling outfit tops and bottoms
-        matches: ({ steam, text }) => /^celestial_tool/.test(steam) || /\bcelestial\b.*\b(tool|outfit)\b/i.test(text),
+        matches: ({ steam, text }) => /celestial_tool/.test(steam) || /\bcelestial\b.*\b(tool|outfit)\b/i.test(text),
         accepts: (hrid, item) => {
             const slug = slugOf(hrid);
             const type = String(item?.equipmentDetail?.type || '');
@@ -261,14 +292,44 @@ const ANY_OF_GROUPS = [
         },
     },
     {
+        // Cheesesmith any azure tool
+        matches: ({ steam, text }) => /azure_tool/.test(steam) || /\bazure tool\b/i.test(text),
+        accepts: (hrid, item) =>
+            slugOf(hrid).startsWith('azure_') && String(item?.equipmentDetail?.type || '').endsWith('_tool'),
+        actionOk: (action) => action.type === '/action_types/cheesesmithing',
+    },
+    {
+        // Craft any jewelry: crafting actions that make a neck, ear or finger piece
+        matches: ({ steam, text }) => /(^|_)jewelry$/.test(steam) || /\bjewelry\b/i.test(text),
+        accepts: (hrid, item) => JEWELRY_SLOTS.has(item?.equipmentDetail?.type),
+        actionOk: (action) => action.type === '/action_types/crafting',
+    },
+    {
+        // Refine any dungeon or labyrinth equipment: the `_refined` piece, made from the unrefined one
+        matches: ({ steam, text }) => /^refine_/.test(steam) || /\brefine any\b/i.test(text),
+        accepts: (hrid, item) => /_refined$/.test(slugOf(hrid)) && Boolean(item?.equipmentDetail),
+        actionOk: (action, outputs) =>
+            Boolean(action.upgradeItemHrid) && (action.outputItems || []).some((out) => outputs.has(out?.itemHrid)),
+    },
+    {
+        // Make any dungeon equipment from its components: crafted equipment with an input found only
+        // in a dungeon's own data (its spawns, keys and reward tables)
+        matches: ({ steam, text }) => /dungeon_equipment/.test(steam) || /\bdungeon equipment\b/i.test(text),
+        accepts: (hrid, item) => Boolean(item?.equipmentDetail) && !/_refined$/.test(slugOf(hrid)),
+        actionOk: (action, outputs, data) =>
+            action.type === '/action_types/crafting' &&
+            !action.upgradeItemHrid &&
+            inputsOf(action).some((input) => dungeonItems(data).has(input.itemHrid)),
+    },
+    {
         // Any Master charm
-        matches: ({ steam, text }) => /^master_charm/.test(steam) || /\bmaster charm\b/i.test(text),
+        matches: ({ steam, text }) => /master_charm/.test(steam) || /\bmaster charm\b/i.test(text),
         accepts: (hrid) => /^master_.+_charm$/.test(slugOf(hrid)),
     },
 ];
 
 function resolveAnyOf(detail, data) {
-    const steam = String(detail?.steamAchievementId || '').replace(/^ach_[a-z]+_/, '');
+    const steam = String(detail?.steamAchievementId || '').replace(/^ach_/, '');
     const text = String(detail?.description || '');
     const group = ANY_OF_GROUPS.find((candidate) => candidate.matches({ steam, text }));
     if (!group || !data?.itemDetailMap) return null;
@@ -281,6 +342,7 @@ function resolveAnyOf(detail, data) {
     const candidates = [];
     for (const [actionHrid, action] of Object.entries(data.actionDetailMap || {})) {
         if (!isSkillAction(action) || GATHERING_TYPES.has(action.type)) continue;
+        if (group.actionOk && !group.actionOk(action, outputs, data)) continue;
         if ((action.outputItems || []).some((out) => outputs.has(out?.itemHrid))) {
             candidates.push(candidateOf(actionHrid, action));
         }
@@ -323,6 +385,9 @@ function resolveCombat(parsed, data) {
         monsterHrid = findOne(monsters, parsed.tieredSlug);
         tier = parsed.tieredTier;
     }
+    // The achievement can name the animal where the monster has a longer name
+    // (ach_defeat_shoebill is /monsters/giant_shoebill): one monster whose slug ends in it
+    if (!monsterHrid) monsterHrid = findBySlugSuffix(monsters, parsed.slug);
     if (!monsterHrid) return null;
 
     const zones = Object.entries(data.actionDetailMap || {}).filter(
