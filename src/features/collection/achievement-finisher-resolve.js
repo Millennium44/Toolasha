@@ -97,6 +97,7 @@ function classify(verb, rest) {
         };
     }
     if (verb === 'equip') return { kind: 'equip', verb, slug: rest, tier: null };
+    if (verb === 'collect') return { kind: 'rare', verb, slug: rest, tier: null };
     return null;
 }
 
@@ -111,6 +112,8 @@ function parseDescription(text) {
     if (m) return { kind: 'alchemy', verb: m[1].toLowerCase(), slug: toSlug(m[2]), tier: null };
     m = /^Defeat (?:T(\d+) )?(.+?) by yourself$/i.exec(text);
     if (m) return { kind: 'combat', verb: 'defeat', slug: toSlug(m[2]), tier: m[1] ? Number(m[1]) : 0 };
+    m = /^Collect an? (.+?) from /i.exec(text);
+    if (m) return { kind: 'rare', verb: 'collect', slug: toSlug(m[1]), tier: null };
     m = /^Equip any (.+?) weapon\b/i.exec(text);
     if (m) return { kind: 'equip', verb: 'equip', slug: `${toSlug(m[1])}_weapon`, tier: null };
     return null;
@@ -165,6 +168,125 @@ function resolveProduction(parsed, data) {
         level: action.levelRequirement?.level || 1,
         inputs: inputsOf(action),
     };
+}
+
+/** Skill types whose actions drop their items from a table rather than make them from inputs */
+const GATHERING_TYPES = new Set(GATHERING_SKILLS.map((skill) => `/action_types/${skill}`));
+
+/** The part of an action a candidate list carries */
+function candidateOf(actionHrid, action, extra = {}) {
+    return {
+        actionHrid,
+        skillHrid: action.levelRequirement?.skillHrid || `/skills/${String(action.type).split('/').pop()}`,
+        level: action.levelRequirement?.level || 1,
+        inputs: inputsOf(action),
+        gathering: GATHERING_TYPES.has(action.type),
+        ...extra,
+    };
+}
+
+/** An action a player can start from a skill tab: not combat, not alchemy */
+const isSkillAction = (action) =>
+    Boolean(action?.type) && action.type !== '/action_types/combat' && action.type !== '/action_types/alchemy';
+
+/**
+ * "Collect a <rare item> from ...": every skill action whose rare drop table lists the item, with the
+ * chance of one drop per action (duplicate entries for one action are independent rolls).
+ */
+function resolveRare(parsed, detail, data) {
+    const items = data.itemDetailMap || {};
+    const suffix = slugOf(detail?.hrid || '').replace(/^collect_/, '');
+    let itemHrid = null;
+    for (const slug of [suffix, parsed.slug]) {
+        if (slug && items[`/items/${slug}`]) {
+            itemHrid = `/items/${slug}`;
+            break;
+        }
+    }
+    itemHrid ||= findOne(items, parsed.slug);
+    if (!itemHrid) return null;
+    const candidates = [];
+    for (const [actionHrid, action] of Object.entries(data.actionDetailMap || {})) {
+        if (!isSkillAction(action)) continue;
+        const rates = (action.rareDropTable || [])
+            .filter((drop) => drop?.itemHrid === itemHrid && Number(drop.dropRate) > 0)
+            .map((drop) => Math.min(1, Number(drop.dropRate)));
+        if (rates.length === 0) continue;
+        // One entry is its own rate exactly; several are independent rolls
+        const dropRate = rates.length === 1 ? rates[0] : 1 - rates.reduce((none, rate) => none * (1 - rate), 1);
+        candidates.push(candidateOf(actionHrid, action, { dropRate }));
+    }
+    if (candidates.length === 0) return null;
+    return { kind: 'production', rareItemHrid: itemHrid, candidates: candidates.sort(byAction) };
+}
+
+const byAction = (a, b) => a.actionHrid.localeCompare(b.actionHrid);
+
+const levelOf = (item) => {
+    const reqs = item?.equipmentDetail?.levelRequirements || [];
+    return reqs.length > 0 ? Math.max(...reqs.map((req) => Number(req.level) || 0)) : 0;
+};
+const COMBAT_SKILLS = new Set(
+    ['attack', 'melee', 'defense', 'ranged', 'magic', 'stamina', 'intelligence', 'combat'].map((s) => `/skills/${s}`)
+);
+
+/**
+ * "Any of" production achievements: which items count. Matched on structure (hrid pattern, equipment
+ * slot, level requirement) so a translated game still resolves; the English description only picks the group.
+ */
+const ANY_OF_GROUPS = [
+    {
+        // Celestial tools or the level 90 skilling outfit tops and bottoms
+        matches: ({ steam, text }) => /^celestial_tool/.test(steam) || /\bcelestial\b.*\b(tool|outfit)\b/i.test(text),
+        accepts: (hrid, item) => {
+            const slug = slugOf(hrid);
+            const type = String(item?.equipmentDetail?.type || '');
+            if (slug.startsWith('celestial_') && type.endsWith('_tool')) return true;
+            const reqs = item?.equipmentDetail?.levelRequirements || [];
+            return (
+                /_(top|bottoms)$/.test(slug) &&
+                reqs.length > 0 &&
+                levelOf(item) === 90 &&
+                reqs.every((req) => !COMBAT_SKILLS.has(req.skillHrid))
+            );
+        },
+    },
+    {
+        // Gluttonous or Guzzling Pouch
+        matches: ({ steam, text }) => /pouch/.test(steam) || /\bpouch\b/i.test(text),
+        accepts: (hrid, item, { text }) => {
+            const m = /\ban? (\w+) or (\w+) pouch\b/i.exec(text);
+            const slugs = m ? [`${m[1]}_pouch`, `${m[2]}_pouch`].map((s) => s.toLowerCase()) : null;
+            return slugs ? slugs.includes(slugOf(hrid)) : /^(gluttonous|guzzling)_pouch$/.test(slugOf(hrid));
+        },
+    },
+    {
+        // Any Master charm
+        matches: ({ steam, text }) => /^master_charm/.test(steam) || /\bmaster charm\b/i.test(text),
+        accepts: (hrid) => /^master_.+_charm$/.test(slugOf(hrid)),
+    },
+];
+
+function resolveAnyOf(detail, data) {
+    const steam = String(detail?.steamAchievementId || '').replace(/^ach_[a-z]+_/, '');
+    const text = String(detail?.description || '');
+    const group = ANY_OF_GROUPS.find((candidate) => candidate.matches({ steam, text }));
+    if (!group || !data?.itemDetailMap) return null;
+    const outputs = new Set(
+        Object.entries(data.itemDetailMap)
+            .filter(([hrid, item]) => group.accepts(hrid, item, { text }))
+            .map(([hrid]) => hrid)
+    );
+    if (outputs.size === 0) return null;
+    const candidates = [];
+    for (const [actionHrid, action] of Object.entries(data.actionDetailMap || {})) {
+        if (!isSkillAction(action) || GATHERING_TYPES.has(action.type)) continue;
+        if ((action.outputItems || []).some((out) => outputs.has(out?.itemHrid))) {
+            candidates.push(candidateOf(actionHrid, action));
+        }
+    }
+    if (candidates.length === 0) return null;
+    return { kind: 'production', anyOf: true, candidates: candidates.sort(byAction) };
 }
 
 function resolveAlchemy(parsed, data) {
@@ -280,8 +402,14 @@ function resolveEquip(parsed, data) {
  */
 export function resolveAchievement(detail, data) {
     const parsed = parseAchievement(detail);
-    if (!parsed || !data) return null;
+    if (!data) return null;
+    // "Any of" achievements name no single target; the verb-and-slug parse can also mistake them for one
+    const anyOf = resolveAnyOf(detail, data);
+    if (anyOf) return anyOf;
+    if (!parsed) return null;
     switch (parsed.kind) {
+        case 'rare':
+            return resolveRare(parsed, detail, data);
         case 'production':
             return resolveProduction(parsed, data);
         case 'alchemy':
@@ -406,7 +534,19 @@ export function readiness(res, ctx) {
         return out;
     }
 
-    // Production and alchemy: the level, then one action's inputs
+    if (Array.isArray(res.candidates)) return candidateReadiness(res, ctx, out);
+    return actionReadiness(res, ctx, out);
+}
+
+/**
+ * Production and alchemy: the level, then one action's inputs.
+ * @param {Object} res - Has `skillHrid`, `level`, `inputs`
+ * @param {Object} ctx
+ * @param {Object} out - The result being filled
+ * @returns {Object} out
+ */
+function actionReadiness(res, ctx, out) {
+    const isEstimated = (hrid) => ctx.isEstimated?.(hrid) === true;
     out.level = levelCheck(ctx.skillLevels, res.skillHrid, res.level, null);
     out.levelMet = out.level.met;
     if (!ctx.inventory) return out;
@@ -465,4 +605,79 @@ export function sortRemaining(rows) {
             return a.index - b.index;
         })
         .map((entry) => entry.row);
+}
+
+const emptyReadiness = () => ({
+    levelMet: null,
+    level: null,
+    owned: null,
+    shortfall: [],
+    cost: null,
+    unpriced: [],
+    buyHrid: null,
+    ownedHrid: null,
+    estimated: false,
+});
+
+/**
+ * Order of candidates whose level is met, best first: owned inputs, then the cheapest priced bill, then
+ * a bill with unpriced inputs (fewer unpriced first, never counted as free), then the rest (inventory
+ * not loaded, or an Iron Cow that cannot buy: fewer short inputs first). Ties: lower level, then hrid.
+ */
+function costRank(ready) {
+    if (ready.owned === true) return [0, 0, 0];
+    if (ready.owned === null) return [3, 0, 0];
+    if (Number.isFinite(ready.cost)) return [1, ready.cost, 0];
+    if (ready.unpriced.length > 0) return [2, ready.unpriced.length, ready.partialCost || 0];
+    return [3, ready.shortfall.length, 0];
+}
+
+const compareTuples = (a, b) => {
+    for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+};
+
+/**
+ * Readiness of a resolution that offers several actions: picks one for this character and returns that
+ * action's readiness with `actionHrid` set (and `dropRate` for a rare-drop target).
+ *
+ * Rare drop (candidates carry `dropRate`): the highest drop rate whose level is met; ties go to the lower
+ * level, then a gathering action (no inputs) before a production one. Any-of production: the met candidate
+ * whose inputs are cheapest to complete. With no level met, the lowest-level candidate, shortfall shown.
+ */
+function candidateReadiness(res, ctx, out) {
+    const rare = res.candidates.some((cand) => Number.isFinite(cand.dropRate));
+    const scored = res.candidates.map((cand) => {
+        const ready = actionReadiness({ ...cand, kind: 'production' }, ctx, emptyReadiness());
+        return { cand, ready };
+    });
+    const met = scored.filter((entry) => entry.ready.levelMet === true);
+    let chosen;
+    if (met.length > 0) {
+        met.sort((a, b) => {
+            if (rare) {
+                if (a.cand.dropRate !== b.cand.dropRate) return b.cand.dropRate - a.cand.dropRate;
+                if (a.cand.level !== b.cand.level) return a.cand.level - b.cand.level;
+                if (a.cand.gathering !== b.cand.gathering) return a.cand.gathering ? -1 : 1;
+            } else {
+                const byCost = compareTuples(costRank(a.ready), costRank(b.ready));
+                if (byCost) return byCost;
+                if (a.cand.level !== b.cand.level) return a.cand.level - b.cand.level;
+            }
+            return a.cand.actionHrid.localeCompare(b.cand.actionHrid);
+        });
+        [chosen] = met;
+    } else {
+        // Nothing met (or levels unknown): the easiest way in, the likelier drop on a tie
+        scored.sort(
+            (a, b) =>
+                a.cand.level - b.cand.level ||
+                (b.cand.dropRate || 0) - (a.cand.dropRate || 0) ||
+                a.cand.actionHrid.localeCompare(b.cand.actionHrid)
+        );
+        [chosen] = scored;
+    }
+    Object.assign(out, chosen.ready, { actionHrid: chosen.cand.actionHrid });
+    if (rare) out.dropRate = chosen.cand.dropRate;
+    return out;
 }
