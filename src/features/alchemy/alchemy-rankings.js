@@ -76,6 +76,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { getShopCoinOnlyCost } from '../../utils/game-lookups.js';
 import { PATIENT_TICK_SETTING_KEYS, isPatientTickOn } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { CAPE_BASE_VALUE_SETTING, getCapeBaseValueMode } from '../../utils/untradable-cape.js';
 
 /** The three alchemy actions an item can be put through */
 export const ALCHEMY_TYPES = ['coinify', 'decompose', 'transmute'];
@@ -406,7 +407,7 @@ function stateFingerprint(priceStamp) {
         .sort()
         .join(',');
 
-    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}|${pricingMode}|${house}|${community}`;
+    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}|${pricingMode}|${getCapeBaseValueMode()}|${house}|${community}`;
 }
 
 /**
@@ -427,7 +428,7 @@ export function clearAlchemyRateCache() {
 // The pricing mode decides what every alchemy output is worth. Registered once,
 // at import, because this module has no lifecycle of its own to hang it on.
 config.onSettingChange?.('profitCalc_pricingMode', clearAlchemyRateCache);
-for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, CAPE_BASE_VALUE_SETTING]) {
     config.onSettingChange?.(key, clearAlchemyRateCache);
 }
 

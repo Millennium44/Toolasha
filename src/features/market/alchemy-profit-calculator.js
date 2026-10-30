@@ -19,7 +19,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { getDrinkConcentration, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
-import { getItemPrice, isPriceEstimated } from '../../utils/market-data.js';
+import { getItemPrice, getPricingMode, isPriceEstimated } from '../../utils/market-data.js';
 import { isUntradableCape } from '../../utils/untradable-cape.js';
 import { getUntradableCapeValue } from '../enhancement/untradable-cape-value.js';
 import {
@@ -55,10 +55,18 @@ import {
  * @param {number} [enhancementLevel=0] - Enhancement level
  * @returns {{itemHrid: string, enhancementLevel: number, value: number, partial: boolean}|null}
  */
-function assumedCape(itemHrid, enhancementLevel = 0) {
+function assumedCape(itemHrid, enhancementLevel = 0, side = 'buy') {
     if (!isUntradableCape(itemHrid)) return null;
-    const cape = getUntradableCapeValue(itemHrid, enhancementLevel);
-    return cape?.value > 0 ? { itemHrid, enhancementLevel, value: cape.value, partial: cape.partial } : null;
+    // The Mirror of Protection stand-in is read on the side this term is on: inputs are bought, outputs
+    // are what the player would otherwise sell. (An enhanced cape's path buys its own inputs.)
+    const cape = getUntradableCapeValue(
+        itemHrid,
+        enhancementLevel,
+        enhancementLevel > 0 ? {} : { mode: getPricingMode('profit', side) }
+    );
+    // A figure that is only a floor (the base counts as nothing, or an input is unpriced) must not
+    // pass for a price: the row stays unpriced, as it was before the setting existed
+    return cape?.value > 0 && !cape.partial ? { itemHrid, enhancementLevel, value: cape.value, partial: false } : null;
 }
 
 // Base success rates for alchemy actions
@@ -440,7 +448,7 @@ class AlchemyProfitCalculator {
     _resolveInput(itemHrid, enhancementLevel = 0) {
         const market = this._marketInputBuyPrice(itemHrid, enhancementLevel);
         if (market !== null) return { price: market, assumedCape: null };
-        const cape = assumedCape(itemHrid, enhancementLevel);
+        const cape = assumedCape(itemHrid, enhancementLevel, 'buy');
         return cape ? { price: cape.value, assumedCape: cape } : { price: null, assumedCape: null };
     }
 
@@ -454,7 +462,7 @@ class AlchemyProfitCalculator {
     _resolveUnrefineSide(itemHrid, enhancementLevel, side) {
         const market = getItemPrice(itemHrid, { context: 'profit', side, enhancementLevel });
         if (market !== null) return { price: market, assumedCape: null };
-        const cape = assumedCape(itemHrid, enhancementLevel);
+        const cape = assumedCape(itemHrid, enhancementLevel, side);
         return cape ? { price: cape.value, assumedCape: cape } : { price: null, assumedCape: null };
     }
 
@@ -1406,7 +1414,7 @@ class AlchemyProfitCalculator {
             for (const output of itemDetails.alchemyDetail.decomposeItems) {
                 const outputPrice = getItemPrice(output.itemHrid, { context: 'profit', side: 'sell' });
                 const shopValue = outputPrice === null ? getAlchemyOutputShopValue(output.itemHrid) : null;
-                const capeOutput = outputPrice === null && !shopValue ? assumedCape(output.itemHrid) : null;
+                const capeOutput = outputPrice === null && !shopValue ? assumedCape(output.itemHrid, 0, 'sell') : null;
                 if (capeOutput) {
                     // Untradable, so it is never sold: valued untaxed, and marked as an assumption
                     const outputCount = output.count * bulkMultiplier;
@@ -1847,7 +1855,7 @@ class AlchemyProfitCalculator {
                 }
 
                 const outputPrice = getItemPrice(drop.itemHrid, { context: 'profit', side: 'sell' });
-                const capeOutput = outputPrice === null && !isSelfReturn ? assumedCape(drop.itemHrid) : null;
+                const capeOutput = outputPrice === null && !isSelfReturn ? assumedCape(drop.itemHrid, 0, 'sell') : null;
                 if (capeOutput) {
                     // Untradable, so it is never sold: valued untaxed, and marked as an assumption
                     const dropValue = capeOutput.value * drop.dropRate * averageCount * bulkMultiplier;

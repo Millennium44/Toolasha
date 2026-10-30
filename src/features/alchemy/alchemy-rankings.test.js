@@ -557,6 +557,16 @@ describe('alchemyGoldRates', () => {
         expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
     });
 
+    test('the untradable-cape setting is part of the state, so flipping it looks again', () => {
+        const first = alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour;
+
+        mocks.itemPrices['/items/gem'] = 4000;
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBe(first);
+
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
+    });
+
     test('the house is part of the state — its rooms feed efficiency and rare find', () => {
         const first = alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour;
 

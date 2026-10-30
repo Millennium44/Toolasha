@@ -17,7 +17,7 @@ import { calculateMultiLevelProgress } from '../../utils/experience-calculator.j
 import { setReactInputValue } from '../../utils/react-input.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 import { describeShopValue } from '../../utils/alchemy-shop-value.js';
-import { describeAssumedCape } from '../../utils/untradable-cape.js';
+import { CAPE_BASE_VALUE_SETTING, describeAssumedCape } from '../../utils/untradable-cape.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
@@ -137,6 +137,7 @@ class AlchemyProfitDisplay {
             config.onSettingChange('profitCalc_pricingNaming', onPricingChange),
             ...PATIENT_TICK_SETTING_KEYS.map((key) => config.onSettingChange(key, onPricingChange)),
             config.onSettingChange(IRONCOW_VALUATION_SETTING, onPricingChange),
+            config.onSettingChange(CAPE_BASE_VALUE_SETTING, onPricingChange),
             config.onSettingsLoaded(onPricingChange),
             // The two section switches are read only when the panel is built, so a change
             // has to force a rebuild of a panel already on screen

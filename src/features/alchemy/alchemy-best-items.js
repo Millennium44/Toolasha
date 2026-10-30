@@ -17,7 +17,12 @@ import { formatKMB, formatWithSeparator, formatPercentage, timeReadable } from '
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
-import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/untradable-cape.js';
+import {
+    CAPE_BASE_VALUE_SETTING,
+    getCapeBaseValue,
+    isRefinedCape,
+    isUntradableCape,
+} from '../../utils/untradable-cape.js';
 import {
     capProfitRate,
     sellsFromProfitData,
@@ -233,6 +238,8 @@ class AlchemyBestItems {
         this.pricingUnsubscribers = [
             ...PRICING_SIDE_SETTING_KEYS.map((key) => config.onSettingChange(key, onPricingChange)),
             config.onSettingChange(IRONCOW_VALUATION_SETTING, onPricingChange),
+            // What an untradable cape is assumed to be worth moves every cape row
+            config.onSettingChange(CAPE_BASE_VALUE_SETTING, onPricingChange),
             // Cowbells inside a chain's bonus crates are valued by this setting
             config.onSettingChange('expectedValue_includeCowbells', () => this.handleMarketUpdate()),
             // The own-stock figures were priced under the keep list and its meaning

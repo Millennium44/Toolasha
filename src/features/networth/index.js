@@ -55,6 +55,8 @@ const NETWORTH_RECALC_SETTINGS = [
     // A base item can be priced at its craft cost, which moves every enhanced piece valued by cost
     'enhanceSim_baseItemCraftingCost',
     IRONCOW_VALUATION_SETTING,
+    // What an unrefined untradable cape is assumed to be worth
+    'untradableCapeBaseValue',
 ];
 
 class NetworthFeature {
