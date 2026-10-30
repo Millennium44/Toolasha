@@ -13,6 +13,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
+import { pricesMoved } from '../../utils/price-change.js';
 import { formatKMB, formatWithSeparator, formatPercentage, timeReadable } from '../../utils/formatters.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -192,7 +193,10 @@ class AlchemyBestItems {
         this.pricingUnsubscribers = [];
         this.profitFilterLabel = null;
         // A market refresh or order-book patch moves the asks and bids the chains were priced on
-        this._onMarketUpdate = () => this.handleMarketUpdate();
+        // A burst that only re-confirmed prices already held moves no chain
+        this._onMarketUpdate = (change) => {
+            if (pricesMoved(change)) this.handleMarketUpdate();
+        };
         // True while a header dropdown writes the pricing settings — see choosePricingSide
         this._applyingPricingChoice = false;
     }

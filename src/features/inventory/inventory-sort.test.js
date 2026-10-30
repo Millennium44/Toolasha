@@ -77,8 +77,15 @@ vi.mock('../../core/dom-observer.js', () => ({
         },
     },
 }));
+const market = vi.hoisted(() => ({ listeners: [] }));
 vi.mock('../../api/marketplace.js', () => ({
-    default: { on: () => {}, off: () => {}, isLoaded: () => true },
+    default: {
+        on: (cb) => market.listeners.push(cb),
+        off: (cb) => {
+            market.listeners = market.listeners.filter((registered) => registered !== cb);
+        },
+        isLoaded: () => true,
+    },
 }));
 vi.mock('../../utils/formatters.js', () => ({
     formatKMB: (v, decimals) => (decimals ? `${v}.${decimals}dp` : String(v)),
@@ -880,6 +887,49 @@ describe('InventorySort.renderBadgesForItem over an unchanged value', () => {
         } finally {
             badgeMode.stackKey = null;
             tile.remove();
+        }
+    });
+});
+
+describe('InventorySort price listener', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    test('a burst that moved no price runs no badge pass; a moved price or a full change does', () => {
+        vi.useFakeTimers();
+        market.listeners = [];
+        inventorySort.setupMarketDataListener();
+        const handler = market.listeners.at(-1);
+        const apply = vi.spyOn(inventorySort, 'applyCurrentSort').mockImplementation(async () => {});
+        const wasInitialized = inventorySort.isInitialized;
+        const wasElem = inventorySort.currentInventoryElem;
+        inventorySort.isInitialized = true;
+        inventorySort.currentInventoryElem = document.createElement('div');
+        try {
+            // A re-opened book whose top of book has not moved
+            handler({ full: false, keys: new Set(), hrids: new Set(), touched: new Set(['/items/egg:0']) });
+            vi.advanceTimersByTime(600);
+            expect(apply).not.toHaveBeenCalled();
+
+            handler({
+                full: false,
+                keys: new Set(['/items/egg:0']),
+                hrids: new Set(['/items/egg']),
+                touched: new Set(['/items/egg:0']),
+            });
+            vi.advanceTimersByTime(600);
+            expect(apply).toHaveBeenCalledTimes(1);
+
+            // No argument at all (an older caller) still counts as a change
+            handler();
+            vi.advanceTimersByTime(600);
+            expect(apply).toHaveBeenCalledTimes(2);
+        } finally {
+            inventorySort.isInitialized = wasInitialized;
+            inventorySort.currentInventoryElem = wasElem;
+            market.listeners = [];
         }
     });
 });

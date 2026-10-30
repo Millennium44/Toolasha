@@ -4,6 +4,7 @@
  */
 
 import marketAPI from '../../api/marketplace.js';
+import { pricesMoved } from '../../utils/price-change.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
@@ -111,7 +112,10 @@ class ExpectedValueCalculator {
             config.onSettingChange(CAPE_BASE_VALUE_SETTING, trigger),
         ];
 
-        this._priceUpdateHandler = trigger;
+        // A burst that only re-confirmed prices already held moves no container's value
+        this._priceUpdateHandler = (change) => {
+            if (pricesMoved(change)) trigger();
+        };
         marketAPI.on(this._priceUpdateHandler);
     }
 

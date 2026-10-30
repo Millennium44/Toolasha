@@ -24,6 +24,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
+import { pricesMoved } from '../../utils/price-change.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { pricingStamp } from '../../utils/enhancement-input-pricing.js';
@@ -161,7 +162,9 @@ class EnhanceProfitColumn {
         };
         dataManager.on('market_item_order_books_updated', bookHandler);
 
-        const priceHandler = () => {
+        const priceHandler = (change) => {
+            // A burst that only re-confirmed prices already held moves no quote
+            if (!pricesMoved(change)) return;
             this.quoteCache.clear();
             this.scheduleRepaint();
         };

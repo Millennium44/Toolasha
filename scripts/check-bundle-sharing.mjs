@@ -106,6 +106,12 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/price-change.js',
+        // One pure predicate, no imports and no module state: whether a market notification moved a
+        // price. The price listeners in several bundles (inventory, net worth, EV, house, shop) ask it.
+        'stateless reading of a market change descriptor; no module state to share',
+    ],
+    [
         'src/utils/responsive-dock.js',
         // No module-level mutable state or import-time DOM effects. Each call owns its
         // element, observer, listener, and cleanup closure; copies share no registry.

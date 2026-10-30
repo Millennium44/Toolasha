@@ -943,6 +943,31 @@ describe('cache invalidation on pricing changes', () => {
         invalidateSpy.mockRestore();
     });
 
+    test('a price burst that moved no price schedules nothing; one that moved a price does', () => {
+        vi.useFakeTimers();
+        const invalidateSpy = vi.spyOn(expectedValueCalculator, 'invalidateCache').mockImplementation(() => {});
+
+        const unmoved = { full: false, keys: new Set(), hrids: new Set(), touched: new Set(['/items/egg:0']) };
+        mocks.marketListeners.forEach((cb) => cb(unmoved));
+        vi.advanceTimersByTime(300);
+        expect(invalidateSpy).not.toHaveBeenCalled();
+
+        const moved = {
+            full: false,
+            keys: new Set(['/items/egg:0']),
+            hrids: new Set(['/items/egg']),
+            touched: new Set(['/items/egg:0']),
+        };
+        mocks.marketListeners.forEach((cb) => cb(moved));
+        vi.advanceTimersByTime(300);
+        expect(invalidateSpy).toHaveBeenCalledTimes(1);
+
+        mocks.marketListeners.forEach((cb) => cb({ full: true, keys: new Set(), hrids: new Set() }));
+        vi.advanceTimersByTime(300);
+        expect(invalidateSpy).toHaveBeenCalledTimes(2);
+        invalidateSpy.mockRestore();
+    });
+
     test('a burst of triggers coalesces into a single invalidate', () => {
         vi.useFakeTimers();
         const invalidateSpy = vi.spyOn(expectedValueCalculator, 'invalidateCache').mockImplementation(() => {});
