@@ -12,6 +12,7 @@
  */
 
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
+import { enhanceReadiness } from './achievement-finisher-enhance.js';
 
 /** Production and gathering verbs → the skill whose action type they name */
 export const VERB_SKILLS = Object.freeze({
@@ -514,6 +515,31 @@ function resolvePlace(detail, data) {
     return null;
 }
 
+/**
+ * "Enhance any equipment to +N" / "Enhance equipment with L+ recommended level to +N": every tradable
+ * equipment piece that can be enhanced, at or above the recommended level (`itemLevel`).
+ * @param {Object} detail
+ * @param {Object} data
+ * @returns {Object|null} An `enhance` resolution, or null when the id is neither or nothing qualifies
+ */
+function resolveEnhance(detail, data) {
+    const m = /^ach_enhance_(?:level_(\d+)_)?to_(\d+)$/.exec(String(detail?.steamAchievementId || ''));
+    if (!m) return null;
+    const minItemLevel = m[1] ? Number(m[1]) : 0;
+    const target = Number(m[2]);
+    if (!(target >= 1 && target <= 19)) return null;
+    const candidates = [];
+    for (const [itemHrid, item] of Object.entries(data.itemDetailMap || {})) {
+        if (!item?.equipmentDetail || !(item.enhancementCosts?.length > 0) || item.isTradable !== true) continue;
+        const itemLevel = Number(item.itemLevel) || 0;
+        if (itemLevel < minItemLevel) continue;
+        candidates.push({ itemHrid, itemLevel: Math.max(1, itemLevel) });
+    }
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => a.itemHrid.localeCompare(b.itemHrid));
+    return { kind: 'enhance', target, minItemLevel, candidates };
+}
+
 const ABILITY_BOOK_CATEGORY = '/item_categories/ability_book';
 
 /**
@@ -556,6 +582,8 @@ export function resolveAchievement(detail, data) {
     if (place) return place;
     const ability = resolveAbility(detail, data);
     if (ability) return ability;
+    const enhance = resolveEnhance(detail, data);
+    if (enhance) return enhance;
     // "Any of" achievements name no single target; the verb-and-slug parse can also mistake them for one
     const anyOf = resolveAnyOf(detail, data);
     if (anyOf) return anyOf;
@@ -647,6 +675,7 @@ export function readiness(res, ctx) {
 
     if (res.kind === 'place') return placeReadiness(res, ctx, out);
     if (res.kind === 'ability') return abilityReadiness(res, ctx, out);
+    if (res.kind === 'enhance') return enhanceReadiness(res, ctx, out);
 
     if (res.kind === 'equip') {
         if (!ctx.inventory) return out;
