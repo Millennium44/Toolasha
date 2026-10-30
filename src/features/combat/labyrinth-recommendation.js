@@ -96,7 +96,7 @@ export const recommendationMethods = {
                 low = mid + 1;
                 continue;
             }
-            if (this.simCancelled()) return null;
+            if (this.simCancelled(this._recommendBatch)) return null;
             // The search only needs this level placed above or below the bar,
             // not measured against it — at the Automation tab's own precision
             // and fight ceiling, which is what every sim this tab runs uses
@@ -172,7 +172,7 @@ export const recommendationMethods = {
             effectiveCombatLevel,
             targetSeconds,
             async (roomLevel) => {
-                if (this.simCancelled()) return { cancelled: true };
+                if (this.simCancelled(this._recommendBatch)) return { cancelled: true };
                 const result = await this.computeCombatClear(monsterHrid, roomLevel, this.automationSimOptions());
                 // A sim that could not run (inputs still loading, a worker error) is no measurement:
                 // abandon the search rather than score the room as never clearing
@@ -471,10 +471,10 @@ export const recommendationMethods = {
      * Put the rooms a search preempted back on the estimate queue.
      * @private
      */
-    _resumePreemptedSims() {
+    _resumePreemptedSims(batch) {
         const stash = this._preemptedSims || [];
         this._preemptedSims = [];
-        if (this.simCancelled()) {
+        if (this.simCancelled(batch)) {
             // A cancelled search does not bring estimates back, the rows a
             // rerender queued during it included
             this.simQueue = [];
@@ -500,7 +500,8 @@ export const recommendationMethods = {
     async runRecommendations(basis = 'winRate') {
         if (this.recommendRunning) return;
         this.recommendRunning = true;
-        this.beginSimBatch();
+        const batch = this.beginSimBatch();
+        this._recommendBatch = batch;
         const epoch = this.simEpoch();
         this.refreshAutomationRunningState();
         this.recommendations.clear();
@@ -567,7 +568,7 @@ export const recommendationMethods = {
             combatSearchedAt.set(roomHrid, startedAt);
             if (bySeconds) {
                 const found = await this.findRecommendedThresholdSecondsCombat(roomHrid, targetSeconds);
-                if (this.simCancelled() || this.simEpoch() !== epoch) return false;
+                if (this.simCancelled(this._recommendBatch) || this.simEpoch() !== epoch) return false;
                 // An interrupted combat room reports nothing, as win-rate does — and a retry
                 // that could not run drops the record it was retrying, rather than leave a
                 // threshold for the inputs that changed
@@ -578,7 +579,7 @@ export const recommendationMethods = {
                 return true;
             }
             const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
-            if (this.simCancelled() || this.simEpoch() !== epoch) return false;
+            if (this.simCancelled(this._recommendBatch) || this.simEpoch() !== epoch) return false;
             this.recommendations.set(roomHrid, {
                 threshold,
                 basis: 'winRate',
@@ -608,7 +609,7 @@ export const recommendationMethods = {
             for (const { roomHrid, isSkill } of rooms) {
                 // Cancelling a batch has to stop the queue of rooms behind the
                 // one being simulated, not only that room's sim
-                if (this.simCancelled() || this.simEpoch() !== epoch) break;
+                if (this.simCancelled(this._recommendBatch) || this.simEpoch() !== epoch) break;
                 if (isSkill) {
                     await searchSkillRoom(roomHrid);
                 } else {
@@ -626,12 +627,17 @@ export const recommendationMethods = {
             // inputs that keep changing (a lab cycling loadouts) cannot hold the run open forever
             let skillSerial = 0;
             for (let pass = 0; pass < 3; pass++) {
-                if (!this._recommendInputsChangedMidRun || this.simCancelled() || this.simEpoch() !== epoch) break;
+                if (
+                    !this._recommendInputsChangedMidRun ||
+                    this.simCancelled(this._recommendBatch) ||
+                    this.simEpoch() !== epoch
+                )
+                    break;
                 const latest = this._recommendChangeSerial;
                 if (skillSerial === latest) break;
                 let aborted = false;
                 for (const { roomHrid, isSkill } of rooms) {
-                    if (this.simCancelled() || this.simEpoch() !== epoch) {
+                    if (this.simCancelled(this._recommendBatch) || this.simEpoch() !== epoch) {
                         aborted = true;
                         break;
                     }
@@ -669,6 +675,7 @@ export const recommendationMethods = {
                     }
                 }
                 this.recommendRunning = false;
+                this._recommendBatch = null;
                 this._recommendInputsChangedMidRun = false;
                 this.refreshAutomationRunningState();
             }
@@ -679,7 +686,7 @@ export const recommendationMethods = {
         // character's thresholds onto the next one's table.
         if (this.simEpoch() !== epoch) return;
         this.injectRecommendationBadges();
-        this._resumePreemptedSims();
+        this._resumePreemptedSims(batch);
     },
 
     /**
