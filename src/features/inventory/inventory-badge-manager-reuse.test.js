@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => ({
     evGeneration: 0,
     dataListeners: {},
     anySetting: null,
+    settingsLoaded: null,
+    valuesEpoch: 0,
+    customVersion: 0,
     popper: null,
 }));
 
@@ -29,8 +32,14 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => mocks.settings[key] ?? false,
         getSettingValue: (key, fallback) => mocks.settings[key] ?? fallback,
-        isFeatureEnabled: () => true,
+        isFeatureEnabled: (key) => mocks.settings[key] ?? true,
         onSettingChange: () => () => {},
+        onSettingsLoaded: (cb) => {
+            mocks.settingsLoaded = cb;
+            return () => {
+                mocks.settingsLoaded = null;
+            };
+        },
         onAnySettingChange: (cb) => {
             mocks.anySetting = cb;
             return () => {
@@ -42,8 +51,10 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../utils/market-values.js', () => ({
     refreshMarketValues: () => {},
     marketValueFor: () => null,
+    getMarketValuesEpoch: () => mocks.valuesEpoch,
     reconcileBook: (ask, bid) => ({ ask, bid }),
 }));
+vi.mock('../settings/custom-price-overrides.js', () => ({ getCustomPriceVersion: () => mocks.customVersion }));
 vi.mock('../../api/marketplace.js', () => ({
     default: {
         getPricesBatch: () => mocks.priceBatch,
@@ -161,6 +172,8 @@ beforeEach(() => {
     mocks.settings = { networth_highEnhancementUseCost: true, networth_highEnhancementMinLevel: 13 };
     mocks.priceVersion = 1;
     mocks.evGeneration = 0;
+    mocks.valuesEpoch = 0;
+    mocks.customVersion = 0;
     networthCache.clear();
 
     const inv = document.createElement('div');
@@ -246,6 +259,32 @@ describe('a pass over unchanged inputs', () => {
         spy.mockRestore();
 
         mocks.evGeneration += 1;
+        expect(await pricedTiles()).toBe(tiles.length);
+        expect(await pricedTiles()).toBe(0);
+    });
+
+    test.each([
+        [
+            'a settings load (sync pull, import, copy, mirror restore), which fires no any-setting event',
+            () => mocks.settingsLoaded(),
+        ],
+        ['a pricing setting that changed under a settings load', () => (mocks.settings.networth_pricingMode = 'bid')],
+        ['the net-worth +N valuation setting', () => (mocks.settings.networth_highEnhancementUseCost = false)],
+        ['the +N minimum level setting', () => (mocks.settings.networth_highEnhancementMinLevel = 15)],
+        ['the base-item crafting setting', () => (mocks.settings.enhanceSim_baseItemCraftingCost = false)],
+        ['the Iron Cow valuation setting', () => (mocks.settings.profitCalc_ironCowValuation = 'vendor')],
+        ['the game value map swapping silently', () => (mocks.valuesEpoch += 1)],
+        [
+            'a custom price edit, which moves its own version without a market notification',
+            () => (mocks.customVersion += 1),
+        ],
+        [
+            'a captured guild token exchange rate',
+            () => window.dispatchEvent(new CustomEvent('toolasha:guild-token-exchange-changed')),
+        ],
+    ])('%s prices every tile again', async (_name, move) => {
+        await pricedTiles();
+        move();
         expect(await pricedTiles()).toBe(tiles.length);
         expect(await pricedTiles()).toBe(0);
     });
