@@ -518,8 +518,8 @@ describe('hints on the game achievement cards', () => {
         goOf('Milkmaid').click();
         expect(nav.navigateToAction.mock.calls).toEqual([['/actions/milking/cow']]);
         for (const name of ['Refiner', 'Azure Smith', 'Celestial']) expect(lineOf(name)).toBeNull();
-        // Repeat T1 clears: the dungeon at T1, progress unknown without a progress row
-        expect(lineOf('Regular').textContent).toContain('[dungeon T1 · clears unknown · no level requirement]');
+        // Repeat T1 clears: the dungeon at T1, 0 clears without a progress row
+        expect(lineOf('Regular').textContent).toContain('[dungeon T1 · 0 / 1 clears · no level requirement]');
     });
 
     test('Missing Mats shows only where inputs are short and buyable, and opens the shared bill for one action', () => {
@@ -903,14 +903,14 @@ describe('hints on the game achievement cards', () => {
         expect(nav.navigateToAction).not.toHaveBeenCalled();
     });
 
-    test('place cards with nothing loaded: rooms and progress unknown, never 0', () => {
+    test('place cards: rooms unknown until loaded; an achievement with no progress row is 0, not unknown', () => {
         placeSetup();
         game.achievements = [{ achievementHrid: '/achievements/coinify_coins_1m', isCompleted: false }];
         achievementsTab(PLACE_ACHIEVEMENTS);
         finisher.initialize();
         expect(lineOf('Homeowner II').textContent).toContain('rooms not loaded');
-        expect(lineOf('Dungeon Elitist').textContent).toContain('clears unknown');
-        expect(lineOf('Midas Touch').textContent).toContain('coinify 1.0M coin · progress unknown');
+        expect(lineOf('Dungeon Elitist').textContent).toContain('dungeon T1 · 0 / 10 clears');
+        expect(lineOf('Midas Touch').textContent).toContain('coinified 0 / 1.0M coin');
     });
 
     test('progress moving redraws a place card; the shop filter waits for the box and stops for a new character', () => {
