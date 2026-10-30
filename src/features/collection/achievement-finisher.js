@@ -36,10 +36,10 @@ import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigat
 import { getItemPriceInfo } from '../../utils/market-data.js';
 import { setShopFilter } from '../../utils/tester-shop-nav.js';
 import { perAttemptMaterialCost, priceProtection } from '../../utils/enhancement-input-pricing.js';
-import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { getRareFindParts } from '../../utils/bonus-revenue-calculator.js';
 import { getAutoDetectedParams } from '../../utils/enhancement-config.js';
-import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
+import { loadoutSnapshot, missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { formatKMB } from '../../utils/formatters.js';
@@ -513,8 +513,10 @@ class AchievementFinisher {
             this.handlers.push([event, stale]);
         }
         // Enhancer routes read the saved loadouts' gear and drinks; an edit there changes the route
-        loadoutSnapshot.onUpdate?.(stale);
-        this.unregisterHandlers.push(() => loadoutSnapshot.offUpdate?.(stale));
+        // The live store sits behind the bundle bridge (one instance across bundles)
+        const loadouts = loadoutSnapshot() || bundledLoadoutSnapshot;
+        loadouts.onUpdate?.(stale);
+        this.unregisterHandlers.push(() => loadouts.offUpdate?.(stale));
         for (const key of READINESS_SETTINGS) {
             const off = config.onSettingChange?.(key, stale);
             if (typeof off === 'function') this.unregisterHandlers.push(off);
