@@ -4858,6 +4858,18 @@ describe('the recompute verb', () => {
         expect(call[3]).toMatchObject({ debounce: true });
     });
 
+    test('the skip-threshold watcher is debounced, so one panel render is one overlay pass', async () => {
+        // The panel inserts one skip-threshold element per skill at once; undebounced, each redrew every
+        // overlay (~580 ms per Labyrinth visit, measured live)
+        const { default: domObserver } = await import('../../core/dom-observer.js');
+        domObserver.onClass.mockClear();
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+        const call = domObserver.onClass.mock.calls.find(([name]) => name === 'LabyrinthClearRate');
+        expect(call).toBeDefined();
+        expect(call[3]).toMatchObject({ debounce: true });
+    });
+
     test('switching the feature off takes it out of the palette', () => {
         resetCommands();
         labyrinthClearRate.isInitialized = false;
