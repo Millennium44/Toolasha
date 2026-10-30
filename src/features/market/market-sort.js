@@ -28,7 +28,9 @@ import profitCalculator from './profit-calculator.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { formatLargeNumber, formatKMB } from '../../utils/formatters.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { withProfitPricingMode } from '../../utils/market-data.js';
+import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
 
 /**
@@ -119,6 +121,34 @@ export function getSortMode(value) {
  */
 export function isAlchemyMode(value) {
     return getSortMode(value).metric !== null;
+}
+
+/** How long the sort computes before handing the browser a frame */
+const SORT_SLICE_MS = 10;
+
+const GATHERING_ACTION_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
+
+/** @type {WeakMap<Object, Map<string, string>>} actionDetailMap → drop item → first gathering action that drops it */
+const gatheringActionIndexes = new WeakMap();
+
+/**
+ * Which gathering action drops each item, first in the map's order. One pass per map object instead of
+ * a scan of every action for every tile that is not craftable.
+ * @param {Object} actionDetailMap - `initClientData.actionDetailMap`
+ * @returns {Map<string, string>} item hrid → action hrid
+ */
+function gatheringActionIndex(actionDetailMap) {
+    let index = gatheringActionIndexes.get(actionDetailMap);
+    if (index) return index;
+    index = new Map();
+    for (const [actionHrid, action] of Object.entries(actionDetailMap)) {
+        if (!GATHERING_ACTION_TYPES.includes(action.type) || !action.dropTable) continue;
+        for (const drop of action.dropTable) {
+            if (!index.has(drop.itemHrid)) index.set(drop.itemHrid, actionHrid);
+        }
+    }
+    gatheringActionIndexes.set(actionDetailMap, index);
+    return index;
 }
 
 class MarketSort {
@@ -471,6 +501,14 @@ class MarketSort {
         // that no longer exist. Cheaper to notice here than to re-derive.
         this.invalidateOnPriceRefresh();
         const cacheRevision = this.cacheRevision;
+        // The sort now hands the browser a frame between tiles, so the user can change the mode (or reset)
+        // while it runs; whichever happens, the figures being computed are for a sort nobody asked for
+        const startedMode = this.sortMode;
+        const superseded = () => this.cacheRevision !== cacheRevision || this.sortMode !== startedMode;
+
+        // The alchemy modes cost every tile three calculator passes over the character's gear and teas;
+        // that setup does not vary by tile, so it is resolved once for the sort
+        const alchemyContext = this.resolveAlchemyContext();
 
         // Get all visible item divs
         const itemDivs = Array.from(marketItemsContainer.querySelectorAll('div[class*="Item_itemContainer"]'));
@@ -485,6 +523,7 @@ class MarketSort {
 
         // Calculate profits for all items (using cache when available)
         const itemsWithProfit = [];
+        let sliceStart = performance.now();
 
         for (const itemDiv of visibleItems) {
             const itemHrid = tileItemHrid(itemDiv);
@@ -502,12 +541,22 @@ class MarketSort {
             }
 
             // Calculate profit
-            const result = await this.calculateItemProfit(itemHrid, gameData);
-            if (this.cacheRevision !== cacheRevision) {
+            const result = await this.calculateItemProfit(itemHrid, gameData, alchemyContext);
+            if (superseded()) {
                 return;
             }
             this.profitCache.set(cacheKey, result);
             itemsWithProfit.push({ element: itemDiv, ...result, itemHrid });
+
+            // ~900 tiles of synchronous calculator work are one long task however many awaits sit between
+            // them (resolved promises never leave the microtask queue): hand the frame back on a clock
+            if (performance.now() - sliceStart > SORT_SLICE_MS) {
+                await yieldToBrowser();
+                if (superseded()) {
+                    return;
+                }
+                sliceStart = performance.now();
+            }
         }
 
         // Sort items
@@ -534,11 +583,12 @@ class MarketSort {
      * Calculate the figure the current mode ranks by.
      * @param {string} itemHrid - Item HRID
      * @param {Object} gameData - Game data
+     * @param {Object|null} [alchemyContext] - The alchemy gear and drinks, resolved once by the caller
      * @returns {Promise<{profit: number|null, detail: string|null, partial?: boolean, partialItems?: string[]}>}
      *   The figure, what it describes, whether it is a lower bound (a decompose chain with an output or crate
      *   content that has no real bid), and the hrids counted at zero
      */
-    async calculateItemProfit(itemHrid, gameData) {
+    async calculateItemProfit(itemHrid, gameData, alchemyContext = null) {
         const mode = getSortMode(this.sortMode);
 
         if (mode.chain) {
@@ -553,7 +603,7 @@ class MarketSort {
         }
 
         if (mode.metric) {
-            const best = this.bestAlchemyCandidate(itemHrid, mode.metric);
+            const best = this.bestAlchemyCandidate(itemHrid, mode.metric, alchemyContext);
             if (!best) return { profit: null, detail: null };
             return { profit: best[mode.metric], detail: best.action };
         }
@@ -610,9 +660,10 @@ class MarketSort {
      * passes over the character's gear, teas and efficiency.
      *
      * @param {string} itemHrid - Item HRID
+     * @param {Object|null} [actionContext] - Gear and drinks to cost with, when the caller resolved them once
      * @returns {Array<{action: string, profitPerAction: number, profitPerHour: number, catalyst: string|null}>} Candidates, unsorted
      */
-    alchemyCandidates(itemHrid) {
+    alchemyCandidates(itemHrid, actionContext = null) {
         const cached = this.alchemyCache.get(itemHrid);
         if (cached) return cached;
 
@@ -623,8 +674,8 @@ class MarketSort {
                     let data;
                     try {
                         data = withEnhancement
-                            ? alchemyProfitCalculator[method](itemHrid, 0)
-                            : alchemyProfitCalculator[method](itemHrid);
+                            ? alchemyProfitCalculator[method](itemHrid, 0, false, null, actionContext)
+                            : alchemyProfitCalculator[method](itemHrid, false, null, null, actionContext);
                     } catch {
                         continue;
                     }
@@ -667,11 +718,12 @@ class MarketSort {
      * The alchemy action that pays best on an item under a given metric.
      * @param {string} itemHrid - Item HRID
      * @param {string} metric - 'profitPerAction' or 'profitPerHour'
+     * @param {Object|null} [actionContext] - Gear and drinks to cost with, when the caller resolved them once
      * @returns {Object|null} The winning candidate, or null when nothing prices
      */
-    bestAlchemyCandidate(itemHrid, metric) {
+    bestAlchemyCandidate(itemHrid, metric, actionContext = null) {
         let best = null;
-        for (const candidate of this.alchemyCandidates(itemHrid)) {
+        for (const candidate of this.alchemyCandidates(itemHrid, actionContext)) {
             if (!best || candidate[metric] > best[metric]) best = candidate;
         }
         return best;
@@ -684,24 +736,24 @@ class MarketSort {
      * @returns {string|null} Action HRID or null
      */
     findGatheringAction(itemHrid, gameData) {
-        const gatheringTypes = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
+        const map = gameData?.actionDetailMap;
+        if (!map || typeof map !== 'object') return null;
+        return gatheringActionIndex(map).get(itemHrid) ?? null;
+    }
 
-        for (const [actionHrid, action] of Object.entries(gameData.actionDetailMap)) {
-            if (!gatheringTypes.includes(action.type)) {
-                continue;
-            }
-
-            // Check drop table for this item
-            if (action.dropTable) {
-                for (const drop of action.dropTable) {
-                    if (drop.itemHrid === itemHrid) {
-                        return actionHrid;
-                    }
-                }
-            }
+    /**
+     * The alchemy gear and drinks one sort costs every tile with, or null outside the alchemy modes.
+     * A failure leaves the calculator to resolve its own per tile, as it always did.
+     * @returns {Object|null}
+     */
+    resolveAlchemyContext() {
+        const mode = getSortMode(this.sortMode);
+        if (mode.metric === null || mode.chain) return null;
+        try {
+            return resolveActionContext('/action_types/alchemy');
+        } catch {
+            return null;
         }
-
-        return null;
     }
 
     /**
