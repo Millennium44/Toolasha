@@ -55,6 +55,19 @@ function createDeferred() {
 }
 
 /**
+ * Write one tile dataset field only when its text would change. Every write is a DOM attribute
+ * mutation every page observer is handed, and a pass over an unchanged inventory used to rewrite
+ * all of them (five per tile, plus a delete and re-add of `expectPrice`).
+ * @param {HTMLElement} el - Item tile
+ * @param {string} key - Dataset key
+ * @param {number|string} value - Value, stored as its string the way a dataset assignment does
+ */
+function setTileData(el, key, value) {
+    const text = String(value);
+    if (el.dataset[key] !== text) el.dataset[key] = text;
+}
+
+/**
  * InventoryBadgeManager class manages all inventory item badges from multiple features
  */
 class InventoryBadgeManager {
@@ -574,9 +587,29 @@ class InventoryBadgeManager {
         // Read once per call rather than once per tile: both are fixed for the pass
         const netOfTax = config.getSetting('invSort_netOfTax') && !isIronCowCharacter();
 
+        // Each tile's expectPrice mark (see inventory-unpriced.js), written once per tile and only when
+        // it changes: a delete followed by a re-add was two attribute mutations per tile per pass even
+        // when the mark never moved. Decided by whichever branch the tile takes, then flushed.
+        let current = null;
+        let expectDecided = false;
+        let expectPrice = null;
+        const flushExpect = () => {
+            if (!current || !expectDecided) return;
+            if (expectPrice === null) {
+                if (current.dataset.expectPrice !== undefined) delete current.dataset.expectPrice;
+            } else {
+                setTileData(current, 'expectPrice', expectPrice);
+            }
+        };
+
         let sliceStart = performance.now();
 
         for (const itemElem of itemElems) {
+            // The previous tile's mark, written now that its branch has been decided
+            flushExpect();
+            current = itemElem;
+            expectDecided = false;
+            expectPrice = null;
             // Cooperative time-slicing: hand the thread back once a slice runs
             // long so the expensive enhancement-cost path below cannot freeze the
             // page in one contiguous macrotask (see RENDER_TIME_BUDGET_MS). Every
@@ -595,8 +628,8 @@ class InventoryBadgeManager {
             const svg = itemElem.querySelector('svg');
             if (!svg) continue;
 
-            // Set again below only for a tile whose 0 would mean "no price" (see inventory-unpriced.js)
-            delete itemElem.dataset.expectPrice;
+            // Set below only for a tile whose 0 would mean "no price" (see inventory-unpriced.js)
+            expectDecided = true;
 
             const itemHrid =
                 this.getItemHridFromContainer(itemElem, gameData) ||
@@ -608,10 +641,10 @@ class InventoryBadgeManager {
 
             // Skip actual currency items
             if (currencyHrids.has(itemHrid)) {
-                itemElem.dataset.askPrice = 0;
-                itemElem.dataset.bidPrice = 0;
-                itemElem.dataset.askValue = 0;
-                itemElem.dataset.bidValue = 0;
+                setTileData(itemElem, 'askPrice', 0);
+                setTileData(itemElem, 'bidPrice', 0);
+                setTileData(itemElem, 'askValue', 0);
+                setTileData(itemElem, 'bidValue', 0);
                 continue;
             }
 
@@ -629,11 +662,11 @@ class InventoryBadgeManager {
                 // The figure is gross (a shop item's market price); net-of-tax mode takes the same cut
                 // as every other market-priced tile
                 if (netOfTax) perToken *= 1 - MARKET_TAX;
-                itemElem.dataset.askPrice = perToken;
-                itemElem.dataset.bidPrice = perToken;
-                itemElem.dataset.askValue = perToken * itemCount;
-                itemElem.dataset.bidValue = perToken * itemCount;
-                if (itemCount > 0) itemElem.dataset.expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
+                setTileData(itemElem, 'askPrice', perToken);
+                setTileData(itemElem, 'bidPrice', perToken);
+                setTileData(itemElem, 'askValue', perToken * itemCount);
+                setTileData(itemElem, 'bidValue', perToken * itemCount);
+                if (itemCount > 0) expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
                 continue;
             }
 
@@ -649,11 +682,11 @@ class InventoryBadgeManager {
                 }
                 const askPerCredit = creditRates.ask[itemHrid] || 0;
                 const bidPerCredit = creditRates.bid[itemHrid] || 0;
-                itemElem.dataset.askPrice = askPerCredit;
-                itemElem.dataset.bidPrice = bidPerCredit;
-                itemElem.dataset.askValue = askPerCredit * itemCount;
-                itemElem.dataset.bidValue = bidPerCredit * itemCount;
-                if (itemCount > 0) itemElem.dataset.expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
+                setTileData(itemElem, 'askPrice', askPerCredit);
+                setTileData(itemElem, 'bidPrice', bidPerCredit);
+                setTileData(itemElem, 'askValue', askPerCredit * itemCount);
+                setTileData(itemElem, 'bidValue', bidPerCredit * itemCount);
+                if (itemCount > 0) expectPrice = gameData.itemDetailMap[itemHrid]?.name || itemHrid;
                 continue;
             }
 
@@ -669,16 +702,16 @@ class InventoryBadgeManager {
 
                 if (isCharm && sellPrice) {
                     // Use sell price for trainee charms
-                    itemElem.dataset.askPrice = sellPrice;
-                    itemElem.dataset.bidPrice = sellPrice;
-                    itemElem.dataset.askValue = sellPrice * itemCount;
-                    itemElem.dataset.bidValue = sellPrice * itemCount;
+                    setTileData(itemElem, 'askPrice', sellPrice);
+                    setTileData(itemElem, 'bidPrice', sellPrice);
+                    setTileData(itemElem, 'askValue', sellPrice * itemCount);
+                    setTileData(itemElem, 'bidValue', sellPrice * itemCount);
                 } else {
                     // Other trainee items (weapons/armor) remain at 0
-                    itemElem.dataset.askPrice = 0;
-                    itemElem.dataset.bidPrice = 0;
-                    itemElem.dataset.askValue = 0;
-                    itemElem.dataset.bidValue = 0;
+                    setTileData(itemElem, 'askPrice', 0);
+                    setTileData(itemElem, 'bidPrice', 0);
+                    setTileData(itemElem, 'askValue', 0);
+                    setTileData(itemElem, 'bidValue', 0);
                 }
                 continue;
             }
@@ -723,10 +756,10 @@ class InventoryBadgeManager {
                     const ask = marketAsk > 0 ? marketAsk * taxKeep : evNet;
                     const bid = marketBid > 0 ? marketBid * taxKeep : evNet;
 
-                    itemElem.dataset.askPrice = ask;
-                    itemElem.dataset.bidPrice = bid;
-                    itemElem.dataset.askValue = ask * itemCount;
-                    itemElem.dataset.bidValue = bid * itemCount;
+                    setTileData(itemElem, 'askPrice', ask);
+                    setTileData(itemElem, 'bidPrice', bid);
+                    setTileData(itemElem, 'askValue', ask * itemCount);
+                    setTileData(itemElem, 'bidValue', bid * itemCount);
                     continue;
                 }
             }
@@ -831,17 +864,18 @@ class InventoryBadgeManager {
             }
 
             // Store per-item prices (for badge display)
-            itemElem.dataset.askPrice = askPrice;
-            itemElem.dataset.bidPrice = bidPrice;
+            setTileData(itemElem, 'askPrice', askPrice);
+            setTileData(itemElem, 'bidPrice', bidPrice);
 
             // Store stack totals (for sorting and stack value badges)
-            itemElem.dataset.askValue = askPrice * itemCount;
-            itemElem.dataset.bidValue = bidPrice * itemCount;
+            setTileData(itemElem, 'askValue', askPrice * itemCount);
+            setTileData(itemElem, 'bidValue', bidPrice * itemCount);
             // Guild credits reach here only when the player left them out of totals on purpose
             if (itemCount > 0 && !GUILD_CREDIT_HRIDS.has(itemHrid)) {
-                itemElem.dataset.expectPrice = itemDetails?.name || itemHrid;
+                expectPrice = itemDetails?.name || itemHrid;
             }
         }
+        flushExpect();
     }
 
     /**

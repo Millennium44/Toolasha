@@ -41,3 +41,31 @@ describe('InventoryBadgePrices.renderPriceBadge text appearance', () => {
         tile.remove();
     });
 });
+
+describe('InventoryBadgePrices.renderBadgesForItem over unchanged prices', () => {
+    test('a second render rewrites neither badge', () => {
+        const tile = document.createElement('div');
+        const inner = document.createElement('div');
+        inner.className = 'Item_item__abc';
+        tile.appendChild(inner);
+        tile.dataset.askPrice = '1200';
+        tile.dataset.bidPrice = '1100';
+        document.body.appendChild(tile);
+        inventoryBadgePrices.renderBadgesForItem(tile);
+        expect(tile.querySelector('.mwi-badge-price-ask').textContent).toBe('1K');
+
+        const records = [];
+        const observer = new MutationObserver((m) => records.push(...m));
+        observer.observe(tile, { subtree: true, childList: true, attributes: true, characterData: true });
+        inventoryBadgePrices.renderBadgesForItem(tile);
+        records.push(...observer.takeRecords());
+        observer.disconnect();
+        expect(records).toHaveLength(0);
+
+        // A changed price still lands
+        tile.dataset.askPrice = '5000';
+        inventoryBadgePrices.renderBadgesForItem(tile);
+        expect(tile.querySelector('.mwi-badge-price-ask').textContent).toBe('5K');
+        tile.remove();
+    });
+});

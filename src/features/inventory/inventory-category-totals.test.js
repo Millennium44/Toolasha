@@ -316,6 +316,28 @@ describe('native inventory tabs DOM (2026-09 patch)', () => {
         expect(staleLabel.querySelector('.mwi-category-total')).toBeNull();
     });
 
+    test('a redraw over unchanged values rewrites nothing', async () => {
+        const { root, labels } = drawTabbedInventory();
+        badgeManagerMock.currentInventoryElem = root;
+        // One unpriced tile, so the hover title is in play too
+        const unpriced = document.createElement('div');
+        unpriced.className = 'Item_itemContainer__x7kH1';
+        unpriced.innerHTML = '<svg><use href="/static/items_sprite.svg#egg"></use></svg>';
+        unpriced.dataset.askValue = '0';
+        unpriced.dataset.expectPrice = 'Egg';
+        labels['Loots'].parentElement.appendChild(unpriced);
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        expect(labels['Loots'].querySelector('.mwi-category-total').textContent).toBe('≥7000');
+
+        const records = [];
+        const observer = new MutationObserver((m) => records.push(...m));
+        observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        records.push(...observer.takeRecords());
+        observer.disconnect();
+        expect(records.map((r) => `${r.type}:${r.attributeName ?? ''}`)).toEqual([]);
+    });
+
     /**
      * The live shape of a single-category native tab (measured on Resources, per inventory-sort.js):
      * a selected role=tab in the tab strip and a grid of tiles with no Inventory_label and no

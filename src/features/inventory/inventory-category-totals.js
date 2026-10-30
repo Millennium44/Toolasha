@@ -17,6 +17,7 @@ import { BADGE_MODE_SETTING, totalValueKey } from './inventory-badge-mode.js';
 import { formatKMB } from '../../utils/formatters.js';
 import * as dom from '../../utils/dom.js';
 import { getIconHref } from '../../utils/game-lookups.js';
+import { setTextIfChanged } from '../../utils/text-if-changed.js';
 
 const CSS_ID = 'mwi-inv-category-totals';
 const SPAN_ATTR = 'data-mwi-category-total';
@@ -328,9 +329,14 @@ class InventoryCategoryTotals {
             labelEl.appendChild(span);
         }
 
-        span.textContent = `${unpriced.length > 0 ? UNPRICED_MARK : ''}${formatKMB(total)}`;
-        if (unpriced.length > 0) span.title = unpricedTitle(unpriced);
-        else span.removeAttribute('title');
+        // Rewritten only when it changes: every badge pass reschedules this, mostly over unchanged totals
+        setTextIfChanged(span, `${unpriced.length > 0 ? UNPRICED_MARK : ''}${formatKMB(total)}`);
+        if (unpriced.length > 0) {
+            const title = unpricedTitle(unpriced);
+            if (span.title !== title) span.title = title;
+        } else if (span.hasAttribute('title')) {
+            span.removeAttribute('title');
+        }
     }
 }
 

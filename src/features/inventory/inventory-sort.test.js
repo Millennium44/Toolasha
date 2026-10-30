@@ -117,7 +117,11 @@ vi.mock('./inventory-badge-manager.js', () => ({
         },
     },
 }));
-vi.mock('./inventory-badge-mode.js', () => ({ BADGE_MODE_SETTING: 'invBadgeMode', stackBadgeValueKey: () => null }));
+const badgeMode = vi.hoisted(() => ({ stackKey: null }));
+vi.mock('./inventory-badge-mode.js', () => ({
+    BADGE_MODE_SETTING: 'invBadgeMode',
+    stackBadgeValueKey: () => badgeMode.stackKey,
+}));
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerInterval: () => {}, registerTimeout: () => {}, clearAll: () => {} }),
 }));
@@ -846,5 +850,36 @@ describe('InventorySort.renderPriceBadge — first draw matches the update path'
         expect(css).toMatch(/min\(var\(--toolasha-text-zoom, 1\),\s*1\.5\)/);
         expect(css).toContain('--toolasha-font-stack');
         tile.remove();
+    });
+});
+
+describe('InventorySort.renderBadgesForItem over an unchanged value', () => {
+    test('a second render does not rewrite the stack badge, and a changed value still lands', () => {
+        badgeMode.stackKey = 'askValue';
+        const tile = document.createElement('div');
+        const inner = document.createElement('div');
+        inner.className = 'Item_item__abc';
+        tile.appendChild(inner);
+        tile.dataset.askValue = '43000000';
+        document.body.appendChild(tile);
+        try {
+            inventorySort.renderBadgesForItem(tile);
+            expect(tile.querySelector('.mwi-stack-price').textContent).toBe('43000000');
+
+            const records = [];
+            const observer = new MutationObserver((m) => records.push(...m));
+            observer.observe(tile, { subtree: true, childList: true, attributes: true, characterData: true });
+            inventorySort.renderBadgesForItem(tile);
+            records.push(...observer.takeRecords());
+            observer.disconnect();
+            expect(records).toHaveLength(0);
+
+            tile.dataset.askValue = '5';
+            inventorySort.renderBadgesForItem(tile);
+            expect(tile.querySelector('.mwi-stack-price').textContent).toBe('5');
+        } finally {
+            badgeMode.stackKey = null;
+            tile.remove();
+        }
     });
 });
