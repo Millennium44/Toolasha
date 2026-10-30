@@ -193,11 +193,31 @@ export function expectedProtectionsFromStock({
     const meanUses = h[start] - 1;
 
     // Σ_{k>s} P(N ≥ k) = (L^{s+1}·h)(start); square-and-multiply, since stock can run to thousands
-    const matVec = (m, v) => m.map((row) => row.reduce((sum, value, j) => sum + value * v[j], 0));
-    const matMul = (a, b) =>
-        a.map((row) => b[0].map((_, j) => row.reduce((sum, value, k) => sum + value * b[k][j], 0)));
-    let beyond = h;
-    let power = L;
+    // Flat Float64Array T×T matrices: this runs per candidate per hover, and the array-of-arrays
+    // reduce version was ~4x slower on a +20 path.
+    let beyond = Float64Array.from(h);
+    let power = new Float64Array(T * T);
+    for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) power[i * T + j] = L[i][j];
+    const matVec = (m, v) => {
+        const out = new Float64Array(T);
+        for (let i = 0; i < T; i++) {
+            let sum = 0;
+            for (let j = 0; j < T; j++) sum += m[i * T + j] * v[j];
+            out[i] = sum;
+        }
+        return out;
+    };
+    const matMul = (m1, m2) => {
+        const out = new Float64Array(T * T);
+        for (let i = 0; i < T; i++) {
+            for (let k = 0; k < T; k++) {
+                const v = m1[i * T + k];
+                if (v === 0) continue;
+                for (let j = 0; j < T; j++) out[i * T + j] += v * m2[k * T + j];
+            }
+        }
+        return out;
+    };
     for (let e = s + 1; e > 0; e = Math.floor(e / 2)) {
         if (e % 2 === 1) beyond = matVec(power, beyond);
         if (e > 1) power = matMul(power, power);
