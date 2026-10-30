@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A new "Untradable capes: base value" setting (nothing, or one Mirror of Protection) prices capes that have no recipe or listing in alchemy, chests, net worth and enhancing; with "nothing" those values stay flagged incomplete instead of a silent 0 (from upstream).
 - Dungeon and Labyrinth shop tiles show gold per token after tax, with the best buy marked (from upstream).
 
+### Quick-input speed counts the guild shrine
+
+- The action panel's speed total and base-to-actual time now include the guild shrine's action speed, which the breakdown already listed (from upstream).
+
 ### Upstream fixes: quick-input loadout, offline limit for endless combat
 
 - The action panel's speed, efficiency and queue sizing now use the saved loadout for that action throughout, instead of mixing worn gear with the loadout's drinks.
