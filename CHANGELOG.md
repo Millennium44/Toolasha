@@ -26,6 +26,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Audit fixes before release
 
+- Inventory price badges no longer reprice every enhanced item on each pass: with a large inventory they kept the page about half busy (opening a profile or panels lagged); unchanged badges are no longer rewritten.
 - Achievement hints re-read each card on every redraw (a reused card no longer keeps another achievement's hint), and Missing Mats appears once its opener loads. The "Toolasha hints" checkbox now draws its box instead of a blank gap.
 - A rerolled combat task card drops its old estimate, so Go can't open the previous monster's zone.
 
