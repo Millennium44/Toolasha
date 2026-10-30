@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Save any build by name in the Party tab and add it as a teammate later; saved builds sync with the roster.
 - The aura options now include Insanity, Invincible and Revive, which fill the same slot.
 
+### Achievement hints on the game's cards
+
+- Each unfinished achievement card now shows whether you can do it (level met, materials owned, or a rough buy cost with the coin icon), with a Go button that opens the right screen and a Missing Mats button that opens the marketplace on what you lack. Go and Missing Mats only navigate.
+- A "Toolasha hints" checkbox beside "Show Incomplete Only" turns them on or off; the separate finisher panel is gone.
+
 ### Guild trial readout fits beside the swarm
 
 - On a four-monster trial the readout no longer spills past the monster grid, so the In Progress tab has no side scroll and the monsters sit without a blank gap to their left.
@@ -57,9 +62,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Lighter storage traffic in combat
 
-- The Party Loot panel no longer re-reads the whole session archive every 5 seconds while open, slow storage checks no longer pile up, and unchanged party consumable records are no longer rewritten after every wave; on a phone these were thousands of database calls per session.
-- Live damage graphs save every 10 seconds instead of 4 (a normal close still saves at once), and the two combat timing tallies save once a minute and on page hide or close.
-- The health dialog reads "Toolasha health" when nothing failed, and the guild history store's soft budget covers the guild trial diagnostic trace.
+- Combat makes far fewer database calls, which matters most on phones: the Party Loot panel stops re-reading its history every 5 seconds, unchanged records are not rewritten, and live graphs save every 10 seconds.
+- The health dialog reads "Toolasha health" when nothing failed.
 
 ### Sync: one gist per game server
 

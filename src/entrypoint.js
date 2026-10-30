@@ -2089,11 +2089,14 @@ function registerFeatures() {
         },
         {
             key: 'achievementFinisher',
-            name: 'Achievement Tier Finisher',
+            name: 'Achievement Hints',
             category: 'Collection',
             module: Market.achievementFinisher,
             async: false,
-            // Its disable() removes the panel and its listeners
+            // Always loaded: the "Toolasha hints" checkbox on the Achievements tab must exist to turn
+            // the hints back on, so the module gates the card hints on the setting itself
+            customCheck: () => true,
+            // Its disable() removes the hints, the checkbox and its listeners
             liveStop: true,
         },
         { key: 'chatCommands', name: 'Chat Commands', category: 'Chat', module: UI.chatCommands, async: true },

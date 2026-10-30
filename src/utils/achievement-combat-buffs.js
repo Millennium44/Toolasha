@@ -32,13 +32,12 @@
  * The full tier → buff mapping from the game's Achievement Buffs popup:
  * completing every achievement in a tier grants that tier's buff. Only three
  * tiers are combat-relevant (Novice, Veteran, Elite); the rest are included
- * here for completeness of the static mapping the maintainer supplied. Ratio
- * vs. flat classification for the three combat buffs matches the observed
- * values for your own character and `combat-scroll-buffs.js` (damage is a
- * ratio boost; wisdom and rare find are flat boosts). The classification for
- * the non-combat tiers (Gathering, Efficiency) is inferred from that same
- * flat-percentage pattern and is not exercised by the sim — verify in-game if
- * it is ever needed for a skilling buff.
+ * here for completeness of the static mapping the maintainer supplied. Every
+ * tier's label and value was verified against the game's own Achievement Buffs
+ * popup on 2026-10-29. The sim still applies only the combat ones. Ratio vs.
+ * flat classification for the combat buffs matches the observed values for
+ * your own character and `combat-scroll-buffs.js` (damage is a ratio boost;
+ * wisdom and rare find are flat boosts).
  * @type {Array<{tierHrid: string, typeHrid: string, valueKey: 'ratioBoost'|'flatBoost', value: number, label: string}>}
  */
 export const ACHIEVEMENT_TIER_BUFFS = [
@@ -89,17 +88,15 @@ export const ACHIEVEMENT_TIER_BUFFS = [
 const COMBAT_ACHIEVEMENT_BUFF_TYPES = ['/buff_types/damage', '/buff_types/wisdom', '/buff_types/rare_find'];
 
 /**
- * The reward a tier grants, for display. The three combat tiers' buffs are
- * observed values; every other tier's buff comes from the same flat-percentage
- * pattern and is NOT verified (see the note on `ACHIEVEMENT_TIER_BUFFS`), so it
- * is returned with `inferred: true` and must be shown as such, never as fact.
+ * The reward a tier grants, for display. Every label was verified against the
+ * game's Achievement Buffs popup on 2026-10-29 (the sim applies only the combat ones).
  * @param {string} tierHrid
- * @returns {{label: string, inferred: boolean}|null} Null for a tier with no catalog entry
+ * @returns {{label: string}|null} Null for a tier with no catalog entry
  */
 export function achievementTierReward(tierHrid) {
     const def = ACHIEVEMENT_TIER_BUFFS.find((entry) => entry.tierHrid === tierHrid);
     if (!def) return null;
-    return { label: def.label, inferred: !COMBAT_ACHIEVEMENT_BUFF_TYPES.includes(def.typeHrid) };
+    return { label: def.label };
 }
 
 /**
