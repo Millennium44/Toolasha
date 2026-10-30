@@ -76,6 +76,7 @@ vi.mock('../../../core/data-manager.js', () => ({
 }));
 
 import { ScrollPlanner } from './scroll-planner.js';
+import { resetSpriteSheetCache } from '../../../utils/overlay-format.js';
 import { isScrollRunActive } from './scroll-planner-state.js';
 
 const SPRITE = '/static/media/items_sprite.6d12eb9d.svg';
@@ -795,6 +796,27 @@ describe('ScrollPlanner', () => {
             expect(cell('gathering').children).toHaveLength(3);
             expect(cell('gathering').title).toBe('Milking, Foraging, Woodcutting');
             expect(cell('damage').children).toHaveLength(1);
+        });
+
+        test('Combat is drawn from the misc sheet, every other skill from the skills sheet', () => {
+            // The sheets as the game's own nav has drawn them
+            const nav = document.createElement('div');
+            nav.innerHTML =
+                '<svg><use href="/static/media/misc_sprite.1a2b.svg#combat"></use></svg>' +
+                '<svg><use href="/static/media/skills_sprite.3c4d.svg#milking"></use></svg>';
+            document.body.appendChild(nav);
+            resetSpriteSheetCache();
+            planner.closeModal();
+            planner.openModal();
+            try {
+                const href = (el) => el.querySelector('use')?.getAttribute('href');
+                expect(href(skillButton('combat'))).toBe('/static/media/misc_sprite.1a2b.svg#combat');
+                expect(href(skillButton('milking'))).toBe('/static/media/skills_sprite.3c4d.svg#milking');
+                const damageIcon = row('damage').querySelector('.toolasha-scroll-planner-row-skills');
+                expect(href(damageIcon)).toBe('/static/media/misc_sprite.1a2b.svg#combat');
+            } finally {
+                resetSpriteSheetCache();
+            }
         });
 
         test('without the buff data there are no icons and the rest still works', () => {

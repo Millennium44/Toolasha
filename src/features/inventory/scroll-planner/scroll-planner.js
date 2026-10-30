@@ -19,7 +19,7 @@ import domObserver from '../../../core/dom-observer.js';
 import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import { getIconHref, getItemHridFromIconHref, getItemHridFromName } from '../../../utils/game-lookups.js';
 import { itemHridFromIcon } from '../../../utils/item-icon.js';
-import { skillIcon } from '../../../utils/overlay-format.js';
+import { skillIcon, spriteIcon } from '../../../utils/overlay-format.js';
 import { setReactInputValue } from '../../../utils/react-input.js';
 import { setScrollRunActive } from './scroll-planner-state.js';
 import {
@@ -80,6 +80,18 @@ const TEXT = {
     stop: 'Stop',
     doneTitle: 'All planned scrolls opened.',
 };
+
+/**
+ * A skill's icon by action type. The skills sheet has no Combat symbol; the game draws Combat
+ * from the misc sheet (`misc_sprite#combat`), so that one comes from there.
+ * @param {string} actionTypeHrid
+ * @param {number} size - Pixels
+ * @returns {SVGElement|HTMLElement}
+ */
+function actionTypeIcon(actionTypeHrid, size) {
+    const id = actionTypeHrid.split('/').pop();
+    return id === 'combat' ? spriteIcon('combat', size, 'misc') : skillIcon(id, size);
+}
 
 class ScrollPlanner {
     constructor() {
@@ -785,7 +797,7 @@ class ScrollPlanner {
             button.setAttribute('aria-label', this.getSkillName(actionTypeHrid));
             button.style.cssText = `display: inline-flex; align-items: center; justify-content: center; padding: 3px;
                 border-radius: 4px; border: 1px solid #555; background: #1f1f1f; cursor: pointer;`;
-            button.appendChild(skillIcon(actionTypeHrid.split('/').pop(), 20));
+            button.appendChild(actionTypeIcon(actionTypeHrid, 20));
             button.addEventListener('click', () => {
                 hint.textContent = '';
                 if (!(this.quickFill > 0)) {
@@ -858,7 +870,7 @@ class ScrollPlanner {
             cell.style.display = 'inline-block';
         } else {
             for (const type of types) {
-                cell.appendChild(skillIcon(type.split('/').pop(), 14));
+                cell.appendChild(actionTypeIcon(type, 14));
             }
         }
         return cell;
