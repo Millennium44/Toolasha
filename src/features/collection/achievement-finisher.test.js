@@ -31,6 +31,10 @@ const game = vi.hoisted(() => ({
     rareFind: 0,
     loadoutListeners: [],
     equipment: new Map(),
+    volumes: {},
+    lateVolumes: {},
+    liquidityOn: true,
+    prefetched: [],
 }));
 
 const nav = vi.hoisted(() => ({
@@ -136,6 +140,16 @@ vi.mock('../../utils/item-navigation.js', () => ({
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: nav.navigateToMarketplace }));
 vi.mock('../../utils/combat-zone-open.js', () => ({ openCombatZoneAtTier: nav.openCombatZoneAtTier }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPriceInfo: nav.getItemPriceInfo }));
+vi.mock('../../utils/liquidity-cap.js', () => ({
+    cachedItemVolume: (hrid) => game.volumes[hrid] ?? null,
+    hasMeasuredVolume: (hrid) => game.volumes[hrid]?.known === true,
+    liquidityCapEnabled: () => game.liquidityOn,
+    // The lookup lands: whatever the test staged as late arrives in the cache
+    prefetchLiquidity: async (items) => {
+        game.prefetched.push(...items.map((item) => item.itemHrid));
+        Object.assign(game.volumes, game.lateVolumes);
+    },
+}));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
 vi.mock('../../utils/tester-shop-nav.js', () => ({ setShopFilter: nav.setShopFilter }));
 vi.mock('../../utils/enhancement-input-pricing.js', () => ({
@@ -367,6 +381,10 @@ describe('hints on the game achievement cards', () => {
         game.houseRooms = null;
         game.learned = null;
         game.rareFind = 0;
+        game.volumes = {};
+        game.lateVolumes = {};
+        game.liquidityOn = true;
+        game.prefetched = [];
         game.loadoutGear = null;
         game.loadoutListeners = [];
         game.settingHandlers = [];
@@ -459,6 +477,108 @@ describe('hints on the game achievement cards', () => {
         game.handlers.buffs_updated.forEach((fn) => fn());
         vi.advanceTimersByTime(1500);
         expect(lineOf('Buttered Up').textContent).toContain('~1 in 25.0K actions');
+    });
+
+    describe('any-of production resale', () => {
+        const celestial = (prices, extra = {}) => {
+            game.detail = ANY_OF_ACHIEVEMENTS;
+            const actions = { ...ANY_OF_DATA.actionDetailMap };
+            // Three pots per craft; the others make one
+            actions['/actions/cheesesmithing/celestial_pot'] = {
+                ...actions['/actions/cheesesmithing/celestial_pot'],
+                outputItems: [{ itemHrid: '/items/celestial_pot', count: 3 }],
+            };
+            game.clientData = { ...ANY_OF_DATA, actionDetailMap: actions, achievementDetailMap: ANY_OF_ACHIEVEMENTS };
+            game.skills = [
+                { skillHrid: '/skills/crafting', level: 95 },
+                { skillHrid: '/skills/cheesesmithing', level: 95 },
+                { skillHrid: '/skills/tailoring', level: 95 },
+            ];
+            game.inventory = [];
+            game.prices = { '/items/mooncrystal': 100, '/items/silk': 10, ...prices };
+            Object.assign(game, extra);
+            achievementsTab(ANY_OF_ACHIEVEMENTS);
+            finisher.initialize();
+            return lineOf('Celestial Artisan').textContent;
+        };
+
+        test('names the buy, the resale after tax once for every unit, and the net', () => {
+            // pot: 3 x 2000 x 0.96 = 5760 for a 200 bill; hammer 1 x 2000 x 0.96 = 1920 for 400; top has no bid
+            const text = celestial({ '/items/celestial_pot': 2000, '/items/celestial_hammer': 2000 });
+            expect(text).toContain('[celestial_pot · level met · buy ~200');
+            expect(text).toContain('resell ~5.8K');
+            expect(text).toContain('profit ~5.6K');
+            // Only the outputs with a bid are looked up, the no-bid top is not
+            expect(game.prefetched.sort()).toEqual(['/items/celestial_hammer', '/items/celestial_pot']);
+        });
+
+        test('the sale price is the pricing-mode sell side less the 4% tax, once; a value-map estimate is no bid', () => {
+            celestial({ '/items/celestial_pot': 1000, '/items/cheese': 500 });
+            game.estimated = new Set(['/items/cheese']);
+            const context = finisher.readinessContext();
+            expect(context.sellPrice('/items/celestial_pot')).toBeCloseTo(960, 10);
+            expect(context.sellPrice('/items/cheese')).toBeNull();
+            expect(context.sellPrice('/items/unlisted')).toBeNull();
+            expect(nav.getItemPriceInfo).toHaveBeenCalledWith('/items/celestial_pot', {
+                context: 'profit',
+                side: 'sell',
+                marketQuote: true,
+            });
+        });
+
+        test('no bid on the pick says so', () => {
+            const text = celestial({});
+            expect(text).toContain('[gatherers_top');
+            expect(text).toContain('buy ~60');
+            expect(text).toContain('no bid');
+            expect(text).not.toContain('resell');
+        });
+
+        test('a thin market is flagged, and a volume that lands late redraws the pick', async () => {
+            const prices = { '/items/celestial_pot': 2000, '/items/celestial_hammer': 2000 };
+            // The pot sells under once a day; the hammer trades. Neither is measured when first drawn
+            const late = {
+                '/items/celestial_pot': { known: true, unitsPerDay: 0.34 },
+                '/items/celestial_hammer': { known: true, unitsPerDay: 9 },
+            };
+            expect(celestial(prices, { lateVolumes: late })).toContain('[celestial_pot');
+            await vi.advanceTimersByTimeAsync(0);
+            vi.advanceTimersByTime(1500);
+            const redrawn = lineOf('Celestial Artisan').textContent;
+            expect(redrawn).toContain('[celestial_hammer');
+            expect(redrawn).not.toContain('thin');
+            // Only what was ranked is looked up, once
+            const asked = game.prefetched.length;
+            finisher.readinessChanged();
+            vi.advanceTimersByTime(1500);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(game.prefetched).toHaveLength(asked);
+        });
+
+        test('when everything is thin the net decides and the hint says how thin', async () => {
+            const prices = { '/items/celestial_pot': 2000, '/items/celestial_hammer': 2000 };
+            celestial(prices, {
+                volumes: {
+                    '/items/celestial_pot': { known: true, unitsPerDay: 0.34 },
+                    '/items/celestial_hammer': { known: true, unitsPerDay: 0.5 },
+                },
+            });
+            expect(lineOf('Celestial Artisan').textContent).toContain('thin: ~0.3/day');
+        });
+
+        test('the volume lookup stays off when the liquidity cap is off', async () => {
+            celestial({ '/items/celestial_pot': 2000 }, { liquidityOn: false });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(game.prefetched).toEqual([]);
+        });
+
+        test('an Iron Cow gets no resale and no lookup', async () => {
+            const text = celestial({ '/items/celestial_pot': 2000 }, { ironCow: true });
+            expect(text).not.toContain('resell');
+            expect(text).not.toContain('no bid');
+            await vi.advanceTimersByTimeAsync(0);
+            expect(game.prefetched).toEqual([]);
+        });
     });
 
     test('rare-drop odds read Rare Find from the gear the saved loadout of the action, not what is worn', () => {
