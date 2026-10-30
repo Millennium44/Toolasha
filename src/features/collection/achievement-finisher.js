@@ -519,7 +519,9 @@ class AchievementFinisher {
         this.isInitialized = true;
 
         this.unregisterHandlers.push(
-            domObserver.onClass('AchievementFinisher-cards', ['AchievementsPanel_', 'Achievement_'], () => this.mount())
+            domObserver.onClass('AchievementFinisher-cards', ['AchievementsPanel_', 'Achievement_'], () =>
+                this.scheduleMount()
+            )
         );
 
         const redraw = () => this.refresh();
@@ -583,6 +585,7 @@ class AchievementFinisher {
         this.marketListener = null;
         this.timers.clearAll();
         this.readinessRedrawPending = false;
+        this.mountScheduled = false;
         this.removeAll();
         this.resolutions = new Map();
         this.resolutionSource = null;
@@ -913,6 +916,20 @@ class AchievementFinisher {
 
     refresh() {
         this.mount();
+    }
+
+    /**
+     * One mount for a burst of added nodes. The class watcher fires for every element whose class starts with
+     * `Achievement_` (each card's name, icon, description...), so a tab render of 77 cards called mount ~700 times,
+     * each walking every card: a 1.5 s freeze measured live. Coalesced to the next task.
+     */
+    scheduleMount() {
+        if (this.mountScheduled) return;
+        this.mountScheduled = true;
+        this.timers.scheduleTimeout(() => {
+            this.mountScheduled = false;
+            this.mount();
+        }, 0);
     }
 
     /**

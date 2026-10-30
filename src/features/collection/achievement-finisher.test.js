@@ -352,7 +352,11 @@ const goOf = (name) => lineOf(name)?.querySelector(`.${PANEL_CLASS}-go`) ?? null
 const matsOf = (name) => lineOf(name)?.querySelector(`.${PANEL_CLASS}-mats`) ?? null;
 const toggle = () => document.querySelector(`.${PANEL_CLASS}-toggle`);
 const lines = () => [...document.querySelectorAll(`.${PANEL_CLASS}-line`)];
-const mountAgain = () => game.observers.forEach((o) => o.cb());
+// The class watcher schedules one mount for a burst; run it
+const mountAgain = () => {
+    game.observers.forEach((o) => o.cb());
+    vi.advanceTimersByTime(0);
+};
 
 describe('hints on the game achievement cards', () => {
     /** Every function the game object is asked for, by name */
@@ -1020,6 +1024,19 @@ describe('hints on the game achievement cards', () => {
         game.settingHandlers.filter((e) => e.key === 'profitCalc_pricingMode').forEach((e) => e.fn('optimistic'));
         await vi.advanceTimersByTimeAsync(1000);
         expect(lineOf('Dairy Chef').textContent).toContain('buy ~600 coin (est.)');
+    });
+
+    test('a burst of class-watcher fires (one per card part) mounts once, not once per fire', () => {
+        achievementsTab();
+        finisher.initialize();
+        vi.advanceTimersByTime(0);
+        const spy = vi.spyOn(finisher, 'decorateCards');
+        // The game adds ~9 matching elements per card: the watcher fires for each
+        for (let i = 0; i < 700; i += 1) game.observers.forEach((o) => o.cb());
+        expect(spy).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(0);
+        expect(spy).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
     });
 
     test('mounts when the tab appears after init, once; disable removes everything, every listener and a pending redraw', async () => {
