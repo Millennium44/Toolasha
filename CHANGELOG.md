@@ -26,6 +26,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Audit fixes before release
 
+- Enhancer achievements now give Iron Cow characters a route: the owned piece needing the fewest attempts (with attempts, protections and missing materials), else the cheapest qualifying piece to craft.
 - The Labyrinth toolbar no longer shows the "this run:" torch/shroud/beacon count, a diagnostic that is no longer needed.
 - Shop token badges redraw when the Iron Cow valuation setting changes or settings arrive by sync or import, and untradable items no longer look like Marketplace links.
 - Achievement hints pick a weapon you can wield, name the candidate you are closest to when no level is met, refresh after a pricing-setting change or a level-up mid-action, and a reused card no longer keeps the previous achievement's Go.
