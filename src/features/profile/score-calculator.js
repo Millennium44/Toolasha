@@ -13,6 +13,7 @@ import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import config from '../../core/config.js';
 import { calculateEnhancementBatch } from '../../utils/enhancement-worker-manager.js';
+import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { applyMirrorOptimization, blessedMirrorChance } from '../../utils/enhancement-calculator.js';
 import {
     perAttemptMaterialCost,
@@ -20,6 +21,9 @@ import {
     priceMirror,
     priceProtection,
 } from '../../utils/enhancement-input-pricing.js';
+
+/** How long one slice of the pricing pass may run before it yields to the browser */
+const YIELD_SLICE_MS = 12;
 
 // A profile score prices every piece at the ask, so another player's score never moves with the
 // viewer's profit mode
@@ -697,8 +701,17 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
     let totalValue = 0;
     let unpricedItems = 0;
     const breakdown = [];
+    // Hand the browser a frame between items once a slice has run long, so a heavily enhanced
+    // loadout never holds the main thread for one long task. Each item is priced whole inside one
+    // slice; the callers re-check their own generation once the score comes back, so a switch
+    // landing in a yield discards the result rather than drawing it.
+    let sliceStart = performance.now();
 
     for (const item of itemsToProcess) {
+        if (performance.now() - sliceStart > YIELD_SLICE_MS) {
+            await yieldToBrowser();
+            sliceStart = performance.now();
+        }
         let itemCost = 0;
 
         // Check token value first
@@ -709,17 +722,22 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
             // Build targetCosts[0..N], matching tooltip's calculateEnhancementPath. Inputs are priced by the
             // shared enhancement rule; one nothing can price makes the piece unpriced (itemCost stays 0
             // and the row says "no price"), never a cheaper piece with a free input
-            const basePrice = priceBase(item.itemHrid, ASK).price;
+            //
+            // Every input is priced once per item here, not once per strategy per sub-level: none of
+            // them depends on the strategy or the level, and a +20 piece has 210 strategies. Each price
+            // walks the resolver (and the shop map), so re-pricing per strategy froze the page for
+            // seconds on a heavily enhanced profile.
+            const inputs = priceEnhancementInputs(item.itemHrid, item.itemDetails);
+            const basePrice = inputs.basePrice;
             const targetCosts = [basePrice ?? 0]; // level 0 = base item
-            const enhancementUnpriced =
-                !(basePrice > 0) || isMaterialBillUnpriced(perAttemptMaterialCost(item.itemDetails, ASK));
+            const enhancementUnpriced = !(basePrice > 0) || isMaterialBillUnpriced(inputs.materials);
             for (let subLevel = 1; subLevel <= item.enhancementLevel && !enhancementUnpriced; subLevel++) {
                 const { workerStartIndex, strategies } = item.subLevelTasks[subLevel - 1];
                 let minCost = null;
                 for (let s = 0; s < strategies.length; s++) {
                     const wr = workerResults[workerStartIndex + s];
                     if (!wr || !wr.attempts) continue;
-                    const cost = calculateEnhancementCostFromWorkerResult(item.itemHrid, strategies[s], wr);
+                    const cost = calculateEnhancementCostFromWorkerResult(inputs, strategies[s], wr);
                     if (cost === null) continue;
                     if (minCost === null || cost < minCost) minCost = cost;
                 }
@@ -799,28 +817,53 @@ function isMaterialBillUnpriced(materials) {
 }
 
 /**
+ * The inputs of one item's enhancing run, priced once for every strategy and sub-level of it.
+ *
+ * The base copy, the per-attempt material bill and the protection item depend only on the item and
+ * the side (always the ask here), never on the strategy or the level being costed, so they are read
+ * once per item per scoring pass. The material bill is skipped when the base is unpriced (the piece
+ * is unpriced then whatever it costs), and protection is read on first use, so a piece whose
+ * strategies never spend protection never prices it.
+ * @param {string} itemHrid - Item HRID
+ * @param {Object} itemDetails - Its item details
+ * @returns {{itemHrid: string, itemDetails: Object, basePrice: number|null, materials: Object|null,
+ *   protection: function(): Object}}
+ */
+function priceEnhancementInputs(itemHrid, itemDetails) {
+    const basePrice = priceBase(itemHrid, ASK).price;
+    const materials = basePrice > 0 ? perAttemptMaterialCost(itemDetails, ASK) : null;
+    let protection = null;
+    return {
+        itemHrid,
+        itemDetails,
+        basePrice,
+        materials,
+        protection: () => {
+            if (protection === null) protection = priceProtection(itemHrid, ASK);
+            return protection;
+        },
+    };
+}
+
+/**
  * Calculate total enhancement cost from worker result
  * Matches tooltip-enhancement.js calculateTotalCost() exactly: every input is priced by the shared
  * enhancement input rule (see utils/enhancement-input-pricing.js).
- * @param {string} itemHrid - Item HRID
+ * @param {Object} inputs - The item's priced inputs, from {@link priceEnhancementInputs}
  * @param {number} protectFrom - Protection threshold used in this calculation
  * @param {Object} workerResult - Worker calculation result
  * @returns {number|null} Total cost (base item + materials + protection), or null when an input
  *   the strategy needs could not be priced - unpriced, not cheap
  */
-function calculateEnhancementCostFromWorkerResult(itemHrid, protectFrom, workerResult) {
-    const gameData = dataManager.getInitClientData();
-    if (!gameData) return null;
+function calculateEnhancementCostFromWorkerResult(inputs, protectFrom, workerResult) {
+    if (!inputs.itemDetails?.enhancementCosts) return null;
 
-    const itemDetails = gameData.itemDetailMap[itemHrid];
-    if (!itemDetails || !itemDetails.enhancementCosts) return null;
-
-    const baseItemCost = priceBase(itemHrid, ASK).price;
+    const baseItemCost = inputs.basePrice;
     if (!(baseItemCost > 0)) return null;
 
     // Material cost per attempt: a material nobody prices is a partial bill, not a cheaper run
-    const materials = perAttemptMaterialCost(itemDetails, ASK);
-    if (isMaterialBillUnpriced(materials)) return null;
+    const materials = inputs.materials;
+    if (!materials || isMaterialBillUnpriced(materials)) return null;
 
     // Total material cost = per-action cost × total expected attempts
     const materialCost = materials.cost * workerResult.attempts;
@@ -829,7 +872,7 @@ function calculateEnhancementCostFromWorkerResult(itemHrid, protectFrom, workerR
     // protect with is not offered at all, rather than offered free
     let protectionCost = 0;
     if (protectFrom > 0 && workerResult.protectionCount > 0) {
-        const protectionInfo = priceProtection(itemHrid, ASK);
+        const protectionInfo = inputs.protection();
         if (protectionInfo.unpriced) return null;
         protectionCost = protectionInfo.price * workerResult.protectionCount;
     }
