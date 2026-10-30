@@ -134,6 +134,7 @@ import {
 } from './__fixtures__/achievement-finisher-game.js';
 import { ANY_OF_ACHIEVEMENTS, ANY_OF_DATA } from './__fixtures__/achievement-finisher-anyof.js';
 import { PLACE_ACHIEVEMENTS, PLACE_DATA } from './__fixtures__/achievement-finisher-places.js';
+import { ABILITY_ACHIEVEMENTS, ABILITY_DATA } from './__fixtures__/achievement-finisher-abilities.js';
 
 const DETAIL = {
     '/achievements/a1': { hrid: '/achievements/a1', name: 'A1', tierHrid: '/achievement_tiers/beginner' },
@@ -878,5 +879,57 @@ describe('hints on the game achievement cards', () => {
         vi.advanceTimersByTime(5000);
         expect(nav.setShopFilter.mock.calls.length).toBe(3);
         nav.setShopFilter.mockReturnValue(true);
+    });
+    test('ability cards: buy the cheapest unlearned book, Go opens its listing; an owned book or Iron Cow gets no Go', () => {
+        game.detail = ABILITY_ACHIEVEMENTS;
+        game.clientData = { ...ABILITY_DATA, achievementDetailMap: ABILITY_ACHIEVEMENTS };
+        game.skills = [
+            { skillHrid: '/skills/melee', level: 10 },
+            { skillHrid: '/skills/magic', level: 70 },
+            { skillHrid: '/skills/ranged', level: 1 },
+        ];
+        game.learned = [{ abilityHrid: '/abilities/poke', level: 1, experience: 0 }];
+        game.inventory = [];
+        game.prices = { '/items/scratch': 4000, '/items/mystic_aura': 50_000_000, '/items/speed_aura': 1_000_000 };
+        game.estimated = new Set(['/items/mystic_aura']);
+        achievementsTab(ABILITY_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Student').textContent).toContain('[level met · buy Scratch ~4.0K coin]');
+        goOf('Student').click();
+        expect(nav.navigateToMarketplace).toHaveBeenLastCalledWith('/items/scratch', 0);
+        // Speed Aura is cheaper but needs Ranged 50: Mystic Aura, an estimate, is the met one
+        expect(lineOf('Gifted').textContent).toContain('[level met · buy Mystic Aura ~50.0M coin (est.)]');
+
+        // A Revive book in the bag: owned, nothing to buy
+        game.inventory = [
+            { itemHrid: '/items/revive', count: 1, itemLocationHrid: '/item_locations/inventory', enhancementLevel: 0 },
+        ];
+        finisher.readinessChanged();
+        vi.advanceTimersByTime(1500);
+        expect(lineOf('Gifted').textContent).toContain('[level met · book owned: Revive]');
+        expect(goOf('Gifted')).toBeNull();
+
+        // Any ability counts for Student too
+        expect(lineOf('Student').textContent).toContain('book owned: Revive');
+        game.inventory = [];
+        game.ironCow = true;
+        finisher.readinessChanged();
+        vi.advanceTimersByTime(1500);
+        expect(lineOf('Student').textContent).toContain('[level met · no book owned]');
+        expect(goOf('Student')).toBeNull();
+    });
+
+    test('ability cards before the abilities load say so; learning one recomputes', () => {
+        game.detail = ABILITY_ACHIEVEMENTS;
+        game.clientData = { ...ABILITY_DATA, achievementDetailMap: ABILITY_ACHIEVEMENTS };
+        game.learned = null;
+        game.prices = { '/items/scratch': 4000 };
+        achievementsTab(ABILITY_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Student').textContent).toBe('[abilities not loaded]');
+        game.learned = [{ abilityHrid: '/abilities/scratch' }];
+        game.handlers.abilities_updated.forEach((fn) => fn());
+        vi.advanceTimersByTime(1500);
+        expect(lineOf('Student').textContent).toContain('[level met · no price for any book]');
     });
 });

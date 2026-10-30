@@ -514,6 +514,32 @@ function resolvePlace(detail, data) {
     return null;
 }
 
+const ABILITY_BOOK_CATEGORY = '/item_categories/ability_book';
+
+/**
+ * "Learn any ability" / "Learn any special ability": every ability book, or the books of special
+ * abilities. An ability with no book (a monster-only special) is never a candidate.
+ * @param {Object} detail
+ * @param {Object} data
+ * @returns {Object|null} An `ability` resolution, or null when the id is neither or no book qualifies
+ */
+function resolveAbility(detail, data) {
+    const m = /^ach_learn_(special_)?ability$/.exec(String(detail?.steamAchievementId || ''));
+    if (!m) return null;
+    const special = Boolean(m[1]);
+    const abilities = data.abilityDetailMap || {};
+    const candidates = [];
+    for (const [itemHrid, item] of Object.entries(data.itemDetailMap || {})) {
+        const book = item?.abilityBookDetail;
+        if (item?.categoryHrid !== ABILITY_BOOK_CATEGORY || !book?.abilityHrid) continue;
+        if (special && abilities[book.abilityHrid]?.isSpecialAbility !== true) continue;
+        candidates.push({ itemHrid, abilityHrid: book.abilityHrid, requirements: book.levelRequirements || [] });
+    }
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => a.itemHrid.localeCompare(b.itemHrid));
+    return { kind: 'ability', special, candidates };
+}
+
 /**
  * Resolve an achievement to the game hrids it is about.
  *
@@ -528,6 +554,8 @@ export function resolveAchievement(detail, data) {
     if (!data) return null;
     const place = resolvePlace(detail, data);
     if (place) return place;
+    const ability = resolveAbility(detail, data);
+    if (ability) return ability;
     // "Any of" achievements name no single target; the verb-and-slug parse can also mistake them for one
     const anyOf = resolveAnyOf(detail, data);
     if (anyOf) return anyOf;
@@ -618,6 +646,7 @@ export function readiness(res, ctx) {
     }
 
     if (res.kind === 'place') return placeReadiness(res, ctx, out);
+    if (res.kind === 'ability') return abilityReadiness(res, ctx, out);
 
     if (res.kind === 'equip') {
         if (!ctx.inventory) return out;
@@ -695,6 +724,75 @@ function placeReadiness(res, ctx, out) {
         out.charmHrid = charm?.itemHrid || null;
         out.cost = charm?.coinCost ?? null;
     }
+    return out;
+}
+
+/** Every level requirement at once: the first unmet one, else unknown when any is, else the first met */
+function requirementsCheck(reqs, skillLevels) {
+    const checks = (reqs || []).map((req) => levelCheck(skillLevels, req.skillHrid, req.level || 1, null));
+    const unmet = checks.find((check) => check.met === false);
+    const unknown = checks.some((check) => check.met === null);
+    return { met: unmet ? false : unknown ? null : true, check: unmet || checks[0] || null };
+}
+
+/**
+ * An ability book to learn from: abilities already learned are skipped; a book of an unlearned
+ * ability in the bag is "owned" (the level-met one first); else the cheapest priced book, level-met
+ * books before the rest. `allLearned` when every candidate is already known.
+ * @param {Object} res - An `ability` resolution
+ * @param {Object} ctx - Also `learnedAbilities`: Set of ability hrids, null when not loaded
+ * @param {Object} out - The result being filled
+ * @returns {Object} out
+ */
+function abilityReadiness(res, ctx, out) {
+    const learned = ctx.learnedAbilities;
+    if (!learned) {
+        out.abilitiesUnknown = true;
+        return out;
+    }
+    const open = res.candidates.filter((cand) => !learned.has(cand.abilityHrid));
+    if (open.length === 0) {
+        Object.assign(out, { levelMet: true, owned: true, allLearned: true });
+        return out;
+    }
+    const withLevel = open.map((cand) => ({ cand, lv: requirementsCheck(cand.requirements, ctx.skillLevels) }));
+    // Level met first, then unknown, then unmet
+    const metRank = (entry) => (entry.lv.met === true ? 0 : entry.lv.met === null ? 1 : 2);
+    const apply = (entry) => Object.assign(out, { levelMet: entry.lv.met, level: entry.lv.check });
+    if (!ctx.inventory) {
+        apply([...withLevel].sort((a, b) => metRank(a) - metRank(b))[0]);
+        return out;
+    }
+    const held = withLevel
+        .filter((entry) => ownedCount(ctx.inventory, entry.cand.itemHrid) > 0)
+        .sort((a, b) => metRank(a) - metRank(b) || a.cand.itemHrid.localeCompare(b.cand.itemHrid));
+    if (held.length > 0) {
+        apply(held[0]);
+        Object.assign(out, { owned: true, ownedHrid: held[0].cand.itemHrid });
+        return out;
+    }
+    out.owned = false;
+    if (ctx.ironCow) {
+        apply([...withLevel].sort((a, b) => metRank(a) - metRank(b))[0]);
+        return out;
+    }
+    const priced = withLevel
+        .map((entry) => ({ ...entry, price: ctx.buyPrice(entry.cand.itemHrid) }))
+        .filter((entry) => Number.isFinite(entry.price));
+    if (priced.length === 0) {
+        out.unpriced = open.map((cand) => cand.itemHrid);
+        apply([...withLevel].sort((a, b) => metRank(a) - metRank(b))[0]);
+        return out;
+    }
+    priced.sort(
+        (a, b) => metRank(a) - metRank(b) || a.price - b.price || a.cand.itemHrid.localeCompare(b.cand.itemHrid)
+    );
+    apply(priced[0]);
+    Object.assign(out, {
+        buyHrid: priced[0].cand.itemHrid,
+        cost: priced[0].price,
+        estimated: ctx.isEstimated?.(priced[0].cand.itemHrid) === true,
+    });
     return out;
 }
 
