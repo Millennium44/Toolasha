@@ -579,6 +579,64 @@ export function calculatePerActionTime(enhancingLevel, itemLevel, speedBonus = 0
  * @returns {Object} Enhancement statistics
  */
 export function calculateEnhancement(params) {
+    const key = enhancementMemoKey(params);
+    const hit = enhancementMemo.get(key);
+    if (hit) {
+        return cloneEnhancementResult(hit);
+    }
+    const result = solveEnhancement(params);
+    if (enhancementMemo.size >= ENHANCEMENT_MEMO_LIMIT) {
+        // Map iterates in insertion order, so the first key is the oldest entry.
+        enhancementMemo.delete(enhancementMemo.keys().next().value);
+    }
+    enhancementMemo.set(key, cloneEnhancementResult(result));
+    return result;
+}
+
+const ENHANCEMENT_MEMO_LIMIT = 4000;
+const enhancementMemo = new Map();
+
+/**
+ * Key over every parameter that changes the solve (houseLevel is destructured but unused).
+ * @param {Object} params - calculateEnhancement params
+ * @returns {string} Memo key
+ */
+function enhancementMemoKey(params) {
+    const p = params;
+    return [
+        p.enhancingLevel,
+        p.toolBonus,
+        p.speedBonus ?? 0,
+        p.itemLevel,
+        p.targetLevel,
+        p.startLevel ?? 0,
+        p.protectFrom ?? 0,
+        p.blessedTea ? 1 : 0,
+        p.guzzlingBonus ?? 1.0,
+        p.blessedTeaBonus ?? BLESSED_TEA_BASE_CHANCE,
+        p.perActionTimeOverride ?? 0,
+    ].join('|');
+}
+
+/**
+ * Copy a result so a caller mutating it can never poison the memo.
+ * @param {Object} r - Enhancement result
+ * @returns {Object} Independent copy
+ */
+function cloneEnhancementResult(r) {
+    return {
+        ...r,
+        successRates: r.successRates.map((x) => ({ ...x })),
+        visitCounts: r.visitCounts.slice(),
+    };
+}
+
+/** Clear the memo (tests). */
+export function clearEnhancementMemo() {
+    enhancementMemo.clear();
+}
+
+function solveEnhancement(params) {
     const {
         enhancingLevel,
         _houseLevel,
