@@ -812,6 +812,10 @@ export function navigateToMarketplace(itemHrid, enhancementLevel = 0) {
     // Silently fail if game API unavailable - feature still provides value without auto-navigation
 }
 
+// Lets a link builder (linkToMarketplace) skip an item the Marketplace would refuse, instead of
+// drawing a pointer and a tooltip over a click that does nothing
+navigateToMarketplace.canOpen = canOpenInMarketplace;
+
 /**
  * How many of `itemHrid` at `enhancementLevel` currently sit in inventory.
  *

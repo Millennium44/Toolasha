@@ -1254,6 +1254,13 @@ describe('navigateToMarketplace tradability guard', () => {
         expect(handler).toHaveBeenCalledWith('/items/cheese', 3);
     });
 
+    test('the navigate function carries the rule for link builders', () => {
+        details.set('/items/gatherer_cape_refined', { name: 'Gatherer Cape Refined' });
+        details.set('/items/cheese', { name: 'Cheese', isTradable: true });
+        expect(navigateToMarketplace.canOpen('/items/gatherer_cape_refined')).toBe(false);
+        expect(navigateToMarketplace.canOpen('/items/cheese')).toBe(true);
+    });
+
     test('an item with no details is allowed through', () => {
         const handler = mountGame();
         details.set('/items/mystery', null);
