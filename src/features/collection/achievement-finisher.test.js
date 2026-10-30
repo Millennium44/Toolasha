@@ -1423,7 +1423,7 @@ describe('hints on the game achievement cards', () => {
         finisher.initialize();
         const owned = lineOf('Enhancer III').textContent;
         expect(owned).toMatch(
-            /^\[you own Cheese Gloves \+7 · enhance to \+10 · ~531 attempts · ~183 protections · missing: Coin ×[\d.]+K, Enhancing Essence ×[\d.]+K, Cheese ×173\]/
+            /^\[you own Cheese Gloves \+7 · enhance to \+10 · ~531 attempts · ~183 protections · protect from \+2 · missing: Coin ×[\d.]+K, Enhancing Essence ×[\d.]+K, Cheese ×173\]/
         );
         goOf('Enhancer III').click();
         expect(nav.navigateToEnhanceItem).toHaveBeenLastCalledWith(

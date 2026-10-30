@@ -313,7 +313,7 @@ function ironCowEnhanceText(res, ready, clientData) {
             let attempts = `~${formatKMB(Math.ceil(ready.attempts))} attempts`;
             if (ready.protections > 0) attempts += ` · ~${formatKMB(ready.protections)} protections`;
             parts.push(attempts);
-            if (ready.oneMore && ready.protections > 0) parts.push(`protect from +${ready.protectFrom}`);
+            if (ready.protections > 0 && ready.protectFrom > 0) parts.push(`protect from +${ready.protectFrom}`);
         }
         if (ready.shortfall.length > 0) {
             parts.push(
