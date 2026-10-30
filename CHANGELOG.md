@@ -16,6 +16,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - "Also try my auras" makes the party search try each aura you own on you, in every party and alone, against your as-worn solo baseline (off by default; it multiplies the sims).
 - Save any build by name in the Party tab and add it as a teammate later; saved builds sync with the roster.
 - The aura options now include Insanity, Invincible and Revive, which fill the same slot.
+- A Templates list in the Party tab adds ready-made teammates: ranged, nature, fire, water and tank builds from community guides, plus endgame builds for every class.
 
 ### Achievement hints on the game's cards
 
