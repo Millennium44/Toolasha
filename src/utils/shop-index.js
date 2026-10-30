@@ -7,14 +7,13 @@
  * server, whose Tester tab sells most things, that map is large, and one profile score asks it
  * thousands of times.
  *
- * The grouping is built once per map object and rebuilt when a different one is handed out (a new
- * init_client_data). Within one item, entries keep the map's own order, so a lookup that returns
+ * The grouping is built once per map object (cached in a WeakMap keyed by the map, so alternating between
+ * several maps does not rebuild each time) and a new init_client_data simply brings a new map object. Within one item, entries keep the map's own order, so a lookup that returns
  * the first match finds the same entry it always did.
  */
 
-let indexedMap = null;
-/** @type {Map<string, Array<[string, Object]>>|null} itemHrid → [key, entry] pairs in map order */
-let index = null;
+/** @type {WeakMap<Object, Map<string, Array<[string, Object]>>>} shop map → itemHrid → [key, entry] pairs in map order */
+let indexes = new WeakMap();
 
 const NONE = Object.freeze([]);
 
@@ -26,26 +25,25 @@ const NONE = Object.freeze([]);
  */
 export function shopEntriesFor(shopMap, itemHrid) {
     if (!shopMap || !itemHrid) return NONE;
-    if (shopMap !== indexedMap) {
-        const built = new Map();
+    let index = indexes.get(shopMap);
+    if (!index) {
+        index = new Map();
         for (const [key, entry] of Object.entries(shopMap)) {
             const hrid = entry?.itemHrid;
             if (!hrid) continue;
-            let list = built.get(hrid);
+            let list = index.get(hrid);
             if (!list) {
                 list = [];
-                built.set(hrid, list);
+                index.set(hrid, list);
             }
             list.push([key, entry]);
         }
-        index = built;
-        indexedMap = shopMap;
+        indexes.set(shopMap, index);
     }
     return index.get(itemHrid) ?? NONE;
 }
 
 /** Drop the cached grouping. Tests only. */
 export function _resetShopIndex() {
-    indexedMap = null;
-    index = null;
+    indexes = new WeakMap();
 }
