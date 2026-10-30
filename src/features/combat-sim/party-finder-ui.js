@@ -797,7 +797,18 @@ export class PartyFinderTab {
             this._rosterNote('Matching the template to your build…');
             let result = null;
             try {
-                result = levels ? await tuneTemplate(template, levels) : null;
+                result = levels
+                    ? await tuneTemplate(template, levels, undefined, {
+                          onProgress: ({ phase, done, max }) => {
+                              if (token !== this._matchToken || !this.root) return;
+                              this._rosterNote(
+                                  phase === 'score'
+                                      ? 'Waiting for your build score…'
+                                      : `Matching the template to your build… ${done}/${max}`
+                              );
+                          },
+                      })
+                    : null;
             } catch (error) {
                 console.error('[PartyFinder] Matching a template to the build failed:', error);
             } finally {

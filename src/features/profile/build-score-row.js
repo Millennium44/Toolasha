@@ -236,15 +236,24 @@ export function readOwnScore() {
  * must not read a stale figure.
  * @param {Object} [options]
  * @param {string|null} [options.stamp] - {@link scorePricingStamp} to be fresh for; null takes whatever is held
+ * @param {number} [options.timeoutMs] - Longest wait for a score to land
  * @returns {Promise<Object|null>} null when no score under that stamp could be had
  */
-export async function ensureOwnScore({ stamp = null } = {}) {
+export async function ensureOwnScore({ stamp = null, timeoutMs = 15000 } = {}) {
     buildScore.ensureWatching();
     const fresh = () => buildScore.score && (stamp === null || buildScore.stamp === stamp);
     if (fresh()) return buildScore.score;
-    if (buildScore.score) buildScore.computedAt = 0;
-    await buildScore.refresh();
-    return fresh() ? buildScore.score : null;
+    const deadline = Date.now() + timeoutMs;
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+    // The first score may not have landed (the watcher was just started, the character still loading), or the held
+    // one is out of date: ask for a fresh one, and wait for it up to the timeout
+    for (;;) {
+        if (buildScore.score) buildScore.computedAt = 0;
+        await Promise.race([buildScore.refresh(), sleep(deadline - Date.now())]);
+        if (fresh()) return buildScore.score;
+        if (Date.now() >= deadline) return null;
+        await sleep(Math.min(500, deadline - Date.now()));
+    }
 }
 
 // The panel behind the tile reads the same figure the tile does.

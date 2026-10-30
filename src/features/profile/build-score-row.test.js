@@ -400,6 +400,23 @@ describe('ensureOwnScore', () => {
         expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 42 });
     });
 
+    test('with no score yet it waits for the first one to land, up to the timeout', async () => {
+        game.characterData = null;
+        const waiting = ensureOwnScore({ stamp: scorePricingStamp(), timeoutMs: 15000 });
+        await vi.advanceTimersByTimeAsync(2000);
+        // The character finishes loading while it waits
+        game.characterData = { characterAbilities: [], combatUnit: { combatAbilities: [] } };
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(await waiting).toEqual({ total: 42 });
+    });
+
+    test('and gives up with null when no score lands in time', async () => {
+        game.characterData = null;
+        const waiting = ensureOwnScore({ stamp: scorePricingStamp(), timeoutMs: 3000 });
+        await vi.advanceTimersByTimeAsync(3500);
+        expect(await waiting).toBeNull();
+    });
+
     test('a score computed before a pricing change is recomputed, not handed back stale', async () => {
         await ensureOwnScore({ stamp: scorePricingStamp() });
         game.stamp = 'b';

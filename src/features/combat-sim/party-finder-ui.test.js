@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
     owned: [],
     /** Replaces the template tuner's answer, when a test sets it */
     tune: null,
+    progress: null,
     tuneCalls: [],
     tunerCleared: 0,
 }));
@@ -90,7 +91,8 @@ vi.mock('./party-template-tuner.js', () => ({
     clearTunerCache: () => {
         state.tunerCleared += 1;
     },
-    tuneTemplate: async (template, levels) => {
+    tuneTemplate: async (template, levels, _deps, options) => {
+        state.progress?.forEach((p) => options?.onProgress?.(p));
         state.tuneCalls.push({ id: template.id, levels });
         if (state.tune) return state.tune(template, levels);
         return {
@@ -249,6 +251,7 @@ async function mountTab() {
 
 beforeEach(() => {
     state.tune = null;
+    state.progress = null;
     state.charId = 'me';
     state.gameMode = undefined;
     state.db = undefined;
@@ -1477,6 +1480,26 @@ describe('saved builds', () => {
             await flush();
             expect(tab._tuning).toBe(false);
             expect(state.db.entries).toHaveLength(1);
+        });
+
+        test('the note shows the wait for the build score, then the probe count', async () => {
+            await mountTab();
+            toggle().click();
+            const note = el('roster-note');
+            let finish;
+            state.tune = (template) => new Promise((resolve) => (finish = () => resolve(tuned(template))));
+            state.progress = [{ phase: 'score', done: 0, max: 10 }];
+            add(t().id);
+            await flush();
+            expect(note.textContent).toBe('Waiting for your build score…');
+            finish();
+            await flush();
+            state.progress = [{ phase: 'solve', done: 3, max: 10 }];
+            add(t().id);
+            await flush();
+            expect(note.textContent).toBe('Matching the template to your build… 3/10');
+            finish();
+            await flush();
         });
 
         test('turned off while matching, the standard template is added', async () => {

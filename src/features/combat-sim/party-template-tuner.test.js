@@ -230,6 +230,23 @@ describe('tuneTemplate', () => {
         expect((await tuneTemplate(smash, LEVELS, b.deps)).status).toBe('partial');
     });
 
+    test('every scoring yields to the browser first, and progress is reported from the wait through each probe', async () => {
+        const { deps } = world();
+        let yields = 0;
+        deps.yieldToBrowser = async () => {
+            yields += 1;
+        };
+        const events = [];
+        const result = await tuneTemplate(smash, LEVELS, deps, { onProgress: (p) => events.push(p) });
+        expect(result.status).toBe('ok');
+        expect(events[0]).toEqual({ phase: 'score', done: 0, max: 10 });
+        const solves = events.filter((p) => p.phase === 'solve');
+        expect(solves.map((p) => p.done)).toEqual(solves.map((_, i) => i + 1));
+        expect(solves.length).toBeGreaterThan(2);
+        expect(solves.length).toBeLessThanOrEqual(10);
+        expect(yields).toBe(solves.length);
+    });
+
     test('a character below the lowest or above the highest reachable score is clamped', async () => {
         const low = await tuneTemplate(smash, LEVELS, world({ score: { equipment: 5, ability: 0 } }).deps);
         expect(low).toMatchObject({ status: 'clampedLow', k: OFFSET_MIN });

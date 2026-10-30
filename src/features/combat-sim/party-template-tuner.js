@@ -136,14 +136,22 @@ export function comparableScore(score) {
  * @param {number} options.target - The character's comparable score
  * @param {() => boolean} [options.stillCurrent] - False once the answer is for nobody (checked after every await)
  * @param {number} [options.maxEvals]
+ * @param {(progress: {phase: string, done: number, max: number}) => void} [options.onProgress] - Called before each scoring
  * @returns {Promise<{status: 'ok'|'clampedLow'|'clampedHigh'|'failed'|'aborted', k: number|null,
  *   score: number|null, evals: number}>} `clampedLow`: even the lowest offset scores above the target;
  *   `clampedHigh`: even the highest scores below it
  */
-export async function solveOffset({ scoreAt, target, stillCurrent = () => true, maxEvals = MAX_EVALS }) {
+export async function solveOffset({
+    scoreAt,
+    target,
+    stillCurrent = () => true,
+    maxEvals = MAX_EVALS,
+    onProgress = null,
+}) {
     let evals = 0;
     const probe = async (k) => {
         evals += 1;
+        onProgress?.({ phase: 'solve', done: evals, max: maxEvals });
         const score = await scoreAt(k);
         return score;
     };
@@ -177,6 +185,11 @@ export async function solveOffset({ scoreAt, target, stillCurrent = () => true, 
     return Math.abs(target - lowScore) <= Math.abs(highScore - target)
         ? done('ok', low, lowScore)
         : done('ok', high, highScore);
+}
+
+/** Hand the main thread back for a macrotask, so a long run of scorings does not freeze the page */
+function yieldToBrowser() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 /** Solved offsets by template, character, score stamp and pricing context */
@@ -221,13 +234,16 @@ function stampOf(score) {
  * @param {{id: string, role: string, playerDto: Object}} template
  * @param {Object} levels - The character's combat levels (a player DTO carries them)
  * @param {Object} [deps] - See {@link liveDeps}
+ * @param {Object} [options]
+ * @param {(progress: {phase: string, done: number, max: number}) => void} [options.onProgress] - 'score' while the
+ *   character's own score is awaited, then 'solve' before each of the (at most MAX_EVALS) scorings
  * @returns {Promise<{status: 'ok'|'partial'|'clampedLow'|'clampedHigh'|'noScore'|'failed'|'aborted', dto: Object,
  *   k: number|null, templateScore: number|null, ownScore: number|null, cached: boolean}>} `partial`: gear in either score was unpriced, so the match is approximate (the tuned build
  *   is still returned, never reported as `ok`). `dto` is always usable:
  *   with `noScore` (the character's score is not loaded), `failed` or `aborted` it is the standardized template with
  *   only the matched combat levels
  */
-export async function tuneTemplate(template, levels, deps = liveDeps()) {
+export async function tuneTemplate(template, levels, deps = liveDeps(), { onProgress = null } = {}) {
     const characterId = deps.getCharacterId();
     const stillCurrent = () => deps.getCharacterId() === characterId;
     const leveled = matchCombatLevels(template.playerDto, template.role, levels);
@@ -241,6 +257,7 @@ export async function tuneTemplate(template, levels, deps = liveDeps()) {
         ...extra,
     });
 
+    onProgress?.({ phase: 'score', done: 0, max: MAX_EVALS });
     const own = await deps.getOwnScore();
     if (!stillCurrent()) return fallback('aborted');
     const target = comparableScore(own);
@@ -253,11 +270,13 @@ export async function tuneTemplate(template, levels, deps = liveDeps()) {
     // A piece nothing could price counts as zero in either score, so a match through it is only approximate
     let unpriced = Number(own.equipmentUnpriced) > 0;
     const scoreAt = async (k) => {
+        // Scoring a whole build is heavy: let the page paint between probes
+        await (deps.yieldToBrowser ?? yieldToBrowser)();
         const result = await deps.scoreProfile(profileDataFor(applyOffset(template.playerDto, k)));
         if (Number(result?.equipmentUnpriced) > 0) unpriced = true;
         return comparableScore(result);
     };
-    const solved = await solveOffset({ scoreAt, target, stillCurrent });
+    const solved = await solveOffset({ scoreAt, target, stillCurrent, onProgress });
     if (!stillCurrent() || solved.status === 'aborted') return fallback('aborted');
     if (solved.status === 'failed') return fallback('failed');
 
