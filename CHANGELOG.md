@@ -26,6 +26,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Audit fixes before release
 
+- Opening the Achievements tab no longer redraws the hints about 700 times (once per card part the game added), which froze the page for over a second.
+- Enhancement chain solves are remembered, so +20 tooltips, badges and planners stop re-solving the same steps; the marketplace profit sort no longer freezes the page (it pauses between items), and token values, Alchemy best items, tea suggestions and the profile score stop rescanning the whole shop or action list per item.
 - The PFormance panel has a Panel delays section timing how long Toolasha panels take to draw after their trigger (profile score, item tooltip, action panel, achievement hints), flagging anything over a second, and stalls during those runs name them.
 - Opening a profile no longer freezes the page for up to 30 seconds before its side panels draw: the score prices each enhancement input once per item, and shop price lookups no longer scan the whole shop (the Tester shop made this worst).
 - Inventory price badges no longer reprice every enhanced item on each pass: with a large inventory they kept the page about half busy (opening a profile or panels lagged); unchanged badges are no longer rewritten.
