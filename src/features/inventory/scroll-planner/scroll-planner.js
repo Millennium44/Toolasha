@@ -28,6 +28,8 @@ import {
     getRemainingQuantity,
     getScrollHrids,
     normalizePlan,
+    normalizeSteps,
+    observeInventory,
 } from './scroll-planner-logic.js';
 import { clearRun, loadLastPlan, loadRun, saveLastPlan, saveRun } from './scroll-planner-storage.js';
 
@@ -315,12 +317,20 @@ class ScrollPlanner {
         if (!items || !Array.isArray(saved?.steps) || saved.steps.length === 0) {
             return;
         }
+        // Read in the current shape (an older record has targetCount only), then fold in what
+        // changed while the page was closed: scrolls opened count, scrolls gained do not
+        const normalized = normalizeSteps(saved.steps, items);
+        const steps = normalized ? observeInventory(normalized, items).steps : null;
         const stale = !(Date.now() - saved.startedAt < RUN_MAX_AGE_MS);
-        if (stale || !getCurrentStep(saved.steps, items)) {
+        if (stale || !steps || !getCurrentStep(steps, items)) {
             await clearRun(characterId);
             return;
         }
-        this.run = { ...saved, shortfalls: Array.isArray(saved.shortfalls) ? saved.shortfalls : [] };
+        this.run = {
+            startedAt: saved.startedAt,
+            steps,
+            shortfalls: Array.isArray(saved.shortfalls) ? saved.shortfalls : [],
+        };
         setScrollRunActive(true);
         this.renderBar();
         this.autoOpenCurrentScroll();
@@ -423,10 +433,16 @@ class ScrollPlanner {
         if (!this.run || !items) {
             return;
         }
+        // Count what was opened before deciding anything; a gain never adds to the plan
+        const observed = observeInventory(this.run.steps, items);
+        this.run.steps = observed.steps;
         const current = getCurrentStep(this.run.steps, items);
         if (!current) {
             this.finishRun();
             return;
+        }
+        if (observed.changed) {
+            this.persistRun(this.characterId, this.run);
         }
         if (this.autoOpenedHrid !== current.step.itemHrid) {
             this.clearHighlights();

@@ -7,6 +7,8 @@ import {
     getScrollHrids,
     isStepFinished,
     normalizePlan,
+    normalizeSteps,
+    observeInventory,
 } from './scroll-planner-logic.js';
 
 const itemDetailMap = {
@@ -70,9 +72,9 @@ describe('buildRun', () => {
             SCROLLS,
             items
         );
-        expect(steps.map((s) => [s.itemHrid, s.quantity, s.targetCount])).toEqual([
-            ['/items/seal_of_damage', 2, 0],
-            ['/items/seal_of_gathering', 4, 6],
+        expect(steps.map((s) => [s.itemHrid, s.quantity, s.remaining, s.lastOwned])).toEqual([
+            ['/items/seal_of_damage', 2, 2, 2],
+            ['/items/seal_of_gathering', 4, 4, 10],
         ]);
         expect(shortfalls).toEqual([{ itemHrid: '/items/seal_of_damage', planned: 5, owned: 2 }]);
     });
@@ -83,26 +85,88 @@ describe('buildRun', () => {
     });
 });
 
+const DAMAGE = '/items/seal_of_damage';
+const GATHERING = '/items/seal_of_gathering';
+
 describe('run progress', () => {
-    const items = [inv('/items/seal_of_damage', 5), inv('/items/seal_of_gathering', 5)];
-    const { steps } = buildRun({ '/items/seal_of_damage': 2, '/items/seal_of_gathering': 3 }, SCROLLS, items);
+    const items = [inv(DAMAGE, 5), inv(GATHERING, 5)];
+    const { steps } = buildRun({ [DAMAGE]: 2, [GATHERING]: 3 }, SCROLLS, items);
 
     it('starts on the first step with the full quantity remaining', () => {
         const current = getCurrentStep(steps, items);
         expect(current.index).toBe(0);
         expect(getRemainingQuantity(current.step, items)).toBe(2);
     });
-    it('finishes a step when the inventory reaches its target', () => {
-        const after = [inv('/items/seal_of_damage', 3), inv('/items/seal_of_gathering', 5)];
-        expect(isStepFinished(steps[0], after)).toBe(true);
-        expect(getCurrentStep(steps, after).index).toBe(1);
+    it('finishes a step once its planned scrolls are opened', () => {
+        const after = [inv(DAMAGE, 3), inv(GATHERING, 5)];
+        const observed = observeInventory(steps, after);
+        expect(observed.changed).toBe(true);
+        expect(isStepFinished(observed.steps[0], after)).toBe(true);
+        expect(getCurrentStep(observed.steps, after).index).toBe(1);
+        // The input steps are not changed
+        expect(steps[0].remaining).toBe(2);
     });
-    it('shrinks the remaining quantity after a partial open', () => {
-        const partial = [inv('/items/seal_of_damage', 4), inv('/items/seal_of_gathering', 5)];
-        expect(getRemainingQuantity(steps[0], partial)).toBe(1);
+    it('partial opens still count down, across several updates and stacks', () => {
+        const stacks = [inv(DAMAGE, 1), inv(DAMAGE, 2), inv(DAMAGE, 2), inv(GATHERING, 5)];
+        let run = buildRun({ [DAMAGE]: 4 }, SCROLLS, stacks).steps;
+        run = observeInventory(run, [inv(DAMAGE, 2), inv(DAMAGE, 2), inv(GATHERING, 5)]).steps;
+        expect(getRemainingQuantity(run[0], [inv(DAMAGE, 4)])).toBe(3);
+        run = observeInventory(run, [inv(DAMAGE, 2)]).steps;
+        expect(run[0].remaining).toBe(1);
+        expect(run[0].done).toBe(false);
+    });
+    it('a gain mid-step never raises the quantity past the plan', () => {
+        // Plan 3 of 5: before the fix the target was 2, and gaining 4 made 7 to open
+        let run = buildRun({ [DAMAGE]: 3 }, SCROLLS, [inv(DAMAGE, 5)]).steps;
+        const gained = [inv(DAMAGE, 9)];
+        run = observeInventory(run, gained).steps;
+        expect(getRemainingQuantity(run[0], gained)).toBe(3);
+        run = observeInventory(run, [inv(DAMAGE, 8)]).steps;
+        expect(getRemainingQuantity(run[0], [inv(DAMAGE, 8)])).toBe(2);
+    });
+    it('a gain after a step is done does not bring it back', () => {
+        let run = buildRun({ [DAMAGE]: 2, [GATHERING]: 3 }, SCROLLS, items).steps;
+        run = observeInventory(run, [inv(DAMAGE, 3), inv(GATHERING, 5)]).steps;
+        const regained = [inv(DAMAGE, 20), inv(GATHERING, 5)];
+        run = observeInventory(run, regained).steps;
+        expect(run[0].done).toBe(true);
+        expect(getCurrentStep(run, regained).index).toBe(1);
+    });
+    it('opening the last scroll of a step finishes it even at zero owned', () => {
+        let run = buildRun({ [DAMAGE]: 5 }, SCROLLS, [inv(DAMAGE, 2)]).steps;
+        run = observeInventory(run, []).steps;
+        expect(run[0].done).toBe(true);
+        expect(getCurrentStep(run, [inv(DAMAGE, 4)])).toBeNull();
+    });
+    it('a later step does not count scrolls opened before it is current', () => {
+        let run = buildRun({ [DAMAGE]: 2, [GATHERING]: 3 }, SCROLLS, items).steps;
+        run = observeInventory(run, [inv(DAMAGE, 5), inv(GATHERING, 4)]).steps;
+        expect(run[1].remaining).toBe(3);
+        expect(run[1].lastOwned).toBe(4);
     });
     it('treats a skipped step as finished and returns null when all are done', () => {
         const skipped = steps.map((s) => ({ ...s, skipped: true }));
         expect(getCurrentStep(skipped, items)).toBeNull();
+    });
+});
+
+describe('normalizeSteps', () => {
+    it('reads an old targetCount record without adding scrolls gained since', () => {
+        // Planned 3 of 5 (target 2); now 9 owned: the old formula said 7
+        const old = [{ itemHrid: DAMAGE, quantity: 3, planned: 3, targetCount: 2, skipped: false }];
+        const [step] = normalizeSteps(old, [inv(DAMAGE, 9)]);
+        expect(step.remaining).toBe(3);
+        expect(step.lastOwned).toBe(9);
+    });
+    it('reads an old record part-way through', () => {
+        const old = [{ itemHrid: DAMAGE, quantity: 3, planned: 3, targetCount: 2, skipped: false }];
+        expect(normalizeSteps(old, [inv(DAMAGE, 3)])[0].remaining).toBe(1);
+        expect(normalizeSteps(old, [inv(DAMAGE, 2)])[0].done).toBe(true);
+    });
+    it('keeps a current record as saved, and refuses garbage', () => {
+        const saved = [{ itemHrid: DAMAGE, quantity: 3, planned: 4, remaining: 2, lastOwned: 4, done: false }];
+        expect(normalizeSteps(saved, [inv(DAMAGE, 7)])[0]).toMatchObject({ remaining: 2, lastOwned: 4 });
+        expect(normalizeSteps('x', [])).toBeNull();
+        expect(normalizeSteps([null], [])).toBeNull();
     });
 });

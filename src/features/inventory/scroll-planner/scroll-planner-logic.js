@@ -2,10 +2,13 @@
  * Scroll Planner logic
  * Pure helpers: which items count as scrolls, plan normalization, and run construction.
  *
- * A run is a list of steps, one per scroll type. Each step stores `targetCount`, the inventory
- * count at which the step is finished (owned at run start minus the planned quantity). Because
- * inventory is the source of truth, completion is just `owned <= targetCount`, which also makes a
- * run resumable after a reload without storing an index.
+ * A run is a list of steps, one per scroll type. Each step carries `remaining`, the planned
+ * scrolls still to open, and `lastOwned`, the inventory count last seen. Only a drop in the count
+ * while the step is current is counted as opened ({@link observeInventory}); a gain moves
+ * `lastOwned` up and leaves `remaining` alone, so picking up more of a scroll mid-run never raises
+ * what the player planned, and a step marked `done` stays done. Steps are saved with both fields,
+ * so a reload resumes from them; records from before this shape (`targetCount` only) are read by
+ * {@link normalizeSteps}.
  */
 
 const SCROLL_CATEGORY_HRID = '/item_categories/scroll';
@@ -74,7 +77,8 @@ export function normalizePlan(rawPlan, scrollHrids) {
  * @param {Object<string, number>} plan
  * @param {string[]} scrollHrids - Ordering of steps
  * @param {Array} characterItems
- * @returns {{steps: Array<{itemHrid: string, quantity: number, planned: number, targetCount: number, skipped: boolean}>,
+ * @returns {{steps: Array<{itemHrid: string, quantity: number, planned: number, remaining: number,
+ *   lastOwned: number, done: boolean, skipped: boolean}>,
  *   shortfalls: Array<{itemHrid: string, planned: number, owned: number}>}}
  */
 export function buildRun(plan, scrollHrids, characterItems) {
@@ -91,19 +95,105 @@ export function buildRun(plan, scrollHrids, characterItems) {
             shortfalls.push({ itemHrid, planned, owned });
         }
         if (quantity > 0) {
-            steps.push({ itemHrid, quantity, planned, targetCount: owned - quantity, skipped: false });
+            steps.push({
+                itemHrid,
+                quantity,
+                planned,
+                remaining: quantity,
+                lastOwned: owned,
+                done: false,
+                skipped: false,
+            });
         }
     }
     return { steps, shortfalls };
 }
 
 /**
- * @param {{itemHrid: string, targetCount: number, skipped: boolean}} step
+ * Saved steps in the current shape, whatever build wrote them.
+ *
+ * A record from before `remaining` existed holds `targetCount` (owned at start minus planned): its
+ * remaining is what that formula gave, owned now minus the target, but never more than the step's
+ * planned quantity — so scrolls gained before the resume are not added to it.
+ * @param {*} steps - Stored steps
+ * @param {Array} characterItems
+ * @returns {Array|null} Steps, or null when the record is unreadable
+ */
+export function normalizeSteps(steps, characterItems) {
+    if (!Array.isArray(steps)) {
+        return null;
+    }
+    const out = [];
+    for (const step of steps) {
+        if (!step || typeof step.itemHrid !== 'string') {
+            return null;
+        }
+        const owned = getOwnedCount(characterItems, step.itemHrid);
+        const quantity = Math.max(0, Math.floor(Number(step.quantity)) || 0);
+        let remaining = Number(step.remaining);
+        let lastOwned = Number(step.lastOwned);
+        if (!Number.isFinite(remaining)) {
+            const target = Number(step.targetCount);
+            remaining = Number.isFinite(target) ? Math.min(quantity, Math.max(0, owned - target)) : 0;
+            lastOwned = owned;
+        }
+        if (!Number.isFinite(lastOwned)) {
+            lastOwned = owned;
+        }
+        out.push({
+            itemHrid: step.itemHrid,
+            quantity,
+            planned: Number(step.planned) || quantity,
+            remaining: Math.max(0, Math.min(quantity, remaining)),
+            lastOwned,
+            done: Boolean(step.done) || remaining <= 0,
+            skipped: Boolean(step.skipped),
+        });
+    }
+    return out;
+}
+
+/**
+ * Fold the inventory now into the steps: a drop in the current step's scroll is that many opened,
+ * a gain only moves the baseline. Returns new step objects; the input is not changed.
+ * @param {Array} steps
+ * @param {Array} characterItems
+ * @returns {{steps: Array, changed: boolean}}
+ */
+export function observeInventory(steps, characterItems) {
+    // The step that was current before this change, judged by the counts last seen: judged by the
+    // new counts, a step whose last scrolls were just opened would already look finished
+    const currentIndex = steps.findIndex(
+        (step) => !step.skipped && !step.done && step.remaining > 0 && step.lastOwned > 0
+    );
+    let changed = false;
+    const next = steps.map((step, index) => {
+        const owned = getOwnedCount(characterItems, step.itemHrid);
+        if (owned === step.lastOwned) {
+            return step;
+        }
+        changed = true;
+        const updated = { ...step, lastOwned: owned };
+        if (index === currentIndex) {
+            const opened = Math.max(0, step.lastOwned - owned);
+            updated.remaining = Math.max(0, step.remaining - opened);
+            // Nothing left to open: done, and a later gain does not bring it back
+            if (updated.remaining <= 0 || owned === 0) {
+                updated.done = true;
+            }
+        }
+        return updated;
+    });
+    return { steps: changed ? next : steps, changed };
+}
+
+/**
+ * @param {{itemHrid: string, remaining: number, done: boolean, skipped: boolean}} step
  * @param {Array} characterItems
  * @returns {boolean}
  */
 export function isStepFinished(step, characterItems) {
-    return step.skipped || getOwnedCount(characterItems, step.itemHrid) <= step.targetCount;
+    return step.skipped || step.done || !(step.remaining > 0) || getOwnedCount(characterItems, step.itemHrid) === 0;
 }
 
 /**
@@ -122,11 +212,11 @@ export function getCurrentStep(steps, characterItems) {
 }
 
 /**
- * Scrolls still to open for a step (shrinks as the player opens them).
- * @param {{itemHrid: string, targetCount: number}} step
+ * Scrolls still to open for a step: what is left of the plan, and never more than is owned.
+ * @param {{itemHrid: string, remaining: number}} step
  * @param {Array} characterItems
  * @returns {number}
  */
 export function getRemainingQuantity(step, characterItems) {
-    return Math.max(0, getOwnedCount(characterItems, step.itemHrid) - step.targetCount);
+    return Math.max(0, Math.min(step.remaining, getOwnedCount(characterItems, step.itemHrid)));
 }

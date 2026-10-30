@@ -351,6 +351,56 @@ describe('ScrollPlanner', () => {
         expect(mocks.store.has('scrollPlanner_run_char-1')).toBe(false);
     });
 
+    test('scrolls gained mid-run do not raise the quantity filled into Open', async () => {
+        await planner.initialize();
+        await planner.startRun({ [DAMAGE]: 3 });
+        // 5 owned, plan 3; then 4 more drop
+        mocks.characterItems = [inv(DAMAGE, 9), inv(GATHERING, 8)];
+        mocks.listeners.items_updated();
+        const menu = buildMenu('Scroll Of Damage', DAMAGE);
+        planner.handleActionMenu(menu);
+        expect(menu.querySelector('input').value).toBe('3');
+        expect(bar().textContent).toContain('Scroll Of Damage ×3');
+
+        // Partial opens still count down, and are saved
+        mocks.characterItems = [inv(DAMAGE, 8), inv(GATHERING, 8)];
+        mocks.listeners.items_updated();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(bar().textContent).toContain('Scroll Of Damage ×2');
+        expect(mocks.store.get('scrollPlanner_run_char-1').steps[0]).toMatchObject({ remaining: 2, lastOwned: 8 });
+    });
+
+    test('scrolls gained after a step is done do not bring it back', async () => {
+        await planner.initialize();
+        await planner.startRun({ [DAMAGE]: 3, [GATHERING]: 2 });
+        mocks.characterItems = [inv(DAMAGE, 2), inv(GATHERING, 8)];
+        mocks.listeners.items_updated();
+        expect(bar().textContent).toContain('Scroll 2 of 2');
+
+        mocks.characterItems = [inv(DAMAGE, 12), inv(GATHERING, 8)];
+        mocks.listeners.items_updated();
+        expect(bar().textContent).toContain('Scroll 2 of 2: Scroll Of Gathering ×2');
+        const menu = buildMenu('Scroll Of Damage', DAMAGE);
+        planner.handleActionMenu(menu);
+        expect(menu.querySelector('input').value).toBe('1');
+    });
+
+    test('a resume after a gain keeps the planned quantity', async () => {
+        const steps = [{ itemHrid: DAMAGE, quantity: 3, planned: 3, remaining: 2, lastOwned: 4, done: false }];
+        mocks.store.set('scrollPlanner_run_char-1', { startedAt: Date.now(), steps, shortfalls: [] });
+        mocks.characterItems = [inv(DAMAGE, 10)];
+        await planner.initialize();
+        expect(bar().textContent).toContain('Scroll Of Damage ×2');
+    });
+
+    test('an old targetCount record resumed after a gain keeps the planned quantity', async () => {
+        const steps = [{ itemHrid: DAMAGE, quantity: 3, planned: 3, targetCount: 2, skipped: false }];
+        mocks.store.set('scrollPlanner_run_char-1', { startedAt: Date.now(), steps });
+        mocks.characterItems = [inv(DAMAGE, 9)];
+        await planner.initialize();
+        expect(bar().textContent).toContain('Scroll Of Damage ×3');
+    });
+
     test('an inventory that is not loaded does not finish (and delete) the run', async () => {
         await planner.initialize();
         await planner.startRun({ [DAMAGE]: 3 });
