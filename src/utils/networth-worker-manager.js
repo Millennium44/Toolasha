@@ -522,7 +522,12 @@ function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags, inp
  * @returns {Object} {itemIndex, value}
  */
 function calculateItemValue(data) {
-    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, recipes, shopCosts, inputPrices } = data;
+    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, itemDetails, recipes, shopCosts, inputPrices } = data;
+    // An untradable cape is costed on the character's own bench, shipped beside the batch's
+    const enhancementParams =
+        inputPrices && inputPrices.capeParams && inputPrices.capeFallback && inputPrices.capeFallback[item.itemHrid]
+            ? inputPrices.capeParams
+            : data.enhancementParams;
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
 
     let itemValue = 0;
@@ -818,6 +823,8 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
         baseAssumed: {},
         // An untradable cape's last-resort value, {price, partial}, where its path fails
         capeFallback: {},
+        // The bench untradable capes are costed on (null when the batch holds none)
+        capeParams: configOptions.capeParams || null,
         // A refined piece's mirror route consumes copies of the unrefined base: its price and whether
         // that base is a partial crafting bill, keyed by the refined item
         copyPrice: {},

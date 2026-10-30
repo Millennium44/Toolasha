@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     enhancementPaths: {}, // `${hrid}:${level}` -> totalCost
     inputsPartialPaths: new Set(),
     partialPaths: new Set(), // keys whose path reports an unpriced material or base
+    pathParams: [], // every [hrid, level, params] the path was asked for
     assumedBasePaths: new Set(), // partial keys whose only unpriced input is an untradable cape's assumed base
     taskTokenValue: null,
     dungeonTokenValues: {},
@@ -79,8 +80,13 @@ vi.mock('../../utils/ability-cost-calculator.js', () => ({
 vi.mock('../../utils/house-cost-calculator.js', () => ({
     calculateHouseBuildCost: (hrid, level) => level * 500,
 }));
+// The own-bench resolution untradable capes are valued on (alchemy reads the same 'valuation' surface)
+vi.mock('../enhancement/enhancement-params-source.js', () => ({
+    enhancementParamsFor: (surface, hrid) => ({ bench: 'own', surface, hrid }),
+}));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
-    calculateEnhancementPath: (hrid, level) => {
+    calculateEnhancementPath: (hrid, level, params) => {
+        mocks.pathParams.push([hrid, level, params]);
         const key = `${hrid}:${level}`;
         return key in mocks.enhancementPaths
             ? {
@@ -93,7 +99,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
             : null;
     },
 }));
-vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
+vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({ bench: 'simulator' }) }));
 vi.mock('../tasks/task-profit-calculator.js', () => ({
     calculateTaskTokenValue: () => mocks.taskTokenValue,
 }));
@@ -204,6 +210,7 @@ beforeEach(() => {
     mocks.inputsPartialPaths = new Set();
     mocks.partialPaths = new Set();
     mocks.assumedBasePaths = new Set();
+    mocks.pathParams = [];
     mocks.taskTokenValue = null;
     mocks.dungeonTokenValues = {};
     mocks.labyrinthTokenDetail = null;
@@ -2023,6 +2030,51 @@ describe('untradable capes', () => {
                 partial: expected.partial,
             });
         }
+    });
+
+    test('a cape is costed on the character own bench, whatever the simulator holds; other items keep the simulator', async () => {
+        mocks.enhancementPaths[`${CAPE}:5`] = 4000;
+        mocks.enhancementPaths['/items/sword:5'] = 800;
+        mocks.settings.networth_highEnhancementUseCost = true;
+        mocks.settings.networth_highEnhancementMinLevel = 3;
+
+        await calculateItemValue({ itemHrid: CAPE, enhancementLevel: 5 });
+        await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 5 });
+
+        const byItem = Object.fromEntries(mocks.pathParams.map(([hrid, , params]) => [hrid, params]));
+        expect(byItem[CAPE]).toEqual({ bench: 'own', surface: 'valuation', hrid: CAPE });
+        expect(byItem['/items/sword']).toEqual({ bench: 'simulator' });
+    });
+
+    test('a cape is never served from the simulator-keyed enhancement cache', async () => {
+        mocks.enhancementPaths[`${CAPE}:5`] = 4000;
+        mocks.settings.networth_highEnhancementUseCost = true;
+        mocks.settings.networth_highEnhancementMinLevel = 3;
+        await calculateItemValue({ itemHrid: CAPE, enhancementLevel: 5 });
+        await calculateItemValue({ itemHrid: CAPE, enhancementLevel: 5 });
+        // The cache mock answers null, so both calls ask the path; the point is no write is relied on
+        expect(mocks.pathParams.filter(([hrid]) => hrid === CAPE)).toHaveLength(2);
+    });
+
+    test('the worker batch carries the own bench for capes beside the simulator one', async () => {
+        mocks.initData = { houseRoomDetailMap: {}, actionDetailMap: {} };
+        mocks.combinedData = {
+            characterItems: [
+                { itemHrid: CAPE, enhancementLevel: 5, count: 1, itemLocationHrid: '/item_locations/inventory' },
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.itemDetails,
+        };
+        workerBatch.mockReset();
+        workerBatch.mockResolvedValue([0]);
+        await calculateNetworth();
+
+        const options = workerBatch.mock.calls[0][2];
+        expect(options.enhancementParams).toEqual({ bench: 'simulator' });
+        expect(options.capeParams).toEqual({ bench: 'own', surface: 'valuation', hrid: CAPE });
     });
 
     test('an enhanced cape on the mirror setting is the full path, unflagged', async () => {

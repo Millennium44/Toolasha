@@ -544,6 +544,42 @@ describe('an untradable cape whose path fails falls back as the main thread does
         expect(await run({ [REFINED]: { price: 1_000, partial: true } })).toEqual({ value: 1_000, partial: true });
     });
 
+    test('a cape is costed on the shipped own bench, not the batch simulator bench', async () => {
+        const OWN = { enhancingLevel: 140, toolBonus: 30, blessedTeaBonus: 0, guzzlingBonus: 1 };
+        const SIM = { enhancingLevel: 20, toolBonus: 0, blessedTeaBonus: 0, guzzlingBonus: 1 };
+        // A cape the path can price (coins only), so the bench decides the figure
+        const pricedData = {
+            itemDetailMap: {
+                [CAPE]: {
+                    itemLevel: 10,
+                    enhancementCosts: [{ itemHrid: '/items/coin', count: 5000 }],
+                    protectionItemHrids: [],
+                },
+            },
+            actionDetailMap: {},
+        };
+        const costWith = async (enhancementParams, capeParams) => {
+            ctx.priceMap = {};
+            ctx.recipes = {};
+            ctx.capes = new Set([CAPE]);
+            ctx.assumedBases = new Set([CAPE]);
+            const [value] = await calculateItemValueBatch(
+                [{ itemHrid: CAPE, enhancementLevel: 8, count: 1 }],
+                {},
+                { useHighEnhancementCost: false, minLevel: 99, enhancementParams, capeParams },
+                pricedData
+            );
+            terminateItemValueWorkerPool();
+            return value;
+        };
+
+        const onOwn = await costWith(OWN, null);
+        const onSim = await costWith(SIM, null);
+        expect(onOwn).toBeLessThan(onSim);
+        // Simulator bench in the batch, own bench shipped for capes: the cape is valued on its own
+        expect(await costWith(SIM, OWN)).toBeCloseTo(onOwn, 6);
+    });
+
     test('on "nothing" the value is 0 but flagged partial, as on the main thread', async () => {
         ctx.capeBase = 0;
         expect(await fallback()).toEqual({ value: 0, partial: true });
