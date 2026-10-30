@@ -448,16 +448,86 @@ function resolveEquip(parsed, data) {
     };
 }
 
+const positiveTarget = (detail, fallback) => {
+    const target = Number(detail?.target);
+    return Number.isFinite(target) && target > 0 ? target : fallback;
+};
+
+/**
+ * Achievements that send the player somewhere rather than name a thing to make: a house room level, a
+ * labyrinth floor, repeat dungeon clears, a trainee charm from the shop, coinified coins. Matched on the
+ * exact steam ids, so no other achievement can fall in here.
+ * @param {Object} detail
+ * @param {Object} data
+ * @returns {Object|null} A `place` resolution, or null when the id is not one of these
+ */
+function resolvePlace(detail, data) {
+    const steam = String(detail?.steamAchievementId || '');
+    const hrid = detail?.hrid || null;
+    let m = /^ach_build_room_level_(\d+)$/.exec(steam);
+    if (m) return { kind: 'place', place: 'house', target: Number(m[1]), achievementHrid: hrid };
+    m = /^ach_labyrinth_floor_(\d+)$/.exec(steam);
+    if (m) return { kind: 'place', place: 'labyrinth', target: Number(m[1]), achievementHrid: hrid };
+    m = /^ach_clear_t(\d+)_dungeon_(\d+)_times$/.exec(steam);
+    if (m) {
+        const tier = Number(m[1]);
+        const candidates = Object.entries(data.actionDetailMap || {})
+            .filter(
+                ([, action]) =>
+                    action?.type === '/action_types/combat' &&
+                    action.combatZoneInfo?.isDungeon === true &&
+                    (action.maxDifficulty ?? tier) >= tier
+            )
+            .sort(([ha, a], [hb, b]) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0) || ha.localeCompare(hb))
+            .map(([actionHrid, action]) => ({ actionHrid, requirement: zoneRequirement(action) }));
+        if (candidates.length === 0) return null;
+        return {
+            kind: 'place',
+            place: 'dungeon',
+            tier,
+            target: positiveTarget(detail, Number(m[2])),
+            achievementHrid: hrid,
+            candidates,
+        };
+    }
+    if (steam === 'ach_buy_trainee_charm') {
+        // The vendor's trainee charms, cheapest first; an empty list still opens the shop
+        const charms = Object.entries(data.shopItemDetailMap || {})
+            .filter(([, entry]) => /^trainee_.+_charm$/.test(slugOf(entry?.itemHrid)))
+            .map(([shopItemHrid, entry]) => {
+                const coin = (entry.costs || []).find((cost) => cost?.itemHrid === COIN_HRID);
+                const others = (entry.costs || []).some((cost) => cost?.itemHrid && cost.itemHrid !== COIN_HRID);
+                return {
+                    shopItemHrid,
+                    itemHrid: entry.itemHrid,
+                    coinCost: coin && !others && Number(coin.count) > 0 ? Number(coin.count) : null,
+                };
+            })
+            .sort(
+                (a, b) => (a.coinCost ?? Infinity) - (b.coinCost ?? Infinity) || a.itemHrid.localeCompare(b.itemHrid)
+            );
+        return { kind: 'place', place: 'shop', achievementHrid: hrid, candidates: charms };
+    }
+    if (steam === 'ach_coinify_coins_1m') {
+        return { kind: 'place', place: 'coinify', target: positiveTarget(detail, 1_000_000), achievementHrid: hrid };
+    }
+    return null;
+}
+
 /**
  * Resolve an achievement to the game hrids it is about.
  *
  * @param {Object} detail - An `achievementDetailMap` entry
- * @param {{actionDetailMap?: Object, itemDetailMap?: Object, combatMonsterDetailMap?: Object}} data
- * @returns {Object|null} A resolution (`kind` production / alchemy / combat / equip), or null
+ * @param {{actionDetailMap?: Object, itemDetailMap?: Object, combatMonsterDetailMap?: Object,
+ *   abilityDetailMap?: Object, shopItemDetailMap?: Object}} data
+ * @returns {Object|null} A resolution (`kind` production / alchemy / combat / equip / place / ability /
+ *   enhance), or null
  */
 export function resolveAchievement(detail, data) {
     const parsed = parseAchievement(detail);
     if (!data) return null;
+    const place = resolvePlace(detail, data);
+    if (place) return place;
     // "Any of" achievements name no single target; the verb-and-slug parse can also mistake them for one
     const anyOf = resolveAnyOf(detail, data);
     if (anyOf) return anyOf;
@@ -547,6 +617,8 @@ export function readiness(res, ctx) {
         return out;
     }
 
+    if (res.kind === 'place') return placeReadiness(res, ctx, out);
+
     if (res.kind === 'equip') {
         if (!ctx.inventory) return out;
         const held = res.candidates.find((hrid) => ownedCount(ctx.inventory, hrid, { anyLocation: true }) > 0);
@@ -591,6 +663,39 @@ export function readiness(res, ctx) {
 
     if (Array.isArray(res.candidates)) return candidateReadiness(res, ctx, out);
     return actionReadiness(res, ctx, out);
+}
+
+/**
+ * A place to go: nothing to buy or make first, so it is ready unless a dungeon's level gate says not.
+ * Dungeon: the first dungeon (game order) whose requirement is met, else the first. House: the highest
+ * room level built, `houseLevel` (null when the rooms are not loaded). Shop: the cheapest trainee charm.
+ * @param {Object} res - A `place` resolution
+ * @param {Object} ctx
+ * @param {Object} out - The result being filled
+ * @returns {Object} out
+ */
+function placeReadiness(res, ctx, out) {
+    out.levelMet = true;
+    out.owned = true;
+    if (res.place === 'dungeon') {
+        const checked = res.candidates.map((cand) => {
+            const level = cand.requirement
+                ? levelCheck(ctx.skillLevels, cand.requirement.skillHrid, cand.requirement.level, ctx.combatLevel)
+                : null;
+            return { cand, level, met: level ? level.met : true };
+        });
+        const chosen =
+            checked.find((entry) => entry.met === true) || checked.find((entry) => entry.met === null) || checked[0];
+        Object.assign(out, { actionHrid: chosen.cand.actionHrid, level: chosen.level, levelMet: chosen.met });
+    } else if (res.place === 'house') {
+        const rooms = ctx.houseRooms;
+        out.houseLevel = rooms ? Math.max(0, ...[...rooms.values()].map((room) => Number(room?.level) || 0)) : null;
+    } else if (res.place === 'shop') {
+        const charm = res.candidates[0] || null;
+        out.charmHrid = charm?.itemHrid || null;
+        out.cost = charm?.coinCost ?? null;
+    }
+    return out;
 }
 
 /**

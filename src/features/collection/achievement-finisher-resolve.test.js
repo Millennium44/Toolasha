@@ -189,14 +189,14 @@ describe('resolveAchievement: what it refuses', () => {
     });
 
     test('refine and the category ids (any Azure tool, any Celestial tool or outfit) stay unresolved', () => {
-        for (const slug of [
-            'refine_something',
-            'cheesesmith_azure_tool',
-            'craft_celestial_tool_or_outfit',
-            'clear_t1_dungeon_10_times',
-        ]) {
+        for (const slug of ['refine_something', 'cheesesmith_azure_tool', 'craft_celestial_tool_or_outfit']) {
             expect(resolveAchievement(MORE[`/achievements/${slug}`], DATA)).toBeNull();
         }
+        // Repeat T1 dungeon clears are a place to go, not a dungeon named "t1 dungeon 10 times"
+        expect(resolveAchievement(MORE['/achievements/clear_t1_dungeon_10_times'], DATA)).toMatchObject({
+            kind: 'place',
+            place: 'dungeon',
+        });
     });
 
     test('missing game data resolves nothing', () => {

@@ -26,6 +26,8 @@ const game = vi.hoisted(() => ({
     handlers: {},
     observers: [],
     bridgeOff: false,
+    houseRooms: null,
+    learned: null,
 }));
 
 const nav = vi.hoisted(() => ({
@@ -40,6 +42,7 @@ const nav = vi.hoisted(() => ({
     openAlchemyMissingMaterials: vi.fn(async () => {}),
     marketOn: vi.fn(),
     marketOff: vi.fn(),
+    setShopFilter: vi.fn(() => true),
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -81,6 +84,11 @@ vi.mock('../../core/data-manager.js', () => ({
         getSkills: () => game.skills,
         getInventory: () => game.inventory,
         getCurrentCharacterId: () => game.characterId,
+        get characterData() {
+            return game.houseRooms || game.learned ? {} : null;
+        },
+        getHouseRooms: () => new Map(game.houseRooms || []),
+        getLearnedAbilities: () => game.learned || [],
         on: (event, fn) => {
             (game.handlers[event] ||= []).push(fn);
         },
@@ -109,6 +117,7 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: nav.n
 vi.mock('../../utils/combat-zone-open.js', () => ({ openCombatZoneAtTier: nav.openCombatZoneAtTier }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPriceInfo: nav.getItemPriceInfo }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => game.ironCow }));
+vi.mock('../../utils/tester-shop-nav.js', () => ({ setShopFilter: nav.setShopFilter }));
 
 import finisher, { findAchievementsHost, PANEL_CLASS } from './achievement-finisher.js';
 import { buildTierChecklists } from './achievement-finisher-model.js';
@@ -124,6 +133,7 @@ import {
     SKILLS,
 } from './__fixtures__/achievement-finisher-game.js';
 import { ANY_OF_ACHIEVEMENTS, ANY_OF_DATA } from './__fixtures__/achievement-finisher-anyof.js';
+import { PLACE_ACHIEVEMENTS, PLACE_DATA } from './__fixtures__/achievement-finisher-places.js';
 
 const DETAIL = {
     '/achievements/a1': { hrid: '/achievements/a1', name: 'A1', tierHrid: '/achievement_tiers/beginner' },
@@ -318,6 +328,8 @@ describe('hints on the game achievement cards', () => {
         game.ironCow = false;
         game.bridgeOff = false;
         game.estimated = new Set();
+        game.houseRooms = null;
+        game.learned = null;
         game.settingHandlers = [];
         game.handlers = {};
         game.observers = [];
@@ -448,7 +460,9 @@ describe('hints on the game achievement cards', () => {
         expect(nav.openCombatZoneAtTier.mock.calls).toEqual([['/actions/combat/chimerical_den', 0]]);
         goOf('Milkmaid').click();
         expect(nav.navigateToAction.mock.calls).toEqual([['/actions/milking/cow']]);
-        for (const name of ['Regular', 'Refiner', 'Azure Smith', 'Celestial']) expect(lineOf(name)).toBeNull();
+        for (const name of ['Refiner', 'Azure Smith', 'Celestial']) expect(lineOf(name)).toBeNull();
+        // Repeat T1 clears: the dungeon at T1, progress unknown without a progress row
+        expect(lineOf('Regular').textContent).toContain('[dungeon T1 · clears unknown · no level requirement]');
     });
 
     test('Missing Mats shows only where inputs are short and buyable, and opens the shared bill for one action', () => {
@@ -775,5 +789,94 @@ describe('hints on the game achievement cards', () => {
         game.handlers.items_updated.forEach((fn) => fn());
         vi.advanceTimersByTime(1500);
         expect(matsOf('Dairy Chef')).not.toBeNull();
+    });
+    /** The game's left navigation entries, by the icon label each carries */
+    function navBar(...labels) {
+        const clicks = [];
+        for (const label of labels) {
+            const nav = document.createElement('div');
+            nav.className = 'NavigationBar_nav__3uuUl';
+            nav.innerHTML = `<svg aria-label="${label}"></svg>`;
+            nav.addEventListener('click', () => clicks.push(label));
+            document.body.appendChild(nav);
+        }
+        return clicks;
+    }
+
+    const placeSetup = () => {
+        game.detail = PLACE_ACHIEVEMENTS;
+        game.clientData = { ...PLACE_DATA, achievementDetailMap: PLACE_ACHIEVEMENTS };
+    };
+
+    test('place cards: house hint without Go; labyrinth, dungeon, shop and coinify navigate only', async () => {
+        placeSetup();
+        game.skills = [{ skillHrid: '/skills/attack', level: 1 }];
+        game.houseRooms = [['/house_rooms/brewery', { houseRoomHrid: '/house_rooms/brewery', level: 2 }]];
+        game.achievements = [
+            { achievementHrid: '/achievements/clear_t1_dungeon_10_times', progress: 4, isCompleted: false },
+            { achievementHrid: '/achievements/coinify_coins_1m', progress: 250000, isCompleted: false },
+        ];
+        const clicks = navBar('navigationBar.labyrinth', 'navigationBar.shop');
+        achievementsTab(PLACE_ACHIEVEMENTS);
+        finisher.initialize();
+
+        expect(lineOf('Homeowner II').textContent).toContain('[build any room to Lv 3 · your highest room Lv 2]');
+        expect(goOf('Homeowner II')).toBeNull();
+
+        expect(lineOf('Labyrinth Explorer II').textContent).toContain('[reach Labyrinth floor 4]');
+        goOf('Labyrinth Explorer II').click();
+        expect(clicks).toEqual(['navigationBar.labyrinth']);
+
+        // A combat level of 1 meets no dungeon: the first is shown with its gate, and Go opens it at T1
+        expect(lineOf('Dungeon Elitist').textContent).toContain('[dungeon T1 · 4 / 10 clears · needs Lv 80');
+        goOf('Dungeon Elitist').click();
+        expect(nav.openCombatZoneAtTier.mock.calls).toEqual([['/actions/combat/chimerical_den', 1]]);
+
+        expect(lineOf('Charmed').textContent).toContain('[Shop: Trainee Milking Charm ~200.0K coin]');
+        goOf('Charmed').click();
+        expect(clicks).toEqual(['navigationBar.labyrinth', 'navigationBar.shop']);
+        expect(nav.setShopFilter).toHaveBeenCalledWith('Trainee Milking Charm');
+
+        expect(lineOf('Midas Touch').textContent).toContain('[coinified 250.0K / 1.0M coin]');
+        goOf('Midas Touch').click();
+        await vi.runAllTimersAsync();
+        // No stack to alchemize: the coinify action itself; nothing is started or bought
+        expect(gameCalls).toEqual([['handleGoToAction', '/actions/alchemy/coinify']]);
+        expect(nav.navigateToMarketplace).not.toHaveBeenCalled();
+        expect(nav.navigateToAction).not.toHaveBeenCalled();
+    });
+
+    test('place cards with nothing loaded: rooms and progress unknown, never 0', () => {
+        placeSetup();
+        game.achievements = [{ achievementHrid: '/achievements/coinify_coins_1m', isCompleted: false }];
+        achievementsTab(PLACE_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Homeowner II').textContent).toContain('rooms not loaded');
+        expect(lineOf('Dungeon Elitist').textContent).toContain('clears unknown');
+        expect(lineOf('Midas Touch').textContent).toContain('coinify 1.0M coin · progress unknown');
+    });
+
+    test('progress moving redraws a place card; the shop filter waits for the box and stops for a new character', () => {
+        placeSetup();
+        game.achievements = [
+            { achievementHrid: '/achievements/clear_t1_dungeon_10_times', progress: 4, isCompleted: false },
+        ];
+        navBar('navigationBar.shop');
+        achievementsTab(PLACE_ACHIEVEMENTS);
+        finisher.initialize();
+        game.achievements = [
+            { achievementHrid: '/achievements/clear_t1_dungeon_10_times', progress: 5, isCompleted: false },
+        ];
+        game.handlers.achievements_updated.forEach((fn) => fn());
+        expect(lineOf('Dungeon Elitist').textContent).toContain('5 / 10 clears');
+
+        nav.setShopFilter.mockReturnValue(false);
+        goOf('Charmed').click();
+        vi.advanceTimersByTime(250);
+        expect(nav.setShopFilter.mock.calls.length).toBe(3);
+        game.characterId = 8;
+        vi.advanceTimersByTime(5000);
+        expect(nav.setShopFilter.mock.calls.length).toBe(3);
+        nav.setShopFilter.mockReturnValue(true);
     });
 });
