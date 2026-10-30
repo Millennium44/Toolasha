@@ -488,6 +488,14 @@ function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes, outFlags
  */
 function fallbackBasePrice(itemHrid, priceMap, recipes, shopCosts, outFlags, inputPrices) {
     let basePrice = priceMap[itemHrid + ':0'] || 0;
+    // An untradable cape's whole fallback bill is the main thread's own figure, shipped in the payload:
+    // the worker's recipe walk cannot know the cape setting's value for the recipe's base cape, so it
+    // would price a refined cape at its refinement materials alone
+    const shippedCape = inputPrices && inputPrices.capeFallback ? inputPrices.capeFallback[itemHrid] : null;
+    if (basePrice === 0 && shippedCape) {
+        if (outFlags && shippedCape.partial) outFlags.partial = true;
+        return shippedCape.price;
+    }
     if (basePrice === 0) {
         // A craft cost that skipped an unpriced input is a partial bill: still the value (the
         // main thread counts the priced inputs too), but reported so the display can say so
@@ -847,7 +855,12 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
                       context: 'networth',
                       mode: config.getSettingValue('networth_pricingMode') || 'ask',
                   });
-            inputPrices.capeFallback[item.itemHrid] = { price, partial: !(price > 0) };
+            // The caller's figure is the main thread's complete fallback bill (a refined cape's base and
+            // refinement together); without one, only the unrefined base can be read here
+            inputPrices.capeFallback[item.itemHrid] = configOptions.capeFallbacks?.[item.itemHrid] ?? {
+                price,
+                partial: !(price > 0),
+            };
         }
         const copyHrid = unrefinedBaseOf(item.itemHrid, gameData);
         if (copyHrid) {

@@ -1981,6 +1981,50 @@ describe('untradable capes', () => {
         });
     });
 
+    test('the worker is handed the main thread own fallback bill for a refined cape, base and refinement together', async () => {
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            actionDetailMap: {
+                '/actions/upgrade/refine': {
+                    type: '/action_types/alchemy',
+                    outputItems: [{ itemHrid: REFINED, count: 1 }],
+                    inputItems: [{ itemHrid: '/items/shard', count: 10 }],
+                    upgradeItemHrid: CAPE,
+                },
+            },
+        };
+        mocks.itemPrices['/items/shard'] = { ask: 100, bid: 90 };
+        mocks.artisan = 0;
+        mocks.combinedData = {
+            characterItems: [
+                { itemHrid: REFINED, enhancementLevel: 5, count: 1, itemLocationHrid: '/item_locations/inventory' },
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.itemDetails,
+        };
+
+        for (const [mode, expected] of [
+            ['zero', { price: 1000, partial: true }],
+            ['mirror', { price: 2000, partial: false }],
+        ]) {
+            mocks.settings.untradableCapeBaseValue = mode;
+            workerBatch.mockReset();
+            workerBatch.mockResolvedValue([0]);
+            await calculateNetworth();
+
+            const options = workerBatch.mock.calls[0][2];
+            expect(options.capeFallbacks).toEqual({ [REFINED]: expected });
+            // The same figure the main thread values a +0 of it at
+            expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
+                value: expected.price,
+                partial: expected.partial,
+            });
+        }
+    });
+
     test('an enhanced cape on the mirror setting is the full path, unflagged', async () => {
         mocks.settings.untradableCapeBaseValue = 'mirror';
         mocks.enhancementPaths[`${CAPE}:5`] = 4000;

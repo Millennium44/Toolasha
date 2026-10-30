@@ -497,6 +497,53 @@ describe('an untradable cape whose path fails falls back as the main thread does
         expect(await fallback()).toEqual({ value: 750_000, partial: false });
     });
 
+    test('a refined cape takes the whole shipped bill, not the worker refinement-only walk', async () => {
+        const REFINED = '/items/gatherer_cape_refined';
+        const refinedData = {
+            itemDetailMap: {
+                [REFINED]: {
+                    itemLevel: 10,
+                    enhancementCosts: [{ itemHrid: '/items/rare_mat', count: 2 }],
+                    protectionItemHrids: [],
+                },
+                '/items/rare_mat': { name: 'Rare Mat' },
+                '/items/shard': { name: 'Shard' },
+            },
+            // The worker's own walk prices the refinement alone: 10 shards at 100 = 1,000
+            actionDetailMap: {
+                '/actions/refine': {
+                    type: '/action_types/alchemy',
+                    outputItems: [{ itemHrid: REFINED, count: 1 }],
+                    inputItems: [{ itemHrid: '/items/shard', count: 10 }],
+                    upgradeItemHrid: CAPE,
+                },
+            },
+        };
+        const run = async (capeFallbacks) => {
+            ctx.priceMap = { '/items/shard:0': 100, '/items/shard:0_ask': 100, '/items/shard:0_bid': 100 };
+            ctx.recipes = refinedData.actionDetailMap;
+            ctx.capes = new Set([REFINED]);
+            const partial = new Set();
+            const [value] = await calculateItemValueBatch(
+                [{ itemHrid: REFINED, enhancementLevel: 5, count: 1 }],
+                ctx.priceMap,
+                { useHighEnhancementCost: false, minLevel: 99, enhancementParams: params, capeFallbacks },
+                refinedData,
+                partial
+            );
+            terminateItemValueWorkerPool();
+            return { value, partial: partial.has(0) };
+        };
+
+        // Mirror at 750k: the main thread's bill is the base and the refinement together
+        expect(await run({ [REFINED]: { price: 751_000, partial: false } })).toEqual({
+            value: 751_000,
+            partial: false,
+        });
+        // Zero: the refinement alone, flagged partial
+        expect(await run({ [REFINED]: { price: 1_000, partial: true } })).toEqual({ value: 1_000, partial: true });
+    });
+
     test('on "nothing" the value is 0 but flagged partial, as on the main thread', async () => {
         ctx.capeBase = 0;
         expect(await fallback()).toEqual({ value: 0, partial: true });

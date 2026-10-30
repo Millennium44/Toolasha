@@ -960,6 +960,13 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
         itemsNeedingWorkers.length > 0
             ? (async () => {
                   const priceMap = await priceMapFor(priceCache, pricingMode);
+                  // The worker cannot walk an untradable cape's recipe with the cape setting, so it is
+                  // handed this thread's own fallback bill for each such cape it may have to fall back on
+                  const capeFallbacks = {};
+                  for (const item of itemsNeedingWorkers) {
+                      if (capeFallbacks[item.itemHrid] || !isUntradableCape(item.itemHrid)) continue;
+                      capeFallbacks[item.itemHrid] = priceWithPartial(item.itemHrid, 0, priceCache);
+                  }
 
                   try {
                       // The worker reports which of its items are partial crafting bills
@@ -968,7 +975,7 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
                       const values = await calculateItemValueBatch(
                           itemsNeedingWorkers,
                           priceMap,
-                          { useHighEnhancementCost, minLevel, enhancementParams },
+                          { useHighEnhancementCost, minLevel, enhancementParams, capeFallbacks },
                           gameData,
                           partialIndexes
                       );
