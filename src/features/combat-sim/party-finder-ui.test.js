@@ -248,6 +248,7 @@ async function mountTab() {
 }
 
 beforeEach(() => {
+    state.tune = null;
     state.charId = 'me';
     state.gameMode = undefined;
     state.db = undefined;
@@ -1449,6 +1450,47 @@ describe('saved builds', () => {
                 'score 1,234M ≈ yours 1,250M. Some gear is unpriced, so the match is approximate.'
             );
             expect(tab.root.querySelector('[data-pf-template-score]').style.color).not.toBe('');
+        });
+
+        test('a match that finishes after the tab was closed and reopened adds nothing and cannot unlock the new match', async () => {
+            await mountTab();
+            toggle().click();
+            const gate = [];
+            state.tune = (template) => new Promise((resolve) => gate.push(() => resolve(tuned(template))));
+            add(t().id);
+            await flush();
+            expect(tab._tuning).toBe(true);
+            tab.detach();
+            tab.mount(container);
+            await flush();
+            tab.onShow();
+            if (!tab.root.querySelector('[data-pf-templates-body]')) toggle().click();
+            add(t().id);
+            await flush();
+            expect(tab._tuning).toBe(true);
+            // The first request finishes now: it is dropped, and the second still owns the flag
+            gate[0]();
+            await flush();
+            expect(state.db?.entries ?? []).toHaveLength(0);
+            expect(tab._tuning).toBe(true);
+            gate[1]();
+            await flush();
+            expect(tab._tuning).toBe(false);
+            expect(state.db.entries).toHaveLength(1);
+        });
+
+        test('turned off while matching, the standard template is added', async () => {
+            await mountTab();
+            toggle().click();
+            let finish;
+            state.tune = (template) => new Promise((resolve) => (finish = () => resolve(tuned(template))));
+            add(t().id);
+            await flush();
+            matchBox().click();
+            finish();
+            await flush();
+            expect(state.db.entries[0].dto.equipment).toEqual(t().playerDto.equipment);
+            expect(tab.root.querySelector('[data-pf-template-score]')).toBeNull();
         });
 
         test('a character switch while matching adds nothing and leaves no score line for the new character', async () => {

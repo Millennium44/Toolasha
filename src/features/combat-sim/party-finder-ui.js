@@ -268,6 +268,8 @@ export class PartyFinderTab {
         /** What tuning each template to the character came to, by template id: {ownerId, status, text} */
         this._tuned = new Map();
         this._tuning = false;
+        /** Bumped on every match and on detach: a match answers only while its token is still the current one */
+        this._matchToken = 0;
         this._pendingDeleteTimer = null;
         /** The teammate whose aura options are open, if any */
         this._auraOpen = null;
@@ -322,6 +324,7 @@ export class PartyFinderTab {
             }
         }
         this._runToken++;
+        this._matchToken++;
         this._running = false;
         clearTimeout(this._renderTimer);
         clearTimeout(this._pendingDeleteTimer);
@@ -789,28 +792,36 @@ export class PartyFinderTab {
         if (this._matchBuild) {
             const ownerId = dataManager.getCurrentCharacterId();
             const levels = buildPlayerDTO();
+            const token = ++this._matchToken;
             this._tuning = true;
             this._rosterNote('Matching the template to your build…');
+            let result = null;
             try {
-                const result = levels ? await tuneTemplate(template, levels) : null;
-                // The character may have switched while the build was scored
-                if (!this.root || dataManager.getCurrentCharacterId() !== ownerId) return;
-                if (result) {
-                    dto = structuredClone(result.dto);
-                    tuned = {
-                        ownerId,
-                        status: result.status,
-                        k: result.k,
-                        template: result.templateScore,
-                        own: result.ownScore,
-                    };
-                    this._tuned.set(template.id, tuned);
-                    this._renderTemplates();
-                }
+                result = levels ? await tuneTemplate(template, levels) : null;
             } catch (error) {
                 console.error('[PartyFinder] Matching a template to the build failed:', error);
             } finally {
-                this._tuning = false;
+                // Only the match that owns the flag clears it: a detach or a newer match has already settled it
+                if (token === this._matchToken) this._tuning = false;
+            }
+            // Closed, or superseded: the newer owner (or nobody) answers, and the note is theirs
+            if (token !== this._matchToken || !this.root) return;
+            if (dataManager.getCurrentCharacterId() !== ownerId) {
+                this._rosterNote('');
+                return;
+            }
+            // Turned off while the build was scored: the standard template, as the option now says
+            if (result && this._matchBuild) {
+                dto = structuredClone(result.dto);
+                tuned = {
+                    ownerId,
+                    status: result.status,
+                    k: result.k,
+                    template: result.templateScore,
+                    own: result.ownScore,
+                };
+                this._tuned.set(template.id, tuned);
+                this._renderTemplates();
             }
         }
         // The template carries shrine levels as an export does; the game's guild buffs are resolved when it is added
