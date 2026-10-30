@@ -154,8 +154,10 @@ class InventoryBadgeManager {
         // One pending render serves an open and a close that land together. The render re-badges the
         // tiles React rebuilt; their prices are reused when nothing they are priced from has moved.
         let popperTimer = null;
+        // The render runs 50 ms after the LAST event: a close that lands after an open must not be
+        // rendered before React has rebuilt the tiles, or the render wipes badges it cannot redraw
         const schedulePopperRender = () => {
-            if (popperTimer !== null) return;
+            if (popperTimer !== null) clearTimeout(popperTimer);
             popperTimer = setTimeout(() => {
                 popperTimer = null;
                 this.renderAllBadges();
@@ -1183,6 +1185,13 @@ class InventoryBadgeManager {
             this.unregisterHandlers = [];
             this.providers.clear();
             this.processedItems = new WeakSet();
+            // Nothing priced before a disable is trusted after a re-enable: the settings, market and
+            // inventory listeners that kept the fingerprint honest were just removed
+            this._pricedTiles = new WeakMap();
+            this._lastPricing = null;
+            this._itemsVersion += 1;
+            this._repriceEpoch += 1;
+            this._settingsEpoch += 1;
             this.currentInventoryElem = null;
             this.isInitialized = false;
             // isRendering / rerenderRequested are deliberately left alone: they belong to a render

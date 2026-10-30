@@ -342,4 +342,32 @@ describe('item popper', () => {
         expect(render).toHaveBeenCalledTimes(1);
         expect(priced).not.toHaveBeenCalled();
     });
+
+    test('the render waits for the close to settle, counting from the last event', async () => {
+        await pricedTiles();
+        const render = vi.spyOn(inventoryBadgeManager, 'renderAllBadges');
+        const popper = document.createElement('div');
+        popper.className = 'MuiTooltip-popperInteractive';
+        mocks.popper([{ addedNodes: [popper], removedNodes: [] }]);
+        await vi.advanceTimersByTimeAsync(40);
+        mocks.popper([{ addedNodes: [], removedNodes: [popper] }]);
+        // 70 ms after the open, 30 ms after the close: the open's own timer would have fired by now
+        await vi.advanceTimersByTimeAsync(30);
+        expect(render).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(25);
+        expect(render).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('disable', () => {
+    test('a re-enable never reuses tiles priced before the disable', async () => {
+        expect(await pricedTiles()).toBe(tiles.length);
+        expect(await pricedTiles()).toBe(0);
+        const inv = inventoryBadgeManager.currentInventoryElem;
+        inventoryBadgeManager.disable();
+        inventoryBadgeManager.initialize();
+        inventoryBadgeManager.currentInventoryElem = inv;
+        expect(inventoryBadgeManager._lastPricing).toBeNull();
+        expect(await pricedTiles()).toBe(tiles.length);
+    });
 });
