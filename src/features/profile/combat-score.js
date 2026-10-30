@@ -22,6 +22,7 @@ import { buildScorePanel, setScoreSource } from './build-score-panel.js';
 import { readOwnScore } from './build-score-row.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import performanceMonitor from '../../utils/performance-monitor.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -159,7 +160,9 @@ class CombatScore {
         this.isInitialized = true;
 
         this.profileSharedHandler = (data) => {
-            this.handleProfileShared(data);
+            performanceMonitor.markTrigger('Combat score panel');
+            if (config.getSetting('abilitiesTriggers')) performanceMonitor.markTrigger('Abilities panel');
+            performanceMonitor.traceAsync('Combat score', () => this.handleProfileShared(data));
         };
 
         // Listen for profile_shared WebSocket messages
@@ -655,6 +658,7 @@ class CombatScore {
 
         markToolashaSurface(panel, 'popover');
         document.body.appendChild(panel);
+        performanceMonitor.markDrawn('Combat score panel');
         this.currentPanel = panel;
 
         // Position panel next to modal, then let a remembered drag position win
@@ -1199,6 +1203,7 @@ class CombatScore {
 
         markToolashaSurface(panel, 'popover');
         document.body.appendChild(panel);
+        performanceMonitor.markDrawn('Abilities panel');
         this.currentAbilitiesPanel = panel;
 
         // Position panel below modal
