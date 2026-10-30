@@ -118,23 +118,37 @@ export function enhanceRunCost({ params, itemLevel, start, target, materialCost,
 }
 
 /**
- * Expected attempts from +start to the first time the piece reaches +target, on the strategy that needs
- * the fewest (the most protected one): for a character that holds the piece and prices nothing. Null at
- * or above the target, where one more success is all that is left.
+ * The expected run to land one success at or above `target`, for a character that holds the piece and
+ * prices nothing: the strategy needing the fewest attempts (the most protected one).
+ *
+ * Below the target it is the chain's answer from +start. At or above it the piece needs one more
+ * success at +start: 1 / success rate attempts, and every failure before it spends a protection
+ * (`protectFrom` is then `start`). A held +10 piece is therefore harder to finish than a held +2 piece
+ * for Enhancer I, which is why callers rank held pieces by this number.
  * @param {Object} params - Enhancing params
  * @param {number} itemLevel
  * @param {number} start
  * @param {number} target
  * @param {Map} [cache] - Chain solves to share across this render's rows
- * @returns {number|null}
+ * @returns {{attempts: number, protections: number, protectFrom: number}|null}
  */
-export function expectedAttempts(params, itemLevel, start, target, cache = new Map()) {
-    if (!(start < target)) return null;
+export function expectedRun(params, itemLevel, start, target, cache = new Map()) {
+    if (start >= target) {
+        const multiplier = calculateSuccessMultiplier({
+            enhancingLevel: Number(params.enhancingLevel) || 1,
+            toolBonus: Number(params.toolBonus) || 0,
+            itemLevel,
+        });
+        const success = Math.min(1, ((BASE_SUCCESS_RATES[start] ?? 0) / 100) * multiplier);
+        if (!(success > 0)) return null;
+        const attempts = 1 / success;
+        return { attempts, protections: Math.max(0, attempts - 1), protectFrom: start };
+    }
     let best = null;
     for (const row of strategies(params, itemLevel, start, target, cache)) {
-        if (Number.isFinite(row.attempts) && (best === null || row.attempts < best)) best = row.attempts;
+        if (Number.isFinite(row.attempts) && (best === null || row.attempts < best.attempts)) best = row;
     }
-    return best;
+    return best && { attempts: best.attempts, protections: best.protections, protectFrom: best.protectFrom };
 }
 
 /**

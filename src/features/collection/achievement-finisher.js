@@ -307,10 +307,14 @@ function placeText(res, ready, clientData, progress) {
 function ironCowEnhanceText(res, ready, clientData) {
     if (ready.owned === null) return 'inventory not loaded';
     if (ready.ownedHrid) {
-        const parts = [
-            `you own ${itemName(clientData, ready.ownedHrid)} +${ready.ownedLevel} · enhance to +${res.target}`,
-        ];
-        if (Number.isFinite(ready.attempts)) parts.push(`~${formatKMB(Math.ceil(ready.attempts))} attempts`);
+        const piece = `you own ${itemName(clientData, ready.ownedHrid)} +${ready.ownedLevel}`;
+        const parts = [ready.oneMore ? `${piece} · one more success counts` : `${piece} · enhance to +${res.target}`];
+        if (Number.isFinite(ready.attempts)) {
+            let attempts = `~${formatKMB(Math.ceil(ready.attempts))} attempts`;
+            if (ready.protections > 0) attempts += ` · ~${formatKMB(ready.protections)} protections`;
+            parts.push(attempts);
+            if (ready.oneMore && ready.protections > 0) parts.push(`protect from +${ready.protectFrom}`);
+        }
         if (ready.shortfall.length > 0) {
             parts.push(
                 `missing: ${ready.shortfall.map((s) => `${itemName(clientData, s.itemHrid)} ×${formatKMB(s.need - s.have)}`).join(', ')}`

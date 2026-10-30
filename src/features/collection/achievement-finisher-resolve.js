@@ -12,7 +12,7 @@
  */
 
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
-import { enhanceReadiness, expectedAttempts } from './achievement-finisher-enhance.js';
+import { enhanceReadiness, expectedRun } from './achievement-finisher-enhance.js';
 
 /** Production and gathering verbs → the skill whose action type they name */
 export const VERB_SKILLS = Object.freeze({
@@ -542,6 +542,7 @@ function resolveEnhance(detail, data) {
         pieces.set(itemHrid, {
             itemHrid,
             itemLevel: Math.max(1, itemLevel),
+            protections: Array.isArray(item.protectionItemHrids) ? item.protectionItemHrids : [],
             costs: item.enhancementCosts
                 .filter((cost) => cost?.itemHrid && Number(cost.count) > 0)
                 .map((cost) => ({ itemHrid: cost.itemHrid, count: Number(cost.count) })),
@@ -917,8 +918,18 @@ function ironCowEnhanceReadiness(res, ctx, out) {
             hash: typeof row.hash === 'string' && row.hash ? row.hash : null,
         });
     }
+    // Rank by the expected attempts to land one success at or above the target, not by level: a +2 piece
+    // for Enhancer I needs one success at +2, a +10 piece one success at +10, which is harder. Ties (and
+    // an unknown bench, where nothing can be computed) fall back to the higher level, then item level,
+    // then a bag copy (only it can be preselected), then hrid.
+    const params = ctx.enhanceParams?.() ?? null;
+    for (const copy of held) {
+        copy.run = params ? expectedRun(params, copy.piece.itemLevel, copy.level, res.target, ctx.enhanceCache) : null;
+    }
+    const attemptsOf = (copy) => (copy.run ? copy.run.attempts : Infinity);
     held.sort(
         (a, b) =>
+            attemptsOf(a) - attemptsOf(b) ||
             b.level - a.level ||
             b.piece.itemLevel - a.piece.itemLevel ||
             Number(a.equipped) - Number(b.equipped) ||
@@ -932,17 +943,33 @@ function ironCowEnhanceReadiness(res, ctx, out) {
             ownedLevel: best.level,
             ownedEquipped: best.equipped,
             ownedHash: best.hash,
+            oneMore: best.level >= res.target,
         });
-        const params = ctx.enhanceParams?.() ?? null;
-        const attempts = params
-            ? expectedAttempts(params, best.piece.itemLevel, best.level, res.target, ctx.enhanceCache)
-            : null;
-        if (Number.isFinite(attempts)) {
-            out.attempts = attempts;
+        if (best.run) {
+            const protections = best.run.protectFrom > 0 ? Math.ceil(best.run.protections) : 0;
+            Object.assign(out, {
+                attempts: best.run.attempts,
+                protections,
+                protectFrom: best.run.protectFrom,
+            });
             for (const cost of best.piece.costs) {
-                const need = Math.ceil(cost.count * attempts);
+                const need = Math.ceil(cost.count * best.run.attempts);
                 const have = ownedCount(ctx.inventory, cost.itemHrid);
                 if (have < need) out.shortfall.push({ itemHrid: cost.itemHrid, need, have });
+            }
+            if (protections > 0) {
+                // The protection item held most of; none held: the piece itself
+                let protectHrid = best.piece.itemHrid;
+                let most = 0;
+                for (const hrid of best.piece.protections) {
+                    const have = ownedCount(ctx.inventory, hrid);
+                    if (have > most) {
+                        most = have;
+                        protectHrid = hrid;
+                    }
+                }
+                out.protectionHrid = protectHrid;
+                if (most < protections) out.shortfall.push({ itemHrid: protectHrid, need: protections, have: most });
             }
         }
         return out;

@@ -1423,7 +1423,7 @@ describe('hints on the game achievement cards', () => {
         finisher.initialize();
         const owned = lineOf('Enhancer III').textContent;
         expect(owned).toMatch(
-            /^\[you own Cheese Gloves \+7 · enhance to \+10 · ~[\d.,]+K? attempts · missing: Coin ×[\d.]+K, Enhancing Essence ×/
+            /^\[you own Cheese Gloves \+7 · enhance to \+10 · ~531 attempts · ~183 protections · missing: Coin ×[\d.]+K, Enhancing Essence ×[\d.]+K, Cheese ×173\]/
         );
         goOf('Enhancer III').click();
         expect(nav.navigateToEnhanceItem).toHaveBeenLastCalledWith(
@@ -1437,6 +1437,16 @@ describe('hints on the game achievement cards', () => {
         expect(nav.navigateToMarketplace).not.toHaveBeenCalled();
         finisher.disable();
 
+        // Already at +10 for a +3 achievement: one more success counts
+        game.inventory = [bag('/items/cheese_gloves', 10)];
+        document.body.replaceChildren();
+        achievementsTab(ENHANCE_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Enhancer I').textContent).toMatch(
+            /^\[you own Cheese Gloves \+10 · one more success counts · ~\d+ attempts · ~\d+ protections · protect from \+10 · missing:/
+        );
+        finisher.disable();
+
         // Only a worn piece: the Enhancing screen opens with nothing selected
         game.inventory = [
             bag('/items/cheese_gloves', 5, { itemLocationHrid: '/item_locations/hands', count: undefined }),
@@ -1445,7 +1455,7 @@ describe('hints on the game achievement cards', () => {
         nav.navigateToEnhanceItem.mockClear();
         achievementsTab(ENHANCE_ACHIEVEMENTS);
         finisher.initialize();
-        expect(lineOf('Enhancer I').textContent).toContain('you own Cheese Gloves +5 · enhance to +3');
+        expect(lineOf('Enhancer I').textContent).toContain('you own Cheese Gloves +5 · one more success counts');
         goOf('Enhancer I').click();
         expect(nav.navigateToEnhanceItem).not.toHaveBeenCalled();
         expect(nav.navigateToAction).toHaveBeenLastCalledWith('/actions/enhancing/enhance');
