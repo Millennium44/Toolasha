@@ -322,8 +322,6 @@ class AchievementFinisher {
         this.readinessVersion = 0;
         this.readinessRedrawPending = false;
         this.marketListener = null;
-        /** card element → achievement hrid or null, so each card is identified once */
-        this.cardHrids = new WeakMap();
         this.catalogSource = null;
         this.catalog = null;
     }
@@ -386,7 +384,6 @@ class AchievementFinisher {
         this.resolutions = new Map();
         this.resolutionSource = null;
         this.readinessCache = new Map();
-        this.cardHrids = new WeakMap();
         this.catalogSource = null;
         this.catalog = null;
         this.isInitialized = false;
@@ -639,7 +636,9 @@ class AchievementFinisher {
      * @returns {string|null}
      */
     hridOfCard(card, detailMap) {
-        if (this.cardHrids.has(card)) return this.cardHrids.get(card);
+        // Read each time: the game may reuse one card element for another achievement when it
+        // re-renders the list (Show Incomplete Only, a tab switch), so an answer cached on the element
+        // goes stale
         let hrid = hridFromIcon(card, detailMap);
         if (!hrid) {
             const texts = leafTexts(card);
@@ -655,7 +654,6 @@ class AchievementFinisher {
                 }
             }
         }
-        this.cardHrids.set(card, hrid);
         return hrid;
     }
 

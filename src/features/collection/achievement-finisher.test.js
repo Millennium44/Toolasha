@@ -25,6 +25,7 @@ const game = vi.hoisted(() => ({
     settingHandlers: [],
     handlers: {},
     observers: [],
+    bridgeOff: false,
 }));
 
 const nav = vi.hoisted(() => ({
@@ -91,10 +92,13 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
     ...(await importOriginal()),
-    missingMaterialsButton: () => ({
-        openMissingMaterials: nav.openMissingMaterials,
-        openAlchemyMissingMaterials: nav.openAlchemyMissingMaterials,
-    }),
+    missingMaterialsButton: () =>
+        game.bridgeOff
+            ? null
+            : {
+                  openMissingMaterials: nav.openMissingMaterials,
+                  openAlchemyMissingMaterials: nav.openAlchemyMissingMaterials,
+              },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { on: nav.marketOn, off: nav.marketOff } }));
 vi.mock('../../utils/item-navigation.js', () => ({
@@ -311,6 +315,7 @@ describe('hints on the game achievement cards', () => {
         game.prices = PRICES;
         game.characterId = 7;
         game.ironCow = false;
+        game.bridgeOff = false;
         game.estimated = new Set();
         game.settingHandlers = [];
         game.handlers = {};
@@ -718,5 +723,18 @@ describe('hints on the game achievement cards', () => {
         finisher.initialize();
         expect(lines()).toHaveLength(0);
         expect(toggle()).not.toBeNull();
+    });
+
+    test('a card element the game reuses for another achievement is read again, not remembered', () => {
+        achievementsTab();
+        finisher.initialize();
+        expect(lineOf('Dairy Chef')).not.toBeNull();
+        // The list re-renders into the same element: now it shows the finished Recycler
+        game.achievements = [done('/achievements/decompose_bamboo_gloves')];
+        cardOf('Dairy Chef')
+            .querySelector('use')
+            .setAttribute('href', '/static/media/achievements_sprite.abc.svg#decompose_bamboo_gloves');
+        mountAgain();
+        expect(cardOf('Dairy Chef').querySelector(`.${PANEL_CLASS}-line`)).toBeNull();
     });
 });
