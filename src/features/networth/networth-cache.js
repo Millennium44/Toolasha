@@ -5,6 +5,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 
 /**
@@ -41,6 +42,16 @@ function fingerprintParams(params) {
  */
 const DEFAULT_MAX_SIZE = 5000;
 
+/**
+ * The hrid of a `hrid:level` price key.
+ * @param {string} key - Price key as marketAPI.getPrice() reads it
+ * @returns {string}
+ */
+function hridOfPriceKey(key) {
+    const split = key.lastIndexOf(':');
+    return split === -1 ? key : key.slice(0, split);
+}
+
 class NetworthCache {
     constructor(maxSize = DEFAULT_MAX_SIZE) {
         this.maxSize = maxSize;
@@ -48,6 +59,16 @@ class NetworthCache {
         this.marketDataHash = null;
         this._paramsFingerprint = null;
         this._paramsFingerprintAt = 0;
+        // Which cached costs read which item's price, so a patch to one book drops only the
+        // costs built on it: input hrid -> cache keys. Costs whose reads were not recorded
+        // (no recorder, or a memo that could not say) are kept in `_wide` and dropped on any move.
+        this._byHrid = new Map();
+        this._wide = new Set();
+        /** The read recording opened by a get() miss, closed by the set() of the same key */
+        this._recording = null;
+        /** What syncWithMarket last saw: the market's priceVersion and the salt */
+        this._syncedVersion = null;
+        this._syncedSalt = null;
     }
 
     /**
@@ -143,13 +164,111 @@ class NetworthCache {
     }
 
     /**
+     * Catch up with the market and drop only the costs a change reached.
+     *
+     * A single order-book patch used to change the whole-book hash above and empty the cache, so
+     * opening one book re-ran every enhancement path in the inventory (about 180 of them, a few ms
+     * each). The market now logs what moved (marketAPI.changesSince), and each cost remembers the
+     * prices it read, so a patch drops the costs that read that item and keeps the rest. A new
+     * snapshot, a source switch, a changed salt, or falling behind the log still empties it all.
+     * @param {Object} api - marketAPI, with priceVersion and changesSince()
+     * @param {string} [salt=''] - As checkAndInvalidate
+     * @returns {boolean} False when `api` has no change log (a stub), so the caller falls back
+     */
+    syncWithMarket(api, salt = '') {
+        if (!api || typeof api.changesSince !== 'function' || !Number.isFinite(api.priceVersion)) return false;
+        const version = api.priceVersion;
+        if (this._syncedVersion === null || this._syncedSalt !== salt) {
+            // First look (anything already held was priced against nothing known), or a mode,
+            // custom price or setting moved: nothing cached can be trusted
+            if (this.cache.size > 0) this.clear();
+        } else if (version !== this._syncedVersion) {
+            const change = api.changesSince(this._syncedVersion);
+            if (change.full) {
+                this.clear();
+            } else {
+                this.dropForHrids(change.hrids);
+            }
+        }
+        this._syncedVersion = version;
+        this._syncedSalt = salt;
+        return true;
+    }
+
+    /**
+     * Drop every cost that read a price of one of these items, and every cost whose reads are unknown.
+     * @param {Iterable<string>} hrids - Items whose price moved
+     */
+    dropForHrids(hrids) {
+        let any = false;
+        for (const hrid of hrids) {
+            any = true;
+            const keys = this._byHrid.get(hrid);
+            if (!keys) continue;
+            for (const key of [...keys]) this._deleteKey(key);
+        }
+        if (!any) return;
+        for (const key of [...this._wide]) this._deleteKey(key);
+    }
+
+    /**
      * Get cached enhancement cost
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level
      * @returns {number|null} Cached cost or null if not found
      */
     get(itemHrid, enhancementLevel) {
-        return this._entry(itemHrid, enhancementLevel)?.cost ?? null;
+        // A miss that never reached set() (the path could not be priced) leaves its recording open
+        this._closeRecording();
+        const entry = this._entry(itemHrid, enhancementLevel);
+        if (entry) {
+            // A reader recording its own reads (a pass over many costs) is owed this cost's
+            marketAPI?.notePriceReads?.(entry.reads);
+            return entry.cost;
+        }
+        // Every caller computes the cost synchronously between this miss and its set(), so what
+        // getPrice() is asked for in between is what the cost is priced from
+        if (typeof marketAPI?.recordPriceReads === 'function') {
+            this._recording = {
+                key: this.generateKey(itemHrid, enhancementLevel),
+                recorder: marketAPI.recordPriceReads(),
+            };
+        }
+        return null;
+    }
+
+    /**
+     * Stop the open read recording.
+     * @returns {{key: string, recorder: Object}|null} What it was
+     * @private
+     */
+    _closeRecording() {
+        const recording = this._recording;
+        if (!recording) return null;
+        this._recording = null;
+        recording.recorder.stop();
+        return recording;
+    }
+
+    /**
+     * Remove one entry and its index rows.
+     * @param {string} key - Cache key
+     * @private
+     */
+    _deleteKey(key) {
+        const entry = this.cache.get(key);
+        if (!entry) return;
+        this.cache.delete(key);
+        if (!entry.hrids) {
+            this._wide.delete(key);
+            return;
+        }
+        for (const hrid of entry.hrids) {
+            const keys = this._byHrid.get(hrid);
+            if (!keys) continue;
+            keys.delete(key);
+            if (keys.size === 0) this._byHrid.delete(hrid);
+        }
     }
 
     /**
@@ -194,18 +313,38 @@ class NetworthCache {
     set(itemHrid, enhancementLevel, cost, partial = false) {
         const key = this.generateKey(itemHrid, enhancementLevel);
 
-        // Delete if exists (to update position)
-        if (this.cache.has(key)) {
-            this.cache.delete(key);
+        // The reads behind this cost, when the get() miss that preceded it recorded them
+        const recording = this._closeRecording();
+        let reads = null;
+        let hrids = null;
+        if (recording && recording.key === key && !recording.recorder.wide) {
+            reads = recording.recorder.keys;
+            // The item's own book always counts: its price at other levels feeds the path
+            hrids = new Set([itemHrid]);
+            for (const read of reads) hrids.add(hridOfPriceKey(read));
         }
 
+        // Delete if exists (to update position)
+        this._deleteKey(key);
+
         // Add to end
-        this.cache.set(key, { cost, partial: Boolean(partial) });
+        this.cache.set(key, { cost, partial: Boolean(partial), reads, hrids });
+        if (hrids) {
+            for (const hrid of hrids) {
+                let keys = this._byHrid.get(hrid);
+                if (!keys) {
+                    keys = new Set();
+                    this._byHrid.set(hrid, keys);
+                }
+                keys.add(key);
+            }
+        } else {
+            this._wide.add(key);
+        }
 
         // Evict oldest if over size limit
         if (this.cache.size > this.maxSize) {
-            const firstKey = this.cache.keys().next().value;
-            this.cache.delete(firstKey);
+            this._deleteKey(this.cache.keys().next().value);
         }
     }
 
@@ -213,8 +352,15 @@ class NetworthCache {
      * Clear entire cache
      */
     clear() {
+        this._closeRecording();
         this.cache.clear();
+        this._byHrid.clear();
+        this._wide.clear();
         this.marketDataHash = null;
+        // Empty is in step with the market as it stands; the salt is kept, so a cost priced under
+        // a salt the next sync does not match is still dropped then
+        const version = marketAPI?.priceVersion;
+        this._syncedVersion = Number.isFinite(version) ? version : null;
         this._paramsFingerprint = null;
         this._paramsFingerprintAt = 0;
     }

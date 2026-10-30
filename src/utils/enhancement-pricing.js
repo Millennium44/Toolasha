@@ -279,10 +279,21 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask') {
         cached.buffVersion === buffVersion &&
         cached.customVersion === customVersion
     ) {
+        // A caller recording what its own figure is priced from (the net-worth cost cache) reads
+        // this cost's inputs through the memo, not getPrice(), so it is handed them here
+        marketAPI?.notePriceReads?.(cached.reads);
         return cached.value;
     }
-    const result = _computeProductionCost(itemHrid, mode);
-    _costCache.set(cacheKey, { version: _priceVersion, buffVersion, customVersion, value: result });
+    // The prices this cost reads, kept with it for the replay above; null (unknown) without a recorder
+    const recorder = typeof marketAPI?.recordPriceReads === 'function' ? marketAPI.recordPriceReads() : null;
+    let result;
+    try {
+        result = _computeProductionCost(itemHrid, mode);
+    } finally {
+        recorder?.stop();
+    }
+    const reads = recorder && !recorder.wide ? recorder.keys : null;
+    _costCache.set(cacheKey, { version: _priceVersion, buffVersion, customVersion, value: result, reads });
     return result;
 }
 
