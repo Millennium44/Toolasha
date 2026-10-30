@@ -737,4 +737,17 @@ describe('hints on the game achievement cards', () => {
         mountAgain();
         expect(cardOf('Dairy Chef').querySelector(`.${PANEL_CLASS}-line`)).toBeNull();
     });
+
+    test('Missing Mats appears on a redraw once the actions bundle opener has loaded', () => {
+        game.inventory = INVENTORY.filter((row) => row.itemHrid !== '/items/bamboo_gloves');
+        game.bridgeOff = true;
+        achievementsTab();
+        finisher.initialize();
+        expect(lineOf('Dairy Chef')).not.toBeNull();
+        expect(matsOf('Dairy Chef')).toBeNull();
+        game.bridgeOff = false;
+        game.handlers.items_updated.forEach((fn) => fn());
+        vi.advanceTimersByTime(1500);
+        expect(matsOf('Dairy Chef')).not.toBeNull();
+    });
 });

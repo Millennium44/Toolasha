@@ -709,9 +709,13 @@ class AchievementFinisher {
         const text = `[${readinessText(res, ready, clientData, getContext().combatLevel)}]`;
         const go = hasGoButton(res, ready);
         const ironCow = getContext().ironCow;
-        const mats = missingMatsLines(res, ready, clientData, ironCow).length > 0;
+        const matsLines = missingMatsLines(res, ready, clientData, ironCow);
+        // The button needs the actions bundle's opener, which can arrive after the first draw, and its
+        // tooltip lists the amounts: both belong in the key or a redraw leaves the old button behind
+        const mats = matsLines.length > 0 && Boolean(missingMaterialsButton());
+        const matsKey = mats ? matsLines.map((m) => `${m.itemHrid}:${m.missing}`) : [];
         return {
-            key: JSON.stringify(['ready', text, go, mats, ready.buyHrid]),
+            key: JSON.stringify(['ready', text, go, matsKey, ready.buyHrid]),
             build: () => {
                 const hint = hintWithCoins(text);
                 hint.className = `${PANEL_CLASS}-ready`;
