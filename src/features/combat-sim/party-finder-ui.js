@@ -25,7 +25,6 @@ import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
-import { isAuraAbility } from '../../utils/party-lint.js';
 import {
     buildGameDataPayload,
     buildPlayerDTO,
@@ -39,17 +38,23 @@ import { saleTaxRateOf } from './upgrade-advisor.js';
 import {
     PARTY_ROSTER_KEY,
     MAX_ROSTER_SIZE,
+    MAX_SAVED_BUILDS,
     loadRoster,
+    saveBuild,
+    renameBuild,
+    removeBuild,
     addTeammates,
     renameTeammate,
     removeTeammate,
     replaceTeammateBuild,
     setTeammateAuras,
+    normalizeAuraOptions,
     MAX_AURA_OPTIONS,
     partyModeOf,
     teammateModeOf,
     teammateModeFit,
     modeMismatchReason,
+    buildFingerprint,
 } from './party-roster.js';
 import {
     planSweep,
@@ -63,6 +68,7 @@ import {
     partyLabel,
     sharedAuras,
     checkAuraOption,
+    isPlayerSpecialAbility,
     maxAbilityLevel,
     csvRow,
     stoppedSweepText,
@@ -193,7 +199,7 @@ export class PartyFinderTab {
     constructor(host) {
         this.host = host;
         this.root = null;
-        this._roster = { savedAt: 0, entries: [] };
+        this._roster = { savedAt: 0, entries: [], builds: [] };
         /** Teammate id → 'try' | 'always' | 'never' */
         this._choices = {};
         /** Selected zone/tiers: [{zoneHrid, difficultyTier, isDungeon, name}] */
@@ -213,6 +219,11 @@ export class PartyFinderTab {
         this._pendingDeleteTimer = null;
         /** The teammate whose aura options are open, if any */
         this._auraOpen = null;
+        /** "Also try my auras": off by default, since every aura of yours multiplies the sims */
+        this._trySelfAuras = false;
+        /** Auras picked by hand for an editor-loaded "you" (what they own is unknown), by the picker's value */
+        this._selfAuraPicks = new Map();
+        this._selfAuraOpen = false;
         this._lastRun = null;
         this._summary = '';
         this._unsubscribePull = null;
@@ -272,13 +283,16 @@ export class PartyFinderTab {
         this.root = null;
         this._rows = new Map();
         this._baselines = new Map();
-        this._roster = { savedAt: 0, entries: [] };
+        this._roster = { savedAt: 0, entries: [], builds: [] };
         this._choices = {};
         this._zones = [];
         this._zonesSeeded = false;
         this._pendingConfirm = null;
         this._pendingDelete = null;
         this._auraOpen = null;
+        this._trySelfAuras = false;
+        this._selfAuraPicks = new Map();
+        this._selfAuraOpen = false;
         this._lastRun = null;
         this._summary = '';
     }
@@ -333,7 +347,15 @@ export class PartyFinderTab {
                 `<div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
                     <select class="toolasha-select" data-pf="self" style="${INPUT_STYLE}"></select>
                     <span style="color:#666; font-size:11px;">Every figure below is this player's own.</span>
-                </div>`
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">
+                    <label style="color:#aaa; font-size:11px; display:flex; gap:4px; align-items:center;" title="Also sim you wearing each aura you own, alone and in every party">
+                        <input type="checkbox" data-pf="self-auras"> Also try my auras</label>
+                    <span data-pf="self-aura-info" style="color:#888; font-size:11px;"></span>
+                    <button data-pf="self-aura-edit" style="${SMALL_BTN_STYLE} display:none;"></button>
+                </div>
+                <div data-pf="self-aura-editor"></div>
+                <div style="color:#666; font-size:11px; margin-top:4px;">With auras on, each aura of yours is tried alone and in every party, so the sims multiply. "vs solo" always compares against you as worn, alone (the baseline row); the solo rows with an aura show whether it helps you alone.</div>`
             ),
             section(
                 'Teammates <span data-pf="roster-count" style="color:#666; font-weight:400;"></span>',
@@ -351,6 +373,20 @@ export class PartyFinderTab {
                     <button data-pf="import" style="${BTN_STYLE} margin-top:4px;">Import to roster</button>
                 </div>
                 <div data-pf="roster-note" style="color:#888; font-size:11px; margin-top:4px;"></div>`
+            ),
+            section(
+                'Saved builds <span data-pf="build-count" style="color:#666; font-weight:400;"></span>',
+                `<div data-pf="builds" style="display:flex; flex-direction:column; gap:3px;"></div>
+                <div style="margin-top:6px;">
+                    <button data-pf="save-build-open" style="${SMALL_BTN_STYLE}" title="Keep a build under a name, to add as a teammate later">Save build…</button>
+                </div>
+                <div data-pf="save-build-form" style="display:none; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">
+                    <select class="toolasha-select" data-pf="build-source" style="${INPUT_STYLE}"></select>
+                    <input data-pf="build-name" type="text" maxlength="40" placeholder="Name" style="${INPUT_STYLE} width:140px;">
+                    <button data-pf="save-build" style="${BTN_STYLE}">Save</button>
+                    <button data-pf="save-build-cancel" style="${SMALL_BTN_STYLE}">Cancel</button>
+                </div>
+                <div data-pf="build-note" style="color:#888; font-size:11px; margin-top:4px;"></div>`
             ),
             section(
                 'Zones',
@@ -410,6 +446,25 @@ export class PartyFinderTab {
     _wire() {
         this._el('add-editor').addEventListener('click', () => this._onAddFromEditor());
         this._el('add-self').addEventListener('click', () => this._onCopySelf());
+        this._el('save-build-open').addEventListener('click', () => this._openSaveBuild());
+        this._el('save-build-cancel').addEventListener('click', () => {
+            this._el('save-build-form').style.display = 'none';
+        });
+        this._el('save-build').addEventListener('click', () => this._onSaveBuild());
+        this._el('build-source').addEventListener('change', () => this._defaultBuildName());
+        this._el('build-name').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this._onSaveBuild();
+        });
+        this._el('self-auras').addEventListener('change', (e) => {
+            this._trySelfAuras = e.target.checked;
+            this._selfAuraOpen = false;
+            this._renderSelfAuras();
+            this._renderPlan();
+        });
+        this._el('self-aura-edit').addEventListener('click', () => {
+            this._selfAuraOpen = !this._selfAuraOpen;
+            this._renderSelfAuras();
+        });
         this._el('toggle-import').addEventListener('click', () => {
             const box = this._el('import-box');
             box.style.display = box.style.display === 'none' ? 'block' : 'none';
@@ -575,31 +630,182 @@ export class PartyFinderTab {
             list.appendChild(row);
             if (this._auraOpen === entry.id) list.appendChild(this._auraEditor(entry));
         }
+        this._renderBuilds();
         this._renderAddFromEditor();
         this._renderPlan();
     }
 
     /**
-     * Every aura the game data knows, by name — classified by `isAuraAbility`, the same test the panel's
-     * party warnings use, never a list kept here.
+     * @param {string} text
+     * @param {boolean} [warn]
+     * @private
+     */
+    _buildNote(text, warn = false) {
+        const note = this._el('build-note');
+        if (!note) return;
+        note.textContent = text || '';
+        note.style.color = warn ? '#ff9800' : '#888';
+    }
+
+    /** The saved builds list. @private */
+    _renderBuilds() {
+        const list = this._el('builds');
+        if (!list) return;
+        const builds = this._roster.builds || [];
+        this._el('build-count').textContent = `(${builds.length}/${MAX_SAVED_BUILDS})`;
+        list.textContent = '';
+        if (!builds.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'color:#666; font-size:11px;';
+            empty.textContent =
+                'No saved builds. "Save build…" keeps your current build, or any player in the editor, under a name.';
+            list.appendChild(empty);
+        }
+        for (const build of builds) {
+            const row = document.createElement('div');
+            row.dataset.pfBuild = build.id;
+            row.style.cssText = 'display:flex; gap:6px; align-items:center; font-size:12px;';
+            const name = document.createElement('span');
+            name.dataset.pfBuildName = '';
+            name.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            name.textContent = build.name;
+            const button = (label, title, onClick) => {
+                const b = document.createElement('button');
+                b.style.cssText = SMALL_BTN_STYLE;
+                b.textContent = label;
+                b.title = title;
+                b.addEventListener('click', onClick);
+                return b;
+            };
+            const deleting = this._pendingDelete === build.id;
+            row.append(
+                name,
+                button(
+                    'Add as teammate',
+                    'Add a copy of this build to the roster, then set Try/Always/Never and Auras',
+                    () => this._onAddBuildAsTeammate(build)
+                ),
+                button('Rename', 'Rename', () => this._onRename(build, row, name, renameBuild, '_buildNote')),
+                button(deleting ? 'Delete?' : '×', deleting ? 'Click again to delete' : 'Delete', () =>
+                    this._onDelete(build, removeBuild, '_buildNote')
+                )
+            );
+            if (deleting) row.lastChild.style.color = RED;
+            list.appendChild(row);
+        }
+    }
+
+    /** Show the save form, with the sources of a build to save. @private */
+    _openSaveBuild() {
+        const form = this._el('save-build-form');
+        if (!form) return;
+        this._renderBuildSources();
+        form.style.display = 'flex';
+        this._el('build-name').focus();
+    }
+
+    /** @private */
+    _renderBuildSources() {
+        const select = this._el('build-source');
+        if (!select) return;
+        const prior = select.value;
+        const options = this._selfOptions();
+        select.innerHTML = options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+        select.value = options.some((o) => o.value === prior) ? prior : options[0]?.value || '';
+        this._defaultBuildName();
+    }
+
+    /** Name the build after its player until the user types a name of their own. @private */
+    _defaultBuildName() {
+        const input = this._el('build-name');
+        const select = this._el('build-source');
+        if (!input || !select) return;
+        const option = this._selfOptions().find((o) => o.value === select.value);
+        if (!input.value || input.dataset.pfAuto === '1') {
+            input.value = option?.name || '';
+            input.dataset.pfAuto = '1';
+        }
+        if (!input.dataset.pfBound) {
+            input.dataset.pfBound = '1';
+            input.addEventListener('input', () => {
+                input.dataset.pfAuto = '0';
+            });
+        }
+    }
+
+    /** @private */
+    async _onSaveBuild() {
+        const choice = this._el('build-source')?.value || 'live';
+        const who = this._resolveChoice(choice);
+        if (!who) {
+            this._buildNote('No character data available.', true);
+            return;
+        }
+        const typed = this._el('build-name')?.value || '';
+        const result = await saveBuild(typed || who.name, who.dto, who.gameMode);
+        this._adoptRoster(result);
+        if (!result.ok) {
+            this._buildNote(
+                result.reason
+                    ? `Not saved: ${result.reason}.`
+                    : 'Could not save the build: the roster could not be written.',
+                true
+            );
+            return;
+        }
+        this._buildNote(
+            result.name === typed.trim() || !typed.trim()
+                ? `Saved "${result.name}".`
+                : `Saved as "${result.name}" (that name was taken).`
+        );
+        const input = this._el('build-name');
+        if (input) {
+            input.value = '';
+            input.dataset.pfAuto = '1';
+        }
+        const form = this._el('save-build-form');
+        if (form) form.style.display = 'none';
+    }
+
+    /**
+     * @param {Object} build - A saved build
+     * @private
+     */
+    async _onAddBuildAsTeammate(build) {
+        const result = await addTeammates([
+            { name: build.name, dto: build.dto, source: 'saved build', gameMode: build.gameMode || undefined },
+        ]);
+        this._adoptRoster(result);
+        this._reportAdd(result);
+    }
+
+    /**
+     * Every special-slot ability the game data knows, by name (the party auras plus Insanity, Invincible,
+     * Revive; not monster-only Promote), read from `isPlayerSpecialAbility`, never a list kept here.
      * @param {Object|null} gameData
      * @returns {Array<{hrid: string, name: string}>}
      * @private
      */
     _auraAbilities(gameData) {
-        return Object.entries(gameData?.abilityDetailMap || {})
-            .filter(([, detail]) => isAuraAbility(detail))
-            .map(([hrid, detail]) => ({ hrid, name: detail.name || hrid }))
-            .sort((a, b) => a.name.localeCompare(b.name));
+        return (
+            Object.entries(gameData?.abilityDetailMap || {})
+                // Every special-slot ability a player can learn, not only the party auras
+                .filter(([hrid]) => isPlayerSpecialAbility(hrid, gameData))
+                .map(([hrid, detail]) => ({ hrid, name: detail.name || hrid }))
+                .sort((a, b) => a.name.localeCompare(b.name))
+        );
     }
 
     /**
      * The aura options editor under one teammate's row.
-     * @param {Object} entry - Roster entry
+     * @param {Object} entry - Roster entry (or, for you, `{id: 'self', dto, auras}`)
+     * @param {{save: Function, intro: string, hideAsBuilt: boolean}} [custom] - For anyone but a roster teammate:
+     *   how a change is stored, what the editor says, and whether "also try as built" is offered (you as worn
+     *   are always tried)
      * @returns {HTMLElement}
      * @private
      */
-    _auraEditor(entry) {
+    _auraEditor(entry, custom = null) {
         const gameData = buildGameDataPayload();
         const maxLevel = maxAbilityLevel(gameData);
         const box = document.createElement('div');
@@ -610,13 +816,18 @@ export class PartyFinderTab {
         const intro = document.createElement('div');
         intro.style.color = '#888';
         intro.textContent =
+            custom?.intro ||
             'Try this teammate with each aura below as well. An aura takes their special ability slot, ' +
-            'replacing the special they wear.';
+                'replacing the special they wear.';
         box.appendChild(intro);
 
         // Every edit is a change to the list as stored when it is written, not to the copy this editor was drawn
         // from: another tab (or a pull) may have changed it since
         const save = async (change) => {
+            if (custom?.save) {
+                await custom.save(change);
+                return;
+            }
             const result = await setTeammateAuras(entry.id, change);
             this._adoptRoster(result);
             if (!result.ok) this._rosterNote('Could not save the aura options.', true);
@@ -728,7 +939,7 @@ export class PartyFinderTab {
         tick.disabled = !entry.auras.length;
         tick.addEventListener('change', () => save((stored) => ({ ...stored, includeAsBuilt: tick.checked })));
         asBuilt.append(tick, document.createTextNode('Also try them as built'));
-        box.appendChild(asBuilt);
+        if (!custom?.hideAsBuilt) box.appendChild(asBuilt);
         return box;
     }
 
@@ -871,12 +1082,14 @@ export class PartyFinderTab {
     }
 
     /**
-     * @param {Object} entry
+     * @param {Object} entry - A teammate, or a saved build
      * @param {HTMLElement} row
      * @param {HTMLElement} nameEl
+     * @param {Function} [rename] - `renameTeammate`, or `renameBuild` for a saved build
+     * @param {string} [note] - The note method that reports a failure
      * @private
      */
-    _onRename(entry, row, nameEl) {
+    _onRename(entry, row, nameEl, rename = renameTeammate, note = '_rosterNote') {
         const input = document.createElement('input');
         input.type = 'text';
         input.value = entry.name;
@@ -891,9 +1104,9 @@ export class PartyFinderTab {
                 this._renderRoster();
                 return;
             }
-            const result = await renameTeammate(entry.id, input.value);
+            const result = await rename(entry.id, input.value);
             this._adoptRoster(result);
-            if (!result.ok) this._rosterNote('Could not save the new name.', true);
+            if (!result.ok) this[note]('Could not save the new name.', true);
         };
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') commit(true);
@@ -903,10 +1116,12 @@ export class PartyFinderTab {
     }
 
     /**
-     * @param {Object} entry
+     * @param {Object} entry - A teammate, or a saved build
+     * @param {Function} [remove] - `removeTeammate`, or `removeBuild` for a saved build
+     * @param {string} [note] - The note method that reports a failure
      * @private
      */
-    async _onDelete(entry) {
+    async _onDelete(entry, remove = removeTeammate, note = '_rosterNote') {
         if (this._pendingDelete !== entry.id) {
             this._pendingDelete = entry.id;
             clearTimeout(this._pendingDeleteTimer);
@@ -919,9 +1134,9 @@ export class PartyFinderTab {
         }
         this._pendingDelete = null;
         clearTimeout(this._pendingDeleteTimer);
-        const result = await removeTeammate(entry.id);
+        const result = await remove(entry.id);
         this._adoptRoster(result);
-        if (!result.ok) this._rosterNote('Could not delete: the roster could not be written.', true);
+        if (!result.ok) this[note]('Could not delete: the roster could not be written.', true);
     }
 
     // ---------------------------------------------------------------- you
@@ -937,12 +1152,99 @@ export class PartyFinderTab {
         const options = [];
         const players = this._editorPlayers();
         const self = players.find((p) => p.hrid === selfHrid);
-        if (self) options.push({ value: `editor:${self.hrid}`, label: `${self.name} (as in the editor)` });
-        options.push({ value: 'live', label: 'My current build' });
+        if (self)
+            options.push({ value: `editor:${self.hrid}`, label: `${self.name} (as in the editor)`, name: self.name });
+        options.push({
+            value: 'live',
+            label: 'My current build',
+            name: dataManager.characterData?.character?.name || 'Me',
+        });
         for (const p of players) {
-            if (p.hrid !== selfHrid) options.push({ value: `editor:${p.hrid}`, label: `${p.name} (from the editor)` });
+            if (p.hrid !== selfHrid) {
+                options.push({ value: `editor:${p.hrid}`, label: `${p.name} (from the editor)`, name: p.name });
+            }
         }
         return options;
+    }
+
+    /**
+     * The auras the search tries YOU with, when "Also try my auras" is on: every aura the live character has
+     * learned (at its level), or for an editor-loaded player whose learned abilities are unknown the ones picked by
+     * hand in {@link PartyFinderTab#_renderSelfAuras}.
+     * @param {Object|null} gameData
+     * @returns {{on: boolean, auras: Array<{hrid: string, level: number}>, dto: Object|null, manual: boolean,
+     *   key: string, self: Object|null}}
+     * @private
+     */
+    _selfAuraInfo(gameData) {
+        const key = this._el('self')?.value || 'live';
+        const none = { on: this._trySelfAuras, auras: [], dto: null, manual: false, key, self: null };
+        if (!this._trySelfAuras) return none;
+        const self = this._resolveSelf();
+        if (!self) return none;
+        if (self.isLive) {
+            const details = gameData?.abilityDetailMap || {};
+            const auras = (dataManager.characterData?.characterAbilities || [])
+                .filter((a) => a?.abilityHrid && details[a.abilityHrid]?.isSpecialAbility === true)
+                .map((a) => ({ hrid: a.abilityHrid, level: Math.max(1, Math.floor(Number(a.level)) || 1) }));
+            return { ...none, auras, dto: self.dto, self };
+        }
+        // Picks belong to the build, not the picker slot: another build loaded into the same editor slot, or
+        // another character, starts from none
+        const pickKey = buildFingerprint(self.dto);
+        return {
+            ...none,
+            key: pickKey,
+            auras: this._selfAuraPicks.get(pickKey) || [],
+            dto: self.dto,
+            manual: true,
+            self,
+        };
+    }
+
+    /** The switch, what it will try, and for a player not the live character the by-hand aura list. @private */
+    _renderSelfAuras() {
+        const tick = this._el('self-auras');
+        const info = this._el('self-aura-info');
+        const edit = this._el('self-aura-edit');
+        const holder = this._el('self-aura-editor');
+        if (!tick || !info || !edit || !holder) return;
+        tick.checked = this._trySelfAuras;
+        holder.textContent = '';
+        edit.style.display = 'none';
+        info.textContent = '';
+        if (!this._trySelfAuras) return;
+        const gameData = buildGameDataPayload();
+        const state = this._selfAuraInfo(gameData);
+        if (!state.manual) {
+            info.textContent = state.auras.length
+                ? `${state.auras.length} aura${state.auras.length === 1 ? '' : 's'} you own`
+                : 'no auras learned yet';
+            return;
+        }
+        const count = state.auras.length;
+        info.textContent = 'What this player owns is unknown: pick the auras to try.';
+        edit.style.display = '';
+        edit.textContent = count ? `You — Auras (${count}) ${this._selfAuraOpen ? 'Close' : 'Edit'}` : 'You — Auras';
+        if (!this._selfAuraOpen) return;
+        const key = state.key;
+        holder.appendChild(
+            this._auraEditor(
+                { id: 'self', dto: state.dto, auras: state.auras, includeAsBuilt: true },
+                {
+                    intro:
+                        'Try you with each aura below as well, alone and in every party. An aura takes your ' +
+                        'special ability slot, replacing the special you wear; you as built are always tried.',
+                    hideAsBuilt: true,
+                    save: async (change) => {
+                        const next = change({ auras: (this._selfAuraPicks.get(key) || []).map((o) => ({ ...o })) });
+                        this._selfAuraPicks.set(key, normalizeAuraOptions(next?.auras));
+                        this._renderSelfAuras();
+                        this._renderPlan();
+                    },
+                }
+            )
+        );
     }
 
     /** @private */
@@ -953,11 +1255,17 @@ export class PartyFinderTab {
         const options = this._selfOptions();
         select.innerHTML = options.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
         if (options.some((o) => o.value === prior)) select.value = prior;
+        if (this._el('save-build-form')?.style.display !== 'none') this._renderBuildSources();
         if (!select.dataset.pfModeBound) {
             select.dataset.pfModeBound = '1';
             // Who "you" are decides which teammates can party with you
-            select.addEventListener('change', () => this._renderRoster());
+            select.addEventListener('change', () => {
+                this._selfAuraOpen = false;
+                this._renderSelfAuras();
+                this._renderRoster();
+            });
         }
+        this._renderSelfAuras();
     }
 
     /**
@@ -996,18 +1304,38 @@ export class PartyFinderTab {
      * @private
      */
     _resolveSelf() {
-        const choice = this._el('self')?.value || 'live';
+        return this._resolveChoice(this._el('self')?.value || 'live');
+    }
+
+    /**
+     * A build named by a picker value (`live`, or `editor:<hrid>`), read now; a player gone from the editor reads
+     * as the live build.
+     * @param {string} choice
+     * @returns {{dto: Object, name: string, isLive: boolean, gameMode: string|undefined}|null}
+     * @private
+     */
+    _resolveChoice(choice) {
         if (choice.startsWith('editor:')) {
             const hrid = choice.slice('editor:'.length);
             const player = this._editorPlayers().find((p) => p.hrid === hrid);
             if (player) {
                 const isLive = hrid === this.host?._editor?.getSelfHrid?.();
-                return { dto: structuredClone(player.dto), name: player.name, isLive };
+                return {
+                    dto: structuredClone(player.dto),
+                    name: player.name,
+                    isLive,
+                    gameMode: this._editorPlayerMode(player),
+                };
             }
         }
         const dto = buildPlayerDTO();
         if (!dto) return null;
-        return { dto, name: dataManager.characterData?.character?.name || 'You', isLive: true };
+        return {
+            dto,
+            name: dataManager.characterData?.character?.name || 'You',
+            isLive: true,
+            gameMode: dto.gameMode || dataManager.getCurrentCharacterGameMode?.() || undefined,
+        };
     }
 
     // ---------------------------------------------------------------- zones
@@ -1168,6 +1496,7 @@ export class PartyFinderTab {
     _plan(gameData) {
         const settings = this._settings();
         const { roster, skipped } = this._planRoster(gameData);
+        const mine = this._selfAuraInfo(gameData);
         const plan = planSweep({
             zones: this._zones,
             roster,
@@ -1175,6 +1504,8 @@ export class PartyFinderTab {
             maxPartySize: settings.maxPartySize,
             gameData,
             selfMode: this._selfMode(),
+            selfAuras: mine.auras,
+            selfDto: mine.dto,
         });
         const zoneCount = plan.perZone.filter((z) => z.count > 0).length;
         const rerunMax = settings.topK > 0 ? Math.min(settings.topK, Math.max(0, plan.total - zoneCount)) : 0;
@@ -1196,8 +1527,9 @@ export class PartyFinderTab {
         const plan = this._plan(buildGameDataPayload());
         const notes = [];
         if (!this._zones.length) notes.push('Pick at least one zone.');
-        else if (!this._roster.entries.length) notes.push('Add teammates to the roster first.');
-        else if (plan.refused) notes.push(plan.refused);
+        else if (!this._roster.entries.length && !(this._trySelfAuras && plan.selfAuraCount)) {
+            notes.push('Add teammates to the roster first.');
+        } else if (plan.refused) notes.push(plan.refused);
         else {
             const { quickHours, fullHours } = plan.settings;
             notes.push(
@@ -1219,6 +1551,13 @@ export class PartyFinderTab {
         }
         if (plan.skipped.length) notes.push(`Left out, not runnable here: ${plan.skipped.join('; ')}.`);
         for (const note of plan.notes || []) notes.push(`${note}.`);
+        if (this._trySelfAuras && !plan.refused) {
+            notes.push(
+                plan.selfAuraCount
+                    ? `Trying ${plan.selfAuraCount} aura variant${plan.selfAuraCount === 1 ? '' : 's'} of you beside as worn.`
+                    : 'Also try my auras: no aura of yours to try here, so you are only tried as worn.'
+            );
+        }
         el.textContent = notes.join(' ');
     }
 
@@ -1241,16 +1580,17 @@ export class PartyFinderTab {
             this._status('Pick at least one zone first.');
             return;
         }
-        if (!this._roster.entries.length) {
-            this._status('Add teammates to the roster first.');
-            return;
-        }
         const gameData = buildGameDataPayload();
         if (!gameData) {
             this._status('No game data available.');
             return;
         }
         const plan = this._plan(gameData);
+        // With no teammates, your own aura variants alone are still worth a run (each aura solo)
+        if (!this._roster.entries.length && !(this._trySelfAuras && plan.selfAuraCount)) {
+            this._status('Add teammates to the roster first.');
+            return;
+        }
         if (plan.refused) {
             this._status(plan.refused);
             return;
@@ -1378,7 +1718,7 @@ export class PartyFinderTab {
             const stage1 = plan.tasks.map((task) => ({
                 ...task,
                 id: `${task.zoneKey}|${task.comp.key}`,
-                party: buildCompositionParty(self.dto, task.comp.members),
+                party: buildCompositionParty(self.dto, task.comp.members, task.comp.selfAura),
             }));
             const finished1 = await this._runPass(
                 stage1,
@@ -1408,7 +1748,7 @@ export class PartyFinderTab {
                         zoneKey: row.zoneKey,
                         comp: row.comp,
                         id: row.id,
-                        party: buildCompositionParty(self.dto, row.comp.members),
+                        party: buildCompositionParty(self.dto, row.comp.members, row.comp.selfAura),
                     }));
                     const finished2 = await this._runPass(
                         stage2,
@@ -1656,6 +1996,9 @@ export class PartyFinderTab {
             const replaced = row.comp.members
                 .filter((m) => m.aura && m.replaced)
                 .map((m) => `${m.name}: ${m.aura.name} replaces ${m.replaced}`);
+            if (row.comp.selfAura?.replaced) {
+                replaced.unshift(`You: ${row.comp.selfAura.name} replaces ${row.comp.selfAura.replaced}`);
+            }
             const sharedChip = row.shared?.length
                 ? ` <span style="color:#ffb74d; font-size:9px;" title="Two or more players run this aura">${esc(
                       row.shared.map((a) => `${a.name} ×${a.count}`).join(', ')
@@ -1720,7 +2063,7 @@ export class PartyFinderTab {
         const self = this._lastRun?.self;
         const editor = this.host?._editor;
         if (!row || !self || !editor?.loadParty) return false;
-        const party = buildCompositionParty(self.dto, row.comp.members);
+        const party = buildCompositionParty(self.dto, row.comp.members, row.comp.selfAura);
         editor.loadParty(party, [self.name, ...row.comp.members.map((m) => m.name)], {
             selfIsLive: self.isLive,
             note: `From the party finder: ${partyLabel(row.comp)}`,

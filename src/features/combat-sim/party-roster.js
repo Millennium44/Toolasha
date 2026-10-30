@@ -7,6 +7,11 @@
  * record in `settings` under a `combatSim` key, so the sync's owned-prefix list already
  * carries it.
  *
+ * Saved builds ride in the same record (`builds`): named copies of your own builds (any editor player, or the
+ * live character) kept to be added as teammates later, with their own `sb-` ids. They merge and tombstone exactly
+ * as teammates do (one `removed` map holds both: ids never collide), so no new storage key is needed and the
+ * owned-prefix registration above already covers them.
+ *
  * Sync: merged per teammate (`mergeRoster`). Entries are matched by id and the later
  * `updatedAt` wins each one, so two devices that add different teammates keep both, and an
  * edit on one device is not undone by the other's older copy. A delete leaves a tombstone
@@ -31,6 +36,9 @@ export const MAX_ROSTER_SIZE = 40;
 
 /** Most aura options one teammate carries */
 export const MAX_AURA_OPTIONS = 8;
+
+/** Most saved builds the record holds */
+export const MAX_SAVED_BUILDS = 40;
 
 /** Longest teammate name kept */
 const MAX_NAME_LENGTH = 40;
@@ -57,7 +65,7 @@ const PER_PARTY_FIELDS = ['hrid', 'debuffOnLevelGap', 'taskMonsterHrids', 'taskM
  * @returns {{savedAt: number, entries: Array}}
  */
 function emptyRoster() {
-    return { savedAt: 0, entries: [], removed: {} };
+    return { savedAt: 0, entries: [], builds: [], removed: {} };
 }
 
 /**
@@ -149,6 +157,28 @@ export function cleanTeammateName(name) {
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, MAX_NAME_LENGTH);
+}
+
+/**
+ * A saved build's name made unique among the others: "Tank", then "Tank (2)", "Tank (3)". Compared without regard
+ * to case, so "tank" and "Tank" are not both kept.
+ * @param {*} name
+ * @param {Array<{id: string, name: string}>} builds - The saved builds
+ * @param {string} [exceptId] - A build being renamed does not clash with itself
+ * @returns {string} '' when nothing usable is left of the name
+ */
+export function uniqueBuildName(name, builds, exceptId = null) {
+    const base = cleanTeammateName(name);
+    if (!base) return '';
+    const taken = new Set(
+        (Array.isArray(builds) ? builds : []).filter((b) => b.id !== exceptId).map((b) => b.name.toLowerCase())
+    );
+    if (!taken.has(base.toLowerCase())) return base;
+    for (let n = 2; ; n++) {
+        const suffix = ` (${n})`;
+        const candidate = `${base.slice(0, MAX_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
+        if (!taken.has(candidate.toLowerCase())) return candidate;
+    }
 }
 
 /**
@@ -267,7 +297,24 @@ export function normalizeRoster(value, now = Date.now()) {
         });
         if (entries.length >= MAX_ROSTER_SIZE) break;
     }
-    return { savedAt: Number(value.savedAt) || 0, entries, removed };
+    const builds = [];
+    const seenBuilds = new Set();
+    for (const build of Array.isArray(value.builds) ? value.builds : []) {
+        if (!build || typeof build.id !== 'string' || !build.id || seenBuilds.has(build.id)) continue;
+        if (!validateTeammateDTO(build.dto).ok) continue;
+        if (removed[build.id] >= (Number(build.updatedAt) || 0)) continue;
+        seenBuilds.add(build.id);
+        builds.push({
+            id: build.id,
+            name: cleanTeammateName(build.name) || 'Build',
+            dto: withEmptySlots({ ...build.dto }),
+            addedAt: Number(build.addedAt) || 0,
+            updatedAt: Number(build.updatedAt) || 0,
+            gameMode: typeof build.gameMode === 'string' && build.gameMode ? build.gameMode : null,
+        });
+        if (builds.length >= MAX_SAVED_BUILDS) break;
+    }
+    return { savedAt: Number(value.savedAt) || 0, entries, builds, removed };
 }
 
 /**
@@ -294,18 +341,27 @@ export function mergeRoster(local, incoming) {
     const entries = [...byId.values()]
         .filter((entry) => !(removed[entry.id] >= entry.updatedAt))
         .slice(0, MAX_ROSTER_SIZE);
-    return { savedAt: Math.max(a.savedAt, b.savedAt), entries, removed };
+    const buildsById = new Map(a.builds.map((build) => [build.id, build]));
+    for (const build of b.builds) {
+        const mine = buildsById.get(build.id);
+        if (!mine || build.updatedAt >= mine.updatedAt) buildsById.set(build.id, build);
+    }
+    const builds = [...buildsById.values()]
+        .filter((build) => !(removed[build.id] >= build.updatedAt))
+        .slice(0, MAX_SAVED_BUILDS);
+    return { savedAt: Math.max(a.savedAt, b.savedAt), entries, builds, removed };
 }
 
 let idCounter = 0;
 
 /**
  * A fresh entry id.
+ * @param {string} [prefix] - 'tm' for a teammate, 'sb' for a saved build
  * @returns {string}
  */
-function newEntryId() {
+function newEntryId(prefix = 'tm') {
     idCounter += 1;
-    return `tm-${Date.now().toString(36)}-${idCounter.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    return `${prefix}-${Date.now().toString(36)}-${idCounter.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
@@ -478,6 +534,83 @@ export async function removeTeammate(id) {
         roster.entries = roster.entries.filter((e) => e.id !== id);
         // Later than its last change, so the deletion beats every copy of it
         roster.removed = { ...roster.removed, [id]: Math.max(now, (entry.updatedAt || 0) + 1) };
+        return { write: true, found: true };
+    });
+    return { ok: result.ok, roster: result.roster, found: Boolean(result.outcome?.found) };
+}
+
+/**
+ * Save a build under a name. The name is made unique among the saved builds ("Tank (2)").
+ * @param {string} name
+ * @param {Object} dto - Sim player DTO (an editor player's, or the live character's)
+ * @param {string} [gameMode] - Its game mode when the build does not carry it
+ * @returns {Promise<{ok: boolean, roster: Object, id: string|null, name: string|null, reason?: string}>} `id` and
+ *   `name` of the saved build (the name actually kept); `reason` says why nothing was saved
+ */
+export async function saveBuild(name, dto, gameMode) {
+    const valid = validateTeammateDTO(dto);
+    if (!valid.ok) return { ok: false, roster: await loadRoster(), id: null, name: null, reason: valid.reason };
+    const result = await mutateRoster((roster, now) => {
+        if (roster.builds.length >= MAX_SAVED_BUILDS) {
+            return { write: false, reason: `at most ${MAX_SAVED_BUILDS} builds can be saved` };
+        }
+        const kept = uniqueBuildName(name, roster.builds) || uniqueBuildName('Build', roster.builds);
+        const id = newEntryId('sb');
+        roster.builds.push({
+            id,
+            name: kept,
+            dto: sanitizeTeammateDTO(dto),
+            addedAt: now,
+            updatedAt: now,
+            gameMode: dto.gameMode || gameMode || null,
+        });
+        return { write: true, id, name: kept };
+    });
+    const outcome = result.outcome || {};
+    return {
+        ok: result.ok && Boolean(outcome.id),
+        roster: result.roster,
+        id: result.ok ? outcome.id || null : null,
+        name: result.ok ? outcome.name || null : null,
+        ...(outcome.reason ? { reason: outcome.reason } : {}),
+    };
+}
+
+/**
+ * Rename a saved build; the new name is made unique among the others.
+ * @param {string} id
+ * @param {string} name
+ * @returns {Promise<{ok: boolean, roster: Object, found: boolean, name: string|null}>} `name` is the one kept
+ */
+export async function renameBuild(id, name) {
+    const result = await mutateRoster((roster, now) => {
+        const build = roster.builds.find((b) => b.id === id);
+        if (!build) return { write: false, found: false };
+        const kept = uniqueBuildName(name, roster.builds, id);
+        if (!kept || kept === build.name) return { write: false, found: true, name: build.name };
+        build.name = kept;
+        build.updatedAt = now;
+        return { write: true, found: true, name: kept };
+    });
+    return {
+        ok: result.ok,
+        roster: result.roster,
+        found: Boolean(result.outcome?.found),
+        name: result.outcome?.name ?? null,
+    };
+}
+
+/**
+ * Delete a saved build, leaving a tombstone so a stale device cannot bring it back.
+ * @param {string} id
+ * @returns {Promise<{ok: boolean, roster: Object, found: boolean}>}
+ */
+export async function removeBuild(id) {
+    const result = await mutateRoster((roster, now) => {
+        const build = roster.builds.find((b) => b.id === id);
+        if (!build) return { write: false, found: false };
+        roster.builds = roster.builds.filter((b) => b.id !== id);
+        roster.removed = { ...roster.removed, [id]: Math.max(now, (build.updatedAt || 0) + 1) };
         return { write: true, found: true };
     });
     return { ok: result.ok, roster: result.roster, found: Boolean(result.outcome?.found) };
