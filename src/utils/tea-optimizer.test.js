@@ -21,7 +21,7 @@ const state = vi.hoisted(() => ({
     characterData: {},
     experienceContexts: [],
 }));
-const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set() }));
+const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set(), calls: {} }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
@@ -75,7 +75,10 @@ vi.mock('../features/market/alchemy-profit-calculator.js', () => ({
 // The real module reaches through config/marketAPI/custom-price-overrides, which this file
 // otherwise avoids wiring up (see file docblock).
 vi.mock('./market-data.js', () => ({
-    getItemPrice: (itemHrid) => (itemHrid in prices.byHrid ? prices.byHrid[itemHrid] : null),
+    getItemPrice: (itemHrid) => {
+        prices.calls[itemHrid] = (prices.calls[itemHrid] || 0) + 1;
+        return itemHrid in prices.byHrid ? prices.byHrid[itemHrid] : null;
+    },
     getItemPriceInfo: (itemHrid) => {
         if (!(itemHrid in prices.byHrid)) return { price: null, source: null, estimated: false };
         const estimated = prices.estimated.has(itemHrid);
@@ -119,6 +122,7 @@ beforeEach(() => {
     state.experienceContexts = [];
     prices.byHrid = {};
     prices.estimated = new Set();
+    prices.calls = {};
     alchemyCalc.decompose = null;
     alchemyCalc.coinify = null;
     alchemyCalc.transmute = null;
@@ -1758,5 +1762,102 @@ describe('Artisan Tea can block the very action it is being scored on', () => {
         expect(result.error).toBeUndefined();
         expect(result.optimal.actionScores).toEqual([{ action: 'Verdant', score: 0, hasMissingPrices: false }]);
         expect(result.optimal.profitableCount).toBe(0);
+    });
+});
+
+describe('processing conversion lookup and drop pricing across a tea search', () => {
+    function crowdedWorld() {
+        const actionDetailMap = {};
+        for (let i = 0; i < 400; i++) {
+            actionDetailMap[`/actions/crafting/filler_${i}`] = {
+                type: '/action_types/crafting',
+                inputItems: [{ itemHrid: `/items/filler_${i}`, count: 1 }],
+                outputItems: [{ itemHrid: `/items/filler_out_${i}`, count: 1 }],
+            };
+        }
+        // An earlier action of a type Processing does not run; then two recipes for the same raw item,
+        // the first of which must win (as the old first-match scan returned it)
+        actionDetailMap['/actions/alchemy/not_processing'] = {
+            type: '/action_types/alchemy',
+            inputItems: [{ itemHrid: '/items/milk', count: 1 }],
+            outputItems: [{ itemHrid: '/items/wrong_a', count: 1 }],
+        };
+        actionDetailMap['/actions/cheesesmithing/cheese'] = {
+            type: '/action_types/cheesesmithing',
+            inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+            outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+        };
+        actionDetailMap['/actions/crafting/second_milk_recipe'] = {
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/milk', count: 5 }],
+            outputItems: [{ itemHrid: '/items/wrong_b', count: 1 }],
+        };
+        actionDetailMap['/actions/milking/cow'] = {
+            type: '/action_types/milking',
+            baseTimeCost: 10e9,
+            levelRequirement: { level: 1 },
+            dropTable: [
+                { itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 3 },
+                { itemHrid: '/items/milk', dropRate: 0.5, minCount: 2, maxCount: 2 },
+            ],
+        };
+        state.gameData = {
+            itemDetailMap: {
+                '/items/milk': { name: 'Milk' },
+                '/items/cheese': { name: 'Cheese' },
+                '/items/processing_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/processing', flatBoost: 1 }] },
+                },
+                '/items/efficiency_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.1 }] },
+                },
+                '/items/gathering_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/gathering', flatBoost: 0.15 }] },
+                },
+                '/items/medium_pouch': { equipmentDetail: { combatStats: { foodSlots: 1, drinkSlots: 3 } } },
+            },
+            actionDetailMap,
+        };
+        prices.byHrid = {
+            '/items/milk': 100,
+            '/items/cheese': 250,
+            '/items/wrong_a': 9999,
+            '/items/wrong_b': 9999,
+            '/items/processing_tea': 0,
+            '/items/efficiency_tea': 0,
+            '/items/gathering_tea': 0,
+        };
+        return actionDetailMap;
+    }
+
+    test('uses the first recipe for a raw item, scans the map a bounded number of times, and quotes each drop once', () => {
+        const map = crowdedWorld();
+        const pouch = new Map([['/item_locations/pouch', { itemHrid: '/items/medium_pouch' }]]);
+        const teas = ['/items/processing_tea', '/items/efficiency_tea', '/items/gathering_tea'];
+        const spies = [vi.spyOn(Object, 'values'), vi.spyOn(Object, 'entries')];
+
+        const perform = calculateSkillPerformance('milking', pouch, ['/items/processing_tea'], 1);
+        const recommendation = findOptimalTeas(
+            'milking',
+            'gold',
+            null,
+            null,
+            { pinned: new Set(teas), banned: new Set() },
+            null,
+            pouch,
+            null,
+            1
+        );
+        const scans = spies.reduce((n, spy) => n + spy.mock.calls.filter((c) => c[0] === map).length, 0);
+        spies.forEach((spy) => spy.mockRestore());
+
+        // Figures the old per-drop scan produced on this world (checked against the pre-index code)
+        expect(perform.goldPerHour).toBeCloseTo(123840, 6);
+        expect(recommendation.optimal.avgScore).toBeCloseTo(157726.56, 6);
+        // one pass of each kind over the map (action list, conversion index), not one per drop per combination
+        expect(scans).toBeLessThanOrEqual(4);
+        // milk and cheese are quoted a handful of times across the whole search, not per combination
+        expect(prices.calls['/items/milk']).toBeLessThanOrEqual(3);
+        expect(prices.calls['/items/cheese'] || 0).toBeLessThanOrEqual(3);
     });
 });
