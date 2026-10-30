@@ -1442,6 +1442,26 @@ describe('placeTrialBlock', () => {
             expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 220px');
         });
 
+        test('a track list the game rewrote over the fit is kept, not overwritten by the stale one', () => {
+            const { root, grid, cards } = fightLayout(4);
+            grid.style.gridTemplateColumns = '120px 120px 120px 120px 120px';
+            measure(grid, 724);
+            placeTrialBlock(root, cards[0], newBlock(), 'Trial Swarm');
+            expect(grid.style.gridTemplateColumns).toBe('120px 120px 120px 120px 220px');
+
+            // The wave drops to one boss and the game writes the new wave's tracks
+            cards.slice(1).forEach((card) => card.remove());
+            grid.style.gridTemplateColumns = '176px';
+            fightSidecarPlacement(grid);
+            expect(grid.style.gridTemplateColumns).toBe('176px 220px');
+
+            // And a trial that ends after the game rewrote the list leaves the game's list
+            grid.style.gridTemplateColumns = '150px';
+            restoreFightGrids(document);
+            expect(grid.style.gridTemplateColumns).toBe('150px');
+            expect(grid.dataset.mwiFitCards).toBeUndefined();
+        });
+
         test('the old 4x176 shape behaves as before when the width is unknown or too small', () => {
             const { grid } = fightLayout(4);
             expect(fightSidecarPlacement(grid).wrapped).toBe(true);
