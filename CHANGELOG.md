@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A "Plan scrolls" button on Labyrinth scroll menus lets you set how many of each to open, then steps you through them: it opens each scroll's menu, fills the quantity and highlights Open, which you press yourself (from upstream).
 - Quick fill: type one number, then click scroll names, or a skill icon to pick every scroll that helps that skill. Each row shows the skills it affects.
 
+### Quick-input speed counts the guild shrine
+
+- The action panel's speed total and base-to-actual time now include the guild shrine's action speed, which the breakdown already listed (from upstream).
+
 ### Upstream fixes: quick-input loadout, offline limit for endless combat
 
 - The action panel's speed, efficiency and queue sizing now use the saved loadout for that action throughout, instead of mixing worn gear with the loadout's drinks.
