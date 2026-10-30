@@ -58,6 +58,17 @@ const AUTO_OPEN_DELAYS_MS = [150, 500, 1000];
 
 const CSS_FONT = 'font-family: inherit; font-size: 13px;';
 
+/**
+ * The plan rows' columns: name | skills | Owned | quantity | All. Fixed widths, so the selected
+ * name's highlight is the same box on every row. The name column fits "Scroll Of Critical Rate";
+ * anything longer ends in an ellipsis. The skills column is left out without skill data.
+ */
+const NAME_COLUMN = '172px';
+const SKILLS_COLUMN = '150px';
+function rowColumns(withSkills) {
+    return [NAME_COLUMN, withSkills ? SKILLS_COLUMN : null, '84px', '64px', 'auto'].filter(Boolean).join(' ');
+}
+
 const TEXT = {
     planButton: 'Plan scrolls',
     modalTitle: 'Scroll Planner',
@@ -809,7 +820,34 @@ class ScrollPlanner {
             this.skillButtons.set(actionTypeHrid, button);
             barEl.appendChild(button);
         }
+
+        // Clear every row and the selection; N stays, ready for the next pick
+        const clearAll = document.createElement('button');
+        clearAll.type = 'button';
+        clearAll.className = 'toolasha-scroll-planner-clear-all';
+        clearAll.textContent = '✕';
+        clearAll.title = 'Clear all';
+        clearAll.setAttribute('aria-label', 'Clear all');
+        clearAll.style.cssText = `display: inline-flex; align-items: center; justify-content: center; min-width: 28px;
+            padding: 3px 6px; border-radius: 4px; border: 1px solid #555; background: #1f1f1f; color: #f87171;
+            cursor: pointer; ${CSS_FONT}`;
+        clearAll.addEventListener('click', () => {
+            hint.textContent = '';
+            this.clearAllRows();
+        });
+        barEl.appendChild(clearAll);
         return barEl;
+    }
+
+    /** Empty every row and the quick-fill selection, keeping N */
+    clearAllRows() {
+        this.quickSelected = new Set();
+        for (const controls of this.rowControls.values()) {
+            controls.setQuantity(0);
+            controls.showSelected();
+        }
+        this.draft = {};
+        this.refreshSkillButtons();
     }
 
     /**
@@ -861,13 +899,13 @@ class ScrollPlanner {
         const cell = document.createElement('span');
         cell.className = 'toolasha-scroll-planner-row-skills';
         cell.title = types.map((type) => this.getSkillName(type)).join(', ');
-        cell.style.cssText = `display: inline-flex; align-items: center; gap: 2px; flex: 0 1 auto; min-width: 0;
-            max-width: 45%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #aaa; font-size: 11px;`;
+        cell.style.cssText = `display: flex; align-items: center; justify-content: flex-start; gap: 2px; min-width: 0;
+            overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #aaa; font-size: 11px;`;
         const { label, missing } = describeScrollSkills(types, coveredSkills);
         if (label) {
             const names = missing.map((type) => this.getSkillName(type)).join(', ');
             cell.textContent = missing.length > 0 ? `${label} except ${names}` : label;
-            cell.style.display = 'inline-block';
+            cell.style.display = 'block';
         } else {
             for (const type of types) {
                 cell.appendChild(actionTypeIcon(type, 14));
@@ -1039,7 +1077,9 @@ class ScrollPlanner {
         const row = document.createElement('div');
         row.className = 'toolasha-scroll-planner-row';
         row.dataset.itemHrid = itemHrid;
-        row.style.cssText = `display: flex; align-items: center; gap: 8px; padding: 3px 0; opacity: ${owned > 0 ? 1 : 0.55};`;
+        row.style.cssText = `display: grid; align-items: center; column-gap: 8px; padding: 3px 0;
+            opacity: ${owned > 0 ? 1 : 0.55};`;
+        row.style.gridTemplateColumns = rowColumns(coveredSkills.length > 0);
 
         // A button, so Enter and Space toggle it too
         const name = document.createElement('button');
@@ -1047,20 +1087,21 @@ class ScrollPlanner {
         name.className = 'toolasha-scroll-planner-name';
         name.textContent = this.getScrollName(itemHrid);
         name.title = 'With a number in "Open N of each", click to set this scroll to N; click again to clear';
-        name.style.cssText = `flex: 1; min-width: 120px; text-align: left; cursor: pointer; padding: 2px 6px;
+        name.style.cssText = `width: 100%; box-sizing: border-box; min-width: 0; text-align: left; cursor: pointer;
+            padding: 2px 6px;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             border-radius: 4px; border: 1px solid transparent; background: transparent; color: #fff; ${CSS_FONT}`;
         name.addEventListener('click', () => this.toggleQuickRow(itemHrid));
         row.appendChild(name);
 
-        const skills = this.buildRowSkills(itemHrid, coveredSkills);
-        if (skills) {
-            row.appendChild(skills);
+        // The skills column holds a cell on every row while it exists, so the columns line up
+        if (coveredSkills.length > 0) {
+            row.appendChild(this.buildRowSkills(itemHrid, coveredSkills) || document.createElement('span'));
         }
 
         const ownedLabel = document.createElement('span');
         ownedLabel.textContent = `Owned: ${owned}`;
-        ownedLabel.style.cssText = 'color: #aaa; min-width: 80px; text-align: right;';
+        ownedLabel.style.cssText = 'color: #aaa; text-align: right; white-space: nowrap;';
         row.appendChild(ownedLabel);
 
         const input = document.createElement('input');

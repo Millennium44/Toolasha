@@ -819,6 +819,47 @@ describe('ScrollPlanner', () => {
             }
         });
 
+        test('every row lays out on the same fixed columns, so the name box is one width', () => {
+            const rows = [...modal().querySelectorAll('.toolasha-scroll-planner-row')];
+            expect(rows).toHaveLength(12);
+            const templates = new Set(rows.map((r) => r.style.gridTemplateColumns));
+            expect(templates.size).toBe(1);
+            expect([...templates][0]).toMatch(/^172px 150px /);
+            for (const r of rows) {
+                expect(r.style.display).toBe('grid');
+                // name, skills, Owned, quantity, All — one cell per column, even with no icons
+                expect(r.children).toHaveLength(5);
+                const name = r.querySelector('.toolasha-scroll-planner-name');
+                expect(name.style.width).toBe('100%');
+                expect(name.style.textOverflow).toBe('ellipsis');
+            }
+        });
+
+        test('the clear button after the skills empties every row and the selection, keeping N', () => {
+            setN('30');
+            skillButton('combat').click();
+            const typed = row('gourmet').querySelector('input');
+            typed.value = '4';
+            typed.dispatchEvent(new Event('input'));
+            const clearAll = modal().querySelector('.toolasha-scroll-planner-clear-all');
+            expect(clearAll.previousElementSibling).toBe(skillButton('combat'));
+            expect(clearAll.title).toBe('Clear all');
+
+            clearAll.click();
+            expect(selected()).toEqual([]);
+            expect(Object.keys(BUFFS).map((buff) => row(buff).querySelector('input').value)).toEqual(
+                Object.keys(BUFFS).map(() => '')
+            );
+            expect(planner.draft).toEqual({});
+            expect(modal().textContent).toContain('Total: 0');
+            expect(skillButton('combat').getAttribute('aria-pressed')).toBe('false');
+            expect(modal().querySelector('.toolasha-scroll-planner-quickfill input').value).toBe('30');
+
+            // N still works straight away
+            skillButton('combat').click();
+            expect(row('damage').querySelector('input').value).toBe('30');
+        });
+
         test('without the buff data there are no icons and the rest still works', () => {
             planner.closeModal();
             mocks.clientData = gameData({ withBuffs: false });
