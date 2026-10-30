@@ -12,6 +12,8 @@ const game = vi.hoisted(() => ({
     scoreResult: { total: 42 },
     toggles: 0,
     scoreSource: null,
+    stamp: 'a',
+    priceVersion: 1,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -50,6 +52,14 @@ vi.mock('../../utils/overlay-rows.js', () => ({
         game.rows[definition.key] = definition;
     },
 }));
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        get priceVersion() {
+            return game.priceVersion;
+        },
+    },
+}));
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({ pricingStamp: () => game.stamp }));
 vi.mock('./score-calculator.js', () => ({
     calculateCombatScore: async () => {
         if (game.scoreGate) await game.scoreGate;
@@ -67,7 +77,7 @@ vi.mock('./build-score-panel.js', () => ({
     },
 }));
 
-const { ownProfileData } = await import('./build-score-row.js');
+const { ownProfileData, ensureOwnScore, scorePricingStamp } = await import('./build-score-row.js');
 const buildScore = (await import('./build-score-row.js')).default;
 
 describe('ownProfileData', () => {
@@ -151,6 +161,9 @@ describe('BuildScore', () => {
         buildScore.score = null;
         buildScore.computedAt = 0;
         buildScore.running = false;
+        buildScore.stamp = null;
+        game.stamp = 'a';
+        game.priceVersion = 1;
         vi.useFakeTimers();
     });
 
@@ -354,5 +367,44 @@ describe('the Build Score tile summarises its own inputs', () => {
 
         buildScore.score = { total: 42.5, equipment: 15, ability: 15, house: 5, skillerTotal: 7.5 };
         expect(version()).not.toBe(before);
+    });
+});
+
+describe('ensureOwnScore', () => {
+    beforeEach(() => {
+        game.setting = true;
+        game.characterData = { characterAbilities: [], combatUnit: { combatAbilities: [] } };
+        game.combined = { characterHouseRoomMap: {} };
+        game.equipment = [];
+        game.scoreResult = { total: 42 };
+        game.stamp = 'a';
+        game.priceVersion = 1;
+        buildScore.disable();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('the stamp is the pricing inputs plus the order-book version', () => {
+        expect(scorePricingStamp()).toBe('a|1');
+        game.priceVersion = 2;
+        expect(scorePricingStamp()).toBe('a|2');
+    });
+
+    test('a score held under the same stamp is returned without recomputing', async () => {
+        const first = await ensureOwnScore({ stamp: scorePricingStamp() });
+        expect(first).toEqual({ total: 42 });
+        game.scoreResult = { total: 99 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 42 });
+    });
+
+    test('a score computed before a pricing change is recomputed, not handed back stale', async () => {
+        await ensureOwnScore({ stamp: scorePricingStamp() });
+        game.stamp = 'b';
+        game.scoreResult = { total: 99 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 99 });
+        expect(buildScore.stamp).toBe('b|1');
     });
 });

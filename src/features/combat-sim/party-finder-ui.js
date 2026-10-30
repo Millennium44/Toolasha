@@ -57,7 +57,7 @@ import {
     modeMismatchReason,
     buildFingerprint,
 } from './party-roster.js';
-import { tuneTemplate } from './party-template-tuner.js';
+import { tuneTemplate, clearTunerCache } from './party-template-tuner.js';
 import { PARTY_TEMPLATES, TEMPLATE_ROLE_GROUPS, templatesForGroup, templateTeammateName } from './party-templates.js';
 import {
     planSweep,
@@ -367,6 +367,8 @@ export class PartyFinderTab {
      * A pricing setting changed: re-price the rows on screen (after the run, if one is going).
      */
     onPricingChanged() {
+        // A solved offset was matched against prices that have moved
+        clearTunerCache();
         if (!this.root || !this._rows.size) return;
         if (this._running) {
             this._repricePending = true;

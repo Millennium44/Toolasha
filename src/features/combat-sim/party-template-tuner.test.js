@@ -5,7 +5,11 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => null } }));
 vi.mock('../profile/score-calculator.js', () => ({ calculateCombatScore: async () => ({ equipment: 1, ability: 1 }) }));
-vi.mock('../profile/build-score-row.js', () => ({ readOwnScore: () => null }));
+const stamp = vi.hoisted(() => ({ value: 'a|1' }));
+vi.mock('../profile/build-score-row.js', () => ({
+    ensureOwnScore: async () => null,
+    scorePricingStamp: () => stamp.value,
+}));
 
 const {
     OFFSET_MIN,
@@ -18,6 +22,7 @@ const {
     solveOffset,
     tuneTemplate,
     clearTunerCache,
+    liveDeps,
 } = await import('./party-template-tuner.js');
 const { PARTY_TEMPLATES } = await import('./party-templates.js');
 
@@ -233,5 +238,19 @@ describe('tuneTemplate', () => {
         state.id = 'c1';
         deps.scoreProfile = inner;
         expect((await tuneTemplate(smash, LEVELS, deps)).cached).toBe(false);
+    });
+});
+
+describe('the live pricing key', () => {
+    test('moves with the pricing stamp, so a price or pricing setting change does not reuse a solved offset', () => {
+        const deps = liveDeps();
+        stamp.value = 'a|1';
+        const before = deps.getPricingKey();
+        stamp.value = 'a|2';
+        expect(deps.getPricingKey()).not.toBe(before);
+        stamp.value = 'b|1';
+        expect(deps.getPricingKey()).not.toBe(before);
+        stamp.value = 'a|1';
+        expect(deps.getPricingKey()).toBe(before);
     });
 });

@@ -9,7 +9,11 @@
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-vi.mock('../profile/build-score-row.js', () => ({ readOwnScore: () => null }));
+vi.mock('../profile/build-score-row.js', () => ({
+    readOwnScore: () => null,
+    ensureOwnScore: async () => null,
+    scorePricingStamp: () => '',
+}));
 vi.mock('../profile/score-calculator.js', () => ({ calculateCombatScore: async () => null }));
 
 // The advisor's mirror and base prices go through the shared enhancement input rule; here they read the

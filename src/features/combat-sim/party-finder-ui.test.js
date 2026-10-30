@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
     /** Replaces the template tuner's answer, when a test sets it */
     tune: null,
     tuneCalls: [],
+    tunerCleared: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -86,6 +87,9 @@ vi.mock('./combat-sim-adapter.js', () => ({
     recomputeLevelGapDebuffs: () => {},
 }));
 vi.mock('./party-template-tuner.js', () => ({
+    clearTunerCache: () => {
+        state.tunerCleared += 1;
+    },
     tuneTemplate: async (template, levels) => {
         state.tuneCalls.push({ id: template.id, levels });
         if (state.tune) return state.tune(template, levels);
@@ -1365,6 +1369,13 @@ describe('saved builds', () => {
             expect(matchBox().checked).toBe(false);
             toggle().click();
             expect(matchBox().checked).toBe(false);
+        });
+
+        test('a pricing change forgets every solved offset', async () => {
+            await mountTab();
+            state.tunerCleared = 0;
+            tab.onPricingChanged();
+            expect(state.tunerCleared).toBe(1);
         });
 
         test('adding tunes the template to the character and shows its score against theirs', async () => {

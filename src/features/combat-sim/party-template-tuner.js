@@ -16,7 +16,7 @@
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { calculateCombatScore } from '../profile/score-calculator.js';
-import { readOwnScore } from '../profile/build-score-row.js';
+import { ensureOwnScore, scorePricingStamp } from '../profile/build-score-row.js';
 
 /** Lowest and highest offset tried */
 export const OFFSET_MIN = -15;
@@ -194,12 +194,14 @@ export function clearTunerCache() {
 export function liveDeps() {
     return {
         getCharacterId: () => dataManager.getCurrentCharacterId(),
-        getOwnScore: async () => readOwnScore(),
+        // A score computed under another pricing stamp is recomputed, not compared against
+        getOwnScore: async () => ensureOwnScore({ stamp: scorePricingStamp() }),
         getPricingKey: () =>
             [
                 dataManager.getCurrentCharacterGameMode?.() || '',
                 config.getSetting('networth_highEnhancementUseCost') ? 'cost' : 'market',
                 config.getSetting('networth_highEnhancementMinLevel') || 13,
+                scorePricingStamp(),
             ].join('|'),
         scoreProfile: async (profileData) => calculateCombatScore(profileData),
     };
