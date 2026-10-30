@@ -28,6 +28,8 @@ const game = vi.hoisted(() => ({
     bridgeOff: false,
     houseRooms: null,
     learned: null,
+    rareFind: 0,
+    equipment: new Map(),
 }));
 
 const nav = vi.hoisted(() => ({
@@ -89,6 +91,7 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.houseRooms || game.learned ? {} : null;
         },
         getHouseRooms: () => new Map(game.houseRooms || []),
+        getEquipment: () => game.equipment,
         getLearnedAbilities: () => game.learned || [],
         on: (event, fn) => {
             (game.handlers[event] ||= []).push(fn);
@@ -99,6 +102,9 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+vi.mock('../../utils/bonus-revenue-calculator.js', () => ({
+    getRareFindParts: () => ({ total: game.rareFind }),
+}));
 vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
     ...(await importOriginal()),
     missingMaterialsButton: () =>
@@ -347,6 +353,7 @@ describe('hints on the game achievement cards', () => {
         game.estimated = new Set();
         game.houseRooms = null;
         game.learned = null;
+        game.rareFind = 0;
         game.settingHandlers = [];
         game.handlers = {};
         game.observers = [];
@@ -419,6 +426,24 @@ describe('hints on the game achievement cards', () => {
         expect(lineOf('Buttered Up').textContent).toContain('~1 in 33.3K actions');
         goOf('Buttered Up').click();
         expect(nav.navigateToAction).toHaveBeenLastCalledWith('/actions/milking/holy_cow');
+    });
+
+    test('a rare-drop card quotes the odds with the characters Rare Find, and a buff change redraws it', () => {
+        game.detail = ANY_OF_ACHIEVEMENTS;
+        game.clientData = { ...ANY_OF_DATA, achievementDetailMap: ANY_OF_ACHIEVEMENTS };
+        game.skills = [
+            { skillHrid: '/skills/milking', level: 70 },
+            { skillHrid: '/skills/cheesesmithing', level: 1 },
+        ];
+        game.inventory = [];
+        game.rareFind = 100;
+        achievementsTab(ANY_OF_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Buttered Up').textContent).toContain('~1 in 50.0K actions');
+        game.rareFind = 300;
+        game.handlers.buffs_updated.forEach((fn) => fn());
+        vi.advanceTimersByTime(1500);
+        expect(lineOf('Buttered Up').textContent).toContain('~1 in 25.0K actions');
     });
 
     test('Missing Mats on an any-of card opens the bill of the action it picked', () => {
