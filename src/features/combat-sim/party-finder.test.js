@@ -51,6 +51,7 @@ const {
     sharedAuras,
     maxAbilityLevel,
     checkAuraOption,
+    isPlayerSpecialAbility,
     MAX_QUICK_RUNS,
 } = await import('./party-finder.js');
 
@@ -442,11 +443,11 @@ describe('aura options', () => {
         expect(planSweep({ zones: [ZONE], roster, gameData }).total).toBe(2);
     });
 
-    test('options the game data cannot run are skipped with a note: gone, not an aura, level too high', () => {
+    test('options the game data cannot run are skipped with a note: gone, not a special-slot ability, level too high', () => {
         const roster = [
             entry('a', 'Ann', dto(90), [
                 { hrid: '/abilities/retired_aura', level: 10 },
-                { hrid: '/abilities/invincible', level: 10 },
+                { hrid: '/abilities/water_strike', level: 10 },
                 { hrid: '/abilities/fierce_aura', level: 999 },
             ]),
         ];
@@ -454,8 +455,27 @@ describe('aura options', () => {
         expect(plan.total).toBe(2);
         const notes = plan.notes.join(' | ');
         expect(notes).toMatch(/retired_aura is not in the game data/);
-        expect(notes).toMatch(/Invincible is not an aura/);
+        expect(notes).toMatch(/Water Strike is not a special-slot ability/);
         expect(notes).toMatch(/Fierce Aura level 999 is outside 1-200/);
+    });
+
+    test('Invincible and the other learnable specials are options like the party auras; Promote is not', () => {
+        const roster = [entry('a', 'Ann', dto(90), [{ hrid: '/abilities/invincible', level: 10 }], false)];
+        const plan = planSweep({ zones: [ZONE], roster, gameData });
+        expect(plan.notes.join(' | ')).not.toMatch(/Invincible/);
+        const withBooks = {
+            ...gameData,
+            abilityDetailMap: {
+                ...gameData.abilityDetailMap,
+                '/abilities/promote': { name: 'Promote', isSpecialAbility: true, abilityEffects: [] },
+            },
+            itemDetailMap: {
+                '/items/invincible': { abilityBookDetail: { abilityHrid: '/abilities/invincible' } },
+            },
+        };
+        expect(isPlayerSpecialAbility('/abilities/invincible', withBooks)).toBe(true);
+        expect(isPlayerSpecialAbility('/abilities/promote', withBooks)).toBe(false);
+        expect(isPlayerSpecialAbility('/abilities/water_strike', withBooks)).toBe(false);
     });
 
     test('every option unusable and as built off: the teammate is left out and says so', () => {
@@ -583,5 +603,186 @@ describe('party game mode', () => {
         const plan = planSweep({ zones: [ZONE], roster: [cow('a', 'Ann'), cow('b', 'Bob')], selfMode: 'market' });
         expect(plan.total).toBe(0);
         expect(plan.perZone[0].note).toBe("no teammates of this character's mode");
+    });
+});
+
+describe('your own auras', () => {
+    const aura = (name) => ({
+        name,
+        isSpecialAbility: true,
+        abilityEffects: [
+            { effectType: '/ability_effect_types/buff', targetType: 'allAllies', buffs: [{ typeHrid: '/x' }] },
+        ],
+    });
+    const gameData = {
+        abilityDetailMap: {
+            '/abilities/fierce_aura': aura('Fierce Aura'),
+            '/abilities/mystic_aura': aura('Mystic Aura'),
+            '/abilities/water_strike': { name: 'Water Strike', isSpecialAbility: false, abilityEffects: [] },
+        },
+        levelExperienceTable: Array.from({ length: 201 }, (_, i) => i * 10),
+    };
+    const owned = [
+        { hrid: '/abilities/fierce_aura', level: 20 },
+        { hrid: '/abilities/mystic_aura', level: 5 },
+    ];
+    const roster = [mate('a', 'Ann', dto(81)), mate('b', 'Bea', dto(82))];
+
+    test('one variant per owned aura, beside you as worn; solo rows for each', () => {
+        const plan = planSweep({ zones: [ZONE], roster, gameData, selfAuras: owned, selfDto: dto(90) });
+        // 1 + 2 singles + 1 pair = 4 compositions, each as worn and with 2 auras
+        expect(plan.total).toBe(4 * 3);
+        expect(plan.perZone[0].count).toBe(12);
+        const labels = plan.tasks.map((t) => partyLabel(t.comp));
+        expect(labels.slice(0, 3)).toEqual(['Solo', 'Solo (you: Fierce Aura 20)', 'Solo (you: Mystic Aura 5)']);
+        expect(labels).toContain('Ann + Bea (you: Mystic Aura 5)');
+        expect(labels).toContain('Ann');
+        // Keys never collide, so row ids and the results cache stay apart
+        expect(new Set(plan.tasks.map((t) => t.comp.key)).size).toBe(plan.total);
+    });
+
+    test('the baseline stays you as worn alone, the only one, and the aura solo rows are not baselines', () => {
+        const plan = planSweep({ zones: [ZONE], roster, gameData, selfAuras: owned, selfDto: dto(90) });
+        const baselines = plan.tasks.filter((t) => t.comp.isBaseline);
+        expect(baselines).toHaveLength(1);
+        expect(baselines[0].comp).toMatchObject({ key: 'solo', selfAura: null });
+        const soloAuras = plan.tasks.filter((t) => !t.comp.isBaseline && !t.comp.members.length);
+        expect(soloAuras.map((t) => t.comp.selfAura.hrid)).toEqual([
+            '/abilities/fierce_aura',
+            '/abilities/mystic_aura',
+        ]);
+        // As-worn keys are the ones a plan without auras uses
+        const plain = planSweep({ zones: [ZONE], roster, gameData });
+        expect(plain.tasks.map((t) => t.comp.key)).toEqual(
+            plan.tasks.filter((t) => !t.comp.selfAura).map((t) => t.comp.key)
+        );
+    });
+
+    test('no aura options: the plan is the one without the feature', () => {
+        const plain = planSweep({ zones: [ZONE], roster, gameData });
+        const none = planSweep({ zones: [ZONE], roster, gameData, selfAuras: [], selfDto: dto(90) });
+        expect(none.tasks.map((t) => t.comp.key)).toEqual(plain.tasks.map((t) => t.comp.key));
+    });
+
+    test('an aura already worn at that level is the as-worn variant; the same aura at another level is kept', () => {
+        const self = dto(90);
+        self.abilities[0] = { hrid: '/abilities/fierce_aura', level: 20, triggers: null };
+        const plan = planSweep({ zones: [ZONE], roster, gameData, selfAuras: owned, selfDto: self });
+        const auras = new Set(plan.tasks.map((t) => t.comp.selfAura?.hrid ?? null));
+        expect(auras).toEqual(new Set([null, '/abilities/mystic_aura']));
+        const higher = planSweep({
+            zones: [ZONE],
+            roster,
+            gameData,
+            selfAuras: [{ hrid: '/abilities/fierce_aura', level: 21 }],
+            selfDto: self,
+        });
+        expect(higher.tasks.some((t) => t.comp.selfAura?.level === 21)).toBe(true);
+        expect(higher.tasks.find((t) => t.comp.selfAura).comp.selfAura.replaced).toBeNull();
+    });
+
+    test('unusable options (not an aura, gone, level too high) are skipped with a note', () => {
+        const plan = planSweep({
+            zones: [ZONE],
+            roster,
+            gameData,
+            selfAuras: [
+                { hrid: '/abilities/water_strike', level: 3 },
+                { hrid: '/abilities/gone', level: 3 },
+                { hrid: '/abilities/fierce_aura', level: 999 },
+            ],
+            selfDto: dto(90),
+        });
+        expect(plan.tasks.some((t) => t.comp.selfAura)).toBe(false);
+        expect(plan.notes.filter((n) => n.startsWith('You:'))).toHaveLength(3);
+    });
+
+    test('the caps count self variants: the bound, the 20x refusal and the real limit', () => {
+        // 2 teammates, 2 members: 1 + 2 + 1 = 4 parties
+        expect(countCompositionsUpperBound([1, 1], [false, false], 2)).toBe(4);
+        expect(countCompositionsUpperBound([1, 1], [false, false], 2, 3)).toBe(12);
+        // Required teammates that cannot fit stay 0, whatever the variants
+        expect(countCompositionsUpperBound([1, 1, 1], [true, true, true], 2, 3)).toBe(0);
+        // 12 teammates, cap 3 (2 members): 1 + 12 + 66 = 79 parties
+        const many = Array.from({ length: 12 }, (_, i) => mate(`t${i}`, `T${i}`, dto(60 + i)));
+        const fine = planSweep({ zones: [ZONE], roster: many, gameData });
+        expect(fine.refused).toBeNull();
+        const auras = Array.from({ length: 400 }, (_, i) => ({
+            hrid: i < 200 ? '/abilities/fierce_aura' : '/abilities/mystic_aura',
+            level: (i % 200) + 1,
+        }));
+        // 79 x 401 variants is over the 20x pre-check: refused before enumerating anything
+        const refused = planSweep({ zones: [ZONE], roster: many, gameData, selfAuras: auras, selfDto: dto(90) });
+        expect(refused.refused).toMatch(/over the/);
+        expect(refused.tasks).toEqual([]);
+        // 79 x 21 variants = 1,659 real sims: under the pre-check, over the real limit
+        const some = planSweep({
+            zones: [ZONE],
+            roster: many,
+            gameData,
+            selfAuras: auras.slice(0, 20),
+            selfDto: dto(90),
+        });
+        expect(some.total).toBe(79 * 21);
+        expect(some.refused).toMatch(/over the/);
+    });
+
+    test('the party carries your aura in your special slot, a copy, and shows doubled auras', () => {
+        const self = dto(90);
+        self.abilities[0] = { hrid: '/abilities/mystic_aura', level: 5, triggers: [{ dependencyHrid: '/x' }] };
+        const ann = dto(80);
+        ann.abilities[0] = { hrid: '/abilities/fierce_aura', level: 30, triggers: null };
+        const aura = { hrid: '/abilities/fierce_aura', level: 20 };
+        const party = buildCompositionParty(self, [{ dto: ann }], aura);
+        expect(party[0].abilities[0]).toEqual({ hrid: '/abilities/fierce_aura', level: 20, triggers: null });
+        expect(self.abilities[0].hrid).toBe('/abilities/mystic_aura');
+        expect(sharedAuras(party, gameData)).toEqual([{ name: 'Fierce Aura', count: 2 }]);
+        expect(buildCompositionParty(self, [{ dto: ann }])[0].abilities[0].hrid).toBe('/abilities/mystic_aura');
+    });
+
+    test('the row label names your aura only when it differs from as worn', () => {
+        const plan = planSweep({
+            zones: [ZONE],
+            roster: [mate('a', 'Ann')],
+            gameData,
+            selfAuras: owned,
+            selfDto: dto(90),
+        });
+        const labels = plan.tasks.map((t) => partyLabel(t.comp));
+        expect(labels.filter((l) => l.includes('you:'))).toHaveLength(4);
+        expect(labels).toContain('Ann');
+        expect(csvRow({ zone: ZONE, comp: plan.tasks[1].comp, quick: null }, null).party).toBe(
+            'Solo (you: Fierce Aura 20)'
+        );
+    });
+
+    test('with no teammate that can join, your aura solo rows are still planned beside the baseline', () => {
+        const ironCow = { ...mate('a', 'Ann', dto(81)), gameMode: 'ironcow' };
+        for (const [roster, selfMode] of [
+            [[], null],
+            [[ironCow], 'market'],
+        ]) {
+            const plan = planSweep({ zones: [ZONE], roster, gameData, selfMode, selfAuras: owned, selfDto: dto(90) });
+            expect(plan.tasks.map((t) => partyLabel(t.comp))).toEqual([
+                'Solo',
+                'Solo (you: Fierce Aura 20)',
+                'Solo (you: Mystic Aura 5)',
+            ]);
+            expect(plan.selfAuraCount).toBe(2);
+            expect(plan.perZone[0].count).toBe(3);
+        }
+        // Without auras the old behavior stays: nothing to run
+        expect(planSweep({ zones: [ZONE], roster: [], gameData }).tasks).toEqual([]);
+    });
+
+    test('a refused plan still reports how many aura variants it counted', () => {
+        const many = Array.from({ length: 12 }, (_, i) => mate(`t${i}`, `T${i}`, dto(60 + i)));
+        const auras = Array.from({ length: 400 }, (_, i) => ({
+            hrid: i < 200 ? '/abilities/fierce_aura' : '/abilities/mystic_aura',
+            level: (i % 200) + 1,
+        }));
+        const plan = planSweep({ zones: [ZONE], roster: many, gameData, selfAuras: auras, selfDto: dto(90) });
+        expect(plan.refused).toBeTruthy();
+        expect(plan.selfAuraCount).toBe(400);
     });
 });

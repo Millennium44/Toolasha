@@ -26,6 +26,11 @@ vi.mock('../../core/storage.js', () => ({
 const {
     PARTY_ROSTER_KEY,
     MAX_ROSTER_SIZE,
+    MAX_SAVED_BUILDS,
+    saveBuild,
+    renameBuild,
+    removeBuild,
+    uniqueBuildName,
     addTeammates,
     renameTeammate,
     removeTeammate,
@@ -202,7 +207,7 @@ describe('normalizeRoster', () => {
             entries: [good, { ...good }, { id: 'b', name: 'B', dto: {} }, null, { name: 'no id', dto: dto() }],
         });
         expect(roster.entries.map((e) => e.id)).toEqual(['a']);
-        expect(normalizeRoster('junk')).toEqual({ savedAt: 0, entries: [], removed: {} });
+        expect(normalizeRoster('junk')).toEqual({ savedAt: 0, entries: [], builds: [], removed: {} });
     });
 });
 
@@ -412,5 +417,142 @@ describe('teammate game mode', () => {
             ['b', 'ironcow'],
         ]);
         expect(mergeRoster(incoming, local).entries.find((e) => e.id === 'a').gameMode).toBe('standard');
+    });
+});
+
+describe('saved builds', () => {
+    test('save keeps the build without per-party fields, and the mode', async () => {
+        const saved = await saveBuild('Tank', dto(), 'ironcow');
+        expect(saved.ok).toBe(true);
+        expect(saved.name).toBe('Tank');
+        const [build] = saved.roster.builds;
+        expect(build).toMatchObject({ id: saved.id, name: 'Tank', gameMode: 'ironcow' });
+        expect(build.id.startsWith('sb-')).toBe(true);
+        expect(build.dto.hrid).toBeUndefined();
+        expect(build.dto.taskMonsterHrids).toBeUndefined();
+        // A mode the build carries wins over the one given
+        const own = await saveBuild('Mage', dto({ gameMode: 'standard' }), 'ironcow');
+        expect(own.roster.builds[1].gameMode).toBe('standard');
+        // Not a roster teammate
+        expect(own.roster.entries).toEqual([]);
+    });
+
+    test('persistence round trip: what is written is what loadRoster reads back', async () => {
+        await saveBuild('Tank', dto());
+        await saveBuild('Healer', dto({ magicLevel: 120 }));
+        expect(db.value.builds.map((b) => b.name)).toEqual(['Tank', 'Healer']);
+        const loaded = await loadRoster();
+        expect(loaded.builds.map((b) => [b.name, b.dto.magicLevel])).toEqual([
+            ['Tank', 95],
+            ['Healer', 120],
+        ]);
+        expect(normalizeRoster(JSON.parse(JSON.stringify(db.value))).builds).toHaveLength(2);
+    });
+
+    test('a roster written before saved builds existed reads as having none', async () => {
+        db.value = { savedAt: 1, entries: [] };
+        expect((await loadRoster()).builds).toEqual([]);
+        // and a save lands next to the old teammates, leaving them alone
+        db.value = { savedAt: 1, entries: [{ id: 'a', name: 'Ann', dto: dto(), addedAt: 1, updatedAt: 1 }] };
+        const saved = await saveBuild('Tank', dto());
+        expect(saved.roster.entries.map((e) => e.id)).toEqual(['a']);
+        expect(saved.roster.builds).toHaveLength(1);
+    });
+
+    test('names are unique: Tank, Tank (2), Tank (3), whatever the case', async () => {
+        const names = [];
+        for (const n of ['Tank', 'Tank', 'tank', ' Tank  ']) names.push((await saveBuild(n, dto())).name);
+        expect(names).toEqual(['Tank', 'Tank (2)', 'tank (3)', 'Tank (4)']);
+        expect(uniqueBuildName('x'.repeat(60), [{ id: 'z', name: 'x'.repeat(40) }])).toHaveLength(40);
+        expect(uniqueBuildName('x'.repeat(60), [{ id: 'z', name: 'x'.repeat(40) }])).toMatch(/ \(2\)$/);
+        expect(uniqueBuildName('   ', [])).toBe('');
+    });
+
+    test('a blank name is saved as "Build"; a build the engine cannot run is refused', async () => {
+        expect((await saveBuild('  ', dto())).name).toBe('Build');
+        const bad = await saveBuild('Bad', { ...dto(), equipment: null });
+        expect(bad.ok).toBe(false);
+        expect(bad.reason).toMatch(/equipment/);
+        expect(db.value.builds).toHaveLength(1);
+    });
+
+    test('the list is capped', async () => {
+        db.value = {
+            savedAt: 1,
+            entries: [],
+            builds: Array.from({ length: MAX_SAVED_BUILDS }, (_, i) => ({
+                id: `sb-${i}`,
+                name: `B${i}`,
+                dto: dto(),
+                addedAt: 1,
+                updatedAt: 1,
+            })),
+        };
+        const full = await saveBuild('One more', dto());
+        expect(full.ok).toBe(false);
+        expect(full.reason).toMatch(/at most 40/);
+        expect(db.value.builds).toHaveLength(MAX_SAVED_BUILDS);
+    });
+
+    test('rename keeps the name unique; renaming to your own name changes nothing', async () => {
+        const a = await saveBuild('Tank', dto());
+        const b = await saveBuild('Healer', dto());
+        const clash = await renameBuild(b.id, 'tank');
+        expect(clash.name).toBe('tank (2)');
+        const same = await renameBuild(a.id, 'TANK');
+        expect(same.name).toBe('TANK');
+        const noop = await renameBuild(a.id, '   ');
+        expect(noop.found).toBe(true);
+        expect(noop.roster.builds.find((x) => x.id === a.id).name).toBe('TANK');
+        expect((await renameBuild('sb-gone', 'X')).found).toBe(false);
+    });
+
+    test('delete leaves a tombstone that beats a stale copy', async () => {
+        const a = await saveBuild('Tank', dto());
+        const stale = JSON.parse(JSON.stringify(db.value));
+        const removed = await removeBuild(a.id);
+        expect(removed.found).toBe(true);
+        expect(removed.roster.builds).toEqual([]);
+        expect(db.value.removed[a.id]).toBeGreaterThan(stale.builds[0].updatedAt);
+        expect(mergeRoster(db.value, stale).builds).toEqual([]);
+        expect(mergeRoster(stale, db.value).builds).toEqual([]);
+        expect((await removeBuild(a.id)).found).toBe(false);
+    });
+
+    test('a sync merge keeps both devices builds and the later rename of one', () => {
+        const build = (id, name, updatedAt) => ({ id, name, dto: dto(), addedAt: 1, updatedAt });
+        const local = { savedAt: 1, entries: [], builds: [build('sb-a', 'Tank', 5)] };
+        const incoming = { savedAt: 2, entries: [], builds: [build('sb-a', 'Tank!', 9), build('sb-b', 'Healer', 3)] };
+        const merged = mergeRoster(local, incoming);
+        expect(merged.builds.map((b) => [b.id, b.name])).toEqual([
+            ['sb-a', 'Tank!'],
+            ['sb-b', 'Healer'],
+        ]);
+    });
+
+    test('adding a saved build as a teammate goes through the roster add path', async () => {
+        const saved = await saveBuild('Tank', dto({ gameMode: 'standard' }));
+        const build = saved.roster.builds[0];
+        const added = await addTeammates([
+            { name: build.name, dto: build.dto, source: 'saved build', gameMode: build.gameMode },
+        ]);
+        expect(added.roster.entries).toHaveLength(1);
+        expect(added.roster.entries[0]).toMatchObject({
+            name: 'Tank',
+            source: 'saved build',
+            gameMode: 'standard',
+            auras: [],
+            includeAsBuilt: true,
+        });
+        // The saved build stays, and can be added again
+        expect(added.roster.builds).toHaveLength(1);
+    });
+
+    test('a failed write saves nothing and says so', async () => {
+        db.failNext = true;
+        const failed = await saveBuild('Tank', dto());
+        expect(failed.ok).toBe(false);
+        expect(failed.id).toBeNull();
+        expect(db.value).toBeUndefined();
     });
 });

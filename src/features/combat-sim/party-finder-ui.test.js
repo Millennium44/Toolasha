@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
     gameData: null,
     imported: null,
     revenueTaxRates: [],
+    owned: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -31,7 +32,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => state.charId,
         getCurrentCharacterGameMode: () => state.gameMode,
         get characterData() {
-            return { character: { name: 'Milkman' } };
+            return { character: { name: 'Milkman' }, characterAbilities: state.owned };
         },
     },
 }));
@@ -235,6 +236,7 @@ beforeEach(() => {
     state.selfDTO = build(90);
     state.imported = null;
     state.revenueTaxRates = [];
+    state.owned = [];
     state.gameData = {
         itemDetailMap: {
             '/items/rippling_trident': {},
@@ -1018,5 +1020,353 @@ describe('teammates of the other game mode', () => {
         state.gameMode = 'standard';
         tab._renderRoster();
         expect(planText()).toContain("No teammates of this character's mode");
+    });
+});
+
+describe('also try my auras', () => {
+    const auraDetail = (name) => ({
+        name,
+        isSpecialAbility: true,
+        abilityEffects: [{ effectType: '/ability_effect_types/buff', targetType: 'allAllies', buffs: [{}] }],
+    });
+    beforeEach(() => {
+        state.gameData.abilityDetailMap['/abilities/fierce_aura'] = auraDetail('Fierce Aura');
+        state.gameData.abilityDetailMap['/abilities/mystic_aura'] = auraDetail('Mystic Aura');
+        state.gameData.levelExperienceTable = Array.from({ length: 201 }, (_, i) => i);
+        // Learned abilities: two auras and an ordinary ability, which is never offered
+        state.owned = [
+            { abilityHrid: '/abilities/fierce_aura', level: 20 },
+            { abilityHrid: '/abilities/mystic_aura', level: 7 },
+            { abilityHrid: '/abilities/water_strike', level: 40 },
+        ];
+    });
+
+    const tick = async () => {
+        el('self-auras').checked = true;
+        el('self-auras').dispatchEvent(new Event('change'));
+        await flush();
+    };
+
+    test('off by default: the plan is the plain one', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        expect(el('self-auras').checked).toBe(false);
+        expect(el('plan').textContent).toMatch(/^2 quick sims/);
+        expect(el('plan').textContent).not.toMatch(/aura variant/);
+    });
+
+    test('on: you are tried with each aura you own, alone and with Ann; the baseline is you as worn', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        await tick();
+        expect(el('self-aura-info').textContent).toBe('2 auras you own');
+        // Solo + Ann, each as worn and with 2 auras
+        expect(el('plan').textContent).toMatch(/^6 quick sims/);
+        expect(el('plan').textContent).toMatch(/2 aura variants of you/);
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        const zones = state.calls[0].params.zones;
+        expect(zones).toHaveLength(6);
+        expect(zones.map((z) => z.playerDTOs[0].abilities[0]?.hrid ?? null)).toEqual([
+            null,
+            '/abilities/fierce_aura',
+            '/abilities/mystic_aura',
+            null,
+            '/abilities/fierce_aura',
+            '/abilities/mystic_aura',
+        ]);
+        expect(zones[1].playerDTOs).toHaveLength(1);
+        expect(zones[5].playerDTOs[0].abilities[0]).toMatchObject({ hrid: '/abilities/mystic_aura', level: 7 });
+        // Ann is never touched by your aura
+        expect(zones[5].playerDTOs[1].abilities[0]).toBeNull();
+        await finishPass((_z, index) => sim(1000 + index * 100, 100));
+        const rows = tab.sortedRows();
+        // Row ids carry your aura, so no two rows share one
+        expect(new Set(rows.map((r) => r.id)).size).toBe(6);
+        expect(rows.filter((r) => r.isBaseline)).toHaveLength(1);
+        const text = rows.map((r) => rowText(r.id));
+        expect(text.some((t) => /Solo \(you: Fierce Aura 20\)/.test(t))).toBe(true);
+        expect(text.some((t) => /Ann \(you: Mystic Aura 7\)/.test(t))).toBe(true);
+        // A solo row with an aura is compared with the as-worn baseline
+        const soloAura = rows.find((r) => r.comp.selfAura && !r.comp.members.length);
+        expect(rowText(soloAura.id)).toMatch(/%/);
+        // Load puts your aura in the editor's copy of you
+        tab.root.querySelector(`[data-pf-load="${soloAura.id}"]`).click();
+        expect(host._editor.loadParty.mock.calls[0][0][0].abilities[0].hrid).toBe(soloAura.comp.selfAura.hrid);
+    });
+
+    test('with no teammates at all, your own auras still run alone; with the switch off it asks for teammates', async () => {
+        seedRoster([]);
+        await mountTab();
+        expect(el('plan').textContent).toMatch(/Add teammates to the roster first/);
+        await tick();
+        // As worn plus 2 aura solos
+        expect(el('plan').textContent).toMatch(/^3 quick sims/);
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        expect(lastStatus()).not.toBe('Add teammates to the roster first.');
+        expect(state.calls[0].params.zones).toHaveLength(3);
+    });
+
+    test('the confirm count includes your auras', async () => {
+        seedRoster(Array.from({ length: 6 }, (_, i) => [`m${i}`, `M${i}`, build(60 + i)]));
+        await mountTab();
+        await tick();
+        tab.start();
+        await flush();
+        // 6 teammates, cap 3 -> 1 + 6 + 15 = 22 compositions, each of 3 variants of you
+        expect(el('confirm').textContent).toMatch(/66 quick/);
+    });
+
+    test('a player loaded in the editor, not the live character: pick the auras by hand', async () => {
+        state.owned = [];
+        host._editor.players = [
+            { hrid: 'player1', name: 'Milkman', dto: build(90), self: true },
+            { hrid: 'player2', name: 'Venaam', dto: build(110) },
+        ];
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        el('self').value = 'editor:player2';
+        el('self').dispatchEvent(new Event('change'));
+        await tick();
+        expect(el('self-aura-info').textContent).toMatch(/unknown/);
+        expect(el('self-aura-edit').textContent).toBe('You — Auras');
+        expect(el('plan').textContent).toMatch(/no aura of yours to try/);
+
+        el('self-aura-edit').click();
+        const select = tab.root.querySelector('[data-pf-aura-pick="self"]');
+        select.value = '/abilities/fierce_aura';
+        tab.root.querySelector('[data-pf-aura-level="self"]').value = '25';
+        tab.root.querySelector('[data-pf-aura-add="self"]').click();
+        await flush();
+        expect(el('self-aura-edit').textContent).toBe('You — Auras (1) Close');
+        expect(el('plan').textContent).toMatch(/^4 quick sims/);
+        expect(tab.root.querySelector('[data-pf-as-built="self"]')).toBeNull();
+
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        const zones = state.calls[0].params.zones;
+        expect(zones[1].playerDTOs[0].abilities[0]).toMatchObject({ hrid: '/abilities/fierce_aura', level: 25 });
+        // Venaam's own build is the as-worn row
+        expect(zones[0].playerDTOs[0].magicLevel).toBe(110);
+        // Picks belong to that player; switching to the live character brings the owned list back
+        el('self').value = 'live';
+        el('self').dispatchEvent(new Event('change'));
+        await flush();
+        expect(el('self-aura-info').textContent).toBe('no auras learned yet');
+    });
+
+    test('an aura you already wear at that level is not tried twice', async () => {
+        state.selfDTO.abilities[0] = { hrid: '/abilities/fierce_aura', level: 20, triggers: null };
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        await tick();
+        // Mystic only: Solo + Ann, as worn and with Mystic
+        expect(el('plan').textContent).toMatch(/^4 quick sims/);
+    });
+});
+
+describe('saved builds', () => {
+    const buildRows = () => [...tab.root.querySelectorAll('[data-pf-build]')];
+    const buildNames = () => buildRows().map((r) => r.querySelector('[data-pf-build-name]').textContent);
+    const rowButton = (id, label) =>
+        [...tab.root.querySelectorAll(`[data-pf-build="${id}"] button`)].find((b) => b.textContent === label);
+
+    const saveAs = async (source, name) => {
+        el('save-build-open').click();
+        el('build-source').value = source;
+        el('build-source').dispatchEvent(new Event('change'));
+        if (name != null) {
+            el('build-name').value = name;
+            el('build-name').dispatchEvent(new Event('input'));
+        }
+        el('save-build').click();
+        await flush();
+    };
+
+    test('save my current build; the name defaults to the character, and the form closes', async () => {
+        await mountTab();
+        expect(buildNames()).toEqual([]);
+        el('save-build-open').click();
+        expect(el('save-build-form').style.display).toBe('flex');
+        expect(el('build-name').value).toBe('Milkman');
+        el('save-build').click();
+        await flush();
+        expect(state.db.builds.map((b) => b.name)).toEqual(['Milkman']);
+        expect(state.db.builds[0].dto.magicLevel).toBe(90);
+        expect(buildNames()).toEqual(['Milkman']);
+        expect(el('build-count').textContent).toBe('(1/40)');
+        expect(el('save-build-form').style.display).toBe('none');
+        expect(el('build-note').textContent).toBe('Saved "Milkman".');
+        // A teammate is not made by saving
+        expect(state.db.entries).toEqual([]);
+    });
+
+    test('save any editor player, with the mode their build carries', async () => {
+        host._editor.players = [
+            { hrid: 'player1', name: 'Milkman', dto: build(90), self: true },
+            { hrid: 'player2', name: 'Venaam', dto: { ...build(110), gameMode: 'ironcow' } },
+        ];
+        await mountTab();
+        await saveAs('editor:player2', null);
+        expect(state.db.builds).toHaveLength(1);
+        expect(state.db.builds[0]).toMatchObject({ name: 'Venaam', gameMode: 'ironcow' });
+        expect(state.db.builds[0].dto.magicLevel).toBe(110);
+    });
+
+    test('duplicate names get (2), (3) and the note says the name was taken', async () => {
+        await mountTab();
+        await saveAs('live', 'Tank');
+        await saveAs('live', 'Tank');
+        expect(el('build-note').textContent).toBe('Saved as "Tank (2)" (that name was taken).');
+        await saveAs('live', 'Tank');
+        expect(buildNames()).toEqual(['Tank', 'Tank (2)', 'Tank (3)']);
+    });
+
+    test('a failed write says so and saves nothing', async () => {
+        await mountTab();
+        state.failWrite = true;
+        await saveAs('live', 'Tank');
+        expect(el('build-note').textContent).toMatch(/could not be written/);
+        expect(buildNames()).toEqual([]);
+        expect(state.db).toBeUndefined();
+    });
+
+    test('add as teammate creates a roster teammate from the build, who can be tried, auras and all', async () => {
+        await mountTab();
+        await saveAs('live', 'Tank');
+        const id = state.db.builds[0].id;
+        rowButton(id, 'Add as teammate').click();
+        await flush();
+        expect(state.db.entries).toHaveLength(1);
+        expect(state.db.entries[0]).toMatchObject({ name: 'Tank', source: 'saved build', includeAsBuilt: true });
+        expect(tab.root.querySelectorAll('[data-pf-member]')).toHaveLength(1);
+        // Try/Always/Never and Auras are there, and the build stays saved
+        const member = tab.root.querySelector('[data-pf-member]');
+        expect(member.querySelector('[data-pf-choice]')).not.toBeNull();
+        expect([...member.querySelectorAll('button')].some((b) => b.textContent.startsWith('Auras'))).toBe(true);
+        expect(buildNames()).toEqual(['Tank']);
+        // Again: a second teammate from the same build
+        rowButton(id, 'Add as teammate').click();
+        await flush();
+        expect(state.db.entries).toHaveLength(2);
+    });
+
+    test('rename keeps names unique; delete takes two clicks and survives a re-read', async () => {
+        await mountTab();
+        await saveAs('live', 'Tank');
+        await saveAs('live', 'Healer');
+        const [tank, healer] = state.db.builds.map((b) => b.id);
+        rowButton(healer, 'Rename').click();
+        const input = tab.root.querySelector(`[data-pf-build="${healer}"] input`);
+        input.value = 'Tank';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+        await flush();
+        expect(buildNames()).toEqual(['Tank', 'Tank (2)']);
+
+        rowButton(tank, '×').click();
+        expect(buildNames()).toHaveLength(2);
+        rowButton(tank, 'Delete?').click();
+        await flush();
+        expect(buildNames()).toEqual(['Tank (2)']);
+        expect(state.db.builds.map((b) => b.id)).toEqual([healer]);
+        expect(state.db.removed[tank]).toBeGreaterThan(0);
+
+        // The list persists: a fresh tab reads it back
+        tab.detach();
+        await mountTab();
+        expect(buildNames()).toEqual(['Tank (2)']);
+    });
+
+    test('a pull that writes the roster brings in builds saved elsewhere', async () => {
+        await mountTab();
+        state.db = {
+            savedAt: 5,
+            entries: [],
+            builds: [{ id: 'sb-x', name: 'From phone', dto: build(70), addedAt: 1, updatedAt: 1 }],
+        };
+        announceSyncPullApplied({ settings: ['combatSimPartyRoster'] });
+        await flush();
+        expect(buildNames()).toEqual(['From phone']);
+    });
+
+    test('by-hand picks belong to the build: another build in the same editor slot starts with none', async () => {
+        for (const [hrid, name] of [
+            ['/abilities/fierce_aura', 'Fierce Aura'],
+            ['/abilities/mystic_aura', 'Mystic Aura'],
+        ]) {
+            state.gameData.abilityDetailMap[hrid] = {
+                name,
+                isSpecialAbility: true,
+                abilityEffects: [{ effectType: '/ability_effect_types/buff', targetType: 'allAllies', buffs: [{}] }],
+            };
+        }
+        state.gameData.levelExperienceTable = Array.from({ length: 201 }, (_, i) => i);
+        state.owned = [];
+        host._editor.players = [
+            { hrid: 'player1', name: 'Milkman', dto: build(90), self: true },
+            { hrid: 'player2', name: 'Venaam', dto: build(110) },
+        ];
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        el('self').value = 'editor:player2';
+        el('self').dispatchEvent(new Event('change'));
+        el('self-auras').checked = true;
+        el('self-auras').dispatchEvent(new Event('change'));
+        await flush();
+        el('self-aura-edit').click();
+        tab.root.querySelector('[data-pf-aura-pick="self"]').value = '/abilities/fierce_aura';
+        tab.root.querySelector('[data-pf-aura-add="self"]').click();
+        await flush();
+        expect(el('self-aura-edit').textContent).toBe('You — Auras (1) Close');
+        // Someone else is loaded into the same slot
+        host._editor.players[1].dto = build(130);
+        tab._renderSelfAuras();
+        expect(el('self-aura-edit').textContent).toMatch(/^You — Auras$/);
+        tab._renderPlan();
+        expect(el('plan').textContent).not.toMatch(/Trying 1 aura/);
+        // The first build back: its pick returns
+        host._editor.players[1].dto = build(110);
+        tab._renderSelfAuras();
+        expect(el('self-aura-edit').textContent).toMatch(/\(1\)/);
+    });
+
+    test('with no usable teammates the aura solo rows run, and a refused plan says refused', async () => {
+        for (const [hrid, name] of [
+            ['/abilities/fierce_aura', 'Fierce Aura'],
+            ['/abilities/mystic_aura', 'Mystic Aura'],
+        ]) {
+            state.gameData.abilityDetailMap[hrid] = {
+                name,
+                isSpecialAbility: true,
+                abilityEffects: [{ effectType: '/ability_effect_types/buff', targetType: 'allAllies', buffs: [{}] }],
+            };
+        }
+        state.gameData.levelExperienceTable = Array.from({ length: 201 }, (_, i) => i);
+        state.owned = [
+            { abilityHrid: '/abilities/fierce_aura', level: 20 },
+            { abilityHrid: '/abilities/mystic_aura', level: 7 },
+        ];
+        seedRoster([['a', 'Ann', build(80), 'ironcow']]);
+        state.gameMode = 'standard';
+        await mountTab();
+        el('self-auras').checked = true;
+        el('self-auras').dispatchEvent(new Event('change'));
+        await flush();
+        expect(el('plan').textContent).toMatch(/^3 quick sims/);
+        expect(el('plan').textContent).toMatch(/2 aura variants/);
+
+        seedRoster(Array.from({ length: 12 }, (_, i) => [`m${i}`, `M${i}`, build(60 + i)]));
+        state.owned = Array.from({ length: 200 }, (_, i) => ({ abilityHrid: '/abilities/fierce_aura', level: i + 1 }));
+        state.owned.push(
+            ...Array.from({ length: 200 }, (_, i) => ({ abilityHrid: '/abilities/mystic_aura', level: i + 1 }))
+        );
+        await tab._reloadRoster();
+        const text = el('plan').textContent;
+        expect(text).toMatch(/over the/);
+        expect(text).not.toMatch(/no aura of yours/);
     });
 });
