@@ -199,6 +199,75 @@ describe('_pickZoneForMonster', () => {
         expect(taskProfitDisplay._pickZoneForMonster('/monsters/fly')).toBe('/actions/combat/fly');
     });
 
+    test('Eyes picks Planet Of The Eyes over its own single-monster action', () => {
+        dataManager.initClientData = buildGameData([
+            {
+                hrid: '/actions/combat/eyes',
+                name: 'Eyes',
+                category: '/categories/a',
+                sortIndex: 1,
+                monsters: ['/monsters/eyes'],
+            },
+            {
+                hrid: '/actions/combat/planet_of_the_eyes',
+                name: 'Planet Of The Eyes',
+                category: '/categories/b',
+                sortIndex: 5,
+                monsters: ['/monsters/eye', '/monsters/eyes', '/monsters/veyes'],
+            },
+        ]);
+        expect(taskProfitDisplay._pickZoneForMonster('/monsters/eyes')).toBe('/actions/combat/planet_of_the_eyes');
+    });
+
+    test('Panda picks bear_with_it over its own single-monster action', () => {
+        dataManager.initClientData = buildGameData([
+            {
+                hrid: '/actions/combat/panda',
+                name: 'Panda',
+                category: '/categories/a',
+                sortIndex: 1,
+                monsters: ['/monsters/panda'],
+            },
+            {
+                hrid: '/actions/combat/bear_with_it',
+                name: 'Bear With It',
+                category: '/categories/b',
+                sortIndex: 5,
+                monsters: ['/monsters/panda', '/monsters/black_bear', '/monsters/grizzly_bear'],
+            },
+        ]);
+        expect(taskProfitDisplay._pickZoneForMonster('/monsters/panda')).toBe('/actions/combat/bear_with_it');
+    });
+
+    test('shared-task scoring still beats spawn count', () => {
+        dataManager.initClientData = buildGameData([
+            {
+                hrid: '/actions/combat/big',
+                name: 'Big',
+                category: '/categories/a',
+                sortIndex: 1,
+                monsters: ['/monsters/panda', '/monsters/x', '/monsters/y', '/monsters/z'],
+            },
+            {
+                hrid: '/actions/combat/small',
+                name: 'Small',
+                category: '/categories/b',
+                sortIndex: 9,
+                monsters: ['/monsters/panda', '/monsters/fly'],
+            },
+        ]);
+        dataManager.initClientData.combatMonsterDetailMap = {
+            '/monsters/panda': { name: 'Panda' },
+            '/monsters/fly': { name: 'Fly' },
+        };
+        const list = document.createElement('div');
+        list.className = 'TasksPanel_taskList__1a';
+        list.appendChild(buildTaskCard('Defeat - Panda', 0, 100));
+        list.appendChild(buildTaskCard('Defeat - Fly', 0, 50));
+        document.body.appendChild(list);
+        expect(taskProfitDisplay._pickZoneForMonster('/monsters/panda')).toBe('/actions/combat/small');
+    });
+
     test('no candidate zone returns null', () => {
         dataManager.initClientData = buildGameData([
             {

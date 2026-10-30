@@ -46,7 +46,8 @@ import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js'
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { buildItemHash, parseItemHash } from '../../utils/item-hash.js';
-import { readAlchemyPanelSelection, getAlchemyTabElements, ALCHEMY_TAB_TYPES } from '../alchemy/alchemy-profit.js';
+import { readAlchemyPanelSelection } from '../alchemy/alchemy-profit.js';
+import { openAlchemyOnItem, selectAlchemyTab as selectAlchemyTabAt } from '../../utils/alchemy-navigation.js';
 import { getCatalystWhatIfResult, onCatalystWhatIfChange } from '../alchemy/alchemy-catalyst-whatif.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { clickThroughReact } from '../../utils/react-click.js';
@@ -1910,64 +1911,25 @@ async function handleReturnToAction() {
 }
 
 /**
- * Select the stored alchemy tab (Coinify, Decompose, Transmute...) by its position, not its translated label, once the panel's tab strip
- * has mounted. A tab click is navigation, so a plain click is enough. Fails soft: if the tab
- * never appears the player is left on whatever tab the game shows.
+ * Select the stored alchemy tab by position once the panel's strip has mounted
+ * (see `selectAlchemyTab` in utils/alchemy-navigation.js).
  *
  * @param {string} actionType - The stored tab, e.g. 'transmute'
  * @returns {Promise<void>}
  */
-export async function selectAlchemyTab(actionType) {
-    const index = ALCHEMY_TAB_TYPES.indexOf(String(actionType).toLowerCase());
-    if (index < 0) return;
-    for (let i = 0; i < 20; i++) {
-        const tab = getAlchemyTabElements()[index];
-        if (tab) {
-            if (tab.getAttribute('aria-selected') !== 'true') tab.click();
-            return;
-        }
-        await new Promise((resolve) => {
-            timerRegistry.scheduleTimeout(resolve, 100);
-        });
-    }
+export function selectAlchemyTab(actionType) {
+    return selectAlchemyTabAt(actionType, timerRegistry.scheduleTimeout);
 }
 
 /**
- * Open the Alchemy panel on the item the bill was for.
- *
- * The game's own `handleAlchemizeItem` takes a stack hash and opens Alchemy with
- * that stack selected, which is the call its inventory menu makes; the hash is
- * the +0 stack now in the bag (the trip was to buy it). With no stack, or no
- * such handler, the panel is opened on the action alone.
+ * Open the Alchemy panel on the item the bill was for (see `openAlchemyOnItem`).
  *
  * @param {Object} game - Game component instance
  * @param {{itemHrid: string, actionType: string|null}} ctx - Stored alchemy context
  * @returns {boolean} Whether a navigation was made
  */
 function openAlchemyPanel(game, ctx) {
-    const inventory = dataManager.getInventory?.() || [];
-    const stack = inventory.find(
-        (item) =>
-            item &&
-            item.itemHrid === ctx.itemHrid &&
-            (item.itemLocationHrid || ENHANCE_INVENTORY_LOCATION) === ENHANCE_INVENTORY_LOCATION &&
-            !(Number(item.enhancementLevel) > 0) &&
-            (item.count == null || item.count > 0)
-    );
-    const hash = stack
-        ? stack.hash ||
-          buildItemHash(dataManager.getCurrentCharacterId?.(), ENHANCE_INVENTORY_LOCATION, ctx.itemHrid, 0)
-        : null;
-
-    if (hash && typeof game.handleAlchemizeItem === 'function') {
-        game.handleAlchemizeItem(hash);
-        return true;
-    }
-    if (ctx.actionType && typeof game.handleGoToAction === 'function') {
-        game.handleGoToAction(`/actions/alchemy/${ctx.actionType}`);
-        return true;
-    }
-    return false;
+    return openAlchemyOnItem(game, ctx);
 }
 
 /**
@@ -2344,8 +2306,22 @@ export async function openMissingMaterials(actionHrid, numActions = 1, { upgrade
     await handleMissingMaterialsClick(actionHrid, numActions, upgradeItemLevel);
 }
 
+/**
+ * Open the marketplace on one Alchemy action's bill for an item, exactly as the Alchemy panel's
+ * button does for the panel's selection. Navigation only: nothing is bought.
+ *
+ * @param {string} itemHrid - The item being alchemized
+ * @param {string|null} actionType - The Alchemy tab (coinify, decompose, transmute)
+ * @param {number} [numActions] - How many actions to size the bill for
+ * @returns {Promise<void>}
+ */
+export async function openAlchemyMissingMaterials(itemHrid, actionType, numActions = 1) {
+    await handleAlchemyMissingMaterialsClick({ itemHrid, actionType, numActions, catalyst: null });
+}
+
 export default {
     initialize,
+    openAlchemyMissingMaterials,
     cleanup,
     openMissingMaterials,
     openMaterialsList,
