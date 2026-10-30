@@ -38,6 +38,13 @@ import { isOfficialValueSource } from '../../utils/guild-credit-networth-side.js
 const RENDER_TIME_BUDGET_MS = 8;
 
 /**
+ * How long a pass's prices are trusted for tiles it priced, when nothing it was priced from has
+ * moved since (see `_pricingFingerprint`). A backstop for any input the fingerprint does not see:
+ * past it, the next pass prices every tile again, as every pass used to.
+ */
+const PRICED_TILE_REUSE_MS = 30_000;
+
+/**
  * A promise together with the functions that settle it — for handing a pending result to a
  * caller from code that cannot itself `await` the work that will eventually produce it. Used by
  * `renderAllBadges()` to share one outcome across every caller that coalesces into the same
@@ -97,6 +104,18 @@ class InventoryBadgeManager {
         this.inventoryLookupCacheTime = 0; // Timestamp when cache was built
         this.INVENTORY_CACHE_TTL = 500; // 500ms cache lifetime
         this.nameToHridMap = null; // Reverse lookup: item name -> HRID (built once, lazy)
+        // Tiles the last passes priced, with what each tile showed then (see `_tileSignature`). A pass
+        // whose inputs match the last completed one's skips a tile that still shows the same thing:
+        // an items_updated is followed by a custom-tabs layout pass, the sort, the badge prices and
+        // the category totals each asking for a pass, and an item popper asks twice (open and close).
+        this._pricedTiles = new WeakMap();
+        /** {fingerprint, at} of the last completed pricing pass, or null */
+        this._lastPricing = null;
+        // Bumped by the events that move a tile's price without the market's priceVersion moving
+        this._itemsVersion = 0; // items_updated (the lookup cache below is keyed on it as well)
+        this._repriceEpoch = 0; // a forced reprice: value source, game value map, pricing settings
+        this._settingsEpoch = 0; // any setting at all
+        this._watchingSettings = false;
     }
 
     /**
@@ -130,6 +149,16 @@ class InventoryBadgeManager {
         // Watch for MuiTooltip-popperInteractive closing (item click popup) and re-render badges.
         // When an inventory item is clicked, the game shows an interactive popper.
         // When that popper closes, React may have re-rendered the item container, wiping badges.
+        // One pending render serves an open and a close that land together. The render re-badges the
+        // tiles React rebuilt; their prices are reused when nothing they are priced from has moved.
+        let popperTimer = null;
+        const schedulePopperRender = () => {
+            if (popperTimer !== null) return;
+            popperTimer = setTimeout(() => {
+                popperTimer = null;
+                this.renderAllBadges();
+            }, 50);
+        };
         const unwatchPopper = createMutationWatcher(
             document.body,
             (mutations) => {
@@ -137,14 +166,14 @@ class InventoryBadgeManager {
                     for (const node of mutation.addedNodes) {
                         if (node.nodeType !== Node.ELEMENT_NODE) continue;
                         if (node.classList?.contains('MuiTooltip-popperInteractive')) {
-                            setTimeout(() => this.renderAllBadges(), 50);
+                            schedulePopperRender();
                             return;
                         }
                     }
                     for (const node of mutation.removedNodes) {
                         if (node.nodeType !== Node.ELEMENT_NODE) continue;
                         if (node.classList?.contains('MuiTooltip-popperInteractive')) {
-                            setTimeout(() => this.renderAllBadges(), 50);
+                            schedulePopperRender();
                             return;
                         }
                     }
@@ -153,12 +182,35 @@ class InventoryBadgeManager {
             { childList: true }
         );
         this.unregisterHandlers.push(unwatchPopper);
+        this.unregisterHandlers.push(() => {
+            clearTimeout(popperTimer);
+            popperTimer = null;
+        });
+
+        // What a tile's price is read from besides the market and the tile itself (see
+        // _pricingFingerprint): the inventory, and every setting
+        const onItemsUpdated = () => {
+            this._itemsVersion += 1;
+        };
+        dataManager.on('items_updated', onItemsUpdated);
+        this.unregisterHandlers.push(() => dataManager.off('items_updated', onItemsUpdated));
+        if (typeof config.onAnySettingChange === 'function') {
+            const offSettings = config.onAnySettingChange(() => {
+                this._settingsEpoch += 1;
+            });
+            this._watchingSettings = true;
+            this.unregisterHandlers.push(() => {
+                offSettings?.();
+                this._watchingSettings = false;
+            });
+        }
 
         // The value source decides how +13 and above equipment is priced, and the game's value map
         // (hourly, on its own message) feeds it in official-value mode and fills empty or stale books in
         // order-book mode. Either change must reprice every tile rather than wait for the next inventory
         // event. market-values.js swaps its cache on that message at import, so it has run by now.
         const reprice = async (why) => {
+            this._repriceEpoch += 1;
             this.invalidateCache();
             this.lastCalculationTime = 0;
             this.lastRenderTime = 0;
@@ -417,7 +469,13 @@ class InventoryBadgeManager {
             let inventoryLookup = null;
 
             const cacheAge = now - this.inventoryLookupCacheTime;
-            if (this.inventoryLookupCache && cacheAge < this.INVENTORY_CACHE_TTL) {
+            // Never across an items_updated: a layout pass reacting to one can run before anything
+            // has called invalidateCache(), and would match tiles against the old counts
+            if (
+                this.inventoryLookupCache &&
+                cacheAge < this.INVENTORY_CACHE_TTL &&
+                this.inventoryLookupCache.itemsVersion === this._itemsVersion
+            ) {
                 // Use cached data
                 inventory = this.inventoryLookupCache.inventory;
                 inventoryLookup = this.inventoryLookupCache.lookup;
@@ -433,7 +491,11 @@ class InventoryBadgeManager {
                         }
                     }
                     // Store in cache
-                    this.inventoryLookupCache = { inventory, lookup: inventoryLookup };
+                    this.inventoryLookupCache = {
+                        inventory,
+                        lookup: inventoryLookup,
+                        itemsVersion: this._itemsVersion,
+                    };
                     this.inventoryLookupCacheTime = now;
                 }
             }
@@ -443,15 +505,76 @@ class InventoryBadgeManager {
             // tiles of one +N piece) is priced once.
             const pass = this.createPricingPass(inventory);
 
+            // Read before any pricing, so an input that moves mid-pass leaves this pass's tiles
+            // unmatched by the next one
+            const fingerprint = this._pricingFingerprint();
+            const previous = this._lastPricing;
+            pass.reuseTiles =
+                fingerprint !== null &&
+                previous?.fingerprint === fingerprint &&
+                now - previous.at < PRICED_TILE_REUSE_MS;
+            this._lastPricing = null;
+
             // Process each category
             for (const categoryDiv of inventoryElem.children) {
                 const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
                 await this.calculateItemPrices(itemElems, inventory, inventoryLookup, pass);
             }
+            // A pass that threw never gets here, so the next one prices everything
+            // A reused tile is as old as the pass that priced it, so the backstop runs from there
+            if (fingerprint !== null) this._lastPricing = { fingerprint, at: pass.reuseTiles ? previous.at : now };
         } finally {
             // Clear guard even on error so later calculations are not blocked forever
             this.isCalculating = false;
         }
+    }
+
+    /**
+     * Everything a tile's price is read from besides the tile itself, or null when some part of
+     * it cannot be watched (then nothing is reused). The market's price version covers every
+     * order-book patch, snapshot and custom price edit; the settings epoch every pricing setting;
+     * the reprice epoch the game's value map and the value source; the items version the
+     * inventory; and the expected-value generation the container values.
+     * @returns {string|null}
+     * @private
+     */
+    _pricingFingerprint() {
+        if (!this._watchingSettings || !Number.isFinite(marketAPI.priceVersion)) return null;
+        let context = '';
+        try {
+            context = typeof networthCache.contextKey === 'function' ? networthCache.contextKey() : 'none';
+        } catch {
+            return null;
+        }
+        return [
+            marketAPI.priceVersion,
+            marketAPI.liveSourced === true,
+            this._itemsVersion,
+            this._repriceEpoch,
+            this._settingsEpoch,
+            expectedValueCalculator.generation,
+            expectedValueCalculator.isInitialized === true,
+            dataManager.getCurrentCharacterId?.() ?? '',
+            dataManager.getBuffStateVersion?.() ?? '',
+            // The character and enhancing bench the +N costs are priced on
+            context,
+        ].join('|');
+    }
+
+    /**
+     * What a tile shows that its price is read from: the sprite, the label, the count and the
+     * enhancement level.
+     * @param {HTMLElement} itemElem - Item tile
+     * @returns {string}
+     * @private
+     */
+    _tileSignature(itemElem) {
+        const use = itemElem.querySelector('use');
+        const href = use ? use.getAttribute('href') || use.getAttribute('xlink:href') || '' : '';
+        const label = itemElem.querySelector('svg')?.getAttribute('aria-label') || '';
+        const count = itemElem.querySelector('[class*="Item_count"]')?.textContent || '';
+        const level = itemElem.querySelector('[class*="Item_enhancementLevel"]')?.textContent || '';
+        return `${href}|${label}|${count}|${level}`;
     }
 
     /**
@@ -607,6 +730,18 @@ class InventoryBadgeManager {
         for (const itemElem of itemElems) {
             // The previous tile's mark, written now that its branch has been decided
             flushExpect();
+            current = null;
+            // A tile the last pass priced, still showing what it showed then, priced from the same
+            // inputs: its values and mark stand as they are
+            const tileSignature = this._tileSignature(itemElem);
+            if (
+                pricing.reuseTiles === true &&
+                itemElem.dataset.askValue !== undefined &&
+                this._pricedTiles.get(itemElem) === tileSignature
+            ) {
+                continue;
+            }
+            this._pricedTiles.set(itemElem, tileSignature);
             current = itemElem;
             expectDecided = false;
             expectPrice = null;
