@@ -318,16 +318,28 @@ function clickNav(ariaLabel) {
 }
 
 /**
+ * Select the House tab in the right-hand character panel: the MUI tab whose text is exactly "House".
+ * Navigation only. Nothing happens (quietly) when there is no such tab, e.g. a game in another language.
+ * @returns {boolean} Whether the tab was there
+ */
+function clickHouseTab() {
+    const tab = [...document.querySelectorAll('.MuiTabs-flexContainer [role="tab"]')].find(
+        (node) => node.textContent.trim() === 'House'
+    );
+    if (!tab) return false;
+    tab.click();
+    return true;
+}
+
+/**
  * Whether a resolved row gets a Go button: every kind does, except an equip row with nothing to buy
- * (already owned, unpriced everywhere, or an Iron Cow character) and the House, which has no verified
- * opener.
+ * (already owned, unpriced everywhere, or an Iron Cow character).
  * @param {Object} res
  * @param {Object|null} ready
  * @returns {boolean}
  */
 export function hasGoButton(res, ready) {
-    // No verified way to open the House from script: the hint stands alone
-    if (res.kind === 'place') return res.place !== 'house';
+    if (res.kind === 'place') return true;
     if (res.kind === 'ability' || res.kind === 'enhance') return Boolean(ready?.buyHrid);
     if (res.kind !== 'equip') return true;
     return Boolean(ready?.buyHrid);
@@ -715,6 +727,9 @@ class AchievementFinisher {
      */
     goPlace(res, ready) {
         switch (res.place) {
+            case 'house':
+                clickHouseTab();
+                break;
             case 'labyrinth':
                 clickNav('navigationBar.labyrinth');
                 break;
