@@ -941,8 +941,9 @@ class MarketAPI {
     /**
      * Everything that moved after a version of priceVersion, for a reader catching up.
      *
-     * Covers the market's own prices only: a snapshot, a source switch, an order-book patch. A
-     * custom price or a setting is the reader's own business (the net-worth cache salts on them).
+     * Covers the market's own prices (a snapshot, a source switch, an order-book patch) and a
+     * keyless scheduleNotify (a custom price edit), which reads as full. A setting is the
+     * reader's own business (the net-worth cache salts on the pricing settings).
      * @param {number} version - The priceVersion the reader last saw
      * @returns {{full: boolean, keys: Set<string>, hrids: Set<string>}} `full` when a snapshot
      *   landed, the source switched, or the reader is further behind than the log reaches
@@ -1009,7 +1010,9 @@ class MarketAPI {
      * notifies, just that much later.
      */
     scheduleNotify(change) {
-        // A caller naming nothing (a custom price edit) may have moved anything
+        // A caller naming nothing (a custom price edit) may have moved anything, so it counts as a
+        // full change in the log too: a reader keyed on priceVersion must see it
+        if (!change) this._recordChange({ full: true });
         this._addPendingChange(change ?? { full: true });
         if (this._notifyTimer) {
             return;

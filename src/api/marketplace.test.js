@@ -901,11 +901,14 @@ describe('MarketAPI change descriptor', () => {
         marketAPI.on(listener);
 
         marketAPI.updatePrice('/items/holy_cheese', 0, 950, 850);
+        const seen = marketAPI.priceVersion;
         marketAPI.scheduleNotify();
         vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
 
         expect(listener).toHaveBeenCalledTimes(1);
         expect(listener.mock.calls[0][0].full).toBe(true);
+        // A reader keyed on the version sees the edit too
+        expect(marketAPI.changesSince(seen).full).toBe(true);
     });
 
     test('a direct notification is a full change and absorbs the pending keys', async () => {
