@@ -865,7 +865,7 @@ describe('hints on the game achievement cards', () => {
         game.clientData = { ...PLACE_DATA, achievementDetailMap: PLACE_ACHIEVEMENTS };
     };
 
-    test('place cards: house hint without Go; labyrinth, dungeon, shop and coinify navigate only', async () => {
+    test('place cards: house selects the House tab; labyrinth, dungeon, shop and coinify navigate only', async () => {
         placeSetup();
         game.skills = [{ skillHrid: '/skills/attack', level: 1 }];
         game.houseRooms = [['/house_rooms/brewery', { houseRoomHrid: '/house_rooms/brewery', level: 2 }]];
@@ -874,11 +874,29 @@ describe('hints on the game achievement cards', () => {
             { achievementHrid: '/achievements/coinify_coins_1m', progress: 250000, isCompleted: false },
         ];
         const clicks = navBar('navigationBar.labyrinth', 'navigationBar.shop');
+        // The right-hand panel's tabs: only the one reading exactly "House" is pressed
+        const tabs = document.createElement('div');
+        tabs.className = 'MuiTabs-flexContainer';
+        const pressed = [];
+        for (const label of ['Inventory', 'House Extra', ' House ']) {
+            const tab = document.createElement('button');
+            tab.setAttribute('role', 'tab');
+            tab.className = 'MuiTab-root';
+            tab.textContent = label;
+            tab.addEventListener('click', () => pressed.push(label.trim()));
+            tabs.appendChild(tab);
+        }
+        document.body.appendChild(tabs);
         achievementsTab(PLACE_ACHIEVEMENTS);
         finisher.initialize();
 
         expect(lineOf('Homeowner II').textContent).toContain('[build any room to Lv 3 · your highest room Lv 2]');
-        expect(goOf('Homeowner II')).toBeNull();
+        goOf('Homeowner II').click();
+        expect(pressed).toEqual(['House']);
+        tabs.remove();
+        // No House tab (another language): Go does nothing and throws nothing
+        expect(() => goOf('Homeowner II').click()).not.toThrow();
+        expect(pressed).toEqual(['House']);
 
         expect(lineOf('Labyrinth Explorer II').textContent).toContain('[reach Labyrinth floor 4]');
         goOf('Labyrinth Explorer II').click();
