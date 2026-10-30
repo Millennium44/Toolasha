@@ -247,6 +247,11 @@ export function priceGuarded(itemHrid, options = {}) {
         partial = craft.cost === price && craft.partial;
     }
     const guarded = result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom), partial);
+    // A refined cape's craft cost includes its base cape at the setting's value: an assumption, not a
+    // price anyone could pay (a cape cannot be bought)
+    if (guarded.price > 0 && resolved.production && isRefinedCape(itemHrid) && isUntradableCape(itemHrid)) {
+        if (getCapeBaseValueMode() === 'mirror') guarded.assumed = true;
+    }
     return guarded.unpriced ? { ...guarded, custom: Boolean(resolved.custom) } : guarded;
 }
 
@@ -312,6 +317,10 @@ export function priceBase(itemHrid, options = {}) {
             custom: false,
             partial: craftPartial(itemHrid, side),
             crafted: true,
+            // A refined cape's craft cost carries its base at the cape setting's value: an assumption
+            ...(isRefinedCape(itemHrid) && isUntradableCape(itemHrid) && getCapeBaseValueMode() === 'mirror'
+                ? { assumed: true }
+                : {}),
         };
     }
     return { ...bought, crafted: false };

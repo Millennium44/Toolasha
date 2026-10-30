@@ -673,8 +673,13 @@ describe('untradable capes', () => {
         addRefineRecipe();
         // Nothing for the base: the bill is the materials only, and says it is a floor
         expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: true });
+        expect(priceBase(REFINED).assumed).toBeUndefined();
         game.capeMode = 'mirror';
-        expect(priceBase(REFINED)).toMatchObject({ price: 2000, partial: false });
+        // The mirror inside the bill is an assumption, not something a player could pay for
+        expect(priceBase(REFINED)).toMatchObject({ price: 2000, partial: false, assumed: true });
+        game.craftingSetting = true;
+        expect(priceBase(REFINED)).toMatchObject({ price: 2000, assumed: true });
+        game.craftingSetting = false;
         game.capeMode = 'zero';
         expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: true });
     });
