@@ -261,9 +261,9 @@ const TOGGLE_LABEL = 'Toolasha hints';
 const INCOMPLETE_LABEL = /incomplete/i;
 
 const CHECKED_SVG =
-    '<svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeSmall" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path></svg>';
+    '<svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeSmall" style="width:20px;height:20px;fill:currentColor;flex-shrink:0;" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"></path></svg>';
 const UNCHECKED_SVG =
-    '<svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeSmall" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"></path></svg>';
+    '<svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeSmall" style="width:20px;height:20px;fill:currentColor;flex-shrink:0;" focusable="false" aria-hidden="true" viewBox="0 0 24 24"><path d="M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"></path></svg>';
 
 /** Whether the hints are switched on */
 const hintsOn = () => Boolean(config.getSetting(SETTING_KEY));
@@ -601,6 +601,9 @@ class AchievementFinisher {
         if (nativeMark) mark.className = nativeMark.className;
         mark.classList.toggle('Mui-checked', checked);
         mark.innerHTML = checked ? CHECKED_SVG : UNCHECKED_SVG;
+        // The game's size and color sit in an emotion class on its own svg; borrow it when present
+        const nativeSvg = nativeMark?.querySelector('svg');
+        if (nativeSvg) mark.querySelector('svg')?.setAttribute('class', nativeSvg.getAttribute('class'));
         label.appendChild(mark);
         label.appendChild(el('span', '', TOGGLE_LABEL));
         label.addEventListener('click', (event) => {

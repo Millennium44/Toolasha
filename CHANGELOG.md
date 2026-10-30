@@ -26,7 +26,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Audit fixes before release
 
-- Achievement hints re-read each card on every redraw (a reused card no longer keeps another achievement's hint), and Missing Mats appears once its opener loads.
+- Achievement hints re-read each card on every redraw (a reused card no longer keeps another achievement's hint), and Missing Mats appears once its opener loads. The "Toolasha hints" checkbox now draws its box instead of a blank gap.
 - A rerolled combat task card drops its old estimate, so Go can't open the previous monster's zone.
 
 ### Quick-input speed counts the guild shrine
