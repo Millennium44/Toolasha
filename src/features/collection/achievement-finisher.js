@@ -148,6 +148,14 @@ export function readinessText(res, ready, clientData, ownCombatLevel) {
         return parts.join(' · ');
     }
 
+    // A rare-drop target: the odds per action; the item cannot be bought, so no price for it
+    if (Number.isFinite(ready.dropRate) && ready.dropRate > 0) {
+        parts.push(`~1 in ${formatKMB(Math.round(1 / ready.dropRate))} actions`);
+        const chosen = res.candidates?.find((cand) => cand.actionHrid === ready.actionHrid);
+        // Nothing to make the action from: no materials line
+        if (ready.owned === true && !(chosen?.inputs?.length > 0)) return parts.join(' · ');
+    }
+
     if (ready.owned === true) parts.push('materials owned');
     else if (ready.owned === null) parts.push('inventory not loaded');
     else if (Number.isFinite(ready.cost))
@@ -490,7 +498,8 @@ class AchievementFinisher {
         try {
             switch (res.kind) {
                 case 'production':
-                    navigateToAction(res.actionHrid);
+                    // A resolution with several candidate actions is settled per character in `ready`
+                    navigateToAction(ready?.actionHrid || res.actionHrid);
                     break;
                 case 'alchemy': {
                     const characterId = dataManager.getCurrentCharacterId?.();
@@ -526,8 +535,9 @@ class AchievementFinisher {
      * Open the marketplace on one action's missing inputs, the same path as the action panel's
      * Missing Mats Marketplace button. Navigation only: nothing is bought.
      * @param {Object} res
+     * @param {Object|null} [ready] - Names the chosen action when the resolution has candidates
      */
-    openMissingMats(res) {
+    openMissingMats(res, ready = null) {
         try {
             // Read through the bridge: the opener lives in the actions bundle, and importing it
             // here would copy its calculators into this one
@@ -536,7 +546,7 @@ class AchievementFinisher {
             const pending =
                 res.kind === 'alchemy'
                     ? opener.openAlchemyMissingMaterials(res.itemHrid, res.alchemyType, 1)
-                    : opener.openMissingMaterials(res.actionHrid, 1);
+                    : opener.openMissingMaterials(ready?.actionHrid || res.actionHrid, 1);
             Promise.resolve(pending).catch((error) =>
                 console.error('[AchievementFinisher] Missing Mats failed:', error)
             );
@@ -718,7 +728,7 @@ class AchievementFinisher {
         const mats = matsLines.length > 0 && Boolean(missingMaterialsButton());
         const matsKey = mats ? matsLines.map((m) => `${m.itemHrid}:${m.missing}`) : [];
         return {
-            key: JSON.stringify(['ready', text, go, matsKey, ready.buyHrid]),
+            key: JSON.stringify(['ready', text, go, matsKey, ready.buyHrid, ready.actionHrid ?? null]),
             build: () => {
                 const hint = hintWithCoins(text);
                 hint.className = `${PANEL_CLASS}-ready`;
