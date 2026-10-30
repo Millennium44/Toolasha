@@ -31,6 +31,7 @@ import {
     getCombatZones,
     getCommunityBuffs,
     getCurrentCombatZone,
+    guildBuffsFromExportLevels,
     parseShykaiImport,
 } from './combat-sim-adapter.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
@@ -664,7 +665,7 @@ export class PartyFinderTab {
         head.dataset.pfTemplatesToggle = '';
         head.style.cssText = `${SMALL_BTN_STYLE} width:100%; text-align:left;`;
         head.textContent = `${open ? '▾' : '▸'} Templates (${PARTY_TEMPLATES.length})`;
-        head.title = 'Ready-made builds from guides and lab loadouts, to add as teammates';
+        head.title = 'Ready-made builds to add as teammates';
         head.addEventListener('click', () => {
             this._templatesOpen = !this._templatesOpen;
             this._renderTemplates();
@@ -688,7 +689,7 @@ export class PartyFinderTab {
                 const name = document.createElement('span');
                 name.style.cssText =
                     'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-                name.textContent = `${template.label} · ${template.tier}`;
+                name.textContent = template.label;
                 name.title = template.source;
                 const add = document.createElement('button');
                 add.style.cssText = SMALL_BTN_STYLE;
@@ -708,9 +709,14 @@ export class PartyFinderTab {
      */
     async _onAddTemplateAsTeammate(template) {
         // No game mode: a template fits a market party and an Iron Cow one alike
-        const result = await addTeammates([
-            { name: templateTeammateName(template), dto: template.playerDto, source: 'template' },
-        ]);
+        // The template carries shrine levels as an export does; the game's guild buffs are resolved when it is added
+        const dto = structuredClone(template.playerDto);
+        if (template.guildCombatBuffLevels) {
+            const { guildShrineLevels, guildCombatBuffs } = guildBuffsFromExportLevels(template.guildCombatBuffLevels);
+            dto.guildShrineLevels = guildShrineLevels;
+            dto.guildCombatBuffs = guildCombatBuffs;
+        }
+        const result = await addTeammates([{ name: templateTeammateName(template), dto, source: 'template' }]);
         this._adoptRoster(result);
         this._reportAdd(result);
     }

@@ -66,6 +66,10 @@ vi.mock('./combat-sim-adapter.js', () => ({
     getCommunityBuffs: () => ({}),
     getCurrentCombatZone: () => null,
     parseShykaiImport: () => state.imported,
+    guildBuffsFromExportLevels: (levels) => ({
+        guildShrineLevels: { resolved: levels },
+        guildCombatBuffs: [{ from: 'shrine' }],
+    }),
     calculateSimRevenue: (sim, _gameData, playerHrid, hours, options = {}) => {
         state.revenueTaxRates.push(options.saleTaxRate);
         return {
@@ -1273,14 +1277,13 @@ describe('saved builds', () => {
             expect(templates.compareDocumentPosition(builds) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
         });
 
-        test('opening lists every template by role, with tier in the label and the source in a tooltip', async () => {
+        test('opening lists every template by role, with the source in a tooltip', async () => {
             await mountTab();
             toggle().click();
             expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(PARTY_TEMPLATES.length);
             const body = tab.root.querySelector('[data-pf-templates-body]').textContent;
             for (const label of ['Ranger', 'Nature', 'Fire', 'Water', 'Tank', 'Melee']) expect(body).toContain(label);
             const t = PARTY_TEMPLATES[0];
-            expect(tplRow(t.id).textContent).toContain(t.tier);
             expect(tplRow(t.id).querySelector('span').title).toBe(t.source);
             // No rename or delete on a template
             const labels = [...tplRow(t.id).querySelectorAll('button')].map((b) => b.textContent);
@@ -1315,6 +1318,20 @@ describe('saved builds', () => {
             // Templates stay open and untouched
             expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(PARTY_TEMPLATES.length);
         });
+    });
+
+    test('adding a template resolves its guild shrine levels onto the teammate, and leaves the template alone', async () => {
+        await mountTab();
+        const toggle = tab.root.querySelector('[data-pf-templates-toggle]');
+        toggle.click();
+        const t = PARTY_TEMPLATES.find((x) => x.id === 'tank-bulwark');
+        [...tab.root.querySelector('[data-pf-template="' + t.id + '"]').querySelectorAll('button')]
+            .find((b) => b.textContent === 'Add as teammate')
+            .click();
+        await flush();
+        expect(state.db.entries[0].dto.guildShrineLevels).toEqual({ resolved: t.guildCombatBuffLevels });
+        expect(state.db.entries[0].dto.guildCombatBuffs).toEqual([{ from: 'shrine' }]);
+        expect(t.playerDto.guildShrineLevels).toBeUndefined();
     });
 
     test('rename keeps names unique; delete takes two clicks and survives a re-read', async () => {

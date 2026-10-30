@@ -559,6 +559,25 @@ export async function buildPlayerDTOFromLoadout(entry, additionalProfiles = [], 
 }
 
 /**
+ * Resolve an export's guild shrine levels into the DTO's guild fields. Szerra's fork keys them by the tail of the
+ * shrine hrid (`guildCombatBuffLevels`: force, tempo, ...), Shykai's own export by guild-buff hrid
+ * (`guildBuffs`); the short-key block wins when both are present.
+ * @param {Object|undefined} shortKeyLevels - `guildCombatBuffLevels`
+ * @param {Object|undefined} [buffHridLevels] - `guildBuffs`
+ * @returns {{guildShrineLevels: Object, guildCombatBuffs: Array}}
+ */
+export function guildBuffsFromExportLevels(shortKeyLevels, buffHridLevels) {
+    const detailMap = getGuildBuffDetailMap();
+    const levelMap = {};
+    for (const [buffHrid, detail] of Object.entries(detailMap)) {
+        if (!detail?.isCombat || !detail.shrineHrid) continue;
+        const level = shortKeyLevels ? shortKeyLevels[detail.shrineHrid.split('/').pop()] : buffHridLevels?.[buffHrid];
+        if (Number.isFinite(level) && level > 0) levelMap[buffHrid] = level;
+    }
+    return buildGuildBuffsFromLevels(levelMap);
+}
+
+/**
  * Parse a Shykai-format export string into player DTOs.
  * Accepts the multi-slot format: {"1": "{...}", "2": "{...}", ...}
  * Each slot is a stringified player object with player/food/drinks/abilities/triggerMap/houseRooms.
@@ -783,16 +802,10 @@ export function parseShykaiImport(jsonString) {
         // only). Either block is honored; the short-key one wins when both are present,
         // as it is the one Toolasha writes alongside and can carry zeros.
         if (slotData.guildCombatBuffLevels || slotData.guildBuffs) {
-            const detailMap = getGuildBuffDetailMap();
-            const levelMap = {};
-            for (const [buffHrid, detail] of Object.entries(detailMap)) {
-                if (!detail?.isCombat || !detail.shrineHrid) continue;
-                const level = slotData.guildCombatBuffLevels
-                    ? slotData.guildCombatBuffLevels[detail.shrineHrid.split('/').pop()]
-                    : slotData.guildBuffs[buffHrid];
-                if (Number.isFinite(level) && level > 0) levelMap[buffHrid] = level;
-            }
-            const { guildShrineLevels, guildCombatBuffs } = buildGuildBuffsFromLevels(levelMap);
+            const { guildShrineLevels, guildCombatBuffs } = guildBuffsFromExportLevels(
+                slotData.guildCombatBuffLevels,
+                slotData.guildBuffs
+            );
             dto.guildShrineLevels = guildShrineLevels;
             dto.guildCombatBuffs = guildCombatBuffs;
         }

@@ -1,0 +1,195 @@
+{
+    "player": {
+        "attackLevel": 125,
+        "magicLevel": 105,
+        "meleeLevel": 125,
+        "rangedLevel": 110,
+        "defenseLevel": 151,
+        "staminaLevel": 125,
+        "intelligenceLevel": 115,
+        "equipment": [
+            {
+                "itemLocationHrid": "/item_locations/back",
+                "itemHrid": "/items/sinister_cape_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/body",
+                "itemHrid": "/items/anchorbound_plate_body_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/charm",
+                "itemHrid": "/items/master_defense_charm",
+                "enhancementLevel": 5
+            },
+            {
+                "itemLocationHrid": "/item_locations/earrings",
+                "itemHrid": "/items/philosophers_earrings",
+                "enhancementLevel": 7
+            },
+            {
+                "itemLocationHrid": "/item_locations/feet",
+                "itemHrid": "/items/pathbreaker_boots_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/hands",
+                "itemHrid": "/items/magnetic_gloves",
+                "enhancementLevel": 11
+            },
+            {
+                "itemLocationHrid": "/item_locations/head",
+                "itemHrid": "/items/corsair_helmet_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/legs",
+                "itemHrid": "/items/anchorbound_plate_legs_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/neck",
+                "itemHrid": "/items/philosophers_necklace",
+                "enhancementLevel": 7
+            },
+            { "itemLocationHrid": "/item_locations/pouch", "itemHrid": "/items/guzzling_pouch", "enhancementLevel": 7 },
+            {
+                "itemLocationHrid": "/item_locations/ring",
+                "itemHrid": "/items/philosophers_ring",
+                "enhancementLevel": 7
+            },
+            {
+                "itemLocationHrid": "/item_locations/trinket",
+                "itemHrid": "/items/expert_task_badge",
+                "enhancementLevel": 9
+            },
+            {
+                "itemLocationHrid": "/item_locations/two_hand",
+                "itemHrid": "/items/griffin_bulwark_refined",
+                "enhancementLevel": 14
+            }
+        ]
+    },
+    "food": {
+        "/action_types/combat": [
+            { "itemHrid": "/items/dragon_fruit_yogurt" },
+            { "itemHrid": "/items/plum_gummy" },
+            { "itemHrid": "/items/spaceberry_cake" }
+        ]
+    },
+    "drinks": {
+        "/action_types/combat": [
+            { "itemHrid": "/items/lucky_coffee" },
+            { "itemHrid": "/items/ultra_defense_coffee" },
+            { "itemHrid": "/items/ultra_stamina_coffee" }
+        ]
+    },
+    "abilities": [
+        { "abilityHrid": "/abilities/invincible", "level": 65 },
+        { "abilityHrid": "/abilities/retribution", "level": 100 },
+        { "abilityHrid": "/abilities/spike_shell", "level": 100 },
+        { "abilityHrid": "/abilities/fracturing_impact", "level": 100 },
+        { "abilityHrid": "/abilities/shield_bash", "level": 90 }
+    ],
+    "triggerMap": {
+        "/abilities/fracturing_impact": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/all_enemies",
+                "conditionHrid": "/combat_trigger_conditions/current_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 1400
+            }
+        ],
+        "/abilities/invincible": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/invincible",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/abilities/retribution": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/retribution",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/abilities/shield_bash": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/targeted_enemy",
+                "conditionHrid": "/combat_trigger_conditions/current_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 1
+            }
+        ],
+        "/abilities/spike_shell": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/spike_shell",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/items/dragon_fruit_yogurt": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/missing_mp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 300
+            }
+        ],
+        "/items/lucky_coffee": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/lucky_coffee",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/items/plum_gummy": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/missing_mp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 160
+            }
+        ],
+        "/items/spaceberry_cake": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/missing_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 350
+            }
+        ],
+        "/items/ultra_defense_coffee": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/defense_coffee",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/items/ultra_stamina_coffee": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/stamina_coffee",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ]
+    },
+    "houseRooms": {
+        "/house_rooms/archery_range": 3,
+        "/house_rooms/armory": 7,
+        "/house_rooms/dining_room": 7,
+        "/house_rooms/dojo": 8,
+        "/house_rooms/gym": 5,
+        "/house_rooms/library": 6,
+        "/house_rooms/mystical_study": 3
+    },
+    "guildCombatBuffLevels": { "force": 5, "tempo": 4, "spirit": 1, "rarity": 0, "scholar": 3 }
+}

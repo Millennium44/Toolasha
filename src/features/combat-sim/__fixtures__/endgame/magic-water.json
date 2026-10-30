@@ -1,0 +1,205 @@
+{
+    "player": {
+        "attackLevel": 134,
+        "magicLevel": 157,
+        "meleeLevel": 114,
+        "rangedLevel": 126,
+        "defenseLevel": 126,
+        "staminaLevel": 135,
+        "intelligenceLevel": 122,
+        "equipment": [
+            {
+                "itemLocationHrid": "/item_locations/back",
+                "itemHrid": "/items/enchanted_cloak_refined",
+                "enhancementLevel": 10
+            },
+            {
+                "itemLocationHrid": "/item_locations/body",
+                "itemHrid": "/items/royal_water_robe_top_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/charm",
+                "itemHrid": "/items/grandmaster_magic_charm",
+                "enhancementLevel": 6
+            },
+            {
+                "itemLocationHrid": "/item_locations/earrings",
+                "itemHrid": "/items/philosophers_earrings",
+                "enhancementLevel": 10
+            },
+            {
+                "itemLocationHrid": "/item_locations/feet",
+                "itemHrid": "/items/pathseeker_boots_refined",
+                "enhancementLevel": 12
+            },
+            { "itemLocationHrid": "/item_locations/hands", "itemHrid": "/items/chrono_gloves", "enhancementLevel": 12 },
+            {
+                "itemLocationHrid": "/item_locations/head",
+                "itemHrid": "/items/magicians_hat_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/legs",
+                "itemHrid": "/items/royal_water_robe_bottoms_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/main_hand",
+                "itemHrid": "/items/rippling_trident_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/neck",
+                "itemHrid": "/items/philosophers_necklace",
+                "enhancementLevel": 10
+            },
+            {
+                "itemLocationHrid": "/item_locations/off_hand",
+                "itemHrid": "/items/bishops_codex_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/pouch",
+                "itemHrid": "/items/guzzling_pouch",
+                "enhancementLevel": 10
+            },
+            {
+                "itemLocationHrid": "/item_locations/ring",
+                "itemHrid": "/items/philosophers_ring",
+                "enhancementLevel": 10
+            },
+            {
+                "itemLocationHrid": "/item_locations/trinket",
+                "itemHrid": "/items/expert_task_badge",
+                "enhancementLevel": 5
+            }
+        ]
+    },
+    "food": {
+        "/action_types/combat": [
+            { "itemHrid": "/items/plum_gummy" },
+            { "itemHrid": "/items/plum_yogurt" },
+            { "itemHrid": "/items/spaceberry_cake" }
+        ]
+    },
+    "drinks": {
+        "/action_types/combat": [
+            { "itemHrid": "/items/lucky_coffee" },
+            { "itemHrid": "/items/ultra_attack_coffee" },
+            { "itemHrid": "/items/ultra_magic_coffee" }
+        ]
+    },
+    "abilities": [
+        { "abilityHrid": "/abilities/mystic_aura", "level": 59 },
+        { "abilityHrid": "/abilities/elemental_affinity", "level": 72 },
+        { "abilityHrid": "/abilities/frost_surge", "level": 73 },
+        { "abilityHrid": "/abilities/mana_spring", "level": 80 },
+        { "abilityHrid": "/abilities/water_strike", "level": 82 }
+    ],
+    "triggerMap": {
+        "/abilities/elemental_affinity": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/elemental_affinity",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/abilities/frost_surge": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/all_enemies",
+                "conditionHrid": "/combat_trigger_conditions/number_of_active_units",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 1
+            },
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/all_enemies",
+                "conditionHrid": "/combat_trigger_conditions/current_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 1200
+            }
+        ],
+        "/abilities/mana_spring": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/all_enemies",
+                "conditionHrid": "/combat_trigger_conditions/number_of_active_units",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 1
+            },
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/all_enemies",
+                "conditionHrid": "/combat_trigger_conditions/current_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 1200
+            }
+        ],
+        "/abilities/mystic_aura": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/mystic_aura",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/abilities/water_strike": null,
+        "/items/lucky_coffee": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/lucky_coffee",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/items/plum_gummy": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/missing_mp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 320
+            }
+        ],
+        "/items/plum_yogurt": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/missing_mp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 400
+            }
+        ],
+        "/items/spaceberry_cake": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/missing_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 555
+            }
+        ],
+        "/items/ultra_attack_coffee": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/attack_coffee",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/items/ultra_magic_coffee": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/magic_coffee",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ]
+    },
+    "houseRooms": {
+        "/house_rooms/archery_range": 5,
+        "/house_rooms/armory": 5,
+        "/house_rooms/dining_room": 6,
+        "/house_rooms/dojo": 6,
+        "/house_rooms/gym": 3,
+        "/house_rooms/library": 8,
+        "/house_rooms/mystical_study": 8
+    },
+    "guildCombatBuffLevels": { "force": 5, "tempo": 5, "spirit": 5, "rarity": 1, "scholar": 4 }
+}
