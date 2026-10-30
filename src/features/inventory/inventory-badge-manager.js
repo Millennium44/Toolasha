@@ -425,10 +425,15 @@ class InventoryBadgeManager {
                 }
             }
 
+            // One context for the whole pass, shared by every category: the batch price lookup and
+            // the per-item cost memos are the same for every grid, and a stack shown twice (or two
+            // tiles of one +N piece) is priced once.
+            const pass = this.createPricingPass(inventory);
+
             // Process each category
             for (const categoryDiv of inventoryElem.children) {
                 const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
-                await this.calculateItemPrices(itemElems, inventory, inventoryLookup);
+                await this.calculateItemPrices(itemElems, inventory, inventoryLookup, pass);
             }
         } finally {
             // Clear guard even on error so later calculations are not blocked forever
@@ -437,12 +442,87 @@ class InventoryBadgeManager {
     }
 
     /**
+     * Per-pass state for {@link calculateItemPrices}: the batch price lookup over the whole
+     * inventory, and memos for the per-item figures that cost the most to work out. Built once per
+     * pass, so nothing it holds outlives the prices and settings it was computed from.
+     * @param {Array|null} inventory - Inventory items
+     * @returns {{priceCache: Map|null, enhancementCosts: Map, craftingCosts: Map, craftIndex: Map|null, validated: boolean}}
+     */
+    createPricingPass(inventory) {
+        let priceCache = null;
+        if (inventory) {
+            const itemsToPrice = [];
+            for (const item of inventory) {
+                if (item.itemLocationHrid === '/item_locations/inventory') {
+                    itemsToPrice.push({
+                        itemHrid: item.itemHrid,
+                        enhancementLevel: item.enhancementLevel || 0,
+                    });
+                }
+            }
+            priceCache = marketAPI.getPricesBatch(itemsToPrice);
+        }
+        return {
+            priceCache,
+            // `${hrid}:${level}` -> cost, or null when no usable path prices it
+            enhancementCosts: new Map(),
+            // hrid -> crafting cost
+            craftingCosts: new Map(),
+            // output hrid -> producing action, built on the first crafting lookup
+            craftIndex: null,
+            // Whether the net-worth cost cache has been validated in this pass
+            validated: false,
+        };
+    }
+
+    /**
+     * The enhancement cost of a +N piece, through the shared net-worth cache and this pass's memo.
+     * A path that cannot be built is remembered for the pass too, so duplicates do not retry it.
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level
+     * @param {Object} pass - From {@link createPricingPass}
+     * @returns {number|null} Cost, or null when no path prices it
+     */
+    enhancementCostFor(itemHrid, enhancementLevel, pass) {
+        const memoKey = `${itemHrid}:${enhancementLevel}`;
+        if (pass.enhancementCosts.has(memoKey)) return pass.enhancementCosts.get(memoKey);
+
+        // Validated like the net-worth calculation does, so a mode, a custom price or the crafting
+        // setting never leaves a cost priced under the old one. Once per pass: the check hashes the
+        // whole order book and computes the pricing stamp, and nothing it reads changes mid-pass.
+        if (!pass.validated) {
+            validateNetworthCache({ force: false });
+            pass.validated = true;
+        }
+
+        let cost = networthCache.get(itemHrid, enhancementLevel);
+        if (cost === null) {
+            const enhancementParams = getEnhancingParams();
+            const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
+                priceContext: 'networth',
+            });
+            if (enhancementPath && enhancementPath.optimalStrategy) {
+                cost = enhancementPath.optimalStrategy.totalCost;
+                networthCache.set(
+                    itemHrid,
+                    enhancementLevel,
+                    cost,
+                    enhancementPath.inputsPartial === true || enhancementPath.pricesPartial === true
+                );
+            }
+        }
+        pass.enhancementCosts.set(memoKey, cost);
+        return cost;
+    }
+
+    /**
      * Calculate and store prices for all items (populates dataset.askValue/bidValue)
      * @param {NodeList} itemElems - Item elements
      * @param {Array} cachedInventory - Optional cached inventory data
      * @param {Map} cachedInventoryLookup - Optional cached inventory lookup map
+     * @param {Object} [pass] - From {@link createPricingPass}; built here when not given
      */
-    async calculateItemPrices(itemElems, cachedInventory = null, cachedInventoryLookup = null) {
+    async calculateItemPrices(itemElems, cachedInventory = null, cachedInventoryLookup = null, pass = null) {
         const gameData = dataManager.getInitClientData();
         if (!gameData) {
             console.warn('[InventoryBadgeManager] Game data not available yet');
@@ -471,17 +551,9 @@ class InventoryBadgeManager {
             }
         }
 
-        // OPTIMIZATION: Pre-fetch all market prices in one batch
-        const itemsToPrice = [];
-        for (const item of inventory) {
-            if (item.itemLocationHrid === '/item_locations/inventory') {
-                itemsToPrice.push({
-                    itemHrid: item.itemHrid,
-                    enhancementLevel: item.enhancementLevel || 0,
-                });
-            }
-        }
-        const priceCache = marketAPI.getPricesBatch(itemsToPrice);
+        // All market prices in one batch, shared by every category of the pass
+        const pricing = pass?.priceCache ? pass : this.createPricingPass(inventory);
+        const priceCache = pricing.priceCache;
 
         // Get settings for high enhancement cost mode. The expensive
         // calculateEnhancementPath path only runs when the Net Worth feature
@@ -498,6 +570,9 @@ class InventoryBadgeManager {
 
         // Gold per guild credit on each side, built on the first credit tile and reused for the rest
         let creditRates = null;
+
+        // Read once per call rather than once per tile: both are fixed for the pass
+        const netOfTax = config.getSetting('invSort_netOfTax') && !isIronCowCharacter();
 
         let sliceStart = performance.now();
 
@@ -553,7 +628,7 @@ class InventoryBadgeManager {
                 let perToken = calculateDungeonTokenValue(itemHrid) ?? 0;
                 // The figure is gross (a shop item's market price); net-of-tax mode takes the same cut
                 // as every other market-priced tile
-                if (config.getSetting('invSort_netOfTax') && !isIronCowCharacter()) perToken *= 1 - MARKET_TAX;
+                if (netOfTax) perToken *= 1 - MARKET_TAX;
                 itemElem.dataset.askPrice = perToken;
                 itemElem.dataset.bidPrice = perToken;
                 itemElem.dataset.askValue = perToken * itemCount;
@@ -644,7 +719,7 @@ class InventoryBadgeManager {
                     // Tax applies to a market price only (net worth never taxes an EV, and an
                     // Iron Cow character has no market to pay it on)
                     const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
-                    const taxKeep = config.getSetting('invSort_netOfTax') && !isIronCowCharacter() ? 1 - taxRate : 1;
+                    const taxKeep = netOfTax ? 1 - taxRate : 1;
                     const ask = marketAsk > 0 ? marketAsk * taxKeep : evNet;
                     const bid = marketBid > 0 ? marketBid * taxKeep : evNet;
 
@@ -679,45 +754,19 @@ class InventoryBadgeManager {
                 askPrice = officialValue;
                 bidPrice = officialValue;
             } else if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
-                // Use enhancement cost calculation for high-level equipment
-                // Validated like the net-worth calculation does, so a mode, a custom price or the crafting
-                // setting never leaves a cost priced under the old one
-                validateNetworthCache({ force: false });
-                const cachedCost = networthCache.get(itemHrid, enhancementLevel);
+                // Use enhancement cost calculation for high-level equipment (both sides)
+                const enhancementCost = this.enhancementCostFor(itemHrid, enhancementLevel, pricing);
 
-                if (cachedCost !== null) {
-                    // Use cached value for both ask and bid
-                    askPrice = cachedCost;
-                    bidPrice = cachedCost;
+                if (enhancementCost !== null) {
+                    askPrice = enhancementCost;
+                    bidPrice = enhancementCost;
                 } else {
-                    // Calculate enhancement cost
-                    const enhancementParams = getEnhancingParams();
-                    const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
-                        priceContext: 'networth',
-                    });
-
-                    if (enhancementPath && enhancementPath.optimalStrategy) {
-                        const enhancementCost = enhancementPath.optimalStrategy.totalCost;
-
-                        // Cache the result
-                        networthCache.set(
-                            itemHrid,
-                            enhancementLevel,
-                            enhancementCost,
-                            enhancementPath.inputsPartial === true || enhancementPath.pricesPartial === true
-                        );
-
-                        // Use enhancement cost for both ask and bid
-                        askPrice = enhancementCost;
-                        bidPrice = enhancementCost;
-                    } else {
-                        // Enhancement calculation failed, fallback to market price
-                        const key = `${itemHrid}:${enhancementLevel}`;
-                        const marketPrice = ironCowBook(itemHrid, enhancementLevel) ?? priceCache.get(key);
-                        if (marketPrice) {
-                            askPrice = marketPrice.ask > 0 ? marketPrice.ask : 0;
-                            bidPrice = marketPrice.bid > 0 ? marketPrice.bid : 0;
-                        }
+                    // Enhancement calculation failed, fallback to market price
+                    const key = `${itemHrid}:${enhancementLevel}`;
+                    const marketPrice = ironCowBook(itemHrid, enhancementLevel) ?? priceCache.get(key);
+                    if (marketPrice) {
+                        askPrice = marketPrice.ask > 0 ? marketPrice.ask : 0;
+                        bidPrice = marketPrice.bid > 0 ? marketPrice.bid : 0;
                     }
                 }
             } else {
@@ -741,35 +790,7 @@ class InventoryBadgeManager {
                     enhancementLevel > 0 &&
                     (askPrice === 0 || bidPrice === 0)
                 ) {
-                    // Check cache first
-                    // Validated like the net-worth calculation does, so a mode, a custom price or the crafting
-                    // setting never leaves a cost priced under the old one
-                    validateNetworthCache({ force: false });
-                    const cachedCost = networthCache.get(itemHrid, enhancementLevel);
-                    let enhancementCost = cachedCost;
-
-                    if (cachedCost === null) {
-                        // Calculate enhancement cost
-                        const enhancementParams = getEnhancingParams();
-                        const enhancementPath = calculateEnhancementPath(
-                            itemHrid,
-                            enhancementLevel,
-                            enhancementParams,
-                            { priceContext: 'networth' }
-                        );
-
-                        if (enhancementPath && enhancementPath.optimalStrategy) {
-                            enhancementCost = enhancementPath.optimalStrategy.totalCost;
-                            networthCache.set(
-                                itemHrid,
-                                enhancementLevel,
-                                enhancementCost,
-                                enhancementPath.inputsPartial === true || enhancementPath.pricesPartial === true
-                            );
-                        } else {
-                            enhancementCost = null;
-                        }
-                    }
+                    const enhancementCost = this.enhancementCostFor(itemHrid, enhancementLevel, pricing);
 
                     // Fill in missing prices
                     if (enhancementCost !== null) {
@@ -778,7 +799,12 @@ class InventoryBadgeManager {
                     }
                 } else if (isEquipment && enhancementLevel === 0 && askPrice === 0 && bidPrice === 0) {
                     // For unenhanced equipment with no market data, use crafting cost
-                    const craftingCost = this.calculateCraftingCost(itemHrid);
+                    let craftingCost = pricing.craftingCosts.get(itemHrid);
+                    if (craftingCost === undefined) {
+                        pricing.craftIndex ??= this.buildCraftIndex();
+                        craftingCost = this.calculateCraftingCost(itemHrid, pricing.craftIndex);
+                        pricing.craftingCosts.set(itemHrid, craftingCost);
+                    }
                     if (craftingCost > 0) {
                         askPrice = craftingCost;
                         bidPrice = craftingCost;
@@ -798,7 +824,7 @@ class InventoryBadgeManager {
             // Apply market tax if setting is enabled — never for an Iron Cow character,
             // which has no market access to pay it on regardless of where the badge's
             // price came from (vendor, coinify, or the market-price fallback)
-            if (config.getSetting('invSort_netOfTax') && !isIronCowCharacter()) {
+            if (netOfTax) {
                 const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
                 askPrice *= 1 - taxRate;
                 bidPrice *= 1 - taxRate;
@@ -819,50 +845,62 @@ class InventoryBadgeManager {
     }
 
     /**
+     * Each item's producing action, for {@link calculateCraftingCost}: the first action (in action
+     * map order) listing it as an output, which is the one a scan of the whole map would stop at.
+     * @returns {Map<string, {action: Object, output: Object}>}
+     */
+    buildCraftIndex() {
+        const index = new Map();
+        const gameData = dataManager.getInitClientData();
+        for (const action of Object.values(gameData?.actionDetailMap || {})) {
+            if (!action.outputItems) continue;
+            for (const output of action.outputItems) {
+                if (!index.has(output.itemHrid)) index.set(output.itemHrid, { action, output });
+            }
+        }
+        return index;
+    }
+
+    /**
      * Calculate crafting cost for an item (used for unenhanced equipment with no market data)
      * @param {string} itemHrid - Item HRID
+     * @param {Map} [craftIndex] - From {@link buildCraftIndex}; built here when not given
      * @returns {number} Total material cost or 0 if not craftable
      */
-    calculateCraftingCost(itemHrid) {
+    calculateCraftingCost(itemHrid, craftIndex = null) {
         const gameData = dataManager.getInitClientData();
         if (!gameData) return 0;
 
         // Find the action that produces this item
-        for (const action of Object.values(gameData.actionDetailMap || {})) {
-            if (action.outputItems) {
-                for (const output of action.outputItems) {
-                    if (output.itemHrid === itemHrid) {
-                        // Found the crafting action, calculate material costs
-                        let inputCost = 0;
+        const found = (craftIndex || this.buildCraftIndex()).get(itemHrid);
+        if (!found) return 0;
+        const { action, output } = found;
 
-                        // Add input items
-                        if (action.inputItems && action.inputItems.length > 0) {
-                            for (const input of action.inputItems) {
-                                const inputPrice = getItemPrice(input.itemHrid, { mode: 'ask' }) || 0;
-                                inputCost += inputPrice * input.count;
-                            }
-                        }
+        // Found the crafting action, calculate material costs
+        let inputCost = 0;
 
-                        // Apply Artisan Tea reduction (0.9x) to input materials
-                        inputCost *= 0.9;
-
-                        // Add upgrade item cost (not affected by Artisan Tea)
-                        let upgradeCost = 0;
-                        if (action.upgradeItemHrid) {
-                            const upgradePrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
-                            upgradeCost = upgradePrice;
-                        }
-
-                        const totalCost = inputCost + upgradeCost;
-
-                        // Divide by output count to get per-item cost
-                        return totalCost / (output.count || 1);
-                    }
-                }
+        // Add input items
+        if (action.inputItems && action.inputItems.length > 0) {
+            for (const input of action.inputItems) {
+                const inputPrice = getItemPrice(input.itemHrid, { mode: 'ask' }) || 0;
+                inputCost += inputPrice * input.count;
             }
         }
 
-        return 0;
+        // Apply Artisan Tea reduction (0.9x) to input materials
+        inputCost *= 0.9;
+
+        // Add upgrade item cost (not affected by Artisan Tea)
+        let upgradeCost = 0;
+        if (action.upgradeItemHrid) {
+            const upgradePrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
+            upgradeCost = upgradePrice;
+        }
+
+        const totalCost = inputCost + upgradeCost;
+
+        // Divide by output count to get per-item cost
+        return totalCost / (output.count || 1);
     }
 
     /**
