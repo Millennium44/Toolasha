@@ -120,6 +120,12 @@ const READINESS_EVENTS = [
 /** Toolasha settings that change a buy cost */
 const READINESS_SETTINGS = ['profitCalc_pricingMode'];
 
+/** Settings that decide whether, and from where, an output's sell volume can be measured */
+const VOLUME_SETTINGS = ['profitCalc_liquidityCap', 'market_pooledHistory', 'market_historySource'];
+
+/** An output whose volume stayed unknown after a lookup (a failure, history off) is asked again after this */
+const VOLUME_RETRY_MS = 10 * 60_000;
+
 /** Readiness redraws are coalesced: an inventory update lands with every finished action */
 const READINESS_REDRAW_MS = 1000;
 
@@ -499,7 +505,8 @@ class AchievementFinisher {
         this.readinessRedrawPending = false;
         /** Items whose daily volume a draw asked about, and the ones already looked up this character */
         this.volumeWanted = new Set();
-        this.volumeAsked = new Set();
+        /** Output item → when its volume was last asked for; measured items are never asked again */
+        this.volumeAsked = new Map();
         this.marketListener = null;
         this.catalogSource = null;
         this.catalog = null;
@@ -547,6 +554,15 @@ class AchievementFinisher {
         this.unregisterHandlers.push(() => loadouts.offUpdate?.(stale));
         for (const key of READINESS_SETTINGS) {
             const off = config.onSettingChange?.(key, stale);
+            if (typeof off === 'function') this.unregisterHandlers.push(off);
+        }
+        // Turning volume on (or switching its source) makes every unmeasured output worth asking again
+        const volumeSettingChanged = () => {
+            this.volumeAsked.clear();
+            stale();
+        };
+        for (const key of VOLUME_SETTINGS) {
+            const off = config.onSettingChange?.(key, volumeSettingChanged);
             if (typeof off === 'function') this.unregisterHandlers.push(off);
         }
         const offSetting = config.onSettingChange?.(SETTING_KEY, redraw);
@@ -1030,13 +1046,17 @@ class AchievementFinisher {
     /**
      * Look up the daily volume of the outputs a draw ranked, so a later draw can tell a thin market from a
      * liquid one. Only under the existing opt-ins (the liquidity cap and pooled history; the history call
-     * itself refuses without the latter), once per item per character; a late answer redraws.
+     * itself refuses without the latter), once per item per character (an unmeasured one again after VOLUME_RETRY_MS, or at once when a volume setting changes); a late answer redraws.
      */
     async warmVolumes() {
-        const items = [...this.volumeWanted].filter((hrid) => !this.volumeAsked.has(hrid));
+        const now = Date.now();
+        const items = [...this.volumeWanted].filter((hrid) => {
+            if (!this.volumeAsked.has(hrid)) return true;
+            return !hasMeasuredVolume(hrid) && now - this.volumeAsked.get(hrid) >= VOLUME_RETRY_MS;
+        });
         this.volumeWanted.clear();
         if (items.length === 0 || !liquidityCapEnabled()) return;
-        for (const hrid of items) this.volumeAsked.add(hrid);
+        for (const hrid of items) this.volumeAsked.set(hrid, now);
         const characterId = dataManager.getCurrentCharacterId?.() ?? null;
         try {
             await prefetchLiquidity(items.map((itemHrid) => ({ itemHrid })));

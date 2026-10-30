@@ -567,6 +567,31 @@ describe('hints on the game achievement cards', () => {
             expect(lineOf('Celestial Artisan').textContent).toContain('thin: ~0.3/day');
         });
 
+        test('an output still unmeasured is asked again after a volume setting changes, or after the retry wait', async () => {
+            // History off: the lookup lands nothing
+            celestial({ '/items/celestial_pot': 2000 });
+            await vi.advanceTimersByTimeAsync(0);
+            const first = game.prefetched.length;
+            expect(first).toBeGreaterThan(0);
+            // A redraw right away does not ask again
+            finisher.readinessChanged();
+            vi.advanceTimersByTime(1500);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(game.prefetched).toHaveLength(first);
+            // Turning pooled history on asks again
+            game.settingHandlers.filter((e) => e.key === 'market_pooledHistory').forEach((e) => e.fn(true));
+            vi.advanceTimersByTime(1500);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(game.prefetched.length).toBeGreaterThan(first);
+            // And with no setting change, after the retry wait
+            const second = game.prefetched.length;
+            vi.advanceTimersByTime(10 * 60_000);
+            finisher.readinessChanged();
+            vi.advanceTimersByTime(1500);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(game.prefetched.length).toBeGreaterThan(second);
+        });
+
         test('the volume lookup stays off when the liquidity cap is off', async () => {
             celestial({ '/items/celestial_pot': 2000 }, { liquidityOn: false });
             await vi.advanceTimersByTimeAsync(0);
@@ -972,6 +997,9 @@ describe('hints on the game achievement cards', () => {
 
         expect(game.settingHandlers.map((e) => e.key).sort()).toEqual([
             'achievementFinisher',
+            'market_historySource',
+            'market_pooledHistory',
+            'profitCalc_liquidityCap',
             'profitCalc_pricingMode',
         ]);
         game.prices = { ...PRICES, '/items/peach': 300 };
