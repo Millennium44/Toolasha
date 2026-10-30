@@ -398,6 +398,23 @@ describe('hints on the game achievement cards', () => {
         expect(nav.navigateToAction).toHaveBeenLastCalledWith('/actions/milking/holy_cow');
     });
 
+    test('Missing Mats on an any-of card opens the bill of the action it picked', () => {
+        game.detail = ANY_OF_ACHIEVEMENTS;
+        game.clientData = {
+            ...ANY_OF_DATA,
+            itemDetailMap: { ...ANY_OF_DATA.itemDetailMap, '/items/silk': { name: 'Silk', isTradable: true } },
+            achievementDetailMap: ANY_OF_ACHIEVEMENTS,
+        };
+        game.skills = [{ skillHrid: '/skills/tailoring', level: 60 }];
+        game.inventory = [];
+        game.prices = { ...PRICES, '/items/silk': 10 };
+        achievementsTab(ANY_OF_ACHIEVEMENTS);
+        finisher.initialize();
+        // Both pouches cost the same; the lower level (Guzzling, 55) wins the tie
+        matsOf('Snack Pack Pro').click();
+        expect(nav.openMissingMaterials.mock.calls).toEqual([['/actions/tailoring/guzzling_pouch', 1]]);
+    });
+
     test('unfinished resolvable cards get a hint line under the description; finished and unresolved get none', () => {
         game.achievements = [done('/achievements/decompose_bamboo_gloves')];
         achievementsTab();
