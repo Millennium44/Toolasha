@@ -5,6 +5,7 @@
 
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
+import { pricesMoved } from '../../utils/price-change.js';
 import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { coinFormatter, formatWithSeparator } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
@@ -278,7 +279,10 @@ class HouseCostDisplay {
         // The modal's cost columns are a snapshot of the prices at the time it
         // opened. A price feed or a live listing patch can land while it stays
         // open, so redraw that room from the same calculator on each update.
-        this._marketPricesUpdatedHandler = () => this._onMarketPricesUpdated();
+        // A burst that only re-confirmed prices already held moves no bill
+        this._marketPricesUpdatedHandler = (change) => {
+            if (pricesMoved(change)) this._onMarketPricesUpdated();
+        };
         marketAPI.on(this._marketPricesUpdatedHandler);
 
         this.autofillManager.initialize();

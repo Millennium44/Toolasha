@@ -18,6 +18,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
+import { pricesMoved } from '../../utils/price-change.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { CAPE_BASE_VALUE_SETTING } from '../../utils/untradable-cape.js';
 import { DUNGEON_TOKEN_HRIDS } from '../../utils/token-valuation.js';
@@ -121,7 +122,10 @@ class ShopTokenValues {
         );
 
         // A price tick or a setting that moves the numbers redraws the badges
-        this.priceHandler = () => this.scheduleRefresh();
+        // A burst that only re-confirmed prices already held moves no token value
+        this.priceHandler = (change) => {
+            if (pricesMoved(change)) this.scheduleRefresh();
+        };
         marketAPI.on(this.priceHandler);
         for (const key of WATCHED_SETTINGS) {
             this.unregisterHandlers.push(config.onSettingChange(key, () => this.scheduleRefresh()));

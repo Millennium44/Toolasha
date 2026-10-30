@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
+import { pricesMoved } from '../../utils/price-change.js';
 import { formatKMB } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
@@ -250,7 +251,10 @@ class InventorySort {
      */
     setupMarketDataListener() {
         // Listen for market price updates
-        const priceUpdateHandler = () => {
+        const priceUpdateHandler = (change) => {
+            // A burst that only re-confirmed prices already held (a book re-opened with the same
+            // top) cannot move a badge value
+            if (!pricesMoved(change)) return;
             // Debounce price updates to avoid excessive recalculation
             clearTimeout(this.priceUpdateDebounceTimer);
             this.priceUpdateDebounceTimer = setTimeout(() => {

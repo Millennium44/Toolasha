@@ -9,6 +9,7 @@ import { runInBackground } from '../../utils/background-work.js';
 import connectionState from '../../core/connection-state.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
+import { pricesMoved } from '../../utils/price-change.js';
 import { calculateNetworth } from './networth-calculator.js';
 import { networthHeaderDisplay, networthInventoryDisplay } from './networth-display.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -151,7 +152,10 @@ class NetworthFeature {
      */
     setupEventListeners() {
         // Listen for market price updates
-        this.priceUpdateHandler = () => {
+        this.priceUpdateHandler = (change) => {
+            // A burst that only re-confirmed prices already held cannot move the total; the game's
+            // value-map handler below calls this with no argument, which always counts
+            if (!pricesMoved(change)) return;
             // Debounce price updates to avoid excessive recalculation
             clearTimeout(this.priceUpdateDebounceTimer);
             this.priceUpdateDebounceTimer = setTimeout(() => {
