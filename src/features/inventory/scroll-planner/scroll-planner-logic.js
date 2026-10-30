@@ -220,3 +220,72 @@ export function getCurrentStep(steps, characterItems) {
 export function getRemainingQuantity(step, characterItems) {
     return Math.max(0, Math.min(step.remaining, getOwnedCount(characterItems, step.itemHrid)));
 }
+
+/**
+ * Which action types (skills) each scroll's buff can be used in, from game data: an item's
+ * `scrollDetail.personalBuffTypeHrid`, then that buff type's `usableInActionTypeMap`.
+ * @param {string[]} scrollHrids
+ * @param {Object} gameData - init_client_data (itemDetailMap, personalBuffTypeDetailMap, actionTypeDetailMap)
+ * @returns {Map<string, string[]>} Scroll HRID -> action type HRIDs in the game's order; empty when
+ *   the buff data is missing
+ */
+export function getScrollSkills(scrollHrids, gameData) {
+    const result = new Map();
+    const buffMap = gameData?.personalBuffTypeDetailMap;
+    if (!buffMap || typeof buffMap !== 'object') {
+        return result;
+    }
+    const order = (hrid) => gameData?.actionTypeDetailMap?.[hrid]?.sortIndex ?? Number.MAX_SAFE_INTEGER;
+    for (const scrollHrid of scrollHrids) {
+        const buffHrid = gameData?.itemDetailMap?.[scrollHrid]?.scrollDetail?.personalBuffTypeHrid;
+        const usable = buffHrid ? buffMap[buffHrid]?.usableInActionTypeMap : null;
+        if (!usable || typeof usable !== 'object') {
+            continue;
+        }
+        const types = Object.keys(usable)
+            .filter((type) => usable[type])
+            .sort((a, b) => order(a) - order(b) || a.localeCompare(b));
+        if (types.length > 0) {
+            result.set(scrollHrid, types);
+        }
+    }
+    return result;
+}
+
+/**
+ * Every action type at least one scroll covers, in the game's order.
+ * @param {Map<string, string[]>} scrollSkills - From {@link getScrollSkills}
+ * @param {Object} [actionTypeDetailMap]
+ * @returns {string[]}
+ */
+export function getCoveredSkills(scrollSkills, actionTypeDetailMap) {
+    const all = new Set();
+    for (const types of scrollSkills.values()) {
+        types.forEach((type) => all.add(type));
+    }
+    const order = (hrid) => actionTypeDetailMap?.[hrid]?.sortIndex ?? Number.MAX_SAFE_INTEGER;
+    return [...all].sort((a, b) => order(a) - order(b) || a.localeCompare(b));
+}
+
+/** At this many non-combat skills a row says so in words rather than drawing every icon */
+const NON_COMBAT_LABEL_MIN = 8;
+export const COMBAT_ACTION_TYPE = '/action_types/combat';
+
+/**
+ * How a scroll row shows its skills: a word label for the broad scrolls, icons otherwise.
+ * @param {string[]} types - The scroll's action types
+ * @param {string[]} coveredSkills - Every skill any scroll covers ({@link getCoveredSkills})
+ * @returns {{label: string|null, missing: string[]}} `label` when words replace the icons, with
+ *   the non-combat skills the scroll does not cover in `missing`
+ */
+export function describeScrollSkills(types, coveredSkills) {
+    const own = new Set(types);
+    if (coveredSkills.length > 0 && coveredSkills.every((type) => own.has(type))) {
+        return { label: 'All skills', missing: [] };
+    }
+    if (!own.has(COMBAT_ACTION_TYPE) && own.size >= NON_COMBAT_LABEL_MIN) {
+        const missing = coveredSkills.filter((type) => type !== COMBAT_ACTION_TYPE && !own.has(type));
+        return { label: 'All non-combat', missing };
+    }
+    return { label: null, missing: [] };
+}

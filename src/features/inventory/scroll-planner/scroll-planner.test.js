@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
     characterId: 'char-1',
     characterItems: [],
     saveGate: null,
+    clientData: null,
 }));
 
 vi.mock('../../../core/config.js', () => ({ default: { getSetting: (key) => mocks.settings[key] } }));
@@ -69,8 +70,8 @@ vi.mock('../../../core/data-manager.js', () => ({
             return mocks.characterItems;
         },
         getCurrentCharacterId: () => mocks.characterId,
-        getInitClientData: () => ({ itemDetailMap: ITEM_DETAIL_MAP }),
-        getItemDetails: (hrid) => ITEM_DETAIL_MAP[hrid] || null,
+        getInitClientData: () => mocks.clientData || { itemDetailMap: ITEM_DETAIL_MAP },
+        getItemDetails: (hrid) => (mocks.clientData?.itemDetailMap || ITEM_DETAIL_MAP)[hrid] || null,
     },
 }));
 
@@ -151,6 +152,7 @@ describe('ScrollPlanner', () => {
         mocks.store = new Map();
         mocks.writes = [];
         mocks.saveGate = null;
+        mocks.clientData = null;
         mocks.characterId = 'char-1';
         mocks.characterItems = [inv(DAMAGE, 5), inv(GATHERING, 8)];
         planner = new ScrollPlanner();
@@ -631,6 +633,179 @@ describe('ScrollPlanner', () => {
             await vi.advanceTimersByTimeAsync(0);
             expect(bar().textContent).toContain('Scroll Of Damage ×5');
             expect(bar().textContent).toContain('Scroll Of Damage (6 → 5)');
+        });
+    });
+
+    describe('skill icons, from the game data', () => {
+        // The skills each scroll's buff is usable in, as measured on the test server (2026-10-29)
+        const SKILL_ORDER = [
+            'milking',
+            'foraging',
+            'woodcutting',
+            'cheesesmithing',
+            'crafting',
+            'tailoring',
+            'cooking',
+            'brewing',
+            'alchemy',
+            'enhancing',
+            'combat',
+        ];
+        const NON_COMBAT_GATHER_PRODUCE = [
+            'alchemy',
+            'brewing',
+            'cheesesmithing',
+            'cooking',
+            'crafting',
+            'foraging',
+            'milking',
+            'tailoring',
+            'woodcutting',
+        ];
+        const BUFFS = {
+            action_speed: [...NON_COMBAT_GATHER_PRODUCE, 'enhancing'],
+            attack_speed: ['combat'],
+            cast_speed: ['combat'],
+            combat_drop: ['combat'],
+            critical_rate: ['combat'],
+            damage: ['combat'],
+            efficiency: NON_COMBAT_GATHER_PRODUCE,
+            gathering: ['foraging', 'milking', 'woodcutting'],
+            processing: ['foraging', 'milking', 'woodcutting'],
+            gourmet: ['brewing', 'cooking'],
+            rare_find: SKILL_ORDER,
+            wisdom: SKILL_ORDER,
+        };
+        const seal = (buff) => `/items/seal_of_${buff}`;
+
+        function gameData({ withBuffs = true } = {}) {
+            const itemDetailMap = {};
+            Object.keys(BUFFS).forEach((buff, index) => {
+                const words = buff.split('_').map((w) => w[0].toUpperCase() + w.slice(1));
+                itemDetailMap[seal(buff)] = {
+                    hrid: seal(buff),
+                    name: `Scroll Of ${words.join(' ')}`,
+                    categoryHrid: '/item_categories/scroll',
+                    isOpenable: true,
+                    sortIndex: index,
+                    scrollDetail: { personalBuffTypeHrid: `/personal_buff_types/${buff}` },
+                };
+            });
+            const personalBuffTypeDetailMap = {};
+            for (const [buff, skills] of Object.entries(BUFFS)) {
+                personalBuffTypeDetailMap[`/personal_buff_types/${buff}`] = {
+                    usableInActionTypeMap: Object.fromEntries(skills.map((k) => [`/action_types/${k}`, true])),
+                };
+            }
+            const actionTypeDetailMap = Object.fromEntries(
+                SKILL_ORDER.map((k, i) => [
+                    `/action_types/${k}`,
+                    { hrid: `/action_types/${k}`, name: k[0].toUpperCase() + k.slice(1), sortIndex: i + 1 },
+                ])
+            );
+            return withBuffs
+                ? { itemDetailMap, personalBuffTypeDetailMap, actionTypeDetailMap }
+                : { itemDetailMap, actionTypeDetailMap };
+        }
+
+        const modal = () => document.querySelector('.toolasha-scroll-planner-modal');
+        const skillButton = (skill) =>
+            modal().querySelector(`.toolasha-scroll-planner-skill[data-action-type="/action_types/${skill}"]`);
+        const row = (buff) => modal().querySelector(`.toolasha-scroll-planner-row[data-item-hrid="${seal(buff)}"]`);
+        const selected = () =>
+            Object.keys(BUFFS).filter(
+                (buff) =>
+                    row(buff).querySelector('.toolasha-scroll-planner-name').getAttribute('aria-pressed') === 'true'
+            );
+        const setN = (value) => {
+            const input = modal().querySelector('.toolasha-scroll-planner-quickfill input');
+            input.value = value;
+            input.dispatchEvent(new Event('input'));
+        };
+
+        beforeEach(async () => {
+            mocks.clientData = gameData();
+            mocks.characterItems = Object.keys(BUFFS).map((buff) => inv(seal(buff), 50));
+            await planner.initialize();
+            planner.openModal();
+        });
+
+        test('one icon per skill any scroll covers, in the game order, named in the tooltip', () => {
+            const buttons = [...modal().querySelectorAll('.toolasha-scroll-planner-skill')];
+            expect(buttons.map((b) => b.dataset.actionType)).toEqual(SKILL_ORDER.map((k) => `/action_types/${k}`));
+            expect(skillButton('milking').title).toBe('Milking');
+        });
+
+        test('Combat selects the five combat scrolls plus wisdom and rare find, at N', () => {
+            setN('30');
+            skillButton('combat').click();
+            expect(selected().sort()).toEqual(
+                ['attack_speed', 'cast_speed', 'combat_drop', 'critical_rate', 'damage', 'rare_find', 'wisdom'].sort()
+            );
+            expect(row('damage').querySelector('input').value).toBe('30');
+            expect(modal().textContent).toContain('Total: 210');
+            expect(skillButton('combat').getAttribute('aria-pressed')).toBe('true');
+        });
+
+        test('Milking selects gathering, processing, efficiency, action speed, wisdom and rare find', () => {
+            setN('30');
+            skillButton('milking').click();
+            expect(selected().sort()).toEqual(
+                ['action_speed', 'efficiency', 'gathering', 'processing', 'rare_find', 'wisdom'].sort()
+            );
+        });
+
+        test('a skill pressed again deselects its scrolls; one short of all selects the missing ones', () => {
+            setN('30');
+            row('gourmet').querySelector('.toolasha-scroll-planner-name').click();
+            skillButton('milking').click();
+            skillButton('milking').click();
+            // Gourmet was picked by name and Milking does not cover it: it stays
+            expect(selected()).toEqual(['gourmet']);
+            expect(row('wisdom').querySelector('input').value).toBe('');
+
+            // Select Milking, drop one of its scrolls by name, press Milking: only that one comes back
+            skillButton('milking').click();
+            row('wisdom').querySelector('.toolasha-scroll-planner-name').click();
+            expect(skillButton('milking').getAttribute('aria-pressed')).toBe('false');
+            skillButton('milking').click();
+            expect(selected().sort()).toEqual(
+                ['action_speed', 'efficiency', 'gathering', 'gourmet', 'processing', 'rare_find', 'wisdom'].sort()
+            );
+        });
+
+        test('with N empty a skill press says what is missing and selects nothing', () => {
+            skillButton('combat').click();
+            expect(selected()).toEqual([]);
+            expect(modal().querySelector('.toolasha-scroll-planner-skill-hint').textContent).toContain(
+                'Open N of each'
+            );
+            setN('5');
+            skillButton('combat').click();
+            expect(modal().querySelector('.toolasha-scroll-planner-skill-hint').textContent).toBe('');
+        });
+
+        test('rows show their skills: a word label for the broad scrolls, icons for the rest', () => {
+            const cell = (buff) => row(buff).querySelector('.toolasha-scroll-planner-row-skills');
+            expect(cell('wisdom').textContent).toBe('All skills');
+            expect(cell('rare_find').textContent).toBe('All skills');
+            expect(cell('action_speed').textContent).toBe('All non-combat');
+            expect(cell('efficiency').textContent).toBe('All non-combat except Enhancing');
+            expect(cell('gathering').textContent).toBe('');
+            expect(cell('gathering').children).toHaveLength(3);
+            expect(cell('gathering').title).toBe('Milking, Foraging, Woodcutting');
+            expect(cell('damage').children).toHaveLength(1);
+        });
+
+        test('without the buff data there are no icons and the rest still works', () => {
+            planner.closeModal();
+            mocks.clientData = gameData({ withBuffs: false });
+            planner.openModal();
+            expect(modal().querySelector('.toolasha-scroll-planner-skill')).toBeNull();
+            expect(modal().querySelector('.toolasha-scroll-planner-row-skills')).toBeNull();
+            setN('4');
+            row('damage').querySelector('.toolasha-scroll-planner-name').click();
+            expect(modal().textContent).toContain('Total: 4');
         });
     });
 

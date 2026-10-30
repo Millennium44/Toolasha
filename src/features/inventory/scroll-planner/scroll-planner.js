@@ -19,14 +19,18 @@ import domObserver from '../../../core/dom-observer.js';
 import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import { getIconHref, getItemHridFromIconHref, getItemHridFromName } from '../../../utils/game-lookups.js';
 import { itemHridFromIcon } from '../../../utils/item-icon.js';
+import { skillIcon } from '../../../utils/overlay-format.js';
 import { setReactInputValue } from '../../../utils/react-input.js';
 import { setScrollRunActive } from './scroll-planner-state.js';
 import {
     buildRun,
+    describeScrollSkills,
+    getCoveredSkills,
     getCurrentStep,
     getOwnedCount,
     getRemainingQuantity,
     getScrollHrids,
+    getScrollSkills,
     normalizePlan,
     normalizeSteps,
     observeInventory,
@@ -89,6 +93,8 @@ class ScrollPlanner {
         this.quickFill = null;
         this.quickSelected = new Set();
         this.rowControls = new Map();
+        this.skillButtons = new Map();
+        this.scrollSkills = new Map();
         this.run = null; // { startedAt, steps, shortfalls }
         this.characterId = null;
         this.autoOpenedHrid = null;
@@ -735,6 +741,127 @@ class ScrollPlanner {
         this.quickFill = null;
         this.quickSelected = new Set();
         this.rowControls = new Map();
+        this.skillButtons = new Map();
+    }
+
+    /**
+     * @param {string} actionTypeHrid
+     * @returns {string} The skill's display name
+     */
+    getSkillName(actionTypeHrid) {
+        return (
+            dataManager.getInitClientData()?.actionTypeDetailMap?.[actionTypeHrid]?.name ||
+            actionTypeHrid.split('/').pop().replace(/_/g, ' ')
+        );
+    }
+
+    /**
+     * @param {string} actionTypeHrid
+     * @returns {string[]} Scrolls (with a row in the modal) usable in that skill
+     */
+    scrollsForSkill(actionTypeHrid) {
+        return [...this.scrollSkills.entries()]
+            .filter(([itemHrid, types]) => types.includes(actionTypeHrid) && this.rowControls.has(itemHrid))
+            .map(([itemHrid]) => itemHrid);
+    }
+
+    /**
+     * The skill icons above the rows: one per skill any scroll covers. Pressing one selects, at N,
+     * every scroll usable in that skill; pressing it while all of them are selected deselects them.
+     * @param {string[]} skills - Action type HRIDs in the game's order
+     * @param {HTMLElement} hint - Line that says why nothing happened
+     * @returns {HTMLElement}
+     */
+    buildSkillBar(skills, hint) {
+        const barEl = document.createElement('div');
+        barEl.className = 'toolasha-scroll-planner-skills';
+        barEl.style.cssText = 'display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px;';
+        for (const actionTypeHrid of skills) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'toolasha-scroll-planner-skill';
+            button.dataset.actionType = actionTypeHrid;
+            button.title = this.getSkillName(actionTypeHrid);
+            button.setAttribute('aria-label', this.getSkillName(actionTypeHrid));
+            button.style.cssText = `display: inline-flex; align-items: center; justify-content: center; padding: 3px;
+                border-radius: 4px; border: 1px solid #555; background: #1f1f1f; cursor: pointer;`;
+            button.appendChild(skillIcon(actionTypeHrid.split('/').pop(), 20));
+            button.addEventListener('click', () => {
+                hint.textContent = '';
+                if (!(this.quickFill > 0)) {
+                    hint.textContent = 'Enter a number in "Open N of each" first.';
+                    return;
+                }
+                this.toggleSkill(actionTypeHrid);
+            });
+            this.skillButtons.set(actionTypeHrid, button);
+            barEl.appendChild(button);
+        }
+        return barEl;
+    }
+
+    /**
+     * Select every scroll for a skill at N, or, if they all are selected already, deselect them.
+     * Scrolls selected some other way stay selected unless this skill covers them.
+     * @param {string} actionTypeHrid
+     */
+    toggleSkill(actionTypeHrid) {
+        const scrolls = this.scrollsForSkill(actionTypeHrid);
+        if (scrolls.length === 0 || !(this.quickFill > 0)) {
+            return;
+        }
+        const allSelected = scrolls.every((itemHrid) => this.quickSelected.has(itemHrid));
+        for (const itemHrid of scrolls) {
+            const controls = this.rowControls.get(itemHrid);
+            if (allSelected) {
+                this.quickSelected.delete(itemHrid);
+                controls.setQuantity(0);
+            } else if (!this.quickSelected.has(itemHrid)) {
+                this.quickSelected.add(itemHrid);
+                controls.setQuantity(this.quickFill);
+            }
+            controls.showSelected();
+        }
+    }
+
+    /** Highlight the skills whose scrolls are all selected */
+    refreshSkillButtons() {
+        for (const [actionTypeHrid, button] of this.skillButtons) {
+            const scrolls = this.scrollsForSkill(actionTypeHrid);
+            const on = scrolls.length > 0 && scrolls.every((itemHrid) => this.quickSelected.has(itemHrid));
+            button.setAttribute('aria-pressed', String(on));
+            button.style.borderColor = on ? '#fbbf24' : '#555';
+            button.style.background = on ? 'rgba(251,191,36,0.2)' : '#1f1f1f';
+        }
+    }
+
+    /**
+     * The skills a scroll row affects: icons, or a word label for the broad scrolls.
+     * @param {string} itemHrid
+     * @param {string[]} coveredSkills
+     * @returns {HTMLElement|null} Nothing when the game data says nothing
+     */
+    buildRowSkills(itemHrid, coveredSkills) {
+        const types = this.scrollSkills.get(itemHrid);
+        if (!types) {
+            return null;
+        }
+        const cell = document.createElement('span');
+        cell.className = 'toolasha-scroll-planner-row-skills';
+        cell.title = types.map((type) => this.getSkillName(type)).join(', ');
+        cell.style.cssText = `display: inline-flex; align-items: center; gap: 2px; flex: 0 1 auto; min-width: 0;
+            max-width: 45%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #aaa; font-size: 11px;`;
+        const { label, missing } = describeScrollSkills(types, coveredSkills);
+        if (label) {
+            const names = missing.map((type) => this.getSkillName(type)).join(', ');
+            cell.textContent = missing.length > 0 ? `${label} except ${names}` : label;
+            cell.style.display = 'inline-block';
+        } else {
+            for (const type of types) {
+                cell.appendChild(skillIcon(type.split('/').pop(), 14));
+            }
+        }
+        return cell;
     }
 
     /**
@@ -842,9 +969,24 @@ class ScrollPlanner {
         };
 
         content.appendChild(this.buildQuickFill());
-        for (const itemHrid of scrollHrids) {
-            content.appendChild(this.buildRow(itemHrid, getOwnedCount(items, itemHrid), updateTotal));
+
+        // Skill icons, from game data only; without it the rest of the modal works as before
+        const gameData = dataManager.getInitClientData();
+        this.scrollSkills = getScrollSkills(scrollHrids, gameData);
+        this.skillButtons = new Map();
+        const coveredSkills = getCoveredSkills(this.scrollSkills, gameData?.actionTypeDetailMap);
+        const skillHint = this.makeLine('', '#f59e0b');
+        skillHint.className = 'toolasha-scroll-planner-skill-hint';
+        skillHint.style.cssText += 'min-height: 0; margin-bottom: 6px;';
+        if (coveredSkills.length > 0) {
+            content.appendChild(this.buildSkillBar(coveredSkills, skillHint));
+            content.appendChild(skillHint);
         }
+
+        for (const itemHrid of scrollHrids) {
+            content.appendChild(this.buildRow(itemHrid, getOwnedCount(items, itemHrid), updateTotal, coveredSkills));
+        }
+        this.refreshSkillButtons();
 
         totalLine.style.cssText += 'margin-top: 10px;';
         updateTotal();
@@ -881,7 +1023,7 @@ class ScrollPlanner {
         this.modal.appendChild(content);
     }
 
-    buildRow(itemHrid, owned, updateTotal) {
+    buildRow(itemHrid, owned, updateTotal, coveredSkills = []) {
         const row = document.createElement('div');
         row.className = 'toolasha-scroll-planner-row';
         row.dataset.itemHrid = itemHrid;
@@ -894,9 +1036,15 @@ class ScrollPlanner {
         name.textContent = this.getScrollName(itemHrid);
         name.title = 'With a number in "Open N of each", click to set this scroll to N; click again to clear';
         name.style.cssText = `flex: 1; min-width: 120px; text-align: left; cursor: pointer; padding: 2px 6px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             border-radius: 4px; border: 1px solid transparent; background: transparent; color: #fff; ${CSS_FONT}`;
         name.addEventListener('click', () => this.toggleQuickRow(itemHrid));
         row.appendChild(name);
+
+        const skills = this.buildRowSkills(itemHrid, coveredSkills);
+        if (skills) {
+            row.appendChild(skills);
+        }
 
         const ownedLabel = document.createElement('span');
         ownedLabel.textContent = `Owned: ${owned}`;
@@ -914,6 +1062,7 @@ class ScrollPlanner {
             name.setAttribute('aria-pressed', String(selected));
             name.style.background = selected ? 'rgba(251,191,36,0.2)' : 'transparent';
             name.style.borderColor = selected ? '#fbbf24' : 'transparent';
+            this.refreshSkillButtons();
         };
         const applyValue = () => {
             const value = Math.floor(Number(input.value));
