@@ -53,6 +53,7 @@ import {
 } from '../../utils/liquidity-cap.js';
 import { spriteIcon, spriteUrl } from '../../utils/overlay-format.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import performanceMonitor from '../../utils/performance-monitor.js';
 
 /** The setting that turns the panel on */
 export const SETTING_KEY = 'achievementFinisher';
@@ -905,6 +906,8 @@ class AchievementFinisher {
             this.removeLines();
             return;
         }
+        // The first draw on this tab visit: lines already up make this a refresh, not a wait
+        if (!document.querySelector(`.${LINE_CLASS}`)) performanceMonitor.markTrigger('Achievement hints', true);
         this.decorateCards(host);
     }
 
@@ -1075,6 +1078,7 @@ class AchievementFinisher {
         const anchor = card.querySelector('[class*="Achievement_description"]');
         if (anchor) anchor.after(line);
         else (card.querySelector('[class*="Achievement_leftColumn"]') || card).appendChild(line);
+        performanceMonitor.markDrawn('Achievement hints');
     }
 
     /**

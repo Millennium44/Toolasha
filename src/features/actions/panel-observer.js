@@ -17,6 +17,7 @@ import { displayGatheringProfit, displayProductionProfit } from './profit-displa
 import { getOriginalText } from '../../utils/dom.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import performanceMonitor from '../../utils/performance-monitor.js';
 import actionFilter from './action-filter.js';
 import {
     getActionHridFromName,
@@ -136,7 +137,8 @@ function setupMutationObserver() {
         (modal) => {
             const panel = modal.querySelector(SELECTORS.REGULAR_PANEL);
             if (panel) {
-                handleActionPanel(panel);
+                performanceMonitor.markTrigger('Action panel');
+                performanceMonitor.traceAsync('Action panel', () => handleActionPanel(panel));
             }
         }
     );
@@ -394,6 +396,8 @@ async function handleActionPanel(panel) {
     if (PRODUCTION_TYPES.includes(actionDetail.type)) {
         await displayProductionProfit(panel, actionHrid, SELECTORS.DROP_TABLE);
     }
+
+    performanceMonitor.markDrawn('Action panel');
 }
 
 /**

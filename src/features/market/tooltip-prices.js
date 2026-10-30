@@ -44,6 +44,7 @@ import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { getActionHridFromName, getActionHridFromFiber } from '../../utils/game-lookups.js';
 import { findProducingAction } from '../../utils/production-index.js';
 import { craftingPlanCalculator } from '../../utils/bundle-bridge.js';
+import performanceMonitor from '../../utils/performance-monitor.js';
 import { parseWearable, highestOwnedEnhancements, resolveEnhancementLevel } from '../../utils/loadout-equipment.js';
 import {
     bestSelfUseCandidate,
@@ -640,9 +641,12 @@ class TooltipPrices {
     setupObserver() {
         // Subscribe to the shared tooltip observer, which classifies each
         // popper once and hands every tooltip feature the result
-        tooltipObserver.subscribe('TooltipPrices', (tooltipElement, eventType, info) => {
+        tooltipObserver.subscribe('TooltipPrices', async (tooltipElement, eventType, info) => {
             if (eventType !== 'opened' || !info?.isTooltipPopper) return;
-            this.handleTooltip(tooltipElement, info);
+            const timed = info.isItemTooltip || info.isCollectionTooltip;
+            if (timed) performanceMonitor.markTrigger('Item tooltip');
+            await performanceMonitor.traceAsync('Item tooltip', () => this.handleTooltip(tooltipElement, info));
+            if (timed) performanceMonitor.markDrawn('Item tooltip');
         });
         this.unregisterObserver = () => tooltipObserver.unsubscribe('TooltipPrices');
 
