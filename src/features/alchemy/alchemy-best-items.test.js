@@ -485,19 +485,19 @@ describe('calculateRankings eligibility', () => {
         game.initClientData.itemDetailMap['/items/b'].alchemyDetail.decomposeItems = [{ itemHrid: '/items/x' }];
 
         bestItems.calculateRankings('coinify');
-        expect(calculator.coinify).toHaveBeenCalledWith('/items/a', 0);
+        expect(calculator.coinify).toHaveBeenCalledWith('/items/a', 0, false, null, expect.any(Object));
 
         bestItems.calculateRankings('decompose');
-        expect(calculator.decompose).toHaveBeenCalledWith('/items/b', 0);
+        expect(calculator.decompose).toHaveBeenCalledWith('/items/b', 0, false, null, expect.any(Object));
     });
 
-    test('transmute is asked with the hrid alone', () => {
+    test('transmute is asked with the hrid and the sweep context and no level', () => {
         game.initClientData = {
             itemDetailMap: { '/items/c': item({ transmuteDropTable: [{ itemHrid: '/items/y' }] }) },
         };
 
         bestItems.calculateRankings('transmute');
-        expect(calculator.transmute).toHaveBeenCalledWith('/items/c');
+        expect(calculator.transmute).toHaveBeenCalledWith('/items/c', false, null, null, expect.any(Object));
     });
 
     test('an item the calculator throws on is dropped, not allowed to sink the table', () => {
