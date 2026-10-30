@@ -85,6 +85,10 @@ class ScrollPlanner {
         this.modal = null;
         this.bar = null;
         this.draft = {};
+        // Quick fill: the N a clicked row name sets, and the rows set that way (they follow N)
+        this.quickFill = null;
+        this.quickSelected = new Set();
+        this.rowControls = new Map();
         this.run = null; // { startedAt, steps, shortfalls }
         this.characterId = null;
         this.autoOpenedHrid = null;
@@ -142,6 +146,7 @@ class ScrollPlanner {
         this.prefillFailedHrid = null;
         this.filledMenu = null;
         this.draft = {};
+        this.resetQuickFill();
         setScrollRunActive(false);
     }
 
@@ -716,12 +721,73 @@ class ScrollPlanner {
             }
         });
         document.body.appendChild(this.modal);
+        this.resetQuickFill();
         this.renderModal('');
     }
 
     closeModal() {
         this.modal?.remove();
         this.modal = null;
+        this.rowControls.clear();
+    }
+
+    resetQuickFill() {
+        this.quickFill = null;
+        this.quickSelected = new Set();
+        this.rowControls = new Map();
+    }
+
+    /**
+     * The quick-fill field: "Open N of each scroll you click". Changing N moves every row still
+     * selected through it to the new N.
+     * @returns {HTMLElement}
+     */
+    buildQuickFill() {
+        const wrap = document.createElement('label');
+        wrap.className = 'toolasha-scroll-planner-quickfill';
+        wrap.style.cssText = 'display: flex; align-items: center; gap: 6px; margin-bottom: 10px; color: #ddd;';
+        const before = document.createElement('span');
+        before.textContent = 'Open';
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '1';
+        input.value = this.quickFill > 0 ? String(this.quickFill) : '';
+        input.style.cssText =
+            'width: 64px; padding: 2px 4px; background: #1f1f1f; color: #fff; border: 1px solid #fbbf24; border-radius: 4px;';
+        const after = document.createElement('span');
+        after.textContent = 'of each scroll you click';
+        input.addEventListener('input', () => {
+            const value = Math.floor(Number(input.value));
+            this.quickFill = Number.isFinite(value) && value > 0 ? value : null;
+            if (!this.quickFill) {
+                return;
+            }
+            for (const itemHrid of this.quickSelected) {
+                this.rowControls.get(itemHrid)?.setQuantity(this.quickFill);
+            }
+        });
+        wrap.append(before, input, after);
+        return wrap;
+    }
+
+    /**
+     * A row name pressed: select the row at N, or clear it if it was selected. Does nothing while
+     * N is empty.
+     * @param {string} itemHrid
+     */
+    toggleQuickRow(itemHrid) {
+        const controls = this.rowControls.get(itemHrid);
+        if (!controls || !(this.quickFill > 0)) {
+            return;
+        }
+        if (this.quickSelected.has(itemHrid)) {
+            this.quickSelected.delete(itemHrid);
+            controls.setQuantity(0);
+        } else {
+            this.quickSelected.add(itemHrid);
+            controls.setQuantity(this.quickFill);
+        }
+        controls.showSelected();
     }
 
     renderModal(message, messageColor = '#f87171') {
@@ -756,6 +822,7 @@ class ScrollPlanner {
         const help = this.makeLine(TEXT.modalHelp, '#aaa');
         help.style.cssText += 'margin: 8px 0 12px;';
         content.appendChild(help);
+        this.rowControls = new Map();
 
         const scrollHrids = this.getScrollHrids();
         const items = this.getItems();
@@ -774,6 +841,7 @@ class ScrollPlanner {
             totalLine.textContent = `Total: ${total}`;
         };
 
+        content.appendChild(this.buildQuickFill());
         for (const itemHrid of scrollHrids) {
             content.appendChild(this.buildRow(itemHrid, getOwnedCount(items, itemHrid), updateTotal));
         }
@@ -791,6 +859,7 @@ class ScrollPlanner {
         footer.appendChild(
             this.makeButton(TEXT.clear, () => {
                 this.draft = {};
+                this.quickSelected = new Set();
                 this.renderModal('');
             })
         );
@@ -818,9 +887,15 @@ class ScrollPlanner {
         row.dataset.itemHrid = itemHrid;
         row.style.cssText = `display: flex; align-items: center; gap: 8px; padding: 3px 0; opacity: ${owned > 0 ? 1 : 0.55};`;
 
-        const name = document.createElement('span');
+        // A button, so Enter and Space toggle it too
+        const name = document.createElement('button');
+        name.type = 'button';
+        name.className = 'toolasha-scroll-planner-name';
         name.textContent = this.getScrollName(itemHrid);
-        name.style.cssText = 'flex: 1; min-width: 120px;';
+        name.title = 'With a number in "Open N of each", click to set this scroll to N; click again to clear';
+        name.style.cssText = `flex: 1; min-width: 120px; text-align: left; cursor: pointer; padding: 2px 6px;
+            border-radius: 4px; border: 1px solid transparent; background: transparent; color: #fff; ${CSS_FONT}`;
+        name.addEventListener('click', () => this.toggleQuickRow(itemHrid));
         row.appendChild(name);
 
         const ownedLabel = document.createElement('span');
@@ -834,7 +909,13 @@ class ScrollPlanner {
         input.value = this.draft[itemHrid] > 0 ? String(this.draft[itemHrid]) : '';
         input.style.cssText =
             'width: 64px; padding: 2px 4px; background: #1f1f1f; color: #fff; border: 1px solid #555; border-radius: 4px;';
-        input.addEventListener('input', () => {
+        const showSelected = () => {
+            const selected = this.quickSelected.has(itemHrid);
+            name.setAttribute('aria-pressed', String(selected));
+            name.style.background = selected ? 'rgba(251,191,36,0.2)' : 'transparent';
+            name.style.borderColor = selected ? '#fbbf24' : 'transparent';
+        };
+        const applyValue = () => {
             const value = Math.floor(Number(input.value));
             if (Number.isFinite(value) && value > 0) {
                 this.draft[itemHrid] = value;
@@ -844,19 +925,38 @@ class ScrollPlanner {
             input.style.borderColor = value > owned ? '#f87171' : '#555';
             input.title = value > owned ? `Only ${owned} owned` : '';
             updateTotal();
+        };
+        /** Set by hand (typing, All): the row stops following the quick-fill N */
+        const handEdit = () => {
+            if (this.quickSelected.delete(itemHrid)) {
+                showSelected();
+            }
+        };
+        input.addEventListener('input', () => {
+            handEdit();
+            applyValue();
         });
-        input.dispatchEvent(new Event('input'));
+        applyValue();
+        showSelected();
         row.appendChild(input);
 
         row.appendChild(
             this.makeButton(TEXT.allButton, () => {
                 if (owned > 0) {
-                    this.draft[itemHrid] = owned;
                     input.value = String(owned);
-                    input.dispatchEvent(new Event('input'));
+                    handEdit();
+                    applyValue();
                 }
             })
         );
+
+        this.rowControls.set(itemHrid, {
+            setQuantity: (quantity) => {
+                input.value = quantity > 0 ? String(quantity) : '';
+                applyValue();
+            },
+            showSelected,
+        });
 
         return row;
     }
@@ -874,6 +974,7 @@ class ScrollPlanner {
             return;
         }
         this.draft = last;
+        this.quickSelected = new Set();
         this.renderModal(TEXT.loadedLast, '#4ade80');
     }
 }

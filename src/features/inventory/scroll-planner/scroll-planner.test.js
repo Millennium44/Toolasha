@@ -549,6 +549,91 @@ describe('ScrollPlanner', () => {
         expect(row.querySelector('input').value).toBe('4');
     });
 
+    describe('quick fill', () => {
+        const modal = () => document.querySelector('.toolasha-scroll-planner-modal');
+        const row = (hrid) => modal().querySelector(`.toolasha-scroll-planner-row[data-item-hrid="${hrid}"]`);
+        const nameOf = (hrid) => row(hrid).querySelector('.toolasha-scroll-planner-name');
+        const qtyOf = (hrid) => row(hrid).querySelector('input').value;
+        const total = () => modal().textContent.match(/Total: (\d+)/)[1];
+        const setN = (value) => {
+            const input = modal().querySelector('.toolasha-scroll-planner-quickfill input');
+            input.value = value;
+            input.dispatchEvent(new Event('input'));
+        };
+        const type = (hrid, value) => {
+            const input = row(hrid).querySelector('input');
+            input.value = value;
+            input.dispatchEvent(new Event('input'));
+        };
+
+        beforeEach(async () => {
+            await planner.initialize();
+            planner.openModal();
+        });
+
+        test('clicking names sets them to N, and again clears them; Total follows', () => {
+            setN('30');
+            nameOf(DAMAGE).click();
+            nameOf(GATHERING).click();
+            expect([qtyOf(DAMAGE), qtyOf(GATHERING)]).toEqual(['30', '30']);
+            expect(total()).toBe('60');
+            expect(nameOf(DAMAGE).getAttribute('aria-pressed')).toBe('true');
+            expect(planner.draft).toEqual({ [DAMAGE]: 30, [GATHERING]: 30 });
+
+            nameOf(DAMAGE).click();
+            expect(qtyOf(DAMAGE)).toBe('');
+            expect(nameOf(DAMAGE).getAttribute('aria-pressed')).toBe('false');
+            expect(total()).toBe('30');
+        });
+
+        test('changing N moves the selected rows, but not one edited by hand', () => {
+            setN('30');
+            nameOf(DAMAGE).click();
+            nameOf(GATHERING).click();
+            type(GATHERING, '7');
+            expect(nameOf(GATHERING).getAttribute('aria-pressed')).toBe('false');
+
+            setN('10');
+            expect([qtyOf(DAMAGE), qtyOf(GATHERING), qtyOf(WISDOM)]).toEqual(['10', '7', '']);
+            expect(total()).toBe('17');
+        });
+
+        test('All on a selected row counts as a hand edit', () => {
+            setN('30');
+            nameOf(DAMAGE).click();
+            [...row(DAMAGE).querySelectorAll('button')].find((b) => b.textContent === 'All').click();
+            setN('10');
+            expect(qtyOf(DAMAGE)).toBe('5');
+        });
+
+        test('with N empty, clicking a name does nothing', () => {
+            type(DAMAGE, '4');
+            nameOf(DAMAGE).click();
+            nameOf(GATHERING).click();
+            expect([qtyOf(DAMAGE), qtyOf(GATHERING)]).toEqual(['4', '']);
+            expect(total()).toBe('4');
+
+            setN('0');
+            nameOf(GATHERING).click();
+            expect(qtyOf(GATHERING)).toBe('');
+        });
+
+        test('the names are buttons, so the keyboard reaches them', () => {
+            expect(nameOf(DAMAGE).tagName).toBe('BUTTON');
+            expect(nameOf(DAMAGE).type).toBe('button');
+            expect(nameOf(DAMAGE).style.cursor).toBe('pointer');
+        });
+
+        test('a quick-filled plan starts like a typed one, over-owned clamped with the note', async () => {
+            setN('6');
+            nameOf(DAMAGE).click();
+            await [...modal().querySelectorAll('button')].find((b) => b.textContent === 'Start').click();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(bar().textContent).toContain('Scroll Of Damage ×5');
+            expect(bar().textContent).toContain('Scroll Of Damage (6 → 5)');
+        });
+    });
+
     test('says when there is no last plan', async () => {
         await planner.initialize();
         planner.openModal();
