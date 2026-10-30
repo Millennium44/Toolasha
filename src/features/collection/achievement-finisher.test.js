@@ -1085,6 +1085,47 @@ describe('hints on the game achievement cards', () => {
         expect(cardOf('Dairy Chef').querySelector(`.${PANEL_CLASS}-line`)).toBeNull();
     });
 
+    test('a reused card whose new achievement reads the same hint still gets its own Go', () => {
+        // Two single-action recipes with nothing to buy: both hints read "[level met · materials owned]"
+        const cook = (slug, name) => ({
+            hrid: `/achievements/cook_${slug}`,
+            name,
+            description: `Make a ${name} with Cooking`,
+            steamAchievementId: `ach_cook_${slug}`,
+            tierHrid: '/achievement_tiers/beginner',
+        });
+        const detail = {
+            '/achievements/cook_tea_x': cook('tea_x', 'Tea X'),
+            '/achievements/cook_tea_y': cook('tea_y', 'Tea Y'),
+        };
+        const action = (slug, name) => ({
+            hrid: `/actions/cooking/${slug}`,
+            name,
+            type: '/action_types/cooking',
+            levelRequirement: { skillHrid: '/skills/cooking', level: 1 },
+            inputItems: [],
+            outputItems: [{ itemHrid: `/items/${slug}`, count: 1 }],
+        });
+        game.detail = detail;
+        game.clientData = {
+            achievementDetailMap: detail,
+            actionDetailMap: {
+                '/actions/cooking/tea_x': action('tea_x', 'Tea X'),
+                '/actions/cooking/tea_y': action('tea_y', 'Tea Y'),
+            },
+            itemDetailMap: { '/items/tea_x': { name: 'Tea X' }, '/items/tea_y': { name: 'Tea Y' } },
+        };
+        achievementsTab(detail);
+        finisher.initialize();
+        const card = cardOf('Tea X');
+        expect(lineOf('Tea X').textContent).toBe(lineOf('Tea Y').textContent);
+        // The game re-renders the list into the same element: now it shows Tea Y
+        card.querySelector('use').setAttribute('href', '/static/media/achievements_sprite.abc.svg#cook_tea_y');
+        mountAgain();
+        card.querySelector(`.${PANEL_CLASS}-go`).click();
+        expect(nav.navigateToAction).toHaveBeenLastCalledWith('/actions/cooking/tea_y');
+    });
+
     test('Missing Mats appears on a redraw once the actions bundle opener has loaded', () => {
         game.inventory = INVENTORY.filter((row) => row.itemHrid !== '/items/bamboo_gloves');
         game.bridgeOff = true;

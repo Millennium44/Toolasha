@@ -1124,7 +1124,9 @@ class AchievementFinisher {
         const mats = matsLines.length > 0 && Boolean(missingMaterialsButton());
         const matsKey = mats ? matsLines.map((m) => `${m.itemHrid}:${m.missing}`) : [];
         return {
-            key: JSON.stringify(['ready', text, go, matsKey, ready.buyHrid, ready.actionHrid ?? null]),
+            // The achievement itself too: the game can reuse a card for another achievement whose hint reads
+            // the same, and the kept line's buttons would still act for the old one
+            key: JSON.stringify(['ready', hrid, text, go, matsKey, ready.buyHrid, ready.actionHrid ?? null]),
             build: () => {
                 const hint = hintWithCoins(text);
                 hint.className = `${PANEL_CLASS}-ready`;
