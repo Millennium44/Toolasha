@@ -1309,7 +1309,9 @@ function planSkillGoal(goal, context, stepId = 'train') {
             if (!tea.itemHrid || !(count > 0)) continue;
             const held = Math.min(count, Math.max(0, num(ask(context, 'owned', [tea.itemHrid, goal.id], 0))));
             teaNeeds.push({ itemHrid: tea.itemHrid, count, held, missing: count - held });
-            if (tea.unitPrice > 0) teaHeldCredit += held * tea.unitPrice;
+            // Credit at most the tea cost the hourly figure charged (fractional consumption), never the
+            // rounded-up reservation count: a short climb must not turn a held tea into a profit
+            if (tea.unitPrice > 0) teaHeldCredit += Math.min(held, num(tea.perHour) * timeHours) * tea.unitPrice;
             else if (count > held) teaUnknown = true;
         }
         goldDelta += teaHeldCredit;

@@ -1779,6 +1779,18 @@ describe('a skill target - recurring teas on an enhancing climb', () => {
         expect(covered.details.teas[0]).toMatchObject({ held: 12, missing: 0 });
     });
 
+    test('a short climb credits a held tea only up to the tea cost it was charged', () => {
+        // 0.01 h: 0.12 teas drunk (120 coins of tea) + 50 of materials = 170 cost; one tea held
+        const short = rate({ xpPerHour: 100_000, goldPerHour: -17_000 });
+        const result = plan(1, [short]);
+        const train = step(result, 'train');
+        expect(train.timeHours).toBeCloseTo(0.01, 9);
+        expect(train.goldDelta).toBeCloseTo(-50, 6);
+        expect(train.goldDelta).toBeLessThanOrEqual(0);
+        // The reservation still claims the whole tea
+        expect(reservationLines(result)).toEqual([{ itemHrid: BLESSED, count: 1 }]);
+    });
+
     test('an unpriced tea still to be bought leaves the cost unknown, not free; a held one does not', () => {
         const unpriced = rate({ teaBill: [{ itemHrid: BLESSED, perHour: 12, unitPrice: null }], goldPerHour: -5_000 });
         const short = step(plan(1, [unpriced]), 'train');
