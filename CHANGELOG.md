@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial info boxes appear sooner
+
+- Guild Trials now starts first at login and draws its info boxes from what is already on screen, instead of several seconds later once the other features and its first sample had run.
+
 ### Saved loadouts in the Metz simulator export
 
 - Your saved combat loadouts now travel with the Metz simulator export, so its loadout picker can switch between them (from upstream); written only when a loadout changes.
