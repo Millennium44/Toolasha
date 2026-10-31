@@ -1879,6 +1879,37 @@ describe('planning against the supplies actually held', () => {
             expect(labyrinthClearRate._stagedBeaconPlan.planFor).toBe(5);
         });
 
+        test('beacons used from an ordinary plan still count when plan-for is raised on the same floor', () => {
+            const status = buildGrid(7);
+            beaconInput(2);
+            const input = planForInput(0);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._beaconPlanCells.centers) reveal(c.watch, 7);
+
+            input.value = '5';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(labels()[0]).toBe('B3');
+            expect(labels()).not.toContain('B1');
+            expect(status.textContent).toContain('B3–B5 later');
+        });
+
+        test('plan-for lowered to the beacons used, then raised again, still counts them', () => {
+            buildGrid(7);
+            beaconInput(0);
+            const input = planForInput(6);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._stagedBeaconPlan.all.slice(0, 3)) reveal(c.watch, 7);
+
+            input.value = '3';
+            labyrinthClearRate.runBeaconCalculation();
+            input.value = '6';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(labels()[0]).toBe('B4');
+            expect(labyrinthClearRate._stagedBeaconPlan.placedBefore).toBe(3);
+        });
+
         test('the plan-for count is a standing setting a new floor keeps', () => {
             buildGrid(7);
             settings.map.set('labyrinthBeaconPlanFor', 5);

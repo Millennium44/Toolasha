@@ -56,6 +56,7 @@ import {
     countDisjointRoutes,
     computeBeaconPlan,
     stageBeaconPlan,
+    beaconsUsedOnFloor,
     BEACON_PLAN_FOR_MAX,
 } from './labyrinth-pathing.js';
 import { parseLabyrinthActionName, monsterHridByName, liveClearDisplay } from './labyrinth-live-readout.js';
@@ -4640,8 +4641,16 @@ class LabyrinthClearRate {
             this.drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor });
             return;
         }
-        // Drawn as an ordinary plan: nothing staged is left to continue
-        this._stagedBeaconPlan = null;
+        // Drawn as an ordinary plan: nothing staged is left to continue, but the
+        // floor's used-beacon count is kept, and this plan's own centers join it
+        // once used, so a plan-for raised later on this floor still counts them
+        this._stagedBeaconPlan = {
+            floor: this.currentFloor,
+            n: flat.length,
+            planFor: 0,
+            placedBefore: beaconsUsedOnFloor(revealed, prior).placedBefore,
+            all: [],
+        };
         if (!plan.beacons.length) {
             const routeNote = plan.routes >= 2 ? ` (${plan.routes} independent routes)` : '';
             this.setTileStatus(
@@ -4672,6 +4681,11 @@ class LabyrinthClearRate {
                 watch: [...plan.covered].filter((c) => dist(c, idx) <= BEACON_RADIUS),
             })),
         };
+        this._stagedBeaconPlan.all = this._beaconPlanCells.centers.map((c, i) => ({
+            ...c,
+            label: `B${i + 1}`,
+            watch: [...c.watch],
+        }));
 
         const minNote = count === 0 ? ' (min)' : '';
         // A clamped run drew fewer beacons than were asked for, and says so

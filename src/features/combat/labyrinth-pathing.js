@@ -1227,6 +1227,24 @@ export function orderBeaconsForPrefixes(revealedRooms, cols, centers, keepOrder 
     return { beacons: ordered, prefixes };
 }
 
+/**
+ * Beacons used on the floor so far, out of the last plan drawn on it: those
+ * the record had already counted, plus each of its centers whose planned rooms
+ * are all revealed now. A guess, not a reading — torches or another beacon
+ * lighting the same rooms count too, and a beacon put down off the plan is not
+ * seen at all.
+ * @param {boolean[]} revealed - Flat grid of revealed rooms (entrance included)
+ * @param {Object|null} prior - { placedBefore, all: [{ idx, watch: number[] }] }
+ * @returns {{ placedBefore: number, used: Object[] }}
+ */
+export function beaconsUsedOnFloor(revealed, prior) {
+    if (!prior) return { placedBefore: 0, used: [] };
+    const exit = labyrinthExit(revealed.length);
+    const lit = (i) => revealed[i] || i === exit;
+    const used = Array.isArray(prior.all) ? prior.all.filter((c) => c.watch.length > 0 && c.watch.every(lit)) : [];
+    return { placedBefore: (prior.placedBefore || 0) + used.length, used };
+}
+
 /** Highest "plan for" count the toolbar accepts, the same ceiling as the beacon count */
 export const BEACON_PLAN_FOR_MAX = 20;
 
@@ -1271,11 +1289,9 @@ export function stageBeaconPlan({ revealed, cols, count, planFor, basePlan, prio
     // changed mid-floor plans what is left of the new total, labelled on from
     // the beacons already down, rather than a whole new set from B1. Only the
     // same plan-for continues the old plan as it was.
-    let placedBefore = 0;
+    const { placedBefore, used } = beaconsUsedOnFloor(revealed, prior);
     let continued = null;
     if (prior && Array.isArray(prior.all)) {
-        const used = prior.all.filter((c) => c.watch.length > 0 && c.watch.every((i) => !dark(i)));
-        placedBefore = (prior.placedBefore || 0) + used.length;
         if (used.length && prior.planFor === target) {
             const left = prior.all.filter((c) => !used.includes(c));
             const grid = beaconGrid(n, cols);
