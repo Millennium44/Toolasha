@@ -15,7 +15,7 @@
 
 import config from '../../core/config.js';
 import { runLabyrinthSimulation } from './combat-sim-runner.js';
-import { SKIP_THRESHOLD_RANGE } from '../combat/labyrinth-clear-rate.js';
+import { SKIP_THRESHOLD_RANGE } from '../combat/labyrinth-formulas.js';
 
 /** Hours to simulate per probe: ~50-100+ encounters depending on fight time */
 const DEFAULT_SIM_HOURS = 2;

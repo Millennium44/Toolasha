@@ -31,6 +31,38 @@ const BEACON_SWAP_PASSES = 4;
  */
 const BEACON_ROUTE_TARGET = 2;
 
+/**
+ * Rooms within this many rooms of the straight line from the entrance to the
+ * exit count as "near the way out". Not the detour cost: the entrance and the
+ * exit are opposite corners, so every room of the floor lies on some shortest
+ * walk between them and the detour of every room is 0 until the revealed
+ * start region grows — ranking by it would rank nothing.
+ */
+const NEAR_LINE_ROOMS = 1.5;
+
+/**
+ * The beacon planner's options, with today's behavior as the defaults.
+ * @typedef {Object} BeaconPlanOptions
+ * @property {'rooms'|'holes'} [priority='rooms'] - After the route target: most rooms, or fewest enclosed holes first
+ * @property {number} [routes=2] - Independent covered routes wanted, 1 or 2 (a corner entrance has
+ *   two neighbours, so no floor has more; anything else reads as 2)
+ * @property {boolean} [nearExit=false] - After the route target (and holes), rooms near the entrance-to-exit line before all rooms
+ */
+
+/**
+ * Normalize planner options, so a missing or junk field means today's behavior.
+ * @param {BeaconPlanOptions} [options]
+ * @returns {{priority: string, routes: number, nearExit: boolean}}
+ */
+export function normalizeBeaconOptions(options = {}) {
+    const routes = Math.floor(Number(options?.routes));
+    return {
+        priority: options?.priority === 'holes' ? 'holes' : 'rooms',
+        routes: routes === 1 ? 1 : BEACON_ROUTE_TARGET,
+        nearExit: options?.nearExit === true,
+    };
+}
+
 /** Stand-in for "no chain of beacons reaches the exit" in the residual ordering */
 const RESIDUAL_UNREACHABLE = 999;
 
@@ -773,8 +805,27 @@ function growForCoverage(grid, revealed, count, detour, preset = []) {
  * @param {boolean} gradient - Whether "how much closer" has to be measured
  * @returns {Object} { score, compare, routesOf }
  */
-function createPlacementScorer(grid, revealed, cols, detour, gradient) {
+function createPlacementScorer(grid, revealed, cols, detour, gradient, options = {}) {
     const n = revealed.length;
+    const { priority, routes: routesWanted, nearExit } = normalizeBeaconOptions(options);
+    const holesWanted = priority === 'holes';
+    // No placement can have more independent routes than a fully revealed
+    // floor has (two from a corner entrance with only two neighbours), so a
+    // target past that is the floor's ceiling. Ordering is unchanged by the
+    // cap; it is what lets the fast path below still apply.
+    const routeTarget = Math.min(
+        routesWanted,
+        Math.max(1, countDisjointRoutes(new Array(n).fill(true), cols, labyrinthExit(n)))
+    );
+    const exitX = (n - 1) % cols;
+    const exitY = Math.floor((n - 1) / cols);
+    const lineLength = Math.hypot(exitX, exitY) || 1;
+    const nearLine = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+        const x = i % cols;
+        const y = Math.floor(i / cols);
+        nearLine[i] = Math.abs(x * exitY - y * exitX) / lineLength <= NEAR_LINE_ROOMS ? 1 : 0;
+    }
     const exitIdx = labyrinthExit(n);
     const { diamond } = grid;
 
@@ -845,15 +896,71 @@ function createPlacementScorer(grid, revealed, cols, detour, gradient) {
         const gen = ++generation;
         const union = [];
         let cost = 0;
+        let near = 0;
         for (const c of centers) {
             for (const d of diamond(c)) {
                 if (revealed[d] || inUnion[d] === gen) continue;
                 inUnion[d] = gen;
                 union.push(d);
                 cost += detour[d];
+                if (nearLine[d]) near++;
             }
         }
-        return { centers: [...centers], union, rooms: union.length, cost, residual: residualOf(gen), routes: -1 };
+        return {
+            centers: [...centers],
+            union,
+            rooms: union.length,
+            near,
+            cost,
+            residual: residualOf(gen),
+            routes: -1,
+            holes: null,
+        };
+    };
+
+    // Holes: dark rooms (neither revealed nor lit by the placement) walled in
+    // on every side, i.e. a 4-connected dark pocket that touches no edge of
+    // the grid. A dark run along the edge is the unexplored rim of the floor;
+    // a pocket in the middle is a gap the beacons left between them. Ranked
+    // by the biggest pocket, then by all pocket rooms together.
+    const holeMark = new Int32Array(n);
+    const holeQueue = new Int32Array(n);
+    const lit = new Int32Array(n);
+    let holeGen = 0;
+    const onEdge = (i) => i < cols || i >= n - cols || i % cols === 0 || i % cols === cols - 1;
+    const holesOf = (state) => {
+        if (state.holes) return state.holes;
+        const gen = ++holeGen;
+        for (const d of state.union) lit[d] = gen;
+        const dark = (i) => !revealed[i] && lit[i] !== gen;
+        let largest = 0;
+        let total = 0;
+        for (let start = 0; start < n; start++) {
+            if (!dark(start) || holeMark[start] === gen) continue;
+            holeMark[start] = gen;
+            holeQueue[0] = start;
+            let head = 0;
+            let tail = 1;
+            let edge = false;
+            while (head < tail) {
+                const cur = holeQueue[head++];
+                if (onEdge(cur)) edge = true;
+                for (let k = cur * 4; k < cur * 4 + 4; k++) {
+                    const nb = nbrs[k];
+                    if (nb < 0) break;
+                    if (holeMark[nb] !== gen && dark(nb)) {
+                        holeMark[nb] = gen;
+                        holeQueue[tail++] = nb;
+                    }
+                }
+            }
+            if (!edge) {
+                largest = Math.max(largest, tail);
+                total += tail;
+            }
+        }
+        state.holes = { largest, total };
+        return state.holes;
     };
 
     // Max-flow is the expensive part of a score, and an uncovered way out has
@@ -871,31 +978,44 @@ function createPlacementScorer(grid, revealed, cols, detour, gradient) {
         return state.routes;
     };
 
-    const compare = (a, b) => {
-        if (a.residual !== b.residual) return a.residual - b.residual;
-        const routes = Math.min(BEACON_ROUTE_TARGET, routesOf(b)) - Math.min(BEACON_ROUTE_TARGET, routesOf(a));
-        if (routes !== 0) return routes;
+    /** Every key after the route target, in order; negative when a is better */
+    const afterRoutes = (a, b) => {
+        if (holesWanted) {
+            const ha = holesOf(a);
+            const hb = holesOf(b);
+            if (ha.largest !== hb.largest) return ha.largest - hb.largest;
+            if (ha.total !== hb.total) return ha.total - hb.total;
+        }
+        if (nearExit && a.near !== b.near) return b.near - a.near;
         if (a.rooms !== b.rooms) return b.rooms - a.rooms;
         return a.cost - b.cost;
     };
 
+    const compare = (a, b) => {
+        if (a.residual !== b.residual) return a.residual - b.residual;
+        const routes = Math.min(routeTarget, routesOf(b)) - Math.min(routeTarget, routesOf(a));
+        if (routes !== 0) return routes;
+        return afterRoutes(a, b);
+    };
+
     /**
      * `compare(a, b) < 0`, reached without counting routes when the answer
-     * cannot depend on them. Once the incumbent already has the two routes the
+     * cannot depend on them. Once the incumbent already has the routes the
      * objective asks for, a challenger can only match that — so a challenger
-     * that is no better on rooms and detour is out before any max-flow runs,
-     * which is nearly every candidate the re-placement sweep tries.
+     * that is no better on the keys after the routes (holes, near rooms,
+     * rooms, detour, whichever are on) is out before any max-flow runs, which
+     * is nearly every candidate the re-placement sweep tries.
      */
     const improves = (a, b) => {
         if (a.residual !== b.residual) return a.residual < b.residual;
-        if (Math.min(BEACON_ROUTE_TARGET, routesOf(b)) >= BEACON_ROUTE_TARGET) {
-            if (a.rooms !== b.rooms ? a.rooms < b.rooms : a.cost >= b.cost) return false;
-            return Math.min(BEACON_ROUTE_TARGET, routesOf(a)) >= BEACON_ROUTE_TARGET;
+        if (Math.min(routeTarget, routesOf(b)) >= routeTarget) {
+            if (afterRoutes(a, b) >= 0) return false;
+            return Math.min(routeTarget, routesOf(a)) >= routeTarget;
         }
         return compare(a, b) < 0;
     };
 
-    return { score, compare, improves, routesOf };
+    return { score, compare, improves, routesOf, holesOf, routeTarget };
 }
 
 /**
@@ -1071,7 +1191,7 @@ function minimalChains(grid, revealed, startOK, distToEnd, minNeeded) {
  * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
  *   revealedNew, minNeeded, routes, corridorOpen } or null on empty input
  */
-export function computeBeaconPlan(revealedRooms, cols, beaconCount = 0) {
+export function computeBeaconPlan(revealedRooms, cols, beaconCount = 0, options = {}) {
     const n = revealedRooms.length;
     if (!n || !cols) return null;
     // The last room is always the exit flag, so it is known as the entrance is:
@@ -1123,7 +1243,7 @@ export function computeBeaconPlan(revealedRooms, cols, beaconCount = 0) {
     // one that can treats every placement that fails to as inadmissible
     const coversPath = Number.isFinite(minNeeded) && count >= minNeeded;
     const detour = detourCosts(grid, n, startRegion, exitIdx);
-    const scorer = createPlacementScorer(grid, revealed, cols, detour, !coversPath);
+    const scorer = createPlacementScorer(grid, revealed, cols, detour, !coversPath, options);
 
     const seeds = [];
     const coverageSeed = growForCoverage(grid, revealed, count, detour, []);
@@ -1188,10 +1308,11 @@ export function computeBeaconPlan(revealedRooms, cols, beaconCount = 0) {
  * @param {number} cols - Grid width
  * @param {number[]} centers - The plan's beacon centers
  * @param {boolean} [keepOrder=false] - Score the prefixes of `centers` as given instead of reordering
+ * @param {BeaconPlanOptions} [options] - The planner options the plan was made under
  * @returns {Object|null} { beacons: ordered centers, prefixes: [{ covered: Set<number>, revealedNew,
  *   corridorOpen, residual, routes }] — prefixes[i] is the first i+1 beacons } or null on empty input
  */
-export function orderBeaconsForPrefixes(revealedRooms, cols, centers, keepOrder = false) {
+export function orderBeaconsForPrefixes(revealedRooms, cols, centers, keepOrder = false, options = {}) {
     const n = revealedRooms.length;
     if (!n || !cols || !Array.isArray(centers)) return null;
     const revealed = revealedRooms.slice();
@@ -1199,7 +1320,7 @@ export function orderBeaconsForPrefixes(revealedRooms, cols, centers, keepOrder 
     const grid = beaconGrid(n, cols);
     const startRegion = grid.regionFrom(LABYRINTH_ENTRANCE, (i) => revealed[i]);
     const detour = detourCosts(grid, n, startRegion, labyrinthExit(n));
-    const scorer = createPlacementScorer(grid, revealed, cols, detour, true);
+    const scorer = createPlacementScorer(grid, revealed, cols, detour, true, options);
 
     const remaining = [...centers];
     const ordered = [];
@@ -1245,6 +1366,65 @@ export function beaconsUsedOnFloor(revealed, prior) {
     return { placedBefore: (prior.placedBefore || 0) + used.length, used };
 }
 
+/**
+ * Put the beacons a plan's way out depends on first. A beacon is a room
+ * beacon when taking it out leaves the way out just as covered (same residual)
+ * with as many of the independent routes wanted; such beacons are taken out
+ * one at a time from the back of the order, and what cannot be taken out is
+ * the route group. Every beacon whose removal alone would raise the residual
+ * or drop a route is in it, and where two beacons each cover the same stretch
+ * one is kept, so the route group on its own covers the way out. Each group
+ * keeps the order it came in.
+ *
+ * @param {boolean[]} revealedRooms - Flat grid of already-revealed rooms
+ * @param {number} cols - Grid width
+ * @param {number[]} centers - The plan's beacon centers, in their current order
+ * @param {BeaconPlanOptions} [options] - The planner options the plan was made under
+ * @returns {{ beacons: number[], onRoute: boolean[] }} Reordered centers, and per reordered center whether it is on the route
+ */
+export function orderBeaconsPathFirst(revealedRooms, cols, centers, options = {}) {
+    const n = revealedRooms.length;
+    if (!n || !cols || !Array.isArray(centers) || centers.length < 2) {
+        return { beacons: [...(centers || [])], onRoute: (centers || []).map(() => false) };
+    }
+    const revealed = revealedRooms.slice();
+    revealed[labyrinthExit(n)] = true;
+    const grid = beaconGrid(n, cols);
+    const startRegion = grid.regionFrom(LABYRINTH_ENTRANCE, (i) => revealed[i]);
+    const detour = detourCosts(grid, n, startRegion, labyrinthExit(n));
+    const scorer = createPlacementScorer(grid, revealed, cols, detour, true, options);
+    const target = scorer.routeTarget;
+
+    const whole = scorer.score(centers);
+    const wholeRoutes = Math.min(target, scorer.routesOf(whole));
+    let kept = [...centers];
+    for (let i = centers.length - 1; i >= 0; i--) {
+        const trial = kept.filter((x) => x !== centers[i]);
+        const without = scorer.score(trial);
+        if (without.residual > whole.residual) continue;
+        if (Math.min(target, scorer.routesOf(without)) < wholeRoutes) continue;
+        kept = trial;
+    }
+    const route = centers.filter((c) => kept.includes(c));
+    const rooms = centers.filter((c) => !kept.includes(c));
+    return {
+        beacons: [...route, ...rooms],
+        onRoute: [...route.map(() => true), ...rooms.map(() => false)],
+    };
+}
+
+/**
+ * A key for everything a beacon plan was ordered and placed under, so a plan
+ * staged under other settings is re-planned rather than continued.
+ * @param {BeaconPlanOptions} [options]
+ * @param {boolean} [pathFirst=false]
+ * @returns {string}
+ */
+export function beaconOptionsKey(options = {}, pathFirst = false) {
+    const o = normalizeBeaconOptions(options);
+    return `${o.priority}|${o.routes}|${o.nearExit ? 1 : 0}|${pathFirst ? 1 : 0}`;
+}
+
 /** Highest "plan for" count the toolbar accepts, the same ceiling as the beacon count */
 export const BEACON_PLAN_FOR_MAX = 20;
 
@@ -1282,7 +1462,17 @@ export const BEACON_PLAN_FOR_MAX = 20;
  *   { planFor, placedBefore, all: [{ idx, label, watch: number[] }] }
  * @returns {Object|null} { beacons, labels, nowCount, prefixes, total, placedBefore, continued } or null
  */
-export function stageBeaconPlan({ revealed, cols, count, held = null, planFor, basePlan, prior = null }) {
+export function stageBeaconPlan({
+    revealed,
+    cols,
+    count,
+    held = null,
+    planFor,
+    basePlan,
+    prior = null,
+    options = {},
+    pathFirst = false,
+}) {
     const n = revealed.length;
     const target = Math.min(BEACON_PLAN_FOR_MAX, Math.max(0, Math.floor(Number(planFor) || 0)));
     if (!n || !cols || !target || !basePlan?.feasible) return null;
@@ -1296,7 +1486,8 @@ export function stageBeaconPlan({ revealed, cols, count, held = null, planFor, b
     const { placedBefore, used } = beaconsUsedOnFloor(revealed, prior);
     let continued = null;
     if (prior && Array.isArray(prior.all)) {
-        if (used.length && prior.planFor === target) {
+        const sameSettings = (prior.optionsKey ?? beaconOptionsKey()) === beaconOptionsKey(options, pathFirst);
+        if (used.length && prior.planFor === target && sameSettings) {
             const left = prior.all.filter((c) => !used.includes(c));
             const grid = beaconGrid(n, cols);
             if (left.length && left.every((c) => grid.diamond(c.idx).some(dark))) continued = left;
@@ -1320,7 +1511,8 @@ export function stageBeaconPlan({ revealed, cols, count, held = null, planFor, b
             revealed,
             cols,
             continued.map((c) => c.idx),
-            true
+            true,
+            options
         );
         return {
             beacons: ordered.beacons,
@@ -1336,9 +1528,15 @@ export function stageBeaconPlan({ revealed, cols, count, held = null, planFor, b
     const budget = target - placedBefore;
     const base = count > 0 ? placeable : basePlan.beacons.length;
     if (budget <= base) return null;
-    const full = computeBeaconPlan(revealed, cols, budget);
+    const full = computeBeaconPlan(revealed, cols, budget, options);
     if (!full?.feasible || full.beacons.length <= base) return null;
-    const ordered = orderBeaconsForPrefixes(revealed, cols, full.beacons);
+    let ordered = orderBeaconsForPrefixes(revealed, cols, full.beacons, false, options);
+    // Path first: the beacons the way out needs lead, each group in the
+    // greedy order, and the prefixes are re-scored in that order
+    if (pathFirst) {
+        const first = orderBeaconsPathFirst(revealed, cols, ordered.beacons, options);
+        ordered = orderBeaconsForPrefixes(revealed, cols, first.beacons, true, options);
+    }
     return {
         beacons: ordered.beacons,
         labels: ordered.beacons.map((_, i) => `B${placedBefore + i + 1}`),

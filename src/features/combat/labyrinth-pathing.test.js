@@ -15,6 +15,9 @@ import {
     countDisjointRoutes,
     orderBeaconsForPrefixes,
     stageBeaconPlan,
+    orderBeaconsPathFirst,
+    normalizeBeaconOptions,
+    beaconOptionsKey,
 } from './labyrinth-pathing.js';
 
 describe('computeLabyrinthPath', () => {
@@ -1029,5 +1032,246 @@ describe('planning for more beacons than are placed now', () => {
             expect(again.continued).toBe(false);
             expect(again.beacons).toEqual(first.beacons);
         });
+    });
+});
+
+/**
+ * Beacon planner options. Fixtures are the floors beacons are planned on in a
+ * live run: 8x8 (floor 5 and up) entered at the top-left corner, exit
+ * bottom-right, plus a 7x7 and an 8x8 with a revealed band through the middle.
+ */
+describe('beacon planner options', () => {
+    const darkFloor = (cols) => {
+        const revealed = new Array(cols * cols).fill(false);
+        revealed[0] = true;
+        return revealed;
+    };
+    const bandFloor = () => {
+        const revealed = darkFloor(8);
+        for (const i of [9, 10, 18, 19, 27, 28]) revealed[i] = true;
+        return revealed;
+    };
+    const xy = (i, cols) => [i % cols, Math.floor(i / cols)];
+
+    /** Independent oracle: the largest dark pocket touching no edge, after the plan's reveal */
+    const largestHole = (revealed, cols, covered) => {
+        const n = revealed.length;
+        const dark = (i) => !revealed[i] && i !== n - 1 && !covered.has(i);
+        const seen = new Set();
+        let largest = 0;
+        for (let start = 0; start < n; start++) {
+            if (!dark(start) || seen.has(start)) continue;
+            const queue = [start];
+            seen.add(start);
+            let edge = false;
+            for (let h = 0; h < queue.length; h++) {
+                const [x, y] = xy(queue[h], cols);
+                if (x === 0 || y === 0 || x === cols - 1 || y === cols - 1) edge = true;
+                const c = queue[h];
+                for (const nb of [x > 0 ? c - 1 : -1, x < cols - 1 ? c + 1 : -1, c - cols, c + cols]) {
+                    if (nb >= 0 && nb < n && dark(nb) && !seen.has(nb)) {
+                        seen.add(nb);
+                        queue.push(nb);
+                    }
+                }
+            }
+            if (!edge) largest = Math.max(largest, queue.length);
+        }
+        return largest;
+    };
+    /** Rooms the plan reveals within 1.5 rooms of the entrance-exit diagonal */
+    const nearRooms = (plan, cols) =>
+        [...plan.covered].filter((i) => {
+            const [x, y] = xy(i, cols);
+            return Math.abs(x - y) / Math.SQRT2 <= 1.5;
+        }).length;
+
+    test('defaults and junk normalize to today: most rooms, two routes, no near-exit bias', () => {
+        expect(normalizeBeaconOptions()).toEqual({ priority: 'rooms', routes: 2, nearExit: false });
+        expect(normalizeBeaconOptions({ priority: 'x', routes: 9, nearExit: 'yes' })).toEqual({
+            priority: 'rooms',
+            routes: 2,
+            nearExit: false,
+        });
+        const revealed = darkFloor(8);
+        expect(computeBeaconPlan(revealed, 8, 5, {})).toEqual(computeBeaconPlan(revealed, 8, 5));
+        expect(computeBeaconPlan(revealed, 8, 5, { priority: 'rooms', routes: 2, nearExit: false })).toEqual(
+            computeBeaconPlan(revealed, 8, 5)
+        );
+    });
+
+    test('fewest holes closes the gap most rooms leaves in the middle of a dark 8x8 (five beacons)', () => {
+        const revealed = darkFloor(8);
+        const rooms = computeBeaconPlan(revealed, 8, 5);
+        const holes = computeBeaconPlan(revealed, 8, 5, { priority: 'holes' });
+
+        expect(largestHole(revealed, 8, rooms.covered)).toBeGreaterThan(0);
+        expect(largestHole(revealed, 8, holes.covered)).toBe(0);
+        // The way out and its routes come first either way
+        expect(holes.corridorOpen).toBe(true);
+        expect(holes.routes).toBe(rooms.routes);
+        // And here closing the gap costs no rooms at all
+        expect(holes.revealedNew).toBe(rooms.revealedNew);
+    });
+
+    test('fewest holes trades rooms for a closed gap when it has to (dark 8x8, four beacons; dark 7x7, three)', () => {
+        for (const [cols, count] of [
+            [8, 4],
+            [7, 3],
+        ]) {
+            const revealed = darkFloor(cols);
+            const rooms = computeBeaconPlan(revealed, cols, count);
+            const holes = computeBeaconPlan(revealed, cols, count, { priority: 'holes' });
+            expect(largestHole(revealed, cols, rooms.covered)).toBeGreaterThan(0);
+            expect(largestHole(revealed, cols, holes.covered)).toBe(0);
+            expect(holes.corridorOpen).toBe(true);
+            expect(holes.revealedNew).toBeLessThan(rooms.revealedNew);
+        }
+    });
+
+    test('one route wanted can take more rooms than two', () => {
+        const revealed = bandFloor();
+        const two = computeBeaconPlan(revealed, 8, 3);
+        const one = computeBeaconPlan(revealed, 8, 3, { routes: 1 });
+        expect(two.routes).toBe(2);
+        expect(one.routes).toBe(1);
+        expect(one.revealedNew).toBeGreaterThan(two.revealedNew);
+    });
+
+    test('routes wanted is 1 or 2; a stored 3 (or anything else) reads as 2', () => {
+        expect(normalizeBeaconOptions({ routes: 1 }).routes).toBe(1);
+        expect(normalizeBeaconOptions({ routes: 3 }).routes).toBe(2);
+        expect(normalizeBeaconOptions({ routes: '3' }).routes).toBe(2);
+        const revealed = darkFloor(8);
+        expect(computeBeaconPlan(revealed, 8, 5, { routes: 3 })).toEqual(computeBeaconPlan(revealed, 8, 5));
+    });
+
+    test('stay near the way out reveals more rooms near the diagonal, never fewer', () => {
+        for (const [revealed, cols, count] of [
+            [darkFloor(8), 8, 5],
+            [darkFloor(7), 7, 3],
+            [bandFloor(), 8, 4],
+        ]) {
+            const plain = computeBeaconPlan(revealed, cols, count);
+            const near = computeBeaconPlan(revealed, cols, count, { nearExit: true });
+            expect(near.corridorOpen).toBe(true);
+            expect(nearRooms(near, cols)).toBeGreaterThanOrEqual(nearRooms(plain, cols));
+        }
+        const plain = computeBeaconPlan(darkFloor(8), 8, 5);
+        const near = computeBeaconPlan(darkFloor(8), 8, 5, { nearExit: true });
+        expect(nearRooms(near, 8)).toBeGreaterThan(nearRooms(plain, 8));
+    });
+
+    test('path first numbers the beacons the way out needs first, each group in its own order', () => {
+        for (const [revealed, cols, count, options] of [
+            [darkFloor(8), 8, 5, {}],
+            [darkFloor(8), 8, 5, { priority: 'holes' }],
+            [darkFloor(7), 7, 4, {}],
+        ]) {
+            const plan = computeBeaconPlan(revealed, cols, count, options);
+            const { beacons, onRoute } = orderBeaconsPathFirst(revealed, cols, plan.beacons, options);
+            expect([...beacons].sort((a, b) => a - b)).toEqual([...plan.beacons].sort((a, b) => a - b));
+            const routeCount = onRoute.filter(Boolean).length;
+            expect(routeCount).toBeGreaterThan(0);
+            // Route beacons all lead
+            expect(onRoute.slice(0, routeCount).every(Boolean)).toBe(true);
+            // Each group keeps the plan's order
+            const inPlanOrder = (list) => {
+                const at = list.map((b) => plan.beacons.indexOf(b));
+                return at.every((v, i) => i === 0 || v > at[i - 1]);
+            };
+            expect(inPlanOrder(beacons.slice(0, routeCount))).toBe(true);
+            expect(inPlanOrder(beacons.slice(routeCount))).toBe(true);
+            // The route group alone lights a walk to the exit, with the routes wanted
+            const passable = revealed.slice();
+            for (const b of beacons.slice(0, routeCount)) {
+                const [bx, by] = xy(b, cols);
+                for (let i = 0; i < passable.length; i++) {
+                    const [x, y] = xy(i, cols);
+                    if (Math.abs(x - bx) + Math.abs(y - by) <= 2) passable[i] = true;
+                }
+            }
+            expect(countDisjointRoutes(passable, cols)).toBeGreaterThanOrEqual(Math.min(2, plan.routes));
+        }
+    });
+
+    test('path first with plan-for: the now beacons are the route beacons, holding fewer than set', () => {
+        const revealed = darkFloor(8);
+        const options = { priority: 'holes' };
+        const staged = stageBeaconPlan({
+            revealed,
+            cols: 8,
+            count: 2,
+            held: 1,
+            planFor: 5,
+            basePlan: computeBeaconPlan(revealed, 8, 2, options),
+            options,
+            pathFirst: true,
+        });
+        const five = computeBeaconPlan(revealed, 8, 5, options);
+        const { beacons, onRoute } = orderBeaconsPathFirst(revealed, 8, staged.beacons, options);
+
+        expect([...staged.beacons].sort((a, b) => a - b)).toEqual([...five.beacons].sort((a, b) => a - b));
+        // Already path-first: re-ordering it changes nothing
+        expect(beacons).toEqual(staged.beacons);
+        expect(onRoute[0]).toBe(true);
+        // Two set, one held: one now, and it is a route beacon
+        expect(staged.nowCount).toBe(1);
+        expect(staged.labels).toEqual(['B1', 'B2', 'B3', 'B4', 'B5']);
+    });
+
+    test('a plan staged under other settings is re-planned, still counting the beacons used', () => {
+        const revealed = darkFloor(8);
+        const first = stageBeaconPlan({
+            revealed,
+            cols: 8,
+            count: 0,
+            planFor: 5,
+            basePlan: computeBeaconPlan(revealed, 8, 0),
+        });
+        const covered = first.prefixes[first.prefixes.length - 1].covered;
+        const diamond = (c) =>
+            [...covered].filter((i) => Math.abs(xy(i, 8)[0] - xy(c, 8)[0]) + Math.abs(xy(i, 8)[1] - xy(c, 8)[1]) <= 2);
+        const prior = {
+            planFor: 5,
+            placedBefore: 0,
+            optionsKey: beaconOptionsKey(),
+            all: first.beacons.map((idx, i) => ({ idx, label: first.labels[i], watch: diamond(idx) })),
+        };
+        const after = revealed.slice();
+        for (const c of prior.all[0].watch) after[c] = true;
+
+        const same = stageBeaconPlan({
+            revealed: after,
+            cols: 8,
+            count: 0,
+            planFor: 5,
+            basePlan: computeBeaconPlan(after, 8, 0),
+            prior,
+        });
+        expect(same.continued).toBe(true);
+
+        const options = { priority: 'holes' };
+        const changed = stageBeaconPlan({
+            revealed: after,
+            cols: 8,
+            count: 0,
+            planFor: 5,
+            basePlan: computeBeaconPlan(after, 8, 0, options),
+            prior,
+            options,
+        });
+        expect(changed.continued).toBe(false);
+        expect(changed.placedBefore).toBe(1);
+        expect(changed.labels[0]).toBe('B2');
+    });
+
+    test('8x8, five beacons, two routes wanted and fewest holes stays quick', () => {
+        const revealed = darkFloor(8);
+        const started = performance.now();
+        const plan = computeBeaconPlan(revealed, 8, 5, { routes: 2, priority: 'holes' });
+        const ms = performance.now() - started;
+        expect(plan.beacons).toHaveLength(5);
+        expect(ms).toBeLessThan(1500);
     });
 });

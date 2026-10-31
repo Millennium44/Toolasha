@@ -57,6 +57,8 @@ import {
     computeBeaconPlan,
     stageBeaconPlan,
     beaconsUsedOnFloor,
+    orderBeaconsPathFirst,
+    beaconOptionsKey,
     BEACON_PLAN_FOR_MAX,
 } from './labyrinth-pathing.js';
 import { parseLabyrinthActionName, monsterHridByName, liveClearDisplay } from './labyrinth-live-readout.js';
@@ -154,6 +156,14 @@ const LIVE_SIM_REFRESH_MS = 4000;
  */
 const LIVE_SIM_MAX_AGE_MS = 30000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
+
+/** The beacon planner settings, editable from the toolbar's gear panel and the Settings page */
+const BEACON_PLANNER_SETTINGS = [
+    'labyrinthBeaconPriority',
+    'labyrinthBeaconRoutes',
+    'labyrinthBeaconNearExit',
+    'labyrinthBeaconPathFirst',
+];
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 /** Wait after a beacon reveal before re-pathing, so the reveal's burst of updates (and the auto-calc it schedules) lands first */
 const AUTO_PATH_DELAY_MS = 900;
@@ -250,7 +260,50 @@ class LabyrinthClearRate {
                 if (value) return;
                 this.disableLiveProgress();
             }),
+            // The four beacon planner settings are also editable from the Settings
+            // page, which does not go through the toolbar's handlers
+            ...BEACON_PLANNER_SETTINGS.map((key) =>
+                config.onSettingChange(key, () => this.onBeaconPlannerSettingChanged())
+            ),
         ];
+    }
+
+    /**
+     * A beacon planner setting changed. The toolbar's own handlers write inside
+     * `writeBeaconPlannerSetting` (they sync their control and replan themselves),
+     * so this only acts on a change made from elsewhere: put the toolbar controls
+     * on the new values and redraw a plan that is on the map.
+     */
+    onBeaconPlannerSettingChanged() {
+        if (this._beaconToolbarWrite) return;
+        this.syncBeaconPlannerControls();
+        this.rerunBeaconPlanIfShown();
+    }
+
+    /** Run a toolbar write of a planner setting, marked as the toolbar's own */
+    writeBeaconPlannerSetting(write) {
+        this._beaconToolbarWrite = true;
+        try {
+            write();
+        } finally {
+            this._beaconToolbarWrite = false;
+        }
+    }
+
+    /** Put the toolbar's planner controls on the stored settings */
+    syncBeaconPlannerControls() {
+        for (const [suffix, settingId, fallback] of [
+            ['beacon-priority', 'labyrinthBeaconPriority', 'rooms'],
+            ['beacon-routes', 'labyrinthBeaconRoutes', '2'],
+        ]) {
+            const select = document.querySelector(`.${TILE_CONTROLS_CLASS}-${suffix}`);
+            if (!select) continue;
+            select.value = String(config.getSettingValue(settingId, fallback));
+            if (!select.value) select.value = fallback;
+        }
+        for (const suffix of ['beacon-near-exit', 'beacon-path-first']) {
+            document.querySelector(`.${TILE_CONTROLS_CLASS}-${suffix}`)?.syncFromSetting?.();
+        }
     }
 
     /** Unwire the live clear chance: its handlers and every readout it drew */
@@ -3348,8 +3401,7 @@ class LabyrinthClearRate {
             config.setSettingValue('labyrinthBeaconPlanFor', n);
             // A plan on the map was made for the old total; redraw it for the
             // new one so the labels and the status agree with the field
-            const staged = this._stagedBeaconPlan;
-            if (this._beaconPlanCells || staged?.floor === this.currentFloor) this.runBeaconCalculation();
+            this.rerunBeaconPlanIfShown();
         });
         cluster();
         group(beaconButton, beaconInput, planForLabel, planForInput, beaconAutoButton);
@@ -3397,16 +3449,13 @@ class LabyrinthClearRate {
         const gear = cluster();
         gear.append(settingsButton, settingsPanel);
 
-        // Row two: the latest summary (the path's rooms and shrouds, a beacon
-        // plan) on a line of its own
-        const rowBreak = document.createElement('span');
-        rowBreak.className = `${TILE_CONTROLS_CLASS}-row-break`;
-        rowBreak.style.cssText = 'flex-basis:100%; height:0;';
-        container.appendChild(rowBreak);
-
+        // The latest summary (the path's rooms and shrouds, a beacon plan) sits
+        // beside the gear when it fits and wraps, whole, onto its own line when
+        // it does not. Hidden while empty so it takes no room.
         const status = document.createElement('span');
         status.className = `${TILE_CONTROLS_CLASS}-status`;
-        status.style.cssText = 'flex:1 1 160px; font-size:10px; color:#9ab0d8; min-width:0; overflow-wrap:anywhere;';
+        status.style.cssText =
+            'display:none; flex:1 1 160px; min-width:160px; font-size:10px; color:#9ab0d8; overflow-wrap:anywhere;';
         container.appendChild(status);
 
         const track = document.createElement('div');
@@ -3516,6 +3565,100 @@ class LabyrinthClearRate {
         });
         settingsPanel.appendChild(autoPathButton);
         syncAutoPath();
+
+        // How the beacon planner ranks placements; any change redraws a plan on the map
+        const beaconGroup = document.createElement('div');
+        beaconGroup.className = `${TILE_CONTROLS_CLASS}-beacon-settings`;
+        beaconGroup.style.cssText =
+            'display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; max-width:100%; ' +
+            'padding-top:6px; border-top:1px solid rgba(255,255,255,0.18);';
+        const beaconHeading = document.createElement('span');
+        beaconHeading.textContent = 'Beacons';
+        beaconHeading.style.cssText = 'flex-basis:100%; font-size:11px; font-weight:700; opacity:0.85;';
+        beaconGroup.appendChild(beaconHeading);
+        const panelSelect = (suffix, settingId, fallback, title, choices) => {
+            const select = document.createElement('select');
+            select.className = `${TILE_CONTROLS_CLASS}-${suffix}`;
+            select.classList.add('toolasha-select');
+            select.title = title;
+            select.style.cssText = unknownSelect.style.cssText;
+            for (const [value, label] of choices) {
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = label;
+                select.appendChild(opt);
+            }
+            select.value = String(config.getSettingValue(settingId, fallback));
+            if (!select.value) select.value = fallback;
+            select.addEventListener('change', () => {
+                this.writeBeaconPlannerSetting(() => config.setSettingValue(settingId, select.value));
+                this.rerunBeaconPlanIfShown();
+            });
+            beaconGroup.appendChild(select);
+            return select;
+        };
+        panelSelect(
+            'beacon-priority',
+            'labyrinthBeaconPriority',
+            'rooms',
+            'What the beacon plan ranks on once the way out and its routes are covered: the most rooms revealed, ' +
+                'or the fewest dark pockets left walled in between lit rooms (then rooms)',
+            [
+                ['rooms', 'Most rooms'],
+                ['holes', 'Fewest holes'],
+            ]
+        );
+        panelSelect(
+            'beacon-routes',
+            'labyrinthBeaconRoutes',
+            '2',
+            'Independent covered routes to the exit the beacon plan aims for: two means no single room can block ' +
+                'the way out, one frees beacons for rooms',
+            [
+                ['1', '1 route'],
+                ['2', '2 routes'],
+            ]
+        );
+        const panelToggle = (suffix, settingId, onText, offText, title) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `${TILE_CONTROLS_CLASS}-${suffix}`;
+            button.style.cssText = autoButton.style.cssText;
+            button.title = title;
+            const sync = () => {
+                const on = !!config.getSetting(settingId);
+                button.textContent = on ? onText : offText;
+                button.style.background = on ? 'rgba(60,180,120,0.85)' : 'rgba(120,134,160,0.85)';
+                button.setAttribute('aria-pressed', on ? 'true' : 'false');
+            };
+            button.addEventListener('click', () => {
+                // Checkbox settings, written the way the auto toggles are
+                this.writeBeaconPlannerSetting(() => config.setSetting(settingId, !config.getSetting(settingId)));
+                sync();
+                this.rerunBeaconPlanIfShown();
+            });
+            button.syncFromSetting = sync;
+            sync();
+            beaconGroup.appendChild(button);
+            return button;
+        };
+        panelToggle(
+            'beacon-near-exit',
+            'labyrinthBeaconNearExit',
+            'Near way out: on',
+            'Near way out: off',
+            'Prefer rooms close to the straight line from the entrance to the exit over rooms out in the corners, ' +
+                'once the way out and its routes are covered'
+        );
+        panelToggle(
+            'beacon-path-first',
+            'labyrinthBeaconPathFirst',
+            'Path first: on',
+            'Path first: off',
+            'Number the beacons the way out depends on first (B1, B2...) and the ones only there for rooms last, ' +
+                'so the first ones placed open the route'
+        );
+        settingsPanel.appendChild(beaconGroup);
 
         // The room grid's size stepper, which used to sit in the game's header
         // row; the grid scale module still owns the setting and the zoom
@@ -3669,6 +3812,7 @@ class LabyrinthClearRate {
         const status = document.querySelector(`.${TILE_CONTROLS_CLASS}-status`);
         if (!status) return;
         status.textContent = message || '';
+        status.style.display = message ? '' : 'none';
         status.style.color = warn ? '#ff8a80' : '';
     }
 
@@ -4751,7 +4895,9 @@ class LabyrinthClearRate {
             this.setTileStatus(`No beacons ${word} — ${requested} set / 0 ${word}`, true);
             return;
         }
-        const plan = computeBeaconPlan(revealed, cols, count);
+        const { options, pathFirst } = this.readBeaconPlanSettings();
+        const optionsKey = beaconOptionsKey(options, pathFirst);
+        const plan = computeBeaconPlan(revealed, cols, count, options);
         if (!plan) {
             this.setTileStatus('Beacon planning failed');
             return;
@@ -4773,11 +4919,28 @@ class LabyrinthClearRate {
                       planFor,
                       basePlan: plan,
                       prior,
+                      options,
+                      pathFirst,
                   })
                 : null;
         if (staged) {
-            this.drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor });
+            this.drawStagedBeaconPlan({
+                staged,
+                plan,
+                cells,
+                cols,
+                flat,
+                count,
+                budget,
+                supplies,
+                planFor,
+                optionsKey,
+            });
             return;
+        }
+        // Path first: the beacons the way out depends on take the first labels
+        if (pathFirst && plan.beacons.length > 1) {
+            plan.beacons = orderBeaconsPathFirst(revealed, cols, plan.beacons, options).beacons;
         }
         // Drawn as an ordinary plan: nothing staged is left to continue, but the
         // floor's used-beacon count is kept, and this plan's own centers join it
@@ -4786,6 +4949,7 @@ class LabyrinthClearRate {
             floor: this.currentFloor,
             n: flat.length,
             characterId,
+            optionsKey,
             planFor: 0,
             placedBefore: beaconsUsedOnFloor(revealed, prior).placedBefore,
             all: [],
@@ -4866,6 +5030,33 @@ class LabyrinthClearRate {
     }
 
     /**
+     * The beacon planner settings from the gear panel: what the placement is
+     * ranked on after the way out, how many independent routes it wants, and
+     * whether the route's beacons are numbered first.
+     * @returns {{ options: {priority: string, routes: number, nearExit: boolean}, pathFirst: boolean }}
+     */
+    readBeaconPlanSettings() {
+        const routes = Math.floor(Number(config.getSettingValue('labyrinthBeaconRoutes', '2')));
+        return {
+            options: {
+                priority: config.getSettingValue('labyrinthBeaconPriority', 'rooms') === 'holes' ? 'holes' : 'rooms',
+                // 1 or 2; anything else, a stored 3 included, is the default
+                routes: routes === 1 ? 1 : 2,
+                nearExit: !!config.getSetting('labyrinthBeaconNearExit'),
+            },
+            pathFirst: !!config.getSetting('labyrinthBeaconPathFirst'),
+        };
+    }
+
+    /** Redraw the beacon plan for changed settings, when one is on the map for this floor */
+    rerunBeaconPlanIfShown() {
+        const staged = this._stagedBeaconPlan;
+        if (this._beaconPlanCells || (staged?.floor === this.currentFloor && staged.all?.length)) {
+            this.runBeaconCalculation();
+        }
+    }
+
+    /**
      * The "plan for" count from the toolbar field (or its setting), clamped to
      * 0..BEACON_PLAN_FOR_MAX. 0 means "the same as the beacon count".
      * @returns {number}
@@ -4885,7 +5076,7 @@ class LabyrinthClearRate {
      * "later", and a status line whose figures are for what goes down now,
      * with the whole plan's reveal beside it.
      */
-    drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor }) {
+    drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor, optionsKey }) {
         const { beacons, labels, nowCount, prefixes, total, placedBefore } = staged;
         const now = nowCount > 0 ? prefixes[nowCount - 1] : null;
         const all = prefixes[prefixes.length - 1];
@@ -4926,6 +5117,7 @@ class LabyrinthClearRate {
             floor: this.currentFloor,
             n: flat.length,
             characterId: dataManager.getCurrentCharacterId() ?? null,
+            optionsKey,
             planFor,
             placedBefore,
             all: centers,

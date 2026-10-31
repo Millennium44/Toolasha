@@ -26,10 +26,6 @@ vi.mock('./combat-sim-runner.js', () => ({
     },
 }));
 
-// The finder only wants the shared search range off this module; everything
-// else in it drags in the whole labyrinth panel
-vi.mock('../combat/labyrinth-clear-rate.js', () => ({ SKIP_THRESHOLD_RANGE: 1000, default: {} }));
-
 const { findMaxLabyrinthLevel, searchWindowFor, defaultThreshold } = await import('./labyrinth-level-finder.js');
 
 const params = (over = {}) => ({

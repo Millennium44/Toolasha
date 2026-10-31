@@ -1962,6 +1962,25 @@ describe('planning against the supplies actually held', () => {
             expect(labyrinthClearRate._stagedBeaconPlan).toBeNull();
         });
 
+        test('the drawn plan is the one the planner settings ask for', async () => {
+            const { computeBeaconPlan } = await import('./labyrinth-pathing.js');
+            configMock.getSetting.mockImplementation((key) => key !== 'labyrinthBeaconNearExit');
+            settings.map.set('labyrinthBeaconPriority', 'holes');
+            try {
+                buildGrid(8);
+                beaconInput(5);
+                labyrinthClearRate.runBeaconCalculation();
+                const drawn = labyrinthClearRate._beaconPlanCells.centers.map((c) => c.idx);
+                const revealed = new Array(64).fill(false);
+                revealed[0] = true;
+                const expected = computeBeaconPlan(revealed, 8, 5, { priority: 'holes', routes: 2, nearExit: false });
+                expect([...drawn].sort((a, b) => a - b)).toEqual([...expected.beacons].sort((a, b) => a - b));
+                expect(labyrinthClearRate._stagedBeaconPlan.optionsKey).toBe('holes|2|0|1');
+            } finally {
+                configMock.getSetting.mockImplementation(() => true);
+            }
+        });
+
         test('the plan-for count is a standing setting a new floor keeps', () => {
             buildGrid(7);
             settings.map.set('labyrinthBeaconPlanFor', 5);
@@ -7483,7 +7502,7 @@ describe('labyrinth toolbar layout', () => {
     const panel = () => q('settings-panel');
     const open = () => panel().style.display !== 'none';
 
-    test('main row: Labyrinth, then Path, Beacons, Clear and the gear in clusters; row two the summary alone', () => {
+    test('main row: Labyrinth, then Path, Beacons, Clear and the gear in clusters; the summary beside the gear, the bar below', () => {
         labyrinthClearRate.injectTileControls();
 
         const clusters = [...document.querySelectorAll('.mwi-labyrinth-tile-controls-cluster')];
@@ -7497,12 +7516,18 @@ describe('labyrinth toolbar layout', () => {
         expect(clusters[3].contains(q('settings-button'))).toBe(true);
         expect(before(q('toggle'), clusters[0])).toBe(true);
 
-        // Row two is the summary and the bar; the toggles are in the panel
-        const rowBreak = q('row-break');
-        expect(before(clusters[3], rowBreak)).toBe(true);
-        expect(before(rowBreak, q('status'))).toBe(true);
+        // The summary follows the gear in the same row container, the bar after it
+        expect(q('row-break')).toBeNull();
+        expect(before(clusters[3], q('status'))).toBe(true);
         expect(before(q('status'), q('bar'))).toBe(true);
-        expect(rowBreak.parentElement.contains(q('auto-toggle'))).toBe(true);
+        expect(q('status').parentElement).toBe(clusters[3].parentElement);
+        // Empty, it takes no room; with text it shows
+        expect(q('status').style.display).toBe('none');
+        labyrinthClearRate.setTileStatus('Path: 12 rooms');
+        expect(q('status').style.display).toBe('');
+        labyrinthClearRate.setTileStatus('');
+        expect(q('status').style.display).toBe('none');
+        expect(clusters[3].parentElement.contains(q('auto-toggle'))).toBe(true);
         expect(panel().contains(q('auto-toggle'))).toBe(true);
     });
 
@@ -7577,6 +7602,161 @@ describe('labyrinth toolbar layout', () => {
         expect(
             q('settings-button').closest('span[style*="display: none"], span[style*="display:none"]')
         ).not.toBeNull();
+    });
+
+    test('the gear panel has a Beacons group with the four planner settings, and each flips its setting', () => {
+        labyrinthClearRate.injectTileControls();
+        const group = q('beacon-settings');
+        expect(panel().contains(group)).toBe(true);
+        expect(group.textContent).toContain('Beacons');
+        const priority = q('beacon-priority');
+        const routes = q('beacon-routes');
+        const near = q('beacon-near-exit');
+        const pathFirst = q('beacon-path-first');
+        for (const el of [priority, routes, near, pathFirst]) {
+            expect(group.contains(el)).toBe(true);
+            expect(el.title.length).toBeGreaterThan(20);
+        }
+        expect(priority.value).toBe('rooms');
+        expect(routes.value).toBe('2');
+        expect([...routes.options].map((o) => o.value)).toEqual(['1', '2']);
+        // Spread stays the panel's last item
+        expect(panel().lastElementChild.textContent).toBe('Spread');
+
+        priority.value = 'holes';
+        priority.dispatchEvent(new Event('change'));
+        expect(settings.map.get('labyrinthBeaconPriority')).toBe('holes');
+        routes.value = '1';
+        routes.dispatchEvent(new Event('change'));
+        expect(settings.map.get('labyrinthBeaconRoutes')).toBe('1');
+
+        configMock.setSetting.mockClear();
+        near.click();
+        expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthBeaconNearExit', true);
+        pathFirst.click();
+        expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthBeaconPathFirst', true);
+    });
+
+    test('a planner setting changed with a beacon plan on the map redraws it; with none it does not', () => {
+        labyrinthClearRate.injectTileControls();
+        const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+        try {
+            labyrinthClearRate._beaconPlanCells = null;
+            labyrinthClearRate._stagedBeaconPlan = null;
+            q('beacon-priority').dispatchEvent(new Event('change'));
+            expect(run).not.toHaveBeenCalled();
+
+            labyrinthClearRate._beaconPlanCells = { fills: [], centers: [] };
+            q('beacon-priority').dispatchEvent(new Event('change'));
+            q('beacon-routes').dispatchEvent(new Event('change'));
+            q('beacon-near-exit').click();
+            q('beacon-path-first').click();
+            expect(run).toHaveBeenCalledTimes(4);
+        } finally {
+            run.mockRestore();
+            labyrinthClearRate._beaconPlanCells = null;
+        }
+    });
+
+    describe('planner settings changed from outside the toolbar', () => {
+        afterEach(() => {
+            settings.map.delete('labyrinthBeaconPriority');
+            settings.map.delete('labyrinthBeaconRoutes');
+        });
+        const fire = (key, value) => {
+            for (const w of settingWatchers.filter((x) => x.key === key)) w.cb(value);
+        };
+
+        test('each one redraws a shown plan and updates its toolbar control', () => {
+            labyrinthClearRate.watchHalfSettings();
+            labyrinthClearRate.injectTileControls();
+            const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+            try {
+                labyrinthClearRate._beaconPlanCells = { fills: [], centers: [] };
+                settings.map.set('labyrinthBeaconPriority', 'holes');
+                fire('labyrinthBeaconPriority', 'holes');
+                expect(q('beacon-priority').value).toBe('holes');
+                settings.map.set('labyrinthBeaconRoutes', '1');
+                fire('labyrinthBeaconRoutes', '1');
+                expect(q('beacon-routes').value).toBe('1');
+                configMock.getSetting.mockImplementation(() => false);
+                expect(q('beacon-near-exit').textContent).toBe('Near way out: off');
+                configMock.getSetting.mockImplementation((k) => k === 'labyrinthBeaconNearExit');
+                fire('labyrinthBeaconNearExit', true);
+                expect(q('beacon-near-exit').textContent).toBe('Near way out: on');
+                configMock.getSetting.mockImplementation((k) => k === 'labyrinthBeaconPathFirst');
+                fire('labyrinthBeaconPathFirst', true);
+                expect(q('beacon-path-first').textContent).toBe('Path first: on');
+                expect(run).toHaveBeenCalledTimes(4);
+            } finally {
+                run.mockRestore();
+                labyrinthClearRate._beaconPlanCells = null;
+                configMock.getSetting.mockImplementation(() => true);
+                labyrinthClearRate.disable();
+            }
+        });
+
+        test('with no plan shown the controls sync and nothing is drawn', () => {
+            labyrinthClearRate.watchHalfSettings();
+            labyrinthClearRate.injectTileControls();
+            const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+            try {
+                labyrinthClearRate._beaconPlanCells = null;
+                labyrinthClearRate._stagedBeaconPlan = null;
+                settings.map.set('labyrinthBeaconPriority', 'holes');
+                fire('labyrinthBeaconPriority', 'holes');
+                expect(q('beacon-priority').value).toBe('holes');
+                expect(run).not.toHaveBeenCalled();
+            } finally {
+                run.mockRestore();
+                labyrinthClearRate.disable();
+            }
+        });
+
+        test('a toolbar change replans exactly once even when the config also notifies', () => {
+            labyrinthClearRate.watchHalfSettings();
+            labyrinthClearRate.injectTileControls();
+            const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+            const realSet = configMock.setSettingValue;
+            try {
+                labyrinthClearRate._beaconPlanCells = { fills: [], centers: [] };
+                // The real config notifies listeners synchronously inside the write
+                configMock.setSettingValue = (key, value) => {
+                    realSet(key, value);
+                    fire(key, value);
+                };
+                q('beacon-priority').value = 'holes';
+                q('beacon-priority').dispatchEvent(new Event('change'));
+                expect(run).toHaveBeenCalledTimes(1);
+            } finally {
+                configMock.setSettingValue = realSet;
+                run.mockRestore();
+                labyrinthClearRate._beaconPlanCells = null;
+                labyrinthClearRate.disable();
+            }
+        });
+
+        test('the listeners are removed on disable', () => {
+            labyrinthClearRate.watchHalfSettings();
+            expect(settingWatchers.filter((w) => w.key.startsWith('labyrinthBeacon'))).toHaveLength(4);
+            labyrinthClearRate.disable();
+            expect(settingWatchers.filter((w) => w.key.startsWith('labyrinthBeacon'))).toHaveLength(0);
+        });
+    });
+
+    test('the plan follows the settings: fewest holes is what the beacon run plans with', () => {
+        configMock.getSetting.mockImplementation(() => false);
+        settings.map.set('labyrinthBeaconPriority', 'holes');
+        expect(labyrinthClearRate.readBeaconPlanSettings()).toEqual({
+            options: { priority: 'holes', routes: 2, nearExit: false },
+            pathFirst: false,
+        });
+        settings.map.set('labyrinthBeaconRoutes', '9');
+        expect(labyrinthClearRate.readBeaconPlanSettings().options.routes).toBe(2);
+        settings.map.set('labyrinthBeaconRoutes', '3');
+        expect(labyrinthClearRate.readBeaconPlanSettings().options.routes).toBe(2);
+        settings.map.set('labyrinthBeaconRoutes', '1');
+        expect(labyrinthClearRate.readBeaconPlanSettings().options.routes).toBe(1);
     });
 
     test('the panel is placed on screen under the gear', () => {
