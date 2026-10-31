@@ -10061,6 +10061,51 @@ describe('main hand and off hand do not conflict; free ability slots are capacit
         expect(plan.attemptsSaved).toBe(14);
     });
 
+    describe('an overlapping pick replaces the pick it clashes with when it earns more', () => {
+        const row = (slot, gain, cost) => ({
+            candidate: { ...enhance(slot), description: `${slot} +5`, currentLevel: 0 },
+            cost,
+            attemptsDelta: -gain,
+            significant: true,
+        });
+        const plan = (rows) => planWithinBudget(rows, 1000, { singleLoadout: true });
+        const slots = (p) => p.picks.map((pick) => pick.candidate.slot).sort();
+
+        test('a cheap two-hander is replaced by a stronger off hand', () => {
+            const p = plan([row(TWO, 5, 1), row(OFF, 10, 10)]);
+            expect(slots(p)).toEqual([OFF]);
+            expect(p.attemptsSaved).toBe(10);
+            expect(p.totalCost).toBe(10);
+        });
+
+        test('a stronger two-hander is kept against a weaker off hand', () => {
+            const p = plan([row(TWO, 20, 1), row(OFF, 10, 10)]);
+            expect(slots(p)).toEqual([TWO]);
+            expect(p.attemptsSaved).toBe(20);
+        });
+
+        test('main hand and off hand bought together beat a two-hander and never stack with it', () => {
+            const p = plan([row(MAIN, 6, 1), row(OFF, 6, 1), row(TWO, 8, 10)]);
+            expect(slots(p)).toEqual([MAIN, OFF].sort());
+            expect(p.attemptsSaved).toBe(12);
+        });
+
+        test('the displaced two-hander still frees the off hand for an independent upgrade', () => {
+            const p = plan([row(TWO, 5, 1), row(MAIN, 10, 10), row(OFF, 4, 100)]);
+            expect(slots(p)).toEqual([MAIN, OFF].sort());
+            expect(p.attemptsSaved).toBe(14);
+        });
+
+        test('a pinned two-hander is never replaced', () => {
+            const pinned = row(TWO, 5, 1);
+            const p = planWithinBudget([pinned, row(OFF, 10, 10)], 1000, {
+                singleLoadout: true,
+                required: [candidateKey(pinned)],
+            });
+            expect(slots(p)).toEqual([TWO]);
+        });
+    });
+
     test('Confirm together accepts independent hands and still refuses a genuine overlap', async () => {
         runSimulation.mockReset();
         runSimulation.mockResolvedValue({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 10 });

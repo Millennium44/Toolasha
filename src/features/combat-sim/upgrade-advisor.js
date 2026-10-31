@@ -7087,38 +7087,61 @@ export function planWithinBudget(
     const pinnedKeys = new Set();
     const blockedByPin = (entry) => singleLoadout && entry.keys.some((key) => pinnedKeys.has(key));
 
-    // Which groups hold each key. A two-hander holds both hands under the group of its first key, so a main hand
-    // and an off hand are separate groups and a two-hander overlaps both: in one loadout a key held by a different
-    // group than the entry's own is a piece that cannot be worn with it
-    const groupsHolding = new Map();
-    const holdKeys = (entry) => {
-        for (const key of entry.keys) {
-            if (!groupsHolding.has(key)) groupsHolding.set(key, []);
-            groupsHolding
-                .get(key)
-                .push({ group: entry.key, savings: entry.savings, candidate: entry.result.candidate });
+    // The picks already in the basket that cannot be worn with `entry`: they hold a key it needs under another group
+    // (a two-hander holds both hands under the main hand's group, so a main hand and an off hand are separate
+    // groups and a two-hander overlaps both). In one loadout that is always a clash. Across loadouts (rooms) a
+    // two-hander in one fight and an off hand in another are both worn, so it only counts in a fight where both
+    // would be credited: there they could not stack
+    const overlapping = (entry) =>
+        picks.filter((pick) => {
+            if (conflictKey(pick.candidate) === entry.key) return false;
+            const held = conflictKeys(pick.candidate);
+            if (!entry.keys.some((key) => held.includes(key))) return false;
+            const savings = creditedOf.get(pick) ?? [];
+            return singleLoadout || entry.savings.some((saving, i) => saving > 0 && (savings[i] || 0) > 0);
+        });
+
+    /** What a set of picks saves in all: each group's standing best per fight, summed */
+    const planSavings = (items) => {
+        const running = new Map();
+        let total = 0;
+        for (const item of items) {
+            const folded = foldStanding(running.get(item.key), item.savings, item.pinned);
+            running.set(item.key, folded.next);
+            total += folded.share;
         }
+        return total;
     };
-    // A pick taken back out gives its keys back: an off hand it was reserving is free to be bought again
-    const releaseKeys = (candidate) => {
-        for (const [key, holders] of groupsHolding) {
-            groupsHolding.set(
-                key,
-                holders.filter((held) => held.candidate !== candidate)
-            );
-        }
-    };
-    // In one loadout any other group holding a key is a piece that cannot be worn with this one. Across loadouts
-    // (rooms) a two-hander in one fight and an off hand in another are both worn, so the overlap only counts in a
-    // fight where both would be credited: there they could not stack
-    const overlapsOtherGroup = (entry) =>
-        entry.keys.some((key) =>
-            (groupsHolding.get(key) || []).some(
-                (held) =>
-                    held.group !== entry.key &&
-                    (singleLoadout || entry.savings.some((saving, i) => saving > 0 && (held.savings[i] || 0) > 0))
-            )
+    const itemOf = (pick) => ({
+        key: conflictKey(pick.candidate),
+        savings: creditedOf.get(pick) ?? savingsOf(pick),
+        pinned: pick.pinned === true,
+    });
+
+    /** What `entry` would add if it replaced the picks it cannot be worn with, for saying why it was left out */
+    const marginalAfterClash = (entry) => {
+        const gone = new Set([...displacedBy(entry).map((i) => picks[i]), ...overlapping(entry)]);
+        const kept = picks.filter((pick) => !gone.has(pick)).map(itemOf);
+        return (
+            planSavings([...kept, { key: entry.key, savings: entry.savings, pinned: false }]) -
+            planSavings(picks.map(itemOf))
         );
+    };
+
+    /** Rebuild every group's standing best and each pick's share from the picks that remain */
+    const rebuildStandings = () => {
+        bestBySlot.clear();
+        for (const pick of picks) {
+            const key = conflictKey(pick.candidate);
+            const folded = foldStanding(
+                bestBySlot.get(key),
+                creditedOf.get(pick) ?? savingsOf(pick),
+                pick.pinned === true
+            );
+            bestBySlot.set(key, folded.next);
+            pick.marginalAttemptsSaved = folded.share;
+        }
+    };
 
     /** Take `entry` into the basket: its keys, its cost, its share of the standing best per slot */
     const acceptPin = (entry) => {
@@ -7127,7 +7150,6 @@ export function planWithinBudget(
             taken.add(key);
             pinnedKeys.add(key);
         }
-        holdKeys(entry);
         spent += entry.result.cost;
         const credited = entry.savings;
         const pick = {
@@ -7223,12 +7245,25 @@ export function planWithinBudget(
             // the book it buys
             if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) continue;
             if (blockedByPin(entry)) continue;
-            if (overlapsOtherGroup(entry)) continue;
             if (noDrinkSlotFor(entry)) continue;
+            // A pick it overlaps is replaced when the entry earns more than both together did, never stacked with
+            // it; a pinned one is the player's call and stays
+            const clashing = overlapping(entry);
+            if (clashing.some((pick) => pick.pinned)) continue;
             const displacedNow = displacedBy(entry);
-            const cost = costWithReplacements(entry, displacedNow);
+            let cost = costWithReplacements(entry, displacedNow);
+            let marginal;
+            if (clashing.length) {
+                const gone = new Set([...displacedNow.map((i) => picks[i]), ...clashing]);
+                cost = entry.result.cost - [...gone].reduce((sum, pick) => sum + pick.cost, 0);
+                const kept = picks.filter((pick) => !gone.has(pick)).map(itemOf);
+                marginal =
+                    planSavings([...kept, { key: entry.key, savings: entry.savings, pinned: false }]) -
+                    planSavings(picks.map(itemOf));
+            } else {
+                marginal = marginalOf(entry);
+            }
             if (spent + cost > budget) continue;
-            const marginal = marginalOf(entry);
             if (marginal <= 0) continue;
             // Gain per coin is meaningless at or below zero cost — everything
             // free ties at infinity and a refund divided by a small gain is
@@ -7254,19 +7289,26 @@ export function planWithinBudget(
         const { entry, marginal } = best;
         remaining.splice(remaining.indexOf(entry), 1);
         for (const key of entry.keys) taken.add(key);
-        holdKeys(entry);
 
         // A piece nobody would now wear is gold spent on nothing: an earlier
         // pick in this group that this one beats in every room it covered is
         // taken back out and its cost and gain reversed. Done before the new
         // pick goes in, at the price `best.cost` was affordability-checked at
+        const clashing = overlapping(entry);
         const displaced = displacedBy(entry);
-        for (const i of displaced) {
+        const removeAt = [...new Set([...displaced, ...clashing.map((pick) => picks.indexOf(pick))])].sort(
+            (x, y) => y - x
+        );
+        for (const i of removeAt) {
             const older = picks[i];
-            releaseKeys(older.candidate);
             spent -= older.cost;
             picks.splice(i, 1);
-            skipped.push({ result: older, reason: 'a later pick covers every room it did' });
+            skipped.push({
+                result: older,
+                reason: displaced.includes(i)
+                    ? 'a later pick covers every room it did'
+                    : 'a later pick that cannot be worn with it earns more',
+            });
         }
         spent += entry.result.cost;
         const credited = entry.savings;
@@ -7284,7 +7326,9 @@ export function planWithinBudget(
         // is only the increment over pieces no longer in the plan. Rebuild the
         // group's standing best and each retained pick's share from what is
         // left, so the per-pick figures add up to the plan's gain
-        if (displaced.length) {
+        if (clashing.length) {
+            rebuildStandings();
+        } else if (displaced.length) {
             let running;
             for (const pick of picks) {
                 if (conflictKey(pick.candidate) !== entry.key) continue;
@@ -7305,7 +7349,7 @@ export function planWithinBudget(
             reason = 'a pick already uses what this needs';
         } else if (blockedByPin(entry)) {
             reason = 'a pinned pick uses what this needs';
-        } else if (overlapsOtherGroup(entry)) {
+        } else if (overlapping(entry).length && marginalAfterClash(entry) <= 0) {
             reason = 'a pick already uses what this needs';
         } else if (noDrinkSlotFor(entry)) {
             reason = 'no drink slot is left free for it';
