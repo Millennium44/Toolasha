@@ -91,7 +91,7 @@ vi.mock('./combat-sim-runner.js', () => ({
     getMaxWorkers: () => 4,
     plannedWorkerCount: vi.fn(() => 1),
 }));
-vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
+vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: { getCombatExperienceBonus: () => 0 } }));
 vi.mock('./labyrinth-level-finder.js', () => ({ findMaxLabyrinthLevel: vi.fn(), defaultThreshold: () => 0.7 }));
 vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false, testerGearPrice: () => null }));
 // The sweep's own arithmetic has its suite; here it is a price per level stepped

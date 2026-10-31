@@ -922,6 +922,8 @@ export function planUpgradeBudget(
         required,
         excluded,
         singleLoadout: true,
+        // Profit (and the Score blend that includes it) counts an unpriced running cost as free
+        excludeCostUnpriced: metric.key === 'profit' || metric.key === 'score',
     });
     const picks = plan.picks.map((pick) => (pick.significant === false ? { ...pick, provisional: true } : pick));
     return {
@@ -10727,6 +10729,9 @@ class CombatSimUI {
         this._upgradeRunning = true;
         // A verify still in flight measured the previous analysis; its verdicts are not drawn over this one
         this._analysisGen = (this._analysisGen || 0) + 1;
+        // The latch below is this run's: a run started after a character switch owns it by then, and an old
+        // run's early exit must not clear it
+        const latchGen = this._analysisGen;
         // A remembered result a sync pull brings is no longer drawn over this panel's own runs
         this._upgradeRunStarted = true;
 
@@ -10746,7 +10751,7 @@ class CombatSimUI {
                 selfHrid = result.selfHrid ?? null;
             }
         } catch (error) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             console.error('[CombatSimUI] Failed to load players for upgrade analysis:', error);
             this._setStatus('Analysis failed: ' + error.message);
             return;
@@ -10756,12 +10761,12 @@ class CombatSimUI {
         // profile read is pending. Do not resume the old character's run in
         // the arriving character's fresh panel.
         if (!this._stillSameCharacter(ownerId)) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             return;
         }
 
         if (!playerDTOs?.length || !playerDTOs[playerIndex]) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             this._setStatus('No player data available. Configure a simulation first.');
             return;
         }
@@ -10945,7 +10950,8 @@ class CombatSimUI {
             console.error('[CombatSimUI] Upgrade analysis failed:', error);
             this._setStatus('Analysis failed: ' + error.message);
         } finally {
-            this._upgradeRunning = false;
+            // A run started after a character switch owns the latch by now
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             progressEl.style.display = 'none';
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
@@ -11138,23 +11144,24 @@ class CombatSimUI {
 
         this._upgradeRunning = true;
         this._analysisGen = (this._analysisGen || 0) + 1;
+        const latchGen = this._analysisGen;
         this._shownTriggerResult = null;
         let party;
         try {
             party = await this._loadTriggerParty(choices.playerIndex);
         } catch (error) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             console.error('[CombatSimUI] Failed to load players for trigger tuning:', error);
             this._setStatus('Trigger tuning failed: ' + error.message);
             return;
         }
         if (!this._stillSameCharacter(ownerId)) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             return;
         }
         const playerIndex = party.playerIndex;
         if (!party.simDTOs?.length || !party.simDTOs[playerIndex]) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             this._setStatus('No player data available. Configure a simulation first.');
             return;
         }
@@ -11262,7 +11269,8 @@ class CombatSimUI {
             console.error('[CombatSimUI] Trigger tuning failed:', error);
             this._setStatus('Trigger tuning failed: ' + error.message);
         } finally {
-            this._upgradeRunning = false;
+            // A run started after a character switch owns the latch by now
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             progressEl.style.display = 'none';
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
@@ -11498,6 +11506,11 @@ class CombatSimUI {
         // cleared it. Without this a 0.2% "gain" off ninety encounters reads
         // exactly like a 15% one off nine thousand
         const errorBar = (key) => {
+            // An unpriced running cost makes the profit delta a ceiling: the reason is the thing to say, not
+            // "within noise" (the figure is a bound, not a measurement being judged against sampling error)
+            if (key === 'profit' && r.costUnpriced?.length) {
+                return `<span data-cost-unpriced style="color:#ff9800;" title="Counted as free in the profit, so this gain is only a ceiling."> ceiling: no price for ${escapeAttribute(r.costUnpriced.join(', '))}</span>`;
+            }
             const { noisePct, significant } = upgradeNoiseFor(r, key);
             if (noisePct == null) return '';
             // Profit's error is a share of the gold moving through the fight, not of the net profit the
@@ -11757,6 +11770,14 @@ class CombatSimUI {
 
         if (detail?.unpriced?.length) {
             parts.push(`<span style="color:#ff9800;">No price found for ${detail.unpriced.join(', ')}.</span>`);
+        }
+
+        // Running costs nothing priced are counted as free in the profit: the gain is a ceiling until priced
+        if (r.costUnpriced?.length) {
+            parts.push(
+                `<span data-cost-unpriced style="color:#ff9800;">No price for ${escapeAttribute(r.costUnpriced.join(', '))} ` +
+                    'in the running costs: the profit gain is a ceiling, with no repay time or ROI.</span>'
+            );
         }
 
         if (r.candidate?.caveat) parts.push(`<span style="color:#ff9800;">${r.candidate.caveat}</span>`);
@@ -12227,7 +12248,13 @@ class CombatSimUI {
                 numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.economics?.profitGainPerHour ?? 0,
-                render: (r) => deltaWithArithmetic(baseline.profitPerHour ?? 0, r.metrics.profitPerHour),
+                render: (r) => {
+                    const body = deltaWithArithmetic(baseline.profitPerHour ?? 0, r.metrics.profitPerHour);
+                    // An unpriced running cost was counted as free: the figure is a ceiling, not a gain
+                    if (!r.costUnpriced?.length) return body;
+                    const title = `Ceiling: nothing prices ${r.costUnpriced.join(', ')}, which this run counted as free.`;
+                    return `<span data-cost-unpriced title="${escapeAttribute(title)}" style="color:#ff9800;">≤ ${body}</span>`;
+                },
             },
             {
                 key: 'profit',
@@ -12884,6 +12911,14 @@ class CombatSimUI {
                         <span style="color:#666;"> if gains in different slots add up</span>
                     </div>${provisional}${partialNote}${constraintsHtml}${this._renderBudgetConfirm(plan, baseline)}`;
             }
+            // Rows left out because nothing prices a running cost: named, with the reason, never planned around
+            const unpricedSkips = (plan.skipped || []).filter((entry) => entry.kind === 'cost-unpriced');
+            if (!plan.blocked && unpricedSkips.length) {
+                body += `<div data-budget-cost-unpriced style="margin-top:4px; color:#ff9800; font-size:10px; line-height:1.35;"
+                    title="${escapeAttribute(unpricedSkips.map((entry) => `${entry.result.candidate.description}: ${entry.reason}`).join('; '))}">
+                    ${unpricedSkips.length} upgrade${unpricedSkips.length === 1 ? '' : 's'} left out of this plan: a running
+                    cost has no price, so the profit gain is only a ceiling.</div>`;
+            }
         }
 
         const options = UPGRADE_PLAN_METRICS.map(
@@ -13212,8 +13247,14 @@ class CombatSimUI {
                           const gain = plan.metric.gain(confirmedRow, basis);
                           return gainSpan(gain, plan.metric.format(gain));
                       })();
+            const provisionalNote = state.result.costUnpriced?.length
+                ? `<div data-confirm-cost-unpriced style="font-size:11px; color:#ff9800; margin-top:2px;">No price for
+                    ${escapeAttribute(state.result.costUnpriced.join(', '))} in the running costs, so the combined
+                    profit is a ceiling and no payback or ROI is quoted.</div>`
+                : '';
             return wrap(
-                `<div style="font-size:11px; color:#aaa;">summed
+                provisionalNote +
+                    `<div style="font-size:11px; color:#aaa;">summed
                     <span style="color:${budgetGainColor(plan.gainTotal)}; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
                     · together
                     ${togetherHtml}
@@ -14174,6 +14215,13 @@ class CombatSimUI {
                 `Stop, not every upgrade the run set out to compare.</div>` +
                 html;
         }
+        if (results.slotWarnings?.length) {
+            html =
+                `<div data-upgrade-slot-warnings style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#e8a87c; ` +
+                `background:rgba(232,168,124,0.08); border:1px solid rgba(232,168,124,0.3); border-radius:5px;">` +
+                `${results.slotWarnings.map((w) => escapeAttribute(w)).join('<br>')}</div>` +
+                html;
+        }
         if (this._restoredUpgradeAt) {
             html =
                 this._restoredUpgradeNote(this._restoredUpgradeAt, {
@@ -14306,6 +14354,7 @@ class CombatSimUI {
                 { key: 'dpsNoisePct', label: 'DPS error ±%' },
                 { key: 'profitNoisePct', label: 'Profit error ±%' },
                 { key: 'measured', label: 'Clears the noise' },
+                { key: 'costUnpriced', label: 'Unpriced running cost' },
             ],
             // Infinity is not a number a spreadsheet can hold; blank says the
             // same thing ("never repays") without pretending to be a measurement
@@ -14345,6 +14394,8 @@ class CombatSimUI {
                     dpsNoisePct: finite(r.noise?.dps),
                     profitNoisePct: finite(r.noise?.profit),
                     measured: r.significant === undefined ? '' : r.significant ? 'yes' : 'no',
+                    // The items nothing priced: the profit columns of such a row are a ceiling
+                    costUnpriced: (r.costUnpriced || []).join('; '),
                 };
             }),
         }));

@@ -1125,10 +1125,12 @@ class LabyrinthClearRate {
      *
      * @returns {number} Ratio, 0 when the buff is not running
      */
-    getCommunityExperienceBonus() {
+    getCommunityExperienceBonus(levelOverride = null) {
         const level = Math.max(
             0,
-            Math.floor(Number(dataManager.getCommunityBuffLevel?.('/community_buff_types/experience')) || 0)
+            Math.floor(
+                Number(levelOverride ?? dataManager.getCommunityBuffLevel?.('/community_buff_types/experience')) || 0
+            )
         );
         if (level <= 0) return 0;
 
@@ -1153,15 +1155,26 @@ class LabyrinthClearRate {
      * Milking room and exactly nothing in a fight. The two rooms pay on the same
      * formula and the buff applies to both.
      *
+     * @param {string[]|null} [crateHrids] - Crates to count instead of the ones equipped (a simulated
+     *   context, such as Lab Sim's picks); null reads the live crates
+     * @param {number|null} [communityLevel] - Experience community buff level to count instead of the
+     *   live one; null reads the live level
      * @returns {number} Ratio, 0 when nothing applies
      */
-    getCombatExperienceBonus() {
+    getCombatExperienceBonus(crateHrids = null, communityLevel = null) {
         let bonus = this.getLabyrinthUpgrades().experience * UPGRADE_STEP;
-        for (const buff of this.getCombatCrateBuffs()) {
+        let crateBuffs;
+        if (Array.isArray(crateHrids)) {
+            const detail = dataManager.getInitClientData()?.labyrinthCrateDetailMap;
+            crateBuffs = crateHrids.flatMap((hrid) => (Array.isArray(detail?.[hrid]) ? detail[hrid] : []));
+        } else {
+            crateBuffs = this.getCombatCrateBuffs();
+        }
+        for (const buff of crateBuffs) {
             if (buff?.typeHrid !== '/buff_types/wisdom') continue;
             bonus += (Number(buff.flatBoost) || 0) + (Number(buff.ratioBoost) || 0);
         }
-        return bonus + this.getCommunityExperienceBonus();
+        return bonus + this.getCommunityExperienceBonus(communityLevel);
     }
 
     /**

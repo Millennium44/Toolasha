@@ -55,6 +55,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('./combat-sim-adapter.js', () => ({
     // Filled up front by the analysis; a test that cares about the snapshot gives it a body
     seedSimPriceCache: vi.fn((cache) => cache),
+    recomputeLevelGapDebuffs: vi.fn(),
 
     buildGameDataPayload: vi.fn(),
     calculateSimRevenue: vi.fn(),
@@ -134,6 +135,7 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
         getSkillingMetricsFromOverrides: (...args) => clearRate.impl.getSkillingMetricsFromOverrides?.(...args),
         computeSkillingClearWithParams: (...args) => clearRate.impl.computeSkillingClearWithParams?.(...args),
         computeEnhancingClearWithParams: (...args) => clearRate.impl.computeEnhancingClearWithParams?.(...args),
+        getCombatExperienceBonus: (...args) => clearRate.impl.getCombatExperienceBonus?.(...args) ?? 0,
     },
 }));
 // The level finder is a binary search over simulations; these tests are about
@@ -243,6 +245,12 @@ const {
     rateDeltaNoisePct,
     significantDeltas,
     generateDrinkCandidates,
+    drinkCapacity,
+    abilitySlotUnlocks,
+    slotWarnings,
+    withLevelGapsFor,
+    newlyUnpricedCosts,
+    withUnknownCost,
     generateCommunityBuffCandidates,
     generateScrollCandidates,
     conflictKey,
@@ -6096,6 +6104,9 @@ describe('an upgrade that pays for itself', () => {
     });
 });
 
+/** A pouch the game data does not describe: its drink bar is taken as full */
+const FULL_POUCH = { '/equipment_types/pouch': { hrid: '/items/test_pouch', enhancementLevel: 0 } };
+
 describe('drink candidates', () => {
     const COFFEE_FAMILY = '/buff_uniques/power_coffee';
 
@@ -6144,7 +6155,7 @@ describe('drink candidates', () => {
     });
 
     test('walks one tier up in a family already being drunk', () => {
-        const player = { drinks: [{ hrid: '/items/power_coffee' }, null, null] };
+        const player = { equipment: FULL_POUCH, drinks: [{ hrid: '/items/power_coffee' }, null, null] };
         const candidates = generateDrinkCandidates(player, drinkGameData());
         const tierUp = candidates.find((c) => c.currentHrid === '/items/power_coffee');
 
@@ -6154,7 +6165,7 @@ describe('drink candidates', () => {
     });
 
     test('offers the best of a family you run none of, into the free slot', () => {
-        const player = { drinks: [{ hrid: '/items/power_coffee' }, null, null] };
+        const player = { equipment: FULL_POUCH, drinks: [{ hrid: '/items/power_coffee' }, null, null] };
         const candidates = generateDrinkCandidates(player, drinkGameData());
         const added = candidates.find((c) => c.currentHrid === null);
 
@@ -6164,7 +6175,7 @@ describe('drink candidates', () => {
     });
 
     test('a family at its top tier has nothing to offer', () => {
-        const player = { drinks: [{ hrid: '/items/ultra_power_coffee' }, null, null] };
+        const player = { equipment: FULL_POUCH, drinks: [{ hrid: '/items/ultra_power_coffee' }, null, null] };
         const candidates = generateDrinkCandidates(player, drinkGameData());
 
         expect(candidates.some((c) => c.buffFamily === COFFEE_FAMILY)).toBe(false);
@@ -6179,7 +6190,7 @@ describe('drink candidates', () => {
     });
 
     test('a drink that restores hitpoints is the food search, not this', () => {
-        const player = { drinks: [null, null, null] };
+        const player = { equipment: FULL_POUCH, drinks: [null, null, null] };
         const candidates = generateDrinkCandidates(player, drinkGameData());
 
         expect(candidates.some((c) => c.upgradeHrid === '/items/healing_tea')).toBe(false);
@@ -6691,9 +6702,10 @@ describe('guide-driven ability swaps', () => {
         character.characterAbilities = [{ abilityHrid: '/abilities/fireball', level: 37, experience: 0 }];
         const filled = swaps(fireMage()).filter((c) => !c.replacesHrid);
 
-        // One candidate per ability, into the first free slot — not one per
-        // ability per empty slot
-        expect(filled.every((c) => c.slot === 'ability_3')).toBe(true);
+        // One candidate per ability, filed under an empty slot — not one per ability per empty slot. The two empty
+        // slots are shared out, so two distinct abilities are not both filed under the first
+        expect(filled).toHaveLength(3);
+        expect(filled.map((c) => c.slot)).toEqual(['ability_3', 'ability_4', 'ability_3']);
         expect(incoming(filled)).toEqual(['/abilities/fireball', '/abilities/precision', '/abilities/smoke_burst']);
         const fireball = filled.find((c) => c.upgradeHrid === '/abilities/fireball');
         expect(fireball.upgradeLevel).toBe(37);
@@ -7556,6 +7568,89 @@ describe('runLabyrinthUpgradeAnalysis ranked by room levels', () => {
 
         expect(searches).toBe(2);
         expect(result.roomLevels.aborted).toBe(true);
+    });
+});
+
+describe('a labyrinth combat room pays its award on a win, which the sim does not record (#660 L03)', () => {
+    const run = async () => {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        // 100 attempts per run: the baseline wins half at 60s an attempt; the gear wins 75% at 40s; the Experience
+        // buff changes neither
+        runLabyrinthSimulation.mockImplementation(async ({ communityBuffs, playerDTOs }) => {
+            const stronger = playerDTOs[0].aLevel === 60;
+            return {
+                labyAttemptCount: 100,
+                encounters: stronger ? 75 : 50,
+                simulatedTime: 100 * (stronger ? 40 : 60) * 1e9,
+                // What the sim does record in a lab win: nothing
+                experienceGained: {},
+                comExp: communityBuffs?.comExp,
+            };
+        });
+        clearRate.impl.getCombatExperienceBonus = vi.fn((crates, level) => 0.1 + level * 0.01);
+        const result = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [{ equipment: {}, abilities: [], staminaLevel: 50 }],
+                playerIndex: 0,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: ['/items/wisdom_crate'],
+                hours: 1,
+                communityBuffs: { comExp: 3 },
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'ability_swap',
+                extraCandidates: [
+                    {
+                        type: 'combat_level',
+                        slot: 'level_a',
+                        skillKey: 'aLevel',
+                        upgradeLevel: 60,
+                        description: 'Candidate a',
+                    },
+                    {
+                        type: 'community_buff',
+                        buffKey: 'comExp',
+                        upgradeLevel: 5,
+                        description: 'Experience buff 3 → 5',
+                    },
+                ],
+            },
+            null,
+            {}
+        );
+        return result;
+    };
+
+    afterEach(() => {
+        clearRate.impl.getCombatExperienceBonus = undefined;
+    });
+
+    test('the baseline and the community row are paid from the win rate, the crates and the buff level', async () => {
+        const { baseline, results } = await run();
+
+        // 50% of attempts win, each worth 100 × 50 × (1 + 0.1 + 3%) at the running buff level
+        expect(baseline.xpPerRoom).toBeCloseTo(0.5 * 5000 * 1.13, 6);
+        expect(clearRate.impl.getCombatExperienceBonus).toHaveBeenCalledWith(['/items/wisdom_crate'], 3);
+        const community = results.find((r) => r.candidate.type === 'community_buff');
+        expect(community.xpPerRoom).toBeCloseTo(0.5 * 5000 * 1.15, 6);
+        expect(community.xpPerRoomDelta).toBeCloseTo(0.5 * 5000 * 0.02, 6);
+        expect(clearRate.impl.getCombatExperienceBonus).toHaveBeenCalledWith(['/items/wisdom_crate'], 5);
+    });
+
+    test('win-rate rows carry the XP/hr they add, so a saturated room can still be ranked on it', async () => {
+        const { roomXpPerHour } = await import('../combat/labyrinth-formulas.js');
+        const { baseline, results } = await run();
+        const gear = results.find((r) => r.candidate.type === 'combat_level');
+        const perClear = 5000 * 1.13;
+
+        const baseHour = roomXpPerHour(perClear, 60 / 0.5, 0.5);
+        const gearHour = roomXpPerHour(perClear, 40 / 0.75, 0.75);
+        expect(baseline.xpPerHour).toBeCloseTo(baseHour, 6);
+        expect(gear.xpPerHourDelta).toBeCloseTo(gearHour - baseHour, 6);
+        expect(gear.xpPerHourDelta).toBeGreaterThan(0);
+        // An Experience buff with the same fights adds only its bonus
+        const community = results.find((r) => r.candidate.type === 'community_buff');
+        expect(community.xpPerHourDelta).toBeCloseTo(roomXpPerHour(5000 * 1.15, 60 / 0.5, 0.5) - baseHour, 6);
     });
 });
 
@@ -8809,7 +8904,7 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
     function context(gameData, drinks) {
         return {
             gameData,
-            playerDTOs: [{ hrid: '/players/me', equipment: {}, drinks }],
+            playerDTOs: [{ hrid: '/players/me', equipment: FULL_POUCH, drinks }],
             playerIndex: 0,
             playerHrid: '/players/me',
             zoneHrid: '/actions/combat/fly',
@@ -8834,7 +8929,9 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
     test('an empty bar takes three of four new coffees, each in its own slot, and the run wears all three', async () => {
         const gameData = drinkGameData();
         const drinks = [null, null, null];
-        const candidates = generateDrinkCandidates({ drinks }, gameData).filter((c) => !c.currentHrid);
+        const candidates = generateDrinkCandidates({ equipment: FULL_POUCH, drinks }, gameData).filter(
+            (c) => !c.currentHrid
+        );
         expect(candidates).toHaveLength(4);
 
         const plan = planWithinBudget(rowsFor(candidates), 100);
@@ -8851,7 +8948,7 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
     test('two occupied slots leave room for exactly one, and the worn drinks stay', async () => {
         const gameData = drinkGameData();
         const drinks = [{ hrid: '/items/existing_0' }, { hrid: '/items/existing_1' }, null];
-        const candidates = generateDrinkCandidates({ drinks }, gameData);
+        const candidates = generateDrinkCandidates({ equipment: FULL_POUCH, drinks }, gameData);
 
         const plan = planWithinBudget(rowsFor(candidates), 100);
         expect(plan.picks).toHaveLength(1);
@@ -8868,7 +8965,7 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
     test('a tier up of a worn family combines with additions without replacing anything else', async () => {
         const gameData = drinkGameData();
         const drinks = [null, { hrid: '/items/power_coffee' }, null];
-        const candidates = generateDrinkCandidates({ drinks }, gameData);
+        const candidates = generateDrinkCandidates({ equipment: FULL_POUCH, drinks }, gameData);
         const tierUp = candidates.find((c) => c.currentHrid === '/items/power_coffee');
         expect(tierUp.upgradeHrid).toBe('/items/super_power_coffee');
 
@@ -8887,7 +8984,10 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
     test('a basket naming more new coffees than the bar holds is refused, not simulated short', async () => {
         const gameData = drinkGameData();
         const drinks = [{ hrid: '/items/existing_0' }, { hrid: '/items/existing_1' }, null];
-        const picks = generateDrinkCandidates({ drinks }, gameData).map((candidate) => ({ candidate, cost: 0 }));
+        const picks = generateDrinkCandidates({ equipment: FULL_POUCH, drinks }, gameData).map((candidate) => ({
+            candidate,
+            cost: 0,
+        }));
         expect(picks.length).toBeGreaterThan(1);
 
         const outcome = await confirmUpgradeBudgetPlan(picks, context(gameData, drinks));
@@ -9568,5 +9668,487 @@ describe('drinks are never a Labyrinth upgrade, since drink slots do not run the
         );
         expect(result.results.filter((row) => row.candidate.type === 'scroll')).toEqual([]);
         expect(simmedAScroll()).toBe(false);
+    });
+});
+
+describe('an unpriced running cost keeps a profit gain provisional (#651 T02)', () => {
+    function setup() {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+        plannedWorkerCount.mockReturnValue(1);
+        return {
+            playerDTOs: [
+                {
+                    equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 0 } },
+                    abilities: [],
+                    hrid: '/players/me',
+                },
+            ],
+            playerIndex: 0,
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: {},
+            upgradeMode: 'equipment',
+        };
+    }
+
+    /** Baseline earns 50k; every candidate 60k, with the given consumables nothing priced */
+    function runWith(unpricedConsumables) {
+        let call = 0;
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(async () => {
+            call++;
+            return { simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 1000, first: call === 1 };
+        });
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockImplementation((result) =>
+            result.first
+                ? { revenuePerHour: 50_000, costPerHour: 0, netPerHour: 50_000 }
+                : { revenuePerHour: 60_000, costPerHour: 0, netPerHour: 60_000, unpricedConsumables }
+        );
+    }
+
+    test('a priced control: the gain is significant and carries a payback and an ROI', async () => {
+        runWith([]);
+        const { results } = await runUpgradeAnalysis(setup(), null, {});
+
+        expect(results[0].significantBy.profit).toBe(true);
+        expect(results[0].economics.provisional).toBeUndefined();
+        expect(Number.isFinite(results[0].goldPer.profit)).toBe(true);
+    });
+
+    test('an extra coffee nothing priced is free in the profit, so the gain is not ranked, repaid or budgeted', async () => {
+        runWith(['Wisdom Coffee']);
+        const { results } = await runUpgradeAnalysis(setup(), null, {});
+        const row = results[0];
+
+        expect(row.metrics.unpricedCost).toEqual(['Wisdom Coffee']);
+        expect(row.costUnpriced).toEqual(['Wisdom Coffee']);
+        expect(row.significantBy.profit).toBe(false);
+        expect(row.goldPer.profit).toBe(Infinity);
+        expect(row.economics).toMatchObject({
+            provisional: true,
+            roiAnnualPct: null,
+            repayHours: Infinity,
+            costUnpriced: ['Wisdom Coffee'],
+        });
+        // The planner reads this flag: a pick on the profit axis is an estimate, not a measured gain
+        expect(row.significant).toBe(Boolean(row.significantBy.dps || row.significantBy.xp));
+    });
+
+    test('withUnknownCost keeps the payback of a known cost: it divides by the baseline, not the flagged gain', () => {
+        const economics = computeEconomics(10_000, { profitPerHour: 1000 }, { profitPerHour: 2000 });
+        const flagged = withUnknownCost(economics, ['Wisdom Coffee']);
+        expect(flagged.paybackHours).toBe(10);
+        expect(flagged.repayHours).toBe(Infinity);
+        expect(flagged.roiAnnualPct).toBeNull();
+    });
+
+    test('an item both runs left unpriced is flagged when the candidate spends more of it', () => {
+        const base = { unpricedCost: ['Food'], unpricedCostRates: { Food: 10 } };
+        // Twice the food, counted as free: the gain is still a ceiling
+        expect(newlyUnpricedCosts(base, { unpricedCost: ['Food'], unpricedCostRates: { Food: 20 } })).toEqual(['Food']);
+        // The same, or a hair more from sampling: not new
+        expect(newlyUnpricedCosts(base, { unpricedCost: ['Food'], unpricedCostRates: { Food: 10.1 } })).toEqual([]);
+        // Less is not a hidden cost
+        expect(newlyUnpricedCosts(base, { unpricedCost: ['Food'], unpricedCostRates: { Food: 4 } })).toEqual([]);
+        // No rates to compare (an older result): name-only, as before
+        expect(newlyUnpricedCosts({ unpricedCost: ['Food'] }, { unpricedCost: ['Food'] })).toEqual([]);
+    });
+
+    test('an item the baseline also left unpriced is not new to the candidate', () => {
+        expect(newlyUnpricedCosts({ unpricedCost: ['Food'] }, { unpricedCost: ['Food', 'Coffee'] })).toEqual([
+            'Coffee',
+        ]);
+        expect(newlyUnpricedCosts({}, {})).toEqual([]);
+    });
+
+    test('a basket that adds an unpriced coffee confirms provisionally, with no ROI or payback', async () => {
+        runWith(['Wisdom Coffee']);
+        const { results, context } = await runUpgradeAnalysis(setup(), null, {});
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockImplementation((result) =>
+            result.first
+                ? { revenuePerHour: 50_000, costPerHour: 0, netPerHour: 50_000 }
+                : { revenuePerHour: 60_000, costPerHour: 0, netPerHour: 60_000, unpricedConsumables: ['Wisdom Coffee'] }
+        );
+        runSimulation.mockResolvedValue({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 1000 });
+
+        const outcome = await confirmUpgradeBudgetPlan([{ ...results[0], cost: 100 }], context);
+
+        expect(outcome.ok).toBe(true);
+        expect(outcome.provisional).toBe(true);
+        expect(outcome.costUnpriced).toEqual(['Wisdom Coffee']);
+        expect(outcome.economics.roiAnnualPct).toBeNull();
+        expect(outcome.economics.repayHours).toBe(Infinity);
+    });
+});
+
+describe('the drink bar and the ability bar offer only what the character can use (#652 T04)', () => {
+    const POUCH = '/equipment_types/pouch';
+    const coffee = (family, itemLevel) => ({
+        name: `${family} coffee`,
+        itemLevel,
+        categoryHrid: '/item_categories/drink',
+        consumableDetail: {
+            hitpointRestore: 0,
+            manapointRestore: 0,
+            buffs: [{ uniqueHrid: `/buff_uniques/${family}_coffee`, typeHrid: '/buff_types/damage' }],
+            defaultCombatTriggers: [{ dependencyHrid: '/combat_trigger_dependencies/self' }],
+        },
+    });
+    const gameData = (extra = {}) => ({
+        itemDetailMap: {
+            '/items/speed_coffee': coffee('speed', 20),
+            '/items/lucky_coffee': coffee('lucky', 20),
+            '/items/wisdom_coffee': coffee('wisdom', 20),
+            '/items/medium_pouch': {
+                name: 'Medium Pouch',
+                equipmentDetail: {
+                    type: POUCH,
+                    combatStats: { drinkSlots: 1 },
+                    combatEnhancementBonuses: { drinkSlots: 0.5 },
+                },
+            },
+        },
+        enhancementLevelTotalBonusMultiplierTable: { 0: 0, 2: 1 },
+        ...extra,
+    });
+    const additions = (dto, data = gameData()) => generateDrinkCandidates(dto, data).filter((c) => !c.currentHrid);
+
+    beforeEach(() => {
+        resolveItemPrice.mockImplementation(() => ({ price: 1000 }));
+    });
+
+    test('a build with no pouch has one drink slot: a filled bar is offered no second coffee', () => {
+        const dto = { equipment: {}, drinks: [{ hrid: '/items/speed_coffee' }, null, null] };
+
+        expect(drinkCapacity(dto, gameData())).toBe(1);
+        expect(additions(dto)).toEqual([]);
+    });
+
+    test('with an empty sole slot one coffee is offered, filed under that slot', () => {
+        const dto = { equipment: {}, drinks: [null, null, null] };
+        const offered = additions(dto);
+
+        expect(offered.length).toBeGreaterThan(0);
+        expect(offered.every((c) => c.drinkIndex === 0 && c.freeDrinkSlots === 1 && c.drinkCapacity === 1)).toBe(true);
+    });
+
+    test('a pouch adds its slots, with its enhancement bonus', () => {
+        const pouch = (enhancementLevel) => ({
+            equipment: { [POUCH]: { hrid: '/items/medium_pouch', enhancementLevel } },
+            drinks: [null, null, null],
+        });
+
+        expect(drinkCapacity(pouch(0), gameData())).toBe(2);
+        expect(drinkCapacity(pouch(2), gameData())).toBe(2);
+        const full = { ...pouch(0), drinks: [{ hrid: '/items/speed_coffee' }, null, null] };
+        expect(additions(full).every((c) => c.drinkIndex === 1 && c.freeDrinkSlots === 1)).toBe(true);
+    });
+
+    test('saved coffees beyond the capacity are warned about, kept, and never upgraded or duplicated', () => {
+        const dto = {
+            equipment: {},
+            drinks: [
+                { hrid: '/items/speed_coffee' },
+                { hrid: '/items/lucky_coffee' },
+                { hrid: '/items/wisdom_coffee' },
+            ],
+        };
+
+        expect(slotWarnings(dto, gameData())).toHaveLength(1);
+        expect(slotWarnings(dto, gameData())[0]).toMatch(/2 saved drinks/);
+        // Nothing is dropped from the saved bar, and nothing is proposed for the slots that do not exist
+        expect(dto.drinks.filter((d) => d)).toHaveLength(3);
+        expect(generateDrinkCandidates(dto, gameData()).every((c) => c.drinkIndex === 0)).toBe(true);
+        expect(slotWarnings({ equipment: {}, drinks: [{ hrid: '/items/speed_coffee' }] }, gameData())).toEqual([]);
+    });
+
+    test('an addition applied to a bar never lands beyond the capacity it was made for', () => {
+        const dto = { equipment: {}, drinks: [{ hrid: '/items/speed_coffee' }, null, null] };
+        const wisdom = {
+            type: 'drink',
+            slot: 'drink_1',
+            drinkIndex: 1,
+            drinkCapacity: 1,
+            currentHrid: null,
+            upgradeHrid: '/items/wisdom_coffee',
+            fillsFreeDrinkSlot: true,
+            triggers: null,
+        };
+
+        // The first slot is taken and the pouch opens no other: the write falls back to a free slot inside the capacity,
+        // of which there is none, so it lands on the only slot it may use
+        expect(
+            applyCandidateToDTO(dto, wisdom)
+                .drinks.slice(1)
+                .every((d) => !d)
+        ).toBe(true);
+    });
+
+    test('an Intelligence bonus does not open a slot: base 49 leaves slot 3 shut, 50 and 90 open it', () => {
+        const data = gameData({ abilitySlotsLevelRequirementList: [0, 1, 1, 20, 50, 90] });
+
+        expect(abilitySlotUnlocks({ intelligenceLevel: 49, combatDetails: { intelligenceLevel: 80 } }, data)).toEqual([
+            true,
+            true,
+            true,
+            false,
+            false,
+        ]);
+        // The live list (test server) has six entries, indexed by the game's slot number; the bar's slot i reads i + 1
+        expect(abilitySlotUnlocks({ intelligenceLevel: 30 }, data)).toEqual([true, true, true, false, false]);
+        expect(abilitySlotUnlocks({ intelligenceLevel: 60 }, data)).toEqual([true, true, true, true, false]);
+        expect(abilitySlotUnlocks({ intelligenceLevel: 50 }, data)).toEqual([true, true, true, true, false]);
+        expect(abilitySlotUnlocks({ intelligenceLevel: 90 }, data)).toEqual([true, true, true, true, true]);
+        // Without the list or the level nothing is guessed shut
+        expect(abilitySlotUnlocks({ intelligenceLevel: 1 }, gameData())).toEqual([true, true, true, true, true]);
+        expect(abilitySlotUnlocks({}, data)).toEqual([true, true, true, true, true]);
+    });
+
+    test('an Intelligence the build never carried (an import default of 1) locks nothing; a known 1 still does', () => {
+        const data = gameData({ abilitySlotsLevelRequirementList: [0, 1, 1, 20, 50, 90] });
+
+        expect(abilitySlotUnlocks({ intelligenceLevel: 1, intelligenceUnknown: true }, data)).toEqual([
+            true,
+            true,
+            true,
+            true,
+            true,
+        ]);
+        expect(abilitySlotUnlocks({ intelligenceLevel: 1 }, data)).toEqual([true, true, false, false, false]);
+    });
+
+    test('guide fills target only open slots; abilities in shut slots are warned about and not offered levels', () => {
+        const ABILITIES = {
+            '/abilities/fireball': { name: 'Fireball' },
+            '/abilities/precision': { name: 'Precision' },
+            '/abilities/smack': { name: 'Smack' },
+            '/abilities/mystic_aura': { name: 'Mystic Aura', isSpecialAbility: true },
+        };
+        const ITEMS = {
+            '/items/blazing_trident': {
+                name: 'Blazing Trident',
+                equipmentDetail: {
+                    type: '/equipment_types/two_hand',
+                    combatStats: { magicDamage: 50, damageType: '/damage_types/fire' },
+                },
+            },
+        };
+        const data = {
+            actionDetailMap: {},
+            itemDetailMap: ITEMS,
+            abilityDetailMap: ABILITIES,
+            abilitySlotsLevelRequirementList: [0, 1, 1, 20, 50, 90],
+        };
+        const dto = (intelligenceLevel) => ({
+            intelligenceLevel,
+            equipment: { '/equipment_types/two_hand': { hrid: '/items/blazing_trident' } },
+            abilities: [
+                { hrid: '/abilities/mystic_aura', level: 5 },
+                { hrid: '/abilities/smack', level: 30 },
+                null,
+                null,
+                null,
+            ],
+        });
+        const fills = (d) =>
+            generateCandidates(d, data, 'ability_swap').filter((c) => c.fillsFreeSlot && !c.replacesHrid);
+
+        // INT 49: only slot 2 is open among the empties, so every fill is filed under it
+        expect([...new Set(fills(dto(49)).map((c) => c.slot))]).toEqual(['ability_2']);
+        // INT 90: slots 2, 3 and 4 are open, and the offers are shared out among them
+        expect([...new Set(fills(dto(90)).map((c) => c.slot))].sort()).toEqual(['ability_2', 'ability_3']);
+        // Nothing open at all: no fill is made up
+        const shut = dto(1);
+        shut.abilities[2] = { hrid: '/abilities/precision', level: 1 };
+        expect(fills(shut)).toEqual([]);
+
+        // A level-up for an ability saved in a slot that is not open is not offered
+        const overFull = dto(49);
+        overFull.abilities[3] = { hrid: '/abilities/fireball', level: 10 };
+        const levels = generateCandidates(overFull, data, 'ability_level');
+        expect(levels.map((c) => c.upgradeHrid)).not.toContain('/abilities/fireball');
+        expect(levels.map((c) => c.upgradeHrid)).toContain('/abilities/smack');
+        expect(slotWarnings(overFull, data).some((w) => /ability slot/.test(w))).toBe(true);
+    });
+});
+
+describe('main hand and off hand do not conflict; free ability slots are capacity (#652 T05)', () => {
+    const MAIN = '/equipment_types/main_hand';
+    const OFF = '/equipment_types/off_hand';
+    const TWO = '/equipment_types/two_hand';
+    const enhance = (slot) => ({ type: 'enhancement', slot, upgradeHrid: `/items/${slot}`, upgradeLevel: 5 });
+
+    test('independent hands carry separate keys; a two-hander takes both', () => {
+        expect(conflictKeys(enhance(MAIN))).toEqual(['hand:main']);
+        expect(conflictKeys(enhance(OFF))).toEqual(['hand:off']);
+        expect(conflictKeys(enhance(TWO)).sort()).toEqual(['hand:main', 'hand:off']);
+        const swap = { type: 'cross_slot', slot: TWO, addedSlots: { [MAIN]: {}, [OFF]: {} }, clearedSlots: [TWO] };
+        expect(conflictKeys(swap).sort()).toEqual(['hand:main', 'hand:off']);
+        // Other slots keep their own key, and a hand beside one keeps both
+        expect(conflictKeys(enhance('/equipment_types/body'))).toEqual(['slot:/equipment_types/body']);
+    });
+
+    test('a budget buys a main-hand and an off-hand enhancement together; a two-hander excludes either', () => {
+        const row = (slot, gain) => ({
+            candidate: { ...enhance(slot), description: `${slot} +5`, currentLevel: 0 },
+            cost: 10,
+            attemptsDelta: -gain,
+            significant: true,
+        });
+        const both = planWithinBudget([row(MAIN, 5), row(OFF, 4)], 1000, { singleLoadout: true });
+        expect(both.picks).toHaveLength(2);
+
+        const clash = planWithinBudget([row(TWO, 9), row(OFF, 4)], 1000, { singleLoadout: true });
+        expect(clash.picks).toHaveLength(1);
+    });
+
+    test('Confirm together accepts independent hands and still refuses a genuine overlap', async () => {
+        runSimulation.mockReset();
+        runSimulation.mockResolvedValue({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 10 });
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0, revenuePerHour: 0, costPerHour: 0 });
+        const gameData = buildGameData();
+        const context = {
+            gameData,
+            playerDTOs: [
+                {
+                    hrid: '/players/me',
+                    equipment: {
+                        [MAIN]: { hrid: '/items/fine_sword', enhancementLevel: 0 },
+                        [OFF]: { hrid: '/items/fine_sword', enhancementLevel: 0 },
+                    },
+                    drinks: [],
+                    abilities: [],
+                },
+            ],
+            playerIndex: 0,
+            playerHrid: '/players/me',
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 1,
+            communityBuffs: {},
+            seed: 1,
+            baselineResult: { simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 10 },
+            baseline: { dps: 100, xpPerHour: 0, profitPerHour: 0, deathsPerHour: 0, encountersPerHour: 10 },
+        };
+        const pick = (slot) => ({
+            cost: 1,
+            candidate: {
+                type: 'enhancement',
+                slot,
+                currentHrid: '/items/fine_sword',
+                currentLevel: 0,
+                upgradeHrid: '/items/fine_sword',
+                upgradeLevel: 5,
+                description: `${slot} +5`,
+            },
+        });
+
+        expect((await confirmUpgradeBudgetPlan([pick(MAIN), pick(OFF)], context)).ok).toBe(true);
+        const clash = await confirmUpgradeBudgetPlan([pick(TWO), pick(OFF)], context);
+        expect(clash.ok).toBe(false);
+        expect(clash.reason).toMatch(/cannot both be worn/);
+    });
+
+    test('two distinct guide abilities fill two open empty slots under separate keys; a duplicate still conflicts', () => {
+        const fill = (hrid, slot) => ({
+            type: 'ability_swap',
+            slot,
+            fillsFreeSlot: true,
+            upgradeHrid: hrid,
+            currentHrid: hrid,
+            description: `Empty slot -> ${hrid}`,
+        });
+        const a = conflictKeys(fill('/abilities/a', 'ability_3'));
+        const b = conflictKeys(fill('/abilities/b', 'ability_4'));
+        expect(a.some((key) => b.includes(key))).toBe(false);
+        // The same ability twice still collides, and so do two fills aimed at one slot
+        expect(conflictKeys(fill('/abilities/a', 'ability_4')).some((key) => b.includes(key))).toBe(true);
+        expect(conflictKeys(fill('/abilities/a', 'ability_3')).some((key) => a.includes(key))).toBe(true);
+    });
+});
+
+describe('a raw skill candidate recomputes the party level-gap penalty (#652 T22)', () => {
+    test('withLevelGapsFor leaves the roster alone for any other candidate, and recomputes it for a skill level', async () => {
+        const adapter = await import('./combat-sim-adapter.js');
+        adapter.recomputeLevelGapDebuffs.mockImplementation((players) => {
+            const top = Math.max(...players.map((p) => p.meleeLevel));
+            for (const player of players) player.debuffOnLevelGap = player.meleeLevel >= top ? 0 : -0.9;
+        });
+        const roster = [
+            { hrid: 'p1', meleeLevel: 150, debuffOnLevelGap: -0.9 },
+            { hrid: 'p2', meleeLevel: 150, debuffOnLevelGap: 0 },
+        ];
+
+        expect(withLevelGapsFor(roster, { type: 'enhancement' })).toBe(roster);
+        const after = withLevelGapsFor(roster, { type: 'combat_level', skillKey: 'meleeLevel' });
+        expect(after.map((p) => p.debuffOnLevelGap)).toEqual([0, 0]);
+        // The roster handed in is not mutated: only copies are recomputed
+        expect(roster[0].debuffOnLevelGap).toBe(-0.9);
+        adapter.recomputeLevelGapDebuffs.mockReset();
+    });
+
+    test('the analysis recomputes the penalty on the candidate roster, and only on the candidate', async () => {
+        const adapter = await import('./combat-sim-adapter.js');
+        adapter.recomputeLevelGapDebuffs.mockImplementation((players) => {
+            const top = Math.max(...players.map((p) => p.meleeLevel));
+            for (const player of players) player.debuffOnLevelGap = player.meleeLevel >= top ? 0 : -0.9;
+        });
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        resolveItemPrice.mockImplementation(() => ({ price: 1000 }));
+        plannedWorkerCount.mockReturnValue(1);
+        const seen = [];
+        runSimulation.mockReset();
+        runSimulation.mockImplementation(async ({ playerDTOs }) => {
+            seen.push(playerDTOs.map((p) => p.debuffOnLevelGap));
+            return { simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 100 };
+        });
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0, revenuePerHour: 0, costPerHour: 0 });
+        const candidate = {
+            type: 'combat_level',
+            slot: 'skill_meleeLevel',
+            skillKey: 'meleeLevel',
+            currentLevel: 100,
+            upgradeLevel: 150,
+            description: 'Melee 100 -> 150',
+        };
+
+        await runUpgradeAnalysis(
+            {
+                playerDTOs: [
+                    {
+                        hrid: 'player1',
+                        equipment: {},
+                        abilities: [],
+                        drinks: [],
+                        meleeLevel: 100,
+                        debuffOnLevelGap: -0.9,
+                    },
+                    { hrid: 'player2', equipment: {}, abilities: [], drinks: [], meleeLevel: 150, debuffOnLevelGap: 0 },
+                ],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/fly',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeMode: 'equipment',
+                extraCandidates: [candidate],
+            },
+            null,
+            {}
+        );
+
+        // The baseline keeps the penalty it was built with; the candidate, now level with the leader, pays none
+        expect(seen[0]).toEqual([-0.9, 0]);
+        expect(seen.some((roster) => roster[0] === 0 && roster[1] === 0)).toBe(true);
+        adapter.recomputeLevelGapDebuffs.mockReset();
     });
 });
