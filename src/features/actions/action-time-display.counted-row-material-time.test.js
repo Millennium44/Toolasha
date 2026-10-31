@@ -471,3 +471,73 @@ describe('a counted enhancing row shows the time its materials can cover', () =>
         expect(rowLimits(el)).toEqual(['[0h 06m 40s]']);
     });
 });
+
+describe('an upgrade craft credits its output at the level the upgrade carries', () => {
+    const SWORD = '/items/cheese_sword';
+    const UPGRADED = '/items/verdant_sword';
+    const upgrade = (extra = {}) => ({
+        hrid: '/actions/crafting/verdant_sword',
+        type: '/action_types/crafting',
+        inputItems: [],
+        upgradeItemHrid: SWORD,
+        outputItems: [{ itemHrid: UPGRADED, count: 1 }],
+        ...extra,
+    });
+    const action = (level) => ({
+        id: 1,
+        actionHrid: '/actions/crafting/verdant_sword',
+        primaryItemHash: `${SWORD}::${level}`,
+        hasMaxCount: true,
+        maxCount: 3,
+        currentCount: 0,
+    });
+
+    test('a +10 input produces a +7 stack, not a +0 one', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3, 10)]);
+        actionTimeDisplay.creditQueueActionOutputs(lookup, upgrade(), action(10), 3, true);
+
+        expect(lookup.byEnhancedKey[`${UPGRADED}::7`]).toBe(3);
+        expect(lookup.byEnhancedKey[`${UPGRADED}::0`] || 0).toBe(0);
+        expect(lookup.byHrid[UPGRADED]).toBe(3);
+    });
+
+    test('a fractional target credits the guaranteed floor when only deterministic yield counts', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3, 5)]);
+        // 0.7 x 5 = 3.5 -> floor 3, half a chance of a 4th level
+        actionTimeDisplay.creditQueueActionOutputs(lookup, upgrade(), action(5), 2, false);
+
+        expect(lookup.byEnhancedKey[`${UPGRADED}::3`]).toBe(2);
+        expect(lookup.byEnhancedKey[`${UPGRADED}::4`] || 0).toBe(0);
+    });
+
+    test('a fractional target splits by chance in expected mode and flags the estimate', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3, 5)]);
+        actionTimeDisplay.creditQueueActionOutputs(lookup, upgrade(), action(5), 2, true);
+
+        expect(lookup.byEnhancedKey[`${UPGRADED}::3`]).toBeCloseTo(1);
+        expect(lookup.byEnhancedKey[`${UPGRADED}::4`]).toBeCloseTo(1);
+        expect(lookup.estimatedHrids.has(UPGRADED)).toBe(true);
+    });
+
+    test('an unenhanced input and a recipe without an upgrade input still credit +0', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3)]);
+        actionTimeDisplay.creditQueueActionOutputs(lookup, upgrade(), action(0), 3, true);
+        expect(lookup.byEnhancedKey[`${UPGRADED}::0`]).toBe(3);
+
+        const plain = actionTimeDisplay.buildInventoryLookup([]);
+        actionTimeDisplay.creditQueueActionOutputs(plain, upgrade({ upgradeItemHrid: undefined }), action(10), 3, true);
+        expect(plain.byEnhancedKey[`${UPGRADED}::0`]).toBe(3);
+    });
+
+    test('a retain-all recipe keeps the full level', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3, 10)]);
+        actionTimeDisplay.creditQueueActionOutputs(
+            lookup,
+            upgrade({ retainAllEnhancement: true }),
+            action(10),
+            3,
+            true
+        );
+        expect(lookup.byEnhancedKey[`${UPGRADED}::10`]).toBe(3);
+    });
+});

@@ -42,6 +42,7 @@ import {
 } from '../../utils/tea-parser.js';
 import { getItemPrices, getRawMarketAskPrice } from '../../utils/market-data.js';
 import { resolveActionContext } from '../../utils/action-context.js';
+import { upgradeOutputLevels } from '../../utils/upgrade-enhancement.js';
 import { affordableActions } from '../../utils/material-calculator.js';
 import { capProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
@@ -4526,18 +4527,42 @@ class ActionTimeDisplay {
             inventoryLookup.estimatedHrids = new Set();
         }
 
-        // Produced items arrive unenhanced, so the level-0 stack is the one that moves —
-        // the same key the alchemy branch of the limit reads.
-        const gain = (itemHrid, amount, isEstimated) => {
+        // Produced items arrive unenhanced, so the level-0 stack is the one that moves — the
+        // same key the alchemy branch of the limit reads. The exception is an upgrade craft,
+        // whose output carries part of the consumed copy's level (see below).
+        const gain = (itemHrid, amount, isEstimated, level = 0) => {
             if (!itemHrid || !Number.isFinite(amount) || amount <= 0) return;
             byHrid[itemHrid] = Math.max(0, (byHrid[itemHrid] || 0) + amount);
-            const key = `${itemHrid}::0`;
+            const key = `${itemHrid}::${level}`;
             byEnhancedKey[key] = Math.max(0, (byEnhancedKey[key] || 0) + amount);
             if (isEstimated) inventoryLookup.estimatedHrids.add(itemHrid);
         };
 
+        // An upgrade craft consumes a selected stack and outputs at floor(0.7 x its level) (or
+        // the full level for a retain-all recipe). Crediting that to +0 would let a later +0
+        // recipe spend stock that does not exist at +0. A fractional target is the chance of
+        // one more level: the deterministic credit takes the guaranteed floor, the expected
+        // credit splits by chance.
+        const upgradeInputLevel = actionDetails.upgradeItemHrid
+            ? this.getProductionUpgradeLevel(actionDetails, actionObj)
+            : 0;
+        const outputLevels = upgradeOutputLevels(upgradeInputLevel, {
+            retainAll: Boolean(actionDetails.retainAllEnhancement),
+        });
+
         const outputs = this.getQueueActionOutputs(actionDetails, actionObj);
         for (const output of outputs.deterministic) {
+            if (actionDetails.upgradeItemHrid && outputLevels.length > 0) {
+                const floorLevel = outputLevels[0].level;
+                if (creditStochastic && outputLevels.length > 1) {
+                    for (const { level, weight } of outputLevels) {
+                        gain(output.itemHrid, output.count * performed * weight, true, level);
+                    }
+                } else {
+                    gain(output.itemHrid, output.count * performed, false, floorLevel);
+                }
+                continue;
+            }
             gain(output.itemHrid, output.count * performed, false);
         }
         if (creditStochastic) {
