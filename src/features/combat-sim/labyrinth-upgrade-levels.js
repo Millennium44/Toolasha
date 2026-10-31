@@ -28,14 +28,24 @@ import { labyrinthFloorForLevel } from '../combat/labyrinth-formulas.js';
 export const ROOM_LEVEL_SHORTLIST_SIZE = 6;
 
 /**
- * A row's price as a sort key: gold, tokens or nothing known. An unpriced row sorts after every
- * priced one rather than as a free upgrade.
- * @param {Object} row
- * @returns {number}
+ * Order two rows by price without mixing units: gold-priced rows by gold, then token-priced rows
+ * by tokens, then unpriced rows. An unpriced row sorts after every priced one rather than as a
+ * free upgrade, and 500 gold is never compared with 5 tokens.
+ * @param {Object} a
+ * @param {Object} b
+ * @returns {number} Negative when `a` is the cheaper
  */
-function costKey(row) {
-    const cost = Number(row.cost ?? row.tokenCost);
-    return Number.isFinite(cost) ? cost : Infinity;
+function compareByPrice(a, b) {
+    const priced = (row) => {
+        const gold = row.cost == null ? NaN : Number(row.cost);
+        if (Number.isFinite(gold)) return { unit: 0, amount: gold };
+        const tokens = row.tokenCost == null ? NaN : Number(row.tokenCost);
+        if (Number.isFinite(tokens)) return { unit: 1, amount: tokens };
+        return { unit: 2, amount: 0 };
+    };
+    const x = priced(a);
+    const y = priced(b);
+    return x.unit - y.unit || x.amount - y.amount;
 }
 
 /**
@@ -66,7 +76,9 @@ export function shortlistForRoomLevels(results, size = ROOM_LEVEL_SHORTLIST_SIZE
     }
     const saturated = rows.filter((r) => (r.winRateDelta || 0) > -1e-9 && (Number(r.winRate) || 0) >= 0.99);
     const gain = (r) => (Number.isFinite(r.xpPerHourDelta) ? r.xpPerHourDelta : -Infinity);
-    return saturated.sort((a, b) => gain(b) - gain(a) || costKey(a) - costKey(b)).slice(0, keep);
+    return saturated
+        .sort((a, b) => (gain(b) === gain(a) ? 0 : gain(b) - gain(a)) || compareByPrice(a, b))
+        .slice(0, keep);
 }
 
 /**

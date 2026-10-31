@@ -76,6 +76,23 @@ describe('the shortlist', () => {
             ]);
         });
 
+        test('never compares gold with tokens: gold rows, then token rows, then unpriced', () => {
+            const results = [
+                saturated('unpriced'),
+                saturated('tokens-5', { tokenCost: 5 }),
+                saturated('gold-500', { cost: 500 }),
+                saturated('tokens-1', { tokenCost: 1 }),
+                saturated('gold-50', { cost: 50 }),
+            ];
+            expect(shortlistForRoomLevels(results, 9).map((r) => r.candidate.description)).toEqual([
+                'gold-50',
+                'gold-500',
+                'tokens-1',
+                'tokens-5',
+                'unpriced',
+            ]);
+        });
+
         test('a room that is merely hard (nothing moves, nothing wins) stays empty', () => {
             expect(shortlistForRoomLevels([row('a', 0, { winRate: 0.4 })], 5)).toEqual([]);
         });
