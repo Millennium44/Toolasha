@@ -3505,6 +3505,8 @@ class OverlayPanel {
         let startSpan = 1;
         let sizing = false;
         let activePointerId = null;
+        // Buttons held at the last move of the active pointer; undefined until one is seen
+        let lastButtons;
 
         const columnWidth = () => {
             const columns = this.columns || 1;
@@ -3516,6 +3518,7 @@ class OverlayPanel {
 
         const onPointerMove = (event) => {
             if (!sizing || event.pointerId !== activePointerId) return;
+            lastButtons = event.buttons;
 
             const steps = Math.round((event.clientX - startX) / columnWidth());
             const wanted = spanFor(startSpan + steps, this.columns || 1);
@@ -3532,11 +3535,11 @@ class OverlayPanel {
             document.removeEventListener('pointermove', onPointerMove);
             document.removeEventListener('pointerup', onPointerUp);
             document.removeEventListener('pointercancel', onPointerUp);
+            window.removeEventListener('blur', endResize);
         };
 
-        const onPointerUp = (event) => {
-            // Another finger lifting is not the end of this resize
-            if (!sizing || event.pointerId !== activePointerId) return;
+        const endResize = () => {
+            if (!sizing) return;
             detach();
             this.interacting = false;
 
@@ -3544,11 +3547,22 @@ class OverlayPanel {
             this._renderBody();
         };
 
+        const onPointerUp = (event) => {
+            // Another finger lifting is not the end of this resize
+            if (!sizing || event.pointerId !== activePointerId) return;
+            endResize();
+        };
+
         grip.addEventListener('pointerdown', (event) => {
             if (!this.isEditable || event.button !== 0) return;
 
+            // A release the page never saw (pointer let go outside the window, a focus change) leaves
+            // the gesture open: a press by the same pointer, or after a move that showed nothing held,
+            // means the previous one is over
+            if (sizing && (event.pointerId === activePointerId || lastButtons === 0)) endResize();
             if (sizing) return;
             sizing = true;
+            lastButtons = undefined;
             activePointerId = event.pointerId;
             this.interacting = true;
             startX = event.clientX;
@@ -3559,6 +3573,8 @@ class OverlayPanel {
             document.addEventListener('pointermove', onPointerMove);
             document.addEventListener('pointerup', onPointerUp);
             document.addEventListener('pointercancel', onPointerUp);
+            // Losing focus mid-drag can swallow the release
+            window.addEventListener('blur', endResize);
             // Closing the panel mid-resize must take these document listeners with it
             (this._spanTeardowns ||= new Set()).add(detach);
         });
