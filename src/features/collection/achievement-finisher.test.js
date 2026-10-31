@@ -40,6 +40,7 @@ const game = vi.hoisted(() => ({
 
 const nav = vi.hoisted(() => ({
     navigateToAction: vi.fn(() => true),
+    navigateToEnhanceItem: vi.fn(() => true),
     navigateToMarketplace: vi.fn(),
     openCombatZoneAtTier: vi.fn(async () => ({ opened: true, tierConfirmed: true, filled: false })),
     // Enhanced levels are keyed `hrid+level`; +0 is the bare hrid
@@ -137,6 +138,7 @@ vi.mock('../../api/marketplace.js', () => ({ default: { on: nav.marketOn, off: n
 vi.mock('../../utils/item-navigation.js', () => ({
     getGameObject: () => game.gameObject,
     navigateToAction: nav.navigateToAction,
+    navigateToEnhanceItem: nav.navigateToEnhanceItem,
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: nav.navigateToMarketplace }));
 vi.mock('../../utils/combat-zone-open.js', () => ({ openCombatZoneAtTier: nav.openCombatZoneAtTier }));
@@ -185,7 +187,7 @@ import {
 import { ANY_OF_ACHIEVEMENTS, ANY_OF_DATA } from './__fixtures__/achievement-finisher-anyof.js';
 import { PLACE_ACHIEVEMENTS, PLACE_DATA } from './__fixtures__/achievement-finisher-places.js';
 import { ABILITY_ACHIEVEMENTS, ABILITY_DATA } from './__fixtures__/achievement-finisher-abilities.js';
-import { ENHANCE_ACHIEVEMENTS, ENHANCE_DATA } from './__fixtures__/achievement-finisher-enhance.js';
+import { ENHANCE_ACHIEVEMENTS, ENHANCE_DATA, ENHANCE_CRAFT_DATA } from './__fixtures__/achievement-finisher-enhance.js';
 
 const DETAIL = {
     '/achievements/a1': { hrid: '/achievements/a1', name: 'A1', tierHrid: '/achievement_tiers/beginner' },
@@ -1393,6 +1395,93 @@ describe('hints on the game achievement cards', () => {
         vi.advanceTimersByTime(1500);
         expect(lineOf('Enhancer I')).toBeNull();
         expect(lineOf('Enhancer IV')).toBeNull();
+    });
+
+    test('enhancer cards for an Iron Cow: enhance the best held piece, else craft; Go opens Enhancing or the craft', () => {
+        game.detail = ENHANCE_ACHIEVEMENTS;
+        game.clientData = { ...ENHANCE_CRAFT_DATA, achievementDetailMap: ENHANCE_ACHIEVEMENTS };
+        game.ironCow = true;
+        game.skills = [
+            { skillHrid: '/skills/enhancing', level: 100 },
+            { skillHrid: '/skills/crafting', level: 50 },
+            { skillHrid: '/skills/cheesesmithing', level: 90 },
+        ];
+        const bag = (itemHrid, enhancementLevel, extra = {}) => ({
+            itemHrid,
+            count: 1,
+            enhancementLevel,
+            itemLocationHrid: '/item_locations/inventory',
+            ...extra,
+        });
+        // Owns Cheese Gloves +3 and +7: +7 wins; Enhancer IV (80+) is not satisfied by them, so it crafts
+        game.inventory = [
+            bag('/items/cheese_gloves', 3),
+            bag('/items/cheese_gloves', 7),
+            bag('/items/cheese', 0, { count: 10 }),
+        ];
+        achievementsTab(ENHANCE_ACHIEVEMENTS);
+        finisher.initialize();
+        const owned = lineOf('Enhancer III').textContent;
+        expect(owned).toMatch(
+            /^\[you own Cheese Gloves \+7 · enhance to \+10 · ~531 attempts · ~183 protections · protect from \+2 · missing: Coin ×[\d.]+K, Enhancing Essence ×[\d.]+K, Cheese ×173\]/
+        );
+        goOf('Enhancer III').click();
+        expect(nav.navigateToEnhanceItem).toHaveBeenLastCalledWith(
+            '7::/item_locations/inventory::/items/cheese_gloves::7'
+        );
+        expect(matsOf('Enhancer III')).toBeNull();
+        expect(lineOf('Enhancer IV').textContent).toContain('[craft Magnetic Gloves · missing 1 input]');
+        goOf('Enhancer IV').click();
+        expect(nav.navigateToAction).toHaveBeenLastCalledWith('/actions/cheesesmithing/magnetic_gloves');
+        expect(matsOf('Enhancer IV')).toBeNull();
+        expect(nav.navigateToMarketplace).not.toHaveBeenCalled();
+        finisher.disable();
+
+        // Already at +10 for a +3 achievement: one more success counts
+        game.inventory = [bag('/items/cheese_gloves', 10)];
+        document.body.replaceChildren();
+        achievementsTab(ENHANCE_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Enhancer I').textContent).toMatch(
+            /^\[you own Cheese Gloves \+10 · one more success counts · ~\d+ attempts · ~\d+ protections · protect from \+2 · missing:/
+        );
+        finisher.disable();
+
+        // Only a worn piece: the Enhancing screen opens with nothing selected
+        game.inventory = [
+            bag('/items/cheese_gloves', 5, { itemLocationHrid: '/item_locations/hands', count: undefined }),
+        ];
+        document.body.replaceChildren();
+        nav.navigateToEnhanceItem.mockClear();
+        achievementsTab(ENHANCE_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Enhancer I').textContent).toContain('you own Cheese Gloves +5 · one more success counts');
+        goOf('Enhancer I').click();
+        expect(nav.navigateToEnhanceItem).not.toHaveBeenCalled();
+        expect(nav.navigateToAction).toHaveBeenLastCalledWith('/actions/enhancing/enhance');
+        finisher.disable();
+
+        // The level gate: Cheesesmithing 80 against the 85 recipe
+        game.inventory = [];
+        game.skills = [
+            { skillHrid: '/skills/enhancing', level: 100 },
+            { skillHrid: '/skills/cheesesmithing', level: 80 },
+        ];
+        document.body.replaceChildren();
+        achievementsTab(ENHANCE_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Enhancer IV').textContent).toContain(
+            '[craft Magnetic Gloves · needs Cheesesmithing 85 (you 80) · missing 2 inputs]'
+        );
+        finisher.disable();
+
+        // Not loaded
+        game.inventory = null;
+        document.body.replaceChildren();
+        achievementsTab(ENHANCE_ACHIEVEMENTS);
+        finisher.initialize();
+        expect(lineOf('Enhancer I').textContent).toBe('[inventory not loaded]');
+        expect(goOf('Enhancer I')).toBeNull();
     });
 
     test('enhancer cards with no listing, or before skills load, say so with no Go', () => {

@@ -117,6 +117,106 @@ export function enhanceRunCost({ params, itemLevel, start, target, materialCost,
     return { cost, protected: isProtected };
 }
 
+/** Solve A x = b in place by Gaussian elimination with partial pivoting; null when singular */
+function solveLinear(a, b) {
+    const n = b.length;
+    for (let col = 0; col < n; col += 1) {
+        let pivot = col;
+        for (let row = col + 1; row < n; row += 1) if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
+        if (Math.abs(a[pivot][col]) < 1e-12) return null;
+        [a[col], a[pivot]] = [a[pivot], a[col]];
+        [b[col], b[pivot]] = [b[pivot], b[col]];
+        for (let row = col + 1; row < n; row += 1) {
+            const factor = a[row][col] / a[col][col];
+            for (let k = col; k < n; k += 1) a[row][k] -= factor * a[col][k];
+            b[row] -= factor * b[col];
+        }
+    }
+    const x = new Array(n).fill(0);
+    for (let row = n - 1; row >= 0; row -= 1) {
+        let sum = b[row];
+        for (let k = row + 1; k < n; k += 1) sum -= a[row][k] * x[k];
+        x[row] = sum / a[row][row];
+    }
+    return x;
+}
+
+/**
+ * Expected attempts and protections to land one success that ends at or above `target`, starting from a
+ * piece already at `start >= target`, per protect-from strategy, the cheapest by attempts returned.
+ *
+ * The shared calculator's chain absorbs on reaching the target from below, so it cannot start above it.
+ * This uses the same rules (`buildEnhancementMarkov`: a failure drops one level from protect-from up, else
+ * to +0; Blessed Tea's double jump) on the levels below `start`, absorbing on any success from a level at
+ * or above target - 1, since that success lands at or above the target. A failure can drop the piece below
+ * that, and it must climb back: so this is far more than 1 / success rate.
+ * @returns {{attempts: number, protections: number, protectFrom: number}|null}
+ */
+function runAtOrAboveTarget(params, itemLevel, start, target, cache) {
+    const key = `above|${itemLevel}|${start}|${target}`;
+    if (cache.has(key)) return cache.get(key);
+    const chain = chainOf(params, itemLevel);
+    const multiplier = calculateSuccessMultiplier({
+        enhancingLevel: chain.enhancingLevel,
+        toolBonus: chain.toolBonus,
+        itemLevel,
+    });
+    const skip = chain.blessedTea ? (chain.blessedTeaBonus ?? 0.01) * chain.guzzlingBonus : 0;
+    const n = start + 1;
+    let best = null;
+    for (const protectFrom of [NO_PROTECTION, ...protectFromLevels(target)]) {
+        // visits x solves (I - Q)^T x = e_start: x[j] is the expected number of attempts made at level j
+        const a = Array.from({ length: n }, (_, row) => Array.from({ length: n }, (_, col) => (row === col ? 1 : 0)));
+        const fails = [];
+        for (let j = 0; j < n; j += 1) {
+            const success = Math.min(1, ((BASE_SUCCESS_RATES[j] ?? 0) / 100) * multiplier);
+            const down = protectFrom > 0 && j >= protectFrom ? j - 1 : 0;
+            fails[j] = 1 - success;
+            a[down][j] -= 1 - success;
+            if (j + 1 < target) {
+                // Below target - 1 a success only climbs; a double jump may land at the target (absorbed)
+                a[j + 1][j] -= success * (1 - skip);
+                if (j + 2 < target && j + 2 < n) a[j + 2][j] -= success * skip;
+            }
+        }
+        const b = Array.from({ length: n }, (_, row) => (row === start ? 1 : 0));
+        const visits = solveLinear(a, b);
+        if (!visits) continue;
+        const attempts = visits.reduce((sum, v) => sum + v, 0);
+        if (!Number.isFinite(attempts) || (best && attempts >= best.attempts)) continue;
+        let protections = 0;
+        if (protectFrom > 0) {
+            for (let j = protectFrom; j < n; j += 1) protections += visits[j] * fails[j];
+        }
+        best = { attempts, protections, protectFrom };
+    }
+    cache.set(key, best);
+    return best;
+}
+
+/**
+ * The expected run to land one success at or above `target`, for a character that holds the piece and
+ * prices nothing: the strategy needing the fewest attempts (the most protected one).
+ *
+ * Below the target it is the chain's answer from +start. At or above it the piece needs one more success
+ * landing at or above the target, and a failure drops it (to +start-1 when protected from there, else
+ * to +0) so it may have to climb back: see {@link runAtOrAboveTarget}. Callers rank held pieces by this.
+ * @param {Object} params - Enhancing params
+ * @param {number} itemLevel
+ * @param {number} start
+ * @param {number} target
+ * @param {Map} [cache] - Chain solves to share across this render's rows
+ * @returns {{attempts: number, protections: number, protectFrom: number}|null}
+ */
+export function expectedRun(params, itemLevel, start, target, cache = new Map()) {
+    if (start >= target) return runAtOrAboveTarget(params, itemLevel, start, target, cache);
+    let best = null;
+    for (const row of strategies(params, itemLevel, start, target, cache)) {
+        if (Number.isFinite(row.attempts) && (best === null || row.attempts < best.attempts)) best = row;
+    }
+    return best && { attempts: best.attempts, protections: best.protections, protectFrom: best.protectFrom };
+}
+
 /**
  * Readiness of an Enhancer achievement: the cheapest route over every qualifying piece and start level.
  *

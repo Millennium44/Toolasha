@@ -12,7 +12,8 @@
  */
 
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
-import { enhanceReadiness } from './achievement-finisher-enhance.js';
+import { enhanceReadiness, expectedRun } from './achievement-finisher-enhance.js';
+import { protectionCandidates } from '../../utils/enhancement-protect-sweep.js';
 
 /** Production and gathering verbs → the skill whose action type they name */
 export const VERB_SKILLS = Object.freeze({
@@ -51,6 +52,7 @@ const WEAPON_SLOTS = new Set(['/equipment_types/two_hand', '/equipment_types/mai
 
 const COIN_HRID = '/items/coin';
 const INVENTORY_LOCATION = '/item_locations/inventory';
+const MARKETPLACE_LOCATION = '/item_locations/marketplace';
 
 const slugOf = (hrid) =>
     String(hrid || '')
@@ -532,15 +534,38 @@ function resolveEnhance(detail, data) {
     const target = Number(m[2]);
     if (!(target >= 1 && target <= 19)) return null;
     const candidates = [];
+    // What an Iron Cow works from: enhanceable equipment at the level, tradable or not (it never trades)
+    const pieces = new Map();
     for (const [itemHrid, item] of Object.entries(data.itemDetailMap || {})) {
-        if (!item?.equipmentDetail || !(item.enhancementCosts?.length > 0) || item.isTradable !== true) continue;
+        if (!item?.equipmentDetail || !(item.enhancementCosts?.length > 0)) continue;
         const itemLevel = Number(item.itemLevel) || 0;
         if (itemLevel < minItemLevel) continue;
-        candidates.push({ itemHrid, itemLevel: Math.max(1, itemLevel) });
+        pieces.set(itemHrid, {
+            itemHrid,
+            itemLevel: Math.max(1, itemLevel),
+            // What can protect it: the piece itself, Mirror of Protection and the item's own list
+            protections: protectionCandidates({ itemHrid, itemDetails: item, priceOf: () => 0 }).map(
+                (cand) => cand.itemHrid
+            ),
+            costs: item.enhancementCosts
+                .filter((cost) => cost?.itemHrid && Number(cost.count) > 0)
+                .map((cost) => ({ itemHrid: cost.itemHrid, count: Number(cost.count) })),
+        });
+        if (item.isTradable === true) candidates.push({ itemHrid, itemLevel: Math.max(1, itemLevel) });
     }
     if (candidates.length === 0) return null;
     candidates.sort((a, b) => a.itemHrid.localeCompare(b.itemHrid));
-    return { kind: 'enhance', target, minItemLevel, candidates };
+    // Skill actions that make such a piece, for a character that must craft its own
+    const crafts = [];
+    for (const [actionHrid, action] of Object.entries(data.actionDetailMap || {})) {
+        if (!isSkillAction(action) || GATHERING_TYPES.has(action.type)) continue;
+        const made = (action.outputItems || []).find(
+            (out) => out?.itemHrid && Number(out.count) > 0 && pieces.has(out.itemHrid)
+        );
+        if (made) crafts.push(candidateOf(actionHrid, action, { outputHrid: made.itemHrid }));
+    }
+    crafts.sort(byAction);
+    return { kind: 'enhance', target, minItemLevel, candidates, pieces: [...pieces.values()], crafts };
 }
 
 const ABILITY_BOOK_CATEGORY = '/item_categories/ability_book';
@@ -685,7 +710,8 @@ export function readiness(res, ctx) {
 
     if (res.kind === 'place') return placeReadiness(res, ctx, out);
     if (res.kind === 'ability') return abilityReadiness(res, ctx, out);
-    if (res.kind === 'enhance') return enhanceReadiness(res, ctx, out);
+    if (res.kind === 'enhance')
+        return ctx.ironCow ? ironCowEnhanceReadiness(res, ctx, out) : enhanceReadiness(res, ctx, out);
 
     if (res.kind === 'equip') {
         if (!ctx.inventory) return out;
@@ -855,6 +881,133 @@ function abilityReadiness(res, ctx, out) {
         buyHrid: priced[0].cand.itemHrid,
         cost: priced[0].price,
         estimated: ctx.isEstimated?.(priced[0].cand.itemHrid) === true,
+    });
+    return out;
+}
+
+/**
+ * Enhancer achievement for an Iron Cow, which cannot buy a piece: enhance the best one it already holds
+ * (inventory or worn), else craft the nearest qualifying one from its own stock.
+ *
+ * Held: the highest enhancement level, then item level, then hrid (a bag copy before a worn one on a
+ * tie, since only a bag copy can be preselected). Fills `ownedHrid`, `ownedLevel`, `ownedHash`,
+ * `ownedEquipped`, and, when the bench is known, `attempts` and the `shortfall` of per-attempt
+ * materials. Craft: `actionHrid`, `craftHrid`, `level`, `shortfall` (input units not owned), the level
+ * gate met first, then fewest missing units. `ironCow` stays unset only when there is something to show;
+ * set, it means no line (nothing held and nothing craftable).
+ * @param {Object} res - An `enhance` resolution
+ * @param {Object} ctx
+ * @param {Object} out - The result being filled
+ * @returns {Object} out
+ */
+function ironCowEnhanceReadiness(res, ctx, out) {
+    out.cowRoute = true;
+    out.levelMet = true;
+    out.owned = null;
+    if (!ctx.inventory) return out;
+    out.owned = false;
+    const pieces = new Map((res.pieces || []).map((piece) => [piece.itemHrid, piece]));
+    const held = [];
+    for (const row of ctx.inventory) {
+        const piece = pieces.get(row?.itemHrid);
+        if (!piece) continue;
+        const location = row.itemLocationHrid || INVENTORY_LOCATION;
+        if (location === MARKETPLACE_LOCATION) continue;
+        // A worn row may carry no count; only an explicit zero is a consumed stack
+        if ((row.count == null ? 1 : Number(row.count) || 0) <= 0) continue;
+        held.push({
+            piece,
+            level: Math.max(0, Math.floor(Number(row.enhancementLevel) || 0)),
+            equipped: location !== INVENTORY_LOCATION,
+            hash: typeof row.hash === 'string' && row.hash ? row.hash : null,
+        });
+    }
+    // Rank by the expected attempts to land one success at or above the target, not by level: a +2 piece
+    // for Enhancer I needs one success at +2, a +10 piece one success at +10, which is harder. Ties (and
+    // an unknown bench, where nothing can be computed) fall back to the higher level, then item level,
+    // then a bag copy (only it can be preselected), then hrid.
+    const params = ctx.enhanceParams?.() ?? null;
+    for (const copy of held) {
+        copy.run = params ? expectedRun(params, copy.piece.itemLevel, copy.level, res.target, ctx.enhanceCache) : null;
+    }
+    const attemptsOf = (copy) => (copy.run ? copy.run.attempts : Infinity);
+    held.sort(
+        (a, b) =>
+            attemptsOf(a) - attemptsOf(b) ||
+            b.level - a.level ||
+            b.piece.itemLevel - a.piece.itemLevel ||
+            Number(a.equipped) - Number(b.equipped) ||
+            a.piece.itemHrid.localeCompare(b.piece.itemHrid)
+    );
+    if (held.length > 0) {
+        const [best] = held;
+        Object.assign(out, {
+            owned: true,
+            ownedHrid: best.piece.itemHrid,
+            ownedLevel: best.level,
+            ownedEquipped: best.equipped,
+            ownedHash: best.hash,
+            oneMore: best.level >= res.target,
+        });
+        if (best.run) {
+            const protections = best.run.protectFrom > 0 ? Math.ceil(best.run.protections) : 0;
+            Object.assign(out, {
+                attempts: best.run.attempts,
+                protections,
+                protectFrom: best.run.protectFrom,
+            });
+            for (const cost of best.piece.costs) {
+                const need = Math.ceil(cost.count * best.run.attempts);
+                const have = ownedCount(ctx.inventory, cost.itemHrid);
+                if (have < need) out.shortfall.push({ itemHrid: cost.itemHrid, need, have });
+            }
+            if (protections > 0) {
+                // The protection item held most of (the order is the piece, the Mirror, then the item's own
+                // list); none held: the piece itself. A +0 copy of the piece being enhanced is that piece,
+                // not a spare, so it is not counted as its own protection.
+                let protectHrid = best.piece.itemHrid;
+                let most = 0;
+                const enhancedZero = best.level === 0 && !best.equipped ? 1 : 0;
+                for (const hrid of best.piece.protections) {
+                    const spare = ownedCount(ctx.inventory, hrid) - (hrid === best.piece.itemHrid ? enhancedZero : 0);
+                    const have = Math.max(0, spare);
+                    if (have > most) {
+                        most = have;
+                        protectHrid = hrid;
+                    }
+                }
+                out.protectionHrid = protectHrid;
+                if (most < protections) out.shortfall.push({ itemHrid: protectHrid, need: protections, have: most });
+            }
+        }
+        return out;
+    }
+
+    const scored = (res.crafts || []).map((cand) => {
+        const ready = actionReadiness({ ...cand, kind: 'production' }, ctx, emptyReadiness());
+        const missing = ready.shortfall.reduce((sum, short) => sum + (short.need - short.have), 0);
+        return { cand, ready, missing };
+    });
+    if (scored.length === 0) {
+        out.ironCow = true;
+        return out;
+    }
+    scored.sort(
+        (a, b) =>
+            levelRank(a.ready.levelMet) - levelRank(b.ready.levelMet) ||
+            levelGap(a.ready.level) - levelGap(b.ready.level) ||
+            a.missing - b.missing ||
+            a.cand.level - b.cand.level ||
+            a.cand.actionHrid.localeCompare(b.cand.actionHrid)
+    );
+    const [chosen] = scored;
+    Object.assign(out, {
+        owned: chosen.ready.owned,
+        levelMet: chosen.ready.levelMet,
+        level: chosen.ready.level,
+        shortfall: chosen.ready.shortfall,
+        actionHrid: chosen.cand.actionHrid,
+        craftHrid: chosen.cand.outputHrid,
     });
     return out;
 }

@@ -70,3 +70,39 @@ export const BENCH = {
     guzzlingBonus: 1,
     blessedTeaBonus: 0.01,
 };
+
+/** A craft action in the game shape: levelRequirement, inputItems, outputItems, upgradeItemHrid */
+const craft = (type, level, inputs, output, extra = {}) => ({
+    type: `/action_types/${type}`,
+    levelRequirement: { skillHrid: `/skills/${type}`, level },
+    inputItems: inputs.map(([itemHrid, count]) => ({ itemHrid, count })),
+    outputItems: [{ itemHrid: output, count: 1 }],
+    ...extra,
+});
+
+/** Ways to craft the gloves above (and one non-qualifying output), for a character that cannot buy */
+export const ENHANCE_CRAFT_DATA = {
+    itemDetailMap: ENHANCE_ITEMS,
+    skillDetailMap: { '/skills/crafting': { name: 'Crafting' }, '/skills/cheesesmithing': { name: 'Cheesesmithing' } },
+    actionDetailMap: {
+        '/actions/crafting/cheese_gloves': craft('crafting', 1, [['/items/cheese', 4]], '/items/cheese_gloves'),
+        '/actions/cheesesmithing/magnetic_gloves': craft(
+            'cheesesmithing',
+            85,
+            [
+                ['/items/cheese', 10],
+                ['/items/enhancing_essence', 5],
+            ],
+            '/items/magnetic_gloves'
+        ),
+        '/actions/cheesesmithing/chrono_gloves': craft(
+            'cheesesmithing',
+            90,
+            [['/items/cheese', 20]],
+            '/items/chrono_gloves',
+            { upgradeItemHrid: '/items/magnetic_gloves' }
+        ),
+        '/actions/crafting/marsh_gloves': craft('crafting', 79, [['/items/cheese', 1]], '/items/marsh_gloves'),
+        '/actions/crafting/plain_ring': craft('crafting', 1, [], '/items/plain_ring'),
+    },
+};

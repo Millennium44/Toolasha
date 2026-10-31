@@ -29,7 +29,7 @@ import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { nameFromHrid, plannerFor } from './achievement-finisher-model.js';
 import { readiness, resolveAchievement } from './achievement-finisher-resolve.js';
-import { getGameObject, navigateToAction } from '../../utils/item-navigation.js';
+import { getGameObject, navigateToAction, navigateToEnhanceItem } from '../../utils/item-navigation.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { openAlchemyOnItem, selectAlchemyTab } from '../../utils/alchemy-navigation.js';
@@ -42,6 +42,7 @@ import { resolveActionContext } from '../../utils/action-context.js';
 import { getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { loadoutSnapshot, missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import { buildItemHash } from '../../utils/item-hash.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
@@ -297,6 +298,39 @@ function placeText(res, ready, clientData, progress) {
 }
 
 /**
+ * The Enhancer hint of an Iron Cow: enhance the piece it holds, else craft the nearest one.
+ * @param {Object} res - An `enhance` resolution
+ * @param {Object} ready
+ * @param {Object|null} clientData
+ * @returns {string}
+ */
+function ironCowEnhanceText(res, ready, clientData) {
+    if (ready.owned === null) return 'inventory not loaded';
+    if (ready.ownedHrid) {
+        const piece = `you own ${itemName(clientData, ready.ownedHrid)} +${ready.ownedLevel}`;
+        const parts = [ready.oneMore ? `${piece} · one more success counts` : `${piece} · enhance to +${res.target}`];
+        if (Number.isFinite(ready.attempts)) {
+            let attempts = `~${formatKMB(Math.ceil(ready.attempts))} attempts`;
+            if (ready.protections > 0) attempts += ` · ~${formatKMB(ready.protections)} protections`;
+            parts.push(attempts);
+            if (ready.protections > 0 && ready.protectFrom > 0) parts.push(`protect from +${ready.protectFrom}`);
+        }
+        if (ready.shortfall.length > 0) {
+            parts.push(
+                `missing: ${ready.shortfall.map((s) => `${itemName(clientData, s.itemHrid)} ×${formatKMB(s.need - s.have)}`).join(', ')}`
+            );
+        }
+        return parts.join(' · ');
+    }
+    const parts = [`craft ${itemName(clientData, ready.craftHrid)}`];
+    const lv = ready.level;
+    if (lv?.met === false) parts.push(`needs ${skillName(clientData, lv.skillHrid)} ${lv.need} (you ${lv.have})`);
+    if (ready.owned === true) parts.push('materials owned');
+    else parts.push(`missing ${ready.shortfall.length} input${ready.shortfall.length === 1 ? '' : 's'}`);
+    return parts.join(' · ');
+}
+
+/**
  * The hint for an Enhancer row: the cheapest piece and level to buy, the total with the expected
  * enhancing, and the protection the route uses.
  * @param {Object} res - An `enhance` resolution
@@ -305,6 +339,7 @@ function placeText(res, ready, clientData, progress) {
  * @returns {string}
  */
 function enhanceText(res, ready, clientData) {
+    if (ready.cowRoute) return ironCowEnhanceText(res, ready, clientData);
     if (ready.levelMet === null) return 'enhancing stats not loaded';
     if (ready.noListing) return `no listing for any piece to take to +${res.target}`;
     if (!ready.buyHrid) return `enhance a piece to +${res.target}`;
@@ -380,7 +415,8 @@ function clickHouseTab() {
  */
 export function hasGoButton(res, ready) {
     if (res.kind === 'place') return true;
-    if (res.kind === 'ability' || res.kind === 'enhance') return Boolean(ready?.buyHrid);
+    if (res.kind === 'enhance') return Boolean(ready?.buyHrid || ready?.ownedHrid || ready?.actionHrid);
+    if (res.kind === 'ability') return Boolean(ready?.buyHrid);
     if (res.kind !== 'equip') return true;
     return Boolean(ready?.buyHrid);
 }
@@ -812,6 +848,8 @@ class AchievementFinisher {
                 case 'enhance':
                     // The listing at the level the route starts from
                     if (ready?.buyHrid) navigateToMarketplace(ready.buyHrid, ready.buyLevel ?? 0);
+                    else if (ready?.ownedHrid) this.goEnhanceOwned(ready);
+                    else if (ready?.actionHrid) navigateToAction(ready.actionHrid);
                     break;
                 default:
                     break;
@@ -819,6 +857,25 @@ class AchievementFinisher {
         } catch (error) {
             console.error('[AchievementFinisher] Navigation failed:', error);
         }
+    }
+
+    /**
+     * Open Enhancing on the piece an Iron Cow holds. The game's handler preselects a bag stack only, so a
+     * worn piece (or a stack with no hash) opens the Enhancing screen with nothing selected.
+     * @param {Object} ready - Has `ownedHrid`, `ownedLevel`, `ownedEquipped`, `ownedHash`
+     */
+    goEnhanceOwned(ready) {
+        const hash = ready.ownedEquipped
+            ? null
+            : ready.ownedHash ||
+              buildItemHash(
+                  dataManager.getCurrentCharacterId?.(),
+                  '/item_locations/inventory',
+                  ready.ownedHrid,
+                  ready.ownedLevel
+              );
+        if (hash && navigateToEnhanceItem(hash)) return;
+        navigateToAction('/actions/enhancing/enhance');
     }
 
     /**
@@ -1132,7 +1189,16 @@ class AchievementFinisher {
         return {
             // The achievement itself too: the game can reuse a card for another achievement whose hint reads
             // the same, and the kept line's buttons would still act for the old one
-            key: JSON.stringify(['ready', hrid, text, go, matsKey, ready.buyHrid, ready.actionHrid ?? null]),
+            key: JSON.stringify([
+                'ready',
+                hrid,
+                text,
+                go,
+                matsKey,
+                ready.buyHrid,
+                ready.actionHrid ?? null,
+                ready.ownedHash ?? null,
+            ]),
             build: () => {
                 const hint = hintWithCoins(text);
                 hint.className = `${PANEL_CLASS}-ready`;
