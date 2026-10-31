@@ -64,28 +64,39 @@ vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => null }))
 vi.mock('./pull-summary-panel.js', () => ({ openPullSummaryPanel: () => {} }));
 
 const payload = vi.hoisted(() => ({ text: '{"local":1}', buildWait: null }));
-vi.mock('./sync-payload.js', async (importOriginal) => ({
-    // The real filter: which keys can change a payload is what these tests are about
-    payloadCarriesKey: (await importOriginal()).payloadCarriesKey,
-    buildPayloadJSON: async () => {
-        calls.push('buildPayloadJSON');
-        if (payload.buildWait) await payload.buildWait();
-        return payload.text;
-    },
-    retryPendingDisplacedDeletes: async () => 0,
-    applyPayload: async () => ({ complete: true, failed: [], merged: [], mergeFailed: [], mergeHeld: [] }),
-    contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
-    addsToRemote: (local, remote) => local !== remote,
-    mergeForUpload: (local, remote) => ({ text: `${remote}+${local}`, remoteAdds: local !== remote }),
-    restampRestoredSettings: () => {},
-    RESTORED_BASELINE: '\u0000restoredAt',
-    exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
-    registeredKeysDiverge: () => false,
-    pushTrimsRegisteredKeys: () => false,
-    trimmedRegisteredKeys: () => [],
-    wholeKeyHashes: (text) => ({ of: text }),
-    hashPayload: (text) => `raw:${text}`,
+// The sliced variants answer as the plain ones do; these fakes hold no work worth slicing
+const withSlicedPayload = vi.hoisted(() => (mod) => ({
+    ...mod,
+    addsToRemoteSliced: async (...args) => mod.addsToRemote(...args),
+    mergeForUploadSliced: async (...args) => mod.mergeForUpload(...args),
+    wholeKeyHashesSliced: async (...args) => mod.wholeKeyHashes(...args),
+    exchangeBaselineSliced: async (...args) => mod.exchangeBaseline(...args),
 }));
+vi.mock('./sync-payload.js', async (importOriginal) => {
+    const mod = {
+        // The real filter: which keys can change a payload is what these tests are about
+        payloadCarriesKey: (await importOriginal()).payloadCarriesKey,
+        buildPayloadJSON: async () => {
+            calls.push('buildPayloadJSON');
+            if (payload.buildWait) await payload.buildWait();
+            return payload.text;
+        },
+        retryPendingDisplacedDeletes: async () => 0,
+        applyPayload: async () => ({ complete: true, failed: [], merged: [], mergeFailed: [], mergeHeld: [] }),
+        contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
+        addsToRemote: (local, remote) => local !== remote,
+        mergeForUpload: (local, remote) => ({ text: `${remote}+${local}`, remoteAdds: local !== remote }),
+        restampRestoredSettings: () => {},
+        RESTORED_BASELINE: '\u0000restoredAt',
+        exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
+        registeredKeysDiverge: () => false,
+        pushTrimsRegisteredKeys: () => false,
+        trimmedRegisteredKeys: () => [],
+        wholeKeyHashes: (text) => ({ of: text }),
+        hashPayload: (text) => `raw:${text}`,
+    };
+    return withSlicedPayload(mod);
+});
 
 const gist = vi.hoisted(() => ({ writes: [] }));
 vi.mock('./gist-client.js', () => ({

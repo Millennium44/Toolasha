@@ -43,6 +43,8 @@ const {
     repriceMetrics,
     soloDelta,
     sortRows,
+    blendedScore,
+    normalizeScoreWeight,
     pickRerunRows,
     partyLabel,
     csvRow,
@@ -336,6 +338,39 @@ describe('ranking against solo', () => {
         expect(sortRows(rows, baselines, 'profit', true).map((r) => r.id)).toEqual(['solo', 'B', 'A']);
     });
 
+    test('the score is EXP/hr plus the weight times profit/hr; a loss lowers it; unpriced profit has none', () => {
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: 400 })).toBe(1400);
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: 400 }, 0.5)).toBe(1200);
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: -300 }, 2)).toBe(400);
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: 0 }, 3)).toBe(1000);
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: null })).toBeNull();
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: NaN })).toBeNull();
+        expect(blendedScore(null)).toBeNull();
+        expect(normalizeScoreWeight('')).toBe(1);
+        expect(normalizeScoreWeight('abc')).toBe(1);
+        expect(normalizeScoreWeight(-2)).toBe(1);
+        expect(normalizeScoreWeight('0')).toBe(0);
+        expect(normalizeScoreWeight('2.5')).toBe(2.5);
+    });
+
+    test('sorting by score follows the weight, and an unpriced or failed row sinks whichever way it runs', () => {
+        const base = row('solo', metrics(1000, 100), null, true);
+        const rows = [
+            row('lossy', metrics(5000, -2000)),
+            row('rich', metrics(100, 900)),
+            row('unpriced', metrics(9000, null)),
+            row('failed', { failed: true }),
+            base,
+        ];
+        const baselines = new Map([['z', base]]);
+        const ids = (weight, asc) => sortRows(rows, baselines, 'score', asc, weight).map((r) => r.id);
+        // w = 1: lossy 3000, rich 1000, solo 1100
+        expect(ids(1)).toEqual(['lossy', 'solo', 'rich', 'unpriced', 'failed']);
+        // w = 10: rich 9100, solo 2000, lossy -15000
+        expect(ids(10)).toEqual(['rich', 'solo', 'lossy', 'unpriced', 'failed']);
+        expect(ids(10, true)).toEqual(['lossy', 'solo', 'rich', 'unpriced', 'failed']);
+    });
+
     test('the re-run picks the top K parties and their baselines, baselines first', () => {
         const base = row('solo', metrics(1000, 100), null, true);
         const rows = [base, row('A', metrics(1500, 0)), row('B', metrics(1200, 0)), row('C', metrics(1100, 0))];
@@ -564,62 +599,44 @@ describe('party game mode', () => {
     const cow = (id, name) => ({ ...mate(id, name, power(id)), gameMode: 'ironcow' });
     const labels = (plan) => plan.tasks.map((t) => partyLabel(t.comp));
 
-    test('a market character never gets an Iron Cow teammate', () => {
-        const plan = planSweep({ zones: [ZONE], roster: [market('a', 'Ann'), cow('b', 'Bob')], selfMode: 'market' });
-        expect(plan.total).toBe(2);
-        expect(labels(plan).join('|')).not.toContain('Bob');
-        expect(plan.excluded.map((e) => e.name)).toEqual(['Bob']);
-        expect(plan.excluded[0].reason).toContain('Iron Cow');
-    });
-
-    test('an Iron Cow never gets a market teammate, legacy Iron Cows count as Iron Cows', () => {
-        const roster = [
-            market('a', 'Ann'),
-            cow('b', 'Bob'),
-            { ...mate('c', 'Cy', power('c')), gameMode: 'legacy_ironcow' },
-        ];
-        const plan = planSweep({ zones: [ZONE], roster, selfMode: 'ironcow' });
-        expect(plan.excluded.map((e) => e.name)).toEqual(['Ann']);
-        expect(plan.total).toBe(4);
-    });
-
-    test('a mode carried by the build counts as much as one saved beside it', () => {
-        const roster = [mate('a', 'Ann', { ...dto(), gameMode: 'ironcow' })];
-        expect(planSweep({ zones: [ZONE], roster, selfMode: 'market' }).excluded).toHaveLength(1);
-    });
-
-    test('a teammate whose mode is unknown stays in, with a note', () => {
+    test("every teammate is assumed to be of the searcher's mode: a mixed roster is searched whole", () => {
         const plan = planSweep({
             zones: [ZONE],
-            roster: [mate('a', 'Ann', power('a')), cow('b', 'Bob')],
-            selfMode: 'market',
+            roster: [
+                market('a', 'Ann'),
+                cow('b', 'Bob'),
+                { ...mate('c', 'Cy', power('c')), gameMode: 'legacy_ironcow' },
+                mate('d', 'Di', { ...power('d'), gameMode: 'ironcow' }),
+                mate('e', 'Ed', power('e')),
+            ],
         });
-        expect(plan.total).toBe(2);
-        expect(plan.notes.join(' ')).toContain('Ann: game mode unknown');
-    });
-
-    test('an unknown live mode excludes no one and notes nothing', () => {
-        const plan = planSweep({ zones: [ZONE], roster: [market('a', 'Ann'), cow('b', 'Bob')], selfMode: null });
-        expect(plan.excluded).toEqual([]);
-        expect(plan.total).toBe(4);
+        expect(plan).not.toHaveProperty('excluded');
         expect(plan.notes).toEqual([]);
+        expect(labels(plan).join('|')).toContain('Bob');
+        expect(labels(plan).join('|')).toContain('Cy');
+        // Same count as the identical roster with no mode stored anywhere
+        const bare = planSweep({
+            zones: [ZONE],
+            roster: ['a', 'b', 'c', 'd', 'e'].map((id) => mate(id, id, power(id))),
+        });
+        expect(plan.total).toBe(bare.total);
     });
 
-    test('an excluded teammate stays out even when set to Always', () => {
+    test('an Always teammate of any stored mode is in every party', () => {
         const plan = planSweep({
             zones: [ZONE],
             roster: [market('a', 'Ann'), cow('b', 'Bob')],
             choices: { b: 'always' },
-            selfMode: 'market',
         });
-        expect(plan.total).toBe(2);
+        // Solo, Bob, Ann + Bob
+        expect(plan.total).toBe(3);
         expect(plan.perZone[0].note).toBeNull();
     });
 
-    test('every teammate of the other mode leaves the no-teammates-of-this-mode state', () => {
-        const plan = planSweep({ zones: [ZONE], roster: [cow('a', 'Ann'), cow('b', 'Bob')], selfMode: 'market' });
-        expect(plan.total).toBe(0);
-        expect(plan.perZone[0].note).toBe("no teammates of this character's mode");
+    test('narrowRoster no longer reports excluded teammates', () => {
+        const out = narrowRoster([market('a', 'Ann'), cow('b', 'Bob')], {}, null);
+        expect(out.pool.map((t) => t.name)).toEqual(['Ann', 'Bob']);
+        expect(out).not.toHaveProperty('excluded');
     });
 });
 
@@ -774,12 +791,8 @@ describe('your own auras', () => {
     });
 
     test('with no teammate that can join, your aura solo rows are still planned beside the baseline', () => {
-        const ironCow = { ...mate('a', 'Ann', dto(81)), gameMode: 'ironcow' };
-        for (const [roster, selfMode] of [
-            [[], null],
-            [[ironCow], 'market'],
-        ]) {
-            const plan = planSweep({ zones: [ZONE], roster, gameData, selfMode, selfAuras: owned, selfDto: dto(90) });
+        for (const roster of [[]]) {
+            const plan = planSweep({ zones: [ZONE], roster, gameData, selfAuras: owned, selfDto: dto(90) });
             expect(plan.tasks.map((t) => partyLabel(t.comp))).toEqual([
                 'Solo',
                 'Solo (you: Fierce Aura 20)',
