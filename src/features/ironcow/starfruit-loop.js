@@ -96,7 +96,8 @@ export function loopBasis() {
  * @returns {{hours: number, assumed: boolean}}
  */
 export function offlineWindow() {
-    const reported = dataManager.characterData?.offlineHours;
+    // The game reports the cap itself (`characterInfo.offlineHourCap`: 20 h base plus any bought upgrades)
+    const reported = dataManager.getOfflineHourCap();
     if (typeof reported === 'number' && reported > 0) return { hours: reported, assumed: false };
     return { hours: ASSUMED_OFFLINE_HOURS, assumed: true };
 }
@@ -543,7 +544,7 @@ export function loopWarnings(state, loop) {
         severity: 'info',
         text: offline.assumed
             ? `Queue enough for about ${offline.hours}h — the plan's assumed offline window. ` +
-              'The game does not report the real cap, so this is the plan’s figure, not yours.'
+              'Your offline cap has not loaded yet, so this is the plan’s figure, not yours.'
             : `Queue enough for ${offline.hours}h, which is your offline window.`,
     });
 
