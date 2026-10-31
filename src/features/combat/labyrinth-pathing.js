@@ -1257,9 +1257,11 @@ export const BEACON_PLAN_FOR_MAX = 20;
  * one no bigger than what is placed now, or nothing beyond it to plan — so the
  * caller draws exactly what it drew before.
  *
- * "Now" is the beacon count when one is set (already clamped to what is held
- * by the caller), less the beacons of this plan already used, and in the automatic mode the shortest prefix that covers a
- * path to the exit (none at all when one is already revealed).
+ * "Now" is the beacon count when one is set, less the beacons already used on
+ * the floor, then clamped to the beacons held — in that order, because the
+ * stock held has already gone down by the ones used. In the automatic mode it
+ * is the shortest prefix that covers a path to the exit (none at all when one
+ * is already revealed).
  *
  * A plan staged earlier on the same floor is continued rather than replaced
  * once any of its beacons has been used (every room it was planned to reveal
@@ -1271,14 +1273,16 @@ export const BEACON_PLAN_FOR_MAX = 20;
  * @param {Object} args
  * @param {boolean[]} args.revealed - Flat grid of revealed rooms (entrance included)
  * @param {number} args.cols - Grid width
- * @param {number} args.count - Beacons to place now; 0 = the fewest that cover a path
+ * @param {number} args.count - The beacon count as set for the floor (not clamped to the bag);
+ *   0 = the fewest that cover a path
+ * @param {number|null} [args.held=null] - Beacons held now, or null when unknown
  * @param {number} args.planFor - Beacons planned for the floor in all; 0 = same as the count
  * @param {Object} args.basePlan - computeBeaconPlan(revealed, cols, count), what would be drawn today
  * @param {Object|null} [args.prior] - The staged plan last drawn on this floor:
  *   { planFor, placedBefore, all: [{ idx, label, watch: number[] }] }
  * @returns {Object|null} { beacons, labels, nowCount, prefixes, total, placedBefore, continued } or null
  */
-export function stageBeaconPlan({ revealed, cols, count, planFor, basePlan, prior = null }) {
+export function stageBeaconPlan({ revealed, cols, count, held = null, planFor, basePlan, prior = null }) {
     const n = revealed.length;
     const target = Math.min(BEACON_PLAN_FOR_MAX, Math.max(0, Math.floor(Number(planFor) || 0)));
     if (!n || !cols || !target || !basePlan?.feasible) return null;
@@ -1299,10 +1303,13 @@ export function stageBeaconPlan({ revealed, cols, count, planFor, basePlan, prio
         }
     }
 
+    // A set count is the floor's own ("beacons to place on this floor"), so
+    // the beacons already used come off it first; only what is still to go
+    // down is then held against the bag, which those used ones already left
+    const outstanding = count > 0 ? Math.max(0, count - placedBefore) : 0;
+    const placeable = held == null ? outstanding : Math.min(outstanding, Math.max(0, held));
     const nowFrom = (prefixes, available) => {
-        // A set count is the floor's own ("beacons to place on this floor"),
-        // so beacons already used out of it come off what goes down now
-        if (count > 0) return Math.min(Math.max(0, count - placedBefore), available);
+        if (count > 0) return Math.min(placeable, available);
         if (basePlan.minNeeded === 0 || !prefixes.length) return 0;
         const at = prefixes.findIndex((p) => p.corridorOpen);
         return at < 0 ? available : at + 1;
@@ -1327,7 +1334,7 @@ export function stageBeaconPlan({ revealed, cols, count, planFor, basePlan, prio
     }
 
     const budget = target - placedBefore;
-    const base = count > 0 ? Math.max(0, count - placedBefore) : basePlan.beacons.length;
+    const base = count > 0 ? placeable : basePlan.beacons.length;
     if (budget <= base) return null;
     const full = computeBeaconPlan(revealed, cols, budget);
     if (!full?.feasible || full.beacons.length <= base) return null;

@@ -994,6 +994,29 @@ describe('planning for more beacons than are placed now', () => {
             expect(again.total).toBe(5);
         });
 
+        test('a set count takes the used beacons off first, then is held against the bag', () => {
+            const revealed = dark(8);
+            const first = stage(revealed, 8, 3, 6);
+            const after = revealed.slice();
+            for (const c of diamondOf(first.beacons[0], 8)) after[c] = true;
+            const args = (held) => ({
+                revealed: after,
+                cols: 8,
+                count: 3,
+                held,
+                planFor: 6,
+                basePlan: computeBeaconPlan(after, 8, 3),
+                prior: priorOf(first, 6, 8),
+            });
+
+            // Three for the floor, one used: two outstanding
+            expect(stageBeaconPlan(args(null)).nowCount).toBe(2);
+            expect(stageBeaconPlan(args(5)).nowCount).toBe(2);
+            // ...of which the bag covers one
+            expect(stageBeaconPlan(args(1)).nowCount).toBe(1);
+            expect(stageBeaconPlan(args(0)).nowCount).toBe(0);
+        });
+
         test('nothing used yet re-plans fresh', () => {
             const revealed = dark(7);
             const first = stage(revealed, 7, 2, 5);

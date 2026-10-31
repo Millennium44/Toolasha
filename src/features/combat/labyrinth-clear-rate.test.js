@@ -1910,6 +1910,58 @@ describe('planning against the supplies actually held', () => {
             expect(labyrinthClearRate._stagedBeaconPlan.placedBefore).toBe(3);
         });
 
+        // An 8x8 floor (floor 5 and up) is what a live run beacons on
+        test('a beacon used out of a bag-clamped count still leaves the next one to place now', () => {
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 2)];
+            const status = buildGrid(8);
+            beaconInput(2);
+            planForInput(5);
+            labyrinthClearRate.runBeaconCalculation();
+            expect(status.textContent).toContain('Beacons: 2 now of 5 planned');
+
+            // B1 goes down: its rooms are revealed and the bag holds one fewer
+            reveal(labyrinthClearRate._stagedBeaconPlan.all[0].watch, 8);
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 1)];
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status.textContent).toContain('Beacons: 1 now of 5 planned');
+            const now = [...document.querySelectorAll('[data-beacon-center="1"]:not([data-beacon-later])')];
+            expect(now.map((el) => el.textContent)).toEqual(['B2']);
+        });
+
+        test('another character on the same floor number and grid size does not inherit the used beacons', async () => {
+            const dm = await import('../../core/data-manager.js');
+            buildGrid(8);
+            beaconInput(0);
+            planForInput(5);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._stagedBeaconPlan.all.slice(0, 2)) reveal(c.watch, 8);
+
+            dm.default.getCurrentCharacterId.mockReturnValue('someone-else');
+            try {
+                labyrinthClearRate.runBeaconCalculation();
+                expect(labyrinthClearRate._stagedBeaconPlan.placedBefore).toBe(0);
+                expect(labels()).toContain('B1');
+                expect(document.querySelector('.mwi-labyrinth-tile-controls-status').textContent).not.toContain(
+                    'Continuing'
+                );
+            } finally {
+                dm.default.getCurrentCharacterId.mockReturnValue('me');
+            }
+        });
+
+        test('teardown drops the floor beacon record', () => {
+            buildGrid(8);
+            beaconInput(0);
+            planForInput(5);
+            labyrinthClearRate.runBeaconCalculation();
+            expect(labyrinthClearRate._stagedBeaconPlan).not.toBeNull();
+
+            labyrinthClearRate._teardown();
+
+            expect(labyrinthClearRate._stagedBeaconPlan).toBeNull();
+        });
+
         test('the plan-for count is a standing setting a new floor keeps', () => {
             buildGrid(7);
             settings.map.set('labyrinthBeaconPlanFor', 5);

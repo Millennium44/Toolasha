@@ -704,6 +704,8 @@ class LabyrinthClearRate {
             this._labyrinth = null;
             this._pathData = null;
             this.currentFloor = 0;
+            // The floor's beacon record (plan, used count) is this character's
+            this._stagedBeaconPlan = null;
             this.combatCache.clear();
             this._combatCacheMeta.clear();
             this._combatCacheLoaded = false;
@@ -4717,9 +4719,16 @@ class LabyrinthClearRate {
         const revealed = flat.map((room, i) => i === 0 || isRoomRevealed(room));
 
         // A staged plan drawn earlier on this floor, so a re-plan can continue it
+        // Owned by the character it was drawn for as well as the floor: a
+        // switch to another character on the same floor number and grid size
+        // must not inherit the beacons the first one used
+        const characterId = dataManager.getCurrentCharacterId() ?? null;
         const priorStaged = this._stagedBeaconPlan;
         const prior =
-            priorStaged && priorStaged.floor === this.currentFloor && priorStaged.n === flat.length
+            priorStaged &&
+            priorStaged.floor === this.currentFloor &&
+            priorStaged.n === flat.length &&
+            priorStaged.characterId === characterId
                 ? priorStaged
                 : null;
         this.clearBeaconOverlays();
@@ -4742,7 +4751,15 @@ class LabyrinthClearRate {
         // equal to the count is the ordinary plan even when fewer are held
         const staged =
             planFor > 0 && (requested === 0 || planFor > requested)
-                ? stageBeaconPlan({ revealed, cols, count, planFor, basePlan: plan, prior })
+                ? stageBeaconPlan({
+                      revealed,
+                      cols,
+                      count: requested,
+                      held: requested > 0 && supplies.known ? supplies.beacon : null,
+                      planFor,
+                      basePlan: plan,
+                      prior,
+                  })
                 : null;
         if (staged) {
             this.drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor });
@@ -4754,6 +4771,7 @@ class LabyrinthClearRate {
         this._stagedBeaconPlan = {
             floor: this.currentFloor,
             n: flat.length,
+            characterId,
             planFor: 0,
             placedBefore: beaconsUsedOnFloor(revealed, prior).placedBefore,
             all: [],
@@ -4890,7 +4908,14 @@ class LabyrinthClearRate {
             fills: [...all.covered],
             centers: centers.map((c) => ({ ...c, watch: [...c.watch] })),
         };
-        this._stagedBeaconPlan = { floor: this.currentFloor, n: flat.length, planFor, placedBefore, all: centers };
+        this._stagedBeaconPlan = {
+            floor: this.currentFloor,
+            n: flat.length,
+            characterId: dataManager.getCurrentCharacterId() ?? null,
+            planFor,
+            placedBefore,
+            all: centers,
+        };
 
         const word = remainingWord(supplies.runActive);
         const minNote = count === 0 ? ' (min)' : '';
