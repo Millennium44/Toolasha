@@ -30,10 +30,15 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 let protectionPrice = 5000;
+let protectionPartial = false;
 let materialPricing = { cost: 1000, hasCost: true, costPartial: false };
 vi.mock('../../features/enhancement/tooltip-enhancement.js', () => ({
     calculatePerAttemptMaterialCost: () => materialPricing,
-    getCheapestProtectionPrice: () => ({ price: protectionPrice, itemHrid: '/items/mirror_of_protection' }),
+    getCheapestProtectionPrice: () => ({
+        price: protectionPrice,
+        itemHrid: '/items/mirror_of_protection',
+        partial: protectionPartial,
+    }),
 }));
 
 const { buildEnhancementModel } = await import('./enhancement-adapter.js');
@@ -118,6 +123,29 @@ describe('buildEnhancementModel', () => {
             ).toEqual({ error: 'incomplete-prices' });
         } finally {
             materialPricing = { cost: 1000, hasCost: true, costPartial: false };
+        }
+    });
+
+    test('refuses a partial protection quote the way it refuses a partial material', () => {
+        protectionPartial = true;
+        try {
+            expect(
+                buildEnhancementModel('/items/kraken_chaps_refined', {
+                    ...NEUTRAL_PARAMS,
+                    targetLevel: 3,
+                    protectFrom: 2,
+                })
+            ).toEqual({ error: 'incomplete-prices' });
+            // Never reached when no protected level is attempted
+            expect(
+                buildEnhancementModel('/items/kraken_chaps_refined', {
+                    ...NEUTRAL_PARAMS,
+                    targetLevel: 3,
+                    protectFrom: 3,
+                }).protectionCostOnFailure
+            ).toBe(0);
+        } finally {
+            protectionPartial = false;
         }
     });
 

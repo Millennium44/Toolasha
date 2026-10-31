@@ -51,7 +51,9 @@
  */
 
 import webSocketHook from '../../core/websocket.js';
-import { trialFromHrid, trialWeekStart } from './guild-trials-math.js';
+import { trialFromHrid } from './guild-trials-math.js';
+import { scheduledCycle } from './guild-trial-ledger.js';
+import { isTestServer } from '../../utils/game-server.js';
 
 /** Live pool and personal figures for a skilling trial */
 export const SKILLING_MESSAGE = 'guild_skilling_updated';
@@ -156,13 +158,16 @@ export function readSkillingUpdate(data, at = Date.now()) {
 }
 
 /**
- * Whether a timestamp falls in the trial week `now` is in.
+ * Whether a timestamp falls in the trial cycle `now` is in: the Friday week on live, the day on the test
+ * server (the ledger's own cycle rule, so one definition).
  * @param {number} at - When something was heard
  * @param {number} now - Clock
  * @returns {boolean}
  */
 function sameTrialWeek(at, now) {
-    return Number.isFinite(at) && trialWeekStart(at) === trialWeekStart(now);
+    if (!Number.isFinite(at)) return false;
+    const daily = isTestServer();
+    return scheduledCycle(at, daily).from === scheduledCycle(now, daily).from;
 }
 
 class GuildTrialSkilling {

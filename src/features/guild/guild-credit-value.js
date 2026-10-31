@@ -880,9 +880,10 @@ export function buyTokenCost(buy, creditBalances = {}, rateFor = () => null, pat
  *
  * The walk then re-prices each buy against the balances the buys before it left
  * behind, so two levels wanting the same credit do not both claim the same stack.
- * The stopping rule is the old one: ascending order means the first buy the
- * remaining balance cannot cover is the last, since nothing further down is
- * cheaper.
+ * A buy the remaining balance cannot cover is skipped, not the end of the walk:
+ * the rows are ranked on their cost before any repricing, and a buy whose held
+ * credits an earlier one used up costs more than it was ranked at, so a later
+ * row can still fit what is left. The result stays greedy, not optimal.
  *
  * What the taken buys are still short of comes back split by which path the
  * recommendation sends it down: `owedCredits` for the colors the market wins —
@@ -929,7 +930,7 @@ export function planNextBuys(
 
     for (const row of rows) {
         const cost = buyTokenCost(row.buy, remaining, rateFor, pathFor);
-        if (cost.effective > tokens) break;
+        if (cost.effective > tokens) continue;
 
         tokens -= cost.effective;
         spent += cost.effective;
@@ -976,8 +977,8 @@ function buildCheapestPerCredit(itemDetailMap) {
     for (const [hrid, item] of Object.entries(itemDetailMap)) {
         for (const conv of item.guildCreditConversions || []) {
             const creditHrid = conv.creditItemHrid;
-            const sellPrice = getItemPrice(hrid, { mode: 'ask' });
-            const buyPrice = getItemPrice(hrid, { mode: 'bid' });
+            const sellPrice = getItemPrice(hrid, { mode: 'ask', side: 'buy' });
+            const buyPrice = getItemPrice(hrid, { mode: 'bid', side: 'buy' });
             if (sellPrice > 0) {
                 const gpc = (sellPrice * conv.itemCount) / conv.creditCount;
                 if (!sell[creditHrid] || gpc < sell[creditHrid]) sell[creditHrid] = gpc;
@@ -1002,8 +1003,8 @@ function buildTopConversions(itemDetailMap, n) {
     for (const [hrid, item] of Object.entries(itemDetailMap)) {
         for (const conv of item.guildCreditConversions || []) {
             const creditHrid = conv.creditItemHrid;
-            const askPrice = getItemPrice(hrid, { mode: 'ask' });
-            const bidPrice = getItemPrice(hrid, { mode: 'bid' });
+            const askPrice = getItemPrice(hrid, { mode: 'ask', side: 'buy' });
+            const bidPrice = getItemPrice(hrid, { mode: 'bid', side: 'buy' });
             if (!askPrice && !bidPrice) continue;
             const askGPC = askPrice > 0 ? (askPrice * conv.itemCount) / conv.creditCount : null;
             const bidGPC = bidPrice > 0 ? (bidPrice * conv.itemCount) / conv.creditCount : null;
@@ -1327,8 +1328,8 @@ function pickerTileEnhancementLevel(tile) {
  * @returns {{sellGPC: number|null, buyGPC: number|null}}
  */
 function pricedAtLevel(row, level) {
-    const askPrice = getItemPrice(row.hrid, { mode: 'ask', enhancementLevel: level });
-    const bidPrice = getItemPrice(row.hrid, { mode: 'bid', enhancementLevel: level });
+    const askPrice = getItemPrice(row.hrid, { mode: 'ask', side: 'buy', enhancementLevel: level });
+    const bidPrice = getItemPrice(row.hrid, { mode: 'bid', side: 'buy', enhancementLevel: level });
     return {
         sellGPC: askPrice > 0 ? (askPrice * row.itemCount) / row.creditCount : null,
         buyGPC: bidPrice > 0 ? (bidPrice * row.itemCount) / row.creditCount : null,
@@ -1607,8 +1608,8 @@ class GuildCreditValue {
             const conv = (item.guildCreditConversions || []).find((c) => c.creditItemHrid === creditHrid);
             if (!conv) continue;
 
-            const sellPrice = getItemPrice(hrid, { mode: 'ask' });
-            const buyPrice = getItemPrice(hrid, { mode: 'bid' });
+            const sellPrice = getItemPrice(hrid, { mode: 'ask', side: 'buy' });
+            const buyPrice = getItemPrice(hrid, { mode: 'bid', side: 'buy' });
             if (!sellPrice && !buyPrice) continue;
 
             const sellGPC = sellPrice > 0 ? (sellPrice * conv.itemCount) / conv.creditCount : null;
@@ -2152,7 +2153,7 @@ class GuildCreditValue {
                 const { owed, owned } = owedRow(itemHrid, count);
                 if (owed <= 0) continue;
                 const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop();
-                const price = getItemPrice(itemHrid, { mode: 'ask' });
+                const price = getItemPrice(itemHrid, { mode: 'ask', side: 'buy' });
                 const goldStr = price > 0 ? ` (${formatKMB(price * owed)})` : '';
                 const rate = tokenRateFor(itemHrid);
                 const described = describeRate(rate);
@@ -3397,8 +3398,8 @@ class GuildCreditValue {
             const isToken = itemHrid.includes('guild_token');
             const isCredit = itemHrid.includes('guild_credit');
 
-            let sellEach = getItemPrice(itemHrid, { mode: 'ask' });
-            let buyEach = getItemPrice(itemHrid, { mode: 'bid' });
+            let sellEach = getItemPrice(itemHrid, { mode: 'ask', side: 'buy' });
+            let buyEach = getItemPrice(itemHrid, { mode: 'bid', side: 'buy' });
 
             if (isCredit) {
                 if (!sellEach || sellEach <= 0) sellEach = cheapestSell[itemHrid] || null;
