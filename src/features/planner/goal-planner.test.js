@@ -1635,9 +1635,83 @@ describe('a shortfall that is somebody else’s claim', () => {
         expect(reservationLines(plan)).toEqual([{ itemHrid: '/items/log', count: 200 }]);
     });
 
-    test('a step already done claims nothing', () => {
+    test('held materials stay claimed until the upgrade that consumes them has been built', () => {
         const plan = housePlan({ owned: () => 500 });
+        expect(step(plan, 'materials').done).toBe(true);
+        expect(step(plan, 'build').done).toBe(false);
+        expect(reservationLines(plan)).toEqual([{ itemHrid: '/items/log', count: 200 }]);
+    });
+
+    test('a plan with nothing left to do claims nothing', () => {
+        const plan = housePlan({ owned: () => 500, houseLevel: () => 8 });
+        expect(plan.satisfied).toBe(true);
         expect(reservationLines(plan)).toEqual([]);
+    });
+
+    test('a done step nothing depends on claims nothing', () => {
+        const done = { id: 'a', done: true, details: { allMaterials: [{ itemHrid: '/items/log', count: 5 }] } };
+        const open = { id: 'b', done: false, prerequisites: [], details: {} };
+        expect(reservationLines({ steps: [done, open] })).toEqual([]);
+        expect(reservationLines({ steps: [done, { ...open, prerequisites: ['a'] }] })).toEqual([
+            { itemHrid: '/items/log', count: 5 },
+        ]);
+    });
+});
+
+describe('a skill target - recurring teas on an enhancing climb', () => {
+    const enhancing = '/skills/enhancing';
+    const BLESSED = '/items/blessed_tea';
+    // One hour of enhancing at 12 teas an hour, a tea costing 1,000, 5,000 an hour in materials
+    const rate = (extra = {}) => ({
+        label: 'Sword +0 → +5',
+        requiredLevel: 1,
+        xpPerHour: 1000,
+        xpPerAction: 100,
+        actionTime: 10,
+        totalEfficiency: 0,
+        flatRate: true,
+        goldKnown: true,
+        goldPerHour: -17_000,
+        drinkCostPerHour: 12_000,
+        teaBill: [{ itemHrid: BLESSED, perHour: 12, unitPrice: 1000 }],
+        ...extra,
+    });
+    const plan = (held, rates = [rate()], gold = 0) =>
+        planGoal(
+            { type: 'skill', skillHrid: enhancing, targetLevel: 2 },
+            context({
+                gold,
+                skill: () => ({ level: 1, experience: 1000 }),
+                xpRates: () => rates,
+                owned: (hrid) => (hrid === BLESSED ? held : 0),
+            })
+        );
+
+    test('one tea held toward twelve: the other eleven are bought and the held one is reserved', () => {
+        const result = plan(1);
+        const train = step(result, 'train');
+        // 5,000 of materials + 11 teas to buy; the held one is consumed but not repurchased
+        expect(train.goldDelta).toBeCloseTo(-16_000, 6);
+        expect(train.costKnown).toBe(true);
+        expect(train.details.teas).toEqual([{ itemHrid: BLESSED, count: 12, held: 1, missing: 11 }]);
+        expect(reservationLines(result)).toEqual([{ itemHrid: BLESSED, count: 12 }]);
+        expect(step(result, 'fund')?.goldDelta).toBeCloseTo(16_000, 6);
+    });
+
+    test('no tea held: the whole bill is outlay; enough held: only the materials are', () => {
+        expect(step(plan(0), 'train').goldDelta).toBeCloseTo(-17_000, 6);
+        const covered = step(plan(50), 'train');
+        expect(covered.goldDelta).toBeCloseTo(-5_000, 6);
+        // Never claims more than the climb drinks
+        expect(covered.details.teas[0]).toMatchObject({ held: 12, missing: 0 });
+    });
+
+    test('an unpriced tea still to be bought leaves the cost unknown, not free; a held one does not', () => {
+        const unpriced = rate({ teaBill: [{ itemHrid: BLESSED, perHour: 12, unitPrice: null }], goldPerHour: -5_000 });
+        const short = step(plan(1, [unpriced]), 'train');
+        expect(short.costKnown).toBe(false);
+        expect(short.goldDelta).toBeCloseTo(-5_000, 6);
+        expect(step(plan(12, [unpriced]), 'train').costKnown).toBe(true);
     });
 });
 

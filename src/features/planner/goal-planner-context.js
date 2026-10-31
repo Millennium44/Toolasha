@@ -56,7 +56,7 @@ import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { GATHERING_TYPES, PRODUCTION_TYPES, MARKET_TAX } from '../../utils/profit-constants.js';
-import { outputTaxRate } from '../../utils/profit-helpers.js';
+import { outputTaxRate, calculateDrinksPerHour } from '../../utils/profit-helpers.js';
 import { getPriceAgeString } from '../../utils/market-data.js';
 import { priceMaterial } from '../../utils/enhancement-input-pricing.js';
 import { effectiveInventory, shortfallNote } from '../../utils/inventory-reservations.js';
@@ -762,6 +762,30 @@ function measureEnhancingRates() {
         .sort((a, b) => (b.details.itemLevel || 0) - (a.details.itemLevel || 0))
         .slice(0, ENHANCING_XP_CANDIDATES);
 
+    // The teas the bench drinks while it works: every one the benefits above credit (the flags), and the
+    // equipped enhancing drinks (wisdom tea has no flag). Drunk by the clock, at the bench's concentration
+    const teaHrids = new Set();
+    const teaFlags = {
+        enhancing: '/items/enhancing_tea',
+        superEnhancing: '/items/super_enhancing_tea',
+        ultraEnhancing: '/items/ultra_enhancing_tea',
+        blessed: '/items/blessed_tea',
+    };
+    for (const [flag, teaHrid] of Object.entries(teaFlags)) {
+        if (params.teas?.[flag]) teaHrids.add(teaHrid);
+    }
+    for (const drink of dataManager.getActionDrinkSlots?.('/action_types/enhancing') || []) {
+        if (drink?.itemHrid) teaHrids.add(drink.itemHrid);
+    }
+    const teasPerHour = calculateDrinksPerHour((Number(params.drinkConcentration) || 0) / 100);
+    const teaBill = [...teaHrids].map((itemHrid) => {
+        const priced = priceMaterial(itemHrid);
+        const price = !priced.partial && priced.price > 0 ? priced.price : null;
+        return { itemHrid, perHour: teasPerHour, unitPrice: price };
+    });
+    // Unpriced is unknown, not free: only the priced teas are in the coin figure
+    const teaPerHour = teaBill.reduce((sum, tea) => sum + (tea.unitPrice ?? 0) * tea.perHour, 0);
+
     const rates = [];
     for (const { hrid, details } of held) {
         try {
@@ -818,7 +842,11 @@ function measureEnhancingRates() {
                 // Enhancing has no efficiency repeats, so the level-by-level
                 // climb the skilling calculator models does not apply
                 flatRate: true,
-                goldPerHour: -(materialPerAttempt * 3600) / run.perActionTime,
+                // The economic cost of an hour: materials plus every tea drunk, whether held or bought. The
+                // planner turns it into coins out of pocket by netting the held tea off (teaBill)
+                goldPerHour: -(materialPerAttempt * 3600) / run.perActionTime - teaPerHour,
+                drinkCostPerHour: teaPerHour,
+                teaBill,
             });
         } catch (error) {
             console.error(`[GoalPlanner] Rating enhancing on ${hrid} failed:`, error);

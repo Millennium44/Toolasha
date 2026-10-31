@@ -25,7 +25,7 @@ const game = vi.hoisted(() => ({
 }));
 
 /** The enhancing run the mocked calculator hands back, and the material prices; null run = no run */
-const enh = vi.hoisted(() => ({ run: null, xp: 0, materials: {} }));
+const enh = vi.hoisted(() => ({ run: null, xp: 0, materials: {}, params: {} }));
 
 const loadout = vi.hoisted(() => ({ drinks: null, equipment: null }));
 
@@ -108,7 +108,7 @@ vi.mock('../../utils/enhancement-input-pricing.js', () => ({
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({
     getTooltipEnhancementParams: () => ({ enhancingLevel: 1, houseLevel: 0 }),
-    enhancementParamsFor: () => ({ enhancingLevel: 1, houseLevel: 0 }),
+    enhancementParamsFor: () => ({ enhancingLevel: 1, houseLevel: 0, ...enh.params }),
     describeEnhancementSource: () => ({ kind: 'own', detail: '' }),
 }));
 vi.mock('../../utils/house-cost-calculator.js', () => ({
@@ -935,12 +935,44 @@ describe('enhancing xp rates and the material bill', () => {
             perActionTime: 2,
         };
         enh.xp = 10;
+        enh.params = {};
+        enh.materials = {};
     });
 
     test('a fully priced material bill rates the item', async () => {
         enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: false, partial: false };
         const context = await buildPlannerContext();
         expect(context.xpRates('/skills/enhancing')).toHaveLength(1);
+    });
+
+    test('the tea the bench drinks is in the hourly bill, with the teas to net held stock off', async () => {
+        enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: false, partial: false };
+        enh.materials['/items/blessed_tea'] = { price: 1000, unpriced: false, estimated: false, partial: false };
+        enh.params = { teas: { blessed: true }, drinkConcentration: 0 };
+        game.drinkSlots['/action_types/enhancing'] = [
+            { itemHrid: '/items/blessed_tea' },
+            { itemHrid: '/items/wisdom_tea' },
+        ];
+        enh.materials['/items/wisdom_tea'] = { price: 200, unpriced: false, estimated: false, partial: false };
+
+        const [rate] = (await buildPlannerContext()).xpRates('/skills/enhancing');
+        const materialsPerHour = (2 * 500 * 3600) / 2;
+        // 12 teas an hour each: blessed (listed once though flagged and equipped) and wisdom
+        expect(rate.drinkCostPerHour).toBe(12 * 1000 + 12 * 200);
+        expect(rate.goldPerHour).toBeCloseTo(-(materialsPerHour + 14_400), 6);
+        expect(rate.teaBill).toEqual([
+            { itemHrid: '/items/blessed_tea', perHour: 12, unitPrice: 1000 },
+            { itemHrid: '/items/wisdom_tea', perHour: 12, unitPrice: 200 },
+        ]);
+    });
+
+    test('drink concentration raises the teas drunk; an unpriced tea is flagged, not free', async () => {
+        enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: false, partial: false };
+        enh.params = { teas: { ultraEnhancing: true }, drinkConcentration: 25 };
+
+        const [rate] = (await buildPlannerContext()).xpRates('/skills/enhancing');
+        expect(rate.teaBill).toEqual([{ itemHrid: '/items/ultra_enhancing_tea', perHour: 15, unitPrice: null }]);
+        expect(rate.drinkCostPerHour).toBe(0);
     });
 
     test('a material priced by a partial craft bill leaves the candidate out, like an unpriced one', async () => {
