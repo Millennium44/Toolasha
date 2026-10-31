@@ -78,15 +78,26 @@ export function replayBuildKey(inputs) {
     return buildKey(inputs);
 }
 
+/**
+ * The key a build had before scroll buffs were left out of it. Recordings exported by that
+ * version carry ids derived from this key, so an import recognizes them by it and re-ids them.
+ *
+ * @param {Object} inputs - Saved replay inputs, as {@link copyReplayInputs} returns
+ * @returns {string} The earlier canonical string
+ */
+export function legacyReplayBuildKey(inputs) {
+    return buildKey(inputs, { keepScrollBuffs: true });
+}
+
 /** Ignore fields the labyrinth engine does not use when comparing saved builds. */
-function buildKey(inputs) {
+function buildKey(inputs, { keepScrollBuffs = false } = {}) {
     const playerDTO = { ...inputs.playerDTO };
     // The worker explicitly removes these in labyrinth mode; crate buffs replace them.
     delete playerDTO.food;
     delete playerDTO.drinks;
     // The worker clears scrolls for labyrinth fights too, so swapping one mid-session
     // must not split otherwise identical fights into separate cohorts.
-    delete playerDTO.scrollBuffs;
+    if (!keepScrollBuffs) delete playerDTO.scrollBuffs;
     // These support the skilling simulator or build editor. The combat worker
     // consumes neither tokenUpgrades nor these level maps: shared community
     // buffs arrive separately, and guildCombatBuffs already carries the resolved
