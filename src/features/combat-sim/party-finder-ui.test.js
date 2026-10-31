@@ -1521,6 +1521,17 @@ describe('saved builds', () => {
             expect(state.db.entries).toHaveLength(2);
         });
 
+        test('an aborted match (prices moved twice, a character switch) does not claim only the character changed', async () => {
+            await mountTab();
+            toggle().click();
+            state.tune = async (template) => tuned(template, { status: 'aborted', k: null });
+            add(t().id);
+            await flush();
+            const text = tab.root.querySelector('[data-pf-template-score]').textContent;
+            expect(text).toMatch(/prices/);
+            expect(text).toMatch(/standard template/);
+        });
+
         test('a build the template cannot reach says which way it is clamped', async () => {
             await mountTab();
             toggle().click();

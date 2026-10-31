@@ -179,7 +179,7 @@ function tunedText(tuned) {
         case 'noScore':
             return 'Your build score is not loaded yet, so the standard template was added (combat levels still match you).';
         case 'aborted':
-            return 'The character changed while matching, so the standard template was added.';
+            return 'The character, its gear or the prices changed while matching, so the standard template was added.';
         default:
             return 'The build could not be scored, so the standard template was added (combat levels still match you).';
     }

@@ -8,6 +8,8 @@ vi.mock('../profile/score-calculator.js', () => ({ calculateCombatScore: async (
 const stamp = vi.hoisted(() => ({ value: 'a|1' }));
 vi.mock('../profile/build-score-row.js', () => ({
     ensureOwnScore: async () => null,
+    ownProfileData: () => null,
+    buildFingerprint: () => null,
     scorePricingStamp: () => stamp.value,
 }));
 
@@ -320,6 +322,30 @@ describe('tuneTemplate', () => {
         expect(state.calls).toBe(0);
         state.mode = 'standard';
         expect((await tuneTemplate(smash, LEVELS, deps)).cached).toBe(false);
+    });
+
+    test('a gear swap while the probes run restarts the solve on the new build (#651 T13)', async () => {
+        const { deps, state } = world();
+        state.build = 'sword';
+        deps.getBuildKey = () => state.build;
+        // The character's score follows the gear: the swap raises it from 1900 to 2300 (weapon +13 on the template)
+        deps.getOwnScore = () => state.score;
+        const inner = deps.scoreProfile;
+        let swapped = false;
+        deps.scoreProfile = async (profileData) => {
+            if (!swapped) {
+                swapped = true;
+                state.build = 'axe';
+                state.score = { total: 9999, equipment: 2300, ability: 0 };
+            }
+            return inner(profileData);
+        };
+
+        const result = await tuneTemplate(smash, LEVELS, deps);
+
+        // Matched against the new build's score, not the one held when the solve began
+        expect(result).toMatchObject({ status: 'ok', ownScore: 2300, templateScore: 2300 });
+        expect(result.dto.equipment['/equipment_types/main_hand'].enhancementLevel).toBe(13);
     });
 
     test('prices that keep moving give up as aborted rather than chase them; a character switch aborts at once', async () => {

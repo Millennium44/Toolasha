@@ -11,6 +11,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('../profile/build-score-row.js', () => ({
     readOwnScore: () => null,
     ensureOwnScore: async () => null,
+    ownProfileData: () => null,
+    buildFingerprint: () => null,
     scorePricingStamp: () => '',
 }));
 vi.mock('../profile/score-calculator.js', () => ({ calculateCombatScore: async () => null }));

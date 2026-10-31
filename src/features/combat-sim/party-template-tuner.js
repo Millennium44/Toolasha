@@ -16,7 +16,7 @@
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { calculateCombatScore } from '../profile/score-calculator.js';
-import { ensureOwnScore, scorePricingStamp } from '../profile/build-score-row.js';
+import { ensureOwnScore, scorePricingStamp, ownProfileData, buildFingerprint } from '../profile/build-score-row.js';
 
 /** Lowest and highest offset tried */
 export const OFFSET_MIN = -15;
@@ -237,6 +237,9 @@ export function liveDeps() {
                 config.getSetting('networth_highEnhancementMinLevel') || 13,
                 scorePricingStamp(),
             ].join('|'),
+        // What the character wears, slots and houses: a gear swap mid-solve leaves the held score (the target)
+        // describing a build that is gone
+        getBuildKey: () => buildFingerprint(ownProfileData()) || '',
         scoreProfile: async (profileData) => calculateCombatScore(profileData),
     };
 }
@@ -270,8 +273,11 @@ export async function tuneTemplate(template, levels, deps = liveDeps(), { onProg
     // The pricing context the solve starts under: a market refresh or a pricing-setting change while it runs makes
     // the character's score and every probe come from different quotes, and what it matched is stale
     const pricingKey = deps.getPricingKey();
+    // The build the character's score is read for: a gear swap while the solve runs leaves `target` stale too
+    const buildKey = deps.getBuildKey?.() ?? '';
     const sameCharacter = () => deps.getCharacterId() === characterId;
-    const stillCurrent = () => sameCharacter() && deps.getPricingKey() === pricingKey;
+    const stillCurrent = () =>
+        sameCharacter() && deps.getPricingKey() === pricingKey && (deps.getBuildKey?.() ?? '') === buildKey;
     const leveled = matchCombatLevels(template.playerDto, template.role, levels);
     const fallback = (status, extra = {}) => ({
         status,
