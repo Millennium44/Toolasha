@@ -1389,8 +1389,8 @@ describe('saved builds', () => {
             expect(dto.equipment['/equipment_types/main_hand'].enhancementLevel).toBe(9);
             expect(dto.guildShrineLevels).toBeDefined();
             const line = tab.root.querySelector('[data-pf-template-score]');
-            expect(line.textContent).toBe('score 1,234M ≈ yours 1,250M');
-            expect(el('roster-note').textContent).toContain('score 1,234M ≈ yours 1,250M');
+            expect(line.textContent).toBe('score 1.23B ≈ yours 1.25B');
+            expect(el('roster-note').textContent).toContain('score 1.23B ≈ yours 1.25B');
         });
 
         test('switched off, the standard template is added and nothing is scored', async () => {
@@ -1445,9 +1445,41 @@ describe('saved builds', () => {
             add(t().id);
             await flush();
             expect(tab.root.querySelector('[data-pf-template-score]').textContent).toBe(
-                'score 1,234M ≈ yours 1,250M. Some gear is unpriced, so the match is approximate.'
+                'score 1.23B ≈ yours 1.25B. Some gear is unpriced, so the match is approximate.'
             );
             expect(tab.root.querySelector('[data-pf-template-score]').style.color).not.toBe('');
+        });
+
+        test('scores print compactly in coins, not as thousands of separated millions', async () => {
+            await mountTab();
+            toggle().click();
+            state.tune = async (template) => tuned(template, { templateScore: 7344662, ownScore: 1054569399 });
+            add(t().id);
+            await flush();
+            const text = tab.root.querySelector('[data-pf-template-score]').textContent;
+            expect(text).toBe('score 7.34T ≈ yours 1.05Q');
+            expect(text).not.toMatch(/\d,\d{3}M/);
+        });
+
+        test('a clamp through unpriced gear reports both the clamp and the approximation', async () => {
+            await mountTab();
+            toggle().click();
+            const both = (clamp, extra) => async (template) =>
+                tuned(template, { status: 'partial', clamp, templateScore: 7344662, ownScore: 1054569399, ...extra });
+            state.tune = both('clampedHigh');
+            add(t().id);
+            await flush();
+            const lines = () => [...tab.root.querySelectorAll('[data-pf-template-score]')].map((l) => l.textContent);
+            expect(lines()[0]).toBe(
+                'score 7.34T ≈ yours 1.05Q. Even the highest setting scores below your build, so the template is ' +
+                    'weaker than you. Some gear is unpriced, so the match is approximate.'
+            );
+            state.tune = both('clampedLow');
+            add(t().id);
+            await flush();
+            const text = lines()[0];
+            expect(text).toContain('Even the lowest setting scores above your build');
+            expect(text).toContain('Some gear is unpriced, so the match is approximate.');
         });
 
         test('a match that finishes after the tab was closed and reopened adds nothing and cannot unlock the new match', async () => {

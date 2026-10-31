@@ -110,31 +110,41 @@ const MATCH_BUILD_HELP =
     'compared. Without your build score the standard template is added.';
 
 /**
- * A build score in millions of coins, for the template score line.
- * @param {number} value
+ * A build score in millions of coins, for the template score line: converted to coins and printed compactly
+ * ("7.34T", "1.05Q").
+ * @param {number} value - Millions of coins
  * @returns {string}
  */
 function formatScoreM(value) {
-    return `${Math.round(value).toLocaleString('en-US')}M`;
+    return formatKMB(Math.round(value) * 1e6, 2);
 }
 
 /**
- * The line saying what tuning a template came to.
- * @param {{status: string, template?: number|null, own?: number|null}} tuned
+ * The line saying what tuning a template came to. A clamp (the template cannot reach your score) and unpriced gear
+ * (the match is approximate) are reported independently, so a clamped match through unpriced gear says both.
+ * @param {{status: string, clamp?: 'clampedLow'|'clampedHigh'|null, template?: number|null, own?: number|null}} tuned
  * @returns {string}
  */
 function tunedText(tuned) {
     const both = tuned.template != null && tuned.own != null;
     const figures = both ? `score ${formatScoreM(tuned.template)} ≈ yours ${formatScoreM(tuned.own)}` : '';
+    const clamp =
+        tuned.clamp || (tuned.status === 'clampedLow' || tuned.status === 'clampedHigh' ? tuned.status : null);
+    const partial = tuned.status === 'partial';
+    if (clamp || partial || tuned.status === 'ok') {
+        const sentences = [figures];
+        if (clamp === 'clampedLow') {
+            sentences.push('Even the lowest setting scores above your build, so the template is stronger than you.');
+        } else if (clamp === 'clampedHigh') {
+            sentences.push('Even the highest setting scores below your build, so the template is weaker than you.');
+        }
+        if (partial) sentences.push('Some gear is unpriced, so the match is approximate.');
+        return sentences
+            .filter(Boolean)
+            .map((sentence, index, all) => (index === 0 && all.length > 1 ? `${sentence}.` : sentence))
+            .join(' ');
+    }
     switch (tuned.status) {
-        case 'ok':
-            return figures;
-        case 'partial':
-            return `${figures}. Some gear is unpriced, so the match is approximate.`;
-        case 'clampedLow':
-            return `${figures}. Even the lowest setting scores above your build, so the template is stronger than you.`;
-        case 'clampedHigh':
-            return `${figures}. Even the highest setting scores below your build, so the template is weaker than you.`;
         case 'noScore':
             return 'Your build score is not loaded yet, so the standard template was added (combat levels still match you).';
         case 'aborted':
@@ -801,6 +811,7 @@ export class PartyFinderTab {
                 tuned = {
                     ownerId,
                     status: result.status,
+                    clamp: result.clamp || null,
                     k: result.k,
                     template: result.templateScore,
                     own: result.ownScore,

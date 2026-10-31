@@ -260,7 +260,8 @@ function stampOf(score) {
  *   character's own score is awaited, then 'solve' before each of the (at most MAX_EVALS) scorings
  * @returns {Promise<{status: 'ok'|'partial'|'clampedLow'|'clampedHigh'|'noScore'|'failed'|'aborted', dto: Object,
  *   k: number|null, templateScore: number|null, ownScore: number|null, cached: boolean}>} `partial`: gear in either score was unpriced, so the match is approximate (the tuned build
- *   is still returned, never reported as `ok`). `dto` is always usable:
+ *   is still returned, never reported as `ok`); `clamp` is `clampedLow`/`clampedHigh` whenever the solve was clamped,
+ *   whether or not the gear was priced (`status` is then `partial`). `dto` is always usable:
  *   with `noScore` (the character's score is not loaded), `failed` or `aborted` it is the standardized template with
  *   only the matched combat levels
  */
@@ -303,6 +304,7 @@ export async function tuneTemplate(template, levels, deps = liveDeps(), { onProg
 
     const result = {
         status: unpriced ? 'partial' : solved.status,
+        clamp: solved.status === 'clampedLow' || solved.status === 'clampedHigh' ? solved.status : null,
         k: solved.k,
         templateScore: solved.score,
         ownScore: target,
