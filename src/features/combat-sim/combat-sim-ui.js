@@ -10764,7 +10764,7 @@ class CombatSimUI {
         }
 
         if (!playerDTOs?.length || !playerDTOs[playerIndex]) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             this._setStatus('No player data available. Configure a simulation first.');
             return;
         }
@@ -10948,7 +10948,8 @@ class CombatSimUI {
             console.error('[CombatSimUI] Upgrade analysis failed:', error);
             this._setStatus('Analysis failed: ' + error.message);
         } finally {
-            this._upgradeRunning = false;
+            // A run started after a character switch owns the latch by now
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             progressEl.style.display = 'none';
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
@@ -11158,7 +11159,7 @@ class CombatSimUI {
         }
         const playerIndex = party.playerIndex;
         if (!party.simDTOs?.length || !party.simDTOs[playerIndex]) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             this._setStatus('No player data available. Configure a simulation first.');
             return;
         }
@@ -11266,7 +11267,8 @@ class CombatSimUI {
             console.error('[CombatSimUI] Trigger tuning failed:', error);
             this._setStatus('Trigger tuning failed: ' + error.message);
         } finally {
-            this._upgradeRunning = false;
+            // A run started after a character switch owns the latch by now
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             progressEl.style.display = 'none';
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';

@@ -3056,6 +3056,67 @@ describe('results outliving the character they were run for', () => {
         expect(mocks.upgradeRuns).toBe(0);
         expect(ui._upgradeRunning).toBe(true);
     });
+
+    test('an old read that finds no players leaves a newer run’s busy latch alone', async () => {
+        let releaseProfiles;
+        mocks.buildPlayerDTOs = () =>
+            new Promise((resolve) => {
+                releaseProfiles = resolve;
+            });
+        ui.buildPanel();
+        selectZone();
+
+        const analysis = ui._onUpgradeAnalyze();
+        ui._analysisGen += 1;
+        ui._upgradeRunning = true;
+        releaseProfiles({ players: [] });
+        await analysis;
+
+        expect(ui._upgradeRunning).toBe(true);
+    });
+
+    test('an upgrade run that ends after a newer one claimed the latch leaves it alone', async () => {
+        ui.buildPanel();
+        selectZone();
+        mocks.onRun = () => {
+            ui._analysisGen += 1;
+            ui._upgradeRunning = true;
+        };
+        try {
+            await ui._onUpgradeAnalyze();
+        } finally {
+            mocks.onRun = null;
+        }
+
+        expect(ui._upgradeRunning).toBe(true);
+    });
+
+    test('a trigger run that ends after a newer one claimed the latch leaves it alone', async () => {
+        ui.buildPanel();
+        selectZone();
+        ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+            box.checked = box.getAttribute('data-upgrade-mode') === 'triggers';
+        });
+        mocks.editedDTOs = { player1: { hrid: 'player1', abilities: [], food: [], drinks: [] } };
+        const result = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 10 };
+        Object.defineProperty(mocks, 'triggerResult', {
+            configurable: true,
+            get() {
+                ui._analysisGen += 1;
+                ui._upgradeRunning = true;
+                return result;
+            },
+        });
+        try {
+            await ui._onUpgradeAnalyze();
+        } finally {
+            delete mocks.triggerResult;
+            mocks.triggerResult = null;
+            mocks.editedDTOs = null;
+        }
+
+        expect(ui._upgradeRunning).toBe(true);
+    });
 });
 
 describe('runs waiting for live player profiles', () => {
