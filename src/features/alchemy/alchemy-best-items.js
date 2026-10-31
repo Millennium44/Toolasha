@@ -775,7 +775,9 @@ class AlchemyBestItems {
             // a new ranking) clears ownStock and bumps the sweep, so the rest are still good
             const held = (this.cachedRankings.decompose || [])
                 .map((row) => ({ row, count: this.heldCount(row.itemHrid) }))
-                .filter(({ row, count }) => count > 0 && !this.ownStock.has(row.itemHrid));
+                // A row whose chain could not be built (an error, or the chain not ready yet) is retried;
+                // an unpriced-but-built chain is a real answer and is kept
+                .filter(({ row, count }) => count > 0 && !this.ownStock.get(row.itemHrid)?.detail);
             const env = held.length > 0 ? await tooltipPrices.buildSelfUseEnv() : null;
             if (sweep !== this.ownStockSweep) return;
             let sliceStart = performance.now();

@@ -1483,9 +1483,17 @@ class ChunkedHistory {
     _notifyLanded(onLanded, queued) {
         if (typeof onLanded !== 'function') return;
         const all = [...queued, ...this._inFlightWrites];
+        // A throwing callback must not surface as an unhandled rejection
+        const report = (ok) => {
+            try {
+                onLanded(ok);
+            } catch (error) {
+                console.error('[ChunkedHistory] onLanded callback failed:', error);
+            }
+        };
         Promise.all(all).then(
-            (results) => onLanded(results.every((ok) => ok !== false)),
-            () => onLanded(false)
+            (results) => report(results.every((ok) => ok !== false)),
+            () => report(false)
         );
     }
 

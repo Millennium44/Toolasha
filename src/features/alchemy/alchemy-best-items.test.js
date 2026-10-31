@@ -1856,6 +1856,19 @@ describe('the Chain/hr (own stock) sort', () => {
         expect(bestItems.ownStock.get('/items/b').value).toBe(200);
     });
 
+    test('a row whose chain could not be built is retried on the next sweep; a built chain is kept', async () => {
+        tooltip.held = { '/items/a': 1, '/items/b': 2 };
+        // b's chain is not ready on the first sweep
+        tooltip.chains = { '/items/a': chain(100) };
+        await open([row('a', 1), row('b', 1)]);
+        expect(bestItems.ownStock.get('/items/b').value).toBeNull();
+        tooltip.chains = { '/items/a': chain(100), '/items/b': chain(200) };
+        tooltip.calls.length = 0;
+        await bestItems.refreshOwnStock();
+        expect(tooltip.calls.map((c) => c.hrid)).toEqual(['/items/b']);
+        expect(bestItems.ownStock.get('/items/b').value).toBe(200);
+    });
+
     test('a long sweep hands the browser a frame, and a sweep superseded during the yield writes nothing more', async () => {
         const hrids = Array.from({ length: 6 }, (_, i) => `/items/i${i}`);
         tooltip.held = Object.fromEntries(hrids.map((h) => [h, 2]));
