@@ -362,6 +362,23 @@ describe('computeBeaconPlan', () => {
     const manhattan = (a, b, cols) =>
         Math.abs((a % cols) - (b % cols)) + Math.abs(Math.floor(a / cols) - Math.floor(b / cols));
 
+    test('a revealed island left by an earlier beacon is a free hop in the minimum', () => {
+        const cols = 8;
+        const revealed = new Array(64).fill(false);
+        revealed[0] = true;
+        // An earlier radius-2 beacon at 27 left this diamond revealed, apart from both ends
+        for (let i = 0; i < 64; i++) {
+            const d = Math.abs((i % cols) - (27 % cols)) + Math.abs(Math.floor(i / cols) - Math.floor(27 / cols));
+            if (d <= 2) revealed[i] = true;
+        }
+        const plan = computeBeaconPlan(revealed, cols, 0);
+        // Two beacons (10 and 46) open two routes through the island; the chain alone said 3
+        expect(plan.minNeeded).toBe(2);
+        expect(plan.feasible).toBe(true);
+        expect(plan.beacons).toHaveLength(2);
+        expect(plan.corridorOpen).toBe(true);
+    });
+
     test('chains the minimum beacons from entrance to exit on a dark floor', () => {
         const cols = 5;
         const revealed = new Array(25).fill(false);
