@@ -7652,6 +7652,92 @@ describe('labyrinth toolbar layout', () => {
         }
     });
 
+    describe('planner settings changed from outside the toolbar', () => {
+        afterEach(() => {
+            settings.map.delete('labyrinthBeaconPriority');
+            settings.map.delete('labyrinthBeaconRoutes');
+        });
+        const fire = (key, value) => {
+            for (const w of settingWatchers.filter((x) => x.key === key)) w.cb(value);
+        };
+
+        test('each one redraws a shown plan and updates its toolbar control', () => {
+            labyrinthClearRate.watchHalfSettings();
+            labyrinthClearRate.injectTileControls();
+            const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+            try {
+                labyrinthClearRate._beaconPlanCells = { fills: [], centers: [] };
+                settings.map.set('labyrinthBeaconPriority', 'holes');
+                fire('labyrinthBeaconPriority', 'holes');
+                expect(q('beacon-priority').value).toBe('holes');
+                settings.map.set('labyrinthBeaconRoutes', '1');
+                fire('labyrinthBeaconRoutes', '1');
+                expect(q('beacon-routes').value).toBe('1');
+                configMock.getSetting.mockImplementation(() => false);
+                expect(q('beacon-near-exit').textContent).toBe('Near way out: off');
+                configMock.getSetting.mockImplementation((k) => k === 'labyrinthBeaconNearExit');
+                fire('labyrinthBeaconNearExit', true);
+                expect(q('beacon-near-exit').textContent).toBe('Near way out: on');
+                configMock.getSetting.mockImplementation((k) => k === 'labyrinthBeaconPathFirst');
+                fire('labyrinthBeaconPathFirst', true);
+                expect(q('beacon-path-first').textContent).toBe('Path first: on');
+                expect(run).toHaveBeenCalledTimes(4);
+            } finally {
+                run.mockRestore();
+                labyrinthClearRate._beaconPlanCells = null;
+                configMock.getSetting.mockImplementation(() => true);
+                labyrinthClearRate.disable();
+            }
+        });
+
+        test('with no plan shown the controls sync and nothing is drawn', () => {
+            labyrinthClearRate.watchHalfSettings();
+            labyrinthClearRate.injectTileControls();
+            const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+            try {
+                labyrinthClearRate._beaconPlanCells = null;
+                labyrinthClearRate._stagedBeaconPlan = null;
+                settings.map.set('labyrinthBeaconPriority', 'holes');
+                fire('labyrinthBeaconPriority', 'holes');
+                expect(q('beacon-priority').value).toBe('holes');
+                expect(run).not.toHaveBeenCalled();
+            } finally {
+                run.mockRestore();
+                labyrinthClearRate.disable();
+            }
+        });
+
+        test('a toolbar change replans exactly once even when the config also notifies', () => {
+            labyrinthClearRate.watchHalfSettings();
+            labyrinthClearRate.injectTileControls();
+            const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+            const realSet = configMock.setSettingValue;
+            try {
+                labyrinthClearRate._beaconPlanCells = { fills: [], centers: [] };
+                // The real config notifies listeners synchronously inside the write
+                configMock.setSettingValue = (key, value) => {
+                    realSet(key, value);
+                    fire(key, value);
+                };
+                q('beacon-priority').value = 'holes';
+                q('beacon-priority').dispatchEvent(new Event('change'));
+                expect(run).toHaveBeenCalledTimes(1);
+            } finally {
+                configMock.setSettingValue = realSet;
+                run.mockRestore();
+                labyrinthClearRate._beaconPlanCells = null;
+                labyrinthClearRate.disable();
+            }
+        });
+
+        test('the listeners are removed on disable', () => {
+            labyrinthClearRate.watchHalfSettings();
+            expect(settingWatchers.filter((w) => w.key.startsWith('labyrinthBeacon'))).toHaveLength(4);
+            labyrinthClearRate.disable();
+            expect(settingWatchers.filter((w) => w.key.startsWith('labyrinthBeacon'))).toHaveLength(0);
+        });
+    });
+
     test('the plan follows the settings: fewest holes is what the beacon run plans with', () => {
         configMock.getSetting.mockImplementation(() => false);
         settings.map.set('labyrinthBeaconPriority', 'holes');

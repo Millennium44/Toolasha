@@ -156,6 +156,14 @@ const LIVE_SIM_REFRESH_MS = 4000;
  */
 const LIVE_SIM_MAX_AGE_MS = 30000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
+
+/** The beacon planner settings, editable from the toolbar's gear panel and the Settings page */
+const BEACON_PLANNER_SETTINGS = [
+    'labyrinthBeaconPriority',
+    'labyrinthBeaconRoutes',
+    'labyrinthBeaconNearExit',
+    'labyrinthBeaconPathFirst',
+];
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 /** Wait after a beacon reveal before re-pathing, so the reveal's burst of updates (and the auto-calc it schedules) lands first */
 const AUTO_PATH_DELAY_MS = 900;
@@ -252,7 +260,50 @@ class LabyrinthClearRate {
                 if (value) return;
                 this.disableLiveProgress();
             }),
+            // The four beacon planner settings are also editable from the Settings
+            // page, which does not go through the toolbar's handlers
+            ...BEACON_PLANNER_SETTINGS.map((key) =>
+                config.onSettingChange(key, () => this.onBeaconPlannerSettingChanged())
+            ),
         ];
+    }
+
+    /**
+     * A beacon planner setting changed. The toolbar's own handlers write inside
+     * `writeBeaconPlannerSetting` (they sync their control and replan themselves),
+     * so this only acts on a change made from elsewhere: put the toolbar controls
+     * on the new values and redraw a plan that is on the map.
+     */
+    onBeaconPlannerSettingChanged() {
+        if (this._beaconToolbarWrite) return;
+        this.syncBeaconPlannerControls();
+        this.rerunBeaconPlanIfShown();
+    }
+
+    /** Run a toolbar write of a planner setting, marked as the toolbar's own */
+    writeBeaconPlannerSetting(write) {
+        this._beaconToolbarWrite = true;
+        try {
+            write();
+        } finally {
+            this._beaconToolbarWrite = false;
+        }
+    }
+
+    /** Put the toolbar's planner controls on the stored settings */
+    syncBeaconPlannerControls() {
+        for (const [suffix, settingId, fallback] of [
+            ['beacon-priority', 'labyrinthBeaconPriority', 'rooms'],
+            ['beacon-routes', 'labyrinthBeaconRoutes', '2'],
+        ]) {
+            const select = document.querySelector(`.${TILE_CONTROLS_CLASS}-${suffix}`);
+            if (!select) continue;
+            select.value = String(config.getSettingValue(settingId, fallback));
+            if (!select.value) select.value = fallback;
+        }
+        for (const suffix of ['beacon-near-exit', 'beacon-path-first']) {
+            document.querySelector(`.${TILE_CONTROLS_CLASS}-${suffix}`)?.syncFromSetting?.();
+        }
     }
 
     /** Unwire the live clear chance: its handlers and every readout it drew */
@@ -3543,7 +3594,7 @@ class LabyrinthClearRate {
             select.value = String(config.getSettingValue(settingId, fallback));
             if (!select.value) select.value = fallback;
             select.addEventListener('change', () => {
-                config.setSettingValue(settingId, select.value);
+                this.writeBeaconPlannerSetting(() => config.setSettingValue(settingId, select.value));
                 this.rerunBeaconPlanIfShown();
             });
             beaconGroup.appendChild(select);
@@ -3585,10 +3636,11 @@ class LabyrinthClearRate {
             };
             button.addEventListener('click', () => {
                 // Checkbox settings, written the way the auto toggles are
-                config.setSetting(settingId, !config.getSetting(settingId));
+                this.writeBeaconPlannerSetting(() => config.setSetting(settingId, !config.getSetting(settingId)));
                 sync();
                 this.rerunBeaconPlanIfShown();
             });
+            button.syncFromSetting = sync;
             sync();
             beaconGroup.appendChild(button);
             return button;
