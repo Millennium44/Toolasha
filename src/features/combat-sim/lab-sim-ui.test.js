@@ -1558,9 +1558,11 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
             },
             '/monsters/mimic',
             Date.now(),
-            ['/items/wisdom_crate']
+            ['/items/wisdom_crate'],
+            7
         );
         expect(game.xpCalls.at(-1)[3]).toEqual(['/items/wisdom_crate']);
+        expect(game.xpCalls.at(-1)[4]).toBe(7);
     });
 
     test('and the Configure box is still exactly what Configure value means', async () => {

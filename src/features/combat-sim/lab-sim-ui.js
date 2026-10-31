@@ -3116,7 +3116,7 @@ class LabSimUI {
                 if (levelInput && maxResult.cleared) levelInput.value = maxResult.maxLevel;
                 this._refreshLevelSourceReadout();
 
-                this._displayFindMaxResults(maxResult, monsterHrid, simStartTime, crates);
+                this._displayFindMaxResults(maxResult, monsterHrid, simStartTime, crates, communityBuffs?.comExp);
             } else {
                 const simResult = await runLabyrinthSimulation(
                     {
@@ -3340,7 +3340,7 @@ class LabSimUI {
      * since skip is a level offset.
      * @private
      */
-    _displayFindMaxResults(maxResult, monsterHrid, simStartTime, crates = null) {
+    _displayFindMaxResults(maxResult, monsterHrid, simStartTime, crates = null, communityLevel = null) {
         const container = this.panel?.querySelector('#mwi-labsim-results');
         if (!container) return;
 
@@ -3370,8 +3370,9 @@ class LabSimUI {
                 maxResult.maxLevel,
                 maxResult.avgFightSeconds,
                 maxResult.winRate,
-                // The crates the search simmed with, not the ones equipped now
-                crates
+                // The crates and community level the search simmed with, not the live ones
+                crates,
+                communityLevel
             );
             // Skip is a level offset, so it only exists once there is a level
             // to offset from. It is signed: the game accepts -999..999, and a

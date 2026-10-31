@@ -857,6 +857,25 @@ describe('the community buffs the server is running reach a labyrinth room', () 
         expect(labyrinthClearRate.getCombatExperienceBonus()).toBeCloseTo(0.25, 10);
     });
 
+    test('a simulated crate set counts coffee and food wisdom but not the tea crate’s', () => {
+        dataManagerMock.getInitClientData.mockReturnValue({
+            labyrinthCrateDetailMap: {
+                '/items/expert_tea_crate': [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.15, ratioBoost: 0 }],
+                '/items/expert_coffee_crate': [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.1, ratioBoost: 0 }],
+            },
+        });
+        const crates = ['/items/expert_tea_crate', '/items/expert_coffee_crate'];
+        expect(labyrinthClearRate.getCombatExperienceBonus(crates)).toBeCloseTo(0.1, 10);
+    });
+
+    test('a quoted XP/hr counts the simulated community level, not the live one', () => {
+        community.levels['/community_buff_types/experience'] = 1;
+        const live = labyrinthClearRate.estimateCombatXpPerHour(100, 30, 1, []);
+        const simulated = labyrinthClearRate.estimateCombatXpPerHour(100, 30, 1, [], 11);
+        // 0.2 live, 0.25 at level 11
+        expect(simulated / live).toBeCloseTo(1.25 / 1.2, 6);
+    });
+
     test('the game’s own numbers win over the fallbacks when they have loaded', () => {
         community.levels['/community_buff_types/experience'] = 3;
         dataManagerMock.getInitClientData.mockReturnValue({

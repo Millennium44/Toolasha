@@ -1175,7 +1175,11 @@ class LabyrinthClearRate {
         let crateBuffs;
         if (Array.isArray(crateHrids)) {
             const detail = dataManager.getInitClientData()?.labyrinthCrateDetailMap;
-            crateBuffs = crateHrids.flatMap((hrid) => (Array.isArray(detail?.[hrid]) ? detail[hrid] : []));
+            // The tea crate's wisdom belongs to skilling rooms; a fight counts coffee and food only,
+            // as `getCombatCrateBuffs` does for the live crates
+            crateBuffs = crateHrids
+                .filter((hrid) => !/_tea_crate$/.test(String(hrid)))
+                .flatMap((hrid) => (Array.isArray(detail?.[hrid]) ? detail[hrid] : []));
         } else {
             crateBuffs = this.getCombatCrateBuffs();
         }
