@@ -9,7 +9,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### October 31 audit fixes: Combat Sim
 
 - Verify, the trigger search, Party search and the food search now read every price once before simulating, so one refresh can't tilt a close comparison.
-- An upgrade whose running cost includes an item with no price is marked as such: its profit gain is a ceiling and it shows no payback or ROI; Party search marks the gap.
+- An upgrade whose running cost includes an item with no price is marked as such: its profit gain is a ceiling (shown with ≤), it shows no ROI, and profit-ranked budget plans leave it out and say so; Party search marks the gap.
+- In the Labyrinth upgrade table, XP and Community Experience rows now count the XP a room win pays, which the simulator never awarded.
 - The upgrade advisor no longer suggests a drink or ability in a slot your build hasn't unlocked, and warns about a build with more than it can use.
 - Budget plans and Confirm together no longer treat a main-hand and an off-hand pick, or two different empty ability slots, as rivals.
 - In a party, a combat level-up row now includes the level-gap penalty change.
