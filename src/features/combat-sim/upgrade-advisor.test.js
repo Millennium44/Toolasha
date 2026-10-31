@@ -10008,6 +10008,44 @@ describe('main hand and off hand do not conflict; free ability slots are capacit
         expect(clash.picks).toHaveLength(1);
     });
 
+    test('across loadouts a two-hander and an off hand do not both count in one fight, but may in different fights', () => {
+        const perFight = (slot, fights) => ({
+            candidate: { ...enhance(slot), description: `${slot} +5`, currentLevel: 0 },
+            cost: 10,
+            attemptsDelta: -1,
+            significant: true,
+            fights,
+        });
+        const baselineFights = [{ winRate: 0.5 }, { winRate: 0.5 }];
+        const wins = (rate) => ({ winRate: rate, applied: true });
+        const off = { winRate: 0.5, applied: false };
+        // Different rooms: the two-hander helps the first fight, the off hand the second, so both are worn
+        const apart = planWithinBudget([perFight(TWO, [wins(0.9), off]), perFight(OFF, [off, wins(0.9)])], 1000, {
+            baselineFights,
+        });
+        expect(apart.picks).toHaveLength(2);
+        // The same room: they cannot be worn together, so only one counts there
+        const same = planWithinBudget([perFight(TWO, [wins(0.9), off]), perFight(OFF, [wins(0.8), off])], 1000, {
+            baselineFights,
+        });
+        expect(same.picks).toHaveLength(1);
+        const plain = (slot, gain) => ({
+            candidate: { ...enhance(slot), description: `${slot} +5`, currentLevel: 0 },
+            cost: 10,
+            attemptsDelta: -gain,
+            significant: true,
+        });
+        // One fight (no per-fight detail): the two-hander saves 5, the off hand 4; they cannot stack
+        const one = planWithinBudget([plain(TWO, 5), plain(OFF, 4)], 1000);
+        expect(one.picks).toHaveLength(1);
+        expect(one.attemptsSaved).toBe(5);
+
+        // Independent hands still add up
+        const hands = planWithinBudget([plain(MAIN, 5), plain(OFF, 4)], 1000);
+        expect(hands.picks).toHaveLength(2);
+        expect(hands.attemptsSaved).toBe(9);
+    });
+
     test('Confirm together accepts independent hands and still refuses a genuine overlap', async () => {
         runSimulation.mockReset();
         runSimulation.mockResolvedValue({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 10 });

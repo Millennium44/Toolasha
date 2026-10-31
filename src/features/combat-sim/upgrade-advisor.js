@@ -7093,13 +7093,21 @@ export function planWithinBudget(
     const groupsHolding = new Map();
     const holdKeys = (entry) => {
         for (const key of entry.keys) {
-            if (!groupsHolding.has(key)) groupsHolding.set(key, new Set());
-            groupsHolding.get(key).add(entry.key);
+            if (!groupsHolding.has(key)) groupsHolding.set(key, []);
+            groupsHolding.get(key).push({ group: entry.key, savings: entry.savings });
         }
     };
+    // In one loadout any other group holding a key is a piece that cannot be worn with this one. Across loadouts
+    // (rooms) a two-hander in one fight and an off hand in another are both worn, so the overlap only counts in a
+    // fight where both would be credited: there they could not stack
     const overlapsOtherGroup = (entry) =>
-        singleLoadout &&
-        entry.keys.some((key) => [...(groupsHolding.get(key) || [])].some((group) => group !== entry.key));
+        entry.keys.some((key) =>
+            (groupsHolding.get(key) || []).some(
+                (held) =>
+                    held.group !== entry.key &&
+                    (singleLoadout || entry.savings.some((saving, i) => saving > 0 && (held.savings[i] || 0) > 0))
+            )
+        );
 
     /** Take `entry` into the basket: its keys, its cost, its share of the standing best per slot */
     const acceptPin = (entry) => {
