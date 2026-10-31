@@ -898,10 +898,14 @@ function candidateTaskDamage(candidate, gameData) {
  *
  * @param {Array} abilities - A loadout's ability bar
  * @param {string} slot - The candidate's slot, e.g. `ability_3`
- * @returns {number} The slot index, or -1 when this bar has nothing free
+ * @returns {number} The slot index (the candidate's own when this bar still has it free, else the first free
+ *   ordinary slot), or -1 when this bar has nothing free
  */
 function freeAbilitySlot(abilities, slot) {
     if (slot === 'ability_0') return abilities.length > 0 && !abilities[0] ? 0 : -1;
+    // The slot the candidate was analysed in, while this bar still has it free: the cast order depends on it
+    const assigned = parseInt(String(slot).split('_')[1], 10);
+    if (assigned > 0 && assigned < abilities.length && !abilities[assigned]) return assigned;
     return abilities.findIndex((ability, index) => index > 0 && !ability);
 }
 

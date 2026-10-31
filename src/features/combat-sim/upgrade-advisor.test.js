@@ -10106,6 +10106,34 @@ describe('main hand and off hand do not conflict; free ability slots are capacit
         });
     });
 
+    test('a guide fill lands in the slot it was analysed in while it is free, else the first free one (#666)', () => {
+        const fill = (slot) => ({
+            type: 'ability_swap',
+            slot,
+            fillsFreeSlot: true,
+            currentHrid: '/abilities/b',
+            currentLevel: 0,
+            upgradeHrid: '/abilities/b',
+            upgradeLevel: 3,
+            description: 'Empty slot -> b',
+        });
+        const a = { hrid: '/abilities/a', level: 1, triggers: null };
+        const dto = { equipment: {}, abilities: [null, null, a, null, null] };
+
+        const placed = applyCandidateToDTO(dto, fill('ability_3'));
+        expect(placed.abilities.map((x) => x?.hrid ?? null)).toEqual([
+            null,
+            null,
+            '/abilities/a',
+            '/abilities/b',
+            null,
+        ]);
+        // Its slot taken on this bar: the first free ordinary slot
+        const taken = { equipment: {}, abilities: [null, null, a, a, null] };
+        expect(applyCandidateToDTO(taken, fill('ability_3')).abilities[1].hrid).toBe('/abilities/b');
+        expect(applyCandidateToDTO(taken, fill('ability_3')).abilities[4]).toBeNull();
+    });
+
     test('Confirm together accepts independent hands and still refuses a genuine overlap', async () => {
         runSimulation.mockReset();
         runSimulation.mockResolvedValue({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 10 });
