@@ -616,14 +616,15 @@ class LabyrinthClearRate {
         // A time recommendation that only found the closest miss is not a level
         // worth filling into the field
         const recommended = rec?.qualifies === false ? null : rec?.threshold;
-        const current = roomHrid.startsWith('/skills/')
-            ? this.getSkipThreshold(roomHrid)
-            : this.getCombatSkipThreshold(roomHrid);
-        // Thresholds are signed: a negative recommendation is as fillable as a positive
-        // one. Zero is the only value worth refusing, because it is also what the reader
-        // returns for a setting that was never saved.
-        const value = Number.isFinite(recommended) && recommended !== 0 ? recommended : current;
-        if (!Number.isFinite(value) || value === 0) return;
+        const isSkill = roomHrid.startsWith('/skills/');
+        const current = isSkill ? this.getSkipThreshold(roomHrid) : this.getCombatSkipThreshold(roomHrid);
+        const currentKey = isSkill ? `labyrinthSkip${this._skillSuffix(roomHrid)}` : this._combatSkipKey(roomHrid);
+        // Thresholds are signed and 0 is a real value. A recommendation fills as it is; the saved
+        // value fills only when the key is present, since the reader also returns 0 for a setting
+        // that was never saved.
+        const useRecommended = Number.isFinite(recommended);
+        const value = useRecommended ? recommended : current;
+        if (!Number.isFinite(value) || (!useRecommended && !this._hasSkipSetting(currentKey))) return;
 
         // React renders the input a beat after the click; retry briefly
         let attempts = 0;
@@ -2101,6 +2102,15 @@ class LabyrinthClearRate {
     _hasSkipSetting(key) {
         const value = dataManager.characterData?.characterSetting?.[key];
         return value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value));
+    }
+
+    /**
+     * Whether the character has a saved skip threshold for a skilling room. A saved 0 counts.
+     * @param {string} skillHrid
+     * @returns {boolean}
+     */
+    hasSkillSkipSetting(skillHrid) {
+        return this._hasSkipSetting(`labyrinthSkip${this._skillSuffix(skillHrid)}`);
     }
 
     /**

@@ -9289,7 +9289,7 @@ class LabSimUI {
         if (usesSkipLevels && r.skillHrid && clearRate) {
             const skip = clearRate.getSkipThreshold?.(r.skillHrid);
             const basis = clearRate.getEffectiveLevel?.(r.skillHrid);
-            if (Number.isFinite(skip) && Number.isFinite(basis) && skip > 0) {
+            if (Number.isFinite(skip) && Number.isFinite(basis) && clearRate.hasSkillSkipSetting?.(r.skillHrid)) {
                 // Explain the − 1: the trigger is the gap at which skipping starts,
                 // so the hardest room you actually enter is one below it.
                 lines.push(`Room ${room} — the hardest room you still fight`);

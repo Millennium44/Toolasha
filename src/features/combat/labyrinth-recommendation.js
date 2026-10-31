@@ -192,7 +192,9 @@ export const recommendationMethods = {
         const found = await findHighestLevelWithinSeconds({
             evaluate: (delta) => evaluateRoom(Math.floor(effectiveLevel + delta)),
             // A room below level 1 does not exist; the threshold window is ±RANGE
-            minDelta: Math.max(-SKIP_THRESHOLD_RANGE - 1, 1 - Math.floor(effectiveLevel)),
+            // Threshold t is room effective + t - 1, so the game's lowest threshold, -999, is a delta of
+            // -SKIP_THRESHOLD_RANGE
+            minDelta: Math.max(-SKIP_THRESHOLD_RANGE, 1 - Math.floor(effectiveLevel)),
             maxDelta: SKIP_THRESHOLD_RANGE - 1,
             targetSeconds,
             ...tuning,

@@ -2144,8 +2144,20 @@ describe('the skilling crate dropdowns follow the equipped crates', () => {
         expect(tea.value).toBe('/items/expert_tea_crate');
     });
 
+    test('the row breakdown explains a saved trigger of zero or below, and none for an unset one', () => {
+        const row = { skillName: 'Alchemy', skillHrid: '/skills/alchemy', roomLevel: 108 };
+        const zero = { getSkipThreshold: () => 0, getEffectiveLevel: () => 108, hasSkillSkipSetting: () => true };
+        expect(ui._skillingRowBreakdown(row, true, zero, '')).toContain('trigger 0:');
+        const unset = { ...zero, hasSkillSkipSetting: () => false };
+        expect(ui._skillingRowBreakdown(row, true, unset, '')).not.toContain('trigger');
+    });
+
     test('the row breakdown spells out the room and success working', () => {
-        const clearRate = { getSkipThreshold: () => 67, getEffectiveLevel: () => 108 };
+        const clearRate = {
+            getSkipThreshold: () => 67,
+            getEffectiveLevel: () => 108,
+            hasSkillSkipSetting: () => true,
+        };
         const row = {
             skillName: 'Alchemy',
             skillHrid: '/skills/alchemy',
