@@ -186,6 +186,37 @@ test('a capped hit keeps Fury active when another buff expires at the old timer'
     expect(source.combatBuffs['/buff_uniques/fury_accuracy']?.ratioBoost).toBeCloseTo(0.25);
 });
 
+test('Fury that ran out while the unit was down starts from zero on the next hit', () => {
+    const { sim } = harness();
+    const source = Object.create(CombatUnit.prototype);
+    source.furyAmount = 0;
+    source.furyExpireTime = 0;
+    source.furyExpirationEvent = null;
+    source.combatBuffs = {};
+    source.buffSources = new Map();
+    source.combatDetails = { combatStats: { fury: 0.05 } };
+    source.updateCombatDetails = vi.fn();
+
+    sim._processFuryUpdate(source, true);
+    sim._processFuryUpdate(source, true);
+    expect(source.furyAmount).toBe(2);
+    const pending = source.furyExpirationEvent;
+
+    // The revive path prunes expired buffs once the 15 s are over
+    sim.simulationTime = FURY_EXPIRE + 1;
+    source.removeExpiredBuffs(sim.simulationTime);
+    expect(source.combatBuffs['/buff_uniques/fury_damage']).toBeUndefined();
+    expect(source.furyAmount).toBe(0);
+    expect(source.furyExpireTime).toBe(0);
+    // The queued expiry stays the unit's one event, so a new streak does not start a second chain
+    expect(source.furyExpirationEvent).toBe(pending);
+
+    sim._processFuryUpdate(source, true);
+    expect(source.furyAmount).toBe(1);
+    expect(source.combatBuffs['/buff_uniques/fury_damage']?.ratioBoost).toBeCloseTo(0.05);
+    expect(queued(sim)).toHaveLength(1);
+});
+
 describe('when the fight ends underneath it', () => {
     test('a cleared queue does not leave fury unable to expire again', () => {
         // The event is gone but the unit still points at it. Left unnoticed,

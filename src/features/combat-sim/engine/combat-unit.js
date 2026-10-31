@@ -628,6 +628,15 @@ class CombatUnit {
             }
         }
 
+        // The Fury counters live beside the buff objects and must expire with them. Left at the old
+        // count, the next hit builds on stacks whose buffs were just pruned (a revive after the timer
+        // ran out). A still-queued expiry event is kept: it finds zero stacks and clears itself, and
+        // a new streak re-arms it, so no second chain starts.
+        if (this.furyAmount > 0 && this.furyExpireTime <= currentTime) {
+            this.furyAmount = 0;
+            this.furyExpireTime = 0;
+        }
+
         this.updateCombatDetails();
     }
 
