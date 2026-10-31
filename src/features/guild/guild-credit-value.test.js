@@ -2053,6 +2053,34 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(plan.owedCredits).toEqual({});
         });
 
+        test('planNextBuys keeps going past a buy that depleted credits made unaffordable', () => {
+            // 300 tokens and 5 Gold credits. A and B each cost 100 tokens + 5 Gold, C costs 200 tokens;
+            // a Gold credit is 60 tokens. Buying A uses the 5 held, so B reprices to 100 + 300 = 400,
+            // but C (200) still fits the 200 left.
+            const rate = { creditsPerToken: 1 / 60, tokensPerExchange: 60, creditsPerExchange: 1 };
+            const buys = [
+                { label: 'A', tokenCost: 100, creditCosts: [{ itemHrid: '/gold', count: 5 }] },
+                { label: 'B', tokenCost: 100, creditCosts: [{ itemHrid: '/gold', count: 5 }] },
+                { label: 'C', tokenCost: 200, creditCosts: [] },
+            ];
+            const plan = planNextBuys(buys, {
+                tokenBalance: 300,
+                creditBalances: { '/gold': 5 },
+                rateFor: () => rate,
+            });
+
+            expect(plan.rows.map((r) => [r.buy.label, r.affordable])).toEqual([
+                ['A', true],
+                ['B', false],
+                ['C', true],
+            ]);
+            expect(plan.count).toBe(2);
+            expect(plan.spent).toBe(300);
+            // The skipped row owes nothing: only the taken buys' shortfall is counted
+            expect(plan.owedTokenCredits).toEqual({});
+            expect(plan.owedCredits).toEqual({});
+        });
+
         test('a color with neither a rate nor a market price is named on the row rather than priced', () => {
             // Level 4 costs Craft Credit: no color in the standard table names
             // it, no exchange has been seen for it, and nothing on the market

@@ -880,9 +880,10 @@ export function buyTokenCost(buy, creditBalances = {}, rateFor = () => null, pat
  *
  * The walk then re-prices each buy against the balances the buys before it left
  * behind, so two levels wanting the same credit do not both claim the same stack.
- * The stopping rule is the old one: ascending order means the first buy the
- * remaining balance cannot cover is the last, since nothing further down is
- * cheaper.
+ * A buy the remaining balance cannot cover is skipped, not the end of the walk:
+ * the rows are ranked on their cost before any repricing, and a buy whose held
+ * credits an earlier one used up costs more than it was ranked at, so a later
+ * row can still fit what is left. The result stays greedy, not optimal.
  *
  * What the taken buys are still short of comes back split by which path the
  * recommendation sends it down: `owedCredits` for the colors the market wins —
@@ -929,7 +930,7 @@ export function planNextBuys(
 
     for (const row of rows) {
         const cost = buyTokenCost(row.buy, remaining, rateFor, pathFor);
-        if (cost.effective > tokens) break;
+        if (cost.effective > tokens) continue;
 
         tokens -= cost.effective;
         spent += cost.effective;
