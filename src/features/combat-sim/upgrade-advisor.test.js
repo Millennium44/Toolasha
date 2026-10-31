@@ -135,6 +135,7 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
         getSkillingMetricsFromOverrides: (...args) => clearRate.impl.getSkillingMetricsFromOverrides?.(...args),
         computeSkillingClearWithParams: (...args) => clearRate.impl.computeSkillingClearWithParams?.(...args),
         computeEnhancingClearWithParams: (...args) => clearRate.impl.computeEnhancingClearWithParams?.(...args),
+        getCombatExperienceBonus: (...args) => clearRate.impl.getCombatExperienceBonus?.(...args) ?? 0,
     },
 }));
 // The level finder is a binary search over simulations; these tests are about
@@ -7567,6 +7568,89 @@ describe('runLabyrinthUpgradeAnalysis ranked by room levels', () => {
 
         expect(searches).toBe(2);
         expect(result.roomLevels.aborted).toBe(true);
+    });
+});
+
+describe('a labyrinth combat room pays its award on a win, which the sim does not record (#660 L03)', () => {
+    const run = async () => {
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        // 100 attempts per run: the baseline wins half at 60s an attempt; the gear wins 75% at 40s; the Experience
+        // buff changes neither
+        runLabyrinthSimulation.mockImplementation(async ({ communityBuffs, playerDTOs }) => {
+            const stronger = playerDTOs[0].aLevel === 60;
+            return {
+                labyAttemptCount: 100,
+                encounters: stronger ? 75 : 50,
+                simulatedTime: 100 * (stronger ? 40 : 60) * 1e9,
+                // What the sim does record in a lab win: nothing
+                experienceGained: {},
+                comExp: communityBuffs?.comExp,
+            };
+        });
+        clearRate.impl.getCombatExperienceBonus = vi.fn((crates, level) => 0.1 + level * 0.01);
+        const result = await runLabyrinthUpgradeAnalysis(
+            {
+                playerDTOs: [{ equipment: {}, abilities: [], staminaLevel: 50 }],
+                playerIndex: 0,
+                monsterHrid: '/monsters/goblin',
+                roomLevel: 100,
+                crates: ['/items/wisdom_crate'],
+                hours: 1,
+                communityBuffs: { comExp: 3 },
+                labyrinthCombatBuffs: [],
+                upgradeMode: 'ability_swap',
+                extraCandidates: [
+                    {
+                        type: 'combat_level',
+                        slot: 'level_a',
+                        skillKey: 'aLevel',
+                        upgradeLevel: 60,
+                        description: 'Candidate a',
+                    },
+                    {
+                        type: 'community_buff',
+                        buffKey: 'comExp',
+                        upgradeLevel: 5,
+                        description: 'Experience buff 3 → 5',
+                    },
+                ],
+            },
+            null,
+            {}
+        );
+        return result;
+    };
+
+    afterEach(() => {
+        clearRate.impl.getCombatExperienceBonus = undefined;
+    });
+
+    test('the baseline and the community row are paid from the win rate, the crates and the buff level', async () => {
+        const { baseline, results } = await run();
+
+        // 50% of attempts win, each worth 100 × 50 × (1 + 0.1 + 3%) at the running buff level
+        expect(baseline.xpPerRoom).toBeCloseTo(0.5 * 5000 * 1.13, 6);
+        expect(clearRate.impl.getCombatExperienceBonus).toHaveBeenCalledWith(['/items/wisdom_crate'], 3);
+        const community = results.find((r) => r.candidate.type === 'community_buff');
+        expect(community.xpPerRoom).toBeCloseTo(0.5 * 5000 * 1.15, 6);
+        expect(community.xpPerRoomDelta).toBeCloseTo(0.5 * 5000 * 0.02, 6);
+        expect(clearRate.impl.getCombatExperienceBonus).toHaveBeenCalledWith(['/items/wisdom_crate'], 5);
+    });
+
+    test('win-rate rows carry the XP/hr they add, so a saturated room can still be ranked on it', async () => {
+        const { roomXpPerHour } = await import('../combat/labyrinth-formulas.js');
+        const { baseline, results } = await run();
+        const gear = results.find((r) => r.candidate.type === 'combat_level');
+        const perClear = 5000 * 1.13;
+
+        const baseHour = roomXpPerHour(perClear, 60 / 0.5, 0.5);
+        const gearHour = roomXpPerHour(perClear, 40 / 0.75, 0.75);
+        expect(baseline.xpPerHour).toBeCloseTo(baseHour, 6);
+        expect(gear.xpPerHourDelta).toBeCloseTo(gearHour - baseHour, 6);
+        expect(gear.xpPerHourDelta).toBeGreaterThan(0);
+        // An Experience buff with the same fights adds only its bonus
+        const community = results.find((r) => r.candidate.type === 'community_buff');
+        expect(community.xpPerHourDelta).toBeCloseTo(roomXpPerHour(5000 * 1.15, 60 / 0.5, 0.5) - baseHour, 6);
     });
 });
 

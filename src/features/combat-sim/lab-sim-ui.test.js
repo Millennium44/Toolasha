@@ -321,6 +321,7 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
     // named export makes its search window NaN — which silently searches nothing
     SKIP_THRESHOLD_RANGE: 60,
     default: {
+        getCombatExperienceBonus: () => 0,
         getLabyrinthCombatBuffs: () => [],
         getCombatSkipRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
         getCombatRoomLevel: (hrid) => game.skipLevels[hrid] || 0,

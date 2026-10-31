@@ -47,6 +47,7 @@ import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-t
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import { measureRoomLevelGains, ROOM_LEVEL_SHORTLIST_SIZE } from './labyrinth-upgrade-levels.js';
+import { roomXpPerHour } from '../combat/labyrinth-formulas.js';
 
 /** Enhancement breakpoints by slot type */
 const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -6312,7 +6313,11 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     const baselineAttempts = baselineResult.labyAttemptCount || 1;
     const baselineEncounters = baselineResult.encounters || 0;
     const baselineWinRate = baselineEncounters / baselineAttempts;
-    const baselineXpPerAttempt = simExperiencePerAttempt(baselineResult);
+    // The labyrinth sim awards no experience of its own on a win, so the figure is the room's award
+    // (roomLevel × 50 × (1 + bonus)) per win, taken from the baseline's win rate and the bonus its crates and
+    // community level give
+    const baselineXp = labCombatXp(baselineResult, roomLevel, crates, communityBuffs?.comExp);
+    const baselineXpPerAttempt = baselineXp.xpPerAttempt;
 
     onProgress?.({ current, total, description: `Baseline: ${(baselineWinRate * 100).toFixed(1)}%` });
 
@@ -6322,6 +6327,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     // Every candidate is one worker against the same baseline with the same
     // seed and the same trial count, so they are independent runs that were
     // being done one at a time
+    const candidateXpPerHour = new Map();
     const runCandidate = async (candidate, playerDTO, buffs, describe) => {
         if (abortSignal?.()) return null;
         const simResult = await runLabyrinthSimulation({
@@ -6341,7 +6347,11 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         progress.current++;
         onProgress?.({ current: progress.current, total, description: describe });
         const attempts = simResult.labyAttemptCount || 1;
-        return (simResult.encounters || 0) / attempts;
+        const winRate = (simResult.encounters || 0) / attempts;
+        // Its experience per hour too: the same room and bonus as the baseline's, at this candidate's win rate and
+        // fight length, so a room already won every time can still be ranked on what a faster kill pays
+        candidateXpPerHour.set(candidate, labCombatXp(simResult, roomLevel, crates, communityBuffs?.comExp).xpPerHour);
+        return winRate;
     };
 
     // ── Equipment / ability sims ──
@@ -6371,6 +6381,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             winRateDelta,
             goldPerWinRate:
                 winRateDelta > 0 && candidate.cost != null ? candidate.cost / (winRateDelta * 100) : Infinity,
+            xpPerHourDelta: (candidateXpPerHour.get(candidate) ?? baselineXp.xpPerHour) - baselineXp.xpPerHour,
             metricType: 'winRate',
         });
     }
@@ -6397,6 +6408,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             tokenCost: buffCandidate.tokenCost,
             winRate,
             winRateDelta,
+            xpPerHourDelta: (candidateXpPerHour.get(buffCandidate) ?? baselineXp.xpPerHour) - baselineXp.xpPerHour,
             metricType: 'winRate',
         });
     }
@@ -6431,7 +6443,14 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         progress.current++;
         onProgress?.({ current: progress.current, total, description: candidate.description });
 
-        const xpPerAttempt = simExperiencePerAttempt(simResult);
+        // Under the candidate's community level: the buff is the thing being measured
+        const candidateXp = labCombatXp(
+            simResult,
+            roomLevel,
+            crates,
+            applyCommunityBuffCandidate(communityBuffs, candidate)?.comExp
+        );
+        const xpPerAttempt = candidateXp.xpPerAttempt;
         results.push({
             candidate,
             costType: 'community',
@@ -6442,6 +6461,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             winRateDelta: 0,
             xpPerRoom: xpPerAttempt,
             xpPerRoomDelta: xpPerAttempt - baselineXpPerAttempt,
+            xpPerHourDelta: candidateXp.xpPerHour - baselineXp.xpPerHour,
             metricType: 'xpPerRoom',
         });
     }
@@ -6511,6 +6531,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             encounters: baselineEncounters,
             attempts: baselineAttempts,
             xpPerRoom: baselineXpPerAttempt,
+            xpPerHour: baselineXp.xpPerHour,
         },
         results,
         roomLevels,
@@ -6518,28 +6539,36 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
 }
 
 /**
- * Combat experience one labyrinth attempt paid out, across every skill.
+ * Experience a labyrinth combat room pays, per attempt and per hour.
  *
- * Summed rather than reported per skill: a community experience buff is a flat
- * multiplier on all of them, so the split says nothing the total does not, and a
- * single number is what a column can hold. Per *attempt* rather than per win —
- * an attempt is what the labyrinth charges you for, and what every other figure
- * in this analysis is denominated in.
+ * The sim itself records no experience on a win (a room pays its award on completion, not per swing), so this is
+ * the room's formula applied to the sim's win rate: `roomLevel × 50 × (1 + bonus)` per win, the bonus being the
+ * labyrinth upgrade, the crates' wisdom and the Experience community buff at `communityLevel`. Per *attempt*
+ * rather than per win, because an attempt is what the labyrinth charges for; per hour on the shared room
+ * convention (`roomXpPerHour`), so it reads alongside the other labyrinth figures.
  *
  * @param {Object} simResult - From `runLabyrinthSimulation`
- * @returns {number} Experience per attempt, 0 when the run recorded none
+ * @param {number} roomLevel - The room's level
+ * @param {string[]|null} crates - The crates the sim ran with
+ * @param {number|null|undefined} communityLevel - The Experience community buff level the sim ran with
+ * @returns {{xpPerAttempt: number, xpPerHour: number}} Zeros when the run recorded no attempts or the room is
+ *   never won
  */
-function simExperiencePerAttempt(simResult) {
-    const gained = simResult?.experienceGained;
-    if (!gained) return 0;
-
-    let total = 0;
-    for (const perSkill of Object.values(gained)) {
-        for (const amount of Object.values(perSkill || {})) {
-            if (Number.isFinite(amount)) total += amount;
-        }
-    }
-    return total / (simResult.labyAttemptCount || 1);
+function labCombatXp(simResult, roomLevel, crates, communityLevel) {
+    const attempts = simResult?.labyAttemptCount || 1;
+    const winRate = (simResult?.encounters || 0) / attempts;
+    if (!(winRate > 0) || !(roomLevel > 0)) return { xpPerAttempt: 0, xpPerHour: 0 };
+    // A level the sim was not given is 0 in the sim, not the live buff: pass it through as a number
+    const bonus = (labyrinthClearRate() || bundledLabyrinthClearRate).getCombatExperienceBonus(
+        Array.isArray(crates) ? crates : null,
+        Number(communityLevel) || 0
+    );
+    const xpPerClear = roomLevel * 50 * (1 + bonus);
+    const attemptSeconds = (simResult.simulatedTime || 0) / 1e9 / attempts;
+    return {
+        xpPerAttempt: winRate * xpPerClear,
+        xpPerHour: roomXpPerHour(xpPerClear, attemptSeconds / winRate, winRate),
+    };
 }
 
 /** Community buffs whose effect a combat sim reports in experience */
