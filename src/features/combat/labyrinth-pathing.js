@@ -1245,10 +1245,10 @@ export const BEACON_PLAN_FOR_MAX = 20;
  *
  * A plan staged earlier on the same floor is continued rather than replaced
  * once any of its beacons has been used (every room it was planned to reveal
- * is revealed), as long as each beacon it still has left reveals something:
- * the remaining beacons keep their labels and order. Otherwise a fresh plan is
- * made for what is left of the floor's count, labelled on from the beacons
- * already used.
+ * is revealed), as long as the plan-for is unchanged and each beacon it still
+ * has left reveals something: the remaining beacons keep their labels and
+ * order. Otherwise a fresh plan is made for what is left of the floor's
+ * plan-for total, labelled on from the beacons already used.
  *
  * @param {Object} args
  * @param {boolean[]} args.revealed - Flat grid of revealed rooms (entrance included)
@@ -1266,13 +1266,17 @@ export function stageBeaconPlan({ revealed, cols, count, planFor, basePlan, prio
     if (!n || !cols || !target || !basePlan?.feasible) return null;
     const dark = (i) => !revealed[i] && i !== labyrinthExit(n);
 
-    // What the last staged plan on this floor has had used since
+    // Beacons the floor has had used out of the last staged plan on it. They
+    // count against the floor's total whatever the plan-for is now: a plan-for
+    // changed mid-floor plans what is left of the new total, labelled on from
+    // the beacons already down, rather than a whole new set from B1. Only the
+    // same plan-for continues the old plan as it was.
     let placedBefore = 0;
     let continued = null;
-    if (prior && prior.planFor === target && Array.isArray(prior.all)) {
+    if (prior && Array.isArray(prior.all)) {
         const used = prior.all.filter((c) => c.watch.length > 0 && c.watch.every((i) => !dark(i)));
-        if (used.length) {
-            placedBefore = (prior.placedBefore || 0) + used.length;
+        placedBefore = (prior.placedBefore || 0) + used.length;
+        if (used.length && prior.planFor === target) {
             const left = prior.all.filter((c) => !used.includes(c));
             const grid = beaconGrid(n, cols);
             if (left.length && left.every((c) => grid.diamond(c.idx).some(dark))) continued = left;

@@ -3325,6 +3325,10 @@ class LabyrinthClearRate {
             if (n > 0 && n < placing) n = placing;
             planForInput.value = String(n);
             config.setSettingValue('labyrinthBeaconPlanFor', n);
+            // A plan on the map was made for the old total; redraw it for the
+            // new one so the labels and the status agree with the field
+            const staged = this._stagedBeaconPlan;
+            if (this._beaconPlanCells || staged?.floor === this.currentFloor) this.runBeaconCalculation();
         });
         cluster();
         group(beaconButton, beaconInput, planForLabel, planForInput, beaconAutoButton);

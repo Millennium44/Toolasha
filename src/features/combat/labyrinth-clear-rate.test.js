@@ -1862,6 +1862,23 @@ describe('planning against the supplies actually held', () => {
             );
         });
 
+        test('lowering plan-for after three are used redraws for the new total, never the old B6', () => {
+            const status = buildGrid(7);
+            beaconInput(0);
+            const input = planForInput(6);
+            labyrinthClearRate.runBeaconCalculation();
+            expect(labels()).toContain('B6');
+            for (const c of labyrinthClearRate._stagedBeaconPlan.all.slice(0, 3)) reveal(c.watch, 7);
+
+            input.value = '5';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(labels()).not.toContain('B6');
+            expect(labels()[0]).toBe('B4');
+            expect(status.textContent).not.toContain('B6');
+            expect(labyrinthClearRate._stagedBeaconPlan.planFor).toBe(5);
+        });
+
         test('the plan-for count is a standing setting a new floor keeps', () => {
             buildGrid(7);
             settings.map.set('labyrinthBeaconPlanFor', 5);
@@ -3712,6 +3729,15 @@ describe('one calculate button, however often the strip is injected', () => {
         planFor.value = '0';
         planFor.dispatchEvent(new Event('change'));
         expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(0);
+
+        // With a beacon plan on the map, a change redraws it for the new total
+        const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+        labyrinthClearRate._beaconPlanCells = { fills: [], centers: [] };
+        planFor.value = '5';
+        planFor.dispatchEvent(new Event('change'));
+        expect(run).toHaveBeenCalledTimes(1);
+        run.mockRestore();
+        labyrinthClearRate._beaconPlanCells = null;
     });
 });
 

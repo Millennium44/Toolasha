@@ -949,6 +949,51 @@ describe('planning for more beacons than are placed now', () => {
             expect(stage(after, 7, 2, 6, prior).continued).toBe(false);
         });
 
+        const priorOf = (staged, planFor, cols) => {
+            const covered = staged.prefixes[staged.prefixes.length - 1].covered;
+            return {
+                planFor,
+                placedBefore: staged.placedBefore,
+                all: staged.beacons.map((idx, i) => ({
+                    idx,
+                    label: staged.labels[i],
+                    watch: diamondOf(idx, cols).filter((c) => covered.has(c)),
+                })),
+            };
+        };
+
+        test('a plan-for lowered after three are used plans what is left of the new total, labelled on', () => {
+            const revealed = dark(7);
+            const six = stage(revealed, 7, 0, 6);
+            expect(six.labels).toEqual(['B1', 'B2', 'B3', 'B4', 'B5', 'B6']);
+            const after = revealed.slice();
+            for (const b of six.beacons.slice(0, 3)) for (const c of diamondOf(b, 7)) after[c] = true;
+
+            const five = stage(after, 7, 0, 5, priorOf(six, 6, 7));
+
+            // Not the old plan's B4-B6: five in all, three of them already down
+            expect(five.continued).toBe(false);
+            expect(five.placedBefore).toBe(3);
+            expect(five.total).toBeLessThanOrEqual(5);
+            expect(five.labels[0]).toBe('B4');
+            expect(five.labels).not.toContain('B6');
+        });
+
+        test('a re-plan that finds none of a continued plan used keeps the beacons used before it', () => {
+            const revealed = dark(7);
+            const first = stage(revealed, 7, 2, 5);
+            const after = revealed.slice();
+            for (const b of first.beacons.slice(0, 2)) for (const c of diamondOf(b, 7)) after[c] = true;
+            const continued = stage(after, 7, 2, 5, priorOf(first, 5, 7));
+            expect(continued.placedBefore).toBe(2);
+
+            // Nothing more used: still two down, so the floor has three left, not five
+            const again = stage(after, 7, 4, 5, priorOf(continued, 5, 7));
+            expect(again.placedBefore).toBe(2);
+            expect(again.labels[0]).toBe('B3');
+            expect(again.total).toBe(5);
+        });
+
         test('nothing used yet re-plans fresh', () => {
             const revealed = dark(7);
             const first = stage(revealed, 7, 2, 5);
