@@ -113,6 +113,8 @@ let announced = false;
 let encounters = 0;
 let startedAt = 0;
 let lastTickAt = 0;
+/** A `new_battle` arrived since the last tick, so the gap to the next one is not inside one fight */
+let battleStartedSinceTick = false;
 let seconds = 0;
 let battleId = null;
 
@@ -175,6 +177,7 @@ function beginRun() {
     encounters = 0;
     seconds = 0;
     lastTickAt = 0;
+    battleStartedSinceTick = false;
     startedAt = Date.now();
     battleSeeded = false;
     restoredFrom = null;
@@ -474,6 +477,7 @@ export default {
                 // `seedTakenState` for why leaving either in place loses hits.
                 seedTakenState(state, data);
                 battleSeeded = true;
+                battleStartedSinceTick = true;
 
                 // The fight on screen is a new one, and last fight's slots
                 // were different monsters
@@ -497,7 +501,9 @@ export default {
 
                 // A new battle is a new set of units, so the counters belong to
                 // somebody else and diffing against them invents huge hits
+                let battleChanged = false;
                 if (data?.battleId !== battleId) {
+                    battleChanged = true;
                     battleId = data?.battleId;
                     // Cleared only when `new_battle` did not just seed it for
                     // exactly this battle — wiping the seed here would put the
@@ -518,7 +524,15 @@ export default {
                 // drawing the names; they are matched back on health.
                 if (!announced) recoverNames(data?.mMap);
 
-                const events = attributeIncoming(data, state);
+                let events = attributeIncoming(data, state);
+                // A stall inside one fight (a throttled tab, a stalled socket): the damage that
+                // arrived in this frame happened over a stretch that cannot be timed, so the frame
+                // is dropped whole — counting the damage with no seconds would inflate the rate.
+                // The baseline above still moves on, so the next tick diffs from here.
+                if (lastTickAt && !battleChanged && !battleStartedSinceTick && now - lastTickAt >= MAX_TICK_GAP_MS) {
+                    events = [];
+                }
+                battleStartedSinceTick = false;
                 foldTaken(tally, events);
                 foldTakenByEnemy(enemyTally, events, (index) => monsters[index] || null);
 
