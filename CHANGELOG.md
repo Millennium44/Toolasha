@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Iron Bell Farming queue helper
+
+- The Check box uses your real offline cap instead of an assumed 16 hours, and no longer says the game hides it.
+- The Queue helper can plan cycles longer than 30 days, keeps the unit you chose when the panel reopens, and offers 1 day, 1 week, 2 weeks and 30 days.
+
 ### October 31 audit fixes: Combat Sim
 
 - Verify, the trigger search, Party search and the food search now read every price once before simulating, so one refresh can't tilt a close comparison.
