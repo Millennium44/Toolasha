@@ -2951,6 +2951,16 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Beacons the beacon planner places on the floor in view, sited to cover a revealed path to the exit first, a second independent route next, and the most rooms with what is left — 0 uses the fewest that cover a path, which every new floor resets to',
             },
+            labyrinthBeaconPlanFor: {
+                id: 'labyrinthBeaconPlanFor',
+                label: 'Labyrinth: Beacons to plan for the floor',
+                type: 'number',
+                default: 0,
+                min: 0,
+                max: 20,
+                step: 1,
+                help: 'Plan for this many beacons on the floor in all while placing only the beacon count now: the plan is ordered so the beacons placed first are the best start toward the full set, and the rest are drawn dashed as "later" — 0 plans only the beacons placed now',
+            },
             labyrinthRoomDistribution: {
                 id: 'labyrinthRoomDistribution',
                 label: 'Labyrinth: Show clear chance distribution button',

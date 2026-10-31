@@ -55,6 +55,8 @@ import {
     computeApproachPath,
     countDisjointRoutes,
     computeBeaconPlan,
+    stageBeaconPlan,
+    BEACON_PLAN_FOR_MAX,
 } from './labyrinth-pathing.js';
 import { parseLabyrinthActionName, monsterHridByName, liveClearDisplay } from './labyrinth-live-readout.js';
 import {
@@ -883,6 +885,7 @@ class LabyrinthClearRate {
             if (previousFloor !== this.currentFloor) {
                 this.clearPathOverlays();
                 this.clearBeaconOverlays();
+                this._stagedBeaconPlan = null;
                 // A beacon count was chosen for the floor that just ended; the
                 // next one starts back on the automatic minimum
                 this.resetBeaconCountToAuto();
@@ -3268,7 +3271,33 @@ class LabyrinthClearRate {
             'width:20px; height:20px; padding:0; border:0; border-radius:5px; background:rgba(29,158,131,0.6); ' +
             'color:#fff; font-size:12px; font-weight:700; line-height:1; cursor:pointer;';
         beaconAutoButton.addEventListener('click', () => this.resetBeaconCountToAuto(true));
-        group(beaconButton, beaconInput, beaconAutoButton);
+
+        // How many beacons the floor gets in all, when only some go down now:
+        // the plan is made for this many and ordered so the first ones placed
+        // are the best start toward it. A standing habit, so a new floor keeps it.
+        const planForLabel = document.createElement('span');
+        planForLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
+        planForLabel.textContent = 'of';
+        const planForInput = document.createElement('input');
+        planForInput.className = `${TILE_CONTROLS_CLASS}-beacon-plan-for`;
+        planForInput.type = 'number';
+        planForInput.min = '0';
+        planForInput.max = String(BEACON_PLAN_FOR_MAX);
+        planForInput.step = '1';
+        planForInput.value = String(config.getSettingValue('labyrinthBeaconPlanFor', 0));
+        planForInput.title = planForLabel.title =
+            'Plan for this many beacons on the floor in all, and place the best start toward them now — ' +
+            'the rest are drawn dashed as "later". 0 plans only the beacons placed now.';
+        planForInput.style.cssText = precisionInput.style.cssText;
+        planForInput.addEventListener('change', () => {
+            let n = Math.min(BEACON_PLAN_FOR_MAX, Math.max(0, Math.floor(Number(planForInput.value) || 0)));
+            // Never fewer than the beacons placed now; that would just be the ordinary plan
+            const placing = Math.max(0, Math.floor(Number(beaconInput.value) || 0));
+            if (n > 0 && n < placing) n = placing;
+            planForInput.value = String(n);
+            config.setSettingValue('labyrinthBeaconPlanFor', n);
+        });
+        group(beaconButton, beaconInput, planForLabel, planForInput, beaconAutoButton);
 
         if (config.getSetting('labyrinthRoomDistribution')) {
             const distributionButton = document.createElement('button');
@@ -4515,6 +4544,12 @@ class LabyrinthClearRate {
 
         const revealed = flat.map((room, i) => i === 0 || isRoomRevealed(room));
 
+        // A staged plan drawn earlier on this floor, so a re-plan can continue it
+        const priorStaged = this._stagedBeaconPlan;
+        const prior =
+            priorStaged && priorStaged.floor === this.currentFloor && priorStaged.n === flat.length
+                ? priorStaged
+                : null;
         this.clearBeaconOverlays();
         if (budget?.clamped && count === 0) {
             const word = remainingWord(supplies.runActive);
@@ -4530,6 +4565,14 @@ class LabyrinthClearRate {
             this.setTileStatus('No beacon chain can reach the exit');
             return;
         }
+        const planFor = this.readBeaconPlanFor();
+        const staged = planFor > 0 ? stageBeaconPlan({ revealed, cols, count, planFor, basePlan: plan, prior }) : null;
+        if (staged) {
+            this.drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor });
+            return;
+        }
+        // Drawn as an ordinary plan: nothing staged is left to continue
+        this._stagedBeaconPlan = null;
         if (!plan.beacons.length) {
             const routeNote = plan.routes >= 2 ? ` (${plan.routes} independent routes)` : '';
             this.setTileStatus(
@@ -4601,6 +4644,111 @@ class LabyrinthClearRate {
     }
 
     /**
+     * The "plan for" count from the toolbar field (or its setting), clamped to
+     * 0..BEACON_PLAN_FOR_MAX. 0 means "the same as the beacon count".
+     * @returns {number}
+     */
+    readBeaconPlanFor() {
+        const input = document.querySelector(`.${TILE_CONTROLS_CLASS}-beacon-plan-for`);
+        const raw = input ? input.value : config.getSettingValue('labyrinthBeaconPlanFor', 0);
+        const n = Math.min(BEACON_PLAN_FOR_MAX, Math.max(0, Math.floor(Number(raw) || 0)));
+        if (input) input.value = String(n);
+        config.setSettingValue('labyrinthBeaconPlanFor', n);
+        return n;
+    }
+
+    /**
+     * Draw a staged beacon plan (see stageBeaconPlan): the beacons placed now
+     * exactly as an ordinary plan draws them, the rest dashed and dimmed as
+     * "later", and a status line whose figures are for what goes down now,
+     * with the whole plan's reveal beside it.
+     */
+    drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor }) {
+        const { beacons, labels, nowCount, prefixes, total, placedBefore } = staged;
+        const now = nowCount > 0 ? prefixes[nowCount - 1] : null;
+        const all = prefixes[prefixes.length - 1];
+
+        const nowFills = now ? now.covered : new Set();
+        for (const idx of nowFills) {
+            const cell = cells[idx];
+            if (cell) this.appendBeaconOverlay(cell, false, '');
+        }
+        for (const idx of all.covered) {
+            if (nowFills.has(idx)) continue;
+            const cell = cells[idx];
+            if (cell) this.appendBeaconOverlay(cell, false, '', { later: true });
+        }
+        beacons.forEach((idx, i) => {
+            const cell = cells[idx];
+            if (!cell) return;
+            const later = i >= nowCount;
+            this.appendBeaconOverlay(cell, true, labels[i], {
+                later,
+                title: later
+                    ? `Later — ${labels[i]} of a ${total}-beacon plan; place it after the ones before it`
+                    : `Place now — ${labels[i]} of a ${total}-beacon plan`,
+            });
+        });
+
+        // What each center was planned to reveal, for pruning its marker once
+        // used and for telling a re-plan which beacons have gone down
+        const dist = (a, b) =>
+            Math.abs((a % cols) - (b % cols)) + Math.abs(Math.floor(a / cols) - Math.floor(b / cols));
+        const watchOf = (idx) => [...all.covered].filter((c) => dist(c, idx) <= BEACON_RADIUS);
+        const centers = beacons.map((idx, i) => ({ idx, label: labels[i], later: i >= nowCount, watch: watchOf(idx) }));
+        this._beaconPlanCells = {
+            fills: [...all.covered],
+            centers: centers.map((c) => ({ ...c, watch: [...c.watch] })),
+        };
+        this._stagedBeaconPlan = { floor: this.currentFloor, n: flat.length, planFor, placedBefore, all: centers };
+
+        const word = remainingWord(supplies.runActive);
+        const minNote = count === 0 ? ' (min)' : '';
+        const ownedNote = budget?.clamped ? ` (${budget.requested} set / ${budget.owned} ${word})` : '';
+        const laterCount = beacons.length - nowCount;
+        const laterLabels =
+            laterCount > 1
+                ? `${labels[nowCount]}–${labels[labels.length - 1]}`
+                : laterCount === 1
+                  ? labels[nowCount]
+                  : '';
+        const parts = [];
+        if (staged.continued) parts.push(`Continuing the ${total}-beacon plan (${placedBefore} used)`);
+        if (now) {
+            parts.push(`Beacons: ${nowCount} now of ${total} planned${minNote}${ownedNote}`);
+            parts.push(`reveals ${now.revealedNew} new rooms now, ${all.revealedNew} with all`);
+            if (now.corridorOpen) parts.push(now.routes >= 2 ? `${now.routes} independent routes` : '1 route');
+        } else {
+            parts.push(
+                plan.minNeeded === 0
+                    ? 'Path to the exit is already revealed — no beacons needed now'
+                    : `Beacons: 0 now of ${total} planned${ownedNote}`
+            );
+            parts.push(`${all.revealedNew} new rooms with all`);
+        }
+        if (laterLabels) parts.push(`${laterLabels} later`);
+        if (now && !now.corridorOpen) {
+            const at = prefixes.findIndex((p) => p.corridorOpen);
+            parts.push(
+                at >= 0
+                    ? `a covered path to the exit from ${labels[at]}`
+                    : `a covered path to the exit needs ${now.residual} more`
+            );
+        }
+        // Supplies are checked against what goes down now — the later beacons
+        // can still be bought or found before they are needed
+        const needed = describeSupplyNeed(nowCount, supplies.beacon, 'beacon', supplies.known, supplies.runActive);
+        if (needed.over) {
+            parts.push(`${supplies.beacon} ${word}`);
+            if (!supplies.runActive) {
+                const buyNote = this.shortfallRestockNote(supplies, 'beacon', needed.short);
+                if (buyNote) parts.push(buyNote);
+            }
+        }
+        this.setTileStatus(parts.join(' · '), needed.over || !!budget?.clamped);
+    }
+
+    /**
      * Put the beacon count back to the automatic "fewest that cover a path to
      * the exit" mode.
      *
@@ -4630,7 +4778,7 @@ class LabyrinthClearRate {
     /**
      * Highlight a tile as beacon coverage (fill) or a beacon center (outline + label)
      */
-    appendBeaconOverlay(cell, isCenter, label) {
+    appendBeaconOverlay(cell, isCenter, label, { later = false, title = '' } = {}) {
         const cellStyle = window.getComputedStyle(cell);
         if (cellStyle.position === 'static') {
             cell.style.position = 'relative';
@@ -4638,17 +4786,31 @@ class LabyrinthClearRate {
         const overlay = document.createElement('div');
         overlay.className = BEACON_OVERLAY_CLASS;
         if (isCenter) overlay.dataset.beaconCenter = '1';
+        if (later) overlay.dataset.beaconLater = '1';
         overlay.style.cssText = isCenter
             ? 'position:absolute; inset:0; border:2px solid #26d0aa; border-radius:6px; ' +
               'pointer-events:none; z-index:8; box-sizing:border-box;'
             : 'position:absolute; inset:0; background:rgba(38,166,154,0.22); border:1px solid rgba(38,166,154,0.45); ' +
               'border-radius:6px; pointer-events:none; z-index:7; box-sizing:border-box;';
+        // A beacon planned for later in the floor: the same marker, dashed and dimmed
+        if (later) {
+            overlay.style.borderStyle = 'dashed';
+            overlay.style.opacity = isCenter ? '0.6' : '0.45';
+            if (!isCenter) overlay.style.background = 'rgba(38,166,154,0.08)';
+        }
         if (label) {
             const tag = document.createElement('div');
             tag.style.cssText =
                 'position:absolute; top:1px; right:1px; padding:0 3px; border-radius:3px; background:#26d0aa; ' +
                 'color:#04263f; font-size:8px; font-weight:700; line-height:1.4;';
             tag.textContent = label;
+            // The overlay lets clicks through to the room; only the tag takes
+            // the pointer so it can carry the now/later tooltip, and a click on
+            // it still bubbles up to the room
+            if (title) {
+                tag.title = title;
+                tag.style.pointerEvents = 'auto';
+            }
             overlay.appendChild(tag);
         }
         cell.appendChild(overlay);

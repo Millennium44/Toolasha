@@ -1741,6 +1741,123 @@ describe('planning against the supplies actually held', () => {
         expect(status.textContent).not.toContain('owned');
         expect(document.querySelectorAll('[data-beacon-center="1"]')).toHaveLength(4);
     });
+
+    describe('planning for more beacons than are placed now', () => {
+        const planForInput = (value) => {
+            const input = document.createElement('input');
+            input.className = 'mwi-labyrinth-tile-controls-beacon-plan-for';
+            input.value = String(value);
+            document.body.appendChild(input);
+            return input;
+        };
+        const labels = () =>
+            [...document.querySelectorAll('[data-beacon-center="1"]')].map((el) => el.textContent).sort();
+        const drawn = () => document.querySelectorAll('.LabyrinthPanel_roomCell_abc');
+        const reveal = (cellIdxs, side) => {
+            for (const i of cellIdxs) {
+                labyrinthClearRate.roomData[Math.floor(i / side)][i % side] = {
+                    roomType: '/labyrinth_room_types/combat',
+                };
+            }
+        };
+
+        beforeEach(() => {
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 9)];
+            labyrinthClearRate._stagedBeaconPlan = null;
+        });
+
+        test('plan-for equal to the count draws exactly what no plan-for draws', () => {
+            const status = buildGrid(7);
+            beaconInput(2);
+            labyrinthClearRate.runBeaconCalculation();
+            const before = { status: status.textContent, html: [...drawn()].map((c) => c.innerHTML) };
+
+            const status2 = buildGrid(7);
+            beaconInput(2);
+            planForInput(2);
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status2.textContent).toBe(before.status);
+            expect([...drawn()].map((c) => c.innerHTML)).toEqual(before.html);
+            expect(document.querySelectorAll('[data-beacon-later]')).toHaveLength(0);
+        });
+
+        test('two now of five draws all five, the last three dashed as later', () => {
+            const status = buildGrid(7);
+            beaconInput(2);
+            planForInput(5);
+
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(labels()).toEqual(['B1', 'B2', 'B3', 'B4', 'B5']);
+            const later = [...document.querySelectorAll('[data-beacon-center="1"][data-beacon-later="1"]')];
+            expect(later.map((el) => el.textContent).sort()).toEqual(['B3', 'B4', 'B5']);
+            expect(later[0].style.borderStyle).toBe('dashed');
+            expect(later[0].firstChild.title).toContain('Later');
+            const now = document.querySelector('[data-beacon-center="1"]:not([data-beacon-later])');
+            expect(now.firstChild.title).toContain('Place now');
+            expect(status.textContent).toContain('Beacons: 2 now of 5 planned');
+            expect(status.textContent).toContain('B3–B5 later');
+            expect(status.textContent).toMatch(/reveals \d+ new rooms now, \d+ with all/);
+            expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(5);
+        });
+
+        test('the supply check is against the beacons placed now, not the whole plan', () => {
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 2)];
+            const status = buildGrid(7);
+            beaconInput(2);
+            planForInput(5);
+
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status.textContent).not.toContain('left this run');
+            expect(status.style.color).toBe('');
+        });
+
+        test('a plan-for field past the ceiling is clamped to 20', () => {
+            buildGrid(5);
+            beaconInput(1);
+            const input = planForInput(99);
+
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(input.value).toBe('20');
+            expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(20);
+        });
+
+        test('re-planning after B1 and B2 are revealed continues the same plan as B3 onward', () => {
+            buildGrid(7);
+            beaconInput(2);
+            planForInput(5);
+            labyrinthClearRate.runBeaconCalculation();
+            const centers = labyrinthClearRate._stagedBeaconPlan.all;
+            for (const c of centers.slice(0, 2)) reveal(c.watch, 7);
+
+            const status = document.querySelector('.mwi-labyrinth-tile-controls-status');
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status.textContent).toContain('Continuing the 5-beacon plan (2 used)');
+            expect(labels()).toEqual(['B3', 'B4', 'B5']);
+            expect(labyrinthClearRate._stagedBeaconPlan.all.map((c) => c.idx)).toEqual(
+                centers.slice(2).map((c) => c.idx)
+            );
+        });
+
+        test('the plan-for count is a standing setting a new floor keeps', () => {
+            buildGrid(7);
+            settings.map.set('labyrinthBeaconPlanFor', 5);
+            labyrinthClearRate.currentFloor = 3;
+
+            labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+            clearTimeout(labyrinthClearRate.pruneTileTimer);
+            clearTimeout(labyrinthClearRate.autoTileTimer);
+            labyrinthClearRate.pruneTileTimer = null;
+            labyrinthClearRate.autoTileTimer = null;
+
+            expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(5);
+            expect(labyrinthClearRate._stagedBeaconPlan).toBeNull();
+        });
+    });
 });
 
 /**
@@ -3555,6 +3672,27 @@ describe('one calculate button, however often the strip is injected', () => {
         uncapped.click();
         expect(settings.map.get('labyrinthSimCaps')).toBe('capped');
         expect(uncapped.getAttribute('aria-pressed')).toBe('false');
+    });
+
+    test('the plan-for field sits beside the beacon count, reads its setting and never drops below the count', () => {
+        setAutoCalc(false);
+        settings.map.set('labyrinthBeaconPlanFor', 5);
+        labyrinthClearRate.injectTileControls();
+
+        const planFor = document.querySelector('.mwi-labyrinth-tile-controls-beacon-plan-for');
+        const count = document.querySelector('.mwi-labyrinth-tile-controls-beacon-count');
+        expect(planFor.value).toBe('5');
+        expect(planFor.parentElement).toBe(count.parentElement);
+
+        count.value = '3';
+        planFor.value = '2';
+        planFor.dispatchEvent(new Event('change'));
+        expect(planFor.value).toBe('3');
+        expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(3);
+
+        planFor.value = '0';
+        planFor.dispatchEvent(new Event('change'));
+        expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(0);
     });
 });
 

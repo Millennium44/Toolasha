@@ -13,6 +13,8 @@ import {
     computeApproachPath,
     computeBeaconPlan,
     countDisjointRoutes,
+    orderBeaconsForPrefixes,
+    stageBeaconPlan,
 } from './labyrinth-pathing.js';
 
 describe('computeLabyrinthPath', () => {
@@ -775,5 +777,186 @@ describe('computeBeaconPlan exit tile', () => {
         expect(plan.revealedNew).toBe(1);
         expect(plan.covered.has(24)).toBe(false);
         expect(plan.covered.has(4)).toBe(true);
+    });
+});
+
+/**
+ * "Plan for" more beacons than go down now. A player who opens a floor with two
+ * beacons and ends up revealing five is locked into a worse five-beacon layout
+ * if the two were placed by the best two-beacon plan, because the best two are
+ * not the first two of the best five.
+ */
+describe('planning for more beacons than are placed now', () => {
+    const dark = (cols) => {
+        const revealed = new Array(cols * cols).fill(false);
+        revealed[0] = true;
+        return revealed;
+    };
+    const diamondOf = (c, cols) => {
+        const out = [];
+        for (let i = 0; i < cols * cols; i++) {
+            if (Math.abs((i % cols) - (c % cols)) + Math.abs(Math.floor(i / cols) - Math.floor(c / cols)) <= 2) {
+                out.push(i);
+            }
+        }
+        return out;
+    };
+    /** Lexicographic "a is better than b" on what the prefixes expose */
+    const better = (a, b) => {
+        if (a.residual !== b.residual) return a.residual < b.residual;
+        const ra = Math.min(2, a.routes);
+        const rb = Math.min(2, b.routes);
+        if (ra !== rb) return ra > rb;
+        return a.revealedNew > b.revealedNew;
+    };
+
+    test('the best two-beacon plan is not the first two of the best five (the fixture the feature exists for)', () => {
+        const revealed = dark(7);
+        const two = computeBeaconPlan(revealed, 7, 2);
+        const five = computeBeaconPlan(revealed, 7, 5);
+        const ordered = orderBeaconsForPrefixes(revealed, 7, five.beacons);
+
+        expect(five.beacons).toHaveLength(5);
+        expect(new Set(ordered.beacons.slice(0, 2))).not.toEqual(new Set(two.beacons));
+        // Not a subset either: placing the best two locks the floor out of the best five
+        expect(two.beacons.every((b) => five.beacons.includes(b))).toBe(false);
+    });
+
+    test('orders the plan greedily: each prefix is the best addition among the plan beacons', () => {
+        for (const cols of [5, 6, 7]) {
+            const revealed = dark(cols);
+            const plan = computeBeaconPlan(revealed, cols, 5);
+            const { beacons, prefixes } = orderBeaconsForPrefixes(revealed, cols, plan.beacons);
+
+            // Still exactly the plan, and the whole set scores as the plan does
+            expect([...beacons].sort((a, b) => a - b)).toEqual([...plan.beacons].sort((a, b) => a - b));
+            expect(prefixes).toHaveLength(plan.beacons.length);
+            expect(prefixes[prefixes.length - 1].revealedNew).toBe(plan.revealedNew);
+            expect(prefixes[prefixes.length - 1].corridorOpen).toBe(plan.corridorOpen);
+
+            for (let j = 0; j < beacons.length; j++) {
+                const chosen = prefixes[j];
+                for (const alt of beacons.slice(j + 1)) {
+                    const trial = orderBeaconsForPrefixes(revealed, cols, [...beacons.slice(0, j), alt], true);
+                    expect(better(trial.prefixes[j], chosen)).toBe(false);
+                }
+            }
+        }
+    });
+
+    test('the first beacons go toward the way out, one beacon closer each', () => {
+        const revealed = dark(7);
+        const five = computeBeaconPlan(revealed, 7, 5);
+        const { prefixes } = orderBeaconsForPrefixes(revealed, 7, five.beacons);
+        expect(prefixes.map((p) => p.residual).slice(0, 3)).toEqual([2, 1, 0]);
+    });
+
+    test('keepOrder scores the given order without reordering it', () => {
+        const revealed = dark(7);
+        const five = computeBeaconPlan(revealed, 7, 5);
+        const given = [...five.beacons].reverse();
+        expect(orderBeaconsForPrefixes(revealed, 7, given, true).beacons).toEqual(given);
+    });
+
+    test('empty input orders nothing', () => {
+        expect(orderBeaconsForPrefixes([], 7, [])).toBeNull();
+    });
+
+    describe('stageBeaconPlan', () => {
+        const stage = (revealed, cols, count, planFor, prior = null) =>
+            stageBeaconPlan({
+                revealed,
+                cols,
+                count,
+                planFor,
+                basePlan: computeBeaconPlan(revealed, cols, count),
+                prior,
+            });
+
+        test('no plan-for count, or one no bigger than the count, is the ordinary plan', () => {
+            const revealed = dark(7);
+            expect(stage(revealed, 7, 2, 0)).toBeNull();
+            expect(stage(revealed, 7, 2, 2)).toBeNull();
+            expect(stage(revealed, 7, 3, 2)).toBeNull();
+            expect(stage(revealed, 7, 2, -4)).toBeNull();
+            // Automatic mode places the minimum (3 here); planning for 3 is that plan
+            expect(stage(revealed, 7, 0, 3)).toBeNull();
+        });
+
+        test('two now of five: the five-beacon plan, ordered, with the first two marked now', () => {
+            const revealed = dark(7);
+            const staged = stage(revealed, 7, 2, 5);
+            const five = computeBeaconPlan(revealed, 7, 5);
+
+            expect(staged.nowCount).toBe(2);
+            expect(staged.total).toBe(5);
+            expect(staged.labels).toEqual(['B1', 'B2', 'B3', 'B4', 'B5']);
+            expect(staged.beacons).toEqual(orderBeaconsForPrefixes(revealed, 7, five.beacons).beacons);
+            expect(staged.continued).toBe(false);
+        });
+
+        test('automatic mode places the shortest prefix that covers the way out', () => {
+            const revealed = dark(7);
+            const staged = stage(revealed, 7, 0, 5);
+            expect(staged.nowCount).toBe(3);
+            expect(staged.prefixes[2].corridorOpen).toBe(true);
+            expect(staged.prefixes[1].corridorOpen).toBe(false);
+        });
+
+        test('automatic mode with the way out already revealed places nothing now and plans the rest for later', () => {
+            const revealed = new Array(25).fill(false);
+            for (const idx of [0, 1, 2, 3, 4, 9, 14, 19, 24]) revealed[idx] = true;
+            const staged = stage(revealed, 5, 0, 2);
+            expect(staged.nowCount).toBe(0);
+            expect(staged.beacons).toHaveLength(2);
+        });
+
+        test('plan-for is clamped to 20', () => {
+            const revealed = dark(8);
+            const staged = stage(revealed, 8, 2, 99);
+            expect(staged.total).toBeLessThanOrEqual(20);
+            expect(staged.beacons.length).toBe(computeBeaconPlan(revealed, 8, 20).beacons.length);
+        });
+
+        test('after B1 and B2 go down, a re-plan continues the same five-beacon plan', () => {
+            const revealed = dark(7);
+            const first = stage(revealed, 7, 2, 5);
+            const covered = first.prefixes[first.prefixes.length - 1].covered;
+            const prior = {
+                planFor: 5,
+                placedBefore: 0,
+                all: first.beacons.map((idx, i) => ({
+                    idx,
+                    label: first.labels[i],
+                    watch: diamondOf(idx, 7).filter((c) => covered.has(c)),
+                })),
+            };
+            const after = revealed.slice();
+            for (const b of first.beacons.slice(0, 2)) for (const c of diamondOf(b, 7)) after[c] = true;
+
+            const again = stage(after, 7, 2, 5, prior);
+            expect(again.continued).toBe(true);
+            expect(again.placedBefore).toBe(2);
+            expect(again.total).toBe(5);
+            expect(again.labels).toEqual(['B3', 'B4', 'B5']);
+            expect(again.beacons).toEqual(first.beacons.slice(2));
+            expect(again.nowCount).toBe(2);
+
+            // A different plan-for count is a fresh plan, not a continuation
+            expect(stage(after, 7, 2, 6, prior).continued).toBe(false);
+        });
+
+        test('nothing used yet re-plans fresh', () => {
+            const revealed = dark(7);
+            const first = stage(revealed, 7, 2, 5);
+            const prior = {
+                planFor: 5,
+                placedBefore: 0,
+                all: first.beacons.map((idx, i) => ({ idx, label: first.labels[i], watch: diamondOf(idx, 7) })),
+            };
+            const again = stage(revealed, 7, 2, 5, prior);
+            expect(again.continued).toBe(false);
+            expect(again.beacons).toEqual(first.beacons);
+        });
     });
 });
