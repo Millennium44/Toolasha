@@ -5,6 +5,7 @@
 
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import { isFromActiveSocket } from './labyrinth-activity.js';
 import config from '../../core/config.js';
 import { createPersistedRecord } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
@@ -94,7 +95,9 @@ class LabyrinthTracker {
         await this.loadData();
         if (!stillOurs(ticket)) return;
 
-        this.handlers.labyrinthUpdated = (data) => this.onLabyrinthUpdated(data);
+        this.handlers.labyrinthUpdated = (data, context) => {
+            if (isFromActiveSocket(context)) this.onLabyrinthUpdated(data);
+        };
         webSocketHook.on('labyrinth_updated', this.handlers.labyrinthUpdated);
 
         this.isInitialized = true;

@@ -379,7 +379,9 @@ class LabyrinthClearRate {
             return;
         }
 
-        this.wsHandler = (data) => this.onLabyrinthUpdated(data);
+        this.wsHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onLabyrinthUpdated(data);
+        };
         webSocketHook.on('labyrinth_updated', this.wsHandler);
 
         // Settings fire for every character-setting change — including editing a

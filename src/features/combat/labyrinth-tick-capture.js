@@ -23,6 +23,7 @@
 
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import { isFromActiveSocket } from './labyrinth-activity.js';
 import storage from '../../core/storage.js';
 import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
 import { scriptVersion } from '../../utils/script-version.js';
@@ -424,12 +425,17 @@ export function startCapture(ctx = null, { stopOnLeave = true, force = false } =
     // Both sides' health/mana/counters, and the message that names the units and
     // their abilities. `battle_updated` is trimmed to what a fight reads; the
     // rest (chat, ids) is noise a capture does not need.
-    const onBattle = (data) => push('battle_updated', { pMap: data?.pMap, mMap: data?.mMap, battleId: data?.battleId });
+    const onBattle = (data, context) =>
+        isFromActiveSocket(context) &&
+        push('battle_updated', { pMap: data?.pMap, mMap: data?.mMap, battleId: data?.battleId });
     // These snapshots answer whether the client applied a room's automatic
     // loadout swap before the fight opened. Array order is client receipt order,
     // not a claim about simultaneous events inside a server tick.
-    const onNew = (data) => push('new_battle', data, clientBuild());
-    const onItems = (data) => {
+    const onNew = (data, context) => {
+        if (isFromActiveSocket(context)) push('new_battle', data, clientBuild());
+    };
+    const onItems = (data, context) => {
+        if (!isFromActiveSocket(context)) return;
         const equipment = (data?.endCharacterItems || [])
             .filter((item) => item.itemLocationHrid !== '/item_locations/inventory')
             .map((item) => ({
@@ -440,7 +446,9 @@ export function startCapture(ctx = null, { stopOnLeave = true, force = false } =
             }));
         if (equipment.length) push('items_updated', { equipment }, clientBuild());
     };
-    const onAbilities = () => push('abilities_updated', {}, clientBuild());
+    const onAbilities = (_data, context) => {
+        if (isFromActiveSocket(context)) push('abilities_updated', {}, clientBuild());
+    };
 
     webSocketHook.on('battle_updated', onBattle);
     webSocketHook.on('new_battle', onNew);
