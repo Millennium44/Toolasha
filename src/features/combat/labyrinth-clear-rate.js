@@ -4985,7 +4985,31 @@ class LabyrinthClearRate {
             this.setTileStatus('Beacon planning failed');
             return;
         }
+        // An exhausted count is reported before an unreachable exit: with every set beacon spent there
+        // is nothing to plan, whatever the planner makes of the floor
+        const markExhausted = () => {
+            this._beaconPlanCells = null;
+            this._stagedBeaconPlan = {
+                floor: this.currentFloor,
+                n: flat.length,
+                characterId,
+                optionsKey,
+                planFor: 0,
+                placedBefore: usedBefore,
+                all: [],
+            };
+            // Nothing needed is not "used up": say the way out is open, not that the count ran out
+            this.setTileStatus(
+                plan.feasible && plan.minNeeded === 0
+                    ? 'Path to the exit is already revealed — no beacons needed'
+                    : `All ${requested} beacons set for this floor are used — raise the count to plan more`
+            );
+        };
         if (!plan.feasible) {
+            if (exhausted) {
+                markExhausted();
+                return;
+            }
             this.setTileStatus('No beacon chain can reach the exit');
             return;
         }
@@ -5022,16 +5046,7 @@ class LabyrinthClearRate {
             return;
         }
         if (exhausted) {
-            this._stagedBeaconPlan = {
-                floor: this.currentFloor,
-                n: flat.length,
-                characterId,
-                optionsKey,
-                planFor: 0,
-                placedBefore: usedBefore,
-                all: [],
-            };
-            this.setTileStatus(`All ${requested} beacons set for this floor are used — raise the count to plan more`);
+            markExhausted();
             return;
         }
         // Path first: the beacons the way out depends on take the first labels

@@ -1926,6 +1926,25 @@ describe('planning against the supplies actually held', () => {
             expect(status.textContent).toContain('All 2 beacons set for this floor are used');
         });
 
+        test('a spent count with the way out already open says no beacons are needed, not that they ran out', () => {
+            const status = buildGrid(7);
+            const count = beaconInput(2);
+            planForInput(0);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._beaconPlanCells.centers) reveal(c.watch, 7);
+            reveal(
+                Array.from({ length: 49 }, (_, i) => i),
+                7
+            );
+
+            count.value = '2';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status.textContent).toContain('Path to the exit is already revealed');
+            expect(status.textContent).not.toContain('are used');
+            expect(labyrinthClearRate._beaconPlanCells).toBeNull();
+        });
+
         test('lowering plan-for after three are used redraws for the new total, never the old B6', () => {
             const status = buildGrid(7);
             beaconInput(0);
