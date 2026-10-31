@@ -16,10 +16,18 @@ const game = vi.hoisted(() => ({
     lastRun: undefined,
     /** The combat loot recorder's rows */
     liveDays: [],
+    /** Item details by hrid, for the basis pricer's openable branch */
+    details: {},
+    /** Expected-value answers by hrid */
+    ev: {},
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getActionDetails: () => null, getCurrentCharacterId: () => 'me' },
+    default: {
+        getActionDetails: () => null,
+        getCurrentCharacterId: () => 'me',
+        getItemDetails: (hrid) => game.details[hrid] ?? null,
+    },
 }));
 vi.mock('../market/trade-ledger-store.js', () => ({
     default: { isReady: () => false, getRecords: () => [] },
@@ -73,7 +81,7 @@ vi.mock('./networth-calculator.js', () => ({
     networthUnitValue: (itemHrid) => (itemHrid === '/items/task_token' ? 40_000 : 0),
 }));
 vi.mock('../market/expected-value-calculator.js', () => ({
-    default: { isInitialized: false, calculateExpectedValue: () => null },
+    default: { isInitialized: true, calculateExpectedValue: (hrid) => game.ev[hrid] ?? null },
 }));
 
 const { collectGoldSourceInputs, createBasisPricer } = await import('./gold-sources-collect.js');
@@ -85,6 +93,8 @@ const session = (start, names = ['Me']) => ({
 });
 
 beforeEach(() => {
+    game.details = {};
+    game.ev = {};
     game.archived = [];
     game.live = null;
     game.lastRun = undefined;
@@ -174,6 +184,20 @@ describe('the live combat session', () => {
 });
 
 describe('the cost-basis pricer', () => {
+    test('a partial openable expected value is not a carrying value', () => {
+        game.details['/items/chest'] = { isOpenable: true };
+        game.ev['/items/chest'] = { expectedValue: 500, isPartial: true, missingCount: 1 };
+        expect(createBasisPricer(() => null)('/items/chest', 0)).toBeNull();
+        game.ev['/items/chest'] = { expectedValue: 500, isPartial: false, missingCount: 0 };
+        expect(createBasisPricer(() => null)('/items/chest', 0)).toBe(500);
+    });
+
+    test('a partial expected value still lets a complete crafting bill answer', () => {
+        game.details['/items/culinary_cape'] = { isOpenable: true };
+        game.ev['/items/culinary_cape'] = { expectedValue: 5, isPartial: true };
+        expect(createBasisPricer(() => null)('/items/culinary_cape', 0)).toBe(300_000);
+    });
+
     test('falls back to material cost for a base item the market cannot price', () => {
         const basis = createBasisPricer(() => null);
         expect(basis('/items/culinary_cape', 0)).toBe(300_000);

@@ -239,6 +239,24 @@ describe('calculateItemXPH', () => {
         expect(result.profitUnavailableReason).toBe('no-cost');
     });
 
+    test('a protection built from an unpriced input flags the row partial, never a firm cost', async () => {
+        engineResult.protectionCount = 2;
+        const { getCheapestProtectionPrice } = await import('./tooltip-enhancement.js');
+        // Drop any one-shot answer an earlier test left unconsumed
+        getCheapestProtectionPrice.mockReset();
+        getCheapestProtectionPrice.mockImplementation(() => ({ itemHrid: null, price: 0 }));
+        getCheapestProtectionPrice.mockReturnValueOnce({
+            itemHrid: '/items/mirror_of_protection',
+            price: 50,
+            partial: true,
+        });
+
+        const result = calculateItemXPH(ITEM, itemDetails, 5, 3, params);
+
+        expect(result.costPartial).toBe(true);
+        expect(result.costPerHour).toBeGreaterThan(0);
+    });
+
     test('a partially-priced cost still produces a profit figure, flagged partial', () => {
         prices[`${ITEM}::5`] = { ask: 500, bid: 400 };
         materialCostResult.costPartial = true;

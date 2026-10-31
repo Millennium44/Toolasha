@@ -71,7 +71,7 @@ function priceOfMaterial(itemHrid, side = 'ask') {
     // 'profit' and 'networth' contexts and otherwise falls through to its
     // default branch, which always resolves to 'ask' regardless of `side`.
     // That silently made the bid column identical to the ask column.
-    return getItemPrice(itemHrid, { mode: side }) || 0;
+    return getItemPrice(itemHrid, { mode: side, side: 'buy' }) || 0;
 }
 
 /**

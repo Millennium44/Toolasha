@@ -534,12 +534,19 @@ export function combatSessionLootValue(session, price) {
  * ingredient. So a session that spent at least one unpriceable input is not
  * valued at all, the same way an unpriceable enhancement run is not.
  *
+ * Every attempt consumes `bulkMultiplier` copies of the input, so the input is charged per copy: the
+ * session's recorded multiplier, else the item's own (`bulkOf`), else one. A catalyst that was spent but
+ * has no price is the same kind of gap as an unpriceable input, so it also sends the session to the residual
+ * rather than costing it nothing.
+ *
  * @param {Object} session - A stored alchemy session, tagged with `kind`
  * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
+ * @param {Function} [basisPrice] - Deeper cost-basis lookup for the input
+ * @param {Function} [bulkOf] - `(itemHrid) => number|null`, the item's bulk multiplier when the session has none
  * @returns {number|null} Coins, which may be negative, or null when the input
- *   consumed could not be priced
+ *   consumed or a spent catalyst could not be priced
  */
-export function alchemySessionNet(session, price, basisPrice = price) {
+export function alchemySessionNet(session, price, basisPrice = price, bulkOf = () => null) {
     if (!session) return 0;
 
     let outputs = num(session.totalCoinsEarned);
@@ -562,13 +569,24 @@ export function alchemySessionNet(session, price, basisPrice = price) {
     // and pricing it there beats sending the whole session to the residual
     const inputUnit = basisPrice(session.inputItemHrid, num(session.enhancementLevel));
     if (attempts > 0 && !Number.isFinite(inputUnit)) return null;
-    const inputs = attempts * num(inputUnit);
+    const recordedBulk = Number(session.bulkMultiplier);
+    const itemBulk = Number(bulkOf(session.inputItemHrid));
+    const bulk = recordedBulk > 0 ? recordedBulk : itemBulk > 0 ? itemBulk : 1;
+    const inputs = attempts * bulk * num(inputUnit);
 
-    const catalysts =
-        num(session.catalystOfCoinificationUsed) * num(price('/items/catalyst_of_coinification', 0)) +
-        num(session.catalystOfDecompositionUsed) * num(price('/items/catalyst_of_decomposition', 0)) +
-        num(session.catalystOfTransmutationUsed) * num(price('/items/catalyst_of_transmutation', 0)) +
-        num(session.primeCatalystUsed) * num(price('/items/prime_catalyst', 0));
+    let catalysts = 0;
+    for (const [field, hrid] of [
+        ['catalystOfCoinificationUsed', '/items/catalyst_of_coinification'],
+        ['catalystOfDecompositionUsed', '/items/catalyst_of_decomposition'],
+        ['catalystOfTransmutationUsed', '/items/catalyst_of_transmutation'],
+        ['primeCatalystUsed', '/items/prime_catalyst'],
+    ]) {
+        const used = num(session[field]);
+        if (used <= 0) continue;
+        const unit = price(hrid, 0);
+        if (!Number.isFinite(unit)) return null;
+        catalysts += used * unit;
+    }
 
     return outputs - inputs - catalysts;
 }
@@ -1646,6 +1664,7 @@ export function combatConsumablesByDay({ liveDays = [], sessions = [], offline =
  * @param {Function} [input.basisPrice] - Cost-basis fallback for what was consumed
  * @param {Function} [input.holdingPrice] - What net worth carries an item at, for
  *   gains (drops, rewards, chest contents) the market cannot price
+ * @param {Function} [input.bulkOf] - `(itemHrid) => number|null`, an alchemy item's bulk multiplier
  * @param {number} [input.marketTax] - Sell tax rate
  * @returns {{
  *   from: number, to: number,
@@ -1694,6 +1713,8 @@ export function attributeGoldSources(input) {
         holdingPrice = price,
         // Which chest key a chest takes to open: `(chestHrid) => keyHrid|null`
         chestKeyOf = () => null,
+        // An alchemy item's bulk multiplier, for sessions that did not record one: `(itemHrid) => number|null`
+        bulkOf = () => null,
         marketTax = MARKET_TAX,
     } = input || {};
 
@@ -1842,7 +1863,7 @@ export function attributeGoldSources(input) {
         const t = num(session?.startTime);
         if (!t) continue;
         const shares = daySharesOfSpan(t, sessionSpanEnd(session, t));
-        const net = alchemySessionNet(session, price, basisPrice);
+        const net = alchemySessionNet(session, price, basisPrice, bulkOf);
         if (net === null) {
             if (shares.some(({ day }) => inWindow.has(day))) unpricedAlchemySessions += 1;
             continue;

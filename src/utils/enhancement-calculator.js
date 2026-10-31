@@ -151,9 +151,14 @@ export function buildEnhancementMarkov(math, options) {
  *   means mirroring is not available and nothing is changed
  * @param {number} [blessedChance=0] - Chance a mirror success is +2 (Blessed Tea's chance times
  *   the guzzling bonus, as a decimal); 0 without Blessed Tea
+ * @param {number[]|null} [copyCosts=null] - A refined piece is mirrored with plain copies of its unrefined
+ *   base: the traditional cost to reach each level of that cheaper lineage (index 0 the copy's price). The
+ *   item consumed at n-2 is then priced from this lineage, so a route that is only feasible with the cheap
+ *   copy is compared at its real price instead of at the refined one. Not mutated. Without it the consumed
+ *   item is priced from `targetCosts` itself, as for any non-refined piece.
  * @returns {boolean[]} Per-level flag, true where the mirror combination won
  */
-export function applyMirrorOptimization(targetCosts, mirrorPrice, blessedChance = 0) {
+export function applyMirrorOptimization(targetCosts, mirrorPrice, blessedChance = 0, copyCosts = null) {
     const usedMirror = new Array(targetCosts.length).fill(false);
     if (!(mirrorPrice > 0)) return usedMirror;
 
@@ -167,12 +172,17 @@ export function applyMirrorOptimization(targetCosts, mirrorPrice, blessedChance 
     // times the visits to the last transient level, a percent or two) and an overshoot is not
     // wasted, it lands on the next level up. So the simple 1 is kept deliberately.
     const landing = new Array(targetCosts.length).fill(1);
+    // The copy lineage follows the same mirror decisions the primary one makes: the plan expansion
+    // builds a consumed item the way the level it sits on was built
+    const copy = copyCosts ? [...copyCosts] : null;
 
     for (let level = 3; level < targetCosts.length; level++) {
-        const mirrorCost = targetCosts[level - 1] + landing[level - 1] * (targetCosts[level - 2] + mirrorPrice);
+        const consumed = copy ? copy[level - 2] : targetCosts[level - 2];
+        const mirrorCost = targetCosts[level - 1] + landing[level - 1] * (consumed + mirrorPrice);
         if (mirrorCost < targetCosts[level]) {
             usedMirror[level] = true;
             targetCosts[level] = mirrorCost;
+            if (copy) copy[level] = copy[level - 1] + landing[level - 1] * (copy[level - 2] + mirrorPrice);
             landing[level] = (1 - b) * landing[level - 1] + (usedMirror[level - 1] ? b * landing[level - 2] : 0);
         }
     }

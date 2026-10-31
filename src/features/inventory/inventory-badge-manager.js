@@ -19,6 +19,7 @@ import {
 import { validateNetworthCache } from '../networth/networth-cache-validation.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { getArtisanBonus } from '../../utils/artisan-bonus.js';
 import { itemHridFromIcon } from '../../utils/item-icon.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -1094,7 +1095,8 @@ class InventoryBadgeManager {
      * Calculate crafting cost for an item (used for unenhanced equipment with no market data)
      * @param {string} itemHrid - Item HRID
      * @param {Map} [craftIndex] - From {@link buildCraftIndex}; built here when not given
-     * @returns {number} Total material cost or 0 if not craftable
+     * @returns {number} Total material cost, or 0 if not craftable or an input has no price (a partial bill
+     *   is not a quote, so no badge is drawn rather than one built on a zero-filled input)
      */
     calculateCraftingCost(itemHrid, craftIndex = null) {
         const gameData = dataManager.getInitClientData();
@@ -1111,18 +1113,20 @@ class InventoryBadgeManager {
         // Add input items
         if (action.inputItems && action.inputItems.length > 0) {
             for (const input of action.inputItems) {
-                const inputPrice = getItemPrice(input.itemHrid, { mode: 'ask' }) || 0;
+                const inputPrice = getItemPrice(input.itemHrid, { mode: 'ask', side: 'buy' }) || 0;
+                if (!(inputPrice > 0) && input.count > 0) return 0;
                 inputCost += inputPrice * input.count;
             }
         }
 
-        // Apply Artisan Tea reduction (0.9x) to input materials
-        inputCost *= 0.9;
+        // Artisan reduces the inputs by the character's real bonus for this skill (none: x1)
+        inputCost *= 1 - getArtisanBonus(action.type);
 
         // Add upgrade item cost (not affected by Artisan Tea)
         let upgradeCost = 0;
         if (action.upgradeItemHrid) {
-            const upgradePrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0;
+            const upgradePrice = getItemPrice(action.upgradeItemHrid, { mode: 'ask', side: 'buy' }) || 0;
+            if (!(upgradePrice > 0)) return 0;
             upgradeCost = upgradePrice;
         }
 

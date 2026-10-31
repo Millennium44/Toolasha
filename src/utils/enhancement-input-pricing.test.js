@@ -93,8 +93,16 @@ vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid, { mode = 'ask' } = {}) => reconciled(hrid)?.[mode] || 0,
 }));
 
-const { priceMaterial, priceProtection, priceMirror, priceBase, priceGuarded, perAttemptMaterialCost, pricingStamp } =
-    await import('./enhancement-input-pricing.js');
+const {
+    getCheapestProtectionPrice,
+    priceMaterial,
+    priceProtection,
+    priceMirror,
+    priceBase,
+    priceGuarded,
+    perAttemptMaterialCost,
+    pricingStamp,
+} = await import('./enhancement-input-pricing.js');
 const { TRAINEE_SHOP_PRICE } = await import('./enhancement-pricing.js');
 
 const SWORD = '/items/fine_sword';
@@ -440,6 +448,7 @@ describe('every entry point reads one number per input', () => {
             expect(m.getCheapestProtectionPrice(SWORD, { includeSelf: false })).toEqual({
                 price: protection.price,
                 itemHrid: protection.itemHrid,
+                partial: protection.partial,
             });
             // Unpriced is null and flagged on every door that can say so
             expect(protection.unpriced).toBe(protection.price === null);
@@ -621,6 +630,14 @@ describe('partial: a craft cost that skipped an unpriced input', () => {
         craftable(PROTECTION, true);
         game.buffVersion++;
         expect(priceProtection(SWORD).partial).toBe(false);
+    });
+
+    test('the scalar wrapper keeps the partial flag, so a lower bound is not read as a quote', () => {
+        craftable(PROTECTION, false);
+        expect(getCheapestProtectionPrice(SWORD)).toMatchObject({ itemHrid: PROTECTION, partial: true });
+        craftable(PROTECTION, true);
+        game.buffVersion++;
+        expect(getCheapestProtectionPrice(SWORD).partial).toBe(false);
     });
 });
 

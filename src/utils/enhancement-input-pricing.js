@@ -390,11 +390,12 @@ export function getRealisticBaseItemPrice(itemHrid, options = {}) {
  * Drop-in for `getCheapestProtectionPrice`.
  * @param {string} itemHrid - The item being enhanced
  * @param {Object} [options] - Options of {@link priceProtection}
- * @returns {{price: number|null, itemHrid: string|null}}
+ * @returns {{price: number|null, itemHrid: string|null, partial: boolean}} `partial` is true when the
+ *   chosen protection is a craft-priced bill with an unpriced input: a lower bound, not a quote
  */
 export function getCheapestProtectionPrice(itemHrid, options = {}) {
-    const { price, itemHrid: hrid } = priceProtection(itemHrid, options);
-    return { price, itemHrid: hrid };
+    const { price, itemHrid: hrid, partial } = priceProtection(itemHrid, options);
+    return { price, itemHrid: hrid, partial: Boolean(partial) };
 }
 
 /**
