@@ -51,6 +51,36 @@ describe('the shortlist', () => {
         expect(shortlistForRoomLevels(results, 5).map((r) => r.candidate.description)).toEqual(['a']);
     });
 
+    describe('at a room every candidate already wins', () => {
+        const saturated = (description, over = {}) => row(description, 0, { winRate: 1, ...over });
+
+        test('is not left empty: the rows that lost no ground are searched', () => {
+            const results = [
+                saturated('a', { cost: 500 }),
+                saturated('b', { cost: 100 }),
+                row('c', -0.3, { winRate: 0.7 }),
+            ];
+            expect(shortlistForRoomLevels(results, 5).map((r) => r.candidate.description)).toEqual(['b', 'a']);
+        });
+
+        test('ranks on experience-per-hour gain first, then price, unpriced last', () => {
+            const results = [
+                saturated('cheap', { cost: 10 }),
+                saturated('unpriced'),
+                saturated('xp', { cost: 900, xpPerHourDelta: 5000 }),
+            ];
+            expect(shortlistForRoomLevels(results, 5).map((r) => r.candidate.description)).toEqual([
+                'xp',
+                'cheap',
+                'unpriced',
+            ]);
+        });
+
+        test('a room that is merely hard (nothing moves, nothing wins) stays empty', () => {
+            expect(shortlistForRoomLevels([row('a', 0, { winRate: 0.4 })], 5)).toEqual([]);
+        });
+    });
+
     test('has a bounded default size', () => {
         expect(ROOM_LEVEL_SHORTLIST_SIZE).toBeGreaterThan(0);
         expect(ROOM_LEVEL_SHORTLIST_SIZE).toBeLessThanOrEqual(10);
