@@ -29,6 +29,7 @@ import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/combat-level.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
+import { isFromActiveSocket, isLabyrinthFightActive } from './labyrinth-activity.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 import { estimateLiveClearChance, FIGHT_TIMEOUT_SECONDS, MIN_ELAPSED_SECONDS } from './labyrinth-live-combat.js';
 import { isFreshLabyrinthFight } from './labyrinth-fight-log.js';
@@ -352,13 +353,19 @@ class LabyrinthClearRate {
         if (!config.getSetting('labyrinthLiveProgress')) return;
         if (this.liveProgressHandler) return;
 
-        this.liveProgressHandler = (data) => this.onLiveProgress(data);
+        this.liveProgressHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onLiveProgress(data);
+        };
         webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
 
-        this.battleHandler = (data) => this.onBattleUpdated(data);
+        this.battleHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onBattleUpdated(data);
+        };
         webSocketHook.on('battle_updated', this.battleHandler);
 
-        this.newBattleHandler = (data) => this.onNewBattle(data);
+        this.newBattleHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onNewBattle(data);
+        };
         webSocketHook.on('new_battle', this.newBattleHandler);
     }
 
@@ -2219,8 +2226,7 @@ class LabyrinthClearRate {
      * @returns {boolean}
      */
     inLabyrinthFight() {
-        const row = document.querySelector("div[class*='Header_actionName']");
-        return !!row && /labyrinth/i.test(row.textContent || '');
+        return isLabyrinthFightActive();
     }
 
     /**
