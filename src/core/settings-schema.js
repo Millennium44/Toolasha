@@ -2961,6 +2961,43 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Plan for this many beacons on the floor in all while placing only the beacon count now: the plan is ordered so the beacons placed first are the best start toward the full set, and the rest are drawn dashed as "later" — 0 plans only the beacons placed now',
             },
+            labyrinthBeaconPriority: {
+                id: 'labyrinthBeaconPriority',
+                label: 'Labyrinth: Beacon plan priority',
+                type: 'select',
+                default: 'rooms',
+                options: [
+                    { value: 'rooms', label: 'Most rooms' },
+                    { value: 'holes', label: 'Fewest holes' },
+                ],
+                help: 'What the beacon planner ranks placements on once a path to the exit and its routes are covered: the most rooms revealed, or the fewest dark pockets left walled in by lit rooms (then rooms). Also in the labyrinth toolbar gear panel',
+            },
+            labyrinthBeaconRoutes: {
+                id: 'labyrinthBeaconRoutes',
+                label: 'Labyrinth: Beacon plan routes wanted',
+                type: 'select',
+                default: '2',
+                options: [
+                    { value: '1', label: '1 route' },
+                    { value: '2', label: '2 routes' },
+                    { value: '3', label: '3 routes' },
+                ],
+                help: 'Independent covered routes to the exit the beacon planner aims for, so no single room can block the way out; a corner entrance allows two at most. Also in the labyrinth toolbar gear panel',
+            },
+            labyrinthBeaconNearExit: {
+                id: 'labyrinthBeaconNearExit',
+                label: 'Labyrinth: Beacon plan stays near the way out',
+                type: 'checkbox',
+                default: false,
+                help: 'Once a path to the exit and its routes are covered, the beacon planner prefers rooms close to the straight line from the entrance to the exit over rooms in the far corners. Also in the labyrinth toolbar gear panel',
+            },
+            labyrinthBeaconPathFirst: {
+                id: 'labyrinthBeaconPathFirst',
+                label: 'Labyrinth: Number the route beacons first',
+                type: 'checkbox',
+                default: true,
+                help: 'Numbers the beacons the way out depends on first (B1, B2...) and the ones only there for rooms last, so the first beacons placed open the route. Also in the labyrinth toolbar gear panel',
+            },
             labyrinthRoomDistribution: {
                 id: 'labyrinthRoomDistribution',
                 label: 'Labyrinth: Show clear chance distribution button',

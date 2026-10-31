@@ -1962,6 +1962,25 @@ describe('planning against the supplies actually held', () => {
             expect(labyrinthClearRate._stagedBeaconPlan).toBeNull();
         });
 
+        test('the drawn plan is the one the planner settings ask for', async () => {
+            const { computeBeaconPlan } = await import('./labyrinth-pathing.js');
+            configMock.getSetting.mockImplementation((key) => key !== 'labyrinthBeaconNearExit');
+            settings.map.set('labyrinthBeaconPriority', 'holes');
+            try {
+                buildGrid(8);
+                beaconInput(5);
+                labyrinthClearRate.runBeaconCalculation();
+                const drawn = labyrinthClearRate._beaconPlanCells.centers.map((c) => c.idx);
+                const revealed = new Array(64).fill(false);
+                revealed[0] = true;
+                const expected = computeBeaconPlan(revealed, 8, 5, { priority: 'holes', routes: 2, nearExit: false });
+                expect([...drawn].sort((a, b) => a - b)).toEqual([...expected.beacons].sort((a, b) => a - b));
+                expect(labyrinthClearRate._stagedBeaconPlan.optionsKey).toBe('holes|2|0|1');
+            } finally {
+                configMock.getSetting.mockImplementation(() => true);
+            }
+        });
+
         test('the plan-for count is a standing setting a new floor keeps', () => {
             buildGrid(7);
             settings.map.set('labyrinthBeaconPlanFor', 5);
@@ -7577,6 +7596,70 @@ describe('labyrinth toolbar layout', () => {
         expect(
             q('settings-button').closest('span[style*="display: none"], span[style*="display:none"]')
         ).not.toBeNull();
+    });
+
+    test('the gear panel has a Beacons group with the four planner settings, and each flips its setting', () => {
+        labyrinthClearRate.injectTileControls();
+        const group = q('beacon-settings');
+        expect(panel().contains(group)).toBe(true);
+        expect(group.textContent).toContain('Beacons');
+        const priority = q('beacon-priority');
+        const routes = q('beacon-routes');
+        const near = q('beacon-near-exit');
+        const pathFirst = q('beacon-path-first');
+        for (const el of [priority, routes, near, pathFirst]) {
+            expect(group.contains(el)).toBe(true);
+            expect(el.title.length).toBeGreaterThan(20);
+        }
+        expect(priority.value).toBe('rooms');
+        expect(routes.value).toBe('2');
+        // Spread stays the panel's last item
+        expect(panel().lastElementChild.textContent).toBe('Spread');
+
+        priority.value = 'holes';
+        priority.dispatchEvent(new Event('change'));
+        expect(settings.map.get('labyrinthBeaconPriority')).toBe('holes');
+        routes.value = '1';
+        routes.dispatchEvent(new Event('change'));
+        expect(settings.map.get('labyrinthBeaconRoutes')).toBe('1');
+
+        configMock.setSetting.mockClear();
+        near.click();
+        expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthBeaconNearExit', true);
+        pathFirst.click();
+        expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthBeaconPathFirst', true);
+    });
+
+    test('a planner setting changed with a beacon plan on the map redraws it; with none it does not', () => {
+        labyrinthClearRate.injectTileControls();
+        const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+        try {
+            labyrinthClearRate._beaconPlanCells = null;
+            labyrinthClearRate._stagedBeaconPlan = null;
+            q('beacon-priority').dispatchEvent(new Event('change'));
+            expect(run).not.toHaveBeenCalled();
+
+            labyrinthClearRate._beaconPlanCells = { fills: [], centers: [] };
+            q('beacon-priority').dispatchEvent(new Event('change'));
+            q('beacon-routes').dispatchEvent(new Event('change'));
+            q('beacon-near-exit').click();
+            q('beacon-path-first').click();
+            expect(run).toHaveBeenCalledTimes(4);
+        } finally {
+            run.mockRestore();
+            labyrinthClearRate._beaconPlanCells = null;
+        }
+    });
+
+    test('the plan follows the settings: fewest holes is what the beacon run plans with', () => {
+        configMock.getSetting.mockImplementation(() => false);
+        settings.map.set('labyrinthBeaconPriority', 'holes');
+        expect(labyrinthClearRate.readBeaconPlanSettings()).toEqual({
+            options: { priority: 'holes', routes: 2, nearExit: false },
+            pathFirst: false,
+        });
+        settings.map.set('labyrinthBeaconRoutes', '9');
+        expect(labyrinthClearRate.readBeaconPlanSettings().options.routes).toBe(2);
     });
 
     test('the panel is placed on screen under the gear', () => {
