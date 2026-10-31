@@ -2037,12 +2037,11 @@ class LabyrinthClearRate {
      */
     getTargetRoomLevel(skillHrid) {
         const skipThreshold = this.getSkipThreshold(skillHrid);
-        // Zero is the unset sentinel, not a threshold of zero: `getSkipThreshold` returns it
-        // for a setting that was never saved, and the automation panel reads a room level of
-        // 0 as "no skip configured, draw no badge". Without this a skill with no threshold
-        // reported effectiveLevel - 1 and every row grew a badge (and queued a sim) for a
-        // skip the player never set.
-        if (skipThreshold === 0) return 0;
+        // Unset means the key is absent from characterSetting, not that it holds 0: the game
+        // ships every threshold at 100 and a saved 0 is a real value (skip rooms from your own
+        // level up). The automation panel reads a room level of 0 as "no skip configured, draw
+        // no badge", so only an absent key may report it.
+        if (skipThreshold === 0 && !this._hasSkipSetting(`labyrinthSkip${this._skillSuffix(skillHrid)}`)) return 0;
         const effectiveLevel = this.getEffectiveLevel(skillHrid);
         return Math.max(0, Math.floor(effectiveLevel + skipThreshold - 1));
     }
@@ -2058,13 +2057,33 @@ class LabyrinthClearRate {
         const charSetting = dataManager.characterData?.characterSetting;
         if (!charSetting) return 0;
 
-        const monsterName = monsterHrid.replace('/monsters/', '');
-        const pascal = monsterName
+        return Math.floor(Number(charSetting[this._combatSkipKey(monsterHrid)]) || 0);
+    }
+
+    /** @private characterSetting key of a combat room's skip threshold */
+    _combatSkipKey(monsterHrid) {
+        const pascal = monsterHrid
+            .replace('/monsters/', '')
             .split('_')
             .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
             .join('');
-        const key = `labyrinthSkip${pascal}`;
-        return Math.floor(Number(charSetting[key]) || 0);
+        return `labyrinthSkip${pascal}`;
+    }
+
+    /** @private Capitalized skill id used in a skill room's skip key */
+    _skillSuffix(skillHrid) {
+        const skillId = skillHrid.replace('/skills/', '');
+        return `${skillId.charAt(0).toUpperCase()}${skillId.slice(1)}`;
+    }
+
+    /**
+     * Whether the character has a saved skip threshold under this key. A saved 0 counts; only an
+     * absent (or non-numeric) value does not.
+     * @private
+     */
+    _hasSkipSetting(key) {
+        const value = dataManager.characterData?.characterSetting?.[key];
+        return value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value));
     }
 
     /**
@@ -2073,8 +2092,8 @@ class LabyrinthClearRate {
      */
     getCombatSkipRoomLevel(monsterHrid) {
         const skipThreshold = this.getCombatSkipThreshold(monsterHrid);
-        // Zero means unset — see getTargetRoomLevel
-        if (skipThreshold === 0) return 0;
+        // Unset means an absent key, not a saved 0 — see getTargetRoomLevel
+        if (skipThreshold === 0 && !this._hasSkipSetting(this._combatSkipKey(monsterHrid))) return 0;
         const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
         if (!(effectiveCombatLevel > 0)) return 0;
         return Math.max(0, Math.floor(effectiveCombatLevel + skipThreshold - 1));

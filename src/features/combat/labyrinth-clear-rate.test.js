@@ -4901,6 +4901,20 @@ describe('formulas across the widened ±1000 threshold range', () => {
             expect(labyrinthClearRate.getCombatSkipRoomLevel('/monsters/imp')).toBe(0);
         });
 
+        test('an explicitly saved zero is a real threshold, unlike an absent key', () => {
+            dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/milking', level: 100 }]);
+            dataManagerMock.characterData = { characterSetting: { labyrinthSkipMilking: 0 } };
+            expect(labyrinthClearRate.getTargetRoomLevel('/skills/milking')).toBeGreaterThan(0);
+            dataManagerMock.characterData = { characterSetting: {} };
+            expect(labyrinthClearRate.getTargetRoomLevel('/skills/milking')).toBe(0);
+
+            vi.spyOn(labyrinthClearRate, 'getPlayerEffectiveCombatLevel').mockReturnValue(150);
+            dataManagerMock.characterData = { characterSetting: { labyrinthSkipImp: 0 } };
+            expect(labyrinthClearRate.getCombatSkipRoomLevel('/monsters/imp')).toBe(149);
+            dataManagerMock.characterData = { characterSetting: {} };
+            expect(labyrinthClearRate.getCombatSkipRoomLevel('/monsters/imp')).toBe(0);
+        });
+
         test('only the derived room level is clamped, never the threshold', () => {
             dataManagerMock.characterData = { characterSetting: { labyrinthSkipMilking: -400 } };
             dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/milking', level: 100 }]);
