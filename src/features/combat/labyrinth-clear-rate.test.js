@@ -5005,6 +5005,33 @@ describe('formulas across the widened ±1000 threshold range', () => {
         }
     });
 
+    test('the enhancing tooltip prints the gear term and the clamp the success chance was built with', () => {
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/enhancing', level: 100 }]);
+        const base = labyrinthClearRate.computeEnhancingClear(100);
+        const crafted = (over) => ({ ...base, ...over });
+        // 0.8 x (1 + 0.1 + 0.2) = 1.04, held to 100%
+        vi.spyOn(labyrinthClearRate, 'computeEnhancingClear').mockReturnValue(
+            crafted({ levelBonus: 0.1, successBonus: 0.2, successChance: 1 })
+        );
+        const tip = labyrinthClearRate._recommendationTooltip(
+            '/skills/enhancing',
+            { threshold: 21 },
+            0,
+            'note',
+            'time'
+        );
+        expect(tip).toContain('Success = 0.8 × (1 + 10.0% + 20.0% gear) = 100.0% (limited to 5%–100%)');
+    });
+
+    test('computeEnhancingClear reports the terms its success chance is made of', () => {
+        const r = labyrinthClearRate.computeEnhancingClear(50);
+        expect(Number.isFinite(r.levelBonus)).toBe(true);
+        expect(r.successChance).toBeCloseTo(
+            Math.min(1, Math.max(0.05, 0.8 * (1 + r.levelBonus + (Number(r.successBonus) || 0)))),
+            10
+        );
+    });
+
     test('the enhancing recommend search terminates finitely over the widened window', () => {
         dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/enhancing', level: 150 }]);
         const threshold = labyrinthClearRate.findRecommendedThreshold('/skills/enhancing', 0.7);

@@ -854,11 +854,15 @@ export const recommendationMethods = {
                 lines.push(
                     `Effective level ${result.effectiveLevel} = base ${result.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`
                 );
-                const gap = result.effectiveLevel - room;
-                const lb = gap >= 0 ? gap * 0.005 : gap * 0.01;
+                // The model's own terms: 0.8 × (1 + level bonus + gear bonus), held to 5%–100%
+                const lb = Number(result.levelBonus) || 0;
+                const sb = Number(result.successBonus) || 0;
+                const raw = 0.8 * (1 + lb + sb);
+                const limited = Math.abs(raw - (result.successChance || 0)) > 1e-9;
                 lines.push(
                     `Success = 0.8 × (1 ${lb >= 0 ? '+' : '−'} ${Math.abs(lb * 100).toFixed(1)}%` +
-                        `) = ${((result.successChance || 0) * 100).toFixed(1)}%`
+                        `${sb ? ` + ${(sb * 100).toFixed(1)}% gear` : ''}) = ${((result.successChance || 0) * 100).toFixed(1)}%` +
+                        `${limited ? ' (limited to 5%–100%)' : ''}`
                 );
                 lines.push(
                     `${result.attempts} attempts to reach +${result.targetLevel} in the room` +

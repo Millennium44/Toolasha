@@ -1638,6 +1638,9 @@ class LabyrinthClearRate {
         result.effectiveLevel = effectiveLevel;
         result.baseLevel = baseLevel;
         result.successChance = successChance;
+        // The two terms successChance is built from, for the hover text that spells them out
+        result.levelBonus = levelBonus;
+        result.successBonus = metrics.successBonus;
         result.doubleChance = doubleChance;
         result.attempts = attempts;
         result.actionSeconds = actionSeconds;
