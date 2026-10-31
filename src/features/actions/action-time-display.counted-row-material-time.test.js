@@ -501,13 +501,15 @@ describe('an upgrade craft credits its output at the level the upgrade carries',
         expect(lookup.byHrid[UPGRADED]).toBe(3);
     });
 
-    test('a fractional target credits the guaranteed floor when only deterministic yield counts', () => {
+    test('a fractional target credits no exact-level stack when only deterministic yield counts', () => {
         const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3, 5)]);
         // 0.7 x 5 = 3.5 -> floor 3, half a chance of a 4th level
         actionTimeDisplay.creditQueueActionOutputs(lookup, upgrade(), action(5), 2, false);
 
-        expect(lookup.byEnhancedKey[`${UPGRADED}::3`]).toBe(2);
+        // The copies roll +3 or +4 each; neither stack is certain, so a later row cannot spend them
+        expect(lookup.byEnhancedKey[`${UPGRADED}::3`] || 0).toBe(0);
         expect(lookup.byEnhancedKey[`${UPGRADED}::4`] || 0).toBe(0);
+        expect(lookup.byHrid[UPGRADED] || 0).toBe(0);
     });
 
     test('a fractional target splits by chance in expected mode and flags the estimate', () => {

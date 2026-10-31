@@ -4572,8 +4572,8 @@ class ActionTimeDisplay {
         // An upgrade craft consumes a selected stack and outputs at floor(0.7 x its level) (or
         // the full level for a retain-all recipe). Crediting that to +0 would let a later +0
         // recipe spend stock that does not exist at +0. A fractional target is the chance of
-        // one more level: the deterministic credit takes the guaranteed floor, the expected
-        // credit splits by chance.
+        // one more level: the deterministic credit leaves it uncertain (nothing credited), the
+        // expected credit splits by chance.
         const upgradeInputLevel = actionDetails.upgradeItemHrid
             ? this.getProductionUpgradeLevel(actionDetails, actionObj)
             : 0;
@@ -4589,9 +4589,13 @@ class ActionTimeDisplay {
                     for (const { level, weight } of outputLevels) {
                         gain(output.itemHrid, output.count * performed * weight, true, level);
                     }
-                } else {
+                } else if (outputLevels.length === 1) {
+                    // A whole transferred level is certain
                     gain(output.itemHrid, output.count * performed, false, floorLevel);
                 }
+                // A fractional target rolls floor or floor+1 per copy, so no exact-level stack is
+                // certain: the conservative ledger leaves it uncredited rather than promising a
+                // later row copies that may have rolled the other level.
                 continue;
             }
             gain(output.itemHrid, output.count * performed, false);
