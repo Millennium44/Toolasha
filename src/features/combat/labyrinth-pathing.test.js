@@ -982,6 +982,24 @@ describe('planning for more beacons than are placed now', () => {
             };
         };
 
+        test('a second unchanged re-plan keeps the continued plan, its centers and its labels', () => {
+            const revealed = dark(7);
+            const first = stage(revealed, 7, 2, 5);
+            const after = revealed.slice();
+            for (const b of first.beacons.slice(0, 2)) for (const c of diamondOf(b, 7)) after[c] = true;
+
+            const again = stage(after, 7, 4, 5, priorOf(first, 5, 7));
+            expect(again.continued).toBe(true);
+            // What the panel stores after that draw: only the beacons left, the spent ones in placedBefore
+            const third = stage(after, 7, 4, 5, priorOf(again, 5, 7));
+            expect(third.continued).toBe(true);
+            expect(third.beacons).toEqual(again.beacons);
+            expect(third.labels).toEqual(['B3', 'B4', 'B5']);
+            expect(third.placedBefore).toBe(2);
+            const fourth = stage(after, 7, 4, 5, priorOf(third, 5, 7));
+            expect(fourth.beacons).toEqual(again.beacons);
+        });
+
         test('a plan-for lowered after three are used plans what is left of the new total, labelled on', () => {
             const revealed = dark(7);
             const six = stage(revealed, 7, 0, 6);

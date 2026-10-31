@@ -1513,7 +1513,10 @@ export function stageBeaconPlan({
     let continued = null;
     if (prior && Array.isArray(prior.all)) {
         const sameSettings = (prior.optionsKey ?? beaconOptionsKey()) === beaconOptionsKey(options, pathFirst);
-        if (used.length && prior.planFor === target && sameSettings) {
+        // Continued once a beacon is spent, and on every recalculation after: a continued draw
+        // stores only the beacons left and folds the spent ones into `placedBefore`, so a second
+        // unchanged recalculation sees no newly used beacon and must still keep the plan
+        if ((used.length || placedBefore > 0) && prior.planFor === target && sameSettings) {
             const left = prior.all.filter((c) => !used.includes(c));
             const grid = beaconGrid(n, cols);
             if (left.length && left.every((c) => grid.diamond(c.idx).some(dark))) continued = left;
