@@ -4922,6 +4922,22 @@ describe('formulas across the widened ±1000 threshold range', () => {
         expect(above.clearChance).toBeLessThan(0.7);
     });
 
+    test('the enhancing recommendation tooltip quotes the enhancing model, not ordinary skilling', () => {
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/enhancing', level: 100 }]);
+        const effective = labyrinthClearRate.getEffectiveLevel('/skills/enhancing');
+        const threshold = 21;
+        const room = Math.floor(effective + threshold - 1);
+        const expected = labyrinthClearRate.computeEnhancingClear(room);
+        const tip = labyrinthClearRate._recommendationTooltip('/skills/enhancing', { threshold }, 0, 'note', 'time');
+        expect(tip).toContain(`Clear ${(expected.clearChance * 100).toFixed(1)}% at that room`);
+        expect(tip).toContain(`${expected.attempts} attempts to reach +${expected.targetLevel}`);
+        // The ordinary skilling figure for the same room is a different number
+        const ordinary = labyrinthClearRate.computeSkillingClear('/skills/enhancing', room);
+        if (ordinary && Math.abs(ordinary.clearChance - expected.clearChance) > 0.001) {
+            expect(tip).not.toContain(`Clear ${(ordinary.clearChance * 100).toFixed(1)}% at that room`);
+        }
+    });
+
     test('the enhancing recommend search terminates finitely over the widened window', () => {
         dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/enhancing', level: 150 }]);
         const threshold = labyrinthClearRate.findRecommendedThreshold('/skills/enhancing', 0.7);

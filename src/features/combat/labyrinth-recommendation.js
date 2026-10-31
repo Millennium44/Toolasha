@@ -838,8 +838,32 @@ export const recommendationMethods = {
             lines.push(
                 `  a room is skipped once it's ≥${rec.threshold} above you (≥${effLevel + rec.threshold}), so ${room} is the top`
             );
-            const result = room > 0 ? this.computeSkillingClear(roomHrid, room) : null;
-            if (result) {
+            const isEnhancing = roomHrid === '/skills/enhancing';
+            const result =
+                room > 0
+                    ? isEnhancing
+                        ? this.computeEnhancingClear(room)
+                        : this.computeSkillingClear(roomHrid, room)
+                    : null;
+            if (result && isEnhancing) {
+                // An enhancing room is a run of attempts that must reach a target level, not a
+                // progress bar: the ordinary skilling success formula would quote the wrong chance
+                const bonus = Number(result.effectiveLevel) - Number(result.baseLevel);
+                lines.push(
+                    `Effective level ${result.effectiveLevel} = base ${result.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`
+                );
+                const gap = result.effectiveLevel - room;
+                const lb = gap >= 0 ? gap * 0.005 : gap * 0.01;
+                lines.push(
+                    `Success = 0.8 × (1 ${lb >= 0 ? '+' : '−'} ${Math.abs(lb * 100).toFixed(1)}%` +
+                        `) = ${((result.successChance || 0) * 100).toFixed(1)}%`
+                );
+                lines.push(
+                    `${result.attempts} attempts to reach +${result.targetLevel} in the room` +
+                        `${result.doubleChance ? ` (${(result.doubleChance * 100).toFixed(1)}% double)` : ''}`
+                );
+                lines.push(`Clear ${((result.clearChance || 0) * 100).toFixed(1)}% at that room`);
+            } else if (result) {
                 const bonus = Number(result.skillLevelBonus) || 0;
                 lines.push(
                     `Effective level ${result.effectiveLevel} = base ${result.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`
