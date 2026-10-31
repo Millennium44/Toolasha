@@ -963,7 +963,9 @@ export function buildShykaiExportPlayer(dto, name) {
 
     const triggerMap = {};
     const addTriggers = (hrid, triggers) => {
-        if (!hrid || !Array.isArray(triggers) || triggers.length === 0) return;
+        // A cleared list ([]) is written as an empty list, not left out: a missing key reads back as
+        // "follow the game's defaults" (null), which would undo the clearing on re-import
+        if (!hrid || !Array.isArray(triggers)) return;
         triggerMap[hrid] = triggers.map((t) => ({
             dependencyHrid: t.dependencyHrid,
             conditionHrid: t.conditionHrid,

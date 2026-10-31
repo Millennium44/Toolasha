@@ -1689,6 +1689,25 @@ describe('buildShykaiExportPlayer round trips through parseShykaiImport', () => 
         expect(byItem['/items/bludgeon']).toBe('/item_locations/two_hand');
     });
 
+    test('a cleared trigger list stays cleared on re-import while a default one stays default', () => {
+        const dto = fullDTO();
+        dto.food[0].triggers = [];
+        dto.drinks[0].triggers = [];
+        dto.abilities[0].triggers = [];
+
+        const exportObj = buildShykaiExportPlayer(dto, 'Milkman');
+        expect(exportObj.triggerMap['/abilities/aura']).toEqual([]);
+        // null means "follow the game's defaults": nothing is written for it
+        expect(exportObj.triggerMap['/abilities/strike']).toHaveLength(1);
+        dto.abilities[1].triggers = null;
+        expect(buildShykaiExportPlayer(dto, 'Milkman').triggerMap['/abilities/strike']).toBeUndefined();
+
+        const back = parseShykaiImport(JSON.stringify(exportObj)).players[0];
+        expect(back.abilities[0].triggers).toEqual([]);
+        expect(back.food[0].triggers).toEqual([]);
+        expect(back.drinks[0].triggers).toEqual([]);
+    });
+
     describe('guild shrine levels: unknown vs. confirmed guildless', () => {
         test('omits guildCombatBuffLevels when the DTO never learned the guild (undefined)', () => {
             const dto = fullDTO();
