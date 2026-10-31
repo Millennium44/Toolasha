@@ -987,6 +987,10 @@ describe('enhancing xp rates and the material bill', () => {
             { itemHrid: '/items/blessed_tea' },
             { itemHrid: '/items/wisdom_tea' },
         ];
+        game.inventory.push(
+            { itemHrid: '/items/blessed_tea', itemLocationHrid: '/item_locations/inventory', count: 50 },
+            { itemHrid: '/items/wisdom_tea', itemLocationHrid: '/item_locations/inventory', count: 50 }
+        );
         enh.materials['/items/wisdom_tea'] = { price: 200, unpriced: false, estimated: false, partial: false };
 
         const [rate] = (await buildPlannerContext()).xpRates('/skills/enhancing');
@@ -998,6 +1002,26 @@ describe('enhancing xp rates and the material bill', () => {
             { itemHrid: '/items/blessed_tea', perHour: 12, unitPrice: 1000 },
             { itemHrid: '/items/wisdom_tea', perHour: 12, unitPrice: 200 },
         ]);
+    });
+
+    test('the tea bill follows the saved enhancing loadout the XP side uses, not the current slots', async () => {
+        enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: false, partial: false };
+        enh.materials['/items/wisdom_tea'] = { price: 200, unpriced: false, estimated: false, partial: false };
+        enh.materials['/items/green_tea'] = { price: 9, unpriced: false, estimated: false, partial: false };
+        const stock = (itemHrid) => ({ itemHrid, itemLocationHrid: '/item_locations/inventory', count: 50 });
+        game.inventory.push(stock('/items/wisdom_tea'), stock('/items/green_tea'));
+        // Slotted now: green tea. Saved loadout (what the XP prediction is built on): wisdom tea
+        game.drinkSlots['/action_types/enhancing'] = [{ itemHrid: '/items/green_tea' }];
+        loadout.drinks = [{ itemHrid: '/items/wisdom_tea' }];
+
+        const [rate] = (await buildPlannerContext()).xpRates('/skills/enhancing');
+        expect(rate.teaBill).toEqual([{ itemHrid: '/items/wisdom_tea', perHour: 12, unitPrice: 200 }]);
+        expect(rate.drinkCostPerHour).toBe(2400);
+
+        // An unpriced saved tea is flagged unknown rather than dropped
+        delete enh.materials['/items/wisdom_tea'];
+        const [bare] = (await buildPlannerContext()).xpRates('/skills/enhancing');
+        expect(bare.teaBill).toEqual([{ itemHrid: '/items/wisdom_tea', perHour: 12, unitPrice: null }]);
     });
 
     test('drink concentration raises the teas drunk; an unpriced tea is flagged, not free', async () => {

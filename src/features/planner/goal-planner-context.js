@@ -774,7 +774,9 @@ function measureEnhancingRates() {
     for (const [flag, teaHrid] of Object.entries(teaFlags)) {
         if (params.teas?.[flag]) teaHrids.add(teaHrid);
     }
-    for (const drink of dataManager.getActionDrinkSlots?.('/action_types/enhancing') || []) {
+    // Through the same action context the XP side resolves (a saved enhancing loadout's drinks, stocked
+    // ones only), so a tea that lifts the predicted XP is the tea that is charged and reserved
+    for (const drink of resolveActionContext('/action_types/enhancing').drinks || []) {
         if (drink?.itemHrid) teaHrids.add(drink.itemHrid);
     }
     const teasPerHour = calculateDrinksPerHour((Number(params.drinkConcentration) || 0) / 100);
