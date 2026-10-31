@@ -1261,6 +1261,9 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
     // copy to buy at any price, and the fallback would quote the vendor sell
     // price — which is not an offer anyone will honour.
     const protection = getCheapestProtectionPrice(itemHrid, { includeSelf: false });
+    // A craft-priced protection with an unpriced input is a floor, not a price: costed like a partial
+    // material bill (unknown), never quoted as a firm figure. Read defensively: older quotes lack the flag.
+    const protectionPartial = Boolean(protection?.partial);
 
     // Nothing below this line reads the game again: the sweep is a pure function
     // of the numbers gathered above, and it is the expensive half of this whole
@@ -1286,6 +1289,7 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
         unpricedMaterials ? 1 : 0,
         protection.itemHrid || '',
         protection.price,
+        protectionPartial ? 1 : 0,
     ].join('|');
     let swept = sweptRuns.get(calculate);
     if (!swept) {
@@ -1319,7 +1323,7 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
             startLevel,
             materialCostPerAttempt: materials.cost,
             protectionOptions: protection.price > 0 ? [{ itemHrid: protection.itemHrid, price: protection.price }] : [],
-            hasMissingPrices: unpricedMaterials,
+            hasMissingPrices: unpricedMaterials || protectionPartial,
             // The namespace's calculator rather than the engine's own import.
             // In the built script they are the same module — enhancement-calculator
             // is shared, so the market bundle's import resolves to exactly this

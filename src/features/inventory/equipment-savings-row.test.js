@@ -192,6 +192,20 @@ vi.mock('../enhancement/enhancement-params-source.js', async (importOriginal) =>
     enhancementParamsFor: () => window.Toolasha?.Utils?.enhancementConfig?.getAutoDetectedParams?.(),
 }));
 
+// A protection quote that a recipe input nobody prices has made a floor carries `partial`. The pricing
+// helper reports it from its own pass; here a test sets it directly on the quote the card receives.
+const protectionQuote = vi.hoisted(() => ({ partial: false }));
+vi.mock('../../utils/enhancement-input-pricing.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        getCheapestProtectionPrice: (...args) => {
+            const quote = actual.getCheapestProtectionPrice(...args);
+            return protectionQuote.partial ? { ...quote, partial: true } : quote;
+        },
+    };
+});
+
 const {
     equipmentSavingsPanel,
     watchTarget,
@@ -1585,6 +1599,18 @@ describe('what a run costs, through the real Markov chain', () => {
         game.details['/items/sinister_cape'].enhancementCosts.push({ itemHrid: '/items/crafted_charm', count: 1 });
 
         expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeNull();
+    });
+
+    test('a partial protection price makes the run unpriced rather than a firm figure, and is its own cache key', () => {
+        try {
+            expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeGreaterThan(0);
+            protectionQuote.partial = true;
+            expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeNull();
+            protectionQuote.partial = false;
+            expect(enhancementCost('/items/sinister_cape', 7, 5)).toBeGreaterThan(0);
+        } finally {
+            protectionQuote.partial = false;
+        }
     });
 
     test('the two levels the report was about, the right way round', () => {

@@ -35,6 +35,9 @@ class MarketplaceShortcuts {
         this.resizeHandler = null;
         this.dropdowns = new Set();
         this.pendingQuantity = null;
+        // Owner of pendingQuantity: the executeAction call that set it. A newer call, a failed opener or the
+        // post-click window running out clears it, so it cannot fill an unrelated later form.
+        this.actionSeq = 0;
         this.addMode = false;
         this.lifecycleGeneration = 0;
     }
@@ -383,6 +386,11 @@ class MarketplaceShortcuts {
      */
     async executeAction(actionType, itemHrid, enhancementLevel = 0) {
         const generation = this.lifecycleGeneration;
+        const seq = ++this.actionSeq;
+        // A newer shortcut press, or teardown, revokes this run's pending openers.
+        const isCancelled = () => generation !== this.lifecycleGeneration || seq !== this.actionSeq;
+        // Quantity left over from an earlier shortcut belongs to that shortcut, not this one.
+        this.pendingQuantity = null;
 
         // Read quantity from item submenu input before navigating away
         const amountInput = document.querySelector('[class*="Item_amountInputContainer"] input');
@@ -412,31 +420,49 @@ class MarketplaceShortcuts {
 
         // Wait for the marketplace panel to render
         await new Promise((r) => setTimeout(r, 300));
-        if (generation !== this.lifecycleGeneration) return;
+        if (isCancelled()) return;
 
+        let opened = false;
         try {
             switch (actionType) {
                 case 'sell':
-                    await this.clickInstantActionButton('Sell');
+                    await this.clickInstantActionButton('Sell', 3000, isCancelled);
                     break;
                 case 'buy':
-                    await this.clickInstantActionButton('Buy');
+                    await this.clickInstantActionButton('Buy', 3000, isCancelled);
                     break;
                 case 'sell-listing':
-                    await this.clickListingButton('+ New Sell Listing', 'Button_sell');
+                    await this.clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isCancelled);
                     break;
                 case 'buy-listing':
-                    await this.clickListingButton('+ New Buy Listing', 'Button_buy');
+                    await this.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled);
                     break;
             }
+            opened = true;
         } catch {
             // Instant sell/buy failed (no matching orders) — fall back to listing form
-            if (actionType === 'sell') {
-                await this.clickListingButton('+ New Sell Listing', 'Button_sell').catch(() => {});
-            } else if (actionType === 'buy') {
-                await this.clickListingButton('+ New Buy Listing', 'Button_buy').catch(() => {});
+            if (!isCancelled()) {
+                if (actionType === 'sell') {
+                    opened = await this.clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isCancelled)
+                        .then(() => true)
+                        .catch(() => false);
+                } else if (actionType === 'buy') {
+                    opened = await this.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled)
+                        .then(() => true)
+                        .catch(() => false);
+                }
             }
         }
+
+        // Nothing opened: the stored quantity has no form to fill and must not wait for a later unrelated one.
+        if (!opened) {
+            if (seq === this.actionSeq) this.pendingQuantity = null;
+            return;
+        }
+        // Opened: the modal observer consumes the quantity within moments; if it never does, drop it.
+        this.timerRegistry.scheduleTimeout(() => {
+            if (seq === this.actionSeq) this.pendingQuantity = null;
+        }, 3000);
     }
 
     /**
@@ -444,13 +470,19 @@ class MarketplaceShortcuts {
      * These buttons have text inside MarketplacePanel_actionButtonText divs.
      * @param {string} buttonText - 'Sell' or 'Buy'
      * @param {number} timeout - Max wait time in ms (default 3000)
+     * @param {Function|null} isCancelled - Polled each tick; true stops the search without clicking
      * @returns {Promise<void>}
      */
-    async clickInstantActionButton(buttonText, timeout = 3000) {
+    async clickInstantActionButton(buttonText, timeout = 3000, isCancelled = null) {
         const start = Date.now();
 
         return new Promise((resolve, reject) => {
             const interval = setInterval(() => {
+                if (isCancelled?.()) {
+                    clearInterval(interval);
+                    reject(new Error('Cancelled'));
+                    return;
+                }
                 const actionTexts = document.querySelectorAll('[class*="MarketplacePanel_actionButtonText"]');
                 for (const div of actionTexts) {
                     // Skip entries with SVGs (those are icon-only buttons)
@@ -481,13 +513,19 @@ class MarketplaceShortcuts {
      * @param {string} buttonText - Full button text to match
      * @param {string} partialClass - Partial CSS class to match (e.g. 'Button_sell')
      * @param {number} timeout - Max wait time in ms (default 3000)
+     * @param {Function|null} isCancelled - Polled each tick; true stops the search without clicking
      * @returns {Promise<void>}
      */
-    async clickListingButton(buttonText, partialClass, timeout = 3000) {
+    async clickListingButton(buttonText, partialClass, timeout = 3000, isCancelled = null) {
         const start = Date.now();
 
         return new Promise((resolve, reject) => {
             const interval = setInterval(() => {
+                if (isCancelled?.()) {
+                    clearInterval(interval);
+                    reject(new Error('Cancelled'));
+                    return;
+                }
                 const candidates = document.querySelectorAll(`[class*="${partialClass}"]`);
                 for (const btn of candidates) {
                     if (btn.textContent.trim() === buttonText) {

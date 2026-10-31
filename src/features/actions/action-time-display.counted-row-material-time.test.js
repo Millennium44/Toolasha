@@ -471,3 +471,139 @@ describe('a counted enhancing row shows the time its materials can cover', () =>
         expect(rowLimits(el)).toEqual(['[0h 06m 40s]']);
     });
 });
+
+describe('an upgrade craft credits its output at the level the upgrade carries', () => {
+    const SWORD = '/items/cheese_sword';
+    const UPGRADED = '/items/verdant_sword';
+    const upgrade = (extra = {}) => ({
+        hrid: '/actions/crafting/verdant_sword',
+        type: '/action_types/crafting',
+        inputItems: [],
+        upgradeItemHrid: SWORD,
+        outputItems: [{ itemHrid: UPGRADED, count: 1 }],
+        ...extra,
+    });
+    const action = (level) => ({
+        id: 1,
+        actionHrid: '/actions/crafting/verdant_sword',
+        primaryItemHash: `${SWORD}::${level}`,
+        hasMaxCount: true,
+        maxCount: 3,
+        currentCount: 0,
+    });
+
+    test('a +10 input produces a +7 stack, not a +0 one', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3, 10)]);
+        actionTimeDisplay.creditQueueActionOutputs(lookup, upgrade(), action(10), 3, true);
+
+        expect(lookup.byEnhancedKey[`${UPGRADED}::7`]).toBe(3);
+        expect(lookup.byEnhancedKey[`${UPGRADED}::0`] || 0).toBe(0);
+        expect(lookup.byHrid[UPGRADED]).toBe(3);
+    });
+
+    test('a fractional target credits the guaranteed floor when only deterministic yield counts', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3, 5)]);
+        // 0.7 x 5 = 3.5 -> floor 3, half a chance of a 4th level
+        actionTimeDisplay.creditQueueActionOutputs(lookup, upgrade(), action(5), 2, false);
+
+        expect(lookup.byEnhancedKey[`${UPGRADED}::3`]).toBe(2);
+        expect(lookup.byEnhancedKey[`${UPGRADED}::4`] || 0).toBe(0);
+    });
+
+    test('a fractional target splits by chance in expected mode and flags the estimate', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3, 5)]);
+        actionTimeDisplay.creditQueueActionOutputs(lookup, upgrade(), action(5), 2, true);
+
+        expect(lookup.byEnhancedKey[`${UPGRADED}::3`]).toBeCloseTo(1);
+        expect(lookup.byEnhancedKey[`${UPGRADED}::4`]).toBeCloseTo(1);
+        expect(lookup.estimatedHrids.has(UPGRADED)).toBe(true);
+    });
+
+    test('an unenhanced input and a recipe without an upgrade input still credit +0', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3)]);
+        actionTimeDisplay.creditQueueActionOutputs(lookup, upgrade(), action(0), 3, true);
+        expect(lookup.byEnhancedKey[`${UPGRADED}::0`]).toBe(3);
+
+        const plain = actionTimeDisplay.buildInventoryLookup([]);
+        actionTimeDisplay.creditQueueActionOutputs(plain, upgrade({ upgradeItemHrid: undefined }), action(10), 3, true);
+        expect(plain.byEnhancedKey[`${UPGRADED}::0`]).toBe(3);
+    });
+
+    test('a retain-all recipe keeps the full level', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(SWORD, 3, 10)]);
+        actionTimeDisplay.creditQueueActionOutputs(
+            lookup,
+            upgrade({ retainAllEnhancement: true }),
+            action(10),
+            3,
+            true
+        );
+        expect(lookup.byEnhancedKey[`${UPGRADED}::10`]).toBe(3);
+    });
+});
+
+describe('rows no queued action matches make the total incomplete, not a confident 0s', () => {
+    const rowsHtml = (names) =>
+        names
+            .map(
+                (name, i) => `
+                <div class="QueuedActions_action__item">
+                    <div class="QueuedActions_actionText__y">
+                        <div class="QueuedActions_text__z">#${i + 1}${name}</div>
+                    </div>
+                </div>`
+            )
+            .join('');
+
+    test('the tooltip total reads [?] and names the unmatched rows', () => {
+        game.inventory = [stack(LOG, 80)];
+        game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
+
+        const el = queueTooltipPopper(['苹果', '蓝莓']);
+        observerState.handler(el);
+
+        const total = el.querySelector('.mwi-queue-tooltip-total');
+        expect(rowLimits(el)).toEqual(['[Unknown action]', '[Unknown action]']);
+        expect(total.textContent).toBe('Total: [?]');
+        expect(total.title).toContain('2 queue rows could not be identified');
+    });
+
+    test('a matched row keeps its time and the total is a floor', () => {
+        game.inventory = [stack(LOG, 80)];
+        game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
+
+        const el = queueTooltipPopper(['Plank', '苹果']);
+        observerState.handler(el);
+
+        expect(el.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: 0h 01m 40s + [?]');
+        expect(el.querySelector('.mwi-queue-tooltip-total').title).toContain('1 queue row could not be identified');
+    });
+
+    test('the edit menu total reads [?] instead of 0s', () => {
+        game.inventory = [stack(LOG, 80)];
+        game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
+
+        const el = document.createElement('div');
+        el.className = 'QueuedActions_queuedActions__menu';
+        el.innerHTML = rowsHtml(['苹果', '蓝莓']);
+        document.body.appendChild(el);
+        actionTimeDisplay.injectQueueTimes(el);
+
+        const total = document.querySelector('#mwi-queue-total-time');
+        expect(total.textContent).toContain('Total time: [?]');
+        expect(total.textContent).not.toContain('0s');
+        expect(total.title).toContain('2 queue rows could not be identified');
+    });
+
+    test('a fully matched queue is unchanged', () => {
+        game.inventory = [stack(LOG, 80)];
+        game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
+
+        const el = queueTooltipPopper(['Plank']);
+        observerState.handler(el);
+
+        const total = el.querySelector('.mwi-queue-tooltip-total');
+        expect(total.textContent).toBe('Total: 0h 01m 40s');
+        expect(total.title).toBe('');
+    });
+});

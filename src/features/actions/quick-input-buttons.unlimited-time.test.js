@@ -122,7 +122,7 @@ vi.mock('../combat/scroll-simulator.js', () => ({
     default: { getScrollSetForActionType: () => new Set() },
 }));
 
-const { clearUnlimitedEstimateCache } = await import('./unlimited-action-estimate.js');
+const { clearUnlimitedEstimateCache, estimateUnlimitedAction } = await import('./unlimited-action-estimate.js');
 const quickInputButtons = (await import('./quick-input-buttons.js')).default;
 
 const LOG = '/items/log';
@@ -259,5 +259,20 @@ describe('the general action panel draws the bounded time', () => {
 
         expect(totalTimeLine(panel).textContent).toBe('Total time: 0h 16m 40s');
         expect(totalTimeLine(panel).textContent).not.toContain('mat:');
+    });
+});
+
+describe('a scroll selection change drops the memoized Repeat infinity estimate', () => {
+    test('the next estimate is recomputed, not served from the cache', () => {
+        expect(estimateUnlimitedAction({ actionHrid: CRAFT_PLANK }).count).toBe(40);
+
+        // Within the cache window the bag changes (stand-in for any input the key cannot see,
+        // such as a scroll buff); without the clear the old 40 is served back.
+        game.inventory = [stack(LOG, 40)];
+        expect(estimateUnlimitedAction({ actionHrid: CRAFT_PLANK }).count).toBe(40);
+
+        quickInputButtons._onScrollSelectionChanged();
+
+        expect(estimateUnlimitedAction({ actionHrid: CRAFT_PLANK }).count).toBe(20);
     });
 });

@@ -126,6 +126,35 @@ describe('Market Item Hop', () => {
             expect(mocks.navigate).toHaveBeenCalledWith('/items/cheese', 0);
         });
 
+        test('a marketplace retained behind another game tab ignores the step and Escape keys', () => {
+            openFromGrid('plank');
+            const panel = document.querySelector('[class*="MarketplacePanel_marketplacePanel"]');
+            const wrapper = document.createElement('div');
+            wrapper.className = 'TabPanel_tabPanel__x TabPanel_hidden__y';
+            panel.parentNode.insertBefore(wrapper, panel);
+            wrapper.appendChild(panel);
+            expect(press(']').defaultPrevented).toBe(false);
+            expect(press('Escape').defaultPrevented).toBe(false);
+
+            wrapper.className = 'TabPanel_tabPanel__x';
+            wrapper.style.display = 'none';
+            expect(press(']').defaultPrevented).toBe(false);
+            expect(mocks.navigate).not.toHaveBeenCalled();
+
+            wrapper.style.display = '';
+            expect(press(']').defaultPrevented).toBe(true);
+        });
+
+        test('a hidden retained marketplace earlier in the document does not mask the visible one', () => {
+            openFromGrid('plank');
+            const panel = document.querySelector('[class*="MarketplacePanel_marketplacePanel"]');
+            const stale = document.createElement('div');
+            stale.className = 'TabPanel_tabPanel__x TabPanel_hidden__y';
+            stale.appendChild(panel.cloneNode(true));
+            panel.parentNode.insertBefore(stale, panel);
+            expect(press(']').defaultPrevented).toBe(true);
+        });
+
         test('does nothing for an item that was not in the grid', () => {
             drawGrid();
             settle();

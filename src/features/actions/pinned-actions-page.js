@@ -659,6 +659,9 @@ class PinnedActionsPage {
      */
     renderContent() {
         if (!this.contentArea) return;
+        // Every redraw owns the content area from here; a Materials draw still waiting on assets from an
+        // earlier redraw checks this and stands down instead of appending into whatever tab is shown now
+        this._contentGen = (this._contentGen || 0) + 1;
         while (this.contentArea.firstChild) {
             this.contentArea.removeChild(this.contentArea.firstChild);
         }
@@ -903,12 +906,14 @@ class PinnedActionsPage {
     async renderMaterialsTab() {
         const contentArea = this.contentArea;
         if (!contentArea) return;
+        const contentGen = this._contentGen;
 
         // Fetch/use cached sprite URL
         if (!this.itemsSpriteUrl) {
             this.itemsSpriteUrl = await assetManifest.getSpriteUrl('items');
-            // Guard: content area may have changed while awaiting
-            if (contentArea !== this.contentArea) return;
+            // Guard: the container is reused across tab switches, so identity alone proves nothing; the
+            // redraw generation does
+            if (contentArea !== this.contentArea || contentGen !== this._contentGen) return;
         }
 
         const actions = this.getFilteredSorted();
