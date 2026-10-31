@@ -122,6 +122,37 @@ describe('the loot log records enhancing costs at the ask', () => {
     });
 });
 
+describe('a partial protection price is shown as a floor', () => {
+    const summaryText = (protection) => {
+        enhancing.calculateEnhancement = () => ({ attempts: 6, protectionCount: 2 });
+        enhancing.protection.mockReturnValue(protection);
+        enhancing.material.mockReturnValue(10);
+        dataManager.getInitClientData.mockReturnValue({
+            itemDetailMap: {
+                '/items/sword': { itemLevel: 10, enhancementCosts: [{ itemHrid: '/items/shard', count: 1 }] },
+            },
+        });
+        try {
+            const div = document.createElement('div');
+            new LootLogStats().injectEnhancingSummary(div, {
+                drops: { '/items/sword::0': 5, '/items/sword::1': 1 },
+                actionCount: 6,
+            });
+            return div.textContent;
+        } finally {
+            enhancing.calculateEnhancement = null;
+            enhancing.protection.mockReturnValue({ price: 0 });
+            enhancing.material.mockReturnValue(0);
+        }
+    };
+
+    test('flagged when the protection quote is partial, silent when it is whole', () => {
+        expect(summaryText({ price: 5000, partial: true })).toContain('protection price is a floor');
+        expect(summaryText({ price: 5000, partial: false })).not.toContain('protection price is a floor');
+        expect(summaryText({ price: 5000 })).not.toContain('protection price is a floor');
+    });
+});
+
 describe('LootLogStats.calculateExpectedRunValue', () => {
     let stats;
 
