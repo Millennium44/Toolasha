@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### October 31 audit fixes: action queue, profiles and marketplace
 
-- The Repeat ∞ time estimate now uses the same loadout as the finite figure beside it, and refreshes when you change the scroll selection.
+- The Repeat ∞ time estimate now uses the same loadout as the finite figure beside it (enhancing still times with your worn gear), and refreshes when you change the scroll selection.
 - The queue's material ledger credits an upgrade craft's output at its real enhancement level, not +0.
 - A queue total with rows Toolasha couldn't identify shows as incomplete instead of a confident "0s".
 - The character-select slot shows the action running now, and conservative deadlines no longer count on random alchemy self-returns.
