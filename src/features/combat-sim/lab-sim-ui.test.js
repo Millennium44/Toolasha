@@ -1534,6 +1534,31 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         }
     });
 
+    test('a Find Max level searched for one build is not used after the editor changed under another scope', () => {
+        const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        const before = scope.value;
+        try {
+            game.editedDTOs = { p1: { abilities: [{ level: 1 }] } };
+            ui._editorEditSig = null;
+            ui._checkEditorEdited();
+            ui._storeMaxLevel('/monsters/mimic', 145);
+            expect(ui._maxLevelFor('/monsters/mimic')).toBe(145);
+
+            scope.value = 'all';
+            game.editedDTOs = { p1: { abilities: [{ level: 2 }] } };
+            ui._checkEditorEdited();
+            // Saved-loadout scope keeps what it searched
+            expect(ui._maxLevelFor('/monsters/mimic')).toBe(145);
+
+            scope.value = 'current';
+            expect(ui._maxLevelFor('/monsters/mimic')).toBe(0);
+            expect(ui._resolveTargetLevel('/monsters/mimic').level).not.toBe(145);
+        } finally {
+            scope.value = before;
+            game.editedDTOs = null;
+        }
+    });
+
     test('Find Max recommends a negative skip when the cleared room is below the combat level', () => {
         // The mocked effective combat level is 100: 80 - 100 + 1
         ui._displayFindMaxResults(
