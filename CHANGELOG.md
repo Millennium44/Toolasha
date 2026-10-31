@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task Crystals priced for enhancing
+
+- Task Crystals are now valued at their Task Shop token cost times the gold a Task Token is worth (the Task Token tooltip's figure), marked as an estimate, instead of counting as free; task badge enhancing costs, the protect-or-not choice, net worth, equipment savings, the Goal Planner and build scores all include them.
+
 ### October 31 audit fixes: Combat Sim
 
 - Verify, the trigger search, Party search and the food search now read every price once before simulating, so one refresh can't tilt a close comparison.
