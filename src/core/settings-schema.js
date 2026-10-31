@@ -2839,7 +2839,7 @@ export const settingsGroups = {
                 label: 'Labyrinth: Show grid size control',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a - / + control to the Labyrinth header row that enlarges the room grid',
+                help: 'Adds a - / + control that enlarges the room grid: in the labyrinth toolbar gear panel, or in the Labyrinth header row when the room calculator is off',
             },
             labyrinthGridScale: {
                 id: 'labyrinthGridScale',
@@ -2849,7 +2849,7 @@ export const settingsGroups = {
                 min: 1,
                 max: 2,
                 step: 0.25,
-                help: 'Scale of the Labyrinth room grid. Also adjustable with the - / + control on the Labyrinth panel',
+                help: 'Scale of the Labyrinth room grid. Also adjustable with the - / + control (the labyrinth toolbar gear panel)',
             },
             labyrinthMonsterStatCheck: {
                 id: 'labyrinthMonsterStatCheck',

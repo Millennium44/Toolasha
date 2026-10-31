@@ -7370,51 +7370,132 @@ describe('labyrinth toolbar layout', () => {
         ];
         labyrinthClearRate.currentFloor = 3;
         labyrinthClearRate._tileControlsCollapsed = false;
-        configMock.getSetting.mockImplementation((key) => key === 'labyrinthRoomDistribution');
+        configMock.getSetting.mockImplementation(
+            (key) => key === 'labyrinthRoomDistribution' || key === 'labyrinthGridScaleControl'
+        );
     });
 
     afterEach(() => {
+        labyrinthClearRate.closeTileSettings();
         labyrinthClearRate._detachTileControlsLayout?.();
         labyrinthClearRate._detachTileControlsLayout = null;
         document.body.innerHTML = '';
         labyrinthClearRate.roomData = null;
         labyrinthClearRate._tileControlsCollapsed = undefined;
         configMock.getSetting.mockImplementation(() => true);
+        settings.map.clear();
     });
 
     const q = (suffix) => document.querySelector(`.mwi-labyrinth-tile-controls-${suffix}`);
     const before = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const panel = () => q('settings-panel');
+    const open = () => panel().style.display !== 'none';
 
-    test('row one in clusters, row two the auto toggles then the summary', () => {
+    test('main row: Labyrinth, then Path, Beacons, Clear and the gear in clusters; row two the summary alone', () => {
         labyrinthClearRate.injectTileControls();
 
         const clusters = [...document.querySelectorAll('.mwi-labyrinth-tile-controls-cluster')];
-        expect(clusters).toHaveLength(3);
+        expect(clusters).toHaveLength(4);
         expect(clusters[0].contains(q('path-button'))).toBe(true);
         expect(clusters[0].contains(q('path-unknown'))).toBe(true);
         expect(clusters[1].contains(q('beacon-button'))).toBe(true);
         expect(clusters[1].contains(q('beacon-plan-for'))).toBe(true);
         expect(clusters[1].contains(q('beacon-auto'))).toBe(true);
-        expect(clusters[1].textContent).toContain('Spread');
         expect(clusters[2].contains(q('clear-button'))).toBe(true);
-        // Precision and Uncapped stay outside the clusters, beside the Labyrinth toggle
-        expect(clusters.some((c) => c.contains(q('precision')))).toBe(false);
+        expect(clusters[3].contains(q('settings-button'))).toBe(true);
+        expect(before(q('toggle'), clusters[0])).toBe(true);
 
+        // Row two is the summary and the bar; the toggles are in the panel
         const rowBreak = q('row-break');
-        expect(before(clusters[2], rowBreak)).toBe(true);
-        expect(before(rowBreak, q('auto-toggle'))).toBe(true);
-        expect(before(q('auto-toggle'), q('auto-path-toggle'))).toBe(true);
-        expect(before(q('auto-path-toggle'), q('status'))).toBe(true);
+        expect(before(clusters[3], rowBreak)).toBe(true);
+        expect(before(rowBreak, q('status'))).toBe(true);
         expect(before(q('status'), q('bar'))).toBe(true);
+        expect(rowBreak.parentElement.contains(q('auto-toggle'))).toBe(true);
+        expect(panel().contains(q('auto-toggle'))).toBe(true);
     });
 
-    test('the auto-path toggle reads and flips its setting', () => {
+    test('the gear panel holds precision, Uncapped, Size, the auto toggles and Spread last', () => {
         labyrinthClearRate.injectTileControls();
-        const toggle = q('auto-path-toggle');
-        expect(toggle.textContent).toBe('Enable auto-path');
+        const p = panel();
 
-        toggle.click();
+        for (const suffix of ['precision', 'uncapped', 'auto-toggle', 'auto-path-toggle']) {
+            expect(p.contains(q(suffix))).toBe(true);
+        }
+        expect(p.querySelector('.mwi-labyrinth-grid-scale')).not.toBeNull();
+        expect(p.lastElementChild.textContent).toBe('Spread');
+        expect(p.lastElementChild.title).toContain('Histogram');
+        // Nothing of it on the main row (the gear's cluster holds the panel itself)
+        expect(
+            [...document.querySelectorAll('.mwi-labyrinth-tile-controls-cluster')]
+                .slice(0, 3)
+                .some((c) => c.textContent.includes('Spread'))
+        ).toBe(false);
+    });
 
+    test('the gear opens and closes the panel; a second press, Esc and an outside click all close it', () => {
+        labyrinthClearRate.injectTileControls();
+        const gear = q('settings-button');
+        expect(open()).toBe(false);
+        expect(gear.getAttribute('aria-expanded')).toBe('false');
+
+        gear.click();
+        expect(open()).toBe(true);
+        expect(gear.getAttribute('aria-expanded')).toBe('true');
+        gear.click();
+        expect(open()).toBe(false);
+
+        gear.click();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(open()).toBe(false);
+
+        gear.click();
+        // A press inside the panel keeps it open
+        q('precision').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(open()).toBe(true);
+        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(open()).toBe(false);
+    });
+
+    test('the moved controls work from inside the panel', () => {
+        labyrinthClearRate.injectTileControls();
+        q('settings-button').click();
+
+        const autoPath = q('auto-path-toggle');
+        expect(autoPath.textContent).toBe('Enable auto-path');
+        autoPath.click();
         expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthAutoPath', true);
+
+        const size = panel().querySelector('.mwi-labyrinth-grid-scale');
+        size.querySelector('[data-role="larger"]').click();
+        expect(settings.map.get('labyrinthGridScale')).toBe(1.25);
+
+        const uncapped = q('uncapped');
+        uncapped.click();
+        expect(settings.map.get('labyrinthSimCaps')).toBe('precision');
+    });
+
+    test('collapsing the bar closes the panel and hides the gear with the rest', () => {
+        labyrinthClearRate.injectTileControls();
+        q('settings-button').click();
+        expect(open()).toBe(true);
+
+        q('toggle').click();
+
+        expect(open()).toBe(false);
+        expect(
+            q('settings-button').closest('span[style*="display: none"], span[style*="display:none"]')
+        ).not.toBeNull();
+    });
+
+    test('the panel is placed on screen under the gear', () => {
+        labyrinthClearRate.injectTileControls();
+        const gear = q('settings-button');
+        vi.spyOn(gear, 'getBoundingClientRect').mockReturnValue({ left: 2, right: 24, top: 10, bottom: 30 });
+        Object.defineProperty(panel(), 'offsetWidth', { configurable: true, value: 200 });
+
+        gear.click();
+
+        expect(panel().style.top).toBe('34px');
+        expect(Number.parseFloat(panel().style.left)).toBeGreaterThanOrEqual(8);
     });
 });

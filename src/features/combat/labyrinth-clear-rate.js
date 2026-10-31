@@ -90,6 +90,7 @@ import {
     refreshRoomDistribution,
     destroyRoomDistribution,
 } from './labyrinth-room-distribution.js';
+import { createScaleControl } from './labyrinth-grid-scale.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 
@@ -653,6 +654,7 @@ class LabyrinthClearRate {
             document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
             this._detachTileControlsLayout?.();
             this._detachTileControlsLayout = null;
+            this.closeTileSettings();
             document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
             if (this.autoTileTimer) {
                 clearTimeout(this.autoTileTimer);
@@ -3115,6 +3117,8 @@ class LabyrinthClearRate {
 
         this._detachTileControlsLayout?.();
         this._detachTileControlsLayout = null;
+        // A panel left open on the bar being replaced goes with it
+        this.closeTileSettings();
         const container = document.createElement('div');
         container.className = TILE_CONTROLS_CLASS;
         container.style.cssText =
@@ -3136,10 +3140,22 @@ class LabyrinthClearRate {
             return g;
         };
         // Related controls sit together in clusters with a thin divider before
-        // each: {Labyrinth, Precision, Uncapped} {Path, Clear >=, ? mode}
-        // {Beacons, count, plan for, reset, Spread} {Clear}. A cluster wraps as
-        // a unit where it can and inside itself where it has to.
-        let groupParent = container;
+        // each: [Labyrinth] {Path, Clear >=, ? mode} {Beacons, count, plan for,
+        // reset} {Clear} [gear]. A cluster wraps as a unit where it can and
+        // inside itself where it has to. The less-used controls (precision,
+        // Uncapped, grid size, the auto toggles, Spread) live in the gear's panel.
+        const settingsPanel = document.createElement('div');
+        settingsPanel.className = `${TILE_CONTROLS_CLASS}-settings-panel`;
+        settingsPanel.setAttribute('role', 'dialog');
+        settingsPanel.setAttribute('aria-label', 'Labyrinth settings');
+        settingsPanel.style.cssText =
+            'display:none; position:fixed; z-index:' +
+            config.Z_FLOATING_PANEL +
+            '; flex-direction:column; align-items:flex-start; gap:6px; padding:8px; ' +
+            'max-width:calc(100vw - 16px); box-sizing:border-box; border-radius:6px; ' +
+            'background:rgba(14,20,32,0.97); color:#f0f4ff; box-shadow:0 4px 14px rgba(0,0,0,0.45); ' +
+            'border:1px solid rgba(150,190,255,0.3);';
+        let groupParent = settingsPanel;
         const cluster = () => {
             const c = document.createElement('span');
             c.className = `${TILE_CONTROLS_CLASS}-cluster`;
@@ -3334,6 +3350,7 @@ class LabyrinthClearRate {
         cluster();
         group(beaconButton, beaconInput, planForLabel, planForInput, beaconAutoButton);
 
+        let spreadButton = null;
         if (config.getSetting('labyrinthRoomDistribution')) {
             const distributionButton = document.createElement('button');
             distributionButton.className = `-distribution-button`;
@@ -3346,7 +3363,8 @@ class LabyrinthClearRate {
             distributionButton.addEventListener('click', () =>
                 toggleRoomDistribution(() => this.roomDistributionFloor())
             );
-            group(distributionButton);
+            // An action rather than a setting, so it closes the gear panel's list
+            spreadButton = distributionButton;
         }
 
         const clearButton = document.createElement('button');
@@ -3359,8 +3377,24 @@ class LabyrinthClearRate {
         clearButton.addEventListener('click', () => this.clearRecommendations());
         cluster().appendChild(clearButton);
 
-        // Row two: the auto toggles first, then the latest summary (the path's
-        // rooms and shrouds, a beacon plan) filling the rest of the line
+        // The gear: opens the panel of less-used controls under it
+        const settingsButton = document.createElement('button');
+        settingsButton.type = 'button';
+        settingsButton.className = `${TILE_CONTROLS_CLASS}-settings-button`;
+        settingsButton.textContent = '⚙';
+        settingsButton.title = 'Labyrinth settings: precision, grid size, auto-calc, auto-path, spread';
+        settingsButton.setAttribute('aria-label', 'Labyrinth settings');
+        settingsButton.setAttribute('aria-haspopup', 'dialog');
+        settingsButton.setAttribute('aria-expanded', 'false');
+        settingsButton.style.cssText =
+            'width:22px; height:20px; padding:0; border:0; border-radius:5px; background:rgba(120,134,160,0.85); ' +
+            'color:#fff; font-size:13px; line-height:1; cursor:pointer;';
+        settingsButton.addEventListener('click', () => this.toggleTileSettings());
+        const gear = cluster();
+        gear.append(settingsButton, settingsPanel);
+
+        // Row two: the latest summary (the path's rooms and shrouds, a beacon
+        // plan) on a line of its own
         const rowBreak = document.createElement('span');
         rowBreak.className = `${TILE_CONTROLS_CLASS}-row-break`;
         rowBreak.style.cssText = 'flex-basis:100%; height:0;';
@@ -3420,6 +3454,7 @@ class LabyrinthClearRate {
 
         const applyCollapsed = () => {
             const collapsed = this._tileControlsCollapsed;
+            if (collapsed) this.closeTileSettings();
             body.style.display = collapsed ? 'none' : 'contents';
             toggle.textContent = collapsed ? '▸ Labyrinth' : '▾ Labyrinth';
             toggle.title = collapsed ? 'Show labyrinth controls' : 'Hide labyrinth controls';
@@ -3453,9 +3488,7 @@ class LabyrinthClearRate {
             syncAuto();
             if (next) this.runTileCalculation({ auto: true });
         });
-        // Row two opens with the auto toggles, ahead of the status text and the
-        // full-width progress track (after the bar it was stranded on its own row)
-        body.insertBefore(autoButton, status);
+        settingsPanel.appendChild(autoButton);
         syncAuto();
 
         // Path on its own when a beacon reveals rooms
@@ -3477,8 +3510,22 @@ class LabyrinthClearRate {
             if (!next) this.cancelAutoPath();
             syncAutoPath();
         });
-        body.insertBefore(autoPathButton, status);
+        settingsPanel.appendChild(autoPathButton);
         syncAutoPath();
+
+        // The room grid's size stepper, which used to sit in the game's header
+        // row; the grid scale module still owns the setting and the zoom
+        if (config.getSetting('labyrinthGridScaleControl')) {
+            const size = createScaleControl();
+            size.style.fontSize = '11px';
+            size.querySelectorAll('button').forEach((b) => {
+                b.style.cssText =
+                    'min-width:22px; height:20px; padding:0 6px; border:0; border-radius:5px; ' +
+                    'background:rgba(120,134,160,0.85); color:#fff; font-size:12px; font-weight:700; cursor:pointer;';
+            });
+            settingsPanel.insertBefore(size, autoButton);
+        }
+        if (spreadButton) settingsPanel.appendChild(spreadButton);
 
         // Toggle and calculate share one nowrap line — a flex item of their own,
         // so a narrow phone bar keeps them together instead of stacking them.
@@ -3508,6 +3555,66 @@ class LabyrinthClearRate {
         // running path rather than an idle button whose press cancels the wait
         this.syncTileCalcButton();
         this.setPathButtonRunning(!!this.pathCalcRunning);
+    }
+
+    /**
+     * Open or close the gear's settings panel.
+     */
+    toggleTileSettings() {
+        if (this._tileSettingsOpen) this.closeTileSettings();
+        else this.openTileSettings();
+    }
+
+    /**
+     * Open the gear's panel under its button, kept on screen, and listen for
+     * the outside click, Esc, scroll and resize that close or move it.
+     */
+    openTileSettings() {
+        const button = document.querySelector(`.${TILE_CONTROLS_CLASS}-settings-button`);
+        const panel = document.querySelector(`.${TILE_CONTROLS_CLASS}-settings-panel`);
+        if (!button || !panel) return;
+        this.closeTileSettings();
+        panel.style.display = 'flex';
+        button.setAttribute('aria-expanded', 'true');
+        const place = () => {
+            const at = button.getBoundingClientRect();
+            const width = panel.offsetWidth || 0;
+            const gutter = 8;
+            const left = Math.max(gutter, Math.min(at.right - width, window.innerWidth - width - gutter));
+            panel.style.left = `${Math.round(left)}px`;
+            panel.style.top = `${Math.round(at.bottom + 4)}px`;
+        };
+        place();
+        const onPointer = (event) => {
+            if (panel.contains(event.target) || button.contains(event.target)) return;
+            this.closeTileSettings();
+        };
+        const onKey = (event) => {
+            if (event.key !== 'Escape') return;
+            this.closeTileSettings();
+            button.focus();
+        };
+        document.addEventListener('mousedown', onPointer, true);
+        document.addEventListener('touchstart', onPointer, true);
+        document.addEventListener('keydown', onKey, true);
+        window.addEventListener('resize', place);
+        window.addEventListener('scroll', place, true);
+        this._tileSettingsOpen = () => {
+            document.removeEventListener('mousedown', onPointer, true);
+            document.removeEventListener('touchstart', onPointer, true);
+            document.removeEventListener('keydown', onKey, true);
+            window.removeEventListener('resize', place);
+            window.removeEventListener('scroll', place, true);
+            panel.style.display = 'none';
+            button.setAttribute('aria-expanded', 'false');
+        };
+    }
+
+    /** Close the gear's panel and drop its listeners; a no-op when it is shut */
+    closeTileSettings() {
+        const close = this._tileSettingsOpen;
+        this._tileSettingsOpen = null;
+        close?.();
     }
 
     /**

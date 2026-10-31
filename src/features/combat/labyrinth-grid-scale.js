@@ -7,6 +7,10 @@
  * Two settings: `labyrinthGridScale` is the size (a slider in the settings panel, shared with the
  * stepper) and `labyrinthGridScaleControl` only decides whether the stepper is drawn. The size
  * applies either way, so a player who set it and then hid the stepper keeps the larger grid.
+ *
+ * With the labyrinth room calculator on, its toolbar carries the stepper in its settings panel
+ * (`createScaleControl`), so the header copy is not drawn; this module still owns the setting,
+ * the zoom and every stepper's readout.
  */
 
 import config from '../../core/config.js';
@@ -17,6 +21,8 @@ const CONTROL_CLASS = 'mwi-labyrinth-grid-scale';
 const STYLE_ID = 'mwi-labyrinth-grid-scale-style';
 const SCALE_SETTING = 'labyrinthGridScale';
 const CONTROL_SETTING = 'labyrinthGridScaleControl';
+/** The room calculator's toolbar holds the stepper while this is on */
+const TOOLBAR_SETTING = 'labyrinthClearRate';
 
 export const MIN_SCALE = 1;
 export const MAX_SCALE = 2;
@@ -30,6 +36,7 @@ let cellObserverUnregister = null;
 const headerWatchers = new Map();
 let unregisterScaleListener = null;
 let unregisterControlListener = null;
+let unregisterToolbarListener = null;
 
 /**
  * Clamp a stored value to a supported scale step.
@@ -94,15 +101,12 @@ function createStepButton(role, text, title, nativeButtonClass) {
 }
 
 /**
- * Inject the stepper into the header row, once per rendered panel instance.
- * @param {Element} chargeLeft - The LabyrinthPanel_chargeLeft element.
+ * Build a stepper (label, - , readout, +) wired to the grid size setting. Every stepper built here
+ * or injected into the header is kept current by this module's setting listener.
+ * @param {string} [nativeButtonClass=''] - Class for its buttons, to match the surrounding buttons
+ * @returns {HTMLElement}
  */
-export function injectControl(chargeLeft) {
-    if (!chargeLeft || chargeLeft.querySelector(`.${CONTROL_CLASS}`)) return;
-
-    // Reuse the native "Upgrade" button's classes so the stepper matches the game's buttons.
-    const nativeButtonClass = chargeLeft.querySelector('button')?.className || '';
-
+export function createScaleControl(nativeButtonClass = '') {
     const control = document.createElement('div');
     control.className = CONTROL_CLASS;
     control.style.cssText = 'display:flex; align-items:center; gap:4px;';
@@ -120,7 +124,24 @@ export function injectControl(chargeLeft) {
     larger.addEventListener('click', () => setScale(getScale() + SCALE_STEP));
 
     control.append(label, smaller, value, larger);
-    chargeLeft.appendChild(control);
+    const scale = getScale();
+    value.textContent = `${Math.round(scale * 100)}%`;
+    smaller.disabled = scale <= MIN_SCALE;
+    larger.disabled = scale >= MAX_SCALE;
+    return control;
+}
+
+/**
+ * Inject the stepper into the header row, once per rendered panel instance.
+ * @param {Element} chargeLeft - The LabyrinthPanel_chargeLeft element.
+ */
+export function injectControl(chargeLeft) {
+    if (!chargeLeft || chargeLeft.querySelector(`.${CONTROL_CLASS}`)) return;
+
+    // Reuse the native "Upgrade" button's classes so the stepper matches the game's buttons.
+    const nativeButtonClass = chargeLeft.querySelector('button')?.className || '';
+
+    chargeLeft.appendChild(createScaleControl(nativeButtonClass));
     updateControls();
 }
 
@@ -149,9 +170,9 @@ function stopWatchingHeaders() {
     headerWatchers.clear();
 }
 
-/** Start or stop drawing the stepper to match the control setting. */
+/** Start or stop drawing the header stepper to match the control and toolbar settings. */
 function syncControl() {
-    const wanted = config.getSetting(CONTROL_SETTING);
+    const wanted = config.getSetting(CONTROL_SETTING) && !config.getSetting(TOOLBAR_SETTING);
     if (wanted && !domObserverUnregister) {
         domObserverUnregister = domObserver.onClass('LabyrinthGridScale', 'LabyrinthPanel_chargeLeft', (el) =>
             watchHeader(el)
@@ -163,7 +184,9 @@ function syncControl() {
             domObserverUnregister = null;
         }
         stopWatchingHeaders();
-        document.querySelectorAll(`.${CONTROL_CLASS}`).forEach((el) => el.remove());
+        // The header copies, and the toolbar's too when the control itself is switched off
+        const scope = config.getSetting(CONTROL_SETTING) ? '[class*="LabyrinthPanel_chargeLeft"] ' : '';
+        document.querySelectorAll(`${scope}.${CONTROL_CLASS}`).forEach((el) => el.remove());
     }
 }
 
@@ -176,6 +199,7 @@ export function initialize() {
     });
     unregisterScaleListener = config.onSettingChange(SCALE_SETTING, updateControls);
     unregisterControlListener = config.onSettingChange(CONTROL_SETTING, syncControl);
+    unregisterToolbarListener = config.onSettingChange(TOOLBAR_SETTING, syncControl);
     syncControl();
 }
 
@@ -198,9 +222,14 @@ export function cleanup() {
         unregisterControlListener();
         unregisterControlListener = null;
     }
+    if (unregisterToolbarListener) {
+        unregisterToolbarListener();
+        unregisterToolbarListener = null;
+    }
 
     removeStyles(STYLE_ID);
-    document.querySelectorAll(`.${CONTROL_CLASS}`).forEach((el) => el.remove());
+    // Header copies only: initialize() runs this too, and the toolbar's stepper is the toolbar's
+    document.querySelectorAll(`[class*="LabyrinthPanel_chargeLeft"] .${CONTROL_CLASS}`).forEach((el) => el.remove());
 }
 
 export default {
