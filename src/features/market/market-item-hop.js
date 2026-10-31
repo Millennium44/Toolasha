@@ -223,8 +223,10 @@ class MarketItemHop {
         if (isTypingTarget(event)) return;
         // The game keeps a visited tab's panel mounted behind another tab; a retained marketplace that
         // cannot be seen must not consume the key
-        if (!isShown(document.querySelector(GAME.MARKETPLACE_PANEL))) return;
-        if (!isShown(document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM))) return;
+        // Any visible match counts: a hidden retained copy can precede the live one in the document
+        const anyShown = (selector) => Array.from(document.querySelectorAll(selector)).some(isShown);
+        if (!anyShown(GAME.MARKETPLACE_PANEL)) return;
+        if (!anyShown(GAME.MARKETPLACE_CURRENT_ITEM)) return;
 
         if (event.key === 'Escape') {
             // A modal's own Escape handling outranks this; the marketplace is behind it.
