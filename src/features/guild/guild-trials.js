@@ -1030,7 +1030,8 @@ export function signedUpElsewhere(trialName, kind, tracker = guildXPTracker) {
 
     for (const member of tracker?.getMemberList?.() || []) {
         const meta = tracker?.getMemberMeta?.(member.characterID) || member;
-        if (currentWeek && meta?.signupWeekStartAt !== currentWeek) continue;
+        // No known current week means no way to tell a stale sign-up from a live one: exclude nobody
+        if (!currentWeek || meta?.signupWeekStartAt !== currentWeek) continue;
 
         const hrids =
             kind === 'combat'
