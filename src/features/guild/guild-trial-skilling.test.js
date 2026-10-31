@@ -11,7 +11,9 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ wsHandlers: {} }));
+const game = vi.hoisted(() => ({ wsHandlers: {}, testServer: false }));
+
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer, liveGameOrigin: (o) => o }));
 
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -100,6 +102,7 @@ describe('personalFromSkilling', () => {
 
 describe('the live skilling tracker', () => {
     beforeEach(() => {
+        game.testServer = false;
         vi.useFakeTimers();
         vi.setSystemTime(now);
         guildTrialSkilling.initialize();
@@ -195,6 +198,23 @@ describe('the live skilling tracker', () => {
         expect(guildTrialSkilling.endedFor('Crafting', nextWeek)).toBeNull();
         expect(guildTrialSkilling.participating('Crafting', 910007, now + 60_000)).toBe(true);
         expect(guildTrialSkilling.participating('Crafting', 910007, nextWeek)).toBeNull();
+    });
+
+    test('on the test server yesterday’s ending and roster do not carry into today’s cycle', () => {
+        game.testServer = true;
+        game.wsHandlers[SKILLING_MESSAGE](GUILD_SKILLING_TICKS[0]);
+        game.wsHandlers[END_SKILLING_MESSAGE](END_GUILD_SKILLING);
+        const tomorrow = now + 24 * 3_600_000;
+
+        // Same cycle: still ended, still in the roster
+        expect(guildTrialSkilling.endedFor('Crafting', now + 60_000)).toMatchObject({ tier: 9 });
+        expect(guildTrialSkilling.participating('Crafting', 910007, now + 60_000)).toBe(true);
+        // A day on is the next cycle, though the Friday week has not turned
+        expect(guildTrialSkilling.endedFor('Crafting', tomorrow)).toBeNull();
+        expect(guildTrialSkilling.participating('Crafting', 910007, tomorrow)).toBeNull();
+        game.testServer = false;
+        // Live keeps the Friday week: the same two moments are one week
+        expect(guildTrialSkilling.endedFor('Crafting', tomorrow)).toMatchObject({ tier: 9 });
     });
 
     test('the opening message is read with the same parser, unobserved as it is', () => {
