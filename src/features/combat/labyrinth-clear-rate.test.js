@@ -174,7 +174,8 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js');
+const labyrinthClearRateModule = await import('./labyrinth-clear-rate.js');
+const { default: labyrinthClearRate } = labyrinthClearRateModule;
 const { clampPrecisionPct } = await import('./labyrinth-sim-cache.js');
 const { default: configMock } = await import('../../core/config.js');
 const { COMBAT_CACHE_STORAGE_VERSION } = await import('./labyrinth-sim-cache.js');
@@ -7120,5 +7121,61 @@ describe('docked labyrinth toolbar placement', () => {
         findGrid.mockRestore();
         findHost.mockRestore();
         labyrinthClearRate.roomData = null;
+    });
+});
+
+describe('labyrinth toolbar layout', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        const parent = document.createElement('div');
+        for (let i = 0; i < 4; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(parent);
+        document.body.appendChild(wrapper);
+        labyrinthClearRate.roomData = [
+            [null, null],
+            [null, null],
+        ];
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate._tileControlsCollapsed = false;
+        configMock.getSetting.mockImplementation((key) => key === 'labyrinthRoomDistribution');
+    });
+
+    afterEach(() => {
+        labyrinthClearRate._detachTileControlsLayout?.();
+        labyrinthClearRate._detachTileControlsLayout = null;
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._tileControlsCollapsed = undefined;
+        configMock.getSetting.mockImplementation(() => true);
+    });
+
+    const q = (suffix) => document.querySelector(`.mwi-labyrinth-tile-controls-${suffix}`);
+    const before = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+    test('row one in clusters, row two the auto toggles then the summary', () => {
+        labyrinthClearRate.injectTileControls();
+
+        const clusters = [...document.querySelectorAll('.mwi-labyrinth-tile-controls-cluster')];
+        expect(clusters).toHaveLength(3);
+        expect(clusters[0].contains(q('path-button'))).toBe(true);
+        expect(clusters[0].contains(q('path-unknown'))).toBe(true);
+        expect(clusters[1].contains(q('beacon-button'))).toBe(true);
+        expect(clusters[1].contains(q('beacon-plan-for'))).toBe(true);
+        expect(clusters[1].contains(q('beacon-auto'))).toBe(true);
+        expect(clusters[1].textContent).toContain('Spread');
+        expect(clusters[2].contains(q('clear-button'))).toBe(true);
+        // Precision and Uncapped stay outside the clusters, beside the Labyrinth toggle
+        expect(clusters.some((c) => c.contains(q('precision')))).toBe(false);
+
+        const rowBreak = q('row-break');
+        expect(before(clusters[2], rowBreak)).toBe(true);
+        expect(before(rowBreak, q('auto-toggle'))).toBe(true);
+        expect(before(q('auto-toggle'), q('status'))).toBe(true);
+        expect(before(q('status'), q('bar'))).toBe(true);
     });
 });

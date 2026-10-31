@@ -3118,8 +3118,23 @@ class LabyrinthClearRate {
             g.style.cssText =
                 'display:inline-flex; align-items:center; gap:4px; flex-wrap:wrap; min-width:0; max-width:100%;';
             els.forEach((el) => g.appendChild(el));
-            container.appendChild(g);
+            groupParent.appendChild(g);
             return g;
+        };
+        // Related controls sit together in clusters with a thin divider before
+        // each: {Labyrinth, Precision, Uncapped} {Path, Clear >=, ? mode}
+        // {Beacons, count, plan for, reset, Spread} {Clear}. A cluster wraps as
+        // a unit where it can and inside itself where it has to.
+        let groupParent = container;
+        const cluster = () => {
+            const c = document.createElement('span');
+            c.className = `${TILE_CONTROLS_CLASS}-cluster`;
+            c.style.cssText =
+                'display:inline-flex; align-items:center; gap:4px 6px; flex-wrap:wrap; min-width:0; max-width:100%; ' +
+                'padding-left:6px; border-left:1px solid rgba(255,255,255,0.22);';
+            container.appendChild(c);
+            groupParent = c;
+            return c;
         };
 
         const precisionLabel = document.createElement('span');
@@ -3231,6 +3246,7 @@ class LabyrinthClearRate {
         unknownSelect.addEventListener('change', () => {
             config.setSettingValue('labyrinthPathUnknownMode', unknownSelect.value);
         });
+        cluster();
         group(pathButton, pathLabel, pathInput, unknownSelect);
 
         const beaconButton = document.createElement('button');
@@ -3297,6 +3313,7 @@ class LabyrinthClearRate {
             planForInput.value = String(n);
             config.setSettingValue('labyrinthBeaconPlanFor', n);
         });
+        cluster();
         group(beaconButton, beaconInput, planForLabel, planForInput, beaconAutoButton);
 
         if (config.getSetting('labyrinthRoomDistribution')) {
@@ -3322,11 +3339,18 @@ class LabyrinthClearRate {
             'min-width:44px; padding:0 10px; height:20px; border:0; border-radius:5px; background:rgba(120,134,160,0.85); ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
         clearButton.addEventListener('click', () => this.clearRecommendations());
-        container.appendChild(clearButton);
+        cluster().appendChild(clearButton);
+
+        // Row two: the auto toggles first, then the latest summary (the path's
+        // rooms and shrouds, a beacon plan) filling the rest of the line
+        const rowBreak = document.createElement('span');
+        rowBreak.className = `${TILE_CONTROLS_CLASS}-row-break`;
+        rowBreak.style.cssText = 'flex-basis:100%; height:0;';
+        container.appendChild(rowBreak);
 
         const status = document.createElement('span');
         status.className = `${TILE_CONTROLS_CLASS}-status`;
-        status.style.cssText = 'font-size:10px; color:#9ab0d8; min-width:0; overflow-wrap:anywhere;';
+        status.style.cssText = 'flex:1 1 160px; font-size:10px; color:#9ab0d8; min-width:0; overflow-wrap:anywhere;';
         container.appendChild(status);
 
         const track = document.createElement('div');
@@ -3411,10 +3435,9 @@ class LabyrinthClearRate {
             syncAuto();
             if (next) this.runTileCalculation({ auto: true });
         });
-        // Sit inline with the other controls, before the full-width progress
-        // track — appending it after the bar left it stranded on its own row
-        // below the bar, since the track is a `flex:1 1 100%` line of its own.
-        body.insertBefore(autoButton, track);
+        // Row two opens with the auto toggles, ahead of the status text and the
+        // full-width progress track (after the bar it was stranded on its own row)
+        body.insertBefore(autoButton, status);
         syncAuto();
 
         // Toggle and calculate share one nowrap line — a flex item of their own,
