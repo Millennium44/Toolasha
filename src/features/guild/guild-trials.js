@@ -3433,8 +3433,8 @@ class GuildTrials {
      * said nothing at all.
      *
      * The character payload carries the same `currentTrialsData` as of login
-     * ({@link _noteInitialTrials}); a `guild_updated` always outranks it, and
-     * only the socket's copy arms anything.
+     * ({@link _noteInitialTrials}); a `guild_updated` outranks it unless the login payload was sent
+     * later (a reconnect), and only the socket's copy arms anything.
      *
      * @param {Object} [data] - A `guild_updated`-shaped payload
      * @param {Object} [options] - Where it came from
@@ -3445,7 +3445,16 @@ class GuildTrials {
         try {
             const read = parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData);
             if (!read) return;
-            if (source === 'init' && this.currentTrials && this.currentTrials.source !== 'init') return;
+            const offsetMs = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
+            if (source === 'init' && this.currentTrials && this.currentTrials.source !== 'init') {
+                // A socket snapshot outranks a login one only while it is the fresher: a reconnect's
+                // init_character_data is read off the server's current state. Compare the two on the local
+                // clock (the login payload's own send time, shifted by the clock offset, against when the
+                // socket copy arrived); a login payload with no send time is taken as just received
+                const initAt = Number.isFinite(serverNow) ? serverNow + offsetMs : null;
+                const held = this.currentTrials.at;
+                if (initAt !== null && Number.isFinite(held) && initAt <= held) return;
+            }
 
             const now = Date.now();
             // A login payload sent long ago (read back by a late start) is

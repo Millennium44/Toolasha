@@ -7488,6 +7488,29 @@ describe('after a reload, before any guild message', () => {
         expect(guildTrials.currentTrials.at).toBe(receivedAt);
     });
 
+    test('a reconnect’s login payload sent after the socket copy replaces it; an older one still does not', async () => {
+        const { INIT_CHARACTER_DATA, sentAt, receivedAt } = await load();
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+        expect(guildTrials.currentTrials.source).toBe('socket');
+        expect(guildTrials.currentTrials.at).toBe(receivedAt);
+
+        // The tab reconnects ten minutes on: the login payload was sent then, and states tier 18
+        const later = 10 * 60_000;
+        vi.setSystemTime(receivedAt + later);
+        const reconnect = { ...INIT_CHARACTER_DATA, currentTimestamp: new Date(sentAt + later).toISOString() };
+        guildTrials._noteInitialTrials(reconnect);
+        expect(guildTrials.currentTrials.source).toBe('init');
+        expect(guildTrials.currentTrials.skilling.trials['/guild_skilling/alchemy'].highestTier).toBe(18);
+
+        // And the control: a login payload sent before the socket copy arrived never replaces it
+        guildTrials.currentTrials = null;
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+        const held = guildTrials.currentTrials;
+        const old = { ...INIT_CHARACTER_DATA, currentTimestamp: new Date(sentAt - 60_000).toISOString() };
+        guildTrials._noteInitialTrials(old);
+        expect(guildTrials.currentTrials).toBe(held);
+    });
+
     test('a payload read back hours after login is dated when it was sent and bounds nothing', async () => {
         // A late start reads the login payload off the data manager. Taken as
         // received now, it bounded the offset at three hours and drew the
