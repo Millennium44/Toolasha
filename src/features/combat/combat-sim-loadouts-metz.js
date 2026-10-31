@@ -210,6 +210,19 @@ export function collectMetzLoadouts() {
     return buildMetzLoadouts(usable, abilityLevels);
 }
 
+/**
+ * Whether an empty live list is a real answer. It is once the snapshot store has loaded and either
+ * holds nothing or the inventory is loaded to judge ownership by; before that (the store not loaded,
+ * as on the Metz site, or snapshots present but no inventory yet) an empty list only means "not
+ * known", and the stored copy may stand in.
+ * @returns {boolean}
+ */
+function liveLoadoutsKnown() {
+    if (!loadoutSnapshot.snapshotsReady) return false;
+    if (!loadoutSnapshot.getAllSnapshots().length) return true;
+    return highestOwnedEnhancements().size > 0;
+}
+
 function publish() {
     if (typeof GM_setValue === 'undefined') {
         return;
@@ -307,7 +320,7 @@ export const metzLoadoutPublisher = {
  */
 export function getMetzLoadouts(characterId) {
     const live = collectMetzLoadouts();
-    if (live.length) {
+    if (live.length || liveLoadoutsKnown()) {
         return live;
     }
     if (typeof GM_getValue === 'undefined') {
