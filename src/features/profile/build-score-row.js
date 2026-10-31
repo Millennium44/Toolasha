@@ -34,6 +34,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { pricingStamp } from '../../utils/enhancement-input-pricing.js';
+import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { calculateCombatScore } from './score-calculator.js';
 import { buildScorePanel, setScoreSource } from './build-score-panel.js';
@@ -108,7 +109,17 @@ export function scorePricingStamp() {
     // The high-enhancement valuation settings change what a worn piece costs but are not in pricingStamp()
     const useCost = config.getSetting('networth_highEnhancementUseCost') ? 'cost' : 'market';
     const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
-    return `${pricingStamp()}|${marketAPI.priceVersion}|${useCost}|${minLevel}`;
+    // calculateCombatScore costs high-enhancement pieces on this bench, so a changed bench is a changed score
+    let bench = '';
+    try {
+        const p = getEnhancingParams() || {};
+        bench = [p.enhancingLevel, p.toolBonus, p.speedBonus, p.teas?.blessed, p.guzzlingBonus, p.blessedTeaBonus].join(
+            ','
+        );
+    } catch {
+        bench = '?';
+    }
+    return `${pricingStamp()}|${marketAPI.priceVersion}|${useCost}|${minLevel}|${bench}`;
 }
 
 /**

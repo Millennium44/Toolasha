@@ -14,6 +14,14 @@ const game = vi.hoisted(() => ({
     scoreSource: null,
     networth: {},
     stamp: 'a',
+    bench: {
+        enhancingLevel: 100,
+        toolBonus: 5,
+        speedBonus: 0,
+        teas: { blessed: false },
+        guzzlingBonus: 1,
+        blessedTeaBonus: 0,
+    },
     priceVersion: 1,
 }));
 
@@ -61,6 +69,7 @@ vi.mock('../../api/marketplace.js', () => ({
     },
 }));
 vi.mock('../../utils/enhancement-input-pricing.js', () => ({ pricingStamp: () => game.stamp }));
+vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => game.bench }));
 vi.mock('./score-calculator.js', () => ({
     calculateCombatScore: async () => {
         if (game.scoreGate) await game.scoreGate;
@@ -390,9 +399,19 @@ describe('ensureOwnScore', () => {
     });
 
     test('the stamp is the pricing inputs plus the order-book version', () => {
-        expect(scorePricingStamp()).toBe('a|1|market|13');
+        expect(scorePricingStamp()).toBe('a|1|market|13|100,5,0,false,1,0');
         game.priceVersion = 2;
-        expect(scorePricingStamp()).toBe('a|2|market|13');
+        expect(scorePricingStamp()).toBe('a|2|market|13|100,5,0,false,1,0');
+    });
+
+    test('the enhancing bench the score costs pieces on is in the stamp', () => {
+        const before = scorePricingStamp();
+        const saved = game.bench;
+        game.bench = { ...saved, enhancingLevel: 120 };
+        expect(scorePricingStamp()).not.toBe(before);
+        game.bench = { ...saved, teas: { blessed: true } };
+        expect(scorePricingStamp()).not.toBe(before);
+        game.bench = saved;
     });
 
     test('the high-enhancement valuation settings are in the stamp, since pricingStamp() lacks them', () => {
@@ -461,6 +480,6 @@ describe('ensureOwnScore', () => {
         game.stamp = 'b';
         game.scoreResult = { total: 99 };
         expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 99 });
-        expect(buildScore.stamp).toBe('b|1|market|13');
+        expect(buildScore.stamp).toBe('b|1|market|13|100,5,0,false,1,0');
     });
 });
