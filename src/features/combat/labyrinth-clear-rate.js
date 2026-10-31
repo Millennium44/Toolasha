@@ -985,6 +985,13 @@ class LabyrinthClearRate {
                 // here.
                 this._tileGen = (this._tileGen || 0) + 1;
                 this._autoCalcDeferred = false;
+                // The same hand-back for a Path still simulating on the floor just left: the new
+                // floor's presses must not be refused as "already running". The old run is
+                // fenced by the same generation (it neither draws nor clears a newer run's flag).
+                if (this.pathCalcRunning) {
+                    this.pathCalcRunning = false;
+                    this.setPathButtonRunning(false);
+                }
                 if (this.tileCalcRunning) {
                     this.tileCalcRunning = false;
                     this._pathQueued = false;

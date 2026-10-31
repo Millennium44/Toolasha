@@ -2143,6 +2143,18 @@ describe('the beacon count as a per-floor override', () => {
         expect(input.value).toBe('0');
     });
 
+    test('a new floor releases a Path still running on the old one, so a press there is not refused', () => {
+        buildToolbar(4);
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate.pathCalcRunning = true;
+        const button = vi.spyOn(labyrinthClearRate, 'setPathButtonRunning');
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+
+        expect(labyrinthClearRate.pathCalcRunning).toBe(false);
+        expect(button).toHaveBeenCalledWith(false);
+    });
+
     test('a new floor forgets the last floor’s room results', () => {
         buildToolbar(4);
         labyrinthClearRate.currentFloor = 3;
