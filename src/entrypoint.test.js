@@ -17,7 +17,7 @@
  * believed the first time it is wrong.
  */
 
-import { describe, test, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
 import { resolve } from 'node:path';
@@ -1059,6 +1059,13 @@ describe('the character_initialized startup block', () => {
         }
         await new Promise((resolve) => setTimeout(resolve, 200));
     }
+
+    // A run that reached it leaves the 500 ms health-check timer pending; let it
+    // fire here, while happy-dom's document still exists, rather than after the
+    // file's environment is torn down (an unhandled "document is not defined")
+    afterAll(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+    });
 
     test('the entrypoint listens for character_initialized at all', () => {
         expect(dataManagerHandlers.get('character_initialized')?.length).toBeGreaterThan(0);
