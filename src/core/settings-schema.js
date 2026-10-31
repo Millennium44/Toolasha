@@ -3022,6 +3022,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Automatically calculates clear chances for newly revealed labyrinth tiles without clicking Calc Tiles',
             },
+            labyrinthAutoPath: {
+                id: 'labyrinthAutoPath',
+                label: 'Labyrinth: Auto-path after a beacon',
+                type: 'checkbox',
+                default: true,
+                help: 'While a path is shown on the labyrinth map, works it out again by itself when a beacon reveals rooms on the floor (once per reveal, after any room calculation it triggers)',
+            },
             combatBattleCounter: {
                 id: 'combatBattleCounter',
                 label: 'Show battle/wave counter in current action panel during combat',

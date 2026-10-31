@@ -152,6 +152,23 @@ const LIVE_SIM_REFRESH_MS = 4000;
 const LIVE_SIM_MAX_AGE_MS = 30000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
+/** Wait after a beacon reveal before re-pathing, so the reveal's burst of updates (and the auto-calc it schedules) lands first */
+const AUTO_PATH_DELAY_MS = 900;
+
+/**
+ * Whether one labyrinth update to the next was a beacon going down: rooms
+ * revealed and the run's beacon stock down by one or more. When the stock
+ * cannot be read on either side, two or more rooms revealed at once stands in
+ * for it (a beacon lights a 13-room diamond).
+ * @param {{revealed: number, beacons: number|null}} before
+ * @param {{revealed: number, beacons: number|null}} after
+ * @returns {boolean}
+ */
+export function isBeaconReveal(before, after) {
+    if (!before || !after || after.revealed <= before.revealed) return false;
+    if (before.beacons != null && after.beacons != null) return after.beacons < before.beacons;
+    return after.revealed - before.revealed >= 2;
+}
 /** The room tooltips' headline row: one label, so the combat and skilling cards match */
 const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
@@ -673,6 +690,7 @@ class LabyrinthClearRate {
             document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
             this.clearPathOverlays();
             this.clearBeaconOverlays();
+            this.cancelAutoPath();
             this.pathCalcRunning = false;
             this._pathQueued = false;
             pruneEmptyAnnotationContainers();
@@ -869,6 +887,9 @@ class LabyrinthClearRate {
         // ended) — same reasoning as `injectOverlays`, for the update that
         // carries no roomData and so never reaches it
         this.hidePreview();
+        // What the floor looked like before this message, for telling a beacon
+        // reveal (rooms revealed, a beacon spent) from any other update
+        const before = this.roomData ? this.revealSnapshot(this.roomData, this._labyrinth) : null;
         // Kept whole, not just the grid: the run's supply stock rides this
         // message, and the readout has to be able to look for it
         this._labyrinth = data.labyrinth ?? null;
@@ -886,6 +907,7 @@ class LabyrinthClearRate {
                 this.clearPathOverlays();
                 this.clearBeaconOverlays();
                 this._stagedBeaconPlan = null;
+                this.cancelAutoPath();
                 // A beacon count was chosen for the floor that just ended; the
                 // next one starts back on the automatic minimum
                 this.resetBeaconCountToAuto();
@@ -933,6 +955,10 @@ class LabyrinthClearRate {
 
             // Auto-calc newly revealed tiles when enabled (off by default)
             this.scheduleAutoTileCalc();
+            if (before && previousFloor === this.currentFloor) {
+                const after = this.revealSnapshot(roomData, data.labyrinth);
+                if (isBeaconReveal(before, after)) this.scheduleAutoPath();
+            }
         } else {
             // No grid in this message (a run ending): an open distribution panel
             // must redraw from the no-floor state rather than keep the last floor
@@ -3440,6 +3466,28 @@ class LabyrinthClearRate {
         body.insertBefore(autoButton, status);
         syncAuto();
 
+        // Re-path on its own when a beacon reveals rooms, while a path is shown
+        const autoPathOn = () => !!config.getSetting('labyrinthAutoPath');
+        const autoPathButton = document.createElement('button');
+        autoPathButton.className = `${TILE_CONTROLS_CLASS}-auto-path-toggle`;
+        autoPathButton.style.cssText = autoButton.style.cssText;
+        autoPathButton.title =
+            'While a path is shown, work it out again by itself when a beacon reveals rooms on this floor';
+        const syncAutoPath = () => {
+            const on = autoPathOn();
+            autoPathButton.textContent = on ? 'Auto-path: on' : 'Enable auto-path';
+            autoPathButton.style.background = on ? 'rgba(60,180,120,0.85)' : 'rgba(120,134,160,0.85)';
+        };
+        autoPathButton.addEventListener('click', () => {
+            const next = !autoPathOn();
+            // A checkbox setting, written the way the auto-calc toggle's is
+            config.setSetting('labyrinthAutoPath', next);
+            if (!next) this.cancelAutoPath();
+            syncAutoPath();
+        });
+        body.insertBefore(autoPathButton, status);
+        syncAutoPath();
+
         // Toggle and calculate share one nowrap line — a flex item of their own,
         // so a narrow phone bar keeps them together instead of stacking them.
         const header = document.createElement('span');
@@ -3573,6 +3621,8 @@ class LabyrinthClearRate {
     cancelTileCalculation() {
         if (!this.tileCalcRunning) return;
         this.cancelRunningSims();
+        // A cancel withdraws an automatic re-path waiting on this calculation too
+        this.cancelAutoPath();
         this.setTileStatus('Cancelled');
         this.syncTileCalcButton();
     }
@@ -4432,6 +4482,9 @@ class LabyrinthClearRate {
                 this.appendPathOverlay(cell, color, label);
             }
 
+            // A path is on the map: auto-path keeps this one current
+            this._pathShownFloor = this.currentFloor;
+
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
             const unknownText = unknownCount ? ` · ${plural(unknownCount, 'unrevealed room')}` : '';
 
@@ -4525,6 +4578,8 @@ class LabyrinthClearRate {
 
     clearPathOverlays() {
         document.querySelectorAll(`.${PATH_OVERLAY_CLASS}`).forEach((el) => el.remove());
+        // No path on the map any more, so nothing for auto-path to keep current
+        this._pathShownFloor = null;
     }
 
     /**
@@ -4908,6 +4963,69 @@ class LabyrinthClearRate {
             // free to walk — so clearing progress is no reason to rub one out
             cells[i]?.querySelector(`.${PATH_OVERLAY_CLASS}:not([data-approach])`)?.remove();
         }
+    }
+
+    /**
+     * Revealed rooms and the run's beacon stock, for spotting a beacon reveal.
+     * @param {Array} roomData - roomData rows
+     * @param {Object|null} labyrinth - The labyrinth state the rows came with
+     * @returns {{ revealed: number, beacons: number|null }}
+     */
+    revealSnapshot(roomData, labyrinth) {
+        const flat = Array.isArray(roomData) ? roomData.flat() : [];
+        const stock = readRunSupplyCounts(
+            labyrinth,
+            resolveSupplyHrids(dataManager.getInitClientData()?.itemDetailMap)
+        );
+        return {
+            revealed: flat.filter((room) => isRoomRevealed(room)).length,
+            beacons: stock.known ? stock.beacon : null,
+        };
+    }
+
+    /**
+     * Work the shown path out again once a beacon has revealed rooms. One run
+     * per reveal burst: a pending run absorbs every reveal that lands before
+     * it fires. Only while a path is on the map for this floor, never once a
+     * calculation is cancelled, and behind a room calculation in progress (it
+     * queues as a Path press would, without the press's toggle).
+     */
+    scheduleAutoPath() {
+        if (!config.getSetting('labyrinthAutoPath')) return;
+        // A path on the map for this floor, or one being worked out right now
+        // (which cleared the old one first and has not drawn its own yet)
+        if (this._pathShownFloor !== this.currentFloor && !this.pathCalcRunning) return;
+        if (this.autoPathTimer) return;
+        const floor = this.currentFloor;
+        const characterId = dataManager.getCurrentCharacterId();
+        this.autoPathTimer = setTimeout(() => {
+            this.autoPathTimer = null;
+            if (!config.getSetting('labyrinthAutoPath')) return;
+            // The floor, the character and the shown path all still the ones
+            // the reveal was about
+            if (this.currentFloor !== floor || dataManager.getCurrentCharacterId() !== characterId) return;
+            if (!this.roomData) return;
+            if (this.pathCalcRunning) {
+                // The path in flight read the grid from before the reveal
+                this.scheduleAutoPath();
+                return;
+            }
+            if (this._pathShownFloor !== floor) return;
+            if (this.tileCalcRunning || this.autoTileTimer) {
+                // The room calculation the reveal set off runs first; the path
+                // follows it once, and a cancel of it withdraws this too
+                this._pathQueued = true;
+                this.setPathButtonRunning(false);
+                return;
+            }
+            this.runPathCalculation();
+        }, AUTO_PATH_DELAY_MS);
+    }
+
+    /** Drop a pending automatic re-path */
+    cancelAutoPath() {
+        if (this.autoPathTimer) clearTimeout(this.autoPathTimer);
+        this.autoPathTimer = null;
     }
 
     /**

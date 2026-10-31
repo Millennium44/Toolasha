@@ -7124,6 +7124,153 @@ describe('docked labyrinth toolbar placement', () => {
     });
 });
 
+/**
+ * Auto-path: a path shown on the map is worked out again by itself once a
+ * beacon reveals rooms, once per reveal burst.
+ */
+describe('auto-path after a beacon reveal', () => {
+    const { isBeaconReveal } = labyrinthClearRateModule;
+    const revealedRoom = { roomType: '/labyrinth_room_types/combat' };
+    let pathSpy;
+    let tileSpy;
+
+    const setSettings = ({ autoPath = true } = {}) =>
+        configMock.getSetting.mockImplementation((key) => (key === 'labyrinthAutoPath' ? autoPath : false));
+
+    /** A labyrinth update for floor 3 with `revealed` rooms lit and `beacons` left in the run */
+    const update = (revealed, beacons, floor = 3) => {
+        const flat = Array.from({ length: 16 }, (_, i) => (i < revealed ? revealedRoom : null));
+        const roomData = [flat.slice(0, 4), flat.slice(4, 8), flat.slice(8, 12), flat.slice(12, 16)];
+        const labyrinth = { currentFloor: floor, roomData };
+        if (beacons != null) labyrinth.supplyItemCountMap = { '/items/advanced_beacon': beacons };
+        return { labyrinth };
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.innerHTML = '';
+        setSettings();
+        pathSpy = vi.spyOn(labyrinthClearRate, 'runPathCalculation').mockResolvedValue(undefined);
+        tileSpy = vi.spyOn(labyrinthClearRate, 'runTileCalculation').mockResolvedValue(undefined);
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate.pathCalcRunning = false;
+        labyrinthClearRate._pathQueued = false;
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate.onLabyrinthUpdated(update(1, 3));
+        labyrinthClearRate._pathShownFloor = 3;
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.cancelAutoPath();
+        clearTimeout(labyrinthClearRate.pruneTileTimer);
+        clearTimeout(labyrinthClearRate.autoTileTimer);
+        labyrinthClearRate.pruneTileTimer = null;
+        labyrinthClearRate.autoTileTimer = null;
+        pathSpy.mockRestore();
+        tileSpy.mockRestore();
+        vi.useRealTimers();
+        configMock.getSetting.mockImplementation(() => true);
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._labyrinth = null;
+        labyrinthClearRate._pathShownFloor = null;
+        labyrinthClearRate._pathQueued = false;
+        document.body.innerHTML = '';
+    });
+
+    test('a beacon reveal re-paths once, however many updates the reveal arrives in', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.onLabyrinthUpdated(update(12, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('two beacons far enough apart re-path twice', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+        labyrinthClearRate.onLabyrinthUpdated(update(14, 1));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(2);
+    });
+
+    test('with the toggle off nothing runs', () => {
+        setSettings({ autoPath: false });
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('turned off while a re-path is pending, it does not run', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        setSettings({ autoPath: false });
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('with no path on the map nothing runs', () => {
+        labyrinthClearRate._pathShownFloor = null;
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a reveal that spent no beacon (a cleared room) does not re-path', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a room calculation in progress gets the path queued behind it, not run beside it', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
+
+    test('cancelling the room calculation withdraws a pending re-path', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.tileCalcRunning = true;
+        labyrinthClearRate.cancelTileCalculation();
+        labyrinthClearRate.tileCalcRunning = false;
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a character switch before it fires drops it', async () => {
+        const dm = await import('../../core/data-manager.js');
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        dm.default.getCurrentCharacterId.mockReturnValue('someone-else');
+        vi.advanceTimersByTime(2000);
+        dm.default.getCurrentCharacterId.mockReturnValue('me');
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a new floor is not a reveal', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2, 4));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('isBeaconReveal: rooms revealed and a beacon spent; without the stock, two rooms at once', () => {
+        expect(isBeaconReveal({ revealed: 1, beacons: 3 }, { revealed: 9, beacons: 2 })).toBe(true);
+        expect(isBeaconReveal({ revealed: 1, beacons: 3 }, { revealed: 9, beacons: 3 })).toBe(false);
+        expect(isBeaconReveal({ revealed: 9, beacons: 3 }, { revealed: 9, beacons: 2 })).toBe(false);
+        expect(isBeaconReveal({ revealed: 1, beacons: null }, { revealed: 2, beacons: null })).toBe(false);
+        expect(isBeaconReveal({ revealed: 1, beacons: null }, { revealed: 3, beacons: 2 })).toBe(true);
+        expect(isBeaconReveal(null, { revealed: 3, beacons: 2 })).toBe(false);
+    });
+});
+
 describe('labyrinth toolbar layout', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
@@ -7175,7 +7322,18 @@ describe('labyrinth toolbar layout', () => {
         const rowBreak = q('row-break');
         expect(before(clusters[2], rowBreak)).toBe(true);
         expect(before(rowBreak, q('auto-toggle'))).toBe(true);
-        expect(before(q('auto-toggle'), q('status'))).toBe(true);
+        expect(before(q('auto-toggle'), q('auto-path-toggle'))).toBe(true);
+        expect(before(q('auto-path-toggle'), q('status'))).toBe(true);
         expect(before(q('status'), q('bar'))).toBe(true);
+    });
+
+    test('the auto-path toggle reads and flips its setting', () => {
+        labyrinthClearRate.injectTileControls();
+        const toggle = q('auto-path-toggle');
+        expect(toggle.textContent).toBe('Enable auto-path');
+
+        toggle.click();
+
+        expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthAutoPath', true);
     });
 });
