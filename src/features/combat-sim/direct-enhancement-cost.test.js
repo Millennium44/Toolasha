@@ -7,6 +7,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const state = vi.hoisted(() => ({
     materials: { cost: 100, hasCost: true, hasMissingPrices: false },
+    protection: { price: 0, itemHrid: null },
 }));
 
 vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false, testerGearPrice: () => null }));
@@ -15,7 +16,7 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({
 }));
 vi.mock('../../utils/enhancement-input-pricing.js', () => ({
     perAttemptMaterialCost: () => state.materials,
-    getCheapestProtectionPrice: () => ({ price: 0, itemHrid: null }),
+    getCheapestProtectionPrice: () => state.protection,
 }));
 
 const { calculateDirectEnhancementCost } = await import('./direct-enhancement-cost.js');
@@ -30,6 +31,7 @@ const gameData = {
 describe('calculateDirectEnhancementCost', () => {
     beforeEach(() => {
         state.materials = { cost: 100, hasCost: true, hasMissingPrices: false };
+        state.protection = { price: 0, itemHrid: null };
     });
 
     test('a fully priced run is a number', () => {
@@ -45,6 +47,17 @@ describe('calculateDirectEnhancementCost', () => {
     test('a craft-priced material with an unpriced input is a partial bill: unknown too', () => {
         state.materials = { cost: 100, hasCost: true, hasMissingPrices: false, hasPartialPrices: true };
         expect(calculateDirectEnhancementCost(SWORD, 0, 3, gameData)).toBeNull();
+    });
+
+    test('a partial protection price makes the quote unknown only when the cheapest plan spends it', () => {
+        // Too dear to be worth using: the cheapest plan is unprotected, so the quote is complete
+        state.protection = { price: 5_000_000, itemHrid: '/items/mirror_of_protection', partial: true };
+        expect(calculateDirectEnhancementCost(SWORD, 0, 3, gameData)).toBeGreaterThan(0);
+        // Cheap enough to be spent on a long run: the figure is a floor, so unknown
+        state.protection = { price: 1, itemHrid: '/items/mirror_of_protection', partial: true };
+        expect(calculateDirectEnhancementCost(SWORD, 0, 12, gameData)).toBeNull();
+        state.protection = { price: 1, itemHrid: '/items/mirror_of_protection', partial: false };
+        expect(calculateDirectEnhancementCost(SWORD, 0, 12, gameData)).toBeGreaterThan(0);
     });
 
     test('nothing priced at all is unknown too', () => {

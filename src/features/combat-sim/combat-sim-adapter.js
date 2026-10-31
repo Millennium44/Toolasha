@@ -687,6 +687,9 @@ export function parseShykaiImport(jsonString) {
         const dto = {
             staminaLevel: p.staminaLevel || 1,
             intelligenceLevel: p.intelligenceLevel || 1,
+            // The simulation needs a number, so an absent level reads as 1; this says it was never known, so the
+            // ability bar locks nothing on its account (see `abilitySlotUnlocks`)
+            ...(Number(p.intelligenceLevel) > 0 ? {} : { intelligenceUnknown: true }),
             attackLevel: p.attackLevel || 1,
             meleeLevel: p.meleeLevel || 1,
             defenseLevel: p.defenseLevel || 1,
@@ -963,7 +966,9 @@ export function buildShykaiExportPlayer(dto, name) {
 
     const triggerMap = {};
     const addTriggers = (hrid, triggers) => {
-        if (!hrid || !Array.isArray(triggers) || triggers.length === 0) return;
+        // A cleared list ([]) is written as an empty list, not left out: a missing key reads back as
+        // "follow the game's defaults" (null), which would undo the clearing on re-import
+        if (!hrid || !Array.isArray(triggers)) return;
         triggerMap[hrid] = triggers.map((t) => ({
             dependencyHrid: t.dependencyHrid,
             conditionHrid: t.conditionHrid,
@@ -1229,6 +1234,10 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         if (dto[key] !== undefined) {
             dto[key] = skill.level || 1;
         }
+    }
+    // A profile that does not carry the Intelligence skill leaves the default 1: not a level to lock slots by
+    if (!(profile.profile?.characterSkills || []).some((skill) => skill.skillHrid === '/skills/intelligence')) {
+        dto.intelligenceUnknown = true;
     }
 
     // Extract equipment from wearableItemMap → keyed by equipmentDetail.type
@@ -2178,6 +2187,9 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
     let costPerHour = 0;
     const consumableEntries = [];
     const unpricedConsumables = [];
+    // How much of each unpriced expense a run spends per hour: a candidate that eats more of an item the baseline
+    // also left unpriced is understating its cost by more than the baseline did
+    const unpricedRates = {};
     const consumablesUsed = simResult.consumablesUsed?.[playerHrid] || {};
     for (const [itemHrid, count] of Object.entries(consumablesUsed)) {
         const { unitCost, priced } = held(`buy|${itemHrid}`, () => consumableUnitCost(itemHrid));
@@ -2188,6 +2200,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
             consumableEntries.push({ name: itemName, countPerHour: count / hours, unitCost, totalCost: perHour });
         } else if (count > 0) {
             unpricedConsumables.push(itemHrid);
+            unpricedRates[itemHrid] = count / hours;
         }
     }
 
@@ -2211,6 +2224,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
         };
         for (const key of calculateDungeonKeyCosts(dropMap, keyPrice)) {
             keyCostPerHour += key.totalCost / hours;
+            if (unpricedKeys.includes(key.itemHrid)) unpricedRates[key.itemHrid] = key.count / hours;
         }
         costPerHour += keyCostPerHour;
     }
@@ -2225,6 +2239,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
         unpricedDrops,
         unpricedConsumables,
         unpricedKeys,
+        unpricedRates,
     };
 }
 

@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### October 31 audit fixes: Combat Sim
+
+- Verify, the trigger search, Party search and the food search now read every price once before simulating, so one refresh can't tilt a close comparison.
+- An upgrade whose running cost includes an item with no price is marked as such: its profit gain is a ceiling (shown with ≤), it shows no ROI, and profit-ranked budget plans leave it out and say so; Party search marks the gap.
+- In the Labyrinth upgrade table, XP and Community Experience rows now count the XP a room win pays, which the simulator never awarded.
+- The upgrade advisor no longer suggests a drink or ability in a slot your build hasn't unlocked, and warns about a build with more than it can use.
+- Budget plans and Confirm together no longer treat a main-hand and an off-hand pick, or two different empty ability slots, as rivals.
+- In a party, a combat level-up row now includes the level-gap penalty change.
+- A custom food price of 0 counts as priced.
+- Fury that ran out while a unit was down no longer comes back after a revive in the simulator.
+- A Shykai export keeps a trigger list you cleared, so re-importing it doesn't restore the defaults.
+- The Metz export no longer includes a loadout you have just deleted, and an old run finishing after a character switch no longer unlocks a newer one's busy guard.
+
 ### October 31 audit fixes: action queue, profiles and marketplace
 
 - The Repeat ∞ time estimate now uses the same loadout as the finite figure beside it (enhancing still times with your worn gear), and refreshes when you change the scroll selection.

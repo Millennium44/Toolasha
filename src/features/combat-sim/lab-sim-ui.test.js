@@ -36,12 +36,15 @@ import config from '../../core/config.js';
 import * as upgradeAdvisor from './upgrade-advisor.js';
 // Real too; the trigger tuning tests spy on its runner
 import * as labTriggerOptimizer from './lab-trigger-optimizer.js';
+import * as levelFinder from './labyrinth-level-finder.js';
 import { summarizeLabTriggerRun } from './lab-trigger-view.js';
 // The game's own trigger detail maps, for the condition search's wording
 import { TRIAL_GAME_DATA } from './engine/guild-trial-game-data.fixture.js';
 
 const geometry = vi.hoisted(() => ({ saved: null, wasOpen: false, restoreCalls: [], saveCalls: [], openCalls: [] }));
 const game = vi.hoisted(() => ({
+    /** Arguments of every estimateCombatXpPerHour call */
+    xpCalls: [],
     monsters: [],
     /** Monster hrid → room level the skip thresholds resolve to */
     skipLevels: {},
@@ -318,6 +321,7 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
     // named export makes its search window NaN — which silently searches nothing
     SKIP_THRESHOLD_RANGE: 60,
     default: {
+        getCombatExperienceBonus: () => 0,
         getLabyrinthCombatBuffs: () => [],
         getCombatSkipRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
         getCombatRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
@@ -330,7 +334,10 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
             guildShrineLevels: { ...game.guildShrineLevels },
         }),
         getPlayerEffectiveCombatLevel: () => 100,
-        estimateCombatXpPerHour: () => 0,
+        estimateCombatXpPerHour: (...args) => {
+            game.xpCalls.push(args);
+            return 0;
+        },
         getTargetRoomLevel: () => 0,
         getSkillingMetricsFromOverrides: (_skillId, _actionTypeHrid, overrides) => {
             const fields = {
@@ -1475,6 +1482,68 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         await ui._onUpgradeAnalyze();
 
         for (const call of sim.calls) expect(call.roomLevel).toBe(232);
+    });
+
+    test('a Find Max that clears nothing drops the earlier sim max instead of keeping it', async () => {
+        ui._maxLevelByMonster['/monsters/mimic'] = 145;
+        ui._labyFindMaxMode = true;
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        const find = vi.spyOn(levelFinder, 'findMaxLabyrinthLevel').mockResolvedValue({
+            cleared: false,
+            maxLevel: 0,
+            threshold: 0.9,
+            minLevel: 20,
+            maxSearched: 200,
+        });
+        try {
+            await ui._onSimulate();
+            expect(find).toHaveBeenCalledTimes(1);
+            expect(ui._maxLevelByMonster['/monsters/mimic']).toBeUndefined();
+        } finally {
+            find.mockRestore();
+            ui._labyFindMaxMode = false;
+        }
+    });
+
+    test('editing the build forgets the Find Max levels searched for the old one', () => {
+        game.editedDTOs = { p1: { abilities: [{ level: 1 }] } };
+        ui._editorEditSig = null;
+        ui._checkEditorEdited();
+        ui._maxLevelByMonster['/monsters/mimic'] = 145;
+        game.editedDTOs = { p1: { abilities: [{ level: 2 }] } };
+        expect(ui._checkEditorEdited()).toBe(true);
+        expect(ui._maxLevelByMonster).toEqual({});
+        game.editedDTOs = null;
+    });
+
+    test('Find Max recommends a negative skip when the cleared room is below the combat level', () => {
+        // The mocked effective combat level is 100: 80 - 100 + 1
+        ui._displayFindMaxResults(
+            { cleared: true, maxLevel: 80, winRate: 0.9, threshold: 0.9, steps: 3, minLevel: 20, maxSearched: 200 },
+            '/monsters/mimic',
+            Date.now()
+        );
+        expect(ui.panel.querySelector('#mwi-labsim-results').textContent).toContain('Recommended skip: -19');
+    });
+
+    test('Find Max quotes XP/hr for the crates it simmed with', () => {
+        game.xpCalls.length = 0;
+        ui._displayFindMaxResults(
+            {
+                cleared: true,
+                maxLevel: 145,
+                winRate: 0.9,
+                avgFightSeconds: 30,
+                threshold: 0.9,
+                steps: 3,
+                minLevel: 20,
+                maxSearched: 200,
+            },
+            '/monsters/mimic',
+            Date.now(),
+            ['/items/wisdom_crate']
+        );
+        expect(game.xpCalls.at(-1)[3]).toEqual(['/items/wisdom_crate']);
     });
 
     test('and the Configure box is still exactly what Configure value means', async () => {

@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
     gameData: null,
     imported: null,
     revenueTaxRates: [],
+    priceSeeds: [],
+    revenueCaches: [],
     owned: [],
     /** Replaces the template tuner's answer, when a test sets it */
     tune: null,
@@ -72,6 +74,10 @@ vi.mock('../../utils/csv-export.js', () => ({
     },
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
+    seedSimPriceCache: (cache, _gameData, options) => {
+        state.priceSeeds.push({ cache, options });
+        return cache;
+    },
     buildGameDataPayload: () => state.gameData,
     buildPlayerDTO: () => (state.selfDTO ? structuredClone(state.selfDTO) : null),
     getCombatZones: () => state.zones,
@@ -84,6 +90,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
     }),
     calculateSimRevenue: (sim, _gameData, playerHrid, hours, options = {}) => {
         state.revenueTaxRates.push(options.saleTaxRate);
+        state.revenueCaches.push(options.priceCache);
         return {
             netPerHour: (sim.__profit?.[playerHrid] ?? 0) / hours,
             dropEntries: [],
@@ -125,7 +132,7 @@ vi.mock('./all-zones-runner.js', () => ({
     },
 }));
 
-const { PartyFinderTab, displayNames } = await import('./party-finder-ui.js');
+const { PartyFinderTab, displayNames, unpricedMark } = await import('./party-finder-ui.js');
 const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 const { PARTY_TEMPLATES, templateTeammateName } = await import('./party-templates.js');
 
@@ -273,6 +280,8 @@ beforeEach(() => {
     state.selfDTO = build(90);
     state.imported = null;
     state.revenueTaxRates = [];
+    state.priceSeeds = [];
+    state.revenueCaches = [];
     state.owned = [];
     state.gameData = {
         itemDetailMap: {
@@ -462,6 +471,31 @@ describe('every way a search can end', () => {
         expect(state.calls[0].params.zones).toHaveLength(2);
         tab.stop();
         await flush();
+    });
+
+    test('one frozen set of quotes values the quick pass and the re-run alike (#651 T01)', async () => {
+        seedRoster([
+            ['a', 'Ann', build(80)],
+            ['b', 'Bob', build(100, '/items/blazing_trident')],
+        ]);
+        await mountTab();
+        el('top-k').value = '1';
+        tab.start();
+        await flush();
+
+        // Taken before the first simulation was even handed out, for the zone searched
+        expect(state.priceSeeds).toHaveLength(1);
+        expect(state.priceSeeds[0].cache).toBeInstanceOf(Map);
+        expect(state.priceSeeds[0].options.zoneHrid).toBe(ZONE.hrid);
+        expect(state.calls).toHaveLength(1);
+
+        await finishPass((_zone, index) => [sim(1000, 100), sim(1200, 150), sim(800, 50), sim(1500, 90)][index]);
+        await finishPass((_zone, index) => [sim(1000, 100, { hours: 10 }), sim(1400, 80, { hours: 10 })][index]);
+
+        // Every row of both passes read the one cache, so a refresh between them cannot reorder the parties
+        expect(state.revenueCaches.length).toBeGreaterThanOrEqual(6);
+        expect(new Set(state.revenueCaches).size).toBe(1);
+        expect(state.revenueCaches[0]).toBe(state.priceSeeds[0].cache);
     });
 
     test('a full run: quick pass, then the best re-run at full hours; worse than solo is red', async () => {
@@ -1487,6 +1521,17 @@ describe('saved builds', () => {
             expect(state.db.entries).toHaveLength(2);
         });
 
+        test('an aborted match (prices moved twice, a character switch) does not claim only the character changed', async () => {
+            await mountTab();
+            toggle().click();
+            state.tune = async (template) => tuned(template, { status: 'aborted', k: null });
+            add(t().id);
+            await flush();
+            const text = tab.root.querySelector('[data-pf-template-score]').textContent;
+            expect(text).toMatch(/prices/);
+            expect(text).toMatch(/standard template/);
+        });
+
         test('a build the template cannot reach says which way it is clamped', async () => {
             await mountTab();
             toggle().click();
@@ -1753,5 +1798,21 @@ describe('saved builds', () => {
         const text = el('plan').textContent;
         expect(text).toMatch(/over the/);
         expect(text).not.toMatch(/no aura of yours/);
+    });
+});
+
+describe('the mark on a profit built from unpriced items (#651 T02)', () => {
+    test('a drop left out makes the figure a floor, an expense left out a ceiling, both neither', () => {
+        expect(unpricedMark({ unpriced: [] })).toBe('');
+        expect(unpricedMark(undefined)).toBe('');
+        expect(unpricedMark({ unpriced: ['Gem'], unpricedCost: [] })).toContain('\u2265');
+        expect(unpricedMark({ unpriced: ['Gem'], unpricedCost: [] })).toContain('lower bound');
+        expect(unpricedMark({ unpriced: ['Coffee'], unpricedCost: ['Coffee'] })).toContain('\u2264');
+        expect(unpricedMark({ unpriced: ['Coffee'], unpricedCost: ['Coffee'] })).toContain('upper bound');
+        const both = unpricedMark({ unpriced: ['Gem', 'Coffee'], unpricedCost: ['Coffee'] });
+        expect(both).toContain('>?<');
+        expect(both).toContain('Gem, Coffee');
+        // A row read before the cost list existed keeps the floor it always showed
+        expect(unpricedMark({ unpriced: ['Gem'] })).toContain('\u2265');
     });
 });

@@ -868,6 +868,23 @@ describe('the community buffs the server is running reach a labyrinth room', () 
         expect(labyrinthClearRate.getCombatExperienceBonus()).toBeCloseTo(0.7, 10);
     });
 
+    test('a simulated context counts its own crates and community level, not the live ones', () => {
+        community.levels['/community_buff_types/experience'] = 0;
+        dataManagerMock.getInitClientData.mockReturnValue({
+            labyrinthCrateDetailMap: {
+                '/items/wisdom_crate': [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.1, ratioBoost: 0.05 }],
+                '/items/other_crate': [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.3 }],
+            },
+        });
+        expect(labyrinthClearRate.getCombatExperienceBonus(['/items/wisdom_crate', '/items/other_crate'])).toBeCloseTo(
+            0.15,
+            10
+        );
+        expect(labyrinthClearRate.getCombatExperienceBonus([])).toBe(0);
+        // 0.2 + 10 × 0.005 for a simulated level 11 while the live level is 0
+        expect(labyrinthClearRate.getCombatExperienceBonus([], 11)).toBeCloseTo(0.25, 10);
+    });
+
     test('a fight with no buff running is still only its labyrinth upgrade', () => {
         expect(labyrinthClearRate.getCombatExperienceBonus()).toBe(0);
     });
