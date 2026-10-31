@@ -84,6 +84,9 @@ function buildKey(inputs) {
     // The worker explicitly removes these in labyrinth mode; crate buffs replace them.
     delete playerDTO.food;
     delete playerDTO.drinks;
+    // The worker clears scrolls for labyrinth fights too, so swapping one mid-session
+    // must not split otherwise identical fights into separate cohorts.
+    delete playerDTO.scrollBuffs;
     // These support the skilling simulator or build editor. The combat worker
     // consumes neither tokenUpgrades nor these level maps: shared community
     // buffs arrive separately, and guildCombatBuffs already carries the resolved
