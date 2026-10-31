@@ -2839,7 +2839,7 @@ export const settingsGroups = {
                 label: 'Labyrinth: Show grid size control',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a - / + control to the Labyrinth header row that enlarges the room grid',
+                help: 'Adds a - / + control that enlarges the room grid: in the labyrinth toolbar gear panel, or in the Labyrinth header row when the room calculator is off',
             },
             labyrinthGridScale: {
                 id: 'labyrinthGridScale',
@@ -2849,7 +2849,7 @@ export const settingsGroups = {
                 min: 1,
                 max: 2,
                 step: 0.25,
-                help: 'Scale of the Labyrinth room grid. Also adjustable with the - / + control on the Labyrinth panel',
+                help: 'Scale of the Labyrinth room grid. Also adjustable with the - / + control (the labyrinth toolbar gear panel)',
             },
             labyrinthMonsterStatCheck: {
                 id: 'labyrinthMonsterStatCheck',
@@ -2951,6 +2951,16 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Beacons the beacon planner places on the floor in view, sited to cover a revealed path to the exit first, a second independent route next, and the most rooms with what is left — 0 uses the fewest that cover a path, which every new floor resets to',
             },
+            labyrinthBeaconPlanFor: {
+                id: 'labyrinthBeaconPlanFor',
+                label: 'Labyrinth: Beacons to plan for the floor',
+                type: 'number',
+                default: 0,
+                min: 0,
+                max: 20,
+                step: 1,
+                help: 'Plan for this many beacons on the floor in all while placing only the beacon count now: the plan is ordered so the beacons placed first are the best start toward the full set, and the rest are drawn dashed as "later" — 0 plans only the beacons placed now',
+            },
             labyrinthRoomDistribution: {
                 id: 'labyrinthRoomDistribution',
                 label: 'Labyrinth: Show clear chance distribution button',
@@ -3011,6 +3021,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Automatically calculates clear chances for newly revealed labyrinth tiles without clicking Calc Tiles',
+            },
+            labyrinthAutoPath: {
+                id: 'labyrinthAutoPath',
+                label: 'Labyrinth: Auto-path after a beacon',
+                type: 'checkbox',
+                default: true,
+                help: 'Works out the labyrinth path after a beacon reveals rooms on the floor, whether or not a path is shown yet (once per reveal, after any room calculation it triggers)',
             },
             combatBattleCounter: {
                 id: 'combatBattleCounter',

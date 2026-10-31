@@ -175,6 +175,7 @@ vi.mock('../../core/storage.js', () => ({
 }));
 
 const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js');
+const { isBeaconReveal } = await import('./labyrinth-supplies.js');
 const { clampPrecisionPct } = await import('./labyrinth-sim-cache.js');
 const { default: configMock } = await import('../../core/config.js');
 const { COMBAT_CACHE_STORAGE_VERSION } = await import('./labyrinth-sim-cache.js');
@@ -1740,6 +1741,241 @@ describe('planning against the supplies actually held', () => {
 
         expect(status.textContent).not.toContain('owned');
         expect(document.querySelectorAll('[data-beacon-center="1"]')).toHaveLength(4);
+    });
+
+    describe('planning for more beacons than are placed now', () => {
+        const planForInput = (value) => {
+            const input = document.createElement('input');
+            input.className = 'mwi-labyrinth-tile-controls-beacon-plan-for';
+            input.value = String(value);
+            document.body.appendChild(input);
+            return input;
+        };
+        const labels = () =>
+            [...document.querySelectorAll('[data-beacon-center="1"]')].map((el) => el.textContent).sort();
+        const drawn = () => document.querySelectorAll('.LabyrinthPanel_roomCell_abc');
+        const reveal = (cellIdxs, side) => {
+            for (const i of cellIdxs) {
+                labyrinthClearRate.roomData[Math.floor(i / side)][i % side] = {
+                    roomType: '/labyrinth_room_types/combat',
+                };
+            }
+        };
+
+        beforeEach(() => {
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 9)];
+            labyrinthClearRate._stagedBeaconPlan = null;
+        });
+
+        test('plan-for equal to the count draws exactly what no plan-for draws', () => {
+            const status = buildGrid(7);
+            beaconInput(2);
+            labyrinthClearRate.runBeaconCalculation();
+            const before = { status: status.textContent, html: [...drawn()].map((c) => c.innerHTML) };
+
+            const status2 = buildGrid(7);
+            beaconInput(2);
+            planForInput(2);
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status2.textContent).toBe(before.status);
+            expect([...drawn()].map((c) => c.innerHTML)).toEqual(before.html);
+            expect(document.querySelectorAll('[data-beacon-later]')).toHaveLength(0);
+        });
+
+        test('plan-for equal to the count is the ordinary plan even when the bag clamps the count', () => {
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 3)];
+            const status = buildGrid(7);
+            beaconInput(4);
+            labyrinthClearRate.runBeaconCalculation();
+            const before = { status: status.textContent, html: [...drawn()].map((c) => c.innerHTML) };
+
+            const status2 = buildGrid(7);
+            beaconInput(4);
+            planForInput(4);
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status2.textContent).toBe(before.status);
+            expect(status2.textContent).toContain('(4 set / 3 left this run)');
+            expect([...drawn()].map((c) => c.innerHTML)).toEqual(before.html);
+            expect(document.querySelectorAll('[data-beacon-later]')).toHaveLength(0);
+        });
+
+        test('two now of five draws all five, the last three dashed as later', () => {
+            const status = buildGrid(7);
+            beaconInput(2);
+            planForInput(5);
+
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(labels()).toEqual(['B1', 'B2', 'B3', 'B4', 'B5']);
+            const later = [...document.querySelectorAll('[data-beacon-center="1"][data-beacon-later="1"]')];
+            expect(later.map((el) => el.textContent).sort()).toEqual(['B3', 'B4', 'B5']);
+            expect(later[0].style.borderStyle).toBe('dashed');
+            expect(later[0].firstChild.title).toContain('Later');
+            const now = document.querySelector('[data-beacon-center="1"]:not([data-beacon-later])');
+            expect(now.firstChild.title).toContain('Place now');
+            expect(status.textContent).toContain('Beacons: 2 now of 5 planned');
+            expect(status.textContent).toContain('B3–B5 later');
+            expect(status.textContent).toMatch(/reveals \d+ new rooms now, \d+ with all/);
+            expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(5);
+        });
+
+        test('the supply check is against the beacons placed now, not the whole plan', () => {
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 2)];
+            const status = buildGrid(7);
+            beaconInput(2);
+            planForInput(5);
+
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status.textContent).not.toContain('left this run');
+            expect(status.style.color).toBe('');
+        });
+
+        test('a plan-for field past the ceiling is clamped to 20', () => {
+            buildGrid(5);
+            beaconInput(1);
+            const input = planForInput(99);
+
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(input.value).toBe('20');
+            expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(20);
+        });
+
+        test('re-planning after B1 and B2 are revealed continues the same plan as B3 onward', () => {
+            buildGrid(7);
+            beaconInput(2);
+            planForInput(5);
+            labyrinthClearRate.runBeaconCalculation();
+            const centers = labyrinthClearRate._stagedBeaconPlan.all;
+            for (const c of centers.slice(0, 2)) reveal(c.watch, 7);
+
+            const status = document.querySelector('.mwi-labyrinth-tile-controls-status');
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status.textContent).toContain('Continuing the 5-beacon plan (2 used)');
+            expect(labels()).toEqual(['B3', 'B4', 'B5']);
+            expect(labyrinthClearRate._stagedBeaconPlan.all.map((c) => c.idx)).toEqual(
+                centers.slice(2).map((c) => c.idx)
+            );
+        });
+
+        test('lowering plan-for after three are used redraws for the new total, never the old B6', () => {
+            const status = buildGrid(7);
+            beaconInput(0);
+            const input = planForInput(6);
+            labyrinthClearRate.runBeaconCalculation();
+            expect(labels()).toContain('B6');
+            for (const c of labyrinthClearRate._stagedBeaconPlan.all.slice(0, 3)) reveal(c.watch, 7);
+
+            input.value = '5';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(labels()).not.toContain('B6');
+            expect(labels()[0]).toBe('B4');
+            expect(status.textContent).not.toContain('B6');
+            expect(labyrinthClearRate._stagedBeaconPlan.planFor).toBe(5);
+        });
+
+        test('beacons used from an ordinary plan still count when plan-for is raised on the same floor', () => {
+            const status = buildGrid(7);
+            beaconInput(2);
+            const input = planForInput(0);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._beaconPlanCells.centers) reveal(c.watch, 7);
+
+            input.value = '5';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(labels()[0]).toBe('B3');
+            expect(labels()).not.toContain('B1');
+            expect(status.textContent).toContain('B3–B5 later');
+        });
+
+        test('plan-for lowered to the beacons used, then raised again, still counts them', () => {
+            buildGrid(7);
+            beaconInput(0);
+            const input = planForInput(6);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._stagedBeaconPlan.all.slice(0, 3)) reveal(c.watch, 7);
+
+            input.value = '3';
+            labyrinthClearRate.runBeaconCalculation();
+            input.value = '6';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(labels()[0]).toBe('B4');
+            expect(labyrinthClearRate._stagedBeaconPlan.placedBefore).toBe(3);
+        });
+
+        // An 8x8 floor (floor 5 and up) is what a live run beacons on
+        test('a beacon used out of a bag-clamped count still leaves the next one to place now', () => {
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 2)];
+            const status = buildGrid(8);
+            beaconInput(2);
+            planForInput(5);
+            labyrinthClearRate.runBeaconCalculation();
+            expect(status.textContent).toContain('Beacons: 2 now of 5 planned');
+
+            // B1 goes down: its rooms are revealed and the bag holds one fewer
+            reveal(labyrinthClearRate._stagedBeaconPlan.all[0].watch, 8);
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 1)];
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status.textContent).toContain('Beacons: 1 now of 5 planned');
+            const now = [...document.querySelectorAll('[data-beacon-center="1"]:not([data-beacon-later])')];
+            expect(now.map((el) => el.textContent)).toEqual(['B2']);
+        });
+
+        test('another character on the same floor number and grid size does not inherit the used beacons', async () => {
+            const dm = await import('../../core/data-manager.js');
+            buildGrid(8);
+            beaconInput(0);
+            planForInput(5);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._stagedBeaconPlan.all.slice(0, 2)) reveal(c.watch, 8);
+
+            dm.default.getCurrentCharacterId.mockReturnValue('someone-else');
+            try {
+                labyrinthClearRate.runBeaconCalculation();
+                expect(labyrinthClearRate._stagedBeaconPlan.placedBefore).toBe(0);
+                expect(labels()).toContain('B1');
+                expect(document.querySelector('.mwi-labyrinth-tile-controls-status').textContent).not.toContain(
+                    'Continuing'
+                );
+            } finally {
+                dm.default.getCurrentCharacterId.mockReturnValue('me');
+            }
+        });
+
+        test('teardown drops the floor beacon record', () => {
+            buildGrid(8);
+            beaconInput(0);
+            planForInput(5);
+            labyrinthClearRate.runBeaconCalculation();
+            expect(labyrinthClearRate._stagedBeaconPlan).not.toBeNull();
+
+            labyrinthClearRate._teardown();
+
+            expect(labyrinthClearRate._stagedBeaconPlan).toBeNull();
+        });
+
+        test('the plan-for count is a standing setting a new floor keeps', () => {
+            buildGrid(7);
+            settings.map.set('labyrinthBeaconPlanFor', 5);
+            labyrinthClearRate.currentFloor = 3;
+
+            labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+            clearTimeout(labyrinthClearRate.pruneTileTimer);
+            clearTimeout(labyrinthClearRate.autoTileTimer);
+            labyrinthClearRate.pruneTileTimer = null;
+            labyrinthClearRate.autoTileTimer = null;
+
+            expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(5);
+            expect(labyrinthClearRate._stagedBeaconPlan).toBeNull();
+        });
     });
 });
 
@@ -3555,6 +3791,36 @@ describe('one calculate button, however often the strip is injected', () => {
         uncapped.click();
         expect(settings.map.get('labyrinthSimCaps')).toBe('capped');
         expect(uncapped.getAttribute('aria-pressed')).toBe('false');
+    });
+
+    test('the plan-for field sits beside the beacon count, reads its setting and never drops below the count', () => {
+        setAutoCalc(false);
+        settings.map.set('labyrinthBeaconPlanFor', 5);
+        labyrinthClearRate.injectTileControls();
+
+        const planFor = document.querySelector('.mwi-labyrinth-tile-controls-beacon-plan-for');
+        const count = document.querySelector('.mwi-labyrinth-tile-controls-beacon-count');
+        expect(planFor.value).toBe('5');
+        expect(planFor.parentElement).toBe(count.parentElement);
+
+        count.value = '3';
+        planFor.value = '2';
+        planFor.dispatchEvent(new Event('change'));
+        expect(planFor.value).toBe('3');
+        expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(3);
+
+        planFor.value = '0';
+        planFor.dispatchEvent(new Event('change'));
+        expect(settings.map.get('labyrinthBeaconPlanFor')).toBe(0);
+
+        // With a beacon plan on the map, a change redraws it for the new total
+        const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+        labyrinthClearRate._beaconPlanCells = { fills: [], centers: [] };
+        planFor.value = '5';
+        planFor.dispatchEvent(new Event('change'));
+        expect(run).toHaveBeenCalledTimes(1);
+        run.mockRestore();
+        labyrinthClearRate._beaconPlanCells = null;
     });
 });
 
@@ -6982,5 +7248,346 @@ describe('docked labyrinth toolbar placement', () => {
         findGrid.mockRestore();
         findHost.mockRestore();
         labyrinthClearRate.roomData = null;
+    });
+});
+
+/**
+ * Auto-path: a path shown on the map is worked out again by itself once a
+ * beacon reveals rooms, once per reveal burst.
+ */
+describe('auto-path after a beacon reveal', () => {
+    const revealedRoom = { roomType: '/labyrinth_room_types/combat' };
+    let pathSpy;
+    let tileSpy;
+
+    const setSettings = ({ autoPath = true } = {}) =>
+        configMock.getSetting.mockImplementation((key) => (key === 'labyrinthAutoPath' ? autoPath : false));
+
+    /** A labyrinth update for floor 3 with `revealed` rooms lit and `beacons` left in the run */
+    const update = (revealed, beacons, floor = 3) => {
+        const flat = Array.from({ length: 16 }, (_, i) => (i < revealed ? revealedRoom : null));
+        const roomData = [flat.slice(0, 4), flat.slice(4, 8), flat.slice(8, 12), flat.slice(12, 16)];
+        const labyrinth = { currentFloor: floor, roomData };
+        if (beacons != null) labyrinth.supplyItemCountMap = { '/items/advanced_beacon': beacons };
+        return { labyrinth };
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.innerHTML = '';
+        setSettings();
+        pathSpy = vi.spyOn(labyrinthClearRate, 'runPathCalculation').mockResolvedValue(undefined);
+        tileSpy = vi.spyOn(labyrinthClearRate, 'runTileCalculation').mockResolvedValue(undefined);
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate.pathCalcRunning = false;
+        labyrinthClearRate._pathQueued = false;
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate.onLabyrinthUpdated(update(1, 3));
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.cancelAutoPath();
+        clearTimeout(labyrinthClearRate.pruneTileTimer);
+        clearTimeout(labyrinthClearRate.autoTileTimer);
+        labyrinthClearRate.pruneTileTimer = null;
+        labyrinthClearRate.autoTileTimer = null;
+        pathSpy.mockRestore();
+        tileSpy.mockRestore();
+        vi.useRealTimers();
+        configMock.getSetting.mockImplementation(() => true);
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._labyrinth = null;
+        labyrinthClearRate._pathQueued = false;
+        document.body.innerHTML = '';
+    });
+
+    test('a beacon reveal re-paths once, however many updates the reveal arrives in', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.onLabyrinthUpdated(update(12, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('two beacons far enough apart re-path twice', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+        labyrinthClearRate.onLabyrinthUpdated(update(14, 1));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(2);
+    });
+
+    test('with the toggle off nothing runs', () => {
+        setSettings({ autoPath: false });
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('turned off while a re-path is pending, it does not run', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        setSettings({ autoPath: false });
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('with no path on the map yet, a beacon reveal still works one out', () => {
+        labyrinthClearRate.clearPathOverlays();
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('with no path on the map and Auto-path off, nothing runs', () => {
+        setSettings({ autoPath: false });
+        labyrinthClearRate.clearPathOverlays();
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a reveal that spent no beacon (a cleared room) does not re-path', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a room calculation in progress gets the path queued behind it, not run beside it', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
+
+    test('turning Auto-path off withdraws a path it already queued behind a room calculation', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+
+        // What the toggle does when switched off
+        setSettings({ autoPath: false });
+        labyrinthClearRate.cancelAutoPath();
+
+        // Nothing left for the calculation's completion to start
+        expect(labyrinthClearRate._pathQueued).toBe(false);
+    });
+
+    test('a Path press already queued is not withdrawn by Auto-path going off', () => {
+        labyrinthClearRate.tileCalcRunning = true;
+        labyrinthClearRate._pathQueued = true; // the press, waiting on the calculation
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        setSettings({ autoPath: false });
+        labyrinthClearRate.cancelAutoPath();
+
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
+
+    test('a Path press while Auto-path is waiting makes the wait its own', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        pathSpy.mockRestore();
+
+        labyrinthClearRate.runPathCalculation();
+        // Not read as the second press that cancels a wait...
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+        // ...and no longer Auto-path's to withdraw
+        labyrinthClearRate.cancelAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
+
+    test('cancelling the room calculation withdraws a pending re-path', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.tileCalcRunning = true;
+        labyrinthClearRate.cancelTileCalculation();
+        labyrinthClearRate.tileCalcRunning = false;
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a character switch before it fires drops it', async () => {
+        const dm = await import('../../core/data-manager.js');
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        dm.default.getCurrentCharacterId.mockReturnValue('someone-else');
+        vi.advanceTimersByTime(2000);
+        dm.default.getCurrentCharacterId.mockReturnValue('me');
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a new floor is not a reveal', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2, 4));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('isBeaconReveal: rooms revealed and a beacon spent; without the stock, two rooms at once', () => {
+        expect(isBeaconReveal({ revealed: 1, beacons: 3 }, { revealed: 9, beacons: 2 })).toBe(true);
+        expect(isBeaconReveal({ revealed: 1, beacons: 3 }, { revealed: 9, beacons: 3 })).toBe(false);
+        expect(isBeaconReveal({ revealed: 9, beacons: 3 }, { revealed: 9, beacons: 2 })).toBe(false);
+        expect(isBeaconReveal({ revealed: 1, beacons: null }, { revealed: 2, beacons: null })).toBe(false);
+        expect(isBeaconReveal({ revealed: 1, beacons: null }, { revealed: 3, beacons: 2 })).toBe(true);
+        expect(isBeaconReveal(null, { revealed: 3, beacons: 2 })).toBe(false);
+    });
+});
+
+describe('labyrinth toolbar layout', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        const parent = document.createElement('div');
+        for (let i = 0; i < 4; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(parent);
+        document.body.appendChild(wrapper);
+        labyrinthClearRate.roomData = [
+            [null, null],
+            [null, null],
+        ];
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate._tileControlsCollapsed = false;
+        configMock.getSetting.mockImplementation(
+            (key) => key === 'labyrinthRoomDistribution' || key === 'labyrinthGridScaleControl'
+        );
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.closeTileSettings();
+        labyrinthClearRate._detachTileControlsLayout?.();
+        labyrinthClearRate._detachTileControlsLayout = null;
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._tileControlsCollapsed = undefined;
+        configMock.getSetting.mockImplementation(() => true);
+        settings.map.clear();
+    });
+
+    const q = (suffix) => document.querySelector(`.mwi-labyrinth-tile-controls-${suffix}`);
+    const before = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const panel = () => q('settings-panel');
+    const open = () => panel().style.display !== 'none';
+
+    test('main row: Labyrinth, then Path, Beacons, Clear and the gear in clusters; row two the summary alone', () => {
+        labyrinthClearRate.injectTileControls();
+
+        const clusters = [...document.querySelectorAll('.mwi-labyrinth-tile-controls-cluster')];
+        expect(clusters).toHaveLength(4);
+        expect(clusters[0].contains(q('path-button'))).toBe(true);
+        expect(clusters[0].contains(q('path-unknown'))).toBe(true);
+        expect(clusters[1].contains(q('beacon-button'))).toBe(true);
+        expect(clusters[1].contains(q('beacon-plan-for'))).toBe(true);
+        expect(clusters[1].contains(q('beacon-auto'))).toBe(true);
+        expect(clusters[2].contains(q('clear-button'))).toBe(true);
+        expect(clusters[3].contains(q('settings-button'))).toBe(true);
+        expect(before(q('toggle'), clusters[0])).toBe(true);
+
+        // Row two is the summary and the bar; the toggles are in the panel
+        const rowBreak = q('row-break');
+        expect(before(clusters[3], rowBreak)).toBe(true);
+        expect(before(rowBreak, q('status'))).toBe(true);
+        expect(before(q('status'), q('bar'))).toBe(true);
+        expect(rowBreak.parentElement.contains(q('auto-toggle'))).toBe(true);
+        expect(panel().contains(q('auto-toggle'))).toBe(true);
+    });
+
+    test('the gear panel holds precision, Uncapped, Size, the auto toggles and Spread last', () => {
+        labyrinthClearRate.injectTileControls();
+        const p = panel();
+
+        for (const suffix of ['precision', 'uncapped', 'auto-toggle', 'auto-path-toggle']) {
+            expect(p.contains(q(suffix))).toBe(true);
+        }
+        expect(p.querySelector('.mwi-labyrinth-grid-scale')).not.toBeNull();
+        expect(p.lastElementChild.textContent).toBe('Spread');
+        expect(p.lastElementChild.title).toContain('Histogram');
+        // Nothing of it on the main row (the gear's cluster holds the panel itself)
+        expect(
+            [...document.querySelectorAll('.mwi-labyrinth-tile-controls-cluster')]
+                .slice(0, 3)
+                .some((c) => c.textContent.includes('Spread'))
+        ).toBe(false);
+    });
+
+    test('the gear opens and closes the panel; a second press, Esc and an outside click all close it', () => {
+        labyrinthClearRate.injectTileControls();
+        const gear = q('settings-button');
+        expect(open()).toBe(false);
+        expect(gear.getAttribute('aria-expanded')).toBe('false');
+
+        gear.click();
+        expect(open()).toBe(true);
+        expect(gear.getAttribute('aria-expanded')).toBe('true');
+        gear.click();
+        expect(open()).toBe(false);
+
+        gear.click();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(open()).toBe(false);
+
+        gear.click();
+        // A press inside the panel keeps it open
+        q('precision').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(open()).toBe(true);
+        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(open()).toBe(false);
+    });
+
+    test('the moved controls work from inside the panel', () => {
+        labyrinthClearRate.injectTileControls();
+        q('settings-button').click();
+
+        const autoPath = q('auto-path-toggle');
+        expect(autoPath.textContent).toBe('Enable auto-path');
+        autoPath.click();
+        expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthAutoPath', true);
+
+        const size = panel().querySelector('.mwi-labyrinth-grid-scale');
+        size.querySelector('[data-role="larger"]').click();
+        expect(settings.map.get('labyrinthGridScale')).toBe(1.25);
+
+        const uncapped = q('uncapped');
+        uncapped.click();
+        expect(settings.map.get('labyrinthSimCaps')).toBe('precision');
+    });
+
+    test('collapsing the bar closes the panel and hides the gear with the rest', () => {
+        labyrinthClearRate.injectTileControls();
+        q('settings-button').click();
+        expect(open()).toBe(true);
+
+        q('toggle').click();
+
+        expect(open()).toBe(false);
+        expect(
+            q('settings-button').closest('span[style*="display: none"], span[style*="display:none"]')
+        ).not.toBeNull();
+    });
+
+    test('the panel is placed on screen under the gear', () => {
+        labyrinthClearRate.injectTileControls();
+        const gear = q('settings-button');
+        vi.spyOn(gear, 'getBoundingClientRect').mockReturnValue({ left: 2, right: 24, top: 10, bottom: 30 });
+        Object.defineProperty(panel(), 'offsetWidth', { configurable: true, value: 200 });
+
+        gear.click();
+
+        expect(panel().style.top).toBe('34px');
+        expect(Number.parseFloat(panel().style.left)).toBeGreaterThanOrEqual(8);
     });
 });

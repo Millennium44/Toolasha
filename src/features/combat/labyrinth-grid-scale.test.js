@@ -43,7 +43,8 @@ vi.mock('../../core/dom-observer.js', () => ({
 
 const { default: config } = await import('../../core/config.js');
 const { default: domObserver } = await import('../../core/dom-observer.js');
-const { initialize, cleanup, injectControl, normalizeScale } = await import('./labyrinth-grid-scale.js');
+const { initialize, cleanup, injectControl, normalizeScale, createScaleControl } =
+    await import('./labyrinth-grid-scale.js');
 
 function renderHeader() {
     document.body.innerHTML = `
@@ -59,6 +60,8 @@ beforeEach(() => {
     config.settingsMap = {
         labyrinthGridScale: { id: 'labyrinthGridScale', type: 'slider', value: 1 },
         labyrinthGridScaleControl: { id: 'labyrinthGridScaleControl', type: 'checkbox', isTrue: true },
+        // Off by default here: with the room calculator on, its toolbar holds the stepper instead
+        labyrinthClearRate: { id: 'labyrinthClearRate', type: 'checkbox', isTrue: false },
     };
     config.settingChangeCallbacks = {};
     config.characterSettingsLoaded = true;
@@ -182,6 +185,41 @@ describe('labyrinth grid scale', () => {
         // A later slider change no longer touches the page
         config.setSettingValue('labyrinthGridScale', 2);
         expect(styleText()).toBeNull();
+    });
+
+    test('with the room calculator on, the header gets no stepper: the toolbar carries it', () => {
+        config.settingsMap.labyrinthClearRate.isTrue = true;
+        renderHeader();
+        initialize();
+
+        expect(document.querySelector('.mwi-labyrinth-grid-scale')).toBeNull();
+    });
+
+    test('turning the room calculator on removes the header stepper and leaves a toolbar one alone', () => {
+        const header = renderHeader();
+        initialize();
+        const toolbarCopy = createScaleControl();
+        document.body.appendChild(toolbarCopy);
+        expect(header.querySelector('.mwi-labyrinth-grid-scale')).not.toBeNull();
+
+        config.setSetting('labyrinthClearRate', true);
+
+        expect(header.querySelector('.mwi-labyrinth-grid-scale')).toBeNull();
+        expect(toolbarCopy.isConnected).toBe(true);
+    });
+
+    test('a stepper built for the toolbar steps the size and applies the zoom', () => {
+        config.settingsMap.labyrinthClearRate.isTrue = true;
+        initialize();
+        const control = createScaleControl();
+        document.body.appendChild(control);
+        expect(control.querySelector('[data-role="value"]').textContent).toBe('100%');
+
+        control.querySelector('[data-role="larger"]').click();
+
+        expect(config.getSettingValue('labyrinthGridScale')).toBe(1.25);
+        expect(control.querySelector('[data-role="value"]').textContent).toBe('125%');
+        expect(styleText()).toContain('zoom: 1.25');
     });
 
     test('re-initializing does not stack listeners', () => {

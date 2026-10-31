@@ -55,6 +55,9 @@ import {
     computeApproachPath,
     countDisjointRoutes,
     computeBeaconPlan,
+    stageBeaconPlan,
+    beaconsUsedOnFloor,
+    BEACON_PLAN_FOR_MAX,
 } from './labyrinth-pathing.js';
 import { parseLabyrinthActionName, monsterHridByName, liveClearDisplay } from './labyrinth-live-readout.js';
 import {
@@ -70,6 +73,7 @@ import {
     estimateRestockCost,
     restockCandidates,
     remainingWord,
+    isBeaconReveal,
 } from './labyrinth-supplies.js';
 import { outcomeMethods } from './labyrinth-outcomes.js';
 import {
@@ -86,6 +90,7 @@ import {
     refreshRoomDistribution,
     destroyRoomDistribution,
 } from './labyrinth-room-distribution.js';
+import { createScaleControl } from './labyrinth-grid-scale.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 
@@ -150,6 +155,9 @@ const LIVE_SIM_REFRESH_MS = 4000;
 const LIVE_SIM_MAX_AGE_MS = 30000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
+/** Wait after a beacon reveal before re-pathing, so the reveal's burst of updates (and the auto-calc it schedules) lands first */
+const AUTO_PATH_DELAY_MS = 900;
+
 /** The room tooltips' headline row: one label, so the combat and skilling cards match */
 const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
@@ -646,6 +654,7 @@ class LabyrinthClearRate {
             document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
             this._detachTileControlsLayout?.();
             this._detachTileControlsLayout = null;
+            this.closeTileSettings();
             document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
             if (this.autoTileTimer) {
                 clearTimeout(this.autoTileTimer);
@@ -671,8 +680,10 @@ class LabyrinthClearRate {
             document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
             this.clearPathOverlays();
             this.clearBeaconOverlays();
+            this.cancelAutoPath();
             this.pathCalcRunning = false;
             this._pathQueued = false;
+            this._pathQueuedAuto = false;
             pruneEmptyAnnotationContainers();
 
             if (this._editClickHandler) {
@@ -694,6 +705,8 @@ class LabyrinthClearRate {
             this._labyrinth = null;
             this._pathData = null;
             this.currentFloor = 0;
+            // The floor's beacon record (plan, used count) is this character's
+            this._stagedBeaconPlan = null;
             this.combatCache.clear();
             this._combatCacheMeta.clear();
             this._combatCacheLoaded = false;
@@ -867,6 +880,9 @@ class LabyrinthClearRate {
         // ended) — same reasoning as `injectOverlays`, for the update that
         // carries no roomData and so never reaches it
         this.hidePreview();
+        // What the floor looked like before this message, for telling a beacon
+        // reveal (rooms revealed, a beacon spent) from any other update
+        const before = this.roomData ? this.revealSnapshot(this.roomData, this._labyrinth) : null;
         // Kept whole, not just the grid: the run's supply stock rides this
         // message, and the readout has to be able to look for it
         this._labyrinth = data.labyrinth ?? null;
@@ -883,6 +899,8 @@ class LabyrinthClearRate {
             if (previousFloor !== this.currentFloor) {
                 this.clearPathOverlays();
                 this.clearBeaconOverlays();
+                this._stagedBeaconPlan = null;
+                this.cancelAutoPath();
                 // A beacon count was chosen for the floor that just ended; the
                 // next one starts back on the automatic minimum
                 this.resetBeaconCountToAuto();
@@ -907,6 +925,7 @@ class LabyrinthClearRate {
                 if (this.tileCalcRunning) {
                     this.tileCalcRunning = false;
                     this._pathQueued = false;
+                    this._pathQueuedAuto = false;
                     this.setPathButtonRunning(false);
                     this.syncTileCalcButton();
                 }
@@ -930,6 +949,10 @@ class LabyrinthClearRate {
 
             // Auto-calc newly revealed tiles when enabled (off by default)
             this.scheduleAutoTileCalc();
+            if (before && previousFloor === this.currentFloor) {
+                const after = this.revealSnapshot(roomData, data.labyrinth);
+                if (isBeaconReveal(before, after)) this.scheduleAutoPath();
+            }
         } else {
             // No grid in this message (a run ending): an open distribution panel
             // must redraw from the no-floor state rather than keep the last floor
@@ -3098,6 +3121,8 @@ class LabyrinthClearRate {
 
         this._detachTileControlsLayout?.();
         this._detachTileControlsLayout = null;
+        // A panel left open on the bar being replaced goes with it
+        this.closeTileSettings();
         const container = document.createElement('div');
         container.className = TILE_CONTROLS_CLASS;
         container.style.cssText =
@@ -3115,8 +3140,35 @@ class LabyrinthClearRate {
             g.style.cssText =
                 'display:inline-flex; align-items:center; gap:4px; flex-wrap:wrap; min-width:0; max-width:100%;';
             els.forEach((el) => g.appendChild(el));
-            container.appendChild(g);
+            groupParent.appendChild(g);
             return g;
+        };
+        // Related controls sit together in clusters with a thin divider before
+        // each: [Labyrinth] {Path, Clear >=, ? mode} {Beacons, count, plan for,
+        // reset} {Clear} [gear]. A cluster wraps as a unit where it can and
+        // inside itself where it has to. The less-used controls (precision,
+        // Uncapped, grid size, the auto toggles, Spread) live in the gear's panel.
+        const settingsPanel = document.createElement('div');
+        settingsPanel.className = `${TILE_CONTROLS_CLASS}-settings-panel`;
+        settingsPanel.setAttribute('role', 'dialog');
+        settingsPanel.setAttribute('aria-label', 'Labyrinth settings');
+        settingsPanel.style.cssText =
+            'display:none; position:fixed; z-index:' +
+            config.Z_FLOATING_PANEL +
+            '; flex-direction:column; align-items:flex-start; gap:6px; padding:8px; ' +
+            'max-width:calc(100vw - 16px); box-sizing:border-box; border-radius:6px; ' +
+            'background:rgba(14,20,32,0.97); color:#f0f4ff; box-shadow:0 4px 14px rgba(0,0,0,0.45); ' +
+            'border:1px solid rgba(150,190,255,0.3);';
+        let groupParent = settingsPanel;
+        const cluster = () => {
+            const c = document.createElement('span');
+            c.className = `${TILE_CONTROLS_CLASS}-cluster`;
+            c.style.cssText =
+                'display:inline-flex; align-items:center; gap:4px 6px; flex-wrap:wrap; min-width:0; max-width:100%; ' +
+                'padding-left:6px; border-left:1px solid rgba(255,255,255,0.22);';
+            container.appendChild(c);
+            groupParent = c;
+            return c;
         };
 
         const precisionLabel = document.createElement('span');
@@ -3228,6 +3280,7 @@ class LabyrinthClearRate {
         unknownSelect.addEventListener('change', () => {
             config.setSettingValue('labyrinthPathUnknownMode', unknownSelect.value);
         });
+        cluster();
         group(pathButton, pathLabel, pathInput, unknownSelect);
 
         const beaconButton = document.createElement('button');
@@ -3268,8 +3321,40 @@ class LabyrinthClearRate {
             'width:20px; height:20px; padding:0; border:0; border-radius:5px; background:rgba(29,158,131,0.6); ' +
             'color:#fff; font-size:12px; font-weight:700; line-height:1; cursor:pointer;';
         beaconAutoButton.addEventListener('click', () => this.resetBeaconCountToAuto(true));
-        group(beaconButton, beaconInput, beaconAutoButton);
 
+        // How many beacons the floor gets in all, when only some go down now:
+        // the plan is made for this many and ordered so the first ones placed
+        // are the best start toward it. A standing habit, so a new floor keeps it.
+        const planForLabel = document.createElement('span');
+        planForLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
+        planForLabel.textContent = 'of';
+        const planForInput = document.createElement('input');
+        planForInput.className = `${TILE_CONTROLS_CLASS}-beacon-plan-for`;
+        planForInput.type = 'number';
+        planForInput.min = '0';
+        planForInput.max = String(BEACON_PLAN_FOR_MAX);
+        planForInput.step = '1';
+        planForInput.value = String(config.getSettingValue('labyrinthBeaconPlanFor', 0));
+        planForInput.title = planForLabel.title =
+            'Plan for this many beacons on the floor in all, and place the best start toward them now — ' +
+            'the rest are drawn dashed as "later". 0 plans only the beacons placed now.';
+        planForInput.style.cssText = precisionInput.style.cssText;
+        planForInput.addEventListener('change', () => {
+            let n = Math.min(BEACON_PLAN_FOR_MAX, Math.max(0, Math.floor(Number(planForInput.value) || 0)));
+            // Never fewer than the beacons placed now; that would just be the ordinary plan
+            const placing = Math.max(0, Math.floor(Number(beaconInput.value) || 0));
+            if (n > 0 && n < placing) n = placing;
+            planForInput.value = String(n);
+            config.setSettingValue('labyrinthBeaconPlanFor', n);
+            // A plan on the map was made for the old total; redraw it for the
+            // new one so the labels and the status agree with the field
+            const staged = this._stagedBeaconPlan;
+            if (this._beaconPlanCells || staged?.floor === this.currentFloor) this.runBeaconCalculation();
+        });
+        cluster();
+        group(beaconButton, beaconInput, planForLabel, planForInput, beaconAutoButton);
+
+        let spreadButton = null;
         if (config.getSetting('labyrinthRoomDistribution')) {
             const distributionButton = document.createElement('button');
             distributionButton.className = `-distribution-button`;
@@ -3282,7 +3367,8 @@ class LabyrinthClearRate {
             distributionButton.addEventListener('click', () =>
                 toggleRoomDistribution(() => this.roomDistributionFloor())
             );
-            group(distributionButton);
+            // An action rather than a setting, so it closes the gear panel's list
+            spreadButton = distributionButton;
         }
 
         const clearButton = document.createElement('button');
@@ -3293,11 +3379,34 @@ class LabyrinthClearRate {
             'min-width:44px; padding:0 10px; height:20px; border:0; border-radius:5px; background:rgba(120,134,160,0.85); ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
         clearButton.addEventListener('click', () => this.clearRecommendations());
-        container.appendChild(clearButton);
+        cluster().appendChild(clearButton);
+
+        // The gear: opens the panel of less-used controls under it
+        const settingsButton = document.createElement('button');
+        settingsButton.type = 'button';
+        settingsButton.className = `${TILE_CONTROLS_CLASS}-settings-button`;
+        settingsButton.textContent = '⚙';
+        settingsButton.title = 'Labyrinth settings: precision, grid size, auto-calc, auto-path, spread';
+        settingsButton.setAttribute('aria-label', 'Labyrinth settings');
+        settingsButton.setAttribute('aria-haspopup', 'dialog');
+        settingsButton.setAttribute('aria-expanded', 'false');
+        settingsButton.style.cssText =
+            'width:22px; height:20px; padding:0; border:0; border-radius:5px; background:rgba(120,134,160,0.85); ' +
+            'color:#fff; font-size:13px; line-height:1; cursor:pointer;';
+        settingsButton.addEventListener('click', () => this.toggleTileSettings());
+        const gear = cluster();
+        gear.append(settingsButton, settingsPanel);
+
+        // Row two: the latest summary (the path's rooms and shrouds, a beacon
+        // plan) on a line of its own
+        const rowBreak = document.createElement('span');
+        rowBreak.className = `${TILE_CONTROLS_CLASS}-row-break`;
+        rowBreak.style.cssText = 'flex-basis:100%; height:0;';
+        container.appendChild(rowBreak);
 
         const status = document.createElement('span');
         status.className = `${TILE_CONTROLS_CLASS}-status`;
-        status.style.cssText = 'font-size:10px; color:#9ab0d8; min-width:0; overflow-wrap:anywhere;';
+        status.style.cssText = 'flex:1 1 160px; font-size:10px; color:#9ab0d8; min-width:0; overflow-wrap:anywhere;';
         container.appendChild(status);
 
         const track = document.createElement('div');
@@ -3349,6 +3458,7 @@ class LabyrinthClearRate {
 
         const applyCollapsed = () => {
             const collapsed = this._tileControlsCollapsed;
+            if (collapsed) this.closeTileSettings();
             body.style.display = collapsed ? 'none' : 'contents';
             toggle.textContent = collapsed ? '▸ Labyrinth' : '▾ Labyrinth';
             toggle.title = collapsed ? 'Show labyrinth controls' : 'Hide labyrinth controls';
@@ -3382,11 +3492,44 @@ class LabyrinthClearRate {
             syncAuto();
             if (next) this.runTileCalculation({ auto: true });
         });
-        // Sit inline with the other controls, before the full-width progress
-        // track — appending it after the bar left it stranded on its own row
-        // below the bar, since the track is a `flex:1 1 100%` line of its own.
-        body.insertBefore(autoButton, track);
+        settingsPanel.appendChild(autoButton);
         syncAuto();
+
+        // Path on its own when a beacon reveals rooms
+        const autoPathOn = () => !!config.getSetting('labyrinthAutoPath');
+        const autoPathButton = document.createElement('button');
+        autoPathButton.className = `${TILE_CONTROLS_CLASS}-auto-path-toggle`;
+        autoPathButton.style.cssText = autoButton.style.cssText;
+        autoPathButton.title =
+            'Works out the path after a beacon reveals rooms on this floor, once per beacon, after any room calculation it sets off';
+        const syncAutoPath = () => {
+            const on = autoPathOn();
+            autoPathButton.textContent = on ? 'Auto-path: on' : 'Enable auto-path';
+            autoPathButton.style.background = on ? 'rgba(60,180,120,0.85)' : 'rgba(120,134,160,0.85)';
+        };
+        autoPathButton.addEventListener('click', () => {
+            const next = !autoPathOn();
+            // A checkbox setting, written the way the auto-calc toggle's is
+            config.setSetting('labyrinthAutoPath', next);
+            if (!next) this.cancelAutoPath();
+            syncAutoPath();
+        });
+        settingsPanel.appendChild(autoPathButton);
+        syncAutoPath();
+
+        // The room grid's size stepper, which used to sit in the game's header
+        // row; the grid scale module still owns the setting and the zoom
+        if (config.getSetting('labyrinthGridScaleControl')) {
+            const size = createScaleControl();
+            size.style.fontSize = '11px';
+            size.querySelectorAll('button').forEach((b) => {
+                b.style.cssText =
+                    'min-width:22px; height:20px; padding:0 6px; border:0; border-radius:5px; ' +
+                    'background:rgba(120,134,160,0.85); color:#fff; font-size:12px; font-weight:700; cursor:pointer;';
+            });
+            settingsPanel.insertBefore(size, autoButton);
+        }
+        if (spreadButton) settingsPanel.appendChild(spreadButton);
 
         // Toggle and calculate share one nowrap line — a flex item of their own,
         // so a narrow phone bar keeps them together instead of stacking them.
@@ -3416,6 +3559,66 @@ class LabyrinthClearRate {
         // running path rather than an idle button whose press cancels the wait
         this.syncTileCalcButton();
         this.setPathButtonRunning(!!this.pathCalcRunning);
+    }
+
+    /**
+     * Open or close the gear's settings panel.
+     */
+    toggleTileSettings() {
+        if (this._tileSettingsOpen) this.closeTileSettings();
+        else this.openTileSettings();
+    }
+
+    /**
+     * Open the gear's panel under its button, kept on screen, and listen for
+     * the outside click, Esc, scroll and resize that close or move it.
+     */
+    openTileSettings() {
+        const button = document.querySelector(`.${TILE_CONTROLS_CLASS}-settings-button`);
+        const panel = document.querySelector(`.${TILE_CONTROLS_CLASS}-settings-panel`);
+        if (!button || !panel) return;
+        this.closeTileSettings();
+        panel.style.display = 'flex';
+        button.setAttribute('aria-expanded', 'true');
+        const place = () => {
+            const at = button.getBoundingClientRect();
+            const width = panel.offsetWidth || 0;
+            const gutter = 8;
+            const left = Math.max(gutter, Math.min(at.right - width, window.innerWidth - width - gutter));
+            panel.style.left = `${Math.round(left)}px`;
+            panel.style.top = `${Math.round(at.bottom + 4)}px`;
+        };
+        place();
+        const onPointer = (event) => {
+            if (panel.contains(event.target) || button.contains(event.target)) return;
+            this.closeTileSettings();
+        };
+        const onKey = (event) => {
+            if (event.key !== 'Escape') return;
+            this.closeTileSettings();
+            button.focus();
+        };
+        document.addEventListener('mousedown', onPointer, true);
+        document.addEventListener('touchstart', onPointer, true);
+        document.addEventListener('keydown', onKey, true);
+        window.addEventListener('resize', place);
+        window.addEventListener('scroll', place, true);
+        this._tileSettingsOpen = () => {
+            document.removeEventListener('mousedown', onPointer, true);
+            document.removeEventListener('touchstart', onPointer, true);
+            document.removeEventListener('keydown', onKey, true);
+            window.removeEventListener('resize', place);
+            window.removeEventListener('scroll', place, true);
+            panel.style.display = 'none';
+            button.setAttribute('aria-expanded', 'false');
+        };
+    }
+
+    /** Close the gear's panel and drop its listeners; a no-op when it is shut */
+    closeTileSettings() {
+        const close = this._tileSettingsOpen;
+        this._tileSettingsOpen = null;
+        close?.();
     }
 
     /**
@@ -3521,6 +3724,8 @@ class LabyrinthClearRate {
     cancelTileCalculation() {
         if (!this.tileCalcRunning) return;
         this.cancelRunningSims();
+        // A cancel withdraws an automatic re-path waiting on this calculation too
+        this.cancelAutoPath();
         this.setTileStatus('Cancelled');
         this.syncTileCalcButton();
     }
@@ -3548,6 +3753,7 @@ class LabyrinthClearRate {
         const settledIdle = () => {
             if (!this._pathQueued || this.autoTileTimer) return;
             this._pathQueued = false;
+            this._pathQueuedAuto = false;
             this.setPathButtonRunning(false);
             this.runPathCalculation();
         };
@@ -3877,7 +4083,10 @@ class LabyrinthClearRate {
                 this._autoCalcDeferred = false;
                 const followUp = retryScheduled || (deferred && !cancelled);
                 const wantsPath = this._pathQueued && !followUp;
-                if (!followUp || cancelled) this._pathQueued = false;
+                if (!followUp || cancelled) {
+                    this._pathQueued = false;
+                    this._pathQueuedAuto = false;
+                }
                 this.setPathButtonRunning(false);
                 if (wantsPath && !cancelled) this.runPathCalculation();
                 // A retry already scheduled covers the new rooms; a user cancel
@@ -3885,6 +4094,7 @@ class LabyrinthClearRate {
                 if (deferred && !retryScheduled && !cancelled) this.scheduleAutoTileCalc();
             } else {
                 this._pathQueued = false;
+                this._pathQueuedAuto = false;
             }
         }
     }
@@ -4173,7 +4383,14 @@ class LabyrinthClearRate {
         // …including the gap before a scheduled auto retry, which is the same
         // calculation still settling
         if (this.tileCalcRunning || this.autoTileTimer) {
-            this._pathQueued = !this._pathQueued;
+            if (this._pathQueuedAuto) {
+                // Waiting on Auto-path's behalf: the press makes the wait its own
+                // (so turning Auto-path off no longer withdraws it) rather than
+                // reading as the second press that cancels a wait
+                this._pathQueuedAuto = false;
+            } else {
+                this._pathQueued = !this._pathQueued;
+            }
             this.setPathButtonRunning(false);
             return;
         }
@@ -4515,6 +4732,19 @@ class LabyrinthClearRate {
 
         const revealed = flat.map((room, i) => i === 0 || isRoomRevealed(room));
 
+        // A staged plan drawn earlier on this floor, so a re-plan can continue it
+        // Owned by the character it was drawn for as well as the floor: a
+        // switch to another character on the same floor number and grid size
+        // must not inherit the beacons the first one used
+        const characterId = dataManager.getCurrentCharacterId() ?? null;
+        const priorStaged = this._stagedBeaconPlan;
+        const prior =
+            priorStaged &&
+            priorStaged.floor === this.currentFloor &&
+            priorStaged.n === flat.length &&
+            priorStaged.characterId === characterId
+                ? priorStaged
+                : null;
         this.clearBeaconOverlays();
         if (budget?.clamped && count === 0) {
             const word = remainingWord(supplies.runActive);
@@ -4530,6 +4760,36 @@ class LabyrinthClearRate {
             this.setTileStatus('No beacon chain can reach the exit');
             return;
         }
+        const planFor = this.readBeaconPlanFor();
+        // Compared with the count as set, not as clamped to the bag: a plan-for
+        // equal to the count is the ordinary plan even when fewer are held
+        const staged =
+            planFor > 0 && (requested === 0 || planFor > requested)
+                ? stageBeaconPlan({
+                      revealed,
+                      cols,
+                      count: requested,
+                      held: requested > 0 && supplies.known ? supplies.beacon : null,
+                      planFor,
+                      basePlan: plan,
+                      prior,
+                  })
+                : null;
+        if (staged) {
+            this.drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor });
+            return;
+        }
+        // Drawn as an ordinary plan: nothing staged is left to continue, but the
+        // floor's used-beacon count is kept, and this plan's own centers join it
+        // once used, so a plan-for raised later on this floor still counts them
+        this._stagedBeaconPlan = {
+            floor: this.currentFloor,
+            n: flat.length,
+            characterId,
+            planFor: 0,
+            placedBefore: beaconsUsedOnFloor(revealed, prior).placedBefore,
+            all: [],
+        };
         if (!plan.beacons.length) {
             const routeNote = plan.routes >= 2 ? ` (${plan.routes} independent routes)` : '';
             this.setTileStatus(
@@ -4560,6 +4820,11 @@ class LabyrinthClearRate {
                 watch: [...plan.covered].filter((c) => dist(c, idx) <= BEACON_RADIUS),
             })),
         };
+        this._stagedBeaconPlan.all = this._beaconPlanCells.centers.map((c, i) => ({
+            ...c,
+            label: `B${i + 1}`,
+            watch: [...c.watch],
+        }));
 
         const minNote = count === 0 ? ' (min)' : '';
         // A clamped run drew fewer beacons than were asked for, and says so
@@ -4601,6 +4866,118 @@ class LabyrinthClearRate {
     }
 
     /**
+     * The "plan for" count from the toolbar field (or its setting), clamped to
+     * 0..BEACON_PLAN_FOR_MAX. 0 means "the same as the beacon count".
+     * @returns {number}
+     */
+    readBeaconPlanFor() {
+        const input = document.querySelector(`.${TILE_CONTROLS_CLASS}-beacon-plan-for`);
+        const raw = input ? input.value : config.getSettingValue('labyrinthBeaconPlanFor', 0);
+        const n = Math.min(BEACON_PLAN_FOR_MAX, Math.max(0, Math.floor(Number(raw) || 0)));
+        if (input) input.value = String(n);
+        config.setSettingValue('labyrinthBeaconPlanFor', n);
+        return n;
+    }
+
+    /**
+     * Draw a staged beacon plan (see stageBeaconPlan): the beacons placed now
+     * exactly as an ordinary plan draws them, the rest dashed and dimmed as
+     * "later", and a status line whose figures are for what goes down now,
+     * with the whole plan's reveal beside it.
+     */
+    drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor }) {
+        const { beacons, labels, nowCount, prefixes, total, placedBefore } = staged;
+        const now = nowCount > 0 ? prefixes[nowCount - 1] : null;
+        const all = prefixes[prefixes.length - 1];
+
+        const nowFills = now ? now.covered : new Set();
+        for (const idx of nowFills) {
+            const cell = cells[idx];
+            if (cell) this.appendBeaconOverlay(cell, false, '');
+        }
+        for (const idx of all.covered) {
+            if (nowFills.has(idx)) continue;
+            const cell = cells[idx];
+            if (cell) this.appendBeaconOverlay(cell, false, '', { later: true });
+        }
+        beacons.forEach((idx, i) => {
+            const cell = cells[idx];
+            if (!cell) return;
+            const later = i >= nowCount;
+            this.appendBeaconOverlay(cell, true, labels[i], {
+                later,
+                title: later
+                    ? `Later — ${labels[i]} of a ${total}-beacon plan; place it after the ones before it`
+                    : `Place now — ${labels[i]} of a ${total}-beacon plan`,
+            });
+        });
+
+        // What each center was planned to reveal, for pruning its marker once
+        // used and for telling a re-plan which beacons have gone down
+        const dist = (a, b) =>
+            Math.abs((a % cols) - (b % cols)) + Math.abs(Math.floor(a / cols) - Math.floor(b / cols));
+        const watchOf = (idx) => [...all.covered].filter((c) => dist(c, idx) <= BEACON_RADIUS);
+        const centers = beacons.map((idx, i) => ({ idx, label: labels[i], later: i >= nowCount, watch: watchOf(idx) }));
+        this._beaconPlanCells = {
+            fills: [...all.covered],
+            centers: centers.map((c) => ({ ...c, watch: [...c.watch] })),
+        };
+        this._stagedBeaconPlan = {
+            floor: this.currentFloor,
+            n: flat.length,
+            characterId: dataManager.getCurrentCharacterId() ?? null,
+            planFor,
+            placedBefore,
+            all: centers,
+        };
+
+        const word = remainingWord(supplies.runActive);
+        const minNote = count === 0 ? ' (min)' : '';
+        const ownedNote = budget?.clamped ? ` (${budget.requested} set / ${budget.owned} ${word})` : '';
+        const laterCount = beacons.length - nowCount;
+        const laterLabels =
+            laterCount > 1
+                ? `${labels[nowCount]}–${labels[labels.length - 1]}`
+                : laterCount === 1
+                  ? labels[nowCount]
+                  : '';
+        const parts = [];
+        if (staged.continued) parts.push(`Continuing the ${total}-beacon plan (${placedBefore} used)`);
+        if (now) {
+            parts.push(`Beacons: ${nowCount} now of ${total} planned${minNote}${ownedNote}`);
+            parts.push(`reveals ${now.revealedNew} new rooms now, ${all.revealedNew} with all`);
+            if (now.corridorOpen) parts.push(now.routes >= 2 ? `${now.routes} independent routes` : '1 route');
+        } else {
+            parts.push(
+                plan.minNeeded === 0
+                    ? 'Path to the exit is already revealed — no beacons needed now'
+                    : `Beacons: 0 now of ${total} planned${ownedNote}`
+            );
+            parts.push(`${all.revealedNew} new rooms with all`);
+        }
+        if (laterLabels) parts.push(`${laterLabels} later`);
+        if (now && !now.corridorOpen) {
+            const at = prefixes.findIndex((p) => p.corridorOpen);
+            parts.push(
+                at >= 0
+                    ? `a covered path to the exit from ${labels[at]}`
+                    : `a covered path to the exit needs ${now.residual} more`
+            );
+        }
+        // Supplies are checked against what goes down now — the later beacons
+        // can still be bought or found before they are needed
+        const needed = describeSupplyNeed(nowCount, supplies.beacon, 'beacon', supplies.known, supplies.runActive);
+        if (needed.over) {
+            parts.push(`${supplies.beacon} ${word}`);
+            if (!supplies.runActive) {
+                const buyNote = this.shortfallRestockNote(supplies, 'beacon', needed.short);
+                if (buyNote) parts.push(buyNote);
+            }
+        }
+        this.setTileStatus(parts.join(' · '), needed.over || !!budget?.clamped);
+    }
+
+    /**
      * Put the beacon count back to the automatic "fewest that cover a path to
      * the exit" mode.
      *
@@ -4630,7 +5007,7 @@ class LabyrinthClearRate {
     /**
      * Highlight a tile as beacon coverage (fill) or a beacon center (outline + label)
      */
-    appendBeaconOverlay(cell, isCenter, label) {
+    appendBeaconOverlay(cell, isCenter, label, { later = false, title = '' } = {}) {
         const cellStyle = window.getComputedStyle(cell);
         if (cellStyle.position === 'static') {
             cell.style.position = 'relative';
@@ -4638,17 +5015,31 @@ class LabyrinthClearRate {
         const overlay = document.createElement('div');
         overlay.className = BEACON_OVERLAY_CLASS;
         if (isCenter) overlay.dataset.beaconCenter = '1';
+        if (later) overlay.dataset.beaconLater = '1';
         overlay.style.cssText = isCenter
             ? 'position:absolute; inset:0; border:2px solid #26d0aa; border-radius:6px; ' +
               'pointer-events:none; z-index:8; box-sizing:border-box;'
             : 'position:absolute; inset:0; background:rgba(38,166,154,0.22); border:1px solid rgba(38,166,154,0.45); ' +
               'border-radius:6px; pointer-events:none; z-index:7; box-sizing:border-box;';
+        // A beacon planned for later in the floor: the same marker, dashed and dimmed
+        if (later) {
+            overlay.style.borderStyle = 'dashed';
+            overlay.style.opacity = isCenter ? '0.6' : '0.45';
+            if (!isCenter) overlay.style.background = 'rgba(38,166,154,0.08)';
+        }
         if (label) {
             const tag = document.createElement('div');
             tag.style.cssText =
                 'position:absolute; top:1px; right:1px; padding:0 3px; border-radius:3px; background:#26d0aa; ' +
                 'color:#04263f; font-size:8px; font-weight:700; line-height:1.4;';
             tag.textContent = label;
+            // The overlay lets clicks through to the room; only the tag takes
+            // the pointer so it can carry the now/later tooltip, and a click on
+            // it still bubbles up to the room
+            if (title) {
+                tag.title = title;
+                tag.style.pointerEvents = 'auto';
+            }
             overlay.appendChild(tag);
         }
         cell.appendChild(overlay);
@@ -4722,6 +5113,76 @@ class LabyrinthClearRate {
             // Every approach room is a cleared room — that is what makes it
             // free to walk — so clearing progress is no reason to rub one out
             cells[i]?.querySelector(`.${PATH_OVERLAY_CLASS}:not([data-approach])`)?.remove();
+        }
+    }
+
+    /**
+     * Revealed rooms and the run's beacon stock, for spotting a beacon reveal.
+     * @param {Array} roomData - roomData rows
+     * @param {Object|null} labyrinth - The labyrinth state the rows came with
+     * @returns {{ revealed: number, beacons: number|null }}
+     */
+    revealSnapshot(roomData, labyrinth) {
+        const flat = Array.isArray(roomData) ? roomData.flat() : [];
+        const stock = readRunSupplyCounts(
+            labyrinth,
+            resolveSupplyHrids(dataManager.getInitClientData()?.itemDetailMap)
+        );
+        return {
+            revealed: flat.filter((room) => isRoomRevealed(room)).length,
+            beacons: stock.known ? stock.beacon : null,
+        };
+    }
+
+    /**
+     * Work out the path once a beacon has revealed rooms, whether or not one
+     * is on the map yet: the reveal is what a path waits for. One run per
+     * reveal burst: a pending run absorbs every reveal that lands before it
+     * fires. Never once a calculation is cancelled, and behind a room
+     * calculation in progress (it queues as a Path press would, without the
+     * press's toggle).
+     */
+    scheduleAutoPath() {
+        if (!config.getSetting('labyrinthAutoPath')) return;
+        if (this.autoPathTimer) return;
+        const floor = this.currentFloor;
+        const characterId = dataManager.getCurrentCharacterId();
+        this.autoPathTimer = setTimeout(() => {
+            this.autoPathTimer = null;
+            if (!config.getSetting('labyrinthAutoPath')) return;
+            // The floor and the character still the ones the reveal was about
+            if (this.currentFloor !== floor || dataManager.getCurrentCharacterId() !== characterId) return;
+            if (!this.roomData) return;
+            if (this.pathCalcRunning) {
+                // The path in flight read the grid from before the reveal
+                this.scheduleAutoPath();
+                return;
+            }
+            if (this.tileCalcRunning || this.autoTileTimer) {
+                // The room calculation the reveal set off runs first; the path
+                // follows it once, and a cancel of it withdraws this too. A
+                // wait a Path press already queued stays that press's.
+                if (!this._pathQueued) {
+                    this._pathQueued = true;
+                    this._pathQueuedAuto = true;
+                }
+                this.setPathButtonRunning(false);
+                return;
+            }
+            this.runPathCalculation();
+        }, AUTO_PATH_DELAY_MS);
+    }
+
+    /** Drop a pending automatic re-path, and an automatic one queued behind a room calculation */
+    cancelAutoPath() {
+        if (this.autoPathTimer) clearTimeout(this.autoPathTimer);
+        this.autoPathTimer = null;
+        // A path Auto-path queued behind a room calculation is withdrawn with
+        // it; one a Path press queued is left to run
+        if (this._pathQueuedAuto) {
+            this._pathQueuedAuto = false;
+            this._pathQueued = false;
+            this.setPathButtonRunning(!!this.pathCalcRunning);
         }
     }
 

@@ -1165,3 +1165,187 @@ export function computeBeaconPlan(revealedRooms, cols, beaconCount = 0) {
         corridorOpen: best.residual === 0,
     };
 }
+
+/**
+ * Put a beacon plan's centers in the order they are best placed, for a floor
+ * where only the first few go down now and the rest later.
+ *
+ * The best two-beacon plan is generally not the first two of the best
+ * five-beacon plan, so a player who opens with two and reveals five over the
+ * floor is better served by planning all five up front and placing them so
+ * every prefix is as good as it can be. Greedy, under the planner's own
+ * objective (covered path to the exit, then a second route, then rooms, then
+ * detour): the first is the center that scores best alone, each next one the
+ * best addition to those already chosen. Only the plan's own centers are
+ * considered, so the full set is still exactly the plan.
+ *
+ * The scorer measures how many beacons a prefix still leaves to cover the way
+ * out (the planner's gradient mode), so a prefix short of the path is ranked
+ * on getting closer to it rather than on rooms alone. Ties keep the plan's
+ * order.
+ *
+ * @param {boolean[]} revealedRooms - Flat grid of already-revealed rooms, as given to computeBeaconPlan
+ * @param {number} cols - Grid width
+ * @param {number[]} centers - The plan's beacon centers
+ * @param {boolean} [keepOrder=false] - Score the prefixes of `centers` as given instead of reordering
+ * @returns {Object|null} { beacons: ordered centers, prefixes: [{ covered: Set<number>, revealedNew,
+ *   corridorOpen, residual, routes }] — prefixes[i] is the first i+1 beacons } or null on empty input
+ */
+export function orderBeaconsForPrefixes(revealedRooms, cols, centers, keepOrder = false) {
+    const n = revealedRooms.length;
+    if (!n || !cols || !Array.isArray(centers)) return null;
+    const revealed = revealedRooms.slice();
+    revealed[labyrinthExit(n)] = true;
+    const grid = beaconGrid(n, cols);
+    const startRegion = grid.regionFrom(LABYRINTH_ENTRANCE, (i) => revealed[i]);
+    const detour = detourCosts(grid, n, startRegion, labyrinthExit(n));
+    const scorer = createPlacementScorer(grid, revealed, cols, detour, true);
+
+    const remaining = [...centers];
+    const ordered = [];
+    const prefixes = [];
+    while (remaining.length) {
+        let bestAt = 0;
+        let best = scorer.score([...ordered, remaining[0]]);
+        for (let i = 1; i < (keepOrder ? 0 : remaining.length); i++) {
+            const scored = scorer.score([...ordered, remaining[i]]);
+            if (scorer.compare(scored, best) < 0) {
+                best = scored;
+                bestAt = i;
+            }
+        }
+        ordered.push(remaining[bestAt]);
+        remaining.splice(bestAt, 1);
+        prefixes.push({
+            covered: new Set(best.union),
+            revealedNew: best.rooms,
+            corridorOpen: best.residual === 0,
+            residual: best.residual,
+            routes: scorer.routesOf(best),
+        });
+    }
+    return { beacons: ordered, prefixes };
+}
+
+/**
+ * Beacons used on the floor so far, out of the last plan drawn on it: those
+ * the record had already counted, plus each of its centers whose planned rooms
+ * are all revealed now. A guess, not a reading — torches or another beacon
+ * lighting the same rooms count too, and a beacon put down off the plan is not
+ * seen at all.
+ * @param {boolean[]} revealed - Flat grid of revealed rooms (entrance included)
+ * @param {Object|null} prior - { placedBefore, all: [{ idx, watch: number[] }] }
+ * @returns {{ placedBefore: number, used: Object[] }}
+ */
+export function beaconsUsedOnFloor(revealed, prior) {
+    if (!prior) return { placedBefore: 0, used: [] };
+    const exit = labyrinthExit(revealed.length);
+    const lit = (i) => revealed[i] || i === exit;
+    const used = Array.isArray(prior.all) ? prior.all.filter((c) => c.watch.length > 0 && c.watch.every(lit)) : [];
+    return { placedBefore: (prior.placedBefore || 0) + used.length, used };
+}
+
+/** Highest "plan for" count the toolbar accepts, the same ceiling as the beacon count */
+export const BEACON_PLAN_FOR_MAX = 20;
+
+/**
+ * Stage a beacon plan for a floor where `planFor` beacons will be revealed in
+ * all but only some go down now: plan the whole floor's worth, order it so
+ * every prefix is as good as it can be, and say how many of them are "now".
+ *
+ * Returns null whenever the answer is the ordinary plan — no "plan for" count,
+ * one no bigger than what is placed now, or nothing beyond it to plan — so the
+ * caller draws exactly what it drew before.
+ *
+ * "Now" is the beacon count when one is set, less the beacons already used on
+ * the floor, then clamped to the beacons held — in that order, because the
+ * stock held has already gone down by the ones used. In the automatic mode it
+ * is the shortest prefix that covers a path to the exit (none at all when one
+ * is already revealed).
+ *
+ * A plan staged earlier on the same floor is continued rather than replaced
+ * once any of its beacons has been used (every room it was planned to reveal
+ * is revealed), as long as the plan-for is unchanged and each beacon it still
+ * has left reveals something: the remaining beacons keep their labels and
+ * order. Otherwise a fresh plan is made for what is left of the floor's
+ * plan-for total, labelled on from the beacons already used.
+ *
+ * @param {Object} args
+ * @param {boolean[]} args.revealed - Flat grid of revealed rooms (entrance included)
+ * @param {number} args.cols - Grid width
+ * @param {number} args.count - The beacon count as set for the floor (not clamped to the bag);
+ *   0 = the fewest that cover a path
+ * @param {number|null} [args.held=null] - Beacons held now, or null when unknown
+ * @param {number} args.planFor - Beacons planned for the floor in all; 0 = same as the count
+ * @param {Object} args.basePlan - computeBeaconPlan(revealed, cols, count), what would be drawn today
+ * @param {Object|null} [args.prior] - The staged plan last drawn on this floor:
+ *   { planFor, placedBefore, all: [{ idx, label, watch: number[] }] }
+ * @returns {Object|null} { beacons, labels, nowCount, prefixes, total, placedBefore, continued } or null
+ */
+export function stageBeaconPlan({ revealed, cols, count, held = null, planFor, basePlan, prior = null }) {
+    const n = revealed.length;
+    const target = Math.min(BEACON_PLAN_FOR_MAX, Math.max(0, Math.floor(Number(planFor) || 0)));
+    if (!n || !cols || !target || !basePlan?.feasible) return null;
+    const dark = (i) => !revealed[i] && i !== labyrinthExit(n);
+
+    // Beacons the floor has had used out of the last staged plan on it. They
+    // count against the floor's total whatever the plan-for is now: a plan-for
+    // changed mid-floor plans what is left of the new total, labelled on from
+    // the beacons already down, rather than a whole new set from B1. Only the
+    // same plan-for continues the old plan as it was.
+    const { placedBefore, used } = beaconsUsedOnFloor(revealed, prior);
+    let continued = null;
+    if (prior && Array.isArray(prior.all)) {
+        if (used.length && prior.planFor === target) {
+            const left = prior.all.filter((c) => !used.includes(c));
+            const grid = beaconGrid(n, cols);
+            if (left.length && left.every((c) => grid.diamond(c.idx).some(dark))) continued = left;
+        }
+    }
+
+    // A set count is the floor's own ("beacons to place on this floor"), so
+    // the beacons already used come off it first; only what is still to go
+    // down is then held against the bag, which those used ones already left
+    const outstanding = count > 0 ? Math.max(0, count - placedBefore) : 0;
+    const placeable = held == null ? outstanding : Math.min(outstanding, Math.max(0, held));
+    const nowFrom = (prefixes, available) => {
+        if (count > 0) return Math.min(placeable, available);
+        if (basePlan.minNeeded === 0 || !prefixes.length) return 0;
+        const at = prefixes.findIndex((p) => p.corridorOpen);
+        return at < 0 ? available : at + 1;
+    };
+
+    if (continued) {
+        const ordered = orderBeaconsForPrefixes(
+            revealed,
+            cols,
+            continued.map((c) => c.idx),
+            true
+        );
+        return {
+            beacons: ordered.beacons,
+            labels: continued.map((c) => c.label),
+            nowCount: nowFrom(ordered.prefixes, continued.length),
+            prefixes: ordered.prefixes,
+            total: placedBefore + continued.length,
+            placedBefore,
+            continued: true,
+        };
+    }
+
+    const budget = target - placedBefore;
+    const base = count > 0 ? placeable : basePlan.beacons.length;
+    if (budget <= base) return null;
+    const full = computeBeaconPlan(revealed, cols, budget);
+    if (!full?.feasible || full.beacons.length <= base) return null;
+    const ordered = orderBeaconsForPrefixes(revealed, cols, full.beacons);
+    return {
+        beacons: ordered.beacons,
+        labels: ordered.beacons.map((_, i) => `B${placedBefore + i + 1}`),
+        nowCount: nowFrom(ordered.prefixes, ordered.beacons.length),
+        prefixes: ordered.prefixes,
+        total: placedBefore + ordered.beacons.length,
+        placedBefore,
+        continued: false,
+    };
+}
