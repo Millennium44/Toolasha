@@ -3033,6 +3033,27 @@ describe('results outliving the character they were run for', () => {
         expect(mocks.upgradeRuns).toBe(0);
         expect(ui._upgradeRunning).toBe(false);
     });
+
+    test('an old profile read that ends after a switch leaves a newer run’s busy latch alone', async () => {
+        let releaseProfiles;
+        mocks.buildPlayerDTOs = () =>
+            new Promise((resolve) => {
+                releaseProfiles = resolve;
+            });
+        ui.buildPanel();
+        selectZone();
+
+        const analysis = ui._onUpgradeAnalyze();
+        mocks.characterId = 'char2';
+        // The arriving character's own run has claimed the latch by the time the old read returns
+        ui._analysisGen += 1;
+        ui._upgradeRunning = true;
+        releaseProfiles({ players: mocks.playerDTOs });
+        await analysis;
+
+        expect(mocks.upgradeRuns).toBe(0);
+        expect(ui._upgradeRunning).toBe(true);
+    });
 });
 
 describe('runs waiting for live player profiles', () => {

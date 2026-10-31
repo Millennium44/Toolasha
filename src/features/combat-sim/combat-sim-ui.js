@@ -10727,6 +10727,9 @@ class CombatSimUI {
         this._upgradeRunning = true;
         // A verify still in flight measured the previous analysis; its verdicts are not drawn over this one
         this._analysisGen = (this._analysisGen || 0) + 1;
+        // The latch below is this run's: a run started after a character switch owns it by then, and an old
+        // run's early exit must not clear it
+        const latchGen = this._analysisGen;
         // A remembered result a sync pull brings is no longer drawn over this panel's own runs
         this._upgradeRunStarted = true;
 
@@ -10746,7 +10749,7 @@ class CombatSimUI {
                 selfHrid = result.selfHrid ?? null;
             }
         } catch (error) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             console.error('[CombatSimUI] Failed to load players for upgrade analysis:', error);
             this._setStatus('Analysis failed: ' + error.message);
             return;
@@ -10756,7 +10759,7 @@ class CombatSimUI {
         // profile read is pending. Do not resume the old character's run in
         // the arriving character's fresh panel.
         if (!this._stillSameCharacter(ownerId)) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             return;
         }
 
@@ -11138,18 +11141,19 @@ class CombatSimUI {
 
         this._upgradeRunning = true;
         this._analysisGen = (this._analysisGen || 0) + 1;
+        const latchGen = this._analysisGen;
         this._shownTriggerResult = null;
         let party;
         try {
             party = await this._loadTriggerParty(choices.playerIndex);
         } catch (error) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             console.error('[CombatSimUI] Failed to load players for trigger tuning:', error);
             this._setStatus('Trigger tuning failed: ' + error.message);
             return;
         }
         if (!this._stillSameCharacter(ownerId)) {
-            this._upgradeRunning = false;
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
             return;
         }
         const playerIndex = party.playerIndex;
