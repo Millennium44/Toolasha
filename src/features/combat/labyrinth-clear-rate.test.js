@@ -4395,6 +4395,43 @@ describe('combat recommend search under cancellation', () => {
     });
 });
 
+describe('a Stop outlives a later batch reopening the cancellation scope', () => {
+    afterEach(() => {
+        labyrinthClearRate._recommendBatch = null;
+        labyrinthClearRate._simCancelRequested = false;
+        vi.restoreAllMocks();
+    });
+
+    test('a stopped batch stays cancelled once a newer batch begins', () => {
+        const stopped = labyrinthClearRate.beginSimBatch();
+        labyrinthClearRate.cancelRunningSims();
+        const newer = labyrinthClearRate.beginSimBatch();
+        expect(labyrinthClearRate.simCancelled(newer)).toBe(false);
+        expect(labyrinthClearRate.simCancelled(stopped)).toBe(true);
+        // A batch begun after the Stop is not born cancelled
+        expect(newer).toBeGreaterThan(stopped);
+    });
+
+    test('a search stopped while another batch starts does not keep probing', async () => {
+        vi.spyOn(labyrinthClearRate, 'getPlayerEffectiveCombatLevel').mockReturnValue(100);
+        let probes = 0;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            probes++;
+            if (probes === 2) {
+                // Stop pressed on the search, then a tile pass begins before it unwinds
+                labyrinthClearRate.cancelRunningSims();
+                labyrinthClearRate.beginSimBatch();
+            }
+            return { clearChance: 1, expectedSeconds: 10 };
+        });
+
+        labyrinthClearRate._recommendBatch = labyrinthClearRate.beginSimBatch();
+        const threshold = await labyrinthClearRate.findRecommendedThresholdCombat('/monsters/imp', 0.7);
+        expect(threshold).toBeNull();
+        expect(probes).toBe(2);
+    });
+});
+
 describe('recommend badge at the search ceiling', () => {
     const cellHtml =
         '<table><tbody><tr>' +

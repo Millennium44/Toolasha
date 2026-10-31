@@ -759,6 +759,10 @@ export const simCacheMethods = {
      */
     cancelRunningSims() {
         this._simCancelRequested = true;
+        // Every batch begun so far is stopped for good: a later beginSimBatch
+        // reopens the scope for the NEW batch only, so a search the player
+        // stopped cannot be un-stopped by another batch starting while it unwinds
+        this._simCancelledThrough = this._simBatchSeq || 0;
         this.simQueue = [];
         // A pending badge retry is part of the batch being stopped: leaving it
         // armed would have the queue start up again seconds after the Stop
@@ -776,9 +780,13 @@ export const simCacheMethods = {
 
     /**
      * Open a fresh cancellation scope for a batch about to start.
+     * @returns {number} The batch's id. Pass it to `simCancelled(id)` so a Stop
+     *   pressed on this batch outlives a later batch reopening the scope.
      */
     beginSimBatch() {
         this._simCancelRequested = false;
+        this._simBatchSeq = (this._simBatchSeq || 0) + 1;
+        return this._simBatchSeq;
     },
 
     /**
@@ -812,10 +820,13 @@ export const simCacheMethods = {
 
     /**
      * Whether the batch in progress has been cancelled.
+     * @param {number} [batch] - A batch id from `beginSimBatch`; a batch that was
+     *   running when Stop was pressed stays cancelled after a newer one begins
      * @returns {boolean}
      */
-    simCancelled() {
-        return this._simCancelRequested === true;
+    simCancelled(batch) {
+        if (this._simCancelRequested === true) return true;
+        return Number.isFinite(batch) && batch <= (this._simCancelledThrough || 0);
     },
 
     /**
@@ -1554,7 +1565,7 @@ export const simCacheMethods = {
         // starting here would also reopen a Stop the player just pressed
         if (this.recommendRunning) return;
         this.simRunning = true;
-        this.beginSimBatch();
+        const batch = this.beginSimBatch();
         const epoch = this.simEpoch();
         // Show Stop estimates now, not only once the controls are next drawn:
         // a queue resumed after a search starts after its last redraw
@@ -1566,7 +1577,7 @@ export const simCacheMethods = {
         const retry = [];
         try {
             while (this.simQueue.length > 0) {
-                if (this.simCancelled() || this.simEpoch() !== epoch) break;
+                if (this.simCancelled(batch) || this.simEpoch() !== epoch) break;
                 const entry = this.simQueue.shift();
                 const { monsterHrid, roomLevel, badge, attempt = 0 } = entry;
                 if (!badge.isConnected) continue;
@@ -1575,7 +1586,7 @@ export const simCacheMethods = {
                 this._simInFlight = entry;
                 const result = await this.computeCombatClear(monsterHrid, roomLevel, simOptions);
                 if (this._simInFlight === entry) this._simInFlight = null;
-                if (result?.cancelled || this.simEpoch() !== epoch) break;
+                if (result?.cancelled || this.simCancelled(batch) || this.simEpoch() !== epoch) break;
                 if (!badge.isConnected) continue;
 
                 // A failed run is not a 0% clear. It means the sim's inputs were
@@ -1607,7 +1618,7 @@ export const simCacheMethods = {
                 // rather than a flush window later
                 this._flushCombatCache();
                 this.refreshAutomationRunningState?.();
-                if (retry.length > 0 && !this.simCancelled() && !this.recommendRunning) {
+                if (retry.length > 0 && !this.simCancelled(batch) && !this.recommendRunning) {
                     this._scheduleSimRetry(retry);
                 } else if (retry.length > 0 && this.recommendRunning && this._preemptedSims) {
                     // A search took over mid-queue: these rooms wait for its end

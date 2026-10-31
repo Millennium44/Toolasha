@@ -43,6 +43,7 @@ import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { findAlchemyTablist, getAlchemyTabElements, readAlchemyTabType } from './alchemy-tabs.js';
 import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose-chain-value.js';
 import { effectiveInventory, onReservationsChanged } from '../../utils/inventory-reservations.js';
@@ -92,6 +93,8 @@ const MARK_MEANING_KEY = 'selfUse_markMeaning';
 
 /** How long inventory churn settles before the own-stock table redraws */
 const INVENTORY_REDRAW_MS = 400;
+/** How long the own-stock sweep works before handing the browser a frame */
+const OWN_STOCK_SLICE_MS = 10;
 
 /** The sort modes that rank by a whole decompose chain */
 const CHAIN_MODES = new Set(['decomposeChainPerHour', 'chainOwnStock']);
@@ -768,10 +771,16 @@ class AlchemyBestItems {
     async runOwnStockSweep(sweep) {
         try {
             this.ownStockGear = this.equipmentSignature();
+            // Only what has no figure yet: every path that makes a figure stale (prices, gear, keep list,
+            // a new ranking) clears ownStock and bumps the sweep, so the rest are still good
             const held = (this.cachedRankings.decompose || [])
                 .map((row) => ({ row, count: this.heldCount(row.itemHrid) }))
-                .filter(({ count }) => count > 0);
-            const env = await tooltipPrices.buildSelfUseEnv();
+                // A row whose chain could not be built (an error, or the chain not ready yet) is retried;
+                // an unpriced-but-built chain is a real answer and is kept
+                .filter(({ row, count }) => count > 0 && !this.ownStock.get(row.itemHrid)?.detail);
+            const env = held.length > 0 ? await tooltipPrices.buildSelfUseEnv() : null;
+            if (sweep !== this.ownStockSweep) return;
+            let sliceStart = performance.now();
             for (const { row, count } of held) {
                 const chain = await tooltipPrices.selfUseChainFor(row.itemHrid, env);
                 if (sweep !== this.ownStockSweep) return;
@@ -783,6 +792,12 @@ class AlchemyBestItems {
                     detail: chain,
                     held: count,
                 });
+                // The awaits above resolve as microtasks, so without a real yield the sweep is one long task
+                if (performance.now() - sliceStart > OWN_STOCK_SLICE_MS) {
+                    await yieldToBrowser();
+                    if (sweep !== this.ownStockSweep) return;
+                    sliceStart = performance.now();
+                }
             }
             if (sweep === this.ownStockSweep) {
                 // Free the slot before drawing, so stock gained mid-sweep starts the next pass

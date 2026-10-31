@@ -10,6 +10,8 @@ import { buildCharacterSheetLink } from './character-sheet.js';
 import { calculateCombatScore } from './score-calculator.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 
+const PROFILE_MODAL_SELECTOR = '.SharableProfile_modal__2OmCQ';
+
 /**
  * Convert combatConsumables array to actionTypeFoodSlotsMap/actionTypeDrinkSlotsMap format
  * @param {Array} combatConsumables - Array of consumable items from profile data
@@ -90,8 +92,10 @@ export async function handleViewCardClick(profileData) {
         }
         // Otherwise leave consumables empty (can't see other player's consumables outside party)
 
-        // Find the profile modal for fallback
-        const _modal = document.querySelector('.SharableProfile_modal__2OmCQ');
+        // Find the profile modal for fallback. Identity is captured before the score await so a
+        // closed modal, another profile, or a character swap during it drops the result.
+        const _modal = document.querySelector(PROFILE_MODAL_SELECTOR);
+        const startCharacterId = dataManager.getCurrentCharacterId?.() ?? null;
 
         // Calculate combat score
         let combatScore = null;
@@ -100,6 +104,15 @@ export async function handleViewCardClick(profileData) {
             combatScore = scoreResult?.total || null;
         } catch (error) {
             console.warn('[CharacterCardButton] Failed to calculate combat score:', error);
+        }
+
+        // The profile this click was for is gone: the modal closed, a different profile's modal
+        // replaced it, or the player switched characters. Opening a tab now would show the wrong card.
+        if (
+            (_modal && document.querySelector(PROFILE_MODAL_SELECTOR) !== _modal) ||
+            (dataManager.getCurrentCharacterId?.() ?? null) !== startCharacterId
+        ) {
+            return;
         }
 
         // Build character sheet link using cached data (preferred) or DOM fallback
@@ -134,6 +147,7 @@ export async function handleViewCardFromSnapshot(snapshotName) {
             return;
         }
 
+        const startCharacterId = dataManager.getCurrentCharacterId?.() ?? null;
         const snapshot = loadoutSnapshot.getAllSnapshots().find((s) => s.name === snapshotName);
         if (!snapshot) {
             console.error('[CharacterCardButton] Snapshot not found:', snapshotName);
@@ -212,6 +226,9 @@ export async function handleViewCardFromSnapshot(snapshotName) {
         } catch (error) {
             console.warn('[CharacterCardButton] Failed to calculate combat score for snapshot:', error);
         }
+
+        // Character swapped during the score await: the snapshot belongs to the previous character
+        if ((dataManager.getCurrentCharacterId?.() ?? null) !== startCharacterId) return;
 
         const url = buildCharacterSheetLink(
             null,

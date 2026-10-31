@@ -12,10 +12,21 @@ const game = vi.hoisted(() => ({
     scoreResult: { total: 42 },
     toggles: 0,
     scoreSource: null,
+    networth: {},
+    stamp: 'a',
+    bench: {
+        enhancingLevel: 100,
+        toolBonus: 5,
+        speedBonus: 0,
+        teas: { blessed: false },
+        guzzlingBonus: 1,
+        blessedTeaBonus: 0,
+    },
+    priceVersion: 1,
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => game.setting },
+    default: { getSetting: (key) => (key.startsWith('networth_') ? game.networth[key] : game.setting) },
 }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -50,6 +61,15 @@ vi.mock('../../utils/overlay-rows.js', () => ({
         game.rows[definition.key] = definition;
     },
 }));
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        get priceVersion() {
+            return game.priceVersion;
+        },
+    },
+}));
+vi.mock('../../utils/enhancement-input-pricing.js', () => ({ pricingStamp: () => game.stamp }));
+vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => game.bench }));
 vi.mock('./score-calculator.js', () => ({
     calculateCombatScore: async () => {
         if (game.scoreGate) await game.scoreGate;
@@ -67,7 +87,7 @@ vi.mock('./build-score-panel.js', () => ({
     },
 }));
 
-const { ownProfileData } = await import('./build-score-row.js');
+const { ownProfileData, ensureOwnScore, scorePricingStamp } = await import('./build-score-row.js');
 const buildScore = (await import('./build-score-row.js')).default;
 
 describe('ownProfileData', () => {
@@ -151,6 +171,9 @@ describe('BuildScore', () => {
         buildScore.score = null;
         buildScore.computedAt = 0;
         buildScore.running = false;
+        buildScore.stamp = null;
+        game.stamp = 'a';
+        game.priceVersion = 1;
         vi.useFakeTimers();
     });
 
@@ -354,5 +377,109 @@ describe('the Build Score tile summarises its own inputs', () => {
 
         buildScore.score = { total: 42.5, equipment: 15, ability: 15, house: 5, skillerTotal: 7.5 };
         expect(version()).not.toBe(before);
+    });
+});
+
+describe('ensureOwnScore', () => {
+    beforeEach(() => {
+        game.setting = true;
+        game.characterData = { characterAbilities: [], combatUnit: { combatAbilities: [] } };
+        game.combined = { characterHouseRoomMap: {} };
+        game.equipment = [];
+        game.scoreResult = { total: 42 };
+        game.stamp = 'a';
+        game.priceVersion = 1;
+        game.networth = {};
+        buildScore.disable();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('the stamp is the pricing inputs plus the order-book version', () => {
+        expect(scorePricingStamp()).toBe('a|1|market|13|100,5,0,false,1,0');
+        game.priceVersion = 2;
+        expect(scorePricingStamp()).toBe('a|2|market|13|100,5,0,false,1,0');
+    });
+
+    test('the enhancing bench the score costs pieces on is in the stamp', () => {
+        const before = scorePricingStamp();
+        const saved = game.bench;
+        game.bench = { ...saved, enhancingLevel: 120 };
+        expect(scorePricingStamp()).not.toBe(before);
+        game.bench = { ...saved, teas: { blessed: true } };
+        expect(scorePricingStamp()).not.toBe(before);
+        game.bench = saved;
+    });
+
+    test('the high-enhancement valuation settings are in the stamp, since pricingStamp() lacks them', () => {
+        const before = scorePricingStamp();
+        game.networth = { networth_highEnhancementUseCost: true };
+        const useCost = scorePricingStamp();
+        expect(useCost).not.toBe(before);
+        game.networth = { networth_highEnhancementUseCost: true, networth_highEnhancementMinLevel: 11 };
+        expect(scorePricingStamp()).not.toBe(useCost);
+        game.networth = {};
+    });
+
+    test('a score held under the same stamp is returned without recomputing', async () => {
+        const first = await ensureOwnScore({ stamp: scorePricingStamp() });
+        expect(first).toEqual({ total: 42 });
+        game.scoreResult = { total: 99 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 42 });
+    });
+
+    test('with no score yet it waits for the first one to land, up to the timeout', async () => {
+        game.characterData = null;
+        const waiting = ensureOwnScore({ stamp: scorePricingStamp(), timeoutMs: 15000 });
+        await vi.advanceTimersByTimeAsync(2000);
+        // The character finishes loading while it waits
+        game.characterData = { characterAbilities: [], combatUnit: { combatAbilities: [] } };
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(await waiting).toEqual({ total: 42 });
+    });
+
+    test('and gives up with null when no score lands in time', async () => {
+        game.characterData = null;
+        const waiting = ensureOwnScore({ stamp: scorePricingStamp(), timeoutMs: 3000 });
+        await vi.advanceTimersByTimeAsync(3500);
+        expect(await waiting).toBeNull();
+    });
+
+    test('after a gear swap with the pricing unchanged, the score of the old build is not handed back', async () => {
+        game.equipment = [['/item_locations/head', { itemHrid: '/items/helmet', enhancementLevel: 5 }]];
+        game.scoreResult = { total: 100 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 100 });
+        // Items updated, the debounced refresh has not run, and the minimum interval has not passed
+        game.equipment = [['/item_locations/head', { itemHrid: '/items/helmet', enhancementLevel: 12 }]];
+        game.scoreResult = { total: 900 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 900 });
+        // Nothing changed since: the held score is returned without scoring again
+        game.scoreResult = { total: 1 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 900 });
+    });
+
+    test('a changed ability level or house room is a different build too', async () => {
+        game.scoreResult = { total: 100 };
+        await ensureOwnScore({ stamp: scorePricingStamp() });
+        game.combined = { characterHouseRoomMap: { '/house_rooms/gym': { level: 3 } } };
+        game.scoreResult = { total: 120 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 120 });
+        game.characterData = {
+            characterAbilities: [{ abilityHrid: '/abilities/fireball', level: 9 }],
+            combatUnit: { combatAbilities: [{ abilityHrid: '/abilities/fireball' }] },
+        };
+        game.scoreResult = { total: 150 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 150 });
+    });
+
+    test('a score computed before a pricing change is recomputed, not handed back stale', async () => {
+        await ensureOwnScore({ stamp: scorePricingStamp() });
+        game.stamp = 'b';
+        game.scoreResult = { total: 99 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 99 });
+        expect(buildScore.stamp).toBe('b|1|market|13|100,5,0,false,1,0');
     });
 });

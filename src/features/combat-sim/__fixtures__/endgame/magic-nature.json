@@ -1,0 +1,208 @@
+{
+    "player": {
+        "attackLevel": 140,
+        "magicLevel": 150,
+        "meleeLevel": 116,
+        "rangedLevel": 115,
+        "defenseLevel": 128,
+        "staminaLevel": 125,
+        "intelligenceLevel": 135,
+        "equipment": [
+            {
+                "itemLocationHrid": "/item_locations/back",
+                "itemHrid": "/items/enchanted_cloak_refined",
+                "enhancementLevel": 5
+            },
+            {
+                "itemLocationHrid": "/item_locations/body",
+                "itemHrid": "/items/royal_nature_robe_top_refined",
+                "enhancementLevel": 10
+            },
+            {
+                "itemLocationHrid": "/item_locations/charm",
+                "itemHrid": "/items/advanced_defense_charm",
+                "enhancementLevel": 3
+            },
+            {
+                "itemLocationHrid": "/item_locations/earrings",
+                "itemHrid": "/items/philosophers_earrings",
+                "enhancementLevel": 7
+            },
+            {
+                "itemLocationHrid": "/item_locations/feet",
+                "itemHrid": "/items/pathseeker_boots_refined",
+                "enhancementLevel": 12
+            },
+            { "itemLocationHrid": "/item_locations/hands", "itemHrid": "/items/chrono_gloves", "enhancementLevel": 12 },
+            {
+                "itemLocationHrid": "/item_locations/head",
+                "itemHrid": "/items/magicians_hat_refined",
+                "enhancementLevel": 10
+            },
+            {
+                "itemLocationHrid": "/item_locations/legs",
+                "itemHrid": "/items/royal_nature_robe_bottoms_refined",
+                "enhancementLevel": 10
+            },
+            {
+                "itemLocationHrid": "/item_locations/main_hand",
+                "itemHrid": "/items/blooming_trident_refined",
+                "enhancementLevel": 12
+            },
+            {
+                "itemLocationHrid": "/item_locations/neck",
+                "itemHrid": "/items/philosophers_necklace",
+                "enhancementLevel": 7
+            },
+            {
+                "itemLocationHrid": "/item_locations/off_hand",
+                "itemHrid": "/items/bishops_codex_refined",
+                "enhancementLevel": 10
+            },
+            { "itemLocationHrid": "/item_locations/pouch", "itemHrid": "/items/guzzling_pouch", "enhancementLevel": 6 },
+            {
+                "itemLocationHrid": "/item_locations/ring",
+                "itemHrid": "/items/philosophers_ring",
+                "enhancementLevel": 7
+            },
+            {
+                "itemLocationHrid": "/item_locations/trinket",
+                "itemHrid": "/items/expert_task_badge",
+                "enhancementLevel": 2
+            }
+        ]
+    },
+    "food": {
+        "/action_types/combat": [
+            { "itemHrid": "/items/dragon_fruit_gummy" },
+            { "itemHrid": "/items/dragon_fruit_yogurt" },
+            { "itemHrid": "/items/spaceberry_cake" }
+        ]
+    },
+    "drinks": {
+        "/action_types/combat": [
+            { "itemHrid": "/items/channeling_coffee" },
+            { "itemHrid": "/items/ultra_magic_coffee" },
+            { "itemHrid": "/items/wisdom_coffee" }
+        ]
+    },
+    "abilities": [
+        { "abilityHrid": "/abilities/mystic_aura", "level": 60 },
+        { "abilityHrid": "/abilities/elemental_affinity", "level": 75 },
+        { "abilityHrid": "/abilities/toxic_pollen", "level": 75 },
+        { "abilityHrid": "/abilities/natures_veil", "level": 65 },
+        { "abilityHrid": "/abilities/entangle", "level": 76 }
+    ],
+    "triggerMap": {
+        "/abilities/elemental_affinity": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/elemental_affinity",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/abilities/entangle": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/targeted_enemy",
+                "conditionHrid": "/combat_trigger_conditions/current_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 1
+            }
+        ],
+        "/abilities/mystic_aura": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/mystic_aura",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/abilities/natures_veil": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/all_enemies",
+                "conditionHrid": "/combat_trigger_conditions/current_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 1540
+            },
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/current_mp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 80
+            }
+        ],
+        "/abilities/toxic_pollen": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/all_enemies",
+                "conditionHrid": "/combat_trigger_conditions/current_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 970
+            },
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/current_mp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 80
+            }
+        ],
+        "/items/channeling_coffee": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/channeling_coffee",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/items/dragon_fruit_gummy": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/missing_mp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 400
+            }
+        ],
+        "/items/dragon_fruit_yogurt": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/missing_mp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 1200
+            }
+        ],
+        "/items/spaceberry_cake": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/missing_hp",
+                "comparatorHrid": "/combat_trigger_comparators/greater_than_equal",
+                "value": 400
+            }
+        ],
+        "/items/ultra_magic_coffee": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/magic_coffee",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ],
+        "/items/wisdom_coffee": [
+            {
+                "dependencyHrid": "/combat_trigger_dependencies/self",
+                "conditionHrid": "/combat_trigger_conditions/wisdom_coffee",
+                "comparatorHrid": "/combat_trigger_comparators/is_inactive",
+                "value": 0
+            }
+        ]
+    },
+    "houseRooms": {
+        "/house_rooms/archery_range": 3,
+        "/house_rooms/armory": 5,
+        "/house_rooms/dining_room": 5,
+        "/house_rooms/dojo": 7,
+        "/house_rooms/gym": 3,
+        "/house_rooms/library": 6,
+        "/house_rooms/mystical_study": 7
+    },
+    "guildCombatBuffLevels": { "force": 5, "tempo": 5, "spirit": 3, "rarity": 0, "scholar": 4 }
+}

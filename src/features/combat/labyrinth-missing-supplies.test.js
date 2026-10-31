@@ -91,6 +91,20 @@ describe('labyrinth missing supplies', () => {
         expect(calculateMissingSupplies()).toEqual([]);
     });
 
+    test('a supply whose isTradable field is absent (the game omits it when untradable) is skipped', () => {
+        game.inventory = [inv('/items/expert_torch', 320), inv('/items/expert_shroud', 10)];
+        delete game.itemDetailMap['/items/basic_beacon'].isTradable;
+        expect(calculateMissingSupplies()).toEqual([]);
+    });
+
+    test('a supply with no item details at all stays on the list', () => {
+        game.inventory = [inv('/items/expert_torch', 320), inv('/items/expert_shroud', 10)];
+        delete game.itemDetailMap['/items/basic_beacon'];
+        expect(calculateMissingSupplies()).toEqual([
+            { itemHrid: '/items/basic_beacon', name: 'basic_beacon', count: 5 },
+        ]);
+    });
+
     test('falls back to the base caps before characterInfo states any', () => {
         game.characterData = { characterSetting: {} };
         game.inventory = [];

@@ -933,3 +933,41 @@ describe('InventorySort price listener', () => {
         }
     });
 });
+
+describe('InventorySort.sortItemsByPrice — change-only order writes', () => {
+    function countingTile(hrid, value) {
+        const node = document.createElement('div');
+        node.className = 'Item_itemContainer__x';
+        node.dataset.hrid = hrid;
+        node.dataset.askValue = String(value);
+        let writes = 0;
+        let current = '';
+        // happy-dom's style is a proxy that rejects defineProperty, so stand in a counting one
+        const style = {};
+        Object.defineProperty(style, 'order', {
+            get: () => current,
+            set: (v) => {
+                writes += 1;
+                current = String(v);
+            },
+        });
+        Object.defineProperty(node, 'style', { value: style });
+        node.getWrites = () => writes;
+        return node;
+    }
+
+    test('a repeat pass over an unchanged grid writes no order; a moved tile is rewritten', () => {
+        const tiles = [countingTile('a', 10), countingTile('b', 30), countingTile('c', 20), countingTile('d', 20)];
+        inventorySort.sortItemsByPrice(tiles, 'ask');
+        expect(tiles.map((t) => t.style.order)).toEqual(['3', '0', '1', '2']);
+        const afterFirst = tiles.map((t) => t.getWrites());
+        expect(afterFirst).toEqual([1, 1, 1, 1]);
+
+        inventorySort.sortItemsByPrice(tiles, 'ask');
+        expect(tiles.map((t) => t.getWrites())).toEqual(afterFirst);
+
+        tiles[0].dataset.askValue = '100';
+        inventorySort.sortItemsByPrice(tiles, 'ask');
+        expect(tiles.map((t) => t.style.order)).toEqual(['0', '1', '2', '3']);
+    });
+});

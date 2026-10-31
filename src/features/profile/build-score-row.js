@@ -32,6 +32,9 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
+import { pricingStamp } from '../../utils/enhancement-input-pricing.js';
+import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { calculateCombatScore } from './score-calculator.js';
 import { buildScorePanel, setScoreSource } from './build-score-panel.js';
@@ -97,11 +100,57 @@ export function ownProfileData() {
     };
 }
 
+/**
+ * Everything outside the character's gear that moves the score: the pricing rule's inputs and the order book's version.
+ * A cache over scores puts it in its key; a score computed under another stamp is out of date.
+ * @returns {string}
+ */
+export function scorePricingStamp() {
+    // The high-enhancement valuation settings change what a worn piece costs but are not in pricingStamp()
+    const useCost = config.getSetting('networth_highEnhancementUseCost') ? 'cost' : 'market';
+    const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
+    // calculateCombatScore costs high-enhancement pieces on this bench, so a changed bench is a changed score
+    let bench = '';
+    try {
+        const p = getEnhancingParams() || {};
+        bench = [p.enhancingLevel, p.toolBonus, p.speedBonus, p.teas?.blessed, p.guzzlingBonus, p.blessedTeaBonus].join(
+            ','
+        );
+    } catch {
+        bench = '?';
+    }
+    return `${pricingStamp()}|${marketAPI.priceVersion}|${useCost}|${minLevel}|${bench}`;
+}
+
+/**
+ * Everything `calculateCombatScore` reads for the own profile, as one string: worn items with their enhancement,
+ * equipped abilities with their levels, house rooms and guild shrine levels. Two builds with the same fingerprint
+ * score the same; a swap of gear changes it before the debounced refresh has run.
+ * @param {{profile: Object}|null} profileData - {@link ownProfileData}
+ * @returns {string|null} null before the character has loaded
+ */
+export function buildFingerprint(profileData) {
+    const p = profileData?.profile;
+    if (!p) return null;
+    const sortedEntries = (map) => Object.entries(map || {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return JSON.stringify([
+        sortedEntries(p.wearableItemMap).map(([slot, item]) => [slot, item.itemHrid, item.enhancementLevel]),
+        (p.equippedAbilities || []).map((a) => [a.abilityHrid, a.level]),
+        sortedEntries(p.characterHouseRoomMap),
+        sortedEntries(p.characterGuildBuffMap),
+    ]);
+}
+
 class BuildScore {
     constructor() {
         this.watching = false;
         this.score = null;
         this.computedAt = 0;
+        /** The {@link scorePricingStamp} the held score was computed under */
+        this.stamp = null;
+        /** The {@link buildFingerprint} of the build the held score was computed for */
+        this.fingerprint = null;
+        this.inflight = null;
         this.pending = null;
         this.running = false;
         // Bumped by disable(). calculateCombatScore prices every worn item and
@@ -141,14 +190,22 @@ class BuildScore {
     }
 
     /** Recompute now, unless one is already running or the last is still fresh */
-    async refresh() {
-        if (this.running) return;
+    refresh() {
+        if (this.running) return this.inflight || Promise.resolve();
+        this.inflight = this._refresh();
+        return this.inflight;
+    }
+
+    /** @private */
+    async _refresh() {
         if (this.score && Date.now() - this.computedAt < MIN_INTERVAL_MS) return;
 
         const profileData = ownProfileData();
         if (!profileData) return;
 
         const generation = this.generation;
+        const stamp = scorePricingStamp();
+        const fingerprint = buildFingerprint(profileData);
         this.running = true;
         try {
             const result = await calculateCombatScore(profileData);
@@ -162,6 +219,8 @@ class BuildScore {
             if (result?.total > 0) {
                 this.score = result;
                 this.computedAt = Date.now();
+                this.stamp = stamp;
+                this.fingerprint = fingerprint;
             }
         } catch (error) {
             console.error('[BuildScore] Scoring the build failed:', error);
@@ -178,7 +237,10 @@ class BuildScore {
         this.detach = null;
         this.watching = false;
         this.score = null;
+        this.stamp = null;
+        this.fingerprint = null;
         this.running = false;
+        this.inflight = null;
         this.generation += 1;
     }
 }
@@ -204,6 +266,37 @@ const buildScore = new BuildScore();
 export function readOwnScore() {
     buildScore.ensureWatching();
     return buildScore.score;
+}
+
+/**
+ * The current character's score as of a pricing stamp: the held one when it was computed under that stamp,
+ * otherwise a fresh one (a price or pricing setting moved since). For a caller that compares against the score and
+ * must not read a stale figure.
+ * @param {Object} [options]
+ * @param {string|null} [options.stamp] - {@link scorePricingStamp} to be fresh for; null takes whatever is held
+ * @param {number} [options.timeoutMs] - Longest wait for a score to land
+ * @returns {Promise<Object|null>} null when no score under that stamp could be had
+ */
+export async function ensureOwnScore({ stamp = null, timeoutMs = 15000 } = {}) {
+    buildScore.ensureWatching();
+    // Fresh means priced under this stamp AND for the build worn now: a gear swap changes what is worn well before
+    // the debounced refresh scores it
+    const fresh = () =>
+        buildScore.score &&
+        (stamp === null || buildScore.stamp === stamp) &&
+        buildScore.fingerprint === buildFingerprint(ownProfileData());
+    if (fresh()) return buildScore.score;
+    const deadline = Date.now() + timeoutMs;
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+    // The first score may not have landed (the watcher was just started, the character still loading), or the held
+    // one is out of date: ask for a fresh one, and wait for it up to the timeout
+    for (;;) {
+        if (buildScore.score) buildScore.computedAt = 0;
+        await Promise.race([buildScore.refresh(), sleep(deadline - Date.now())]);
+        if (fresh()) return buildScore.score;
+        if (Date.now() >= deadline) return null;
+        await sleep(Math.min(500, deadline - Date.now()));
+    }
 }
 
 // The panel behind the tile reads the same figure the tile does.

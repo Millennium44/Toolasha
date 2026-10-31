@@ -19,6 +19,11 @@ const state = vi.hoisted(() => ({
     imported: null,
     revenueTaxRates: [],
     owned: [],
+    /** Replaces the template tuner's answer, when a test sets it */
+    tune: null,
+    progress: null,
+    tuneCalls: [],
+    tunerCleared: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -66,6 +71,10 @@ vi.mock('./combat-sim-adapter.js', () => ({
     getCommunityBuffs: () => ({}),
     getCurrentCombatZone: () => null,
     parseShykaiImport: () => state.imported,
+    guildBuffsFromExportLevels: (levels) => ({
+        guildShrineLevels: { resolved: levels },
+        guildCombatBuffs: [{ from: 'shrine' }],
+    }),
     calculateSimRevenue: (sim, _gameData, playerHrid, hours, options = {}) => {
         state.revenueTaxRates.push(options.saleTaxRate);
         return {
@@ -77,6 +86,23 @@ vi.mock('./combat-sim-adapter.js', () => ({
         };
     },
     recomputeLevelGapDebuffs: () => {},
+}));
+vi.mock('./party-template-tuner.js', () => ({
+    clearTunerCache: () => {
+        state.tunerCleared += 1;
+    },
+    tuneTemplate: async (template, levels, _deps, options) => {
+        state.progress?.forEach((p) => options?.onProgress?.(p));
+        state.tuneCalls.push({ id: template.id, levels });
+        if (state.tune) return state.tune(template, levels);
+        return {
+            status: 'noScore',
+            dto: structuredClone(template.playerDto),
+            k: null,
+            templateScore: null,
+            ownScore: null,
+        };
+    },
 }));
 vi.mock('./all-zones-runner.js', () => ({
     runAllZonesSimulation: (params, onProgress) =>
@@ -224,6 +250,8 @@ async function mountTab() {
 }
 
 beforeEach(() => {
+    state.tune = null;
+    state.progress = null;
     state.charId = 'me';
     state.gameMode = undefined;
     state.db = undefined;
@@ -1273,14 +1301,13 @@ describe('saved builds', () => {
             expect(templates.compareDocumentPosition(builds) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
         });
 
-        test('opening lists every template by role, with tier in the label and the source in a tooltip', async () => {
+        test('opening lists every template by role, with the source in a tooltip', async () => {
             await mountTab();
             toggle().click();
             expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(PARTY_TEMPLATES.length);
             const body = tab.root.querySelector('[data-pf-templates-body]').textContent;
             for (const label of ['Ranger', 'Nature', 'Fire', 'Water', 'Tank', 'Melee']) expect(body).toContain(label);
             const t = PARTY_TEMPLATES[0];
-            expect(tplRow(t.id).textContent).toContain(t.tier);
             expect(tplRow(t.id).querySelector('span').title).toBe(t.source);
             // No rename or delete on a template
             const labels = [...tplRow(t.id).querySelectorAll('button')].map((b) => b.textContent);
@@ -1315,6 +1342,207 @@ describe('saved builds', () => {
             // Templates stay open and untouched
             expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(PARTY_TEMPLATES.length);
         });
+    });
+
+    describe('Match my build', () => {
+        const toggle = () => tab.root.querySelector('[data-pf-templates-toggle]');
+        const matchBox = () => tab.root.querySelector('[data-pf-match-build]');
+        const add = (id) =>
+            [...tab.root.querySelector('[data-pf-template="' + id + '"]').querySelectorAll('button')]
+                .find((b) => b.textContent === 'Add as teammate')
+                .click();
+        const tuned = (template, extra = {}) => {
+            const dto = structuredClone(template.playerDto);
+            dto.meleeLevel = 136;
+            dto.equipment['/equipment_types/main_hand'].enhancementLevel = 9;
+            return { status: 'ok', dto, k: -3, templateScore: 1234, ownScore: 1250, ...extra };
+        };
+        const t = () => PARTY_TEMPLATES.find((x) => x.id === 'melee-smash');
+
+        beforeEach(() => {
+            state.tune = null;
+            state.tuneCalls = [];
+            state.selfDTO = { meleeLevel: 136, staminaLevel: 125 };
+        });
+
+        test('is on by default with the rule in its tooltip, and the toggle persists across redraws of the list', async () => {
+            await mountTab();
+            expect(matchBox().checked).toBe(true);
+            expect(matchBox().parentElement.title).toMatch(/highest of melee, ranged, magic and defense/);
+            matchBox().click();
+            expect(matchBox().checked).toBe(false);
+            toggle().click();
+            expect(matchBox().checked).toBe(false);
+        });
+
+        test('a pricing change forgets every solved offset', async () => {
+            await mountTab();
+            state.tunerCleared = 0;
+            tab.onPricingChanged();
+            expect(state.tunerCleared).toBe(1);
+        });
+
+        test('adding tunes the template to the character and shows its score against theirs', async () => {
+            await mountTab();
+            state.tune = async (template) => tuned(template);
+            toggle().click();
+            add(t().id);
+            await flush();
+            expect(state.tuneCalls[0].levels.meleeLevel).toBe(136);
+            const dto = state.db.entries[0].dto;
+            expect(dto.meleeLevel).toBe(136);
+            expect(dto.equipment['/equipment_types/main_hand'].enhancementLevel).toBe(9);
+            expect(dto.guildShrineLevels).toBeDefined();
+            const line = tab.root.querySelector('[data-pf-template-score]');
+            expect(line.textContent).toBe('score 1,234M ≈ yours 1,250M');
+            expect(el('roster-note').textContent).toContain('score 1,234M ≈ yours 1,250M');
+        });
+
+        test('switched off, the standard template is added and nothing is scored', async () => {
+            await mountTab();
+            toggle().click();
+            matchBox().click();
+            add(t().id);
+            await flush();
+            expect(state.tuneCalls).toEqual([]);
+            expect(state.db.entries[0].dto.equipment).toEqual(t().playerDto.equipment);
+            expect(tab.root.querySelector('[data-pf-template-score]')).toBeNull();
+        });
+
+        test('no score loaded, or no character build: the standard template and a note that says so', async () => {
+            await mountTab();
+            toggle().click();
+            add(t().id);
+            await flush();
+            expect(el('roster-note').textContent).toMatch(/build score is not loaded yet/);
+            expect(tab.root.querySelector('[data-pf-template-score]').textContent).toMatch(/standard template/);
+            state.selfDTO = null;
+            state.tuneCalls = [];
+            add(t().id);
+            await flush();
+            expect(state.tuneCalls).toEqual([]);
+            expect(state.db.entries).toHaveLength(2);
+        });
+
+        test('a build the template cannot reach says which way it is clamped', async () => {
+            await mountTab();
+            toggle().click();
+            state.tune = async (template) =>
+                tuned(template, { status: 'clampedLow', templateScore: 2000, ownScore: 500 });
+            add(t().id);
+            await flush();
+            expect(tab.root.querySelector('[data-pf-template-score]').textContent).toMatch(
+                /lowest setting scores above/
+            );
+            state.tune = async (template) =>
+                tuned(template, { status: 'clampedHigh', templateScore: 200, ownScore: 5000 });
+            add(t().id);
+            await flush();
+            expect(tab.root.querySelector('[data-pf-template-score]').textContent).toMatch(
+                /highest setting scores below/
+            );
+        });
+
+        test('a match through unpriced gear says it is approximate', async () => {
+            await mountTab();
+            toggle().click();
+            state.tune = async (template) => tuned(template, { status: 'partial' });
+            add(t().id);
+            await flush();
+            expect(tab.root.querySelector('[data-pf-template-score]').textContent).toBe(
+                'score 1,234M ≈ yours 1,250M. Some gear is unpriced, so the match is approximate.'
+            );
+            expect(tab.root.querySelector('[data-pf-template-score]').style.color).not.toBe('');
+        });
+
+        test('a match that finishes after the tab was closed and reopened adds nothing and cannot unlock the new match', async () => {
+            await mountTab();
+            toggle().click();
+            const gate = [];
+            state.tune = (template) => new Promise((resolve) => gate.push(() => resolve(tuned(template))));
+            add(t().id);
+            await flush();
+            expect(tab._tuning).toBe(true);
+            tab.detach();
+            tab.mount(container);
+            await flush();
+            tab.onShow();
+            if (!tab.root.querySelector('[data-pf-templates-body]')) toggle().click();
+            add(t().id);
+            await flush();
+            expect(tab._tuning).toBe(true);
+            // The first request finishes now: it is dropped, and the second still owns the flag
+            gate[0]();
+            await flush();
+            expect(state.db?.entries ?? []).toHaveLength(0);
+            expect(tab._tuning).toBe(true);
+            gate[1]();
+            await flush();
+            expect(tab._tuning).toBe(false);
+            expect(state.db.entries).toHaveLength(1);
+        });
+
+        test('the note shows the wait for the build score, then the probe count', async () => {
+            await mountTab();
+            toggle().click();
+            const note = el('roster-note');
+            let finish;
+            state.tune = (template) => new Promise((resolve) => (finish = () => resolve(tuned(template))));
+            state.progress = [{ phase: 'score', done: 0, max: 10 }];
+            add(t().id);
+            await flush();
+            expect(note.textContent).toBe('Waiting for your build score…');
+            finish();
+            await flush();
+            state.progress = [{ phase: 'solve', done: 3, max: 10 }];
+            add(t().id);
+            await flush();
+            expect(note.textContent).toBe('Matching the template to your build… 3/10');
+            finish();
+            await flush();
+        });
+
+        test('turned off while matching, the standard template is added', async () => {
+            await mountTab();
+            toggle().click();
+            let finish;
+            state.tune = (template) => new Promise((resolve) => (finish = () => resolve(tuned(template))));
+            add(t().id);
+            await flush();
+            matchBox().click();
+            finish();
+            await flush();
+            expect(state.db.entries[0].dto.equipment).toEqual(t().playerDto.equipment);
+            expect(tab.root.querySelector('[data-pf-template-score]')).toBeNull();
+        });
+
+        test('a character switch while matching adds nothing and leaves no score line for the new character', async () => {
+            await mountTab();
+            toggle().click();
+            state.tune = async (template) => {
+                state.charId = 'someone-else';
+                return tuned(template);
+            };
+            add(t().id);
+            await flush();
+            expect(state.db?.entries ?? []).toHaveLength(0);
+            expect(tab.root.querySelector('[data-pf-template-score]')).toBeNull();
+            state.charId = 'me';
+        });
+    });
+
+    test('adding a template resolves its guild shrine levels onto the teammate, and leaves the template alone', async () => {
+        await mountTab();
+        const toggle = tab.root.querySelector('[data-pf-templates-toggle]');
+        toggle.click();
+        const t = PARTY_TEMPLATES.find((x) => x.id === 'tank-bulwark');
+        [...tab.root.querySelector('[data-pf-template="' + t.id + '"]').querySelectorAll('button')]
+            .find((b) => b.textContent === 'Add as teammate')
+            .click();
+        await flush();
+        expect(state.db.entries[0].dto.guildShrineLevels).toEqual({ resolved: t.guildCombatBuffLevels });
+        expect(state.db.entries[0].dto.guildCombatBuffs).toEqual([{ from: 'shrine' }]);
+        expect(t.playerDto.guildShrineLevels).toBeUndefined();
     });
 
     test('rename keeps names unique; delete takes two clicks and survives a re-read', async () => {

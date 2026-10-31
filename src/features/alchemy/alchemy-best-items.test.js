@@ -183,6 +183,14 @@ vi.mock('../market/tooltip-prices.js', () => ({
     },
 }));
 
+const yielding = vi.hoisted(() => ({ calls: 0, onYield: null }));
+vi.mock('../../utils/yield-to-browser.js', () => ({
+    yieldToBrowser: async () => {
+        yielding.calls += 1;
+        if (yielding.onYield) yielding.onYield();
+    },
+}));
+
 vi.mock('../market/self-use-wanted.js', () => ({
     default: {
         onChange: (cb) => {
@@ -1827,6 +1835,68 @@ describe('the Chain/hr (own stock) sort', () => {
         await sweep;
         await vi.waitFor(() => expect(bestItems.ownStock.has('/items/b')).toBe(true));
         expect(cells().map((c) => c.textContent)).not.toContain('…');
+    });
+
+    test('a re-sweep works out only the held items that have no figure yet', async () => {
+        tooltip.held = { '/items/a': 1, '/items/b': 2, '/items/c': 3 };
+        tooltip.chains = { '/items/a': chain(100), '/items/b': chain(200), '/items/c': chain(300) };
+        await open([row('a', 1), row('b', 1), row('c', 1)]);
+        expect(tooltip.calls).toHaveLength(3);
+        // Back into the sort with every figure present: nothing to work out, no pricing env built
+        tooltip.calls.length = 0;
+        tooltip.envCalls = 0;
+        await bestItems.refreshOwnStock();
+        expect(tooltip.calls).toHaveLength(0);
+        expect(tooltip.envCalls).toBe(0);
+        // One figure missing (stock gained): only that one is worked out, the others keep theirs
+        bestItems.ownStock.delete('/items/b');
+        await bestItems.refreshOwnStock();
+        expect(tooltip.calls.map((c) => c.hrid)).toEqual(['/items/b']);
+        expect(bestItems.ownStock.get('/items/a').value).toBe(100);
+        expect(bestItems.ownStock.get('/items/b').value).toBe(200);
+    });
+
+    test('a row whose chain could not be built is retried on the next sweep; a built chain is kept', async () => {
+        tooltip.held = { '/items/a': 1, '/items/b': 2 };
+        // b's chain is not ready on the first sweep
+        tooltip.chains = { '/items/a': chain(100) };
+        await open([row('a', 1), row('b', 1)]);
+        expect(bestItems.ownStock.get('/items/b').value).toBeNull();
+        tooltip.chains = { '/items/a': chain(100), '/items/b': chain(200) };
+        tooltip.calls.length = 0;
+        await bestItems.refreshOwnStock();
+        expect(tooltip.calls.map((c) => c.hrid)).toEqual(['/items/b']);
+        expect(bestItems.ownStock.get('/items/b').value).toBe(200);
+    });
+
+    test('a long sweep hands the browser a frame, and a sweep superseded during the yield writes nothing more', async () => {
+        const hrids = Array.from({ length: 6 }, (_, i) => `/items/i${i}`);
+        tooltip.held = Object.fromEntries(hrids.map((h) => [h, 2]));
+        tooltip.chains = Object.fromEntries(hrids.map((h) => [h, chain(50)]));
+        let now = 0;
+        const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => (now += 11));
+        yielding.calls = 0;
+        try {
+            await open(hrids.map((h) => row(h.slice(7), 1)));
+            expect(yielding.calls).toBe(6);
+
+            // Superseded during the first yield: the stale sweep must not store the rest
+            bestItems.ownStock.clear();
+            tooltip.calls.length = 0;
+            yielding.onYield = () => {
+                // What every real supersede path does (see clearChainCaches)
+                bestItems.ownStockSweep += 1;
+                bestItems.ownStockRunning = false;
+                bestItems.ownStockPromise = null;
+                yielding.onYield = null;
+            };
+            await bestItems.refreshOwnStock();
+            expect(tooltip.calls).toHaveLength(1);
+            expect(bestItems.ownStock.size).toBe(1);
+        } finally {
+            nowSpy.mockRestore();
+            yielding.onYield = null;
+        }
     });
 
     test('switching into own-stock mode runs one sweep, not two', async () => {
