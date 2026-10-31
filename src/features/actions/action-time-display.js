@@ -42,6 +42,7 @@ import {
 } from '../../utils/tea-parser.js';
 import { getItemPrices, getRawMarketAskPrice } from '../../utils/market-data.js';
 import { resolveActionContext } from '../../utils/action-context.js';
+import { upgradeOutputLevels } from '../../utils/upgrade-enhancement.js';
 import { affordableActions } from '../../utils/material-calculator.js';
 import { capProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
@@ -2145,6 +2146,9 @@ class ActionTimeDisplay {
             // A counted fight with no simulated rate: the queue does end, but not at a time
             // anyone can say, so every clock after it is withheld and the total is incomplete
             let hasUnknown = false;
+            // Rows no queued action could be matched to: they add no time, so a total built
+            // without them is a floor, never a complete figure
+            let unmatchedRows = 0;
 
             // Include current action time in total (same as edit menu)
             const currentActionTime = this.calculateCurrentActionTime(currentActions, inventoryLookup);
@@ -2169,6 +2173,8 @@ class ActionTimeDisplay {
 
                 if (!actionObj) {
                     this.appendTimeToActionDiv(actionDiv, '[Unknown action]');
+                    hasUnknown = true;
+                    unmatchedRows++;
                     continue;
                 }
 
@@ -2269,11 +2275,23 @@ class ActionTimeDisplay {
                     totalText = `Total: ${totalMark}${timeReadable(accumulatedTime)}`;
                 }
                 totalDiv.textContent = totalText;
+                totalDiv.title = this.unmatchedRowsTitle(unmatchedRows);
                 actionsContainer.appendChild(totalDiv);
             }
         } catch (error) {
             console.error('[Action Time Display] Error injecting queue tooltip times:', error);
         }
+    }
+
+    /**
+     * The hover text for a queue total that skipped rows it could not identify.
+     * @param {number} unmatchedRows - Rows no queued action could be matched to
+     * @returns {string} Empty when nothing was skipped
+     */
+    unmatchedRowsTitle(unmatchedRows) {
+        return unmatchedRows > 0
+            ? `At least this long: ${unmatchedRows} queue ${unmatchedRows === 1 ? 'row' : 'rows'} could not be identified and ${unmatchedRows === 1 ? 'is' : 'are'} not counted.`
+            : '';
     }
 
     /**
@@ -2363,7 +2381,10 @@ class ActionTimeDisplay {
      *   what the lookup can actually pay for. Off by default: this helper also answers for a
      *   single, unqueued action, where the whole bag is the right basis and the requested
      *   count is what the player asked to run. Only the queue walks, which cost each row
-     *   against a running ledger, ask for the cap.
+     *   against a running ledger, ask for the cap. `actionContext` ({equipment, drinks}) times
+     *   the action with that gear instead of the worn gear (a panel's resolved context).
+     *   `countSelfReturns: false` costs a transmute's input without crediting its expected
+     *   self-returns, for a caller that must not promise supply random rolls may not deliver.
      * @returns {Object} { totalTime, actionTimeSeconds, count, baseActionsNeeded, isTrulyInfinite,
      *      isInfinite, materialLimit, limitType, limitLabel, materialLimitIsEstimated, isEnhancing }
      */
@@ -2405,7 +2426,12 @@ class ActionTimeDisplay {
                 totalTime = Infinity;
             }
         } else {
-            const timeData = this.calculateActionTime(actionDetails, actionObj.actionHrid, actionObj);
+            const timeData = this.calculateActionTime(
+                actionDetails,
+                actionObj.actionHrid,
+                actionObj,
+                options.actionContext ?? null
+            );
             if (!timeData) {
                 return {
                     totalTime: 0,
@@ -2431,7 +2457,8 @@ class ActionTimeDisplay {
                     actionDetails,
                     inventoryLookup,
                     artisanBonus,
-                    actionObj
+                    actionObj,
+                    { countSelfReturns: options.countSelfReturns !== false }
                 );
                 if (limitResult) {
                     materialLimit = limitResult.maxActions;
@@ -2445,7 +2472,9 @@ class ActionTimeDisplay {
             if (!isInfinite) {
                 count = actionObj.maxCount - actionObj.currentCount;
                 if (options.limitCountedByMaterials) {
-                    const capped = this.capCountedRequestByMaterials(count, actionDetails, inventoryLookup, actionObj);
+                    const capped = this.capCountedRequestByMaterials(count, actionDetails, inventoryLookup, actionObj, {
+                        countSelfReturns: options.countSelfReturns !== false,
+                    });
                     count = capped.count;
                     if (capped.limitType !== null) {
                         materialLimit = capped.count;
@@ -3819,11 +3848,13 @@ class ActionTimeDisplay {
      * @param {string} actionHrid - Action HRID for task detection (optional)
      * @param {Object|null} [actionObj] - The queued action; an alchemy action's level efficiency
      *   is measured against the item it alchemizes, which only its primaryItemHash names
+     * @param {{equipment?: Map, drinks?: Array}|null} [actionContext] - An explicit equipment and
+     *   drinks context (a panel's resolved one); worn gear and the resolved drinks when omitted
      * @returns {Object} {actionTime, totalEfficiency} or null if calculation fails
      */
-    calculateActionTime(actionDetails, actionHrid = null, actionObj = null) {
+    calculateActionTime(actionDetails, actionHrid = null, actionObj = null, actionContext = null) {
         const skills = dataManager.getSkills();
-        const equipment = dataManager.getEquipment();
+        const equipment = actionContext?.equipment ?? dataManager.getEquipment();
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 
         // Use shared calculator with same parameters as main display
@@ -3834,6 +3865,7 @@ class ActionTimeDisplay {
             actionHrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: false,
+            actionContext,
             levelRequirementOverride: this.alchemyLevelRequirement(actionDetails, actionObj, itemDetailMap),
         });
     }
@@ -4291,7 +4323,9 @@ class ActionTimeDisplay {
         const bulkMultiplier = alchItemDetails?.alchemyDetail?.bulkMultiplier || 1;
         const exact = { perAction: bulkMultiplier, isEstimated: false };
         if (getAlchemyTypeFromActionHrid(actionDetails?.hrid) !== 'transmute') return exact;
-        const { itemHrid } = this.parseItemHash(actionObj?.primaryItemHash || '');
+        const { itemHrid, level: inputLevel } = this.parseItemHash(actionObj?.primaryItemHash || '');
+        // A self-return arrives as a +0 copy: it cannot refill an enhanced input's own stack
+        if (inputLevel > 0) return exact;
         const selfDrop = (alchItemDetails?.alchemyDetail?.transmuteDropTable || []).find(
             (drop) => drop?.itemHrid === itemHrid
         );
@@ -4373,17 +4407,24 @@ class ActionTimeDisplay {
      * @param {Object} actionDetails - Action detail object for the row
      * @param {Object} inventoryLookup - Maps from buildInventoryLookup; read, never mutated
      * @param {Object} actionObj - Character action object (carries the item hashes)
+     * @param {Object} [limitOptions] - Passed to `calculateMaterialLimit` ({countSelfReturns})
      * @returns {{count: number, limitType: string|null, isEstimated: boolean}} Capped count,
      *      always a finite non-negative integer
      */
-    capCountedRequestByMaterials(requested, actionDetails, inventoryLookup, actionObj) {
+    capCountedRequestByMaterials(requested, actionDetails, inventoryLookup, actionObj, limitOptions = {}) {
         // Neither a display nor the ledger may ever see Infinity, NaN or a negative
         const count = Number.isFinite(requested) ? Math.max(0, Math.floor(requested)) : 0;
         const unlimited = { count, limitType: null, isEstimated: false };
         if (!inventoryLookup || !actionDetails) return unlimited;
 
         const artisanBonus = this.getArtisanBonusForAction(actionDetails);
-        const limitResult = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj);
+        const limitResult = this.calculateMaterialLimit(
+            actionDetails,
+            inventoryLookup,
+            artisanBonus,
+            actionObj,
+            limitOptions
+        );
         if (!limitResult || !Number.isFinite(limitResult.maxActions)) return unlimited;
 
         const cap = Math.max(0, Math.floor(limitResult.maxActions));
@@ -4517,18 +4558,46 @@ class ActionTimeDisplay {
             inventoryLookup.estimatedHrids = new Set();
         }
 
-        // Produced items arrive unenhanced, so the level-0 stack is the one that moves —
-        // the same key the alchemy branch of the limit reads.
-        const gain = (itemHrid, amount, isEstimated) => {
+        // Produced items arrive unenhanced, so the level-0 stack is the one that moves — the
+        // same key the alchemy branch of the limit reads. The exception is an upgrade craft,
+        // whose output carries part of the consumed copy's level (see below).
+        const gain = (itemHrid, amount, isEstimated, level = 0) => {
             if (!itemHrid || !Number.isFinite(amount) || amount <= 0) return;
             byHrid[itemHrid] = Math.max(0, (byHrid[itemHrid] || 0) + amount);
-            const key = `${itemHrid}::0`;
+            const key = `${itemHrid}::${level}`;
             byEnhancedKey[key] = Math.max(0, (byEnhancedKey[key] || 0) + amount);
             if (isEstimated) inventoryLookup.estimatedHrids.add(itemHrid);
         };
 
+        // An upgrade craft consumes a selected stack and outputs at floor(0.7 x its level) (or
+        // the full level for a retain-all recipe). Crediting that to +0 would let a later +0
+        // recipe spend stock that does not exist at +0. A fractional target is the chance of
+        // one more level: the deterministic credit leaves it uncertain (nothing credited), the
+        // expected credit splits by chance.
+        const upgradeInputLevel = actionDetails.upgradeItemHrid
+            ? this.getProductionUpgradeLevel(actionDetails, actionObj)
+            : 0;
+        const outputLevels = upgradeOutputLevels(upgradeInputLevel, {
+            retainAll: Boolean(actionDetails.retainAllEnhancement),
+        });
+
         const outputs = this.getQueueActionOutputs(actionDetails, actionObj);
         for (const output of outputs.deterministic) {
+            if (actionDetails.upgradeItemHrid && outputLevels.length > 0) {
+                const floorLevel = outputLevels[0].level;
+                if (creditStochastic && outputLevels.length > 1) {
+                    for (const { level, weight } of outputLevels) {
+                        gain(output.itemHrid, output.count * performed * weight, true, level);
+                    }
+                } else if (outputLevels.length === 1) {
+                    // A whole transferred level is certain
+                    gain(output.itemHrid, output.count * performed, false, floorLevel);
+                }
+                // A fractional target rolls floor or floor+1 per copy, so no exact-level stack is
+                // certain: the conservative ledger leaves it uncredited rather than promising a
+                // later row copies that may have rolled the other level.
+                continue;
+            }
             gain(output.itemHrid, output.count * performed, false);
         }
         if (creditStochastic) {
@@ -4576,12 +4645,16 @@ class ActionTimeDisplay {
         // because a caller that passes a raw count (the edit menu's current-action block) must
         // still be charged only for what it can pay for.
         let performed = Number.isFinite(timing.count) ? Math.max(0, Math.floor(timing.count)) : 0;
-        const limit = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj);
+        // A caller that credits no expected yield also counts no expected self-return: the same
+        // random roll cannot fund the next action here and be ignored on the credit side.
+        const creditStochastic = options.creditStochastic !== false;
+        const limit = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj, {
+            countSelfReturns: creditStochastic,
+        });
         if (limit && Number.isFinite(limit.maxActions)) {
             performed = Math.min(performed, Math.max(0, limit.maxActions));
         }
         if (performed <= 0) return 0;
-        const creditStochastic = options.creditStochastic !== false;
         const credit = () => {
             this.creditQueueActionOutputs(inventoryLookup, actionDetails, actionObj, performed, creditStochastic);
             return performed;
@@ -4628,7 +4701,9 @@ class ActionTimeDisplay {
                 const alchItemDetails = dataManager.getItemDetails(itemHrid);
                 // Net of self-returns, which the output credit leaves out, so the limit that
                 // counted them and the spend that pays for them agree
-                const inputPerAction = this.getAlchemyNetInputPerAction(actionDetails, alchItemDetails, actionObj);
+                const inputPerAction = creditStochastic
+                    ? this.getAlchemyNetInputPerAction(actionDetails, alchItemDetails, actionObj)
+                    : { perAction: alchItemDetails?.alchemyDetail?.bulkMultiplier || 1 };
                 spend(itemHrid, performed * inputPerAction.perAction, level);
 
                 // The fee is absent from the game's action data; utils/alchemy-fees.js is the
@@ -4846,6 +4921,9 @@ class ActionTimeDisplay {
             // As in the tooltip: a counted fight with no simulated rate ends at a time nobody can
             // say, so the clocks after it are withheld and the total says it is incomplete
             let hasUnknown = false;
+            // Rows no queued action could be matched to; as in the tooltip they make the total
+            // a floor rather than a complete figure
+            let unmatchedRows = 0;
             // Whether the total leans on a simulated combat rate, or on a material limit that
             // rests on an expected draw rather than a guaranteed count — either way `hasEstimate`
             // carries the mark; these two are tracked separately only so the total's hover text
@@ -5083,6 +5161,8 @@ class ActionTimeDisplay {
                         margin-top: 2px;
                     `;
                     timeDiv.textContent = '[Unknown action]';
+                    hasUnknown = true;
+                    unmatchedRows++;
 
                     const actionTextContainer = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
                     if (actionTextContainer) {
@@ -5428,13 +5508,15 @@ class ActionTimeDisplay {
             const xpText = this.queueXpTotalText(xpTally);
 
             totalDiv.innerHTML = totalText + xpText;
+            if (unmatchedRows > 0) totalDiv.title = this.unmatchedRowsTitle(unmatchedRows);
 
             // Say why the total is marked when a material limit is the reason (or part of it) —
             // the sim-rate case is already explained on the combat row itself
             if (hasMaterialLimitEstimate) {
-                totalDiv.title = usesSimRate
+                const estimateTitle = usesSimRate
                     ? 'Estimated, not measured: includes both a simulated combat rate and a material limit resting on an expected draw.'
                     : 'Estimated, not measured: a material limit in this total rests on an expected draw, not a guaranteed count.';
+                totalDiv.title = totalDiv.title ? `${totalDiv.title} ${estimateTitle}` : estimateTitle;
             }
 
             // Insert after queue menu

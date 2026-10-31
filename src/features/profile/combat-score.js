@@ -83,6 +83,8 @@ class CombatScore {
         // suspended on an await (storage, waitForProfilePanel's up-to-2s poll, calculateCombatScore)
         // knows its render is stale and must not append a panel after the module was switched off.
         this._renderGeneration = 0;
+        // Bumped per profile_shared event: a slower earlier profile must not replace a newer one's panel.
+        this._profileRequestSeq = 0;
     }
 
     /**
@@ -179,6 +181,7 @@ class CombatScore {
         // Captured before any await: disable() bumping this means every render below is stale,
         // even once a later initialize() has isInitialized true again for an unrelated open.
         const generation = this._renderGeneration;
+        const requestSeq = ++this._profileRequestSeq;
 
         // Extract character ID from profile data
         const characterId =
@@ -188,13 +191,13 @@ class CombatScore {
 
         // Store the profile ID so export button can find it
         await storage.set('currentProfileId', characterId, 'combatExport', true);
-        if (generation !== this._renderGeneration) return;
+        if (generation !== this._renderGeneration || requestSeq !== this._profileRequestSeq) return;
 
         // Note: Memory cache is handled by websocket.js listener (don't duplicate here)
 
         // Wait for profile panel to appear in DOM
         const profilePanel = await this.waitForProfilePanel();
-        if (generation !== this._renderGeneration) return;
+        if (generation !== this._renderGeneration || requestSeq !== this._profileRequestSeq) return;
         if (!profilePanel) {
             console.error('[CombatScore] Could not find profile panel');
             return;
@@ -208,7 +211,7 @@ class CombatScore {
             profilePanel.parentElement;
 
         if (modalContainer) {
-            await this.handleProfileOpen(profileData, modalContainer, generation);
+            await this.handleProfileOpen(profileData, modalContainer, generation, requestSeq);
         }
     }
 
@@ -233,12 +236,13 @@ class CombatScore {
      * @param {Element} modalContainer - Modal container element
      * @param {number} generation - `_renderGeneration` at the start of this render pass; a value
      *   the module has since moved past means disable() ran mid-flight and this pass must not draw
+     * @param {number} [requestSeq] - `_profileRequestSeq` for this profile event; a newer event supersedes it
      */
-    async handleProfileOpen(profileData, modalContainer, generation) {
+    async handleProfileOpen(profileData, modalContainer, generation, requestSeq = this._profileRequestSeq) {
         try {
             // Calculate combat score
             const scoreData = await calculateCombatScore(profileData);
-            if (generation !== this._renderGeneration) return;
+            if (generation !== this._renderGeneration || requestSeq !== this._profileRequestSeq) return;
 
             // Display score panel
             this.showScorePanel(profileData, scoreData, modalContainer);
@@ -1078,7 +1082,7 @@ class CombatScore {
                     loadoutDropdown.innerHTML = snapshots
                         .map(
                             (s) =>
-                                `<div class="mwi-loadout-option" data-name="${escapeHtml(s.name)}" style="
+                                `<div class="mwi-loadout-option" data-name="${escapeHtml(s.name)}" data-snapshot-id="${escapeHtml(String(s.id ?? ''))}" style="
                                 padding: 6px 10px;
                                 cursor: pointer;
                                 font-size: 0.8rem;
@@ -1104,7 +1108,7 @@ class CombatScore {
 
                     loadoutDropdown.querySelectorAll('.mwi-loadout-option').forEach((opt) => {
                         opt.addEventListener('click', () => {
-                            handleViewCardFromSnapshot(opt.dataset.name);
+                            handleViewCardFromSnapshot(opt.dataset.name, opt.dataset.snapshotId);
                             loadoutDropdown.style.display = 'none';
                         });
                         opt.addEventListener('mouseenter', () => {

@@ -38,6 +38,7 @@ class CharacterSelectRenderer {
         this.refreshTimer = null;
         this.trackedSlots = new Map(); // characterId -> {slotElement, character}
         this.checkpointedRoots = new WeakSet();
+        this.mountedRoot = null; // the root the latest scan belongs to
     }
 
     /**
@@ -98,6 +99,7 @@ class CharacterSelectRenderer {
         try {
             const { slots } = resolveCharacterSelectSlots(rootElement);
             if (slots.length === 0) return;
+            this.mountedRoot = rootElement;
 
             // A native Switch Character navigation does not fire the collector's switching or
             // unload hooks. Save once per populated Character Select mount before reading the
@@ -108,6 +110,9 @@ class CharacterSelectRenderer {
                 // Keep the pre-await marker so simultaneous root/slots observations coalesce,
                 // but let a later native rescan retry after a transient storage failure.
                 if (!checkpointed) this.checkpointedRoots.delete(rootElement);
+                // A newer root mounted (or this one left the page) while the checkpoint was
+                // pending: this scan's slots are stale and must not replace the newer mount's.
+                if (this.mountedRoot !== rootElement || !rootElement.isConnected) return;
             }
 
             this.trackedSlots.clear();
@@ -258,6 +263,7 @@ class CharacterSelectRenderer {
         this.clearAllInjectedBlocks();
         this.trackedSlots.clear();
         this.checkpointedRoots = new WeakSet();
+        this.mountedRoot = null;
         this.isWatching = false;
     }
 }

@@ -74,6 +74,7 @@ const coreExternalGlobals = new Map([
 const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/formatters.js')), 'Toolasha.Utils.formatters'],
     [normalize(join(__dirname, 'src/utils/liquidity-cap.js')), 'Toolasha.Utils.liquidityCap'],
+    [normalize(join(__dirname, 'src/utils/upgrade-enhancement.js')), 'Toolasha.Utils.upgradeEnhancement'],
     // Combat-scroll definitions are consumed by both the actions and sim
     // bundles. Keep one shared copy so both surfaces use the same constants.
     [normalize(join(__dirname, 'src/utils/combat-scroll-buffs.js')), 'Toolasha.Utils.combatScrollBuffs'],

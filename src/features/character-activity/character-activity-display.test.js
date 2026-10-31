@@ -268,6 +268,39 @@ describe('the two lines a slot shows', () => {
         expect(state.limiterColor).toBe('neutral');
     });
 
+    test('a known prefix keeps its identity ahead of an unknown-duration tail until it ends', () => {
+        const segments = [
+            {
+                actionName: 'Cooking',
+                actionTypeHrid: '/action_types/cooking',
+                startAt: NOW - HOUR,
+                endAt: NOW + 3 * HOUR,
+                queuedIndex: 0,
+                certainty: 'trustworthy',
+                stopCause: 'complete',
+            },
+            {
+                actionName: 'Enhancing',
+                actionTypeHrid: '/action_types/enhancing',
+                startAt: NOW + 3 * HOUR,
+                endAt: null,
+                queuedIndex: 1,
+                certainty: 'uncertain',
+                stopCause: 'unknown',
+            },
+        ];
+        const rec = record({ endsInMs: null, terminalCause: 'unknown', segments });
+
+        const during = computeSlotDisplayState(rec, { id: '1' }, PREFS, NOW);
+        expect(during.firstLineText).toBe('Cooking +1 queued');
+        expect(during.actionTypeHrid).toBe('/action_types/cooking');
+        expect(during.limiterText).toBe('End time unavailable');
+
+        const after = computeSlotDisplayState(rec, { id: '1' }, PREFS, NOW + 4 * HOUR);
+        expect(after.firstLineText).toBe('Enhancing');
+        expect(after.actionTypeHrid).toBe('/action_types/enhancing');
+    });
+
     test('what is still queued behind the running action is counted', () => {
         const queued = record({
             endsInMs: 6 * HOUR,

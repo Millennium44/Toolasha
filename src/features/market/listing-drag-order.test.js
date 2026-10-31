@@ -472,6 +472,18 @@ describe('finger-driven reordering (no native drag events)', () => {
         expect(listingDragOrder.touchDrag).toBeNull();
     });
 
+    test('a listing removed under a resting finger cannot start or save a drag', () => {
+        ptr(handleOf(rows[0]), 'pointerdown', 7, 0, 0);
+        rows[0].remove();
+        rows[2].getBoundingClientRect = () => ({ top: 100, height: 20 });
+        document.elementFromPoint.mockReturnValue(rows[2].children[0]);
+        ptr(document.body, 'pointermove', 7, 0, 119);
+        ptr(document.body, 'pointerup', 7, 0, 119);
+        expect(listingDragOrder.touchDrag).toBeNull();
+        expect(game.set).not.toHaveBeenCalled();
+        expect(table.dataset.mwiManualListingOrder).toBeUndefined();
+    });
+
     test('mouse pointer events leave the native drag path alone', () => {
         ptr(handleOf(rows[0]), 'pointerdown', 1, 0, 0, 'mouse');
         expect(listingDragOrder.touchDrag).toBeNull();

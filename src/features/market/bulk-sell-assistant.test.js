@@ -68,7 +68,7 @@ vi.mock('../inventory/custom-tabs/custom-tabs-data.js', () => ({
     collectTabItems: () => new Set(),
     collectItemsAboveTab: () => new Set(),
 }));
-const shortcuts = vi.hoisted(() => ({ insta: [], listing: [] }));
+const shortcuts = vi.hoisted(() => ({ insta: [], listing: [], calls: [] }));
 // A settable tradable band for the decision tests; null = no band, pass-through
 const band = vi.hoisted(() => ({ value: null }));
 vi.mock('../../utils/market-values.js', () => ({
@@ -79,13 +79,14 @@ vi.mock('../../utils/market-values.js', () => ({
 }));
 vi.mock('./marketplace-shortcuts.js', () => ({
     default: {
-        clickInstantActionButton: (label) => {
+        clickInstantActionButton: (label, _timeout, isCancelled) => {
             shortcuts.insta.push(label);
-            return new Promise(() => {}); // never settles — the decision is what's under test
+            // Never settles unless a test settles it — the decision is what's under test
+            return new Promise((resolve, reject) => shortcuts.calls.push({ label, isCancelled, resolve, reject }));
         },
-        clickListingButton: (label) => {
+        clickListingButton: (label, _class, _timeout, isCancelled) => {
             shortcuts.listing.push(label);
-            return new Promise(() => {});
+            return new Promise((resolve, reject) => shortcuts.calls.push({ label, isCancelled, resolve, reject }));
         },
         // The real finder's primary path, which is the row the game renders and
         // the one the assistant's own prefill writes into
@@ -643,6 +644,48 @@ describe('the insta-vs-listing decision', () => {
         band.value = null;
         bulkSell.state = 'preparing';
         bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 0, count: 5 };
+    });
+
+    describe('Stop revokes the delayed opener and fill', () => {
+        beforeEach(() => {
+            shortcuts.calls.length = 0;
+        });
+
+        test('an opener that times out after Stop neither skips nor closes an unrelated modal', async () => {
+            bulkSell.queue = [{ itemHrid: '/items/cheese', enhancementLevel: 0, count: 5, name: 'Cheese' }];
+            bulkSell.index = 0;
+            bulkSell._decideAndOpen(book(100, 99));
+            const call = shortcuts.calls[0];
+            expect(call.isCancelled()).toBe(false);
+
+            const unrelated = document.createElement('div');
+            unrelated.innerHTML =
+                '<div class="Modal_modalContainer__x"><button class="Modal_closeButton__x"></button></div>';
+            document.body.appendChild(unrelated);
+            const closed = vi.fn();
+            unrelated.querySelector('button').addEventListener('click', closed);
+
+            bulkSell._stop('Stopped');
+            expect(call.isCancelled()).toBe(true);
+            call.reject(new Error('Timeout'));
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(closed).not.toHaveBeenCalled();
+            expect(bulkSell.state).toBe('idle');
+            expect(bulkSell.statusNote).toBe('Stopped');
+            unrelated.remove();
+        });
+
+        test('an opener that resolves after Stop does not move the run on', async () => {
+            bulkSell._decideAndOpen(book(100, 99));
+            const call = shortcuts.calls[0];
+            bulkSell._stop('Stopped');
+            call.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(bulkSell.state).toBe('idle');
+        });
     });
 
     test('with the spread rule off, a tight spread still lists', () => {
@@ -2509,6 +2552,21 @@ describe('confirming from the strip', () => {
             vi.advanceTimersByTime(500);
 
             expect(theirs.querySelector('input').value).toBe('2');
+        });
+
+        test('Stop inside the fill delay leaves the field the player edits alone', () => {
+            bulkSell.queue = [{ itemHrid: '/items/cheese', enhancementLevel: 0, count: 18, name: 'Cheese' }];
+            bulkSell.index = 0;
+            bulkSell.current = bulkSell.queue[0];
+            bulkSell.state = 'preparing';
+
+            const ours = openModal({ item: 'cheese', qty: 0 });
+            bulkSell._onModal(ours);
+            bulkSell._stop('Stopped');
+            ours.querySelector('input').value = '3';
+            vi.advanceTimersByTime(500);
+
+            expect(ours.querySelector('input').value).toBe('3');
         });
 
         test('the run’s own modal is still filled with the queued count', () => {

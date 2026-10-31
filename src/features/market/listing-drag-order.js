@@ -309,6 +309,12 @@ class ListingDragOrder {
                 if (!own(e)) return;
                 const gesture = this.touchDrag;
                 if (!gesture.started) {
+                    // The listing under the finger was removed before the gesture began: there is no row
+                    // to reorder, and a later move must not claim and save an order for the others
+                    if (!row.isConnected) {
+                        this._clearTouchDrag();
+                        return;
+                    }
                     // A tap or jitter is not a reorder; nothing is claimed or saved
                     if (Math.hypot(e.clientX - gesture.startX, e.clientY - gesture.startY) <= TOUCH_SLOP_PX) return;
                     gesture.started = true;

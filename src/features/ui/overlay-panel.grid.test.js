@@ -575,6 +575,62 @@ describe('arranging by hand', () => {
         expect(overlayPanel.settings.span.a).toBe(1);
     });
 
+    test('only the finger that grabbed the handle resizes, and only its release ends it', () => {
+        const [first] = threeUnlocked();
+        Object.defineProperty(overlayPanel.canvasEl, 'clientWidth', { value: 200, configurable: true });
+        overlayPanel.columns = 2;
+        const pe = (type, init) => new window.PointerEvent(type, { bubbles: true, ...init });
+
+        first._grip.dispatchEvent(pe('pointerdown', { button: 0, clientX: 0, pointerId: 1 }));
+        document.dispatchEvent(pe('pointermove', { clientX: 100, pointerId: 2 }));
+        expect(overlayPanel.settings.span?.a).toBeUndefined();
+        document.dispatchEvent(pe('pointerup', { pointerId: 2 }));
+        expect(overlayPanel.interacting).toBe(true);
+
+        document.dispatchEvent(pe('pointermove', { clientX: 100, pointerId: 1 }));
+        document.dispatchEvent(pe('pointerup', { pointerId: 1 }));
+        expect(overlayPanel.settings.span.a).toBe(2);
+        expect(overlayPanel.interacting).toBe(false);
+    });
+
+    test('a release the page never saw does not leave the handle stuck', () => {
+        const [first] = threeUnlocked();
+        Object.defineProperty(overlayPanel.canvasEl, 'clientWidth', { value: 200, configurable: true });
+        overlayPanel.columns = 2;
+        const pe = (type, init) => new window.PointerEvent(type, { bubbles: true, ...init });
+
+        // Window loses focus mid-drag: no pointerup arrives
+        first._grip.dispatchEvent(pe('pointerdown', { button: 0, clientX: 0, pointerId: 1 }));
+        window.dispatchEvent(new window.Event('blur'));
+        expect(overlayPanel.interacting).toBe(false);
+
+        // A press by the same pointer after a lost release starts a fresh resize
+        first._grip.dispatchEvent(pe('pointerdown', { button: 0, clientX: 0, pointerId: 1 }));
+        expect(overlayPanel.interacting).toBe(true);
+        first._grip.dispatchEvent(pe('pointerdown', { button: 0, clientX: 0, pointerId: 1 }));
+        document.dispatchEvent(pe('pointermove', { clientX: 100, pointerId: 1 }));
+        document.dispatchEvent(pe('pointerup', { pointerId: 1 }));
+        expect(overlayPanel.settings.span.a).toBe(2);
+        expect(overlayPanel.interacting).toBe(false);
+    });
+
+    test('closing the panel mid-resize removes the document listeners', () => {
+        const [first] = threeUnlocked();
+        Object.defineProperty(overlayPanel.canvasEl, 'clientWidth', { value: 200, configurable: true });
+        overlayPanel.columns = 2;
+        first._grip.dispatchEvent(new window.PointerEvent('pointerdown', { button: 0, bubbles: true, clientX: 0 }));
+        overlayPanel.hide();
+        const save = vi.spyOn(overlayPanel, '_save');
+        const spanBefore = overlayPanel.settings.span?.a;
+        document.dispatchEvent(new window.PointerEvent('pointermove', { clientX: 100, bubbles: true }));
+        document.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true }));
+
+        expect(overlayPanel.settings.span?.a).toBe(spanBefore);
+        expect(save).not.toHaveBeenCalled();
+        expect(overlayPanel.interacting).toBe(false);
+        save.mockRestore();
+    });
+
     test('and never past the columns there are', () => {
         const [first] = threeUnlocked();
         Object.defineProperty(overlayPanel.canvasEl, 'clientWidth', { value: 200, configurable: true });
