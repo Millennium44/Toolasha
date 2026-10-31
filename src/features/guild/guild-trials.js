@@ -2450,6 +2450,13 @@ function gameCardCount(grid) {
  */
 function refreshStaleFit(grid) {
     if (grid?.dataset?.mwiFitCards === undefined) return;
+    // The game re-rendered its own track list over our fit (a new wave, a
+    // resize): the template now on the grid is the game's current one, and the
+    // original and inline we stored belong to the layout it replaced
+    if (grid.style.gridTemplateColumns !== grid.dataset.mwiFitApplied) {
+        forgetFightFit(grid);
+        return;
+    }
     if (Number(grid.dataset.mwiFitCards) !== gameCardCount(grid)) restoreFightGrid(grid);
 }
 
@@ -2498,6 +2505,18 @@ function applyFit(grid, original, fitted) {
     }
     grid.dataset.mwiFitCards = String(gameCardCount(grid));
     if (grid.style.gridTemplateColumns !== fitted) grid.style.gridTemplateColumns = fitted;
+    grid.dataset.mwiFitApplied = fitted;
+}
+
+/**
+ * Forget a stored fit without touching the grid's template.
+ * @param {Element} grid - The fight grid
+ */
+function forgetFightFit(grid) {
+    delete grid.dataset.mwiFitInline;
+    delete grid.dataset.mwiFitOriginal;
+    delete grid.dataset.mwiFitCards;
+    delete grid.dataset.mwiFitApplied;
 }
 
 /**
@@ -2506,11 +2525,13 @@ function applyFit(grid, original, fitted) {
  */
 export function restoreFightGrid(grid) {
     if (!grid?.dataset || grid.dataset.mwiFitCards === undefined) return;
-    grid.style.gridTemplateColumns = grid.dataset.mwiFitInline || '';
-    if (!grid.getAttribute('style')) grid.removeAttribute('style');
-    delete grid.dataset.mwiFitInline;
-    delete grid.dataset.mwiFitOriginal;
-    delete grid.dataset.mwiFitCards;
+    // Only our own write is put back: when the game has re-rendered its track
+    // list since, what is on the grid is current and the stored one is not
+    if (grid.style.gridTemplateColumns === grid.dataset.mwiFitApplied) {
+        grid.style.gridTemplateColumns = grid.dataset.mwiFitInline || '';
+        if (!grid.getAttribute('style')) grid.removeAttribute('style');
+    }
+    forgetFightFit(grid);
 }
 
 /**
