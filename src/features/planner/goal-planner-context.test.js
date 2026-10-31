@@ -92,7 +92,8 @@ vi.mock('./market-liquidity.js', () => ({
         measured: liquidity.measured,
     }),
 }));
-vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({ computeBestCraftingPlan: () => null }));
+const craft = vi.hoisted(() => ({ plan: null }));
+vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({ computeBestCraftingPlan: () => craft.plan }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     calculateEnhancementPath: () => null,
     getProductionChainTime: () => 0,
@@ -559,6 +560,37 @@ describe('training rates keep the signed margin the rankings drop', () => {
         const context = await buildPlannerContext();
         const [cooking] = context.xpRates('/skills/cooking');
         expect(cooking.goldKnown).toBe(false);
+    });
+});
+
+describe('a crafted piece’s prerequisite carries the start bonuses of the quoted craft', () => {
+    afterEach(() => {
+        craft.plan = null;
+    });
+
+    test('Artisan Tea raises the requirement the planner checks, as it does the crafted price', async () => {
+        game.actionDetailMap['/actions/cooking/stew'].levelRequirement = { skillHrid: '/skills/cooking', level: 10 };
+        game.itemDetailMap['/items/artisan_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_level', flatBoost: 6 }] },
+        };
+        game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/artisan_tea' }];
+        game.inventory = [{ itemHrid: '/items/artisan_tea', count: 5 }];
+        craft.plan = { strategy: 'craft', totalCost: 100, unitCost: 100, actionHrid: '/actions/cooking/stew' };
+
+        const context = await buildPlannerContext();
+        expect(context.acquire('/items/stew').requires).toEqual([
+            { skillHrid: '/skills/cooking', level: 10, teaSkillLevelBonus: 0, actionLevelBonus: 6 },
+        ]);
+
+        // A level-1 recipe is still gated once the tea raises it
+        game.actionDetailMap['/actions/cooking/stew'].levelRequirement = { skillHrid: '/skills/cooking', level: 1 };
+        const low = await buildPlannerContext();
+        expect(low.acquire('/items/stew').requires).toHaveLength(1);
+
+        // Without the tea, a level-1 recipe gates nothing, as before
+        game.drinkSlots['/action_types/cooking'] = [];
+        const bare = await buildPlannerContext();
+        expect(bare.acquire('/items/stew').requires).toEqual([]);
     });
 });
 

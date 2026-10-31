@@ -868,9 +868,21 @@ function acquisitionFor(itemHrid) {
 
     const requires = [];
     if (plan.strategy === 'craft' && plan.actionHrid) {
-        const requirement = dataManager.getActionDetails(plan.actionHrid)?.levelRequirement;
-        if (requirement?.skillHrid && requirement.level > 1) {
-            requires.push({ skillHrid: requirement.skillHrid, level: requirement.level });
+        const action = dataManager.getActionDetails(plan.actionHrid);
+        const requirement = action?.levelRequirement;
+        if (requirement?.skillHrid) {
+            // The same start rule the game and the crafted price use: an Action Level tea (Artisan) raises
+            // the requirement and a skill-level tea lifts the level, so the bare skill level is not the test
+            let bonuses = { teaSkillLevelBonus: 0, actionLevelBonus: 0 };
+            try {
+                const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap;
+                if (action?.type && itemDetailMap) bonuses = startBonuses(action, itemDetailMap);
+            } catch (error) {
+                console.error('[GoalPlanner] Reading the start bonuses for a craft failed:', error);
+            }
+            if (requirement.level > 1 || Math.trunc(bonuses.actionLevelBonus) > 0) {
+                requires.push({ skillHrid: requirement.skillHrid, level: requirement.level, ...bonuses });
+            }
         }
     }
 

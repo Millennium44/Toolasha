@@ -978,7 +978,19 @@ function planEquipmentGoal(goal, context) {
     const unmet = [];
     for (const requirement of requires) {
         const current = num(ask(context, 'skill', [requirement.skillHrid], null)?.level, 0);
-        if (current < num(requirement.level)) unmet.push({ ...requirement, current });
+        const canStart = canStartAction({
+            requiredLevel: num(requirement.level),
+            skillLevel: current,
+            teaSkillLevelBonus: num(requirement.teaSkillLevelBonus),
+            actionLevelBonus: num(requirement.actionLevelBonus),
+        });
+        if (canStart) continue;
+        // The raw level that clears the start check: the requirement as raised by an Action Level tea,
+        // less what a skill-level tea lifts
+        const needed = Math.ceil(
+            num(requirement.level) + Math.trunc(num(requirement.actionLevelBonus)) - num(requirement.teaSkillLevelBonus)
+        );
+        unmet.push({ ...requirement, level: Math.max(needed, current + 1), current });
     }
 
     const trainIds = [];

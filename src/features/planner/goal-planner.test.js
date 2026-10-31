@@ -1063,6 +1063,51 @@ describe('an equipment target', () => {
         expect(step(plan, 'train-crafting').description).toContain('Crafting 70');
     });
 
+    test('an Action Level tea makes a craft the bare skill level would allow an unmet prerequisite', () => {
+        const craftPlan = (requires, level) =>
+            planGoal(
+                { type: 'equipment', itemHrid: cape, enhancementLevel: 0 },
+                context({
+                    gold: 1_000_000,
+                    skill: () => ({ level, experience: 0 }),
+                    acquire: () => ({
+                        strategy: 'craft',
+                        totalCost: 900,
+                        buyPrice: 5000,
+                        craftCost: 900,
+                        actionHrid: '/actions/crafting/sinister_cape',
+                        requires,
+                    }),
+                    xpRates: () => [
+                        {
+                            label: 'Sinister Cape',
+                            requiredLevel: 1,
+                            xpPerHour: 10_000,
+                            xpPerAction: 100,
+                            actionTime: 10,
+                            totalEfficiency: 0,
+                            goldPerHour: 0,
+                        },
+                    ],
+                })
+            );
+        const artisan = { skillHrid: '/skills/crafting', level: 10, teaSkillLevelBonus: 0, actionLevelBonus: 6.4 };
+
+        // Raw level 10 meets a level-10 recipe, but Artisan Tea makes it level 16 to start
+        const blocked = craftPlan([artisan], 10);
+        expect(step(blocked, 'train-crafting')).toBeTruthy();
+        expect(step(blocked, 'train-crafting').description).toContain('Crafting 16');
+        expect(step(blocked, 'base').prerequisites).toContain('train-crafting');
+        // At 16 the tea no longer blocks the start
+        expect(step(craftPlan([artisan], 16), 'train-crafting')).toBeUndefined();
+        // A skill-level tea lifts the level: +3 means 13 is enough, 12 is not
+        const lifted = { ...artisan, teaSkillLevelBonus: 3 };
+        expect(step(craftPlan([lifted], 13), 'train-crafting')).toBeUndefined();
+        expect(step(craftPlan([lifted], 12), 'train-crafting').description).toContain('Crafting 13');
+        // No bonus fields at all (an older caller): the bare level, as before
+        expect(step(craftPlan([{ skillHrid: '/skills/crafting', level: 10 }], 10), 'train-crafting')).toBeUndefined();
+    });
+
     test('a plan that spends more than is held earns the shortfall first', () => {
         const plan = planGoal(
             { type: 'equipment', itemHrid: cape, enhancementLevel: 0 },
