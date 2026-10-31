@@ -4,9 +4,9 @@ import { PARTY_TEMPLATES, TEMPLATE_ROLE_GROUPS, templatesForGroup, templateTeamm
 import { validateTeammateDTO, sanitizeTeammateDTO } from './party-roster.js';
 
 describe('party templates', () => {
-    test('there are 8 with unique ids', () => {
-        expect(PARTY_TEMPLATES).toHaveLength(8);
-        expect(new Set(PARTY_TEMPLATES.map((t) => t.id)).size).toBe(8);
+    test('there are 9 with unique ids', () => {
+        expect(PARTY_TEMPLATES).toHaveLength(9);
+        expect(new Set(PARTY_TEMPLATES.map((t) => t.id)).size).toBe(9);
     });
 
     test.each(PARTY_TEMPLATES.map((t) => [t.id, t]))('%s passes validateTeammateDTO and sanitizes whole', (_id, t) => {
@@ -15,7 +15,8 @@ describe('party templates', () => {
         expect(clean.food).toHaveLength(3);
         expect(clean.drinks).toHaveLength(3);
         expect(clean.abilities).toHaveLength(5);
-        expect(t.label && t.source).toBeTruthy();
+        expect(t.label).toBeTruthy();
+        expect(t).not.toHaveProperty('source');
         // Equipment is keyed by full hrid
         for (const key of Object.keys(t.playerDto.equipment)) expect(key).toMatch(/^\/equipment_types\//);
         // No game mode: fits either party
@@ -27,6 +28,7 @@ describe('party templates', () => {
         'melee-spear': 'melee-spear',
         'melee-slash': 'melee-slash',
         'ranged-cursed-bow': 'ranged-cursed-bow',
+        'ranged-sundering-crossbow': 'ranged-sundering-crossbow',
         'magic-nature': 'magic-nature',
         'magic-fire': 'magic-fire',
         'magic-water': 'magic-water',
@@ -100,9 +102,25 @@ describe('party templates', () => {
         }
     });
 
+    test('the sundering crossbow ranger sits in the Ranger group beside the cursed bow, dual-wielding a shield', () => {
+        const ranger = TEMPLATE_ROLE_GROUPS.find((g) => g.id === 'ranger');
+        expect(templatesForGroup(ranger).map((t) => t.id)).toEqual(['ranged-cursed-bow', 'ranged-sundering-crossbow']);
+        const t = PARTY_TEMPLATES.find((x) => x.id === 'ranged-sundering-crossbow');
+        expect(t.role).toBe('ranged');
+        expect(t.playerDto.equipment['/equipment_types/main_hand']).toEqual({
+            hrid: '/items/sundering_crossbow_refined',
+            enhancementLevel: 12,
+        });
+        expect(t.playerDto.equipment['/equipment_types/off_hand']).toEqual({
+            hrid: '/items/manticore_shield',
+            enhancementLevel: 10,
+        });
+        expect(JSON.stringify(t)).not.toMatch(/"name"|characterName/);
+    });
+
     test('no template carries a player name', () => {
         for (const t of PARTY_TEMPLATES) {
-            expect(JSON.stringify([t.id, t.label, t.source])).not.toMatch(/Millennium|lab loadout|bWarkb/i);
+            expect(JSON.stringify([t.id, t.label])).not.toMatch(/Millennium|lab loadout|bWarkb/i);
         }
     });
 

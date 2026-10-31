@@ -104,50 +104,6 @@ function unionTombstones(a, b) {
 }
 
 /**
- * The party pool a game mode belongs to. The game only parties market characters with market characters and Iron
- * Cows (either kind) with Iron Cows.
- * @param {*} gameMode - A `character.gameMode` value: 'standard', 'ironcow', 'legacy_ironcow'
- * @returns {'market'|'ironcow'|null} null when the mode is not known
- */
-export function partyModeOf(gameMode) {
-    if (typeof gameMode !== 'string' || !gameMode) return null;
-    return gameMode.includes('ironcow') ? 'ironcow' : 'market';
-}
-
-/**
- * A teammate's party pool: the mode saved with them, else the one their build carries (a shared profile stamps it).
- * @param {{gameMode?: *, dto?: Object}} entry
- * @returns {'market'|'ironcow'|null}
- */
-export function teammateModeOf(entry) {
-    return partyModeOf(entry?.gameMode) ?? partyModeOf(entry?.dto?.gameMode);
-}
-
-/**
- * Whether a teammate can party with a character of the given mode.
- * @param {{gameMode?: *, dto?: Object}} entry
- * @param {'market'|'ironcow'|null} selfMode - The live character's pool; null when unknown (nothing is excluded)
- * @returns {'match'|'mismatch'|'unknown'} `unknown` when the teammate's mode was never recorded
- */
-export function teammateModeFit(entry, selfMode) {
-    const mode = teammateModeOf(entry);
-    if (!mode) return 'unknown';
-    if (!selfMode) return 'match';
-    return mode === selfMode ? 'match' : 'mismatch';
-}
-
-/**
- * Why a teammate of the other mode is left out of the search.
- * @param {'market'|'ironcow'|null} mode - The teammate's pool
- * @returns {string}
- */
-export function modeMismatchReason(mode) {
-    return mode === 'ironcow'
-        ? "Iron Cow — can't party with a market character"
-        : "market character — can't party with an Iron Cow";
-}
-
-/**
  * Trim and bound a teammate name.
  * @param {*} name
  * @returns {string} '' when nothing usable is left

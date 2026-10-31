@@ -280,6 +280,23 @@ describe('tuneTemplate', () => {
         expect(high.status).toBe('clampedHigh');
     });
 
+    test('a clamp is reported beside unpriced gear, not hidden by it, and a cached answer keeps both', async () => {
+        const unpriced = (w) => {
+            const inner = w.deps.scoreProfile;
+            w.deps.scoreProfile = async (p) => ({ ...(await inner(p)), equipmentUnpriced: 1 });
+            return w;
+        };
+        const low = await tuneTemplate(smash, LEVELS, unpriced(world({ score: { equipment: 5, ability: 0 } })).deps);
+        expect(low).toMatchObject({ status: 'partial', clamp: 'clampedLow', k: OFFSET_MIN });
+        const high = unpriced(world({ score: { equipment: 1e7, ability: 0 } }));
+        clearTunerCache();
+        expect(await tuneTemplate(smash, LEVELS, high.deps)).toMatchObject({ status: 'partial', clamp: 'clampedHigh' });
+        expect(await tuneTemplate(smash, LEVELS, high.deps)).toMatchObject({ status: 'partial', clamp: 'clampedHigh' });
+        // Priced and reachable: neither
+        clearTunerCache();
+        expect(await tuneTemplate(smash, LEVELS, world().deps)).toMatchObject({ status: 'ok', clamp: null });
+    });
+
     test('a character switch while scoring gives the standard template, and nothing is cached', async () => {
         const { deps, state } = world();
         const inner = deps.scoreProfile;

@@ -21,6 +21,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
@@ -51,10 +52,6 @@ import {
     setTeammateAuras,
     normalizeAuraOptions,
     MAX_AURA_OPTIONS,
-    partyModeOf,
-    teammateModeOf,
-    teammateModeFit,
-    modeMismatchReason,
     buildFingerprint,
 } from './party-roster.js';
 import { tuneTemplate, clearTunerCache } from './party-template-tuner.js';
@@ -82,6 +79,9 @@ import {
     DEFAULT_TOP_K,
     RANK_METRICS,
     DUNGEON_MAX_PARTY,
+    blendedScore,
+    normalizeScoreWeight,
+    DEFAULT_SCORE_WEIGHT,
 } from './party-finder.js';
 
 const ACCENT = '#4a9eff';
@@ -114,31 +114,41 @@ const MATCH_BUILD_HELP =
     'compared. Without your build score the standard template is added.';
 
 /**
- * A build score in millions of coins, for the template score line.
- * @param {number} value
+ * A build score in millions of coins, for the template score line: converted to coins and printed compactly
+ * ("7.34T", "1.05Q").
+ * @param {number} value - Millions of coins
  * @returns {string}
  */
 function formatScoreM(value) {
-    return `${Math.round(value).toLocaleString('en-US')}M`;
+    return formatKMB(Math.round(value) * 1e6, 2);
 }
 
 /**
- * The line saying what tuning a template came to.
- * @param {{status: string, template?: number|null, own?: number|null}} tuned
+ * The line saying what tuning a template came to. A clamp (the template cannot reach your score) and unpriced gear
+ * (the match is approximate) are reported independently, so a clamped match through unpriced gear says both.
+ * @param {{status: string, clamp?: 'clampedLow'|'clampedHigh'|null, template?: number|null, own?: number|null}} tuned
  * @returns {string}
  */
 function tunedText(tuned) {
     const both = tuned.template != null && tuned.own != null;
     const figures = both ? `score ${formatScoreM(tuned.template)} ≈ yours ${formatScoreM(tuned.own)}` : '';
+    const clamp =
+        tuned.clamp || (tuned.status === 'clampedLow' || tuned.status === 'clampedHigh' ? tuned.status : null);
+    const partial = tuned.status === 'partial';
+    if (clamp || partial || tuned.status === 'ok') {
+        const sentences = [figures];
+        if (clamp === 'clampedLow') {
+            sentences.push('Even the lowest setting scores above your build, so the template is stronger than you.');
+        } else if (clamp === 'clampedHigh') {
+            sentences.push('Even the highest setting scores below your build, so the template is weaker than you.');
+        }
+        if (partial) sentences.push('Some gear is unpriced, so the match is approximate.');
+        return sentences
+            .filter(Boolean)
+            .map((sentence, index, all) => (index === 0 && all.length > 1 ? `${sentence}.` : sentence))
+            .join(' ');
+    }
     switch (tuned.status) {
-        case 'ok':
-            return figures;
-        case 'partial':
-            return `${figures}. Some gear is unpriced, so the match is approximate.`;
-        case 'clampedLow':
-            return `${figures}. Even the lowest setting scores above your build, so the template is stronger than you.`;
-        case 'clampedHigh':
-            return `${figures}. Even the highest setting scores below your build, so the template is weaker than you.`;
         case 'noScore':
             return 'Your build score is not loaded yet, so the standard template was added (combat levels still match you).';
         case 'aborted':
@@ -256,6 +266,8 @@ export class PartyFinderTab {
         this._baselines = new Map();
         this._sortKey = 'xp';
         this._sortAsc = false;
+        /** XP per coin in the Score column: "1M profit = X M XP", kept per character */
+        this._scoreWeight = DEFAULT_SCORE_WEIGHT;
         this._running = false;
         this._runToken = 0;
         this._repricePending = false;
@@ -308,6 +320,7 @@ export class PartyFinderTab {
             if ((written?.settings || []).includes(PARTY_ROSTER_KEY)) this._reloadRoster();
         });
         this._reloadRoster();
+        this._loadScoreWeight();
     }
 
     /**
@@ -490,6 +503,8 @@ export class PartyFinderTab {
                 </div>`
             ),
             `<div data-pf="summary" style="font-size:12px; color:#bbb;"></div>`,
+            `<label style="color:#888; font-size:11px;" title="The Score column is EXP/hr plus this much EXP for every coin of profit/hr. 1 is a plain sum.">Score: 1M profit =
+                <input data-pf="score-weight" type="number" min="0" step="any" value="${DEFAULT_SCORE_WEIGHT}" style="${INPUT_STYLE} width:64px;"> M XP</label>`,
             `<div data-pf="results" style="overflow-x:auto;"></div>`,
         ].join('');
     }
@@ -545,6 +560,7 @@ export class PartyFinderTab {
             this._sortAsc = false;
             this._renderResults();
         });
+        this._el('score-weight').addEventListener('change', (e) => this._onScoreWeight(e.target.value));
         // Up to the game's largest party; each zone is still held to its own cap
         this._el('max-party').value = String(DUNGEON_MAX_PARTY);
         this._populateZoneSelect();
@@ -571,6 +587,43 @@ export class PartyFinderTab {
     }
 
     // ---------------------------------------------------------------- roster
+
+    /** The storage key of this character's score weight. @private */
+    _scoreWeightKey(characterId) {
+        return `combatSimPartyScoreWeight_${characterId}`;
+    }
+
+    /**
+     * Read this character's saved score weight into the input.
+     * @private
+     */
+    async _loadScoreWeight() {
+        const ownerId = dataManager.getCurrentCharacterId();
+        if (ownerId == null) return;
+        const saved = await storage.get(this._scoreWeightKey(ownerId), 'settings', null);
+        if (!this.root || dataManager.getCurrentCharacterId() !== ownerId || saved == null) return;
+        this._scoreWeight = normalizeScoreWeight(saved);
+        this._el('score-weight').value = String(this._scoreWeight);
+        this._renderResults();
+    }
+
+    /**
+     * The player set the weight: an unusable entry falls back to 1.
+     * @param {string} raw
+     * @private
+     */
+    async _onScoreWeight(raw) {
+        const ownerId = dataManager.getCurrentCharacterId();
+        this._scoreWeight = normalizeScoreWeight(raw);
+        this._el('score-weight').value = String(this._scoreWeight);
+        this._renderResults();
+        if (ownerId == null) return;
+        try {
+            await storage.set(this._scoreWeightKey(ownerId), this._scoreWeight, 'settings');
+        } catch (error) {
+            console.error('[PartyFinder] Could not save the score weight:', error);
+        }
+    }
 
     /** @private */
     async _reloadRoster() {
@@ -610,7 +663,6 @@ export class PartyFinderTab {
             list.appendChild(empty);
         }
         const names = displayNames(entries);
-        const selfMode = this._selfMode();
         for (const entry of entries) {
             const row = document.createElement('div');
             row.dataset.pfMember = entry.id;
@@ -621,20 +673,6 @@ export class PartyFinderTab {
             name.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
             name.textContent = names.get(entry.id);
             name.title = `Saved from ${entry.source}`;
-            const fit = teammateModeFit(entry, selfMode);
-            let modeTag = null;
-            if (fit === 'mismatch' || (fit === 'unknown' && selfMode)) {
-                modeTag = document.createElement('span');
-                modeTag.dataset.pfModeNote = fit;
-                modeTag.style.cssText = 'font-size:10px; color:#ff9800; white-space:nowrap;';
-                modeTag.textContent =
-                    fit === 'mismatch' ? modeMismatchReason(teammateModeOf(entry)) : 'game mode unknown, kept';
-                if (fit === 'mismatch') {
-                    row.dataset.pfExcluded = '';
-                    name.style.opacity = '0.45';
-                    modeTag.style.color = '#888';
-                }
-            }
 
             const choice = document.createElement('select');
             choice.className = 'toolasha-select';
@@ -652,10 +690,6 @@ export class PartyFinderTab {
                 choice.appendChild(option);
             }
             choice.value = this._choices[entry.id] || 'try';
-            if (fit === 'mismatch') {
-                choice.disabled = true;
-                choice.style.opacity = '0.45';
-            }
             choice.addEventListener('change', () => {
                 this._choices[entry.id] = choice.value;
                 this._renderPlan();
@@ -673,7 +707,6 @@ export class PartyFinderTab {
             const auraCount = entry.auras?.length || 0;
             row.append(
                 name,
-                ...(modeTag ? [modeTag] : []),
                 choice,
                 button(auraCount ? `Auras (${auraCount})` : 'Auras', 'Aura options to try this teammate with', () => {
                     this._auraOpen = this._auraOpen === entry.id ? null : entry.id;
@@ -760,14 +793,13 @@ export class PartyFinderTab {
                 name.style.cssText =
                     'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
                 name.textContent = template.label;
-                name.title = template.source;
                 const tuned = this._matchBuild ? this._tuned.get(template.id) : null;
                 const tunedLine =
                     tuned && tuned.ownerId === dataManager.getCurrentCharacterId() ? this._tunedLine(tuned) : null;
                 const add = document.createElement('button');
                 add.style.cssText = SMALL_BTN_STYLE;
                 add.textContent = 'Add as teammate';
-                add.title = `Add a copy to the roster, then set Try/Always/Never and Auras. ${template.source}`;
+                add.title = `Add a copy to the roster, then set Try/Always/Never and Auras.`;
                 add.addEventListener('click', () => this._onAddTemplateAsTeammate(template));
                 row.append(name, add);
                 body.appendChild(row);
@@ -786,7 +818,6 @@ export class PartyFinderTab {
             this._rosterNote('Still matching a template to your build. One moment.');
             return;
         }
-        // No game mode: a template fits a market party and an Iron Cow one alike
         let dto = structuredClone(template.playerDto);
         let tuned = null;
         if (this._matchBuild) {
@@ -827,6 +858,7 @@ export class PartyFinderTab {
                 tuned = {
                     ownerId,
                     status: result.status,
+                    clamp: result.clamp || null,
                     k: result.k,
                     template: result.templateScore,
                     own: result.ownScore,
@@ -1287,10 +1319,8 @@ export class PartyFinderTab {
         }
         if (!editor.isInitialized?.()) editor.resetToSelf?.();
         const dto = structuredClone(entry.dto);
-        // A mode saved on the entry alone (a copy of your own build) rides with the build, so saving it back as a new
-        // teammate, or simming it as "you", still knows which characters it can party with
-        if (!dto.gameMode && entry.gameMode) dto.gameMode = entry.gameMode;
-        editor.importPlayers([dto], [entry.name]);
+        // Taken to be of the live character's mode, whatever was saved with it
+        editor.importPlayers([this._withAssumedMode(dto)], [entry.name]);
         this._rosterNote(`${entry.name} is in the editor. Change them there, then save back here with "replacing".`);
         this.host._switchTab?.('configure');
     }
@@ -1483,20 +1513,29 @@ export class PartyFinderTab {
     }
 
     /**
-     * The party pool of the character the search is for: the live character's game mode, or for another player
-     * loaded in the editor and picked as "you" the one their build carries. Read from the picker, without building
-     * a DTO.
-     * @returns {'market'|'ironcow'|null} null when not known (no teammate is excluded)
+     * The game mode every teammate and template is taken to have: the live character's own. The game parties only
+     * characters of one mode, so a teammate's stored mode is never read to include or leave anyone out or to price
+     * them.
+     * @returns {string|undefined}
      * @private
      */
-    _selfMode() {
-        const choice = this._el('self')?.value || 'live';
-        if (choice.startsWith('editor:')) {
-            const hrid = choice.slice('editor:'.length);
-            const player = this._editorPlayers().find((p) => p.hrid === hrid);
-            if (player && hrid !== this.host?._editor?.getSelfHrid?.()) return partyModeOf(player.dto?.gameMode);
-        }
-        return partyModeOf(dataManager.getCurrentCharacterGameMode?.());
+    _assumedMode() {
+        return dataManager.getCurrentCharacterGameMode?.() || undefined;
+    }
+
+    /**
+     * A copy of a teammate's build carrying the assumed game mode in place of any other it came with, so whatever
+     * prices or taxes them later reads the live character's mode.
+     * @param {Object} dto
+     * @returns {Object}
+     * @private
+     */
+    _withAssumedMode(dto) {
+        const copy = { ...dto };
+        const mode = this._assumedMode();
+        if (mode) copy.gameMode = mode;
+        else delete copy.gameMode;
+        return copy;
     }
 
     /**
@@ -1693,9 +1732,8 @@ export class PartyFinderTab {
                 skipped.push(`${names.get(entry.id)} (unknown ${unknown.slice(0, 2).join(', ')})`);
                 continue;
             }
-            // A mode saved on the entry alone rides with the build, so a party loaded into the editor (and saved
-            // back from there) still knows who each teammate can party with
-            const dto = !entry.dto?.gameMode && entry.gameMode ? { ...entry.dto, gameMode: entry.gameMode } : entry.dto;
+            // Every teammate is taken to be of the live character's game mode, whatever was saved with them
+            const dto = this._withAssumedMode(entry.dto);
             roster.push({ ...entry, name: names.get(entry.id), dto });
         }
         return { roster, skipped };
@@ -1717,7 +1755,6 @@ export class PartyFinderTab {
             choices: this._choices,
             maxPartySize: settings.maxPartySize,
             gameData,
-            selfMode: this._selfMode(),
             selfAuras: mine.auras,
             selfDto: mine.dto,
         });
@@ -1749,15 +1786,6 @@ export class PartyFinderTab {
             notes.push(
                 `${plan.total} quick sim${plan.total === 1 ? '' : 's'} at ${quickHours} h` +
                     (plan.rerunMax ? `, then up to ${plan.rerunMax} re-run at ${fullHours} h.` : '.')
-            );
-        }
-        if (plan.excluded?.length) {
-            const left = this._roster.entries.length - plan.skipped.length - plan.excluded.length;
-            notes.push(
-                left > 0
-                    ? `Left out, other game mode: ${plan.excluded.map((e) => e.name).join(', ')}.`
-                    : "No teammates of this character's mode: every saved teammate is of the other game mode " +
-                          '(market characters only party with market characters, Iron Cows with Iron Cows).'
             );
         }
         for (const zone of plan.perZone) {
@@ -1810,11 +1838,7 @@ export class PartyFinderTab {
             return;
         }
         if (!plan.total) {
-            this._status(
-                plan.excluded?.length && plan.excluded.length === this._roster.entries.length - plan.skipped.length
-                    ? "No teammates of this character's mode: every saved teammate is of the other game mode."
-                    : 'Nothing to run: no party fits these zones and choices.'
-            );
+            this._status('Nothing to run: no party fits these zones and choices.');
             this._renderPlan();
             return;
         }
@@ -2162,7 +2186,7 @@ export class PartyFinderTab {
      * @returns {Array<Object>}
      */
     sortedRows() {
-        return sortRows([...this._rows.values()], this._baselines, this._sortKey, this._sortAsc);
+        return sortRows([...this._rows.values()], this._baselines, this._sortKey, this._sortAsc, this._scoreWeight);
     }
 
     /** @private */
@@ -2195,6 +2219,7 @@ export class PartyFinderTab {
         let html = `<table style="border-collapse:collapse; width:100%;"><thead><tr>
             ${th('', 'Zone')}${th('', 'Party', 'Teammates beside you')}
             ${th('xp', 'EXP/hr', 'Your EXP per hour')}${th('profit', 'Profit/hr', 'Your profit per hour')}
+            ${th('score', 'Score', `EXP/hr + ${this._scoreWeight} × Profit/hr (1M profit = ${this._scoreWeight}M XP). Set the weight above the table. A party whose profit could not be priced has no score and sorts last.`)}
             ${th('deaths', 'Deaths/hr', 'Your deaths per hour')}
             ${th('xpVsSolo', 'EXP vs solo', 'Your EXP against you alone in the same zone and tier')}
             ${th('profitVsSolo', 'Profit vs solo', 'Your profit against you alone in the same zone and tier')}
@@ -2226,7 +2251,7 @@ export class PartyFinderTab {
                 : '';
             html += `<tr data-pf-row="${esc(row.id)}" style="border-bottom:1px solid #1a1a1a;">${td(zoneLabel)}${td(party + sharedChip + replacedChip + hoursTag)}`;
             if (!shown) {
-                html += `${td('sim failed', `color:${RED};`)}${td('')}${td('')}${td('')}${td('')}`;
+                html += `${td('sim failed', `color:${RED};`)}${td('')}${td('')}${td('')}${td('')}${td('')}`;
             } else {
                 const unpriced = shown.unpriced?.length
                     ? `<span title="No price for ${esc(shown.unpriced.join(', '))}; counted as 0" style="color:#ff9800;">≥</span>`
@@ -2239,10 +2264,16 @@ export class PartyFinderTab {
                     shown.profitPerHour == null
                         ? td('—', 'color:#555;', 'Could not be priced')
                         : td(`${unpriced}${esc(formatKMB(shown.profitPerHour))}${capped}`);
+                const score = blendedScore(shown, this._scoreWeight);
+                const scoreCell =
+                    score == null
+                        ? td('—', 'color:#555;', 'No score: the profit could not be priced')
+                        : td(`${unpriced}${esc(formatKMB(score))}`);
                 const delta = row.isBaseline ? { xpPct: null, profitDelta: null } : soloDelta(row, baseline);
                 html +=
                     td(esc(formatKMB(shown.xpPerHour))) +
                     profit +
+                    scoreCell +
                     td(shown.deathsPerHour.toFixed(3)) +
                     (row.isBaseline
                         ? td('baseline', 'color:#666;') + td('', '')
