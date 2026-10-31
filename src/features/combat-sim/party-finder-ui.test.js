@@ -10,6 +10,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 const state = vi.hoisted(() => ({
     charId: 'me',
     db: undefined,
+    prefs: {},
     failWrite: false,
     calls: [],
     downloads: [],
@@ -43,7 +44,13 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
-        get: async (_k, _s, fallback) => (state.db === undefined ? fallback : structuredClone(state.db)),
+        get: async (k, _s, fallback) => {
+            if (String(k).startsWith('combatSimPartyScoreWeight_')) return k in state.prefs ? state.prefs[k] : fallback;
+            return state.db === undefined ? fallback : structuredClone(state.db);
+        },
+        set: async (k, v) => {
+            state.prefs[k] = v;
+        },
         update: async (_k, mutate) => {
             if (state.failWrite) return null;
             const next = mutate(state.db === undefined ? undefined : structuredClone(state.db));
@@ -255,6 +262,7 @@ beforeEach(() => {
     state.charId = 'me';
     state.gameMode = undefined;
     state.db = undefined;
+    state.prefs = {};
     state.failWrite = false;
     state.calls = [];
     state.downloads = [];
@@ -497,13 +505,13 @@ describe('every way a search can end', () => {
         ]);
         expect(rows[0].textContent).toMatch(/10h/);
         expect(rows[0].textContent).toMatch(/\+40\.0%/);
-        const bobDelta = rows[3].querySelectorAll('td')[5];
+        const bobDelta = rows[3].querySelectorAll('td')[6];
         expect(bobDelta.textContent).toBe('-20.0%');
         expect(bobDelta.getAttribute('style')).toMatch(/#f44336/);
         // Bob's loot had an unpriced drop
         expect(rows[3].querySelectorAll('td')[3].textContent).toMatch(/^≥/);
         // ...so his profit against solo is built on a zero too, and says so; Ann's is not
-        const marker = rows[3].querySelectorAll('td')[6].querySelector('[data-pf-delta-unpriced]');
+        const marker = rows[3].querySelectorAll('td')[7].querySelector('[data-pf-delta-unpriced]');
         expect(marker?.getAttribute('title')).toContain('/items/x');
         expect(rows[1].querySelector('[data-pf-delta-unpriced]')).toBeNull();
     });
@@ -939,6 +947,66 @@ describe('redrawing while results stream in', () => {
         expect(tab._sortAsc).toBe(true);
         header().click();
         expect(tab._sortAsc).toBe(false);
+    });
+});
+
+describe('score column', () => {
+    const scoreCells = () =>
+        [...tab.root.querySelectorAll('[data-pf-row]')].map((r) => r.querySelectorAll('td')[4].textContent);
+    const run = async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        await finishPass((_z, index) => [sim(1000, 100), sim(1100, 50)][index]);
+    };
+
+    test('is EXP/hr + weight x Profit/hr, sorts like the other columns and follows the weight', async () => {
+        await run();
+        const header = tab.root.querySelector('[data-pf-sort="score"]');
+        expect(header.textContent).toContain('Score');
+        expect(header.title).toContain('1 × Profit/hr');
+        // Solo 1000 + 100, Ann 1100 + 50
+        expect(tab.sortedRows().map((r) => r.comp.isBaseline)).toEqual([false, true]);
+        header.click();
+        expect(tab._sortKey).toBe('score');
+        expect(scoreCells()).toEqual(['1.1K', '1.1K']);
+        el('score-weight').value = '20';
+        el('score-weight').dispatchEvent(new Event('change'));
+        await flush();
+        // Solo 1000 + 2000 = 3K now beats Ann 1100 + 1000 = 2.1K
+        expect(tab.sortedRows().map((r) => r.comp.isBaseline)).toEqual([true, false]);
+        expect(tab.root.querySelector('[data-pf-sort="score"]').title).toContain('1M profit = 20M XP');
+    });
+
+    test('the weight is saved for this character and restored, and a bad entry falls back to 1', async () => {
+        await run();
+        el('score-weight').value = '3';
+        el('score-weight').dispatchEvent(new Event('change'));
+        await flush();
+        expect(state.prefs['combatSimPartyScoreWeight_me']).toBe(3);
+        tab.detach();
+        await mountTab();
+        expect(el('score-weight').value).toBe('3');
+        state.charId = 'other';
+        tab.detach();
+        await mountTab();
+        expect(el('score-weight').value).toBe('1');
+        el('score-weight').value = 'abc';
+        el('score-weight').dispatchEvent(new Event('change'));
+        await flush();
+        expect(el('score-weight').value).toBe('1');
+    });
+
+    test('a party with unpriced drops marks its score as a floor, like its profit', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        await finishPass((_z, index) => [sim(1000, 100), sim(1100, 50, { unpriced: ['/items/x'] })][index]);
+        expect(scoreCells().some((t) => t.startsWith('≥'))).toBe(true);
     });
 });
 

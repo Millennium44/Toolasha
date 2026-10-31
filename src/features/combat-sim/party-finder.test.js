@@ -43,6 +43,8 @@ const {
     repriceMetrics,
     soloDelta,
     sortRows,
+    blendedScore,
+    normalizeScoreWeight,
     pickRerunRows,
     partyLabel,
     csvRow,
@@ -334,6 +336,39 @@ describe('ranking against solo', () => {
         const baselines = new Map([['z', base]]);
         expect(sortRows(rows, baselines, 'profit').map((r) => r.id)).toEqual(['B', 'solo', 'A']);
         expect(sortRows(rows, baselines, 'profit', true).map((r) => r.id)).toEqual(['solo', 'B', 'A']);
+    });
+
+    test('the score is EXP/hr plus the weight times profit/hr; a loss lowers it; unpriced profit has none', () => {
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: 400 })).toBe(1400);
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: 400 }, 0.5)).toBe(1200);
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: -300 }, 2)).toBe(400);
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: 0 }, 3)).toBe(1000);
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: null })).toBeNull();
+        expect(blendedScore({ xpPerHour: 1000, profitPerHour: NaN })).toBeNull();
+        expect(blendedScore(null)).toBeNull();
+        expect(normalizeScoreWeight('')).toBe(1);
+        expect(normalizeScoreWeight('abc')).toBe(1);
+        expect(normalizeScoreWeight(-2)).toBe(1);
+        expect(normalizeScoreWeight('0')).toBe(0);
+        expect(normalizeScoreWeight('2.5')).toBe(2.5);
+    });
+
+    test('sorting by score follows the weight, and an unpriced or failed row sinks whichever way it runs', () => {
+        const base = row('solo', metrics(1000, 100), null, true);
+        const rows = [
+            row('lossy', metrics(5000, -2000)),
+            row('rich', metrics(100, 900)),
+            row('unpriced', metrics(9000, null)),
+            row('failed', { failed: true }),
+            base,
+        ];
+        const baselines = new Map([['z', base]]);
+        const ids = (weight, asc) => sortRows(rows, baselines, 'score', asc, weight).map((r) => r.id);
+        // w = 1: lossy 3000, rich 1000, solo 1100
+        expect(ids(1)).toEqual(['lossy', 'solo', 'rich', 'unpriced', 'failed']);
+        // w = 10: rich 9100, solo 2000, lossy -15000
+        expect(ids(10)).toEqual(['rich', 'solo', 'lossy', 'unpriced', 'failed']);
+        expect(ids(10, true)).toEqual(['lossy', 'solo', 'rich', 'unpriced', 'failed']);
     });
 
     test('the re-run picks the top K parties and their baselines, baselines first', () => {

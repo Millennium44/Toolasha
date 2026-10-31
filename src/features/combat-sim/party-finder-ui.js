@@ -21,6 +21,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
@@ -78,6 +79,9 @@ import {
     DEFAULT_TOP_K,
     RANK_METRICS,
     DUNGEON_MAX_PARTY,
+    blendedScore,
+    normalizeScoreWeight,
+    DEFAULT_SCORE_WEIGHT,
 } from './party-finder.js';
 
 const ACCENT = '#4a9eff';
@@ -262,6 +266,8 @@ export class PartyFinderTab {
         this._baselines = new Map();
         this._sortKey = 'xp';
         this._sortAsc = false;
+        /** XP per coin in the Score column: "1M profit = X M XP", kept per character */
+        this._scoreWeight = DEFAULT_SCORE_WEIGHT;
         this._running = false;
         this._runToken = 0;
         this._repricePending = false;
@@ -314,6 +320,7 @@ export class PartyFinderTab {
             if ((written?.settings || []).includes(PARTY_ROSTER_KEY)) this._reloadRoster();
         });
         this._reloadRoster();
+        this._loadScoreWeight();
     }
 
     /**
@@ -496,6 +503,8 @@ export class PartyFinderTab {
                 </div>`
             ),
             `<div data-pf="summary" style="font-size:12px; color:#bbb;"></div>`,
+            `<label style="color:#888; font-size:11px;" title="The Score column is EXP/hr plus this much EXP for every coin of profit/hr. 1 is a plain sum.">Score: 1M profit =
+                <input data-pf="score-weight" type="number" min="0" step="any" value="${DEFAULT_SCORE_WEIGHT}" style="${INPUT_STYLE} width:64px;"> M XP</label>`,
             `<div data-pf="results" style="overflow-x:auto;"></div>`,
         ].join('');
     }
@@ -551,6 +560,7 @@ export class PartyFinderTab {
             this._sortAsc = false;
             this._renderResults();
         });
+        this._el('score-weight').addEventListener('change', (e) => this._onScoreWeight(e.target.value));
         // Up to the game's largest party; each zone is still held to its own cap
         this._el('max-party').value = String(DUNGEON_MAX_PARTY);
         this._populateZoneSelect();
@@ -577,6 +587,43 @@ export class PartyFinderTab {
     }
 
     // ---------------------------------------------------------------- roster
+
+    /** The storage key of this character's score weight. @private */
+    _scoreWeightKey(characterId) {
+        return `combatSimPartyScoreWeight_${characterId}`;
+    }
+
+    /**
+     * Read this character's saved score weight into the input.
+     * @private
+     */
+    async _loadScoreWeight() {
+        const ownerId = dataManager.getCurrentCharacterId();
+        if (ownerId == null) return;
+        const saved = await storage.get(this._scoreWeightKey(ownerId), 'settings', null);
+        if (!this.root || dataManager.getCurrentCharacterId() !== ownerId || saved == null) return;
+        this._scoreWeight = normalizeScoreWeight(saved);
+        this._el('score-weight').value = String(this._scoreWeight);
+        this._renderResults();
+    }
+
+    /**
+     * The player set the weight: an unusable entry falls back to 1.
+     * @param {string} raw
+     * @private
+     */
+    async _onScoreWeight(raw) {
+        const ownerId = dataManager.getCurrentCharacterId();
+        this._scoreWeight = normalizeScoreWeight(raw);
+        this._el('score-weight').value = String(this._scoreWeight);
+        this._renderResults();
+        if (ownerId == null) return;
+        try {
+            await storage.set(this._scoreWeightKey(ownerId), this._scoreWeight, 'settings');
+        } catch (error) {
+            console.error('[PartyFinder] Could not save the score weight:', error);
+        }
+    }
 
     /** @private */
     async _reloadRoster() {
@@ -2139,7 +2186,7 @@ export class PartyFinderTab {
      * @returns {Array<Object>}
      */
     sortedRows() {
-        return sortRows([...this._rows.values()], this._baselines, this._sortKey, this._sortAsc);
+        return sortRows([...this._rows.values()], this._baselines, this._sortKey, this._sortAsc, this._scoreWeight);
     }
 
     /** @private */
@@ -2172,6 +2219,7 @@ export class PartyFinderTab {
         let html = `<table style="border-collapse:collapse; width:100%;"><thead><tr>
             ${th('', 'Zone')}${th('', 'Party', 'Teammates beside you')}
             ${th('xp', 'EXP/hr', 'Your EXP per hour')}${th('profit', 'Profit/hr', 'Your profit per hour')}
+            ${th('score', 'Score', `EXP/hr + ${this._scoreWeight} × Profit/hr (1M profit = ${this._scoreWeight}M XP). Set the weight above the table. A party whose profit could not be priced has no score and sorts last.`)}
             ${th('deaths', 'Deaths/hr', 'Your deaths per hour')}
             ${th('xpVsSolo', 'EXP vs solo', 'Your EXP against you alone in the same zone and tier')}
             ${th('profitVsSolo', 'Profit vs solo', 'Your profit against you alone in the same zone and tier')}
@@ -2203,7 +2251,7 @@ export class PartyFinderTab {
                 : '';
             html += `<tr data-pf-row="${esc(row.id)}" style="border-bottom:1px solid #1a1a1a;">${td(zoneLabel)}${td(party + sharedChip + replacedChip + hoursTag)}`;
             if (!shown) {
-                html += `${td('sim failed', `color:${RED};`)}${td('')}${td('')}${td('')}${td('')}`;
+                html += `${td('sim failed', `color:${RED};`)}${td('')}${td('')}${td('')}${td('')}${td('')}`;
             } else {
                 const unpriced = shown.unpriced?.length
                     ? `<span title="No price for ${esc(shown.unpriced.join(', '))}; counted as 0" style="color:#ff9800;">≥</span>`
@@ -2216,10 +2264,16 @@ export class PartyFinderTab {
                     shown.profitPerHour == null
                         ? td('—', 'color:#555;', 'Could not be priced')
                         : td(`${unpriced}${esc(formatKMB(shown.profitPerHour))}${capped}`);
+                const score = blendedScore(shown, this._scoreWeight);
+                const scoreCell =
+                    score == null
+                        ? td('—', 'color:#555;', 'No score: the profit could not be priced')
+                        : td(`${unpriced}${esc(formatKMB(score))}`);
                 const delta = row.isBaseline ? { xpPct: null, profitDelta: null } : soloDelta(row, baseline);
                 html +=
                     td(esc(formatKMB(shown.xpPerHour))) +
                     profit +
+                    scoreCell +
                     td(shown.deathsPerHour.toFixed(3)) +
                     (row.isBaseline
                         ? td('baseline', 'color:#666;') + td('', '')
