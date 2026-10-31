@@ -11759,6 +11759,14 @@ class CombatSimUI {
             parts.push(`<span style="color:#ff9800;">No price found for ${detail.unpriced.join(', ')}.</span>`);
         }
 
+        // Running costs nothing priced are counted as free in the profit: the gain is a ceiling until priced
+        if (r.costUnpriced?.length) {
+            parts.push(
+                `<span data-cost-unpriced style="color:#ff9800;">No price for ${escapeAttribute(r.costUnpriced.join(', '))} ` +
+                    'in the running costs: the profit gain is a ceiling, with no payback or ROI.</span>'
+            );
+        }
+
         if (r.candidate?.caveat) parts.push(`<span style="color:#ff9800;">${r.candidate.caveat}</span>`);
 
         // What equipping this would throw away, for candidates the labyrinth
@@ -13212,8 +13220,14 @@ class CombatSimUI {
                           const gain = plan.metric.gain(confirmedRow, basis);
                           return gainSpan(gain, plan.metric.format(gain));
                       })();
+            const provisionalNote = state.result.costUnpriced?.length
+                ? `<div data-confirm-cost-unpriced style="font-size:11px; color:#ff9800; margin-top:2px;">No price for
+                    ${escapeAttribute(state.result.costUnpriced.join(', '))} in the running costs, so the combined
+                    profit is a ceiling and no payback or ROI is quoted.</div>`
+                : '';
             return wrap(
-                `<div style="font-size:11px; color:#aaa;">summed
+                provisionalNote +
+                    `<div style="font-size:11px; color:#aaa;">summed
                     <span style="color:${budgetGainColor(plan.gainTotal)}; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
                     · together
                     ${togetherHtml}
@@ -14172,6 +14186,13 @@ class CombatSimUI {
                 `background:rgba(232,168,124,0.08); border:1px solid rgba(232,168,124,0.3); border-radius:5px;">` +
                 `Analysis ${stoppedRunText(results.stopped)}: these rows are only the candidates measured before ` +
                 `Stop, not every upgrade the run set out to compare.</div>` +
+                html;
+        }
+        if (results.slotWarnings?.length) {
+            html =
+                `<div data-upgrade-slot-warnings style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#e8a87c; ` +
+                `background:rgba(232,168,124,0.08); border:1px solid rgba(232,168,124,0.3); border-radius:5px;">` +
+                `${results.slotWarnings.map((w) => escapeAttribute(w)).join('<br>')}</div>` +
                 html;
         }
         if (this._restoredUpgradeAt) {

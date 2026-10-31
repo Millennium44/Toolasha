@@ -1329,6 +1329,28 @@ describe('the panel', () => {
         expect(ui._upgradeRunning).toBe(false);
     });
 
+    test('a build that carries more than it can use is warned about, and an unpriced running cost is named on its row', async () => {
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [
+                {
+                    ...row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+                    costUnpriced: ['Wisdom Coffee'],
+                },
+            ],
+            slotWarnings: ['2 saved drinks sit beyond the 1 slot this build pouch gives.'],
+            food: null,
+        };
+        selectZone();
+
+        await ui._onUpgradeAnalyze();
+
+        const results = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        expect(results.querySelector('[data-upgrade-slot-warnings]').textContent).toContain('2 saved drinks');
+        expect(results.querySelector('[data-cost-unpriced]').textContent).toContain('Wisdom Coffee');
+        expect(results.querySelector('[data-cost-unpriced]').textContent).toContain('ceiling');
+    });
+
     test('a stopped run says it covers only part of the run, in the table, the budget and when remembered', async () => {
         mocks.upgradeResult = {
             baseline: BASELINE,
