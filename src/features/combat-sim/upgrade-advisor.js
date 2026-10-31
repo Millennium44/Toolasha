@@ -11,6 +11,7 @@ import {
     buildGameDataPayload,
     calculateSimRevenue,
     seedSimPriceCache,
+    recomputeLevelGapDebuffs,
     getGuildBuffDetailMap,
     guildBuffMaxLevel,
     applyGuildBuffLevel,
@@ -956,13 +957,27 @@ function guideSwapAllowed(guide, currentHrid, incomingHrid) {
 function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates, isSelf) {
     const abilities = playerDTO.abilities || [];
     const equipped = new Set(abilities.filter((a) => a).map((a) => a.hrid));
-    const specialSlotFree = abilities.length > 0 && !abilities[0];
-    const firstFreeNormal = abilities.findIndex((ability, index) => index > 0 && !ability);
+    const slotOpen = abilitySlotUnlocks(playerDTO, gameData);
+    const specialSlotFree = abilities.length > 0 && !abilities[0] && slotOpen[0] !== false;
+    // The ordinary slots that are empty AND open. Offers are spread over them, so two distinct abilities that fit
+    // two open slots are not filed under one slot (and so refused together); with more offers than slots the rest
+    // are alternatives for the same slots
+    const freeNormals = [];
+    abilities.forEach((ability, index) => {
+        if (index > 0 && !ability && slotOpen[index] !== false) freeNormals.push(index);
+    });
+    let normalOffers = 0;
 
     for (const abHrid of guide.offers) {
         const abDetail = gameData.abilityDetailMap?.[abHrid];
         if (!abDetail || equipped.has(abHrid)) continue;
-        const slotIdx = abDetail.isSpecialAbility ? (specialSlotFree ? 0 : -1) : firstFreeNormal;
+        let slotIdx;
+        if (abDetail.isSpecialAbility) {
+            slotIdx = specialSlotFree ? 0 : -1;
+        } else {
+            slotIdx = freeNormals.length > 0 ? freeNormals[normalOffers % freeNormals.length] : -1;
+            if (slotIdx >= 0) normalOffers++;
+        }
         if (slotIdx < 0) continue;
         // No style guard here: every abHrid is a guide offer, and the guide's set
         // is style-correct by construction (see the swap loop). The heuristic would
@@ -1370,9 +1385,12 @@ export function generateCandidates(
                 ? abilityTargets
                 : null;
 
+        const slotOpen = abilitySlotUnlocks(playerDTO, gameData);
         for (let slotIdx = 0; slotIdx < playerDTO.abilities.length; slotIdx++) {
             const ability = playerDTO.abilities[slotIdx];
             if (!ability) continue;
+            // An ability saved in a slot the Intelligence level has not opened is not one the character casts
+            if (slotOpen[slotIdx] === false) continue;
 
             const abilityDetail = gameData.abilityDetailMap[ability.hrid];
             if (!abilityDetail) continue;
@@ -2048,8 +2066,76 @@ export function generateGuildShrineCandidates(
     return candidates;
 }
 
-/** Drink slots a combat loadout has */
+/** Drink slots a combat loadout has at most (a full pouch) */
 const DRINK_SLOTS = 3;
+
+/** Ability slots a combat loadout has: the special slot, then four ordinary ones */
+const ABILITY_SLOTS = 5;
+
+/**
+ * How many of a loadout's drink slots it can use. The game gives one slot, and each pouch adds its `drinkSlots`
+ * (with its enhancement bonus), so a build with no pouch drinks one coffee however many are saved on it.
+ * A pouch missing from the game data is not guessed at: the bar is taken as full.
+ * @param {Object} playerDTO - Player DTO with `equipment`
+ * @param {Object} gameData - Game data payload
+ * @returns {number} 1 to {@link DRINK_SLOTS}
+ */
+export function drinkCapacity(playerDTO, gameData) {
+    const pouch = playerDTO?.equipment?.['/equipment_types/pouch'];
+    if (!pouch?.hrid) return 1;
+    const detail = gameData?.itemDetailMap?.[pouch.hrid]?.equipmentDetail;
+    if (!detail) return DRINK_SLOTS;
+    const multiplier = gameData?.enhancementLevelTotalBonusMultiplierTable?.[pouch.enhancementLevel || 0] || 0;
+    const extra =
+        (detail.combatStats?.drinkSlots || 0) + multiplier * (detail.combatEnhancementBonuses?.drinkSlots || 0);
+    return Math.max(1, Math.min(DRINK_SLOTS, Math.floor(1 + extra + 1e-9)));
+}
+
+/**
+ * Which ability slots a loadout can use. A slot opens at a base Intelligence level the game lists per slot
+ * (`abilitySlotsLevelRequirementList`); an Intelligence bonus from gear or tea does not open one. The list is read
+ * by position, slot 0 being the special slot. Without the list or the player's Intelligence nothing is locked.
+ * @param {Object} playerDTO - Player DTO with `intelligenceLevel`
+ * @param {Object} gameData - Game data payload
+ * @returns {boolean[]} One flag per slot, true where the slot is open
+ */
+export function abilitySlotUnlocks(playerDTO, gameData) {
+    const list = gameData?.abilitySlotsLevelRequirementList;
+    const level = Number(playerDTO?.intelligenceLevel);
+    return Array.from({ length: ABILITY_SLOTS }, (_, index) => {
+        const required = Array.isArray(list) ? Number(list[index]) : NaN;
+        return !Number.isFinite(required) || !Number.isFinite(level) || level >= required;
+    });
+}
+
+/**
+ * What is wrong with a build that carries more than its character can use: coffees saved beyond the pouch's slots,
+ * abilities in slots the Intelligence level has not opened. The simulation still runs them as saved; the advisor
+ * offers nothing into those slots, and this says so rather than leaving the build quietly cut short.
+ * @param {Object} playerDTO - Player DTO
+ * @param {Object} gameData - Game data payload
+ * @returns {string[]} One sentence per problem, empty for a build that fits
+ */
+export function slotWarnings(playerDTO, gameData) {
+    const warnings = [];
+    const capacity = drinkCapacity(playerDTO, gameData);
+    const extraDrinks = (playerDTO?.drinks || []).slice(capacity).filter((drink) => drink?.hrid).length;
+    if (extraDrinks > 0) {
+        warnings.push(
+            `${extraDrinks} saved drink${extraDrinks === 1 ? '' : 's'} sit beyond the ${capacity} slot${capacity === 1 ? '' : 's'} ` +
+                'this build pouch gives. The simulation still drinks them; the game would not, and no coffee is offered for those slots.'
+        );
+    }
+    const unlocked = abilitySlotUnlocks(playerDTO, gameData);
+    const locked = (playerDTO?.abilities || []).filter((ability, index) => ability && unlocked[index] === false).length;
+    if (locked > 0) {
+        warnings.push(
+            `${locked} ability slot${locked === 1 ? ' is' : 's are'} filled below the Intelligence level that opens ` +
+                `${locked === 1 ? 'it' : 'them'}. The simulation still casts them; the game would not, and nothing is offered for those slots.`
+        );
+    }
+    return warnings;
+}
 
 /**
  * Buff drinks worth simulating: a tier up in each family you already run, and
@@ -2089,10 +2175,18 @@ export function generateDrinkCandidates(playerDTO, gameData) {
         return null;
     };
 
+    // Only the slots the build pouch opens: a saved coffee beyond them is neither upgraded nor given a neighbor
+    const capacity = drinkCapacity(playerDTO, gameData);
+    const lockedFamilies = new Set();
+    for (let index = capacity; index < drinks.length; index++) {
+        const family = drinks[index]?.hrid ? familyOf(drinks[index].hrid) : null;
+        if (family) lockedFamilies.add(family);
+    }
+
     const equipped = new Map(); // family → { index, entry }
     let freeSlot = -1;
     let freeSlots = 0;
-    for (let index = 0; index < DRINK_SLOTS; index++) {
+    for (let index = 0; index < capacity; index++) {
         const worn = drinks[index];
         if (!worn?.hrid) {
             if (freeSlot === -1) freeSlot = index;
@@ -2120,6 +2214,7 @@ export function generateDrinkCandidates(playerDTO, gameData) {
                 type: 'drink',
                 slot: `drink_${worn.index}`,
                 drinkIndex: worn.index,
+                drinkCapacity: capacity,
                 currentHrid: worn.entry.hrid,
                 upgradeHrid: next.hrid,
                 upgradeLevel: 0,
@@ -2131,8 +2226,9 @@ export function generateDrinkCandidates(playerDTO, gameData) {
         }
 
         // Not running this family at all: only worth a row if there is a slot
-        // free to run it in, and only the best of it
-        if (freeSlot === -1) continue;
+        // free to run it in, and only the best of it. A family saved in a slot the pouch does not open is one the
+        // build already carries
+        if (freeSlot === -1 || lockedFamilies.has(family)) continue;
         const best = usable[usable.length - 1];
         candidates.push({
             type: 'drink',
@@ -2147,6 +2243,7 @@ export function generateDrinkCandidates(playerDTO, gameData) {
             // no more additions fit together than the bar has free slots (see `planWithinBudget`)
             fillsFreeDrinkSlot: true,
             freeDrinkSlots: freeSlots,
+            drinkCapacity: capacity,
             description: `Add ${best.name}`,
         });
     }
@@ -2191,11 +2288,17 @@ function isDrinkAddition(candidate) {
 function applyDrinkToDTO(dto, candidate) {
     if (!Array.isArray(dto.drinks)) dto.drinks = [];
     while (dto.drinks.length < DRINK_SLOTS) dto.drinks.push(null);
+    // The bar the candidate was made for: an addition never lands in a slot its pouch does not open
+    const room = Number.isFinite(candidate.drinkCapacity)
+        ? Math.min(DRINK_SLOTS, candidate.drinkCapacity)
+        : DRINK_SLOTS;
     let index = candidate.drinkIndex;
     if (isDrinkAddition(candidate)) {
-        if (dto.drinks[index]?.hrid) {
-            const free = dto.drinks.slice(0, DRINK_SLOTS).findIndex((drink) => !drink?.hrid);
+        if (dto.drinks[index]?.hrid || index >= room) {
+            const free = dto.drinks.slice(0, room).findIndex((drink) => !drink?.hrid);
             if (free >= 0) index = free;
+            // No free slot the pouch opens: the coffee is not worn, rather than written into one it does not
+            else if (index >= room) return;
         }
     } else if (candidate.currentHrid) {
         const worn = dto.drinks.findIndex((drink) => drink?.hrid === candidate.currentHrid);
@@ -2393,7 +2496,7 @@ function applyGuildShrineToDTO(dto, candidate) {
  * @returns {Object} Same shape as `explainUpgradeCost`, plus `guild`
  */
 function explainGuildShrineCost(candidate) {
-    const { lines, total, unpriced } = priceGuildCreditCosts(candidate.creditCosts);
+    const { lines, total, unpriced } = priceGuildCreditCosts(candidate.creditCosts, { side: 'buy' });
 
     const tokens = candidate.guildTokenCost || 0;
     const tokenValue = explainGuildTokenValue('ask');
@@ -4765,6 +4868,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         } else if (candidate.type === 'combat_level') {
             // Combat skill level boost (simulated charm)
             modifiedDTOs[playerIndex][candidate.skillKey] = candidate.upgradeLevel;
+            // Raising a skill moves who in the party is highest level, so every member's level-gap XP penalty with it
+            recomputeLevelGapDebuffs(modifiedDTOs);
         } else if (candidate.type === 'house') {
             // House room level (a room at level 0 isn't in the map yet)
             if (!modifiedDTOs[playerIndex].houseRooms) modifiedDTOs[playerIndex].houseRooms = {};
@@ -4828,9 +4933,16 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         const deltas = computeDeltas(baselineMetrics, metrics);
         const goldPer = computeGoldPerImprovement(candidate.cost, deltas);
 
-        const economics = computeEconomics(candidate.cost, baselineMetrics, metrics);
+        // An extra coffee or key nothing priced is counted as free in the profit: the row's profit gain is a ceiling
+        // until it is priced, so it is neither ranked as a gain, budgeted as one, nor given a payback
+        const costUnpriced = newlyUnpricedCosts(baselineMetrics, metrics);
+        const economics = withUnknownCost(computeEconomics(candidate.cost, baselineMetrics, metrics), costUnpriced);
         const noise = rateDeltaNoisePct(baselineResult, simResult, playerHrid);
         const significantBy = significantDeltas(deltas, noise, { baseline: baselineMetrics, upgraded: metrics });
+        if (costUnpriced.length) {
+            significantBy.profit = false;
+            goldPer.profit = Infinity;
+        }
 
         const row = {
             candidate,
@@ -4841,6 +4953,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             deltas,
             goldPer,
             economics,
+            ...(costUnpriced.length ? { costUnpriced } : {}),
             noise,
             significantBy,
             // The single flag `planWithinBudget` reads. A row is worth planning
@@ -4915,6 +5028,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                         });
                         const bothDTOs = JSON.parse(JSON.stringify(modifiedDTOs));
                         bothDTOs[playerIndex][along.skillKey] = along.upgradeLevel;
+                        recomputeLevelGapDebuffs(bothDTOs);
                         let bothResult;
                         try {
                             bothResult = await runSimulation(
@@ -4999,6 +5113,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         results,
         // How many candidates the run set out to measure, so a stopped run can say how much of it it covers
         candidateCount: candidatesWithCost.length,
+        // A saved build that carries more than the character can use (see `slotWarnings`): said, not trimmed
+        slotWarnings: slotWarnings(playerDTO, gameData),
         food,
         // Explains an empty house result rather than leaving it as "no upgrades"
         houseScan: candidateModes.includes('house')
@@ -5272,6 +5388,9 @@ export function computeMetrics(simResult, gameData, playerHrid, hours, { priceCa
             ...(revenue.unpricedConsumables || []),
             ...(revenue.unpricedKeys || []),
         ],
+        // The expense side of `unpriced` (consumables, dungeon keys). A drop left out only makes profit a floor; an
+        // expense left out can make a profit gain a loss, so `newlyUnpricedCosts` reads this apart from the rest
+        unpricedCost: [...(revenue.unpricedConsumables || []), ...(revenue.unpricedKeys || [])],
         deathsPerHour: deaths,
         encountersPerHour: encounters,
         dps: (simResult.totalDamageDealt?.[playerHrid] || 0) / (simHours * 3600),
@@ -5453,6 +5572,53 @@ export const PAIRED_TIME_HEADROOM = 3;
 export function pairedTrialRule(baselineResult) {
     const trials = Math.max(1, Math.floor(Number(baselineResult?.labyAttemptCount) || 0));
     return { minTrials: trials, maxTrials: trials };
+}
+
+/**
+ * A roster as it stands once a candidate is applied to one of its players. A raw combat-level candidate moves who
+ * is highest level, so the party level-gap XP penalty of every member is recomputed; any other candidate leaves
+ * the roster as it was.
+ * @param {Array<Object>} playerDTOs - The roster with the candidate already applied to its player
+ * @param {Object} candidate - The candidate applied
+ * @returns {Array<Object>} `playerDTOs` itself, or copies of its players with the penalties recomputed
+ */
+export function withLevelGapsFor(playerDTOs, candidate) {
+    if (candidate?.type !== 'combat_level') return playerDTOs;
+    const roster = playerDTOs.map((player) => (player ? { ...player } : player));
+    recomputeLevelGapDebuffs(roster);
+    return roster;
+}
+
+/**
+ * The running costs a candidate's run counted at zero that the baseline's did not: an extra coffee or key with no
+ * price. Profit built on them is an upper bound (the real spend only lowers it), so the row's profit gain, ROI and
+ * payback are provisional rather than figures.
+ * @param {Object} baseline - `computeMetrics` of the baseline
+ * @param {Object} upgraded - `computeMetrics` of the candidate (or the basket)
+ * @returns {string[]} Names nothing priced, empty when every expense of the candidate was priced
+ */
+export function newlyUnpricedCosts(baseline, upgraded) {
+    const already = new Set(baseline?.unpricedCost || []);
+    return (upgraded?.unpricedCost || []).filter((name) => !already.has(name));
+}
+
+/**
+ * Economics with an unknown running cost marked: no ROI or payback is quoted (a finite figure would read as a
+ * measurement), and the result says which items were missing.
+ * @param {Object} economics - From {@link computeEconomics}
+ * @param {string[]} costUnpriced - From {@link newlyUnpricedCosts}
+ * @returns {Object} `economics` unchanged when nothing is missing
+ */
+export function withUnknownCost(economics, costUnpriced) {
+    if (!costUnpriced?.length) return economics;
+    return {
+        ...economics,
+        paybackHours: Infinity,
+        repayHours: Infinity,
+        roiAnnualPct: null,
+        provisional: true,
+        costUnpriced,
+    };
 }
 
 /**
@@ -6543,9 +6709,20 @@ export function conflictKeys(candidate) {
         : [candidate.slot];
     // A two-hander and a main-hand+off-hand pair are competing for the same
     // hands even though they name different slots
-    const hands = ['/equipment_types/two_hand', '/equipment_types/main_hand', '/equipment_types/off_hand'];
-    if (slots.some((slot) => hands.includes(slot))) return ['slot:weapon'];
-    return [`slot:${[...new Set(slots)].sort().join('+')}`];
+    // Each hand is its own resource: a main hand and an off hand do not compete, a two-hander takes both
+    const handKeys = [];
+    const others = [];
+    for (const slot of slots) {
+        if (slot === '/equipment_types/two_hand') handKeys.push('hand:main', 'hand:off');
+        else if (slot === '/equipment_types/main_hand') handKeys.push('hand:main');
+        else if (slot === '/equipment_types/off_hand') handKeys.push('hand:off');
+        else others.push(slot);
+    }
+    const keys = [...new Set(handKeys)];
+    if (others.length > 0 || keys.length === 0) {
+        keys.push(`slot:${[...new Set(others.length ? others : slots)].sort().join('+')}`);
+    }
+    return keys;
 }
 
 /**
@@ -6837,6 +7014,20 @@ export function planWithinBudget(
     const pinnedKeys = new Set();
     const blockedByPin = (entry) => singleLoadout && entry.keys.some((key) => pinnedKeys.has(key));
 
+    // Which groups hold each key. A two-hander holds both hands under the group of its first key, so a main hand
+    // and an off hand are separate groups and a two-hander overlaps both: in one loadout a key held by a different
+    // group than the entry's own is a piece that cannot be worn with it
+    const groupsHolding = new Map();
+    const holdKeys = (entry) => {
+        for (const key of entry.keys) {
+            if (!groupsHolding.has(key)) groupsHolding.set(key, new Set());
+            groupsHolding.get(key).add(entry.key);
+        }
+    };
+    const overlapsOtherGroup = (entry) =>
+        singleLoadout &&
+        entry.keys.some((key) => [...(groupsHolding.get(key) || [])].some((group) => group !== entry.key));
+
     /** Take `entry` into the basket: its keys, its cost, its share of the standing best per slot */
     const acceptPin = (entry) => {
         const { next, share: marginal } = foldStanding(bestBySlot.get(entry.key), entry.savings, true);
@@ -6844,6 +7035,7 @@ export function planWithinBudget(
             taken.add(key);
             pinnedKeys.add(key);
         }
+        holdKeys(entry);
         spent += entry.result.cost;
         const credited = entry.savings;
         const pick = {
@@ -6939,6 +7131,7 @@ export function planWithinBudget(
             // the book it buys
             if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) continue;
             if (blockedByPin(entry)) continue;
+            if (overlapsOtherGroup(entry)) continue;
             if (noDrinkSlotFor(entry)) continue;
             const displacedNow = displacedBy(entry);
             const cost = costWithReplacements(entry, displacedNow);
@@ -6969,6 +7162,7 @@ export function planWithinBudget(
         const { entry, marginal } = best;
         remaining.splice(remaining.indexOf(entry), 1);
         for (const key of entry.keys) taken.add(key);
+        holdKeys(entry);
 
         // A piece nobody would now wear is gold spent on nothing: an earlier
         // pick in this group that this one beats in every room it covered is
@@ -7018,6 +7212,8 @@ export function planWithinBudget(
             reason = 'a pick already uses what this needs';
         } else if (blockedByPin(entry)) {
             reason = 'a pinned pick uses what this needs';
+        } else if (overlapsOtherGroup(entry)) {
+            reason = 'a pick already uses what this needs';
         } else if (noDrinkSlotFor(entry)) {
             reason = 'no drink slot is left free for it';
         } else if (spent + costWithReplacements(entry, displacedBy(entry)) > budget) {
@@ -7085,8 +7281,9 @@ export function planWithinBudget(
  * @param {Object} context - `{ gameData, playerDTOs, playerIndex, playerHrid, zoneHrid, difficultyTier, hours,
  *   communityBuffs, seed, precision, baselineResult, baseline }`, as returned by `runUpgradeAnalysis`
  * @returns {Promise<{ok: true, metrics: Object, deltas: Object, economics: Object, noise: Object,
- *   totalCost: number, baseline: Object} | {ok: false, reason: string}>} `deltas`, `economics` and `baseline`
- *   are on the basket's own price snapshot
+ *   totalCost: number, baseline: Object, provisional?: true, costUnpriced?: string[]} | {ok: false, reason: string}>}
+ *   `deltas`, `economics` and `baseline` are on the basket's own price snapshot; `provisional` means a coffee or key
+ *   the basket adds had no price, so its profit gain is a ceiling and carries no ROI or payback
  */
 export async function confirmUpgradeBudgetPlan(picks, context) {
     if (!picks?.length) return { ok: false, reason: 'The plan is empty — nothing to confirm.' };
@@ -7197,11 +7394,23 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
     const pricedBaseline = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache, saleTaxRate });
     const metrics = computeMetrics(combinedResult, gameData, playerHrid, hours, { priceCache, saleTaxRate });
     const deltas = computeDeltas(pricedBaseline, metrics);
-    const economics = computeEconomics(totalCost, pricedBaseline, metrics);
+    // A coffee or key the basket adds that nothing priced is free in this profit: the confirmed gain is then a
+    // ceiling, so no ROI or payback is quoted and the result says what was missing
+    const costUnpriced = newlyUnpricedCosts(pricedBaseline, metrics);
+    const economics = withUnknownCost(computeEconomics(totalCost, pricedBaseline, metrics), costUnpriced);
     const noise = rateDeltaNoisePct(baselineResult, combinedResult, playerHrid);
 
     // `baseline`: the analysis baseline on the basket's own price basis, for a reader that shows the gain
-    return { ok: true, metrics, deltas, economics, noise, totalCost, baseline: pricedBaseline };
+    return {
+        ok: true,
+        metrics,
+        deltas,
+        economics,
+        noise,
+        totalCost,
+        baseline: pricedBaseline,
+        ...(costUnpriced.length ? { provisional: true, costUnpriced } : {}),
+    };
 }
 
 /**

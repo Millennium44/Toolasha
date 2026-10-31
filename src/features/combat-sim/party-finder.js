@@ -582,7 +582,7 @@ export function slimSimResult(simResult) {
  * @param {number} simHours
  * @param {Map} [priceCache]
  * @returns {{profitPerHour: number|null, uncappedProfit: number|null, liquidityLimit: Object|null,
- *   unpriced: Array<string>}}
+ *   unpriced: Array<string>, unpricedCost: Array<string>}} `unpricedCost` is the consumables and keys among `unpriced`
  */
 function priceRow(simResult, gameData, simHours, priceCache, saleTaxRate = null) {
     let revenue = null;
@@ -593,13 +593,12 @@ function priceRow(simResult, gameData, simHours, priceCache, saleTaxRate = null)
         console.error('[PartyFinder] Pricing a result failed:', error);
     }
     if (!revenue || !Number.isFinite(revenue.netPerHour)) {
-        return { profitPerHour: null, uncappedProfit: null, liquidityLimit: null, unpriced: [] };
+        return { profitPerHour: null, uncappedProfit: null, liquidityLimit: null, unpriced: [], unpricedCost: [] };
     }
-    const unpriced = [
-        ...(revenue.unpricedDrops || []),
-        ...(revenue.unpricedConsumables || []),
-        ...(revenue.unpricedKeys || []),
-    ];
+    // The expense side (consumables, dungeon keys) apart from the drops: a drop nothing priced makes profit a floor,
+    // an expense nothing priced makes it a ceiling
+    const unpricedCost = [...(revenue.unpricedConsumables || []), ...(revenue.unpricedKeys || [])];
+    const unpriced = [...(revenue.unpricedDrops || []), ...unpricedCost];
     let profitPerHour = revenue.netPerHour;
     let uncappedProfit = null;
     let liquidityLimit = null;
@@ -616,7 +615,7 @@ function priceRow(simResult, gameData, simHours, priceCache, saleTaxRate = null)
     } catch (error) {
         console.error('[PartyFinder] Bounding a row by market volume failed:', error);
     }
-    return { profitPerHour, uncappedProfit, liquidityLimit, unpriced };
+    return { profitPerHour, uncappedProfit, liquidityLimit, unpriced, unpricedCost };
 }
 
 /**

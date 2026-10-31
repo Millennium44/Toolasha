@@ -16,6 +16,7 @@
  */
 
 import { buildGameDataPayload } from './combat-sim-adapter.js';
+import { seedRunPriceCache } from './sim-price-seed.js';
 import { runSimulation, runLabyrinthSimulation } from './combat-sim-runner.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
@@ -47,6 +48,7 @@ import {
     computeMetrics,
     expectedFightAttempts,
     pairedTrialRule,
+    withLevelGapsFor,
 } from './upgrade-advisor.js';
 
 /**
@@ -279,6 +281,14 @@ export async function verifyCombatCandidates({
     // One set of held prices for the baseline and every candidate: a market or custom-price update partway through
     // the run cannot read as a gain (the trigger optimizer does the same)
     const priceCache = new Map();
+    // ...and every quote it can read is taken now, not when the first sim that needs it finishes: an extra coffee
+    // a candidate adds would otherwise be priced after a refresh the baseline never saw
+    seedRunPriceCache(priceCache, gameData, {
+        zoneHrid,
+        playerDTOs,
+        extraHrids: rows.flatMap((row) => (row?.candidate?.type === 'drink' ? [row.candidate.upgradeHrid] : [])),
+        ...(Number.isFinite(context.saleTaxRate) ? { saleTaxRates: { [playerHrid]: context.saleTaxRate } } : {}),
+    });
 
     const simulate = (dtos, buffs, seed) =>
         limit(async () => {
@@ -368,7 +378,10 @@ export async function verifyCombatCandidates({
             tally.done += seeds;
             return failure(error);
         }
-        const dtos = playerDTOs.map((player, index) => (index === playerIndex ? dto : player));
+        const dtos = withLevelGapsFor(
+            playerDTOs.map((player, index) => (index === playerIndex ? dto : player)),
+            row.candidate
+        );
         const state = { failed: null };
         // Every seed's candidate metrics are kept: whether profit can be valued is known only once all of them are
         const measured = await Promise.all(
@@ -800,6 +813,7 @@ async function measureCombatTriggers({
     })();
     // One read per price for the whole verify, like the tuner: a price update mid-run must not look like an effect
     const priceCache = new Map();
+    seedRunPriceCache(priceCache, gameData, { zoneHrid, playerDTOs: [...playerDTOs, ...tunedDtos], saleTaxRates });
 
     const sampleOn = (dtos, seed) =>
         limit(async () => {

@@ -126,6 +126,23 @@ describe('buildConsumablePools', () => {
         expect(all).not.toContain('/items/unpriced_cake');
     });
 
+    test('a zero price is known only when the player typed it (a custom price); a quote of 0 is still unpriced (M01)', () => {
+        resolveItemPrice.mockImplementation((hrid) =>
+            hrid === '/items/unpriced_cake' ? { price: 0, custom: true } : { price: PRICES[hrid] ?? 0 }
+        );
+        const pools = buildConsumablePools(foodGameData());
+        const all = [...pools.values()].flat();
+        const free = all.find((e) => e.hrid === '/items/unpriced_cake');
+
+        // A farmed or gifted food really is free to them, and is offered
+        expect(free).toMatchObject({ price: 0, pricePerPoint: 0 });
+
+        // The same zero from the market is no price at all
+        resolveItemPrice.mockImplementation((hrid) => ({ price: hrid === '/items/marsberry_cake' ? 0 : PRICES[hrid] }));
+        const noQuote = [...buildConsumablePools(foodGameData()).values()].flat();
+        expect(noQuote.find((e) => e.hrid === '/items/marsberry_cake')).toBeUndefined();
+    });
+
     test('records price per restored point', () => {
         const pools = buildConsumablePools(foodGameData());
         const cheese = pools.get('hp_instant').find((e) => e.hrid === '/items/cheese');
@@ -405,6 +422,28 @@ describe('runFoodOptimization', () => {
         communityBuffs: {},
         seed: 1,
         baselineResult: null,
+    });
+
+    test('every price the search spends is read before its first simulation, so a refresh mid-run is not a saving (#651 T01)', async () => {
+        const prices = { ...PRICES };
+        resolveItemPrice.mockImplementation((hrid) => ({ price: prices[hrid] ?? 0 }));
+        mockSimFromFood();
+        const inner = runSimulation.getMockImplementation();
+        let first = true;
+        runSimulation.mockImplementation(async (args) => {
+            if (first) {
+                first = false;
+                // The market moves the moment the first simulation starts
+                for (const hrid of Object.keys(prices)) prices[hrid] = 1;
+            }
+            return inner(args);
+        });
+
+        const result = await runFoodOptimization(params(), null, {});
+
+        // 100 uses an hour of the recommended yogurt, at the price when the search began (900), not after (1)
+        expect(result.recommendation.slots.find((s) => s.index === 1).hrid).toBe('/items/star_fruit_yogurt');
+        expect(result.recommendation.costPerHour).toBeGreaterThan(50_000);
     });
 
     test('never recommends a setup that runs out of mana when a viable tier exists', async () => {

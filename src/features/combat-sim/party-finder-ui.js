@@ -14,7 +14,7 @@
  *   reads as a stop here.
  * - Captures the character before the first await and checks it, and the run's own token, after every await and
  *   in every callback; a run that outlived its character or its panel draws and writes nothing.
- * - Figures are yours (player1) only, priced by `calculateSimRevenue` with one price cache per pass; a pricing
+ * - Figures are yours (player1) only, priced by `calculateSimRevenue` with one price cache, frozen before the first sim, for both passes; a pricing
  *   change during a run is replayed when it ends.
  * - Stop keeps every finished row and says "stopped early — N of M".
  */
@@ -37,6 +37,7 @@ import {
 } from './combat-sim-adapter.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
 import { saleTaxRateOf } from './upgrade-advisor.js';
+import { seedRunPriceCache } from './sim-price-seed.js';
 import {
     PARTY_ROSTER_KEY,
     MAX_ROSTER_SIZE,
@@ -121,6 +122,32 @@ const MATCH_BUILD_HELP =
  */
 function formatScoreM(value) {
     return formatKMB(Math.round(value) * 1e6, 2);
+}
+
+/**
+ * The mark beside a profit or Score figure that was built on items nothing priced, counted as 0. A drop left out
+ * makes the figure a floor ("≥"); an expense left out (a consumable, a dungeon key) makes it a ceiling ("≤"); both
+ * at once leave it neither ("?").
+ * @param {Object} metrics - A row's shown metrics (`unpriced`, `unpricedCost`)
+ * @returns {string} HTML, empty when everything was priced
+ */
+export function unpricedMark(metrics) {
+    const all = metrics?.unpriced || [];
+    if (!all.length) return '';
+    const costs = new Set(metrics?.unpricedCost || []);
+    const costSide = all.filter((name) => costs.has(name));
+    const revenueSide = all.filter((name) => !costs.has(name));
+    let mark = '≥';
+    let note = 'a lower bound';
+    if (costSide.length && revenueSide.length) {
+        mark = '?';
+        note = 'neither a floor nor a ceiling';
+    } else if (costSide.length) {
+        mark = '≤';
+        note = 'an upper bound';
+    }
+    const names = [...revenueSide, ...costSide].join(', ');
+    return `<span title="No price for ${esc(names)}; counted as 0, so this is ${note}" style="color:#ff9800;">${mark}</span>`;
 }
 
 /**
@@ -1952,7 +1979,17 @@ export class PartyFinderTab {
         let errorText = '';
         try {
             // Stage 1: every party, short
+            // One set of quotes for the whole search, frozen now: the quick pass ranks the parties, the rerun pass
+            // re-measures the best, and a refresh between them must not read as one party beating another
             const quickCache = new Map();
+            const fullCache = quickCache;
+            for (const zoneHrid of new Set(plan.tasks.map((task) => task.zone?.zoneHrid).filter(Boolean))) {
+                seedRunPriceCache(quickCache, gameData, {
+                    zoneHrid,
+                    playerDTOs: [self.dto],
+                    saleTaxRates: { [self.dto?.hrid]: saleTaxRate },
+                });
+            }
             const stage1 = plan.tasks.map((task) => ({
                 ...task,
                 id: `${task.zoneKey}|${task.comp.key}`,
@@ -1980,7 +2017,6 @@ export class PartyFinderTab {
                     stage = 2;
                     done = 0;
                     total = rerun.length;
-                    const fullCache = new Map();
                     const stage2 = rerun.map((row) => ({
                         zone: row.zone,
                         zoneKey: row.zoneKey,
@@ -2253,9 +2289,7 @@ export class PartyFinderTab {
             if (!shown) {
                 html += `${td('sim failed', `color:${RED};`)}${td('')}${td('')}${td('')}${td('')}${td('')}`;
             } else {
-                const unpriced = shown.unpriced?.length
-                    ? `<span title="No price for ${esc(shown.unpriced.join(', '))}; counted as 0" style="color:#ff9800;">≥</span>`
-                    : '';
+                const unpriced = unpricedMark(shown);
                 const capped =
                     shown.uncappedProfit != null
                         ? ` <span title="Limited by market volume (uncapped ${esc(formatKMB(shown.uncappedProfit))})" style="color:#ff9800;">*</span>`

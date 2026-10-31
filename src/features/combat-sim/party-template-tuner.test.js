@@ -297,6 +297,69 @@ describe('tuneTemplate', () => {
         expect(await tuneTemplate(smash, LEVELS, world().deps)).toMatchObject({ status: 'ok', clamp: null });
     });
 
+    test('a price change while the probes run restarts the solve once on the new prices (#651 T13)', async () => {
+        const { deps, state } = world();
+        const inner = deps.scoreProfile;
+        let moved = false;
+        deps.scoreProfile = async (profileData) => {
+            // The market refreshes during the first probe of the first attempt
+            if (!moved) {
+                moved = true;
+                state.mode = 'refreshed';
+            }
+            return inner(profileData);
+        };
+
+        const result = await tuneTemplate(smash, LEVELS, deps);
+
+        expect(result).toMatchObject({ status: 'ok', k: -3 });
+        // Solved again on the refreshed prices, and filed under them: the stale attempt left nothing behind
+        expect(state.calls).toBeGreaterThan(15);
+        state.calls = 0;
+        expect((await tuneTemplate(smash, LEVELS, deps)).cached).toBe(true);
+        expect(state.calls).toBe(0);
+        state.mode = 'standard';
+        expect((await tuneTemplate(smash, LEVELS, deps)).cached).toBe(false);
+    });
+
+    test('prices that keep moving give up as aborted rather than chase them; a character switch aborts at once', async () => {
+        const drifting = world();
+        const inner = drifting.deps.scoreProfile;
+        let n = 0;
+        drifting.deps.scoreProfile = async (profileData) => {
+            drifting.state.mode = `m${n++}`;
+            return inner(profileData);
+        };
+        const result = await tuneTemplate(smash, LEVELS, drifting.deps);
+        expect(result.status).toBe('aborted');
+        expect(result.dto.meleeLevel).toBe(136);
+
+        const switching = world();
+        const innerSwitch = switching.deps.scoreProfile;
+        let probes = 0;
+        switching.deps.scoreProfile = async (profileData) => {
+            probes++;
+            switching.state.id = 'c2';
+            return innerSwitch(profileData);
+        };
+        expect((await tuneTemplate(smash, LEVELS, switching.deps)).status).toBe('aborted');
+        // No second attempt for a different character
+        expect(probes).toBe(1);
+    });
+
+    test('a character whose own score has unpriced gear is cached apart from one without (#651 T13)', async () => {
+        const { deps, state } = world();
+        await tuneTemplate(smash, LEVELS, deps);
+        const first = state.calls;
+        // Same numeric totals, but a piece of the character's own gear is now unpriced
+        state.score = { total: 9999, equipment: 1900, ability: 0, equipmentUnpriced: 1 };
+        const swapped = await tuneTemplate(smash, LEVELS, deps);
+
+        expect(swapped.cached).toBe(false);
+        expect(swapped.status).toBe('partial');
+        expect(state.calls).toBeGreaterThan(first);
+    });
+
     test('a character switch while scoring gives the standard template, and nothing is cached', async () => {
         const { deps, state } = world();
         const inner = deps.scoreProfile;

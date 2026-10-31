@@ -50,7 +50,7 @@ vi.mock('./combat-sim-runner.js', () => ({
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
-    seedSimPriceCache: (cache) => cache,
+    seedSimPriceCache: vi.fn((cache) => cache),
 
     buildGameDataPayload: vi.fn(() => ({ actionDetailMap: { '/actions/combat/fly': {} } })),
     calculateSimRevenue: vi.fn(),
@@ -70,6 +70,7 @@ vi.mock('./trigger-tuning.js', async (importOriginal) => {
 // pricing, storage and the guild shop, none of which is under test here
 vi.mock('./upgrade-advisor.js', () => ({
     PAIRED_TIME_HEADROOM: 3,
+    withLevelGapsFor: vi.fn((dtos) => dtos),
     applyCandidateToDTO: vi.fn((dto, candidate) => {
         if (candidate.explode) throw new Error('cannot apply');
         return { ...dto, applied: candidate.effect };
@@ -293,6 +294,44 @@ describe('isCloseCall', () => {
 });
 
 describe('verifyCombatCandidates', () => {
+    test('every price a verify can read is taken before the first simulation (#651 T01)', async () => {
+        const { seedSimPriceCache } = await import('./combat-sim-adapter.js');
+        const drinkRow = {
+            ...row('good', 'good'),
+            candidate: { ...row('good', 'good').candidate, type: 'drink', upgradeHrid: '/items/super_coffee' },
+        };
+        await verifyCombatCandidates({
+            context: makeContext({
+                playerDTOs: [
+                    { hrid: 'p1', food: [{ hrid: '/items/donut' }], drinks: [{ hrid: '/items/coffee' }, null] },
+                ],
+            }),
+            rows: [drinkRow],
+            seeds: 2,
+        });
+
+        expect(seedSimPriceCache).toHaveBeenCalledTimes(1);
+        const [cache, , options] = seedSimPriceCache.mock.calls[0];
+        expect(cache).toBeInstanceOf(Map);
+        expect(options.zoneHrid).toBe('/actions/combat/fly');
+        // What the baseline wears AND the coffee only the candidate adds
+        expect(options.consumableHrids.sort()).toEqual(['/items/coffee', '/items/donut', '/items/super_coffee']);
+        expect(seedSimPriceCache.mock.invocationCallOrder[0]).toBeLessThan(
+            vi.mocked((await import('./combat-sim-runner.js')).runSimulation).mock.invocationCallOrder[0]
+        );
+    });
+
+    test('a skill-level candidate is run on a roster with the party level-gap penalty recomputed (#652 T22)', async () => {
+        const { withLevelGapsFor } = await import('./upgrade-advisor.js');
+        const levelRow = {
+            ...row('good', 'good'),
+            candidate: { ...row('good', 'good').candidate, type: 'combat_level' },
+        };
+        await verifyCombatCandidates({ context: makeContext(), rows: [levelRow], seeds: 2 });
+
+        expect(withLevelGapsFor).toHaveBeenCalledWith(expect.any(Array), levelRow.candidate);
+    });
+
     test('runs the baseline and every candidate on identical seeds, one worker, no preempt, no precision', async () => {
         const out = await verifyCombatCandidates({
             context: makeContext(),

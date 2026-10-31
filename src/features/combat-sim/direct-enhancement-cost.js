@@ -86,7 +86,10 @@ export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel
     // item has a price — which makes every protecting strategy unpriceable, not
     // free. Quoting protection at zero made the most-protected path the cheapest
     // by construction and put it top of the rankings.
-    const { price: protPrice, itemHrid: protHrid } = getCheapestProtectionPrice(itemHrid);
+    const { price: protPrice, itemHrid: protHrid, partial: protPartial } = getCheapestProtectionPrice(itemHrid);
+    // A protection price built on a partial bill is a floor: a run protected by it cannot be quoted, and
+    // quoting the unprotected strategies alone would rank the row on a cost it may not be able to meet
+    if (protPartial) return null;
 
     try {
         // From the level the piece is actually at, not the difference between
