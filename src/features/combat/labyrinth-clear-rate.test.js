@@ -7502,7 +7502,7 @@ describe('labyrinth toolbar layout', () => {
     const panel = () => q('settings-panel');
     const open = () => panel().style.display !== 'none';
 
-    test('main row: Labyrinth, then Path, Beacons, Clear and the gear in clusters; row two the summary alone', () => {
+    test('main row: Labyrinth, then Path, Beacons, Clear and the gear in clusters; the summary beside the gear, the bar below', () => {
         labyrinthClearRate.injectTileControls();
 
         const clusters = [...document.querySelectorAll('.mwi-labyrinth-tile-controls-cluster')];
@@ -7516,12 +7516,18 @@ describe('labyrinth toolbar layout', () => {
         expect(clusters[3].contains(q('settings-button'))).toBe(true);
         expect(before(q('toggle'), clusters[0])).toBe(true);
 
-        // Row two is the summary and the bar; the toggles are in the panel
-        const rowBreak = q('row-break');
-        expect(before(clusters[3], rowBreak)).toBe(true);
-        expect(before(rowBreak, q('status'))).toBe(true);
+        // The summary follows the gear in the same row container, the bar after it
+        expect(q('row-break')).toBeNull();
+        expect(before(clusters[3], q('status'))).toBe(true);
         expect(before(q('status'), q('bar'))).toBe(true);
-        expect(rowBreak.parentElement.contains(q('auto-toggle'))).toBe(true);
+        expect(q('status').parentElement).toBe(clusters[3].parentElement);
+        // Empty, it takes no room; with text it shows
+        expect(q('status').style.display).toBe('none');
+        labyrinthClearRate.setTileStatus('Path: 12 rooms');
+        expect(q('status').style.display).toBe('');
+        labyrinthClearRate.setTileStatus('');
+        expect(q('status').style.display).toBe('none');
+        expect(clusters[3].parentElement.contains(q('auto-toggle'))).toBe(true);
         expect(panel().contains(q('auto-toggle'))).toBe(true);
     });
 

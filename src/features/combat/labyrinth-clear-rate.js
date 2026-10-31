@@ -3449,16 +3449,13 @@ class LabyrinthClearRate {
         const gear = cluster();
         gear.append(settingsButton, settingsPanel);
 
-        // Row two: the latest summary (the path's rooms and shrouds, a beacon
-        // plan) on a line of its own
-        const rowBreak = document.createElement('span');
-        rowBreak.className = `${TILE_CONTROLS_CLASS}-row-break`;
-        rowBreak.style.cssText = 'flex-basis:100%; height:0;';
-        container.appendChild(rowBreak);
-
+        // The latest summary (the path's rooms and shrouds, a beacon plan) sits
+        // beside the gear when it fits and wraps, whole, onto its own line when
+        // it does not. Hidden while empty so it takes no room.
         const status = document.createElement('span');
         status.className = `${TILE_CONTROLS_CLASS}-status`;
-        status.style.cssText = 'flex:1 1 160px; font-size:10px; color:#9ab0d8; min-width:0; overflow-wrap:anywhere;';
+        status.style.cssText =
+            'display:none; flex:1 1 160px; min-width:160px; font-size:10px; color:#9ab0d8; overflow-wrap:anywhere;';
         container.appendChild(status);
 
         const track = document.createElement('div');
@@ -3815,6 +3812,7 @@ class LabyrinthClearRate {
         const status = document.querySelector(`.${TILE_CONTROLS_CLASS}-status`);
         if (!status) return;
         status.textContent = message || '';
+        status.style.display = message ? '' : 'none';
         status.style.color = warn ? '#ff8a80' : '';
     }
 
