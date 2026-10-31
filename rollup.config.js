@@ -792,6 +792,47 @@ const prodEntrypoint = {
 const sharedCoreGlobals = buildGlobals(coreExternalGlobals);
 const sharedFeatureGlobals = buildGlobals(new Map([...coreExternalGlobals, ...utilsExternalGlobals]));
 
+/**
+ * Keeps the labyrinth clear-rate module (and the room logs, outcome log, sim
+ * cache and recorders it drags in, several hundred KB) out of the sim bundle.
+ *
+ * The sim's lab panel and upgrade advisor import it only as a *fallback*: every
+ * call site reads `labyrinthClearRate() || bundledLabyrinthClearRate`, where the
+ * first is the combat bundle's live instance (`Toolasha.Combat.labyrinthClearRate`).
+ * Combat is always loaded by the time a panel is opened, but it loads AFTER sim,
+ * so it cannot be an iife argument (that is read at load time and would throw).
+ * In the split build this resolves the import to a stand-in that reads the
+ * combat bundle's instance lazily, on each access. The dev standalone is one
+ * bundle with a single copy, so it is not routed through here.
+ *
+ * @returns {import('rollup').Plugin} Rollup plugin
+ */
+function labyrinthClearRateStandInPlugin() {
+    const target = normalize(join(__dirname, 'src/features/combat/labyrinth-clear-rate.js'));
+    const virtualId = ' labyrinth-clear-rate-stand-in';
+    return {
+        name: 'labyrinth-clear-rate-stand-in',
+        resolveId(source, importer) {
+            if (!importer || !source.endsWith('labyrinth-clear-rate.js')) return null;
+            const resolved = normalize(join(dirname(importer.split('?')[0]), source));
+            return resolved === target ? virtualId : null;
+        },
+        load(id) {
+            if (id !== virtualId) return null;
+            return `
+const live = () => (typeof window !== 'undefined' ? window.Toolasha?.Combat?.labyrinthClearRate : null) || null;
+export default new Proxy({}, {
+    get(_target, key) {
+        const module = live();
+        const value = module ? module[key] : undefined;
+        return typeof value === 'function' ? value.bind(module) : value;
+    },
+});
+`;
+        },
+    };
+}
+
 const prodConfig = [
     ...prodLibraries.map((lib) => {
         const { key, ...libraryConfig } = lib;
@@ -833,6 +874,7 @@ const prodConfig = [
                 ...(globals ? { globals } : {}),
             },
             plugins: [
+                ...(key === 'sim' ? [labyrinthClearRateStandInPlugin()] : []),
                 cssRawPlugin(),
                 changelogPlugin(),
                 overviewPlugin(),
