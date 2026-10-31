@@ -1072,7 +1072,9 @@ function planEquipmentGoal(goal, context) {
         // The first base copy is covered by the acquire step, but every other
         // consumed line must have a price before this run has a complete cost.
         const remainingBill = enhancementBillAfterBase(run, itemHrid);
-        const unpricedInputs = remainingBill.filter((line) => line.count > 0 && !(num(line.unitPrice) > 0));
+        const unpricedInputs = remainingBill.filter(
+            (line) => line.count > 0 && (!(num(line.unitPrice) > 0) || line.partial === true)
+        );
         const runCostKnown = run != null && Number.isFinite(run.totalCost) && unpricedInputs.length === 0;
         if (unpricedInputs.length) {
             warnings.push(

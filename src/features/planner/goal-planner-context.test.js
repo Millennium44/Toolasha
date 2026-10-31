@@ -25,7 +25,7 @@ const game = vi.hoisted(() => ({
 }));
 
 /** The enhancing run the mocked calculator hands back, and the material prices; null run = no run */
-const enh = vi.hoisted(() => ({ run: null, xp: 0, materials: {}, params: {} }));
+const enh = vi.hoisted(() => ({ run: null, xp: 0, materials: {}, params: {}, path: null, protection: null }));
 
 const loadout = vi.hoisted(() => ({ drinks: null, equipment: null }));
 
@@ -95,9 +95,9 @@ vi.mock('./market-liquidity.js', () => ({
 const craft = vi.hoisted(() => ({ plan: null }));
 vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({ computeBestCraftingPlan: () => craft.plan }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
-    calculateEnhancementPath: () => null,
+    calculateEnhancementPath: () => enh.path,
     getProductionChainTime: () => 0,
-    getCheapestProtectionPrice: () => null,
+    getCheapestProtectionPrice: () => enh.protection,
     getEnhancementMaterialPrice: () => 0,
 }));
 vi.mock('../enhancement/enhancement-xp.js', () => ({
@@ -219,6 +219,8 @@ beforeEach(() => {
     rates.combat = { rates: [], best: null, status: { note: null } };
     rates.alchemyCalls = [];
     enh.run = null;
+    enh.path = null;
+    enh.protection = null;
     enh.xp = 0;
     enh.materials = {};
 });
@@ -1011,5 +1013,63 @@ describe('enhancing xp rates and the material bill', () => {
         enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: true, partial: true };
         const context = await buildPlannerContext();
         expect(context.xpRates('/skills/enhancing')).toEqual([]);
+    });
+});
+
+describe('a run from a held copy that the optimiser did not protect', () => {
+    const SWORD = '/items/cheese_sword';
+    const optimiserPath = {
+        xpPerHour: 0,
+        optimalStrategy: {
+            protectFrom: 0,
+            usedMirror: false,
+            baseCost: 100,
+            expectedAttempts: 10,
+            totalTime: 100,
+            materialCost: 1000,
+            protectionCost: 0,
+            protectionCount: 0,
+            totalCost: 1100,
+            materialBill: [{ itemHrid: '/items/cheese', name: 'Cheese', count: 20, unitPrice: 50, kind: 'material' }],
+        },
+    };
+    const heldRun = { attempts: 30, totalTime: 300, protectionCount: 4 };
+    const bill = async () => {
+        const context = await buildPlannerContext();
+        return context.enhance({ itemHrid: SWORD, targetLevel: 5, startLevel: 3 });
+    };
+
+    beforeEach(() => {
+        enh.path = optimiserPath;
+        enh.run = heldRun;
+    });
+
+    test('a priced protection is costed and listed as a plain priced line', async () => {
+        enh.protection = { price: 700, itemHrid: '/items/mirror_of_protection', partial: false };
+        const run = await bill();
+        expect(run.protectionCost).toBe(2800);
+        const line = run.materialBill.find((entry) => entry.kind === 'protection');
+        expect(line).toMatchObject({ itemHrid: '/items/mirror_of_protection', count: 4, unitPrice: 700 });
+        expect(line.partial).toBeUndefined();
+    });
+
+    test('a protection nobody prices is a flagged unknown, not four free ones', async () => {
+        enh.protection = { price: null, itemHrid: null, partial: false };
+        const run = await bill();
+        const line = run.materialBill.find((entry) => entry.kind === 'protection');
+        expect(line).toMatchObject({ count: 4, unitPrice: 0, partial: true });
+    });
+
+    test('a protection priced by a partial craft bill is flagged, its figure a lower bound', async () => {
+        enh.protection = { price: 300, itemHrid: '/items/mirror_of_protection', partial: true };
+        const run = await bill();
+        const line = run.materialBill.find((entry) => entry.kind === 'protection');
+        expect(line).toMatchObject({ unitPrice: 300, partial: true });
+    });
+
+    test('a run that spends no protection adds no protection line', async () => {
+        enh.run = { ...heldRun, protectionCount: 0 };
+        const run = await bill();
+        expect(run.materialBill.some((entry) => entry.kind === 'protection')).toBe(false);
     });
 });

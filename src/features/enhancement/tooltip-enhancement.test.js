@@ -185,6 +185,7 @@ let calculateMinimumSellPrice;
 let calculatePerAttemptMaterialCost;
 let getCheapestProtectionPrice;
 let getRealisticBaseItemPrice;
+let buildMaterialBill;
 
 beforeAll(async () => {
     globalThis.math = mathjs;
@@ -196,6 +197,7 @@ beforeAll(async () => {
         calculatePerAttemptMaterialCost,
         getCheapestProtectionPrice,
         getRealisticBaseItemPrice,
+        buildMaterialBill,
     } = await import('./tooltip-enhancement.js'));
 });
 
@@ -453,6 +455,22 @@ describe('calculateEnhancementPath', () => {
  * *consistent with the totals beside it* — a list that does not reconcile is worse than none.
  */
 describe('the material bill a path expects to consume', () => {
+    test('a protection row priced from a fallback quote says so instead of passing it off as a price', () => {
+        const row = (parts) =>
+            buildMaterialBill({ protectionItemHrid: PROTECTION, protectionCount: 3, ...parts }).find(
+                (line) => line.kind === 'protection'
+            );
+
+        expect(row({ protectionUnitPrice: 900, protectionPartial: true })).toMatchObject({
+            unitPrice: 900,
+            totalCost: 2700,
+            partial: true,
+        });
+        // No price at all: the row is flagged, not left looking like three free protections
+        expect(row({ protectionUnitPrice: 0, protectionPartial: true })).toMatchObject({ unitPrice: 0, partial: true });
+        expect(row({ protectionUnitPrice: 900 }).partial).toBeUndefined();
+    });
+
     /**
      * @param {Array<Object>} bill - A material bill
      * @param {string} kind - Which line kind to total

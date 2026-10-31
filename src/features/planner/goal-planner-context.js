@@ -962,13 +962,41 @@ function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
     // The per-attempt bill the optimiser already priced, reused rather than
     // rebuilt so a partial run and a full one cannot disagree about materials
     const perAttempt = strategy.expectedAttempts > 0 ? strategy.materialCost / strategy.expectedAttempts : 0;
-    const protectionUnit =
-        strategy.protectionCount > 0
-            ? strategy.protectionCost / strategy.protectionCount
-            : getCheapestProtectionPrice(itemHrid)?.price || 0;
+    // The optimiser's own protection price when it spent any; otherwise the cheapest protection on the
+    // book. One nobody prices, or a craft bill missing an input, is an unknown cost: the run keeps its
+    // protection line flagged rather than pricing the protections at zero
+    let protectionUnit = 0;
+    let protectionUnknown = false;
+    let protectionItemHrid = null;
+    if (strategy.protectionCount > 0) {
+        protectionUnit = strategy.protectionCost / strategy.protectionCount;
+    } else if (run.protectionCount > 0) {
+        const cheapest = getCheapestProtectionPrice(itemHrid);
+        protectionItemHrid = cheapest?.itemHrid || null;
+        if (cheapest?.price > 0) protectionUnit = cheapest.price;
+        protectionUnknown = !(cheapest?.price > 0) || Boolean(cheapest.partial);
+    }
 
     const materialCost = perAttempt * run.attempts;
     const protectionCost = protectionUnit * run.protectionCount;
+    const bill = rescaleMaterialBill(strategy.materialBill, {
+        attempts: run.attempts,
+        fromAttempts: strategy.expectedAttempts,
+        protectionCount: run.protectionCount,
+        fromProtectionCount: strategy.protectionCount,
+    });
+    // The optimiser spent no protection, so its bill has no line for one: add the priced-or-flagged line
+    if (strategy.protectionCount <= 0 && run.protectionCount > 0) {
+        bill.push({
+            itemHrid: protectionItemHrid,
+            name: protectionItemHrid ? protectionItemHrid.split('/').pop() : 'protection',
+            count: run.protectionCount,
+            unitPrice: protectionUnit,
+            totalCost: protectionCost,
+            kind: 'protection',
+            ...(protectionUnknown ? { partial: true } : {}),
+        });
+    }
 
     return {
         ...common,
@@ -981,12 +1009,7 @@ function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
         // a run that starts from a copy already held pays for no base at all
         baseCost: 0,
         totalCost: materialCost + protectionCost,
-        materialBill: rescaleMaterialBill(strategy.materialBill, {
-            attempts: run.attempts,
-            fromAttempts: strategy.expectedAttempts,
-            protectionCount: run.protectionCount,
-            fromProtectionCount: strategy.protectionCount,
-        }),
+        materialBill: bill,
         fromLevel: startLevel,
     };
 }

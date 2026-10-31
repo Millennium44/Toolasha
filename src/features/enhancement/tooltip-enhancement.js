@@ -570,6 +570,7 @@ function unrefinedBaseOf(itemHrid) {
  * @param {string} [parts.protectionItemHrid] - What the plan protects with
  * @param {number} [parts.protectionCount=0] - Expected protections consumed
  * @param {number} [parts.protectionUnitPrice=0] - Price of one
+ * @param {boolean} [parts.protectionPartial=false] - The price is a lower bound or missing, not a quote
  * @param {number} [parts.mirrorCount=0] - Philosopher's Mirrors the plan combines
  * @param {number} [parts.mirrorPrice=0] - Price of one
  * @param {string} [parts.baseItemHrid] - Base item, for a plan that consumes more than the one
@@ -579,14 +580,14 @@ function unrefinedBaseOf(itemHrid) {
  * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number,
  *   totalCost: number, kind: string}>} The bill, materials first; `kind` is one of
  *   `material`, `protection`, `mirror`, `base`
- * @private
  */
-function buildMaterialBill({
+export function buildMaterialBill({
     materials = [],
     materialMultiplier = 1,
     protectionItemHrid = null,
     protectionCount = 0,
     protectionUnitPrice = 0,
+    protectionPartial = false,
     mirrorCount = 0,
     mirrorPrice = 0,
     baseItemHrid = null,
@@ -622,6 +623,7 @@ function buildMaterialBill({
             unitPrice: protectionUnitPrice,
             totalCost: protectionUnitPrice * protectionCount,
             kind: 'protection',
+            ...(protectionPartial ? { partial: true } : {}),
         });
     }
 
@@ -744,6 +746,11 @@ function buildMirrorOptimizedResult(
     // The consumed item costs from targetCosts already include base/materials/protection
     // NO separate base/materials/protection for main item!
 
+    // Only read when the optimiser's own strategy spent no protection to take a price from
+    const fallbackProtection =
+        optimalTraditional.protectionAskPrice && optimalTraditional.protectionItemHrid
+            ? null
+            : getCheapestProtectionPrice(itemHrid, pricingOf(priceContext));
     return {
         protectFrom: optimalTraditional.protectFrom,
         label: optimalTraditional.protectFrom === 0 ? 'Never' : `From +${optimalTraditional.protectFrom}`,
@@ -771,14 +778,15 @@ function buildMirrorOptimizedResult(
         materialBill: buildMaterialBill({
             materials: optimalTraditional.materialBreakdown,
             materialMultiplier,
-            protectionItemHrid:
-                optimalTraditional.protectionItemHrid ||
-                getCheapestProtectionPrice(itemHrid, pricingOf(priceContext))?.itemHrid,
+            protectionItemHrid: optimalTraditional.protectionItemHrid || fallbackProtection?.itemHrid,
             protectionCount: totalProtections,
-            protectionUnitPrice:
-                optimalTraditional.protectionAskPrice ||
-                getCheapestProtectionPrice(itemHrid, pricingOf(priceContext))?.price ||
-                0,
+            protectionUnitPrice: optimalTraditional.protectionAskPrice || fallbackProtection?.price || 0,
+            // The fallback quote can be a craft bill missing an input, or nothing at all: the row then
+            // says so instead of passing a lower bound (or a zero) off as the price
+            protectionPartial:
+                !optimalTraditional.protectionAskPrice &&
+                totalProtections > 0 &&
+                (!(fallbackProtection?.price > 0) || Boolean(fallbackProtection?.partial)),
             mirrorCount,
             mirrorPrice,
             baseItemHrid: itemHrid,

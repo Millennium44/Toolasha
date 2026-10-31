@@ -857,6 +857,34 @@ describe('an equipment target', () => {
         expect(plan.totals.costKnown).toBe(false);
     });
 
+    test('a protection line priced by a partial craft bill leaves the enhancement cost provisional', () => {
+        const plan = planGoal(
+            { type: 'equipment', itemHrid: cape, enhancementLevel: 5 },
+            context({
+                acquire: () => ({ strategy: 'buy', totalCost: 1000 }),
+                enhance: () => ({
+                    totalCost: 1400,
+                    baseCost: 1000,
+                    attempts: 10,
+                    totalTimeSeconds: 120,
+                    materialBill: [
+                        { itemHrid: '/items/enhancement_crystal', count: 4, unitPrice: 100, kind: 'material' },
+                        {
+                            itemHrid: '/items/mirror_of_protection',
+                            count: 2,
+                            unitPrice: 300,
+                            kind: 'protection',
+                            partial: true,
+                        },
+                    ],
+                }),
+            })
+        );
+
+        expect(step(plan, 'enhance').costKnown).toBe(false);
+        expect(plan.totals.costKnown).toBe(false);
+    });
+
     test('a mirrored refined cape keeps an unpriced plain copy in its bill', () => {
         const refinedCape = '/items/chance_cape_refined';
         const plainCape = '/items/chance_cape';
