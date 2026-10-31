@@ -9826,6 +9826,19 @@ describe('the drink bar and the ability bar offer only what the character can us
         expect(abilitySlotUnlocks({}, data)).toEqual([true, true, true, true, true]);
     });
 
+    test('an Intelligence the build never carried (an import default of 1) locks nothing; a known 1 still does', () => {
+        const data = gameData({ abilitySlotsLevelRequirementList: [0, 1, 1, 20, 50, 90] });
+
+        expect(abilitySlotUnlocks({ intelligenceLevel: 1, intelligenceUnknown: true }, data)).toEqual([
+            true,
+            true,
+            true,
+            true,
+            true,
+        ]);
+        expect(abilitySlotUnlocks({ intelligenceLevel: 1 }, data)).toEqual([true, true, false, false, false]);
+    });
+
     test('guide fills target only open slots; abilities in shut slots are warned about and not offered levels', () => {
         const ABILITIES = {
             '/abilities/fireball': { name: 'Fireball' },

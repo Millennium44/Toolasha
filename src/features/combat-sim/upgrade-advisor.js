@@ -2095,14 +2095,16 @@ export function drinkCapacity(playerDTO, gameData) {
  * Which ability slots a loadout can use. A slot opens at a base Intelligence level the game lists per slot
  * (`abilitySlotsLevelRequirementList`); an Intelligence bonus from gear or tea does not open one. The list is read
  * by the game's slot number: the list has an unused entry 0, so the ability bar's slot `i` (0 the special slot, as
- * `fillAbilities` lays it out) reads entry `i + 1`. Without the list or the player's Intelligence nothing is locked.
+ * `fillAbilities` lays it out) reads entry `i + 1`. Without the list or the player's Intelligence nothing is locked,
+ * and a DTO marked `intelligenceUnknown` (an import or profile that never carried the level; its 1 is only the
+ * simulation's default) has nothing locked either.
  * @param {Object} playerDTO - Player DTO with `intelligenceLevel`
  * @param {Object} gameData - Game data payload
  * @returns {boolean[]} One flag per slot, true where the slot is open
  */
 export function abilitySlotUnlocks(playerDTO, gameData) {
     const list = gameData?.abilitySlotsLevelRequirementList;
-    const level = Number(playerDTO?.intelligenceLevel);
+    const level = playerDTO?.intelligenceUnknown ? NaN : Number(playerDTO?.intelligenceLevel);
     return Array.from({ length: ABILITY_SLOTS }, (_, index) => {
         const required = Array.isArray(list) ? Number(list[index + 1]) : NaN;
         return !Number.isFinite(required) || !Number.isFinite(level) || level >= required;

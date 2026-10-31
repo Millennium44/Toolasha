@@ -3218,6 +3218,8 @@ export class SimEditor {
                 const val = Math.max(1, parseInt(input.value) || 1);
                 input.value = val;
                 dto[key] = val;
+                // A typed Intelligence is a known one
+                if (key === 'intelligenceLevel') delete dto.intelligenceUnknown;
             });
         });
 

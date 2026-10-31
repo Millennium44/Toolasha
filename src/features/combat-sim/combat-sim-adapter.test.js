@@ -1029,6 +1029,20 @@ describe('a gearless player with any raised combat level is not treated as blank
         expect(result.players[0][key]).toBe(50);
     });
 
+    test('an import without an Intelligence level is marked unknown; one that carries it is not', () => {
+        const without = parseShykaiImport(
+            JSON.stringify({ player: { attackLevel: 1, meleeLevel: 90, equipment: [] } })
+        );
+        expect(without.players[0].intelligenceLevel).toBe(1);
+        expect(without.players[0].intelligenceUnknown).toBe(true);
+
+        const withInt = parseShykaiImport(
+            JSON.stringify({ player: { attackLevel: 1, meleeLevel: 90, intelligenceLevel: 60, equipment: [] } })
+        );
+        expect(withInt.players[0].intelligenceLevel).toBe(60);
+        expect(withInt.players[0].intelligenceUnknown).toBeUndefined();
+    });
+
     test('a genuinely blank player (every level at 1, no equipment) is still dropped', () => {
         const payload = JSON.stringify({ player: { attackLevel: 1, staminaLevel: 1, equipment: [] } });
 

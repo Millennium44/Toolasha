@@ -687,6 +687,9 @@ export function parseShykaiImport(jsonString) {
         const dto = {
             staminaLevel: p.staminaLevel || 1,
             intelligenceLevel: p.intelligenceLevel || 1,
+            // The simulation needs a number, so an absent level reads as 1; this says it was never known, so the
+            // ability bar locks nothing on its account (see `abilitySlotUnlocks`)
+            ...(Number(p.intelligenceLevel) > 0 ? {} : { intelligenceUnknown: true }),
             attackLevel: p.attackLevel || 1,
             meleeLevel: p.meleeLevel || 1,
             defenseLevel: p.defenseLevel || 1,
@@ -1231,6 +1234,10 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         if (dto[key] !== undefined) {
             dto[key] = skill.level || 1;
         }
+    }
+    // A profile that does not carry the Intelligence skill leaves the default 1: not a level to lock slots by
+    if (!(profile.profile?.characterSkills || []).some((skill) => skill.skillHrid === '/skills/intelligence')) {
+        dto.intelligenceUnknown = true;
     }
 
     // Extract equipment from wearableItemMap → keyed by equipmentDetail.type
