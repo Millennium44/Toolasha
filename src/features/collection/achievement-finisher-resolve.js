@@ -355,14 +355,16 @@ function resolveAlchemy(parsed, data) {
     const fee = getAlchemyCoinCost(item, type);
     const inputs = [{ itemHrid, count: item.alchemyDetail?.bulkMultiplier || 1 }];
     if (fee > 0) inputs.push({ itemHrid: COIN_HRID, count: fee });
+    const actionHrid = `/actions/alchemy/${type}`;
     return {
         kind: 'alchemy',
-        actionHrid: `/actions/alchemy/${type}`,
+        actionHrid,
         alchemyType: type,
         itemHrid,
-        // Alchemy actions all require level 1; an item above the Alchemy level is the gate
+        // The gate is the action's own level requirement (1 for every alchemy action today). The item's
+        // level only recommends a level (it drives the success-rate penalty) and never blocks the action
         skillHrid: '/skills/alchemy',
-        level: item.itemLevel || 1,
+        level: data.actionDetailMap?.[actionHrid]?.levelRequirement?.level || 1,
         inputs,
     };
 }

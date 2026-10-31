@@ -564,15 +564,18 @@ class AchievementFinisher {
         );
 
         const redraw = () => this.refresh();
-        for (const event of [
-            'achievements_updated',
-            'character_initialized',
-            'collections_updated',
-            'monsters_updated',
-        ]) {
+        for (const event of ['achievements_updated', 'collections_updated', 'monsters_updated']) {
             dataManager.on(event, redraw);
             this.handlers.push([event, redraw]);
         }
+        // A login or reconnect replaces the whole character (stock, levels, buffs) and emits none of the
+        // readiness events: stale the cached readiness before the redraw reads it
+        const reinitialized = () => {
+            this.readinessVersion += 1;
+            this.refresh();
+        };
+        dataManager.on('character_initialized', reinitialized);
+        this.handlers.push(['character_initialized', reinitialized]);
         // A character leaving: its hints must not stay on screen for the next one
         const clear = () => {
             this.readinessCache.clear();

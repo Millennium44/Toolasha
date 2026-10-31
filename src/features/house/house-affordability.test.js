@@ -40,7 +40,8 @@ vi.mock('../../utils/market-data.js', () => ({
     // ask/bid genuinely differ, so a call site that forwards `side` incorrectly
     // (e.g. through an unrecognised `context` that always resolves to ask) is
     // caught by asserting the two actually differ.
-    getItemPrice: (_hrid, options = {}) => (options.mode === 'bid' ? 2 : 1),
+    // A house is bought, so a custom price set for the buying side must be the one read
+    getItemPrice: (_hrid, options = {}) => (options.side !== 'buy' ? 0 : options.mode === 'bid' ? 2 : 1),
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 // Per-key data and per-key artificial delays, so a race test can make one
@@ -249,6 +250,11 @@ describe('both sides of the book', () => {
         const priced = [{ itemHrid: '/items/birch_lumber', count: 300 }];
         expect(materialsCost(priced, 'bid')).not.toBe(materialsCost(priced, 'ask'));
         expect(materialsCost(priced, 'bid')).toBe(300 * 2);
+    });
+
+    test('materials are priced as a purchase, so a buy-side custom price applies', () => {
+        // The mock only answers a call that names side: 'buy' (house-cost-calculator does the same)
+        expect(materialsCost([{ itemHrid: '/items/birch_lumber', count: 10 }], 'ask')).toBe(10);
     });
 });
 

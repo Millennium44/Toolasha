@@ -25,7 +25,7 @@ const game = vi.hoisted(() => ({
 }));
 
 /** The enhancing run the mocked calculator hands back, and the material prices; null run = no run */
-const enh = vi.hoisted(() => ({ run: null, xp: 0, materials: {} }));
+const enh = vi.hoisted(() => ({ run: null, xp: 0, materials: {}, params: {}, path: null, protection: null }));
 
 const loadout = vi.hoisted(() => ({ drinks: null, equipment: null }));
 
@@ -92,11 +92,12 @@ vi.mock('./market-liquidity.js', () => ({
         measured: liquidity.measured,
     }),
 }));
-vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({ computeBestCraftingPlan: () => null }));
+const craft = vi.hoisted(() => ({ plan: null }));
+vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({ computeBestCraftingPlan: () => craft.plan }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
-    calculateEnhancementPath: () => null,
+    calculateEnhancementPath: () => enh.path,
     getProductionChainTime: () => 0,
-    getCheapestProtectionPrice: () => null,
+    getCheapestProtectionPrice: () => enh.protection,
     getEnhancementMaterialPrice: () => 0,
 }));
 vi.mock('../enhancement/enhancement-xp.js', () => ({
@@ -108,7 +109,7 @@ vi.mock('../../utils/enhancement-input-pricing.js', () => ({
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({
     getTooltipEnhancementParams: () => ({ enhancingLevel: 1, houseLevel: 0 }),
-    enhancementParamsFor: () => ({ enhancingLevel: 1, houseLevel: 0 }),
+    enhancementParamsFor: () => ({ enhancingLevel: 1, houseLevel: 0, ...enh.params }),
     describeEnhancementSource: () => ({ kind: 'own', detail: '' }),
 }));
 vi.mock('../../utils/house-cost-calculator.js', () => ({
@@ -218,6 +219,8 @@ beforeEach(() => {
     rates.combat = { rates: [], best: null, status: { note: null } };
     rates.alchemyCalls = [];
     enh.run = null;
+    enh.path = null;
+    enh.protection = null;
     enh.xp = 0;
     enh.materials = {};
 });
@@ -559,6 +562,37 @@ describe('training rates keep the signed margin the rankings drop', () => {
         const context = await buildPlannerContext();
         const [cooking] = context.xpRates('/skills/cooking');
         expect(cooking.goldKnown).toBe(false);
+    });
+});
+
+describe('a crafted piece’s prerequisite carries the start bonuses of the quoted craft', () => {
+    afterEach(() => {
+        craft.plan = null;
+    });
+
+    test('Artisan Tea raises the requirement the planner checks, as it does the crafted price', async () => {
+        game.actionDetailMap['/actions/cooking/stew'].levelRequirement = { skillHrid: '/skills/cooking', level: 10 };
+        game.itemDetailMap['/items/artisan_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_level', flatBoost: 6 }] },
+        };
+        game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/artisan_tea' }];
+        game.inventory = [{ itemHrid: '/items/artisan_tea', count: 5 }];
+        craft.plan = { strategy: 'craft', totalCost: 100, unitCost: 100, actionHrid: '/actions/cooking/stew' };
+
+        const context = await buildPlannerContext();
+        expect(context.acquire('/items/stew').requires).toEqual([
+            { skillHrid: '/skills/cooking', level: 10, teaSkillLevelBonus: 0, actionLevelBonus: 6 },
+        ]);
+
+        // A level-1 recipe is still gated once the tea raises it
+        game.actionDetailMap['/actions/cooking/stew'].levelRequirement = { skillHrid: '/skills/cooking', level: 1 };
+        const low = await buildPlannerContext();
+        expect(low.acquire('/items/stew').requires).toHaveLength(1);
+
+        // Without the tea, a level-1 recipe gates nothing, as before
+        game.drinkSlots['/action_types/cooking'] = [];
+        const bare = await buildPlannerContext();
+        expect(bare.acquire('/items/stew').requires).toEqual([]);
     });
 });
 
@@ -935,6 +969,8 @@ describe('enhancing xp rates and the material bill', () => {
             perActionTime: 2,
         };
         enh.xp = 10;
+        enh.params = {};
+        enh.materials = {};
     });
 
     test('a fully priced material bill rates the item', async () => {
@@ -943,9 +979,121 @@ describe('enhancing xp rates and the material bill', () => {
         expect(context.xpRates('/skills/enhancing')).toHaveLength(1);
     });
 
+    test('the tea the bench drinks is in the hourly bill, with the teas to net held stock off', async () => {
+        enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: false, partial: false };
+        enh.materials['/items/blessed_tea'] = { price: 1000, unpriced: false, estimated: false, partial: false };
+        enh.params = { teas: { blessed: true }, drinkConcentration: 0 };
+        game.drinkSlots['/action_types/enhancing'] = [
+            { itemHrid: '/items/blessed_tea' },
+            { itemHrid: '/items/wisdom_tea' },
+        ];
+        game.inventory.push(
+            { itemHrid: '/items/blessed_tea', itemLocationHrid: '/item_locations/inventory', count: 50 },
+            { itemHrid: '/items/wisdom_tea', itemLocationHrid: '/item_locations/inventory', count: 50 }
+        );
+        enh.materials['/items/wisdom_tea'] = { price: 200, unpriced: false, estimated: false, partial: false };
+
+        const [rate] = (await buildPlannerContext()).xpRates('/skills/enhancing');
+        const materialsPerHour = (2 * 500 * 3600) / 2;
+        // 12 teas an hour each: blessed (listed once though flagged and equipped) and wisdom
+        expect(rate.drinkCostPerHour).toBe(12 * 1000 + 12 * 200);
+        expect(rate.goldPerHour).toBeCloseTo(-(materialsPerHour + 14_400), 6);
+        expect(rate.teaBill).toEqual([
+            { itemHrid: '/items/blessed_tea', perHour: 12, unitPrice: 1000 },
+            { itemHrid: '/items/wisdom_tea', perHour: 12, unitPrice: 200 },
+        ]);
+    });
+
+    test('the tea bill follows the saved enhancing loadout the XP side uses, not the current slots', async () => {
+        enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: false, partial: false };
+        enh.materials['/items/wisdom_tea'] = { price: 200, unpriced: false, estimated: false, partial: false };
+        enh.materials['/items/green_tea'] = { price: 9, unpriced: false, estimated: false, partial: false };
+        const stock = (itemHrid) => ({ itemHrid, itemLocationHrid: '/item_locations/inventory', count: 50 });
+        game.inventory.push(stock('/items/wisdom_tea'), stock('/items/green_tea'));
+        // Slotted now: green tea. Saved loadout (what the XP prediction is built on): wisdom tea
+        game.drinkSlots['/action_types/enhancing'] = [{ itemHrid: '/items/green_tea' }];
+        loadout.drinks = [{ itemHrid: '/items/wisdom_tea' }];
+
+        const [rate] = (await buildPlannerContext()).xpRates('/skills/enhancing');
+        expect(rate.teaBill).toEqual([{ itemHrid: '/items/wisdom_tea', perHour: 12, unitPrice: 200 }]);
+        expect(rate.drinkCostPerHour).toBe(2400);
+
+        // An unpriced saved tea is flagged unknown rather than dropped
+        delete enh.materials['/items/wisdom_tea'];
+        const [bare] = (await buildPlannerContext()).xpRates('/skills/enhancing');
+        expect(bare.teaBill).toEqual([{ itemHrid: '/items/wisdom_tea', perHour: 12, unitPrice: null }]);
+    });
+
+    test('drink concentration raises the teas drunk; an unpriced tea is flagged, not free', async () => {
+        enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: false, partial: false };
+        enh.params = { teas: { ultraEnhancing: true }, drinkConcentration: 25 };
+
+        const [rate] = (await buildPlannerContext()).xpRates('/skills/enhancing');
+        expect(rate.teaBill).toEqual([{ itemHrid: '/items/ultra_enhancing_tea', perHour: 15, unitPrice: null }]);
+        expect(rate.drinkCostPerHour).toBe(0);
+    });
+
     test('a material priced by a partial craft bill leaves the candidate out, like an unpriced one', async () => {
         enh.materials[CHEESE] = { price: 500, unpriced: false, estimated: true, partial: true };
         const context = await buildPlannerContext();
         expect(context.xpRates('/skills/enhancing')).toEqual([]);
+    });
+});
+
+describe('a run from a held copy that the optimiser did not protect', () => {
+    const SWORD = '/items/cheese_sword';
+    const optimiserPath = {
+        xpPerHour: 0,
+        optimalStrategy: {
+            protectFrom: 0,
+            usedMirror: false,
+            baseCost: 100,
+            expectedAttempts: 10,
+            totalTime: 100,
+            materialCost: 1000,
+            protectionCost: 0,
+            protectionCount: 0,
+            totalCost: 1100,
+            materialBill: [{ itemHrid: '/items/cheese', name: 'Cheese', count: 20, unitPrice: 50, kind: 'material' }],
+        },
+    };
+    const heldRun = { attempts: 30, totalTime: 300, protectionCount: 4 };
+    const bill = async () => {
+        const context = await buildPlannerContext();
+        return context.enhance({ itemHrid: SWORD, targetLevel: 5, startLevel: 3 });
+    };
+
+    beforeEach(() => {
+        enh.path = optimiserPath;
+        enh.run = heldRun;
+    });
+
+    test('a priced protection is costed and listed as a plain priced line', async () => {
+        enh.protection = { price: 700, itemHrid: '/items/mirror_of_protection', partial: false };
+        const run = await bill();
+        expect(run.protectionCost).toBe(2800);
+        const line = run.materialBill.find((entry) => entry.kind === 'protection');
+        expect(line).toMatchObject({ itemHrid: '/items/mirror_of_protection', count: 4, unitPrice: 700 });
+        expect(line.partial).toBeUndefined();
+    });
+
+    test('a protection nobody prices is a flagged unknown, not four free ones', async () => {
+        enh.protection = { price: null, itemHrid: null, partial: false };
+        const run = await bill();
+        const line = run.materialBill.find((entry) => entry.kind === 'protection');
+        expect(line).toMatchObject({ count: 4, unitPrice: 0, partial: true });
+    });
+
+    test('a protection priced by a partial craft bill is flagged, its figure a lower bound', async () => {
+        enh.protection = { price: 300, itemHrid: '/items/mirror_of_protection', partial: true };
+        const run = await bill();
+        const line = run.materialBill.find((entry) => entry.kind === 'protection');
+        expect(line).toMatchObject({ unitPrice: 300, partial: true });
+    });
+
+    test('a run that spends no protection adds no protection line', async () => {
+        enh.run = { ...heldRun, protectionCount: 0 };
+        const run = await bill();
+        expect(run.materialBill.some((entry) => entry.kind === 'protection')).toBe(false);
     });
 });

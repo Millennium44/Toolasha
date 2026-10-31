@@ -7352,6 +7352,60 @@ describe('a combat trial only mates joined', () => {
         }
     });
 
+    test('a live estimate leaves out captured members known to be on another trial; unknown ones stay', async () => {
+        game.clientData = clientData;
+        const capture = (await import('./guild-loadout-capture.js')).default;
+        const mate = { name: 'Mate', stats: { attackInterval: 3_000_000_000, autoAttackDamage: 900 } };
+        const other = { name: 'Other', stats: { attackInterval: 1_000_000_000, autoAttackDamage: 60_000 } };
+        const seen = vi.spyOn(capture, 'seen').mockReturnValue([mate, other]);
+        const tile = { name: 'Trial Badger', kind: 'combat' };
+        const analysis = analyseTrial(badger(), { phase: 'live', participants: 2, timeLeftMs: 57 * 60_000, now });
+        const estimate = (loadouts) =>
+            forecastTrial({ analysis, clientData, name: tile.name, participants: 2, loadouts, measuredDps: null });
+        const week = '2026-10-15T00:00:00Z';
+        const savedMembers = game.members;
+        const savedWeek = game.currentWeek;
+        try {
+            game.currentWeek = week;
+            // Nobody on record: both are unknown, so both stay counted (as before)
+            game.members = [];
+            expect(guildTrials._forecast(tile, analysis, 2, 'live', null)).toEqual(estimate([mate, other]));
+            expect(estimate([mate, other])).not.toEqual(estimate([mate]));
+
+            // Mate is on this Badger, Other on the Chameleon this week: only Mate is in the Badger's party
+            game.members = [
+                {
+                    characterID: 1,
+                    name: 'Mate',
+                    signupWeekStartAt: week,
+                    signedUpCombatTrialHrid: '/guild_combat/badger',
+                },
+                {
+                    characterID: 2,
+                    name: 'Other',
+                    signupWeekStartAt: week,
+                    signedUpCombatTrialHrid: '/guild_combat/chameleon',
+                },
+            ];
+            expect(guildTrials._forecast(tile, analysis, 2, 'live', null)).toEqual(estimate([mate]));
+
+            // Other's chameleon sign-up is last week's, or a skilling one: not elsewhere for this combat trial
+            game.members[1] = { ...game.members[1], signupWeekStartAt: '2026-10-08T00:00:00Z' };
+            expect(guildTrials._forecast(tile, analysis, 2, 'live', null)).toEqual(estimate([mate, other]));
+            game.members[1] = {
+                characterID: 2,
+                name: 'Other',
+                signupWeekStartAt: week,
+                signedUpSkillingTrialHrid: '/guild_skilling/crafting',
+            };
+            expect(guildTrials._forecast(tile, analysis, 2, 'live', null)).toEqual(estimate([mate, other]));
+        } finally {
+            game.members = savedMembers;
+            game.currentWeek = savedWeek;
+            seen.mockRestore();
+        }
+    });
+
     test('a scheduled trial is not forecast from the last cycle’s clears', () => {
         game.clientData = clientData;
         const record = badger();
@@ -7432,6 +7486,42 @@ describe('after a reload, before any guild message', () => {
         guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
         expect(guildTrials.currentTrials.source).toBe('socket');
         expect(guildTrials.currentTrials.at).toBe(receivedAt);
+    });
+
+    test('a reconnect’s login payload sent after the socket copy replaces it; an older one still does not', async () => {
+        const { INIT_CHARACTER_DATA, sentAt, receivedAt } = await load();
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+        expect(guildTrials.currentTrials.source).toBe('socket');
+        expect(guildTrials.currentTrials.at).toBe(receivedAt);
+
+        // The tab reconnects ten minutes on: the login payload was sent then, and states tier 18
+        const later = 10 * 60_000;
+        vi.setSystemTime(receivedAt + later);
+        const reconnect = { ...INIT_CHARACTER_DATA, currentTimestamp: new Date(sentAt + later).toISOString() };
+        guildTrials._noteInitialTrials(reconnect);
+        expect(guildTrials.currentTrials.source).toBe('init');
+        expect(guildTrials.currentTrials.skilling.trials['/guild_skilling/alchemy'].highestTier).toBe(18);
+
+        // And the control: a login payload sent before the socket copy arrived never replaces it
+        guildTrials.currentTrials = null;
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+        const held = guildTrials.currentTrials;
+        const old = { ...INIT_CHARACTER_DATA, currentTimestamp: new Date(sentAt - 60_000).toISOString() };
+        guildTrials._noteInitialTrials(old);
+        expect(guildTrials.currentTrials).toBe(held);
+    });
+
+    test('with no clock offset known, a login payload is accepted instead of compared across clocks', async () => {
+        const { INIT_CHARACTER_DATA, sentAt } = await load();
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+        expect(guildTrials.currentTrials.source).toBe('socket');
+
+        // A login payload stamped before the socket copy would be refused on a known offset; without one
+        // the server and local clocks cannot be compared, so it is taken
+        guildTrials.serverClockOffsetMs = null;
+        const stamped = { ...INIT_CHARACTER_DATA, currentTimestamp: new Date(sentAt - 60_000).toISOString() };
+        guildTrials._noteInitialTrials(stamped);
+        expect(guildTrials.currentTrials.source).toBe('init');
     });
 
     test('a payload read back hours after login is dated when it was sent and bounds nothing', async () => {

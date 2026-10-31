@@ -258,8 +258,8 @@ describe('one pricing pass over a large enhanced inventory', () => {
         const shield = fixture.tiles[183].dataset;
         expect([shield.askPrice, shield.bidPrice, shield.expectPrice]).toEqual(['0', '0', 'broken_shield']);
         const plain = fixture.tiles[184].dataset;
-        // 3 × 10 × 0.9 artisan
-        expect(plain.askPrice).toBe('27');
+        // 3 × 10, no Artisan tea
+        expect(plain.askPrice).toBe('30');
         const chest = fixture.tiles[204].dataset;
         expect([chest.askPrice, chest.askValue]).toEqual(['500', '1500']);
         const unpriced = fixture.tiles[209].dataset;

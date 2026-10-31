@@ -25,7 +25,8 @@ vi.mock('../api/marketplace.js', () => ({
 // The pricing chain reads through getItemPrice, mode by mode. `prices` maps
 // itemHrid -> {ask, bid}; a missing side or item answers null, like the real one.
 vi.mock('./market-data.js', () => ({
-    getItemPrice: (itemHrid, { mode } = {}) => state.prices[itemHrid]?.[mode] ?? null,
+    getItemPrice: (itemHrid, { mode, side } = {}) =>
+        state.custom?.[itemHrid]?.[side ?? 'sell'] ?? state.prices[itemHrid]?.[mode] ?? null,
 }));
 
 const {
@@ -59,6 +60,16 @@ describe('calculateHouseBuildCost', () => {
     beforeEach(() => {
         state.gameData = { houseRoomDetailMap };
         state.prices = { '/items/plank': { ask: 12, bid: 8 } };
+    });
+
+    test('a build is costed at the buy override, not the sell override', () => {
+        state.custom = { '/items/plank': { buy: 1000, sell: 100 } };
+        try {
+            // Dojo level 2 costs 10 planks
+            expect(calculateHouseBuildCost('/house_rooms/dojo', 2)).toBe(1 * 100 + 10 * 1000);
+        } finally {
+            state.custom = null;
+        }
     });
 
     test('returns 0 without game data', () => {

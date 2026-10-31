@@ -249,3 +249,42 @@ describe('Blessed Tea on a mirror step', () => {
         expect(blessedMirrorChance({ blessedTea: true })).toBeCloseTo(0.01, 10);
     });
 });
+
+describe('applyMirrorOptimization with a cheaper copy lineage', () => {
+    test('the consumed item is priced from the copy lineage while the route is compared', () => {
+        // Refined spine 1000 / 1100 / 1200 / 1400; plain copies 10 / 110 / 210 / 410
+        const refined = [1000, 1100, 1200, 1400];
+        const copies = [10, 110, 210, 410];
+        // Priced as refined, +3 costs min(1400, 1200 + 1100 + 50) = 1400: the mirror route loses
+        const plain = [...refined];
+        expect(applyMirrorOptimization(plain, 50)[3]).toBe(false);
+        // With the copy at +1 (110) in place: 1200 + 110 + 50 = 1360 < 1400
+        const withCopies = [...refined];
+        const used = applyMirrorOptimization(withCopies, 50, 0, copies);
+        expect(used[3]).toBe(true);
+        expect(withCopies[3]).toBe(1360);
+        // The caller's copy array is not mutated
+        expect(copies).toEqual([10, 110, 210, 410]);
+    });
+
+    test('a copy lineage that does not help leaves the result unchanged', () => {
+        const a = [1000, 1100, 1200, 1400];
+        const b = [...a];
+        applyMirrorOptimization(a, 50, 0, [1000, 1100, 1200, 1400]);
+        applyMirrorOptimization(b, 50);
+        expect(a).toEqual(b);
+    });
+
+    test('a mirror-built level carries the mirror cost into the copy lineage', () => {
+        const refined = [1000, 1100, 1200, 1400, 1700, 2100];
+        const copies = [10, 110, 210, 410, 710, 1110];
+        const costs = [...refined];
+        const used = applyMirrorOptimization(costs, 50, 0, copies);
+        expect(used[3]).toBe(true);
+        // +4 consumes the copy +2 (210): 1360 + 210 + 50 = 1620 < 1700
+        expect(used[4]).toBe(true);
+        expect(costs[4]).toBe(1360 + 210 + 50);
+        // +5 consumes the copy +3, itself mirror-built: 210 + (110 + 50) = 370
+        expect(costs[5]).toBe(costs[4] + 370 + 50);
+    });
+});
