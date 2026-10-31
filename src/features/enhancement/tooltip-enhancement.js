@@ -195,7 +195,18 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // worker and the profile score run the identical sweep instead of three copies of it.
     const mirrorPrice = priceMirror(pricingOf(priceContext)).price || 0;
     const mirrorBlessedChance = blessedMirrorChance(config);
-    const usedMirror = applyMirrorOptimization(targetCosts, mirrorPrice, mirrorBlessedChance);
+    // A refined piece consumes plain copies of its unrefined base, so the route is compared with the
+    // copy's price already in place; pricing both required items as refined rejected routes that are
+    // feasible with the cheap copy
+    const mirrorCopyHrid = unrefinedBaseOf(itemHrid);
+    const mirrorCopyPrice = mirrorCopyHrid ? priceBase(mirrorCopyHrid, pricingOf(priceContext)).price || 0 : 0;
+    const copyCosts =
+        mirrorCopyPrice > 0
+            ? traditionalCosts.map((cost, level) =>
+                  level === 0 ? mirrorCopyPrice : Math.max(0, cost - traditionalCosts[0]) + mirrorCopyPrice
+              )
+            : null;
+    const usedMirror = applyMirrorOptimization(targetCosts, mirrorPrice, mirrorBlessedChance, copyCosts);
 
     // Step 4: Build final result with breakdown
     const _finalCost = targetCosts[currentEnhancementLevel];
@@ -748,14 +759,8 @@ function buildMirrorOptimizedResult(
         protectionCount: 0,
         consumedItemsCost,
         philosopherMirrorCost: totalMirrorsCost,
-        // The recursive formula, less what plain copies save a refined piece
-        totalCost:
-            targetCosts[targetLevel] -
-            leaves.reduce(
-                (sum, { level, quantity, primary }) =>
-                    sum + quantity * (traditionalCosts[level] - costOf(level, primary)),
-                0
-            ),
+        // The recursive formula, already priced with the plain copies a refined piece consumes
+        totalCost: targetCosts[targetLevel],
         mirrorStartLevel: mirrorStartLevel,
         usedMirror: true,
         traditionalCost: optimalTraditional.totalCost,

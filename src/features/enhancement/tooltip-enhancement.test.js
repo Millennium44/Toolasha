@@ -840,6 +840,18 @@ describe('mirroring a refined piece', () => {
         );
     });
 
+    test('a route only feasible with the cheap plain copy is compared at the copy price', () => {
+        // Refined +2 plus a plain +1 and a mirror is the cheapest +3. Pricing the +1 as refined
+        // (400,000 + 10,000) rejected that route and quoted the dearer traditional one.
+        const data = calculateEnhancementPath(REFINED, 3, enhancingConfig);
+        const strategy = data.optimalStrategy;
+        expect(strategy.usedMirror).toBe(true);
+        expect(strategy.totalCost).toBeCloseTo(442651.5747, 3);
+        expect(strategy.totalCost).toBeLessThan(strategy.traditionalCost);
+        const copies = strategy.consumedItems.filter((item) => !item.primary);
+        expect(copies.map((item) => [item.itemHrid, item.level, item.quantity])).toEqual([[ITEM, 1, 1]]);
+    });
+
     test('says what the primary copy costs inside the total, even when the +0 quote differs', () => {
         // Setting off: level 0 and the base row both read the one guarded price (the bid, 100: the
         // ask is over 1.3x it) while every enhanced row carries the ask (200). Whatever the total
