@@ -978,7 +978,19 @@ function planEquipmentGoal(goal, context) {
     const unmet = [];
     for (const requirement of requires) {
         const current = num(ask(context, 'skill', [requirement.skillHrid], null)?.level, 0);
-        if (current < num(requirement.level)) unmet.push({ ...requirement, current });
+        const canStart = canStartAction({
+            requiredLevel: num(requirement.level),
+            skillLevel: current,
+            teaSkillLevelBonus: num(requirement.teaSkillLevelBonus),
+            actionLevelBonus: num(requirement.actionLevelBonus),
+        });
+        if (canStart) continue;
+        // The raw level that clears the start check: the requirement as raised by an Action Level tea,
+        // less what a skill-level tea lifts
+        const needed = Math.ceil(
+            num(requirement.level) + Math.trunc(num(requirement.actionLevelBonus)) - num(requirement.teaSkillLevelBonus)
+        );
+        unmet.push({ ...requirement, level: Math.max(needed, current + 1), current });
     }
 
     const trainIds = [];
@@ -1060,7 +1072,9 @@ function planEquipmentGoal(goal, context) {
         // The first base copy is covered by the acquire step, but every other
         // consumed line must have a price before this run has a complete cost.
         const remainingBill = enhancementBillAfterBase(run, itemHrid);
-        const unpricedInputs = remainingBill.filter((line) => line.count > 0 && !(num(line.unitPrice) > 0));
+        const unpricedInputs = remainingBill.filter(
+            (line) => line.count > 0 && (!(num(line.unitPrice) > 0) || line.partial === true)
+        );
         const runCostKnown = run != null && Number.isFinite(run.totalCost) && unpricedInputs.length === 0;
         if (unpricedInputs.length) {
             warnings.push(
@@ -1283,6 +1297,29 @@ function planSkillGoal(goal, context, stepId = 'train') {
         } else if (timeHours !== null) goldDelta = num(best.goldPerHour) * timeHours;
     }
 
+    // Recurring teas (enhancing): the hourly figure above prices every tea drunk at market, but tea already
+    // in the bag is not bought again. Held tea is reserved like any other material and only the shortfall
+    // beyond it is outlay; the economic cost stays on the step. A shortfall of an unpriced tea is unknown.
+    const teaNeeds = [];
+    let teaUnknown = false;
+    let teaHeldCredit = 0;
+    if (best && rateKnown && timeHours !== null && Array.isArray(best.teaBill)) {
+        for (const tea of best.teaBill) {
+            const count = Math.ceil(num(tea.perHour) * timeHours - 1e-9);
+            if (!tea.itemHrid || !(count > 0)) continue;
+            const held = Math.min(count, Math.max(0, num(ask(context, 'owned', [tea.itemHrid, goal.id], 0))));
+            teaNeeds.push({ itemHrid: tea.itemHrid, count, held, missing: count - held });
+            if (tea.unitPrice > 0) teaHeldCredit += held * tea.unitPrice;
+            else if (count > held) teaUnknown = true;
+        }
+        goldDelta += teaHeldCredit;
+        if (teaUnknown) {
+            warnings.push(
+                `${label}: a tea this climb drinks has no market price, so its cost is at least the figure shown.`
+            );
+        }
+    }
+
     // The gold on a training step is a rate multiplied by a duration, and both
     // are estimates. Naming the rate is what makes an implausible total
     // attributable — "+523.2M" alone reads as a promise, "+523.2M at 7.4B/hr"
@@ -1298,13 +1335,15 @@ function planSkillGoal(goal, context, stepId = 'train') {
               goldNote
             : `Train ${label} ${level} → ${target}`,
         goldDelta,
-        costKnown: rateKnown,
+        costKnown: rateKnown && !teaUnknown,
         timeHours,
         details: {
             skillHrid,
             level,
             targetLevel: target,
             rate: best,
+            ...(teaNeeds.length ? { allMaterials: teaNeeds.map(({ itemHrid, count }) => ({ itemHrid, count })) } : {}),
+            ...(teaNeeds.length ? { teas: teaNeeds, teaHeldValue: teaHeldCredit } : {}),
             // One completion's inputs, which must be in hand before the first one can run
             upfrontCost: best && rateKnown ? Math.max(0, num(best.upfrontCost)) : 0,
             actionsNeeded,
@@ -1581,8 +1620,14 @@ export const RESERVATION_OWNER_PREFIX = 'goal:';
  */
 export function reservationLines(plan) {
     const lines = [];
-    for (const step of plan?.steps || []) {
-        if (step?.done) continue;
+    const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+    for (const step of steps) {
+        // A step that is done has consumed nothing yet if a step still to do builds on it: stock bought for
+        // (or already held toward) a house upgrade stays claimed until the upgrade has used it
+        const stillNeeded = steps.some(
+            (other) => !other?.done && Array.isArray(other?.prerequisites) && other.prerequisites.includes(step?.id)
+        );
+        if (step?.done && !stillNeeded) continue;
         const materials = step?.details?.allMaterials || step?.details?.materials;
         for (const material of Array.isArray(materials) ? materials : []) {
             const count = Math.floor(num(material?.count));

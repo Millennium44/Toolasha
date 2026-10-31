@@ -199,6 +199,36 @@ describe('alchemySessionNet', () => {
         expect(alchemySessionNet(session, price)).toBeNull();
     });
 
+    test('bulk consumption is charged per copy, not per attempt', () => {
+        const session = {
+            startTime: D20,
+            inputItemHrid: '/items/milk',
+            totalAttempts: 10,
+            bulkMultiplier: 5,
+            totalCoinsEarned: 3000,
+        };
+        // 10 attempts x 5 copies x 40
+        expect(alchemySessionNet(session, price)).toBe(3000 - 2000);
+    });
+
+    test('a session with no recorded bulk uses the item bulk, then one', () => {
+        const session = { startTime: D20, inputItemHrid: '/items/milk', totalAttempts: 10, totalCoinsEarned: 3000 };
+        expect(alchemySessionNet(session, price, price, () => 5)).toBe(1000);
+        expect(alchemySessionNet(session, price, price, () => null)).toBe(3000 - 400);
+    });
+
+    test('a spent catalyst with no price sends the session to the residual, not a free catalyst', () => {
+        const session = {
+            startTime: D20,
+            inputItemHrid: '/items/milk',
+            totalAttempts: 1,
+            totalCoinsEarned: 900,
+            catalystOfCoinificationUsed: 2,
+        };
+        expect(alchemySessionNet(session, price)).toBeNull();
+        expect(alchemySessionNet({ ...session, catalystOfCoinificationUsed: 0 }, price)).toBe(860);
+    });
+
     test('no attempts means no input cost even when the input has no price', () => {
         const session = {
             startTime: D20,

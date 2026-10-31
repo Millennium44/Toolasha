@@ -22,6 +22,17 @@ import {
     priceProtection,
 } from '../../utils/enhancement-input-pricing.js';
 
+/**
+ * The plain item a refined piece is mirrored with, or null for anything else.
+ * @param {string} itemHrid - e.g. `/items/griffin_bulwark_refined`
+ * @returns {string|null}
+ */
+function unrefinedBaseOf(itemHrid) {
+    if (!String(itemHrid || '').endsWith('_refined')) return null;
+    const base = String(itemHrid).replace(/_refined$/, '');
+    return dataManager.getInitClientData()?.itemDetailMap?.[base] ? base : null;
+}
+
 /** How long one slice of the pricing pass may run before it yields to the browser */
 const YIELD_SLICE_MS = 12;
 
@@ -281,7 +292,7 @@ function getMarketPriceWithFallback(itemHrid, enhancementLevel = 0) {
     const gameData = dataManager.getInitClientData();
 
     // Try ask price first
-    const askPrice = getItemPrice(itemHrid, { enhancementLevel, mode: 'ask' });
+    const askPrice = getItemPrice(itemHrid, { enhancementLevel, mode: 'ask', side: 'buy' });
 
     if (askPrice && askPrice > 0) {
         return askPrice;
@@ -459,7 +470,7 @@ function calculateGuildShrineScore(profileData) {
     if (!buffMap || Object.keys(buffMap).length === 0 || !detailMap) return unknown;
 
     // Built once and shared: every level of every shrine prices the same credits
-    const goldPerCredit = buildGoldPerCredit('ask');
+    const goldPerCredit = buildGoldPerCredit('ask', { side: 'buy' });
 
     let totalCost = 0;
     let totalTokens = 0;
@@ -487,7 +498,7 @@ function calculateGuildShrineScore(profileData) {
             // could not price precisely so a caller does not present a short
             // total as a complete one, the way the gear and ability scores flag
             // an unpriced piece rather than dropping it.
-            const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { goldPerCredit });
+            const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { goldPerCredit, side: 'buy' });
             for (const line of lines) {
                 if (line.gold === null) unpricedCredits += 1;
                 else cost += line.gold || 0;
@@ -569,7 +580,7 @@ function calculateTokenBasedItemValue(itemHrid) {
     let bestValuePerToken = 0;
     for (const shopItem of capeData.tokenShopItems) {
         // Use ask price for shop items (instant buy cost)
-        const shopItemPrice = getItemPrice(shopItem.hrid, { mode: 'ask' }) || 0;
+        const shopItemPrice = getItemPrice(shopItem.hrid, { mode: 'ask', side: 'buy' }) || 0;
         if (shopItemPrice > 0) {
             const valuePerToken = shopItemPrice / shopItem.cost;
             if (valuePerToken > bestValuePerToken) {
@@ -773,10 +784,21 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
             if (!enhancementUnpriced) {
                 // Apply Philosopher's Mirror optimization — literally the tooltip's pass, so the two
                 // cannot drift (it starts at +3: the game will not mirror an item below +2)
+                // A refined piece is mirrored with plain copies of its unrefined base: the route is compared with
+                // the copy lineage priced in place, exactly as the tooltip and the net-worth worker do
+                const copyHrid = unrefinedBaseOf(item.itemHrid);
+                const copyPrice = copyHrid ? priceBase(copyHrid, ASK).price || 0 : 0;
+                const copyCosts =
+                    copyPrice > 0
+                        ? targetCosts.map((cost, level) =>
+                              level === 0 ? copyPrice : Math.max(0, cost - targetCosts[0]) + copyPrice
+                          )
+                        : null;
                 applyMirrorOptimization(
                     targetCosts,
                     priceMirror(ASK).price || 0,
-                    blessedMirrorChance(enhancementParams)
+                    blessedMirrorChance(enhancementParams),
+                    copyCosts
                 );
             }
             itemCost = enhancementUnpriced ? 0 : targetCosts[item.enhancementLevel];

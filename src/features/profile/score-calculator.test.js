@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
     pricingOptions: [],
     askPrices: {},
     books: {},
+    mirrorCalls: [],
+    basePrices: {},
 }));
 
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
@@ -48,9 +50,9 @@ vi.mock('../../utils/enhancement-worker-manager.js', () => ({
 // so the mirror optimization never wins; the material tests below are about the per-attempt bill, which
 // reads the book the test sets (the ask, else the bid, else unpriced - never the vendor price)
 vi.mock('../../utils/enhancement-input-pricing.js', () => ({
-    priceBase: (_hrid, options) => {
+    priceBase: (hrid, options) => {
         mocks.pricingOptions.push(options);
-        return { price: 1, unpriced: false, estimated: false };
+        return { price: mocks.basePrices[hrid] ?? 1, unpriced: false, estimated: false };
     },
     priceMirror: (options) => {
         mocks.pricingOptions.push(options);
@@ -88,6 +90,18 @@ vi.mock('../../utils/guild-credit-pricing.js', () => ({
     }),
 }));
 
+// A passthrough that records what the mirror sweep was asked, to pin that a refined piece forwards its copy lineage
+vi.mock('../../utils/enhancement-calculator.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        applyMirrorOptimization: (...args) => {
+            mocks.mirrorCalls.push(args.map((arg) => (Array.isArray(arg) ? [...arg] : arg)));
+            return actual.applyMirrorOptimization(...args);
+        },
+    };
+});
+
 const { calculateCombatScore } = await import('./score-calculator.js');
 
 const CREDIT = '/items/guild_credit_1';
@@ -100,6 +114,8 @@ beforeEach(() => {
     mocks.pricingOptions = [];
     mocks.askPrices = {};
     mocks.books = {};
+    mocks.mirrorCalls = [];
+    mocks.basePrices = {};
     mocks.clientData = {
         itemDetailMap: {},
         guildBuffDetailMap: {
@@ -426,6 +442,46 @@ describe('a score is priced at the ask, whoever is looking', () => {
 
         expect(mocks.pricingOptions.length).toBeGreaterThan(0);
         for (const options of mocks.pricingOptions) expect(options).toEqual({ mode: 'ask' });
+    });
+});
+
+describe('a refined piece is mirrored with plain copies', () => {
+    const wearRefined = (hrid) => ({
+        profile: {
+            equippedAbilities: [],
+            wearableItemMap: { '/item_locations/main_hand': { itemHrid: hrid, enhancementLevel: 14 } },
+        },
+    });
+
+    test('the mirror sweep gets the copy lineage priced from the unrefined base', async () => {
+        mocks.settings = { networth_highEnhancementUseCost: true, networth_highEnhancementMinLevel: 13 };
+        mocks.workerResults = { attempts: 10, protectionCount: 0 };
+        mocks.basePrices = { '/items/big_axe': 40, '/items/big_axe_refined': 900 };
+        mocks.clientData.itemDetailMap['/items/big_axe'] = { itemLevel: 60, equipmentDetail: {} };
+        mocks.clientData.itemDetailMap['/items/big_axe_refined'] = { itemLevel: 60, equipmentDetail: {} };
+
+        await calculateCombatScore(wearRefined('/items/big_axe_refined'));
+
+        expect(mocks.mirrorCalls.length).toBeGreaterThan(0);
+        const [targetCosts, , , copyCosts] = mocks.mirrorCalls[0];
+        expect(copyCosts).toHaveLength(targetCosts.length);
+        expect(copyCosts[0]).toBe(40);
+        expect(targetCosts[0]).toBe(900);
+        // The lineage is the refined piece's enhancement bill on the cheap +0
+        expect(copyCosts[3]).toBeCloseTo(targetCosts[3] - 900 + 40, 6);
+    });
+
+    test('a plain piece, or a refined one with no unrefined twin, sends no lineage', async () => {
+        mocks.settings = { networth_highEnhancementUseCost: true, networth_highEnhancementMinLevel: 13 };
+        mocks.workerResults = { attempts: 10, protectionCount: 0 };
+        mocks.clientData.itemDetailMap['/items/big_axe'] = { itemLevel: 60, equipmentDetail: {} };
+        mocks.clientData.itemDetailMap['/items/lone_refined'] = { itemLevel: 60, equipmentDetail: {} };
+
+        await calculateCombatScore(wearRefined('/items/big_axe'));
+        await calculateCombatScore(wearRefined('/items/lone_refined'));
+
+        expect(mocks.mirrorCalls.length).toBeGreaterThan(1);
+        for (const call of mocks.mirrorCalls) expect(call[3]).toBeNull();
     });
 });
 

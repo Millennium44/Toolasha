@@ -131,7 +131,9 @@ export function createBasisPricer(price = createPricer()) {
             const details = dataManager.getItemDetails?.(itemHrid);
             if (details?.isOpenable && expectedValueCalculator.isInitialized) {
                 const ev = expectedValueCalculator.calculateExpectedValue(itemHrid);
-                if (ev?.expectedValue > 0) fallback = ev.expectedValue;
+                // A partial expected value leaves an unpriced drop out: a lower bound, not a carrying
+                // value, so it is left unvalued (the crafting route below may still answer)
+                if (ev?.expectedValue > 0 && !ev.isPartial) fallback = ev.expectedValue;
             }
             if (fallback === null) {
                 // A bill with an unpriced input is a lower bound, not a cost: it is left unvalued so the
@@ -331,6 +333,7 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
         holdingPrice: createHoldingPricer(price),
         chestKeyOf: (chestHrid) =>
             dataManager.getItemDetails?.(chestHrid)?.openKeyItemHrid || DUNGEON_CHEST_CHEST_KEYS[chestHrid] || null,
+        bulkOf: (itemHrid) => dataManager.getItemDetails?.(itemHrid)?.alchemyDetail?.bulkMultiplier ?? null,
         marketTax: MARKET_TAX,
     };
 }
