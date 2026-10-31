@@ -17,6 +17,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import actionTimeDisplay from './action-time-display.js';
 import { runningAction } from '../../utils/combat-actions.js';
 
@@ -34,6 +35,30 @@ const ESTIMATE_TTL_MS = 1500;
 const UNQUEUED_ACTION_ID = 'mwi-unqueued-estimate';
 
 let cache = { key: null, at: 0, value: null };
+
+/**
+ * A string naming every input of an action context that changes a figure: each worn or
+ * loadout item with its enhancement level, and each active drink.
+ * @param {{equipment?: Map|Array|Object, drinks?: Array}|null} context
+ * @returns {string}
+ */
+function contextSignature(context) {
+    if (!context) return '';
+    const gear = context.equipment;
+    const gearEntries = !gear
+        ? []
+        : gear instanceof Map
+          ? [...gear.entries()]
+          : Array.isArray(gear)
+            ? gear
+            : Object.entries(gear);
+    const gearPart = gearEntries
+        .map((e) => JSON.stringify(Array.isArray(e) ? [e[0], e[1]?.itemHrid ?? e[1], e[1]?.enhancementLevel ?? 0] : e))
+        .sort()
+        .join(',');
+    const drinkPart = (context.drinks || []).map((d) => `${d?.itemHrid}`).join(',');
+    return `${gearPart}#${drinkPart}`;
+}
 
 /**
  * Forget any memoized estimate. Called when a panel is rebuilt for a different action, and
@@ -120,7 +145,14 @@ export function estimateUnlimitedAction(spec) {
     try {
         if (!spec || !spec.actionHrid) return null;
 
+        // The same atomic equipment+drinks context the finite panel figure uses, so the two
+        // agree and a changed loadout, scroll buff or tea is a different cache entry.
+        const actionDetails = dataManager.getActionDetails(spec.actionHrid);
+        if (!actionDetails) return null;
+        const actionContext = resolveActionContext(actionDetails.type);
+
         const key = [
+            contextSignature(actionContext),
             spec.actionHrid,
             spec.itemHrid || '',
             spec.enhancementLevel || 0,
@@ -135,15 +167,14 @@ export function estimateUnlimitedAction(spec) {
             return cache.value;
         }
 
-        const actionDetails = dataManager.getActionDetails(spec.actionHrid);
-        if (!actionDetails) return null;
-
         const inventoryLookup = actionTimeDisplay.buildInventoryLookup(dataManager.getInventory());
         const actionObj = buildUnqueuedActionObject(spec);
 
         // No `limitCountedByMaterials`: nothing is queued ahead of this, so the whole bag is
         // the right basis — which is exactly the case the option is off by default for.
-        const result = actionTimeDisplay.calculateSingleQueueActionTime(actionObj, actionDetails, inventoryLookup);
+        const result = actionTimeDisplay.calculateSingleQueueActionTime(actionObj, actionDetails, inventoryLookup, {
+            actionContext,
+        });
 
         cache = { key, at: now, value: result };
         return result;

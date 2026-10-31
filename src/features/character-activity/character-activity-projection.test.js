@@ -49,7 +49,15 @@ vi.mock('../../api/marketplace.js', () => ({
 }));
 vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
 vi.mock('../market/profit-calculator.js', () => ({ default: { calculate: async () => null } }));
-vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: { calculate: async () => null } }));
+vi.mock('../market/alchemy-profit-calculator.js', () => ({
+    default: {
+        calculate: async () => null,
+        baseSuccessRateFor: (type, item) => (type === 'transmute' ? item?.alchemyDetail?.transmuteSuccessRate || 0 : 0),
+        catalystSuccessBonus: () => 0,
+        getUnderLevelPenalty: () => 0,
+        calculateSuccessRateBreakdown: (base) => ({ total: base }),
+    },
+}));
 vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
 
 const { computeLiveProjection } = await import('./character-activity-projection.js');
@@ -277,5 +285,49 @@ describe('computeLiveProjection combat', () => {
         game.currentActions = [combat(1, '/actions/combat/unknown_zone')];
 
         expect(computeLiveProjection(NOW).terminalCause).toBe('unknown');
+    });
+});
+
+describe('computeLiveProjection transmute self-returns', () => {
+    const CAPE = '/items/gatherer_cape_refined';
+    const TRANSMUTE = '/actions/alchemy/transmute';
+    const COIN = '/items/coin';
+
+    test('the idle deadline does not lean on random self-returns', () => {
+        game.itemDetails = {
+            [CAPE]: {
+                itemHrid: CAPE,
+                name: 'Gatherer Cape',
+                itemLevel: 100,
+                alchemyDetail: {
+                    bulkMultiplier: 1,
+                    transmuteSuccessRate: 0.5,
+                    transmuteDropTable: [{ itemHrid: CAPE, dropRate: 0.25, minCount: 1, maxCount: 1 }],
+                },
+            },
+        };
+        game.actionDetails = {
+            [TRANSMUTE]: { hrid: TRANSMUTE, name: 'Transmute', type: '/action_types/alchemy', coinCost: 0 },
+        };
+        game.inventory = [stack(CAPE, 100), stack(COIN, 1e12)];
+        game.currentActions = [
+            {
+                id: 1,
+                ordinal: 1,
+                actionHrid: TRANSMUTE,
+                primaryItemHash: `char1::/item_locations/inventory::${CAPE}::0`,
+                secondaryItemHash: '',
+                hasMaxCount: false,
+                maxCount: 0,
+                currentCount: 0,
+                isDone: false,
+            },
+        ];
+
+        const projection = computeLiveProjection(NOW);
+
+        // 100 capes at 10 s: 1,000 s, not the 1,140 s an expected self-return would stretch it to
+        expect(projection.terminalAt).toBe(NOW + 1_000_000);
+        expect(projection.certainty).toBe('trustworthy');
     });
 });

@@ -19,6 +19,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A Shykai export keeps a trigger list you cleared, so re-importing it doesn't restore the defaults.
 - The Metz export no longer includes a loadout you have just deleted, and an old run finishing after a character switch no longer unlocks a newer one's busy guard.
 
+### October 31 audit fixes: action queue, profiles and marketplace
+
+- The Repeat ∞ time estimate now uses the same loadout as the finite figure beside it (enhancing still times with your worn gear), and refreshes when you change the scroll selection.
+- The queue's material ledger credits an upgrade craft's output at its real enhancement level, not +0.
+- A queue total with rows Toolasha couldn't identify shows as incomplete instead of a confident "0s".
+- The character-select slot shows the action running now, and conservative deadlines no longer count on random alchemy self-returns.
+- A discarded task leaves the task list, so its reroll spend is retired.
+- A slow profile score no longer replaces a newer profile's panel, and View Card picks the loadout by id when two share a name.
+- Marketplace shortcuts no longer carry a quantity into a later, unrelated order form; Item Hop keys only act while the marketplace is visible; and the bulk-sell opener stops cleanly on Stop without closing another window.
+- Volume stats redraw when the same item's panel is reopened, and a touch drag ends when its listing row disappears.
+- The Materials tab no longer draws into another tab after a quick switch, and Overlay tile resizing follows one pointer and stops when the panel closes.
+- Equipment savings and loot-log enhancing costs flag a protection price that is only a floor.
+
 ### October 31 audit fixes: valuation, planner and guild trials
 
 - Gold Sources no longer overstates alchemy profit on bulk transmutes and coinifies: each attempt is now charged for every copy it consumes.

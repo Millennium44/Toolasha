@@ -38,7 +38,11 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { scrollSimulator } from '../../utils/bundle-bridge.js';
 import { SCROLL_BUFF_ITEMS, SELECTION_CHANGED_EVENT } from '../../utils/scroll-buff-values.js';
-import { estimateUnlimitedAction, formatUnlimitedTimeText } from './unlimited-action-estimate.js';
+import {
+    clearUnlimitedEstimateCache,
+    estimateUnlimitedAction,
+    formatUnlimitedTimeText,
+} from './unlimited-action-estimate.js';
 
 /**
  * Guild shrine action-speed bonus for an action type, as a fraction (0.1 = +10%).
@@ -404,6 +408,9 @@ class QuickInputButtons {
      * @private
      */
     _onScrollSelectionChanged() {
+        // A scroll buff changes the action time, and the memoized Repeat ∞ estimate was
+        // computed without it; drop it so the rebuilt panel measures the new selection.
+        clearUnlimitedEstimateCache();
         for (const panel of [...this._panelReleases.keys()]) {
             if (!panel.isConnected) continue;
             const profitSections = [...panel.querySelectorAll('[data-mwi-profit-display]')];
