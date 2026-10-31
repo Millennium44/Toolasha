@@ -696,6 +696,25 @@ describe('pull', () => {
         expect(toasts.at(-1).message).toContain('Reload now');
     });
 
+    test('cleanup while the pull weighs what it applied leaves the sync stamp unset for a retry', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        let finishHashing;
+        payload.hashWait = new Promise((resolve) => {
+            finishHashing = resolve;
+        });
+
+        const oldPull = syncManager.pull();
+        await vi.waitFor(() => expect(payload.hashCalls).toBe(1));
+        expect(payload.applyCalls).toBe(1);
+        syncManager.cleanup();
+        finishHashing();
+
+        expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+        expect(toasts.at(-1).message).toContain('Reload now');
+    });
+
     test('cleanup during an import that latched nothing does not ask for a reload', async () => {
         stored.map.toolasha_sync_gistId = 'abc';
         gist.read = remote('2026-02-01T00:00:00.000Z');

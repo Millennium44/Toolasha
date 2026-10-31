@@ -1821,13 +1821,17 @@ class SyncManager {
             }
         }
 
-        // Worked out before the record is written; hashing the download hands the page frames as it goes
+        // Worked out before the record is written, each a wait of its own: a takeover during them (the
+        // rebuild, the weighing above) leaves the stamp alone, as one during the import does
         const appliedHash = mergedRebuild
             ? contentHash(pushOwed ? payload : mergedRebuild)
             : mergeHeld?.length
               ? contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
               : contentHash(applied ?? payload);
         const pulledHashes = await wholeKeyHashesSliced(payload);
+        if (!this._stillOwns(opToken)) {
+            return this._stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld });
+        }
 
         await this._remember({
             gistId,
