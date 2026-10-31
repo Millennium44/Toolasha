@@ -5604,7 +5604,7 @@ export function newlyUnpricedCosts(baseline, upgraded) {
 }
 
 /**
- * Economics with an unknown running cost marked: no ROI or payback is quoted (a finite figure would read as a
+ * Economics with an unknown running cost marked: no ROI or repay time is quoted (a finite figure would read as a
  * measurement), and the result says which items were missing.
  * @param {Object} economics - From {@link computeEconomics}
  * @param {string[]} costUnpriced - From {@link newlyUnpricedCosts}
@@ -5614,7 +5614,8 @@ export function withUnknownCost(economics, costUnpriced) {
     if (!costUnpriced?.length) return economics;
     return {
         ...economics,
-        paybackHours: Infinity,
+        // paybackHours stays: it is the cost over the BASELINE's profit rate, which this candidate's missing
+        // running cost does not touch (it is Infinity already when the purchase price itself is unknown)
         repayHours: Infinity,
         roiAnnualPct: null,
         provisional: true,
@@ -6858,7 +6859,9 @@ export function candidateKey(result) {
 /**
  * @param {Array<Object>} results - Ranked analysis results
  * @param {number} budget - Coins available
- * @param {Object} [options] - `{ baselineFights, includeUnmeasured, required, excluded, singleLoadout }`.
+ * @param {Object} [options] - `{ baselineFights, includeUnmeasured, required, excluded, singleLoadout,
+ *   excludeCostUnpriced }`. `excludeCostUnpriced` leaves out every row carrying `costUnpriced` (a running cost nothing
+ *   prices, so its profit gain is only a ceiling) with a `skipped` entry of kind `cost-unpriced`, and blocks a pin of one.
  *   `required` / `excluded` are Sets (or arrays) of `candidateKey`s: a required candidate is always in the basket,
  *   first, and its cost counts against the budget; an excluded one is never chosen. When the required set cannot
  *   be honored the result is `{ picks: [], blocked: [{ kind, reason, ids }] }` with nothing silently dropped.
@@ -6867,7 +6870,14 @@ export function candidateKey(result) {
 export function planWithinBudget(
     results,
     budget,
-    { baselineFights = [], includeUnmeasured = false, required = null, excluded = null, singleLoadout = false } = {}
+    {
+        baselineFights = [],
+        includeUnmeasured = false,
+        required = null,
+        excluded = null,
+        singleLoadout = false,
+        excludeCostUnpriced = false,
+    } = {}
 ) {
     const requiredIds = new Set(required || []);
     const excludedIds = new Set(excluded || []);
@@ -6906,6 +6916,12 @@ export function planWithinBudget(
                     ids: [id],
                     reason: `"${result.candidate?.description}" is both pinned and excluded — clear one of them.`,
                 });
+            } else if (excludeCostUnpriced && result.costUnpriced?.length) {
+                blocked.push({
+                    kind: 'cost-unpriced',
+                    ids: [id],
+                    reason: `"${result.candidate?.description}" is pinned but nothing prices ${result.costUnpriced.join(', ')} in its running costs, so its profit gain is only a ceiling.`,
+                });
             } else if (!Number.isFinite(result.cost)) {
                 blocked.push({
                     kind: 'unpriced',
@@ -6920,6 +6936,16 @@ export function planWithinBudget(
         }
         if (excludedIds.has(id)) {
             skipped.push({ result, reason: 'excluded by you' });
+            continue;
+        }
+        // A flagged figure is never ranked, budgeted or summed as a firm gain: its profit counted an unpriced
+        // running cost as free, so the gain is a ceiling
+        if (excludeCostUnpriced && result.costUnpriced?.length) {
+            skipped.push({
+                kind: 'cost-unpriced',
+                result,
+                reason: `no price for ${result.costUnpriced.join(', ')} in its running costs: its profit gain is only a ceiling`,
+            });
             continue;
         }
         // A budget is in coins, so a row without a price cannot be planned

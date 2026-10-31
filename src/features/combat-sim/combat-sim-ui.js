@@ -922,6 +922,8 @@ export function planUpgradeBudget(
         required,
         excluded,
         singleLoadout: true,
+        // Profit (and the Score blend that includes it) counts an unpriced running cost as free
+        excludeCostUnpriced: metric.key === 'profit' || metric.key === 'score',
     });
     const picks = plan.picks.map((pick) => (pick.significant === false ? { ...pick, provisional: true } : pick));
     return {
@@ -11504,6 +11506,11 @@ class CombatSimUI {
         // cleared it. Without this a 0.2% "gain" off ninety encounters reads
         // exactly like a 15% one off nine thousand
         const errorBar = (key) => {
+            // An unpriced running cost makes the profit delta a ceiling: the reason is the thing to say, not
+            // "within noise" (the figure is a bound, not a measurement being judged against sampling error)
+            if (key === 'profit' && r.costUnpriced?.length) {
+                return `<span data-cost-unpriced style="color:#ff9800;" title="Counted as free in the profit, so this gain is only a ceiling."> ceiling: no price for ${escapeAttribute(r.costUnpriced.join(', '))}</span>`;
+            }
             const { noisePct, significant } = upgradeNoiseFor(r, key);
             if (noisePct == null) return '';
             // Profit's error is a share of the gold moving through the fight, not of the net profit the
@@ -11769,7 +11776,7 @@ class CombatSimUI {
         if (r.costUnpriced?.length) {
             parts.push(
                 `<span data-cost-unpriced style="color:#ff9800;">No price for ${escapeAttribute(r.costUnpriced.join(', '))} ` +
-                    'in the running costs: the profit gain is a ceiling, with no payback or ROI.</span>'
+                    'in the running costs: the profit gain is a ceiling, with no repay time or ROI.</span>'
             );
         }
 
@@ -12241,7 +12248,13 @@ class CombatSimUI {
                 numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.economics?.profitGainPerHour ?? 0,
-                render: (r) => deltaWithArithmetic(baseline.profitPerHour ?? 0, r.metrics.profitPerHour),
+                render: (r) => {
+                    const body = deltaWithArithmetic(baseline.profitPerHour ?? 0, r.metrics.profitPerHour);
+                    // An unpriced running cost was counted as free: the figure is a ceiling, not a gain
+                    if (!r.costUnpriced?.length) return body;
+                    const title = `Ceiling: nothing prices ${r.costUnpriced.join(', ')}, which this run counted as free.`;
+                    return `<span data-cost-unpriced title="${escapeAttribute(title)}" style="color:#ff9800;">≤ ${body}</span>`;
+                },
             },
             {
                 key: 'profit',
@@ -12897,6 +12910,14 @@ class CombatSimUI {
                         <span style="color:${budgetGainColor(plan.gainTotal + orderPlan.gain)}; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
                     </div>${provisional}${partialNote}${constraintsHtml}${this._renderBudgetConfirm(plan, baseline)}`;
+            }
+            // Rows left out because nothing prices a running cost: named, with the reason, never planned around
+            const unpricedSkips = (plan.skipped || []).filter((entry) => entry.kind === 'cost-unpriced');
+            if (!plan.blocked && unpricedSkips.length) {
+                body += `<div data-budget-cost-unpriced style="margin-top:4px; color:#ff9800; font-size:10px; line-height:1.35;"
+                    title="${escapeAttribute(unpricedSkips.map((entry) => `${entry.result.candidate.description}: ${entry.reason}`).join('; '))}">
+                    ${unpricedSkips.length} upgrade${unpricedSkips.length === 1 ? '' : 's'} left out of this plan: a running
+                    cost has no price, so the profit gain is only a ceiling.</div>`;
             }
         }
 
@@ -14333,6 +14354,7 @@ class CombatSimUI {
                 { key: 'dpsNoisePct', label: 'DPS error ±%' },
                 { key: 'profitNoisePct', label: 'Profit error ±%' },
                 { key: 'measured', label: 'Clears the noise' },
+                { key: 'costUnpriced', label: 'Unpriced running cost' },
             ],
             // Infinity is not a number a spreadsheet can hold; blank says the
             // same thing ("never repays") without pretending to be a measurement
@@ -14372,6 +14394,8 @@ class CombatSimUI {
                     dpsNoisePct: finite(r.noise?.dps),
                     profitNoisePct: finite(r.noise?.profit),
                     measured: r.significant === undefined ? '' : r.significant ? 'yes' : 'no',
+                    // The items nothing priced: the profit columns of such a row are a ceiling
+                    costUnpriced: (r.costUnpriced || []).join('; '),
                 };
             }),
         }));

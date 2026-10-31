@@ -249,6 +249,7 @@ const {
     slotWarnings,
     withLevelGapsFor,
     newlyUnpricedCosts,
+    withUnknownCost,
     generateCommunityBuffCandidates,
     generateScrollCandidates,
     conflictKey,
@@ -9647,12 +9648,19 @@ describe('an unpriced running cost keeps a profit gain provisional (#651 T02)', 
         expect(row.economics).toMatchObject({
             provisional: true,
             roiAnnualPct: null,
-            paybackHours: Infinity,
             repayHours: Infinity,
             costUnpriced: ['Wisdom Coffee'],
         });
         // The planner reads this flag: a pick on the profit axis is an estimate, not a measured gain
         expect(row.significant).toBe(Boolean(row.significantBy.dps || row.significantBy.xp));
+    });
+
+    test('withUnknownCost keeps the payback of a known cost: it divides by the baseline, not the flagged gain', () => {
+        const economics = computeEconomics(10_000, { profitPerHour: 1000 }, { profitPerHour: 2000 });
+        const flagged = withUnknownCost(economics, ['Wisdom Coffee']);
+        expect(flagged.paybackHours).toBe(10);
+        expect(flagged.repayHours).toBe(Infinity);
+        expect(flagged.roiAnnualPct).toBeNull();
     });
 
     test('an item the baseline also left unpriced is not new to the candidate', () => {
