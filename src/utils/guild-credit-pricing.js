@@ -20,9 +20,12 @@ import { getItemPriceInfo } from './market-data.js';
 /**
  * Cheapest gold cost of one credit of each type, by conversion.
  * @param {string} [mode='ask'] - Pricing side: 'ask' to buy the items in, 'bid' to value what you hand over
+ * @param {Object} [options]
+ * @param {'buy'|'sell'} [options.side] - The transaction side, for a custom-price override: callers that
+ *   acquire the items pass 'buy' (book mode alone does not select the override side)
  * @returns {Object} creditItemHrid → gold per credit
  */
-export function buildGoldPerCredit(mode = 'ask') {
+export function buildGoldPerCredit(mode = 'ask', { side } = {}) {
     const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
     const cheapest = {};
 
@@ -31,7 +34,7 @@ export function buildGoldPerCredit(mode = 'ask') {
         if (conversions.length === 0) continue;
 
         // One lookup per item, not one per conversion - this runs over the whole item map
-        const { price, estimated } = getItemPriceInfo(hrid, { mode });
+        const { price, estimated } = getItemPriceInfo(hrid, side ? { mode, side } : { mode });
         // "Cheapest item that yields a credit" is a claim about what you could actually buy.
         // An item priced off the official value map has no order book behind it, so quoting a
         // credit at that price says you can buy something nobody is selling - and being an
@@ -61,11 +64,12 @@ export function buildGoldPerCredit(mode = 'ask') {
  * @param {Array<{itemHrid: string, count: number}>} creditCosts - Costs to price
  * @param {Object} [options]
  * @param {string} [options.mode='ask'] - Pricing side
+ * @param {'buy'|'sell'} [options.side] - Custom-price override side; 'buy' for an acquisition cost
  * @param {Object} [options.goldPerCredit] - Prebuilt rate map, to avoid rebuilding it per call
  * @returns {{lines: Array<Object>, total: number|null, unpriced: Array<string>}}
  */
-export function priceGuildCreditCosts(creditCosts, { mode = 'ask', goldPerCredit = null } = {}) {
-    const rates = goldPerCredit || buildGoldPerCredit(mode);
+export function priceGuildCreditCosts(creditCosts, { mode = 'ask', goldPerCredit = null, side } = {}) {
+    const rates = goldPerCredit || buildGoldPerCredit(mode, { side });
     const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 
     const lines = [];
@@ -78,7 +82,7 @@ export function priceGuildCreditCosts(creditCosts, { mode = 'ask', goldPerCredit
         // Same gate as buildGoldPerCredit: a price derived from the official value
         // map has no order book behind it, and taking it here let an invented figure
         // beat the conversion rate that the rate map had already refused to use it for
-        const { price: direct, estimated } = getItemPriceInfo(itemHrid, { mode });
+        const { price: direct, estimated } = getItemPriceInfo(itemHrid, side ? { mode, side } : { mode });
         const each = direct > 0 && !estimated ? direct : rates[itemHrid] || null;
 
         lines.push({ itemHrid, name, count, goldEach: each, gold: each === null ? null : each * count });

@@ -281,7 +281,7 @@ function getMarketPriceWithFallback(itemHrid, enhancementLevel = 0) {
     const gameData = dataManager.getInitClientData();
 
     // Try ask price first
-    const askPrice = getItemPrice(itemHrid, { enhancementLevel, mode: 'ask' });
+    const askPrice = getItemPrice(itemHrid, { enhancementLevel, mode: 'ask', side: 'buy' });
 
     if (askPrice && askPrice > 0) {
         return askPrice;
@@ -459,7 +459,7 @@ function calculateGuildShrineScore(profileData) {
     if (!buffMap || Object.keys(buffMap).length === 0 || !detailMap) return unknown;
 
     // Built once and shared: every level of every shrine prices the same credits
-    const goldPerCredit = buildGoldPerCredit('ask');
+    const goldPerCredit = buildGoldPerCredit('ask', { side: 'buy' });
 
     let totalCost = 0;
     let totalTokens = 0;
@@ -487,7 +487,7 @@ function calculateGuildShrineScore(profileData) {
             // could not price precisely so a caller does not present a short
             // total as a complete one, the way the gear and ability scores flag
             // an unpriced piece rather than dropping it.
-            const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { goldPerCredit });
+            const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { goldPerCredit, side: 'buy' });
             for (const line of lines) {
                 if (line.gold === null) unpricedCredits += 1;
                 else cost += line.gold || 0;
@@ -569,7 +569,7 @@ function calculateTokenBasedItemValue(itemHrid) {
     let bestValuePerToken = 0;
     for (const shopItem of capeData.tokenShopItems) {
         // Use ask price for shop items (instant buy cost)
-        const shopItemPrice = getItemPrice(shopItem.hrid, { mode: 'ask' }) || 0;
+        const shopItemPrice = getItemPrice(shopItem.hrid, { mode: 'ask', side: 'buy' }) || 0;
         if (shopItemPrice > 0) {
             const valuePerToken = shopItemPrice / shopItem.cost;
             if (valuePerToken > bestValuePerToken) {

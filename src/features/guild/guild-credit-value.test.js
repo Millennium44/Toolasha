@@ -18,6 +18,8 @@ const game = vi.hoisted(() => ({
     settings: {},
     clientData: null,
     prices: {},
+    /** Custom price overrides by hrid and transaction side, which beat the book like the real resolver */
+    custom: {},
     observers: {},
     buildingLevels: {},
     buffLevels: {},
@@ -121,7 +123,9 @@ vi.mock('../../utils/market-data.js', () => ({
     // price — a level with nothing stored there is a level the market has no
     // data for, and must read as unpriced rather than quietly inherit the
     // +0 figure the picker-level-pricing tests exist to prove it does not.
-    getItemPrice: (itemHrid, { mode, enhancementLevel = 0 } = {}) => {
+    getItemPrice: (itemHrid, { mode, side, enhancementLevel = 0 } = {}) => {
+        const custom = game.custom[itemHrid]?.[side ?? 'sell'];
+        if (custom !== undefined && enhancementLevel === 0) return custom;
         if (enhancementLevel > 0) return game.prices[`${itemHrid}:${enhancementLevel}`]?.[mode] ?? 0;
         return game.prices[itemHrid]?.[mode] ?? 0;
     },
@@ -313,6 +317,25 @@ describe('guild credit value — exchange ranking table', () => {
         expect(texts[0]).toContain('Steel Bar');
         expect(texts[1]).toContain('Bronze Bar');
         expect(texts[2]).toContain('Iron Bar');
+    });
+
+    test('ranks on what the items cost to buy, not on the sell override', () => {
+        // Bronze: buy 100 / sell 1. Iron: buy 100 / sell 50. A sell-side read ranks bronze (10/credit) far
+        // ahead of iron (250/credit); acquisition is 1000 vs 500 per credit, so iron is the cheaper source.
+        game.custom = {
+            '/items/bronze_bar': { buy: 100, sell: 1 },
+            '/items/iron_bar': { buy: 100, sell: 50 },
+        };
+        try {
+            const modal = buildExchangeModal('Trade Credit');
+            game.observers['GuildPanel_exchangeModalContent'](modal);
+            const texts = rowTexts(modal);
+            expect(texts[0]).toContain('Steel Bar');
+            expect(texts[1]).toContain('Iron Bar');
+            expect(texts[2]).toContain('Bronze Bar');
+        } finally {
+            game.custom = {};
+        }
     });
 
     test('each row names how many of the item are held, and holds its tongue at zero', () => {
