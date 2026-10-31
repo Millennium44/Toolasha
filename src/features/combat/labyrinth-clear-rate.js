@@ -4602,6 +4602,13 @@ class LabyrinthClearRate {
         this.clearPathOverlays();
         this.pathCalcRunning = true;
         this.setPathButtonRunning(true);
+        // What owns this run: a teardown (epoch), a floor change (tile generation) or a newer
+        // run (id) each end it, and an ended run neither draws nor clears a newer run's flag
+        const pathRunId = (this._pathRunId = (this._pathRunId || 0) + 1);
+        const pathEpoch = this.simEpoch();
+        const pathFloorGen = this._tileGen || 0;
+        const pathEnded = () =>
+            this._pathRunId !== pathRunId || this.simEpoch() !== pathEpoch || (this._tileGen || 0) !== pathFloorGen;
 
         try {
             // Clear chances, worked out once and keyed by what they are about
@@ -4657,6 +4664,19 @@ class LabyrinthClearRate {
                 const { monsterHrid, roomLevel, key } = combatToSim[i];
                 this.setTileStatus(`Pathing: fight sims ${i + 1}/${combatToSim.length}`);
                 const result = await this.computeCombatClear(monsterHrid, roomLevel);
+                // A cancelled sim, a torn-down run or a different floor stops the whole pass: the
+                // result is not an unsimmed fight and the route would be drawn for a board that
+                // is gone
+                if (result?.cancelled || pathEnded()) {
+                    if (this._pathRunId === pathRunId && this.simEpoch() === pathEpoch) {
+                        this.setTileStatus(
+                            result?.cancelled
+                                ? 'Path cancelled'
+                                : 'The floor changed while the sims ran — press Path again'
+                        );
+                    }
+                    return;
+                }
                 if (!result || result.failed) {
                     unsimmed++;
                     continue;
@@ -4825,8 +4845,11 @@ class LabyrinthClearRate {
             console.error('[LabyrinthClearRate] Path calculation failed:', error);
             this.setTileStatus('Path failed');
         } finally {
-            this.pathCalcRunning = false;
-            this.setPathButtonRunning(false);
+            // Only the run that still owns the flag releases it
+            if (this._pathRunId === pathRunId) {
+                this.pathCalcRunning = false;
+                this.setPathButtonRunning(false);
+            }
         }
     }
 

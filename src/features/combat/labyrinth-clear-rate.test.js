@@ -3058,6 +3058,70 @@ describe('re-planning a route after shrouds have been spent', () => {
         }
     });
 
+    test('a Path whose sim was cancelled stops instead of drawing a route', async () => {
+        const { status, parent } = buildBoard(unbeatableFloor());
+        labyrinthClearRate.combatCache.clear();
+        const sim = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockResolvedValue({ failed: true, cancelled: true });
+        try {
+            await labyrinthClearRate.runPathCalculation();
+            expect(sim).toHaveBeenCalledTimes(1);
+            expect(status.textContent).toBe('Path cancelled');
+            expect(marks(parent).join('')).toBe('');
+            expect(labyrinthClearRate.pathCalcRunning).toBe(false);
+        } finally {
+            sim.mockRestore();
+        }
+    });
+
+    test('a Path started on an earlier floor does not paint the new floor', async () => {
+        const { status, parent } = buildBoard(unbeatableFloor());
+        labyrinthClearRate.combatCache.clear();
+        let release;
+        const sim = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        try {
+            const running = labyrinthClearRate.runPathCalculation();
+            // The floor changes (same grid size) while the sim is out
+            labyrinthClearRate._tileGen = (labyrinthClearRate._tileGen || 0) + 1;
+            release({ clearChance: 0, winRate: 0, expectedSeconds: Infinity, trials: 400, hitTarget: true });
+            await running;
+            expect(status.textContent).toContain('floor changed');
+            expect(marks(parent).join('')).toBe('');
+            expect(labyrinthClearRate.pathCalcRunning).toBe(false);
+        } finally {
+            sim.mockRestore();
+        }
+    });
+
+    test('an ended Path does not clear the running flag of a newer run', async () => {
+        buildBoard(unbeatableFloor());
+        labyrinthClearRate.combatCache.clear();
+        let release;
+        const sim = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        try {
+            const old = labyrinthClearRate.runPathCalculation();
+            // A newer run took over (as after a teardown and re-enable)
+            labyrinthClearRate._pathRunId += 1;
+            release({ failed: true, cancelled: true });
+            await old;
+            expect(labyrinthClearRate.pathCalcRunning).toBe(true);
+        } finally {
+            labyrinthClearRate.pathCalcRunning = false;
+            sim.mockRestore();
+        }
+    });
+
     test('rooms already shrouded are not planned to be shrouded again', async () => {
         const { status, parent } = buildBoard(unbeatableFloor());
 
