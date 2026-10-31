@@ -940,7 +940,10 @@ describe('planning for more beacons than are placed now', () => {
             expect(again.total).toBe(5);
             expect(again.labels).toEqual(['B3', 'B4', 'B5']);
             expect(again.beacons).toEqual(first.beacons.slice(2));
-            expect(again.nowCount).toBe(2);
+            // The count is the floor's: two set and two used leaves none to place now
+            expect(again.nowCount).toBe(0);
+            // Four set for the floor, two used: the next two go down now
+            expect(stage(after, 7, 4, 5, prior).nowCount).toBe(2);
 
             // A different plan-for count is a fresh plan, not a continuation
             expect(stage(after, 7, 2, 6, prior).continued).toBe(false);

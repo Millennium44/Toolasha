@@ -72,6 +72,7 @@ import {
     estimateRestockCost,
     restockCandidates,
     remainingWord,
+    isBeaconReveal,
 } from './labyrinth-supplies.js';
 import { outcomeMethods } from './labyrinth-outcomes.js';
 import {
@@ -155,20 +156,6 @@ const PATH_OVERLAY_CLASS = 'mwi-labyrinth-path-overlay';
 /** Wait after a beacon reveal before re-pathing, so the reveal's burst of updates (and the auto-calc it schedules) lands first */
 const AUTO_PATH_DELAY_MS = 900;
 
-/**
- * Whether one labyrinth update to the next was a beacon going down: rooms
- * revealed and the run's beacon stock down by one or more. When the stock
- * cannot be read on either side, two or more rooms revealed at once stands in
- * for it (a beacon lights a 13-room diamond).
- * @param {{revealed: number, beacons: number|null}} before
- * @param {{revealed: number, beacons: number|null}} after
- * @returns {boolean}
- */
-export function isBeaconReveal(before, after) {
-    if (!before || !after || after.revealed <= before.revealed) return false;
-    if (before.beacons != null && after.beacons != null) return after.beacons < before.beacons;
-    return after.revealed - before.revealed >= 2;
-}
 /** The room tooltips' headline row: one label, so the combat and skilling cards match */
 const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
@@ -4644,7 +4631,12 @@ class LabyrinthClearRate {
             return;
         }
         const planFor = this.readBeaconPlanFor();
-        const staged = planFor > 0 ? stageBeaconPlan({ revealed, cols, count, planFor, basePlan: plan, prior }) : null;
+        // Compared with the count as set, not as clamped to the bag: a plan-for
+        // equal to the count is the ordinary plan even when fewer are held
+        const staged =
+            planFor > 0 && (requested === 0 || planFor > requested)
+                ? stageBeaconPlan({ revealed, cols, count, planFor, basePlan: plan, prior })
+                : null;
         if (staged) {
             this.drawStagedBeaconPlan({ staged, plan, cells, cols, flat, count, budget, supplies, planFor });
             return;

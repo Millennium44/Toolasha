@@ -174,8 +174,8 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const labyrinthClearRateModule = await import('./labyrinth-clear-rate.js');
-const { default: labyrinthClearRate } = labyrinthClearRateModule;
+const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js');
+const { isBeaconReveal } = await import('./labyrinth-supplies.js');
 const { clampPrecisionPct } = await import('./labyrinth-sim-cache.js');
 const { default: configMock } = await import('../../core/config.js');
 const { COMBAT_CACHE_STORAGE_VERSION } = await import('./labyrinth-sim-cache.js');
@@ -1779,6 +1779,24 @@ describe('planning against the supplies actually held', () => {
             labyrinthClearRate.runBeaconCalculation();
 
             expect(status2.textContent).toBe(before.status);
+            expect([...drawn()].map((c) => c.innerHTML)).toEqual(before.html);
+            expect(document.querySelectorAll('[data-beacon-later]')).toHaveLength(0);
+        });
+
+        test('plan-for equal to the count is the ordinary plan even when the bag clamps the count', () => {
+            bag.items = [supplyItem('/items/expert_torch', 43), supplyItem('/items/advanced_beacon', 3)];
+            const status = buildGrid(7);
+            beaconInput(4);
+            labyrinthClearRate.runBeaconCalculation();
+            const before = { status: status.textContent, html: [...drawn()].map((c) => c.innerHTML) };
+
+            const status2 = buildGrid(7);
+            beaconInput(4);
+            planForInput(4);
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status2.textContent).toBe(before.status);
+            expect(status2.textContent).toContain('(4 set / 3 left this run)');
             expect([...drawn()].map((c) => c.innerHTML)).toEqual(before.html);
             expect(document.querySelectorAll('[data-beacon-later]')).toHaveLength(0);
         });
@@ -7129,7 +7147,6 @@ describe('docked labyrinth toolbar placement', () => {
  * beacon reveals rooms, once per reveal burst.
  */
 describe('auto-path after a beacon reveal', () => {
-    const { isBeaconReveal } = labyrinthClearRateModule;
     const revealedRoom = { roomType: '/labyrinth_room_types/combat' };
     let pathSpy;
     let tileSpy;

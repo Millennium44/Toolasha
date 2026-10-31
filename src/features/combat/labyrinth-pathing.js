@@ -1240,7 +1240,7 @@ export const BEACON_PLAN_FOR_MAX = 20;
  * caller draws exactly what it drew before.
  *
  * "Now" is the beacon count when one is set (already clamped to what is held
- * by the caller), and in the automatic mode the shortest prefix that covers a
+ * by the caller), less the beacons of this plan already used, and in the automatic mode the shortest prefix that covers a
  * path to the exit (none at all when one is already revealed).
  *
  * A plan staged earlier on the same floor is continued rather than replaced
@@ -1280,7 +1280,9 @@ export function stageBeaconPlan({ revealed, cols, count, planFor, basePlan, prio
     }
 
     const nowFrom = (prefixes, available) => {
-        if (count > 0) return Math.min(count, available);
+        // A set count is the floor's own ("beacons to place on this floor"),
+        // so beacons already used out of it come off what goes down now
+        if (count > 0) return Math.min(Math.max(0, count - placedBefore), available);
         if (basePlan.minNeeded === 0 || !prefixes.length) return 0;
         const at = prefixes.findIndex((p) => p.corridorOpen);
         return at < 0 ? available : at + 1;
@@ -1305,7 +1307,7 @@ export function stageBeaconPlan({ revealed, cols, count, planFor, basePlan, prio
     }
 
     const budget = target - placedBefore;
-    const base = count > 0 ? count : basePlan.beacons.length;
+    const base = count > 0 ? Math.max(0, count - placedBefore) : basePlan.beacons.length;
     if (budget <= base) return null;
     const full = computeBeaconPlan(revealed, cols, budget);
     if (!full?.feasible || full.beacons.length <= base) return null;

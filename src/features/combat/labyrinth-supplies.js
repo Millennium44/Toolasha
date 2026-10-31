@@ -581,3 +581,18 @@ export function restockCandidates(hrids, preferredHrid = null) {
     if (preferredHrid && list.includes(preferredHrid)) return [preferredHrid];
     return list;
 }
+
+/**
+ * Whether one labyrinth update to the next was a beacon going down: rooms
+ * revealed and the run's beacon stock down by one or more. When the stock
+ * cannot be read on either side, two or more rooms revealed at once stands in
+ * for it (a beacon lights a 13-room diamond).
+ * @param {{revealed: number, beacons: number|null}} before
+ * @param {{revealed: number, beacons: number|null}} after
+ * @returns {boolean}
+ */
+export function isBeaconReveal(before, after) {
+    if (!before || !after || after.revealed <= before.revealed) return false;
+    if (before.beacons != null && after.beacons != null) return after.beacons < before.beacons;
+    return after.revealed - before.revealed >= 2;
+}
