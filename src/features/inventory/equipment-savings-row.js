@@ -1323,7 +1323,7 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
             startLevel,
             materialCostPerAttempt: materials.cost,
             protectionOptions: protection.price > 0 ? [{ itemHrid: protection.itemHrid, price: protection.price }] : [],
-            hasMissingPrices: unpricedMaterials || protectionPartial,
+            hasMissingPrices: unpricedMaterials,
             // The namespace's calculator rather than the engine's own import.
             // In the built script they are the same module — enhancement-calculator
             // is shared, so the market bundle's import resolves to exactly this
@@ -1334,7 +1334,9 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
 
         // A plan that left a material unpriced is a partial bill: unknown, like a run nothing
         // could price, so the target reads as unpriced instead of quoting the part that had a price
-        const cost = plan && !plan.hasMissingPrices ? plan.cost : null;
+        // A partial protection quote only taints a plan that actually spends protection: a run
+        // that never protects (a +0 to +1 climb) does not depend on that price at all
+        const cost = plan && !plan.hasMissingPrices && !(protectionPartial && plan.protections > 0) ? plan.cost : null;
         // Bounded rather than grown forever: a player editing a target's level
         // walks through twenty keys a piece, and nothing here is worth holding
         // an unbounded table for. A failed sweep is not cached — the next draw

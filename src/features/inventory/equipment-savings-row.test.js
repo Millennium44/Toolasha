@@ -1613,6 +1613,17 @@ describe('what a run costs, through the real Markov chain', () => {
         }
     });
 
+    test('a partial protection price does not taint a run that spends no protection', () => {
+        try {
+            const clean = enhancementCost('/items/sinister_cape', 1, 0);
+            expect(clean).toBeGreaterThan(0);
+            protectionQuote.partial = true;
+            expect(enhancementCost('/items/sinister_cape', 1, 0)).toBe(clean);
+        } finally {
+            protectionQuote.partial = false;
+        }
+    });
+
     test('the two levels the report was about, the right way round', () => {
         const fromFive = enhancementCost('/items/sinister_cape', 7, 5);
         const fromFour = enhancementCost('/items/sinister_cape', 7, 4);
