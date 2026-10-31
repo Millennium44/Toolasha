@@ -442,14 +442,16 @@ class MarketplaceShortcuts {
         } catch {
             // Instant sell/buy failed (no matching orders) — fall back to listing form
             if (!isCancelled()) {
-                if (actionType === 'sell') {
-                    opened = await this.clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isCancelled)
-                        .then(() => true)
-                        .catch(() => false);
-                } else if (actionType === 'buy') {
-                    opened = await this.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled)
-                        .then(() => true)
-                        .catch(() => false);
+                try {
+                    if (actionType === 'sell') {
+                        await this.clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isCancelled);
+                        opened = true;
+                    } else if (actionType === 'buy') {
+                        await this.clickListingButton('+ New Buy Listing', 'Button_buy', 3000, isCancelled);
+                        opened = true;
+                    }
+                } catch {
+                    opened = false;
                 }
             }
         }

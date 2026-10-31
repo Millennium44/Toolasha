@@ -41,10 +41,11 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 const scoreGate = vi.hoisted(() => ({ pending: [] }));
 vi.mock('./score-calculator.js', () => ({
-    calculateCombatScore: (profileData) =>
-        new Promise((resolve) => {
+    calculateCombatScore: async (profileData) => {
+        await new Promise((resolve) => {
             scoreGate.pending.push({ name: profileData.profile.sharableCharacter.name, resolve });
-        }).then(() => ({
+        });
+        return {
             total: 0,
             house: 0,
             ability: 0,
@@ -53,7 +54,8 @@ vi.mock('./score-calculator.js', () => ({
             skillerEquipment: 0,
             breakdown: { houses: [], abilities: [], equipment: [] },
             skillerBreakdown: { equipment: [] },
-        })),
+        };
+    },
 }));
 vi.mock('../combat/combat-sim-export-metz.js', () => ({
     constructMetzCharacterExport: () => ({}),
