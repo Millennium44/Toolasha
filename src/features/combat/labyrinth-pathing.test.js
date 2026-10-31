@@ -1138,7 +1138,10 @@ describe('beacon planner options', () => {
         expect(one.revealedNew).toBeGreaterThan(two.revealedNew);
     });
 
-    test('three routes wanted is two on these floors: a corner entrance has only two neighbours', () => {
+    test('routes wanted is 1 or 2; a stored 3 (or anything else) reads as 2', () => {
+        expect(normalizeBeaconOptions({ routes: 1 }).routes).toBe(1);
+        expect(normalizeBeaconOptions({ routes: 3 }).routes).toBe(2);
+        expect(normalizeBeaconOptions({ routes: '3' }).routes).toBe(2);
         const revealed = darkFloor(8);
         expect(computeBeaconPlan(revealed, 8, 5, { routes: 3 })).toEqual(computeBeaconPlan(revealed, 8, 5));
     });
@@ -1263,10 +1266,10 @@ describe('beacon planner options', () => {
         expect(changed.labels[0]).toBe('B2');
     });
 
-    test('8x8, five beacons, three routes wanted and fewest holes stays quick', () => {
+    test('8x8, five beacons, two routes wanted and fewest holes stays quick', () => {
         const revealed = darkFloor(8);
         const started = performance.now();
-        const plan = computeBeaconPlan(revealed, 8, 5, { routes: 3, priority: 'holes' });
+        const plan = computeBeaconPlan(revealed, 8, 5, { routes: 2, priority: 'holes' });
         const ms = performance.now() - started;
         expect(plan.beacons).toHaveLength(5);
         expect(ms).toBeLessThan(1500);

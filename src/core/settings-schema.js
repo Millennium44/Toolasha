@@ -2980,9 +2980,8 @@ export const settingsGroups = {
                 options: [
                     { value: '1', label: '1 route' },
                     { value: '2', label: '2 routes' },
-                    { value: '3', label: '3 routes' },
                 ],
-                help: 'Independent covered routes to the exit the beacon planner aims for, so no single room can block the way out; a corner entrance allows two at most. Also in the labyrinth toolbar gear panel',
+                help: 'Independent covered routes to the exit the beacon planner aims for: two means no single room can block the way out, one frees beacons for rooms. Also in the labyrinth toolbar gear panel',
             },
             labyrinthBeaconNearExit: {
                 id: 'labyrinthBeaconNearExit',

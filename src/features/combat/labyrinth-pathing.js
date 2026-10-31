@@ -44,7 +44,8 @@ const NEAR_LINE_ROOMS = 1.5;
  * The beacon planner's options, with today's behavior as the defaults.
  * @typedef {Object} BeaconPlanOptions
  * @property {'rooms'|'holes'} [priority='rooms'] - After the route target: most rooms, or fewest enclosed holes first
- * @property {number} [routes=2] - Independent covered routes wanted (1..3)
+ * @property {number} [routes=2] - Independent covered routes wanted, 1 or 2 (a corner entrance has
+ *   two neighbours, so no floor has more; anything else reads as 2)
  * @property {boolean} [nearExit=false] - After the route target (and holes), rooms near the entrance-to-exit line before all rooms
  */
 
@@ -57,7 +58,7 @@ export function normalizeBeaconOptions(options = {}) {
     const routes = Math.floor(Number(options?.routes));
     return {
         priority: options?.priority === 'holes' ? 'holes' : 'rooms',
-        routes: routes >= 1 && routes <= 3 ? routes : BEACON_ROUTE_TARGET,
+        routes: routes === 1 ? 1 : BEACON_ROUTE_TARGET,
         nearExit: options?.nearExit === true,
     };
 }

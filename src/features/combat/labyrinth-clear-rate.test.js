@@ -7613,6 +7613,7 @@ describe('labyrinth toolbar layout', () => {
         }
         expect(priority.value).toBe('rooms');
         expect(routes.value).toBe('2');
+        expect([...routes.options].map((o) => o.value)).toEqual(['1', '2']);
         // Spread stays the panel's last item
         expect(panel().lastElementChild.textContent).toBe('Spread');
 
@@ -7660,6 +7661,10 @@ describe('labyrinth toolbar layout', () => {
         });
         settings.map.set('labyrinthBeaconRoutes', '9');
         expect(labyrinthClearRate.readBeaconPlanSettings().options.routes).toBe(2);
+        settings.map.set('labyrinthBeaconRoutes', '3');
+        expect(labyrinthClearRate.readBeaconPlanSettings().options.routes).toBe(2);
+        settings.map.set('labyrinthBeaconRoutes', '1');
+        expect(labyrinthClearRate.readBeaconPlanSettings().options.routes).toBe(1);
     });
 
     test('the panel is placed on screen under the gear', () => {

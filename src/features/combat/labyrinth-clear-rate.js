@@ -3564,12 +3564,11 @@ class LabyrinthClearRate {
             'beacon-routes',
             'labyrinthBeaconRoutes',
             '2',
-            'Independent covered routes to the exit the beacon plan aims for, so no single room can block the way ' +
-                'out (a corner entrance allows two at most)',
+            'Independent covered routes to the exit the beacon plan aims for: two means no single room can block ' +
+                'the way out, one frees beacons for rooms',
             [
                 ['1', '1 route'],
                 ['2', '2 routes'],
-                ['3', '3 routes'],
             ]
         );
         const panelToggle = (suffix, settingId, onText, offText, title) => {
@@ -4991,7 +4990,8 @@ class LabyrinthClearRate {
         return {
             options: {
                 priority: config.getSettingValue('labyrinthBeaconPriority', 'rooms') === 'holes' ? 'holes' : 'rooms',
-                routes: routes >= 1 && routes <= 3 ? routes : 2,
+                // 1 or 2; anything else, a stored 3 included, is the default
+                routes: routes === 1 ? 1 : 2,
                 nearExit: !!config.getSetting('labyrinthBeaconNearExit'),
             },
             pathFirst: !!config.getSetting('labyrinthBeaconPathFirst'),
