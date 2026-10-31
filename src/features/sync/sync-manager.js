@@ -64,9 +64,13 @@ import {
     contentHash,
     hashPayload,
     addsToRemote,
+    addsToRemoteSliced,
     mergeForUpload,
+    mergeForUploadSliced,
     wholeKeyHashes,
+    wholeKeyHashesSliced,
     exchangeBaseline,
+    exchangeBaselineSliced,
     registeredKeysDiverge,
     trimmedRegisteredKeys,
     restampRestoredSettings,
@@ -1640,7 +1644,7 @@ class SyncManager {
         // over nothing. Settled the way an upload merge that adds nothing
         // settles (see `_mergeIntoUpload`): nothing imported, nothing said.
         // Held-back records and a replaced push keep their own paths.
-        let standDown = !retryHeld && !replaced && this._sameContent(payload, localText, localHash);
+        let standDown = !retryHeld && !replaced && (await this._sameContent(payload, localText, localHash));
         if (standDown) {
             // `addsToRemote` ignores a stale out-of-window key, so this shortcut would otherwise settle
             // over a displaced delete that is still owed. One that still fails is not settled over: the
@@ -1649,6 +1653,7 @@ class SyncManager {
             if (stillOwed > 0) standDown = false;
         }
         if (standDown) {
+            const settledBaseline = await exchangeBaselineSliced(payload, localText);
             // The flush and the build above can outlast a takeover, whose own
             // record this one would roll back
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
@@ -1662,7 +1667,7 @@ class SyncManager {
                 // A hold from an earlier version has nothing left to wait for:
                 // this device's copy was just read whole, and it is the gist's
                 mergeHeld: null,
-                extra: { [KEY_BASELINE]: exchangeBaseline(payload, localText), [KEY_UNAPPLIED]: null },
+                extra: { [KEY_BASELINE]: settledBaseline, [KEY_UNAPPLIED]: null },
             });
             if (!silent) showToast('Already up to date with GitHub.');
             return { ok: true, skipped: true, reason: 'same-content' };
@@ -1767,17 +1772,7 @@ class SyncManager {
         // switch push and tell the new screen to reload, even though the old
         // operation no longer owns its normal success toast.
         if (!this._stillOwns(opToken)) {
-            if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
-            console.warn('[Sync] Pull import finished after cleanup; leaving the sync stamp for a retry.');
-            // A pull that landed only live-safe records latched nothing (see below), so a takeover has
-            // nothing to reload for either. A result without the count is taken as having latched.
-            if (latched !== 0 || complete === false || mergeFailed?.length || mergeHeld?.length) {
-                showToast('Sync imported data during a character switch. Reload now before making more changes.', {
-                    kind: 'warn',
-                    duration: 0,
-                });
-            }
-            return { ok: false, reason: 'stopped-after-apply' };
+            return this._stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld });
         }
 
         // A pull that wrote nothing must not move the stamp. Remembering the
@@ -1811,7 +1806,7 @@ class SyncManager {
         let pushOwed = false;
         if (silent && !mergeHeld?.length) {
             mergedRebuild = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
-            pushOwed = addsToRemote(mergedRebuild, payload);
+            pushOwed = await addsToRemoteSliced(mergedRebuild, payload);
             // Also owed when this device's scope or cleaning would take something
             // out of the gist (a Settings-only device pulling a gist that still
             // holds history stores): the trimmed upload is what stops every
@@ -1819,11 +1814,23 @@ class SyncManager {
             // gist's, so the push is not 'unchanged'; once it lands, it is.
             if (!pushOwed) {
                 try {
-                    pushOwed = mergeForUpload(mergedRebuild, payload, null).dropsFromRemote;
+                    pushOwed = (await mergeForUploadSliced(mergedRebuild, payload, null)).dropsFromRemote;
                 } catch (error) {
                     console.warn('[Sync] Could not check whether the gist holds more than this device syncs:', error);
                 }
             }
+        }
+
+        // Worked out before the record is written, each a wait of its own: a takeover during them (the
+        // rebuild, the weighing above) leaves the stamp alone, as one during the import does
+        const appliedHash = mergedRebuild
+            ? contentHash(pushOwed ? payload : mergedRebuild)
+            : mergeHeld?.length
+              ? contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
+              : contentHash(applied ?? payload);
+        const pulledHashes = await wholeKeyHashesSliced(payload);
+        if (!this._stillOwns(opToken)) {
+            return this._stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld });
         }
 
         await this._remember({
@@ -1839,11 +1846,7 @@ class SyncManager {
             // Held-back records remain on this device even though they were
             // removed from `applied`; fingerprint the actual local snapshot
             // so a retry does not mistake that expected difference for an edit.
-            hash: mergedRebuild
-                ? contentHash(pushOwed ? payload : mergedRebuild)
-                : mergeHeld?.length
-                  ? contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
-                  : contentHash(applied ?? payload),
+            hash: appliedHash,
             chunkCount: Number(manifest?.chunks) || 0,
             // Lamport's rule on receive: this device is now at least as far
             // along as the payload it accepted. Written only here, after the
@@ -1860,7 +1863,7 @@ class SyncManager {
             extra: {
                 // The gist's values are now the last exchange: a key this device
                 // kept over an unmoved gist value stays "moved here" against it
-                [KEY_BASELINE]: heldAsUnapplied(wholeKeyHashes(payload), mergeHeld),
+                [KEY_BASELINE]: heldAsUnapplied(pulledHashes, mergeHeld),
                 // Whatever an automatic merge left in the gist has landed now —
                 // unless records were held back, which the retry has to take
                 ...(pendingHeld ? {} : { [KEY_UNAPPLIED]: null }),
@@ -1984,7 +1987,10 @@ class SyncManager {
             await flushPersistedRecords();
             await storage.flushAll?.();
             const localText = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
-            if (addsToRemote(localText, remoteText) || mergeForUpload(localText, remoteText, null).dropsFromRemote) {
+            if (
+                (await addsToRemoteSliced(localText, remoteText)) ||
+                (await mergeForUploadSliced(localText, remoteText, null)).dropsFromRemote
+            ) {
                 return 'Nothing new from GitHub; this device has changes the next push will send.';
             }
         } catch (error) {
@@ -2001,10 +2007,10 @@ class SyncManager {
      * @param {string} remoteText - The gist's payload, as downloaded
      * @param {string} localText - This device's payload, just built
      * @param {string} localHash - `contentHash(localText)`
-     * @returns {boolean} True when the two hold the same data
+     * @returns {Promise<boolean>} True when the two hold the same data
      * @private
      */
-    _sameContent(remoteText, localText, localHash) {
+    async _sameContent(remoteText, localText, localHash) {
         if (contentHash(remoteText) === localHash) return true;
         try {
             // The store comparison reads only `stores`. A download whose format
@@ -2016,7 +2022,10 @@ class SyncManager {
             if (stableStringify(remote?.externalKeys ?? null) !== stableStringify(local?.externalKeys ?? null)) {
                 return false;
             }
-            return !addsToRemote(remoteText, localText, { forUpload: false }) && !addsToRemote(localText, remoteText);
+            return (
+                !(await addsToRemoteSliced(remoteText, localText, { forUpload: false })) &&
+                !(await addsToRemoteSliced(localText, remoteText))
+            );
         } catch (error) {
             console.warn('[Sync] Could not compare the download with this device; applying it:', error);
             return false;
@@ -2622,6 +2631,29 @@ class SyncManager {
         if (silent) return { ok: true, skipped: true, reason: 'another-tab' };
         showToast('Sync is running in another tab. Try again when it finishes.', { kind: 'warn' });
         return { ok: false, reason: 'another-tab' };
+    }
+
+    /**
+     * The end of a pull whose import landed after another operation took over: the stamp is left for a
+     * retry, a hold is kept, and the new screen is told to reload when the import latched anything.
+     * @param {Object|null} pendingHeld - The held-back marker, when records were held
+     * @param {{latched: number|undefined, complete: boolean, mergeFailed: Array|undefined,
+     *   mergeHeld: Array|undefined}} imported - What the import reported
+     * @returns {Promise<{ok: false, reason: 'stopped-after-apply'}>} The pull's result
+     * @private
+     */
+    async _stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld }) {
+        if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
+        console.warn('[Sync] Pull import finished after cleanup; leaving the sync stamp for a retry.');
+        // A pull that landed only live-safe records latched nothing (see below), so a takeover has
+        // nothing to reload for either. A result without the count is taken as having latched.
+        if (latched !== 0 || complete === false || mergeFailed?.length || mergeHeld?.length) {
+            showToast('Sync imported data during a character switch. Reload now before making more changes.', {
+                kind: 'warn',
+                duration: 0,
+            });
+        }
+        return { ok: false, reason: 'stopped-after-apply' };
     }
 
     /**

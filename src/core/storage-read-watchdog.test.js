@@ -182,6 +182,46 @@ describe('Storage reads on a connection that has stopped answering', () => {
         await expect(storage.tryGet('script_settingsMap_32326', 'settings')).resolves.toBeNull();
     });
 
+    test('tryGetMany() reports a wedged batch as untrustworthy, not as every key absent', async () => {
+        const { db } = createWedgedDb();
+        storage.db = db;
+        installFakeIndexedDB([createWedgedDb().db]);
+
+        await expect(storage.tryGetMany(['a', 'b'], 'settings')).resolves.toBeNull();
+    });
+
+    test('tryGetMany() tells a stored key from an absent one, on one transaction', async () => {
+        storage.db = createHealthyDb({ a: 'on disk', b: 0 });
+
+        const reads = await storage.tryGetMany(['a', 'b', 'missing', 'a'], 'settings');
+
+        expect(reads.get('a')).toEqual({ found: true, value: 'on disk' });
+        expect(reads.get('b')).toEqual({ found: true, value: 0 });
+        expect(reads.get('missing')).toEqual({ found: false, value: null });
+        await expect(storage.tryGetMany([], 'settings')).resolves.toEqual(new Map());
+    });
+
+    test('tryGetMany() answers null when any one read fails, not a partial map', async () => {
+        const healthy = createHealthyDb({ a: 'on disk' });
+        storage.db = {
+            ...healthy,
+            transaction() {
+                const txn = healthy.transaction();
+                const store = txn.objectStore();
+                const get = store.get.bind(store);
+                store.get = (key) => {
+                    if (key !== 'bad') return get(key);
+                    const request = { onsuccess: null, onerror: null, error: new Error('read failed') };
+                    queueMicrotask(() => request.onerror?.());
+                    return request;
+                };
+                return txn;
+            },
+        };
+
+        await expect(storage.tryGetMany(['a', 'bad'], 'settings')).resolves.toBeNull();
+    });
+
     test('tryGetAllKeys() answers null rather than an empty listing', async () => {
         const { db } = createWedgedDb();
         storage.db = db;

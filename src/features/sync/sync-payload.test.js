@@ -13,10 +13,26 @@ vi.mock('../../core/storage.js', () => ({
             // Unreadable histories, not the sync's own registry record (whose
             // failed read is its own case, in sync-external-keys.test.js)
             if (storeState.unreadable && key !== 'toolasha_sync_externalKeys') return null;
+            storeState.singleReads = [...(storeState.singleReads || []), { name, key }];
+            if (storeState.unreadableKeys?.includes(key)) return null;
             const store = storeState.stores[name] || {};
             return Object.prototype.hasOwnProperty.call(store, key)
                 ? { found: true, value: store[key] }
                 : { found: false, value: null };
+        },
+        // All or nothing, as the real one: one unreadable key makes the whole batch untrustworthy
+        tryGetMany: async (keys, name) => {
+            storeState.batchReads = [...(storeState.batchReads || []), { name, keys }];
+            if (storeState.unreadable || storeState.unreadableKeys?.some((key) => keys.includes(key))) return null;
+            const store = storeState.stores[name] || {};
+            return new Map(
+                keys.map((key) => [
+                    key,
+                    Object.prototype.hasOwnProperty.call(store, key)
+                        ? { found: true, value: store[key] }
+                        : { found: false, value: null },
+                ])
+            );
         },
         // The real one flushes every debounced write before a restore
         // overwrites what it was going to land on. Reads (`tryGet`) go straight
@@ -163,6 +179,9 @@ beforeEach(() => {
     importOutcome.writtenKeys = undefined;
     importOutcome.throws = null;
     storeState.unreadable = false;
+    storeState.unreadableKeys = null;
+    storeState.batchReads = [];
+    storeState.singleReads = [];
     storeState.pending = {};
     storeState.flushError = null;
     storeState.putAllCalls = [];
@@ -1034,6 +1053,58 @@ describe('applyPayload merges additive records', () => {
         // "combined", and the player never learns the record is still waiting
         expect(result.mergeHeld).toEqual([{ store: 'dungeonRuns', key: 'run_char', label: 'fake' }]);
         expect(result.mergeFailed).toEqual([]);
+        off();
+    });
+
+    test("a store's records are read in batches, not one round trip apiece", async () => {
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => [...new Set([...local, ...incoming])],
+            label: 'fake',
+        });
+        const local = {};
+        const remote = {};
+        for (let index = 0; index < 120; index += 1) {
+            local[`run_c${index}`] = ['a', 'b'];
+            remote[`run_c${index}`] = index === 7 ? ['a', 'b', 'c'] : ['b', 'a', 'b'];
+        }
+        storeState.stores.dungeonRuns = local;
+
+        const result = await applyPayload(JSON.stringify({ formatVersion: 1, stores: { dungeonRuns: remote } }));
+
+        expect(
+            storeState.batchReads.filter((read) => read.name === 'dungeonRuns').map((read) => read.keys.length)
+        ).toEqual([50, 50, 20]);
+        expect(storeState.singleReads.filter((read) => read.name === 'dungeonRuns')).toEqual([]);
+        // The fold of each copy is as before: one combined, the rest already the same
+        expect(result.merged.map((entry) => entry.key)).toEqual(['run_c7']);
+        expect(importedPayloads[0].stores.dungeonRuns).toEqual({ run_c7: ['a', 'b', 'c'] });
+        expect(result.unchanged.dungeonRuns).toBe(119);
+        off();
+    });
+
+    test('a batch that cannot be read is re-read key by key, so only the unreadable record is held', async () => {
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => [...new Set([...local, ...incoming])],
+            label: 'fake',
+        });
+        storeState.stores.dungeonRuns = { run_a: ['a'], run_b: ['b'], run_c: ['c'] };
+        storeState.unreadableKeys = ['run_b'];
+
+        const result = await applyPayload(
+            JSON.stringify({
+                formatVersion: 1,
+                stores: { dungeonRuns: { run_a: ['a', 'x'], run_b: ['remote'], run_c: ['c'] } },
+            })
+        );
+
+        expect(storeState.singleReads.map((read) => read.key)).toEqual(['run_a', 'run_b', 'run_c']);
+        expect(result.mergeHeld).toEqual([{ store: 'dungeonRuns', key: 'run_b', label: 'fake' }]);
+        expect(result.merged.map((entry) => entry.key)).toEqual(['run_a']);
+        expect(importedPayloads[0].stores.dungeonRuns).toEqual({ run_a: ['a', 'x'] });
         off();
     });
 

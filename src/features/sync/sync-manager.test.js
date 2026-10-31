@@ -65,67 +65,86 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 }));
 
 const payload = vi.hoisted(() => ({ text: '{"local":1}' }));
-vi.mock('./sync-payload.js', () => ({
-    resetLeftOutLogForTests: () => {},
-    retryPendingDisplacedDeletes: async () => {
-        payload.retries = (payload.retries || 0) + 1;
-        return payload.outstandingDeletes || 0;
-    },
-    // Read by the write counter in sync-dirty.js, which this storage fake never feeds
-    payloadCarriesKey: () => true,
-    buildPayloadJSON: async () => {
-        storageCalls.push('buildPayloadJSON');
-        if (payload.buildWait) await payload.buildWait;
-        return payload.text;
-    },
-    applyPayload: async (json, options) => {
-        payload.applyCalls = (payload.applyCalls || 0) + 1;
-        payload.applied = json;
-        payload.applyOptions = options;
-        if (payload.applyWait) await payload.applyWait;
-        return {
-            restored: {},
-            failed: payload.failed ?? [],
-            complete: payload.complete ?? true,
-            merged: payload.merged ?? [],
-            mergeFailed: payload.mergeFailed ?? [],
-            mergeHeld: payload.mergeHeld ?? [],
-            // Undefined unless a test sets it: a result without counts is taken as having written
-            expected: payload.expected,
-            unchanged: payload.unchanged,
-            // Undefined unless a test sets it: a result without the count is taken as having latched
-            latched: payload.latched,
-            exportedAt: null,
-            applied: payload.appliedText ?? json,
-        };
-    },
-    // Content hash, as the real one: the exportedAt stamp does not participate
-    contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
-    addsToRemote: (local, remote) => payload.addsToRemote?.(local, remote) ?? local !== remote,
-    // Opaque payload text here: the merged upload is the two texts side by side
-    mergeForUpload: (local, remote) => {
-        if (payload.mergeThrows) throw payload.mergeThrows;
-        payload.uploadMerges = (payload.uploadMerges || 0) + 1;
-        return {
-            text: `${remote}+${local}`,
-            remoteAdds: payload.remoteAdds ?? local !== remote,
-            dropsFromRemote: payload.drops ?? false,
-        };
-    },
-    restampRestoredSettings: () => {},
-    assertExternalKeysSaved: async () => payload.assertSaved?.(),
-    // A download that teaches this device another script's key prefixes (see sync-external-keys.test.js)
-    learnExternalKeysFromText: (text) => payload.learns?.(text) ?? false,
-    RESTORED_BASELINE: '\u0000restoredAt',
-    exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
-    // Opaque payloads hold no registered history to cut
-    registeredKeysDiverge: (local, baseline) => payload.registeredDiverge?.(local, baseline) ?? false,
-    pushTrimsRegisteredKeys: () => false,
-    trimmedRegisteredKeys: () => [],
-    wholeKeyHashes: (text) => payload.hashes ?? { of: text },
-    // The older raw-text hash, which the manifest gate also accepts
-    hashPayload: (text) => `raw:${text}`,
+// The sliced variants answer as the plain ones do; these fakes hold no work worth slicing
+const withSlicedPayload = vi.hoisted(() => (mod) => ({
+    ...mod,
+    addsToRemoteSliced: async (...args) => mod.addsToRemote(...args),
+    mergeForUploadSliced: async (...args) => mod.mergeForUpload(...args),
+    wholeKeyHashesSliced: async (...args) => mod.wholeKeyHashes(...args),
+    exchangeBaselineSliced: async (...args) => mod.exchangeBaseline(...args),
 }));
+vi.mock('./sync-payload.js', () => {
+    const mod = {
+        resetLeftOutLogForTests: () => {},
+        retryPendingDisplacedDeletes: async () => {
+            payload.retries = (payload.retries || 0) + 1;
+            return payload.outstandingDeletes || 0;
+        },
+        // Read by the write counter in sync-dirty.js, which this storage fake never feeds
+        payloadCarriesKey: () => true,
+        buildPayloadJSON: async () => {
+            storageCalls.push('buildPayloadJSON');
+            if (payload.buildWait) await payload.buildWait;
+            return payload.text;
+        },
+        applyPayload: async (json, options) => {
+            payload.applyCalls = (payload.applyCalls || 0) + 1;
+            payload.applied = json;
+            payload.applyOptions = options;
+            if (payload.applyWait) await payload.applyWait;
+            return {
+                restored: {},
+                failed: payload.failed ?? [],
+                complete: payload.complete ?? true,
+                merged: payload.merged ?? [],
+                mergeFailed: payload.mergeFailed ?? [],
+                mergeHeld: payload.mergeHeld ?? [],
+                // Undefined unless a test sets it: a result without counts is taken as having written
+                expected: payload.expected,
+                unchanged: payload.unchanged,
+                // Undefined unless a test sets it: a result without the count is taken as having latched
+                latched: payload.latched,
+                exportedAt: null,
+                applied: payload.appliedText ?? json,
+            };
+        },
+        // Content hash, as the real one: the exportedAt stamp does not participate
+        contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
+        addsToRemote: (local, remote) => payload.addsToRemote?.(local, remote) ?? local !== remote,
+        // Opaque payload text here: the merged upload is the two texts side by side
+        mergeForUpload: (local, remote) => {
+            if (payload.mergeThrows) throw payload.mergeThrows;
+            payload.uploadMerges = (payload.uploadMerges || 0) + 1;
+            return {
+                text: `${remote}+${local}`,
+                remoteAdds: payload.remoteAdds ?? local !== remote,
+                dropsFromRemote: payload.drops ?? false,
+            };
+        },
+        restampRestoredSettings: () => {},
+        assertExternalKeysSaved: async () => payload.assertSaved?.(),
+        // A download that teaches this device another script's key prefixes (see sync-external-keys.test.js)
+        learnExternalKeysFromText: (text) => payload.learns?.(text) ?? false,
+        RESTORED_BASELINE: '\u0000restoredAt',
+        exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
+        // Opaque payloads hold no registered history to cut
+        registeredKeysDiverge: (local, baseline) => payload.registeredDiverge?.(local, baseline) ?? false,
+        pushTrimsRegisteredKeys: () => false,
+        trimmedRegisteredKeys: () => [],
+        wholeKeyHashes: (text) => payload.hashes ?? { of: text },
+        // The older raw-text hash, which the manifest gate also accepts
+        hashPayload: (text) => `raw:${text}`,
+    };
+    return {
+        ...withSlicedPayload(mod),
+        // A wait a test can hold open: the hashing of the download, after the import and before the record
+        wholeKeyHashesSliced: async (text) => {
+            payload.hashCalls = (payload.hashCalls || 0) + 1;
+            if (payload.hashWait) await payload.hashWait;
+            return mod.wholeKeyHashes(text);
+        },
+    };
+});
 
 const gist = vi.hoisted(() => ({
     found: null,
@@ -228,6 +247,8 @@ beforeEach(() => {
     payload.applied = undefined;
     payload.applyCalls = 0;
     payload.applyWait = null;
+    payload.hashCalls = 0;
+    payload.hashWait = null;
     payload.applyOptions = undefined;
     payload.hashes = undefined;
     payload.addsToRemote = undefined;
@@ -672,6 +693,25 @@ describe('pull', () => {
         expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
         expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
         expect(toasts.at(-1)).toMatchObject({ kind: 'warn', duration: 0 });
+        expect(toasts.at(-1).message).toContain('Reload now');
+    });
+
+    test('cleanup while the pull weighs what it applied leaves the sync stamp unset for a retry', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        let finishHashing;
+        payload.hashWait = new Promise((resolve) => {
+            finishHashing = resolve;
+        });
+
+        const oldPull = syncManager.pull();
+        await vi.waitFor(() => expect(payload.hashCalls).toBe(1));
+        expect(payload.applyCalls).toBe(1);
+        syncManager.cleanup();
+        finishHashing();
+
+        expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
         expect(toasts.at(-1).message).toContain('Reload now');
     });
 

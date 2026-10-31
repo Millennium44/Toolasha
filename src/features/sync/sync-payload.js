@@ -39,6 +39,7 @@ import {
     retentionKeepsLocal,
 } from '../../utils/sync-merge-registry.js';
 import { GistError } from './gist-client.js';
+import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 
 /** Matches the full-backup format, because that is what this produces */
 const FORMAT_VERSION = 1;
@@ -578,6 +579,84 @@ export async function buildPayloadJSON(scope = 'settings') {
     return parts.join('');
 }
 
+/** How long a pull's comparison loops run before handing the page a frame */
+const SLICE_BUDGET_MS = 10;
+
+/** How many of a store's records a pull reads in one transaction */
+const READ_BATCH = 50;
+
+/**
+ * A clock for a long loop: each call answers at once until the slice has run `SLICE_BUDGET_MS`, then
+ * yields to the browser and starts the next slice. A storage read in between counts toward the slice: one
+ * that settled on a microtask (or deserialized a lot on the page's thread) did not let the page run.
+ * @returns {() => Promise<void>} Await once per item
+ */
+function createSlicer() {
+    let sliceStart = performance.now();
+    return async () => {
+        if (performance.now() - sliceStart < SLICE_BUDGET_MS) return;
+        await pageFrame();
+        sliceStart = performance.now();
+    };
+}
+
+/**
+ * Hand the page a frame, unless it is hidden. A hidden tab paints nothing a frame could save, and its
+ * timers are throttled to one a second or slower, so a pull yielding there would hold the restore — and every
+ * write queued behind it — for minutes.
+ * @returns {Promise<void>} Settles on the next frame, or at once in a hidden tab
+ */
+async function pageFrame() {
+    if (globalThis.document?.visibilityState === 'hidden') return;
+    await yieldToBrowser();
+}
+
+/**
+ * Run a step generator to its end in one go.
+ * @param {Generator} steps - Yields between units of work, returns the answer
+ * @returns {*} Its return value
+ */
+function runSteps(steps) {
+    for (;;) {
+        const step = steps.next();
+        if (step.done) return step.value;
+    }
+}
+
+/**
+ * Run a step generator to its end, handing the page a frame whenever a slice has run its budget.
+ * Same work, same answer as {@link runSteps}.
+ * @param {Generator} steps - Yields between units of work, returns the answer
+ * @returns {Promise<*>} Its return value
+ */
+async function runStepsSliced(steps) {
+    const slice = createSlicer();
+    for (;;) {
+        const step = steps.next();
+        if (step.done) return step.value;
+        await slice();
+    }
+}
+
+/**
+ * `storage.tryGet` for several keys of one store at once.
+ * @param {Array<string>} keys - Storage keys
+ * @param {string} storeName - Object store
+ * @returns {Promise<Map<string, {found: boolean, value: *}>|null>} The reads; null when they must be made one
+ *   by one (the batch failed, or this storage cannot batch)
+ */
+async function readMany(keys, storeName) {
+    if (typeof storage.tryGetMany !== 'function') return null;
+    try {
+        const reads = await storage.tryGetMany(keys, storeName);
+        if (!(reads instanceof Map) || keys.some((key) => !reads.has(key))) return null;
+        return reads;
+    } catch (error) {
+        console.warn(`[Sync] Could not read ${storeName} in one go; reading key by key:`, error);
+        return null;
+    }
+}
+
 /**
  * Fold this device's histories into an incoming payload, key by key.
  *
@@ -657,16 +736,32 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
     const same = new Set();
     const refolds = {};
 
+    const slice = createSlicer();
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
 
         // Keys captured up front: an unreadable base deletes its own key below
+        const registered = [];
         for (const key of Object.keys(entries)) {
             const registration = mergeForKey(storeName, key);
-            if (!registration) continue;
-
+            if (registration) registered.push({ key, registration });
+        }
+        // One read per `READ_BATCH` records rather than one round trip apiece (a batch, not the whole store, so
+        // no one read hands the page a store's worth of values to deserialize). A batch that could not be
+        // trusted, or a storage without batches, reads its keys one by one, so a key whose own read fails is
+        // still the one held back
+        let batch = null;
+        for (let index = 0; index < registered.length; index += 1) {
+            const { key, registration } = registered[index];
+            if (index % READ_BATCH === 0) {
+                batch = await readMany(
+                    registered.slice(index, index + READ_BATCH).map((entry) => entry.key),
+                    storeName
+                );
+            }
+            await slice();
             try {
-                const probed = await storage.tryGet(key, storeName);
+                const probed = batch ? batch.get(key) : await storage.tryGet(key, storeName);
                 if (probed === null) {
                     // Read failed — not "nothing stored". This device may hold
                     // entries the union would have kept, and they are exactly
@@ -710,6 +805,20 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                     localWins ? registration.merge(incoming, local) : registration.mergeForPull(local, incoming);
                 entries[key] = fold(probed.value);
                 merged.push({ store: storeName, key, label: registration.label });
+                if (entries[key] === probed.value) {
+                    // The fold handed back the copy it was built on (a union that added nothing): the same
+                    // without serializing either. Nothing mutates the copy before the write, so its text
+                    // is taken only if a write's refold asks for it
+                    same.add(id);
+                    const kept = probed.value;
+                    let keptText = null;
+                    (refolds[storeName] ||= {})[key] = refoldAgainstStored(
+                        () => (keptText ??= stableStringify(kept)),
+                        fold,
+                        incoming
+                    );
+                    continue;
+                }
                 const probedText = stableStringify(probed.value);
                 if (stableStringify(entries[key]) === probedText) {
                     same.add(id);
@@ -796,6 +905,8 @@ function refoldAgainstStored(probedText, fold, incoming) {
  */
 export async function applyPayload(json, { mode = 'pull', baseline = null, retryHeld = false, heldKeys = null } = {}) {
     const payload = JSON.parse(json);
+    // A whole gist parsed is a task's worth on its own; the page gets a frame before the rest
+    await pageFrame();
     // Before anything is dropped as unowned: keys another script registered,
     // on this device on an earlier load or on another device, are carried
     await requireExternalKeys();
@@ -917,7 +1028,10 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             retentionDropped ||
             splitRetired ||
             Boolean(settingsStore);
+        // ...and again around re-serializing it, which costs about as much
+        if (rewrote) await pageFrame();
         const applied = rewrote ? JSON.stringify(payload) : json;
+        if (rewrote) await pageFrame();
 
         // After `applied`, which describes the data as it now stands here: a
         // key left out below already holds its value
@@ -1345,6 +1459,24 @@ const valueHash = (value) => hashPayload(stableStringify(value));
  * @returns {Record<string, string>} Hash by `store\u0000key`
  */
 export function wholeKeyHashes(text) {
+    return runSteps(wholeKeyHashesSteps(text));
+}
+
+/**
+ * {@link wholeKeyHashes}, handing the page a frame between keys.
+ * @param {string} text - Payload text
+ * @returns {Promise<Record<string, string>>} Hash by `store key`
+ */
+export function wholeKeyHashesSliced(text) {
+    return runStepsSliced(wholeKeyHashesSteps(text));
+}
+
+/**
+ * The body of {@link wholeKeyHashes}, yielding between keys.
+ * @param {string} text - Payload text
+ * @returns {Generator<void, Record<string, string>>} Steps; returns the hashes
+ */
+function* wholeKeyHashesSteps(text) {
     const hashes = {};
     let stores;
     try {
@@ -1355,6 +1487,7 @@ export function wholeKeyHashes(text) {
     for (const [storeName, entries] of Object.entries(stores)) {
         if (!entries || typeof entries !== 'object') continue;
         for (const [key, value] of Object.entries(entries)) {
+            yield;
             if (!isSettingsMapKey(storeName, key)) hashes[baselineId(storeName, key)] = valueHash(value);
         }
     }
@@ -1446,8 +1579,27 @@ function readBaselineEntry(entry) {
  * @returns {Record<string, string|{gist: string, local: string|null}>} The baseline
  */
 export function exchangeBaseline(uploadedText, localText) {
-    const gist = wholeKeyHashes(uploadedText);
-    const local = wholeKeyHashes(localText);
+    return baselineFrom(wholeKeyHashes(uploadedText), wholeKeyHashes(localText));
+}
+
+/**
+ * {@link exchangeBaseline}, handing the page a frame between keys: the same baseline.
+ * @param {string} uploadedText - The payload the gist now holds
+ * @param {string} localText - This device's payload
+ * @returns {Promise<Record<string, string|{gist: string, local: string|null}>>} The baseline
+ */
+export async function exchangeBaselineSliced(uploadedText, localText) {
+    const gist = await wholeKeyHashesSliced(uploadedText);
+    return baselineFrom(gist, await wholeKeyHashesSliced(localText));
+}
+
+/**
+ * The baseline from both sides' hashes (see {@link exchangeBaseline}).
+ * @param {Record<string, string>} gist - Hashes of what the gist holds
+ * @param {Record<string, string>} local - Hashes of what this device holds
+ * @returns {Record<string, string|{gist: string, local: string|null}>} The baseline
+ */
+function baselineFrom(gist, local) {
     const baseline = {};
     for (const [id, hash] of Object.entries(gist)) {
         baseline[id] = local[id] === hash ? hash : { gist: hash, local: local[id] ?? null };
@@ -1607,6 +1759,7 @@ function comparableLocalValue(storeName, key, value) {
  *   whether a retention rule took any key out of the download; and local keys the download pushed out of a window
  */
 async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
+    const slice = createSlicer();
     const sameByStore = new Map();
     let retentionDropped = false;
     const displaced = [];
@@ -1644,12 +1797,14 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
     };
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
+        await slice();
         // Before the baseline rule removes any: a companion it kept as this
         // device's is not one the download lacked
         const carried = new Set(Object.keys(entries));
         let local;
         try {
             local = await storage.getAll(storeName);
+            await slice();
         } catch (error) {
             // The baseline rule always needed this read; only the comparison is optional
             if (baseline) throw error;
@@ -1672,6 +1827,7 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
         if (baseline) {
             for (const key of Object.keys(entries)) {
                 if (!isWholeKey(storeName, key) || !Object.hasOwn(local || {}, key)) continue;
+                await slice();
                 if (
                     keepMine(baselineId(storeName, key), local[key], entries[key], baseline, {
                         allowRestored: true,
@@ -1688,15 +1844,18 @@ async function weighAgainstLocal(payload, baseline, foldsSame = new Set()) {
             dropOutsideIndex(storeName, entries, localValues);
         }
         if (!local || typeof local !== 'object' || Array.isArray(entries)) continue;
-        const same = new Set(
-            Object.keys(entries).filter(
-                (key) =>
-                    foldsSame.has(baselineId(storeName, key)) ||
-                    (Object.hasOwn(local, key) &&
-                        stableStringify(comparableLocalValue(storeName, key, local[key])) ===
-                            stableStringify(entries[key]))
-            )
-        );
+        const same = new Set();
+        for (const key of Object.keys(entries)) {
+            if (foldsSame.has(baselineId(storeName, key))) {
+                same.add(key);
+                continue;
+            }
+            if (!Object.hasOwn(local, key)) continue;
+            await slice();
+            if (stableStringify(comparableLocalValue(storeName, key, local[key])) === stableStringify(entries[key])) {
+                same.add(key);
+            }
+        }
         for (const key of Object.keys(entries)) {
             const companion = tombstoneCompanionKey(storeName, key);
             if (!companion) continue;
@@ -1854,9 +2013,36 @@ function cleaningRemoved(entries, cleaned) {
  *   nothing)
  * @throws {Error} When the gist's payload is not one this build can apply
  */
-export function mergeForUpload(localText, remoteText, baseline, { revisionFold = false, scope = null } = {}) {
+export function mergeForUpload(localText, remoteText, baseline, options = {}) {
+    return runSteps(mergeForUploadSteps(localText, remoteText, baseline, options));
+}
+
+/**
+ * {@link mergeForUpload}, handing the page a frame between keys: the same result.
+ * @param {string} localText - This device's payload
+ * @param {string} remoteText - The gist's payload
+ * @param {Record<string, *>|null} baseline - Hashes at the last exchange
+ * @param {{revisionFold?: boolean, scope?: string|null}} [options] - As for `mergeForUpload`
+ * @returns {Promise<{text: string, remoteAdds: boolean, dropsFromRemote: boolean}>} As `mergeForUpload` answers
+ */
+export function mergeForUploadSliced(localText, remoteText, baseline, options = {}) {
+    return runStepsSliced(mergeForUploadSteps(localText, remoteText, baseline, options));
+}
+
+/**
+ * The body of {@link mergeForUpload}, yielding between units of work.
+ * @param {string} localText - This device's payload
+ * @param {string} remoteText - The gist's payload
+ * @param {Record<string, *>|null} baseline - Hashes at the last exchange
+ * @param {{revisionFold?: boolean, scope?: string|null}} [options] - As for `mergeForUpload`
+ * @returns {Generator<void, {text: string, remoteAdds: boolean, dropsFromRemote: boolean}>} Steps; returns the
+ *   result
+ */
+function* mergeForUploadSteps(localText, remoteText, baseline, { revisionFold = false, scope = null } = {}) {
     const local = JSON.parse(localText);
+    yield;
     const remote = JSON.parse(remoteText);
+    yield;
     // Every prefix either side knows another script registered is carried, so
     // the gist's copies of those keys survive an upload from a device that has
     // never run that script (the registry is written back with the result)
@@ -1913,6 +2099,7 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
                 out[key] = value;
                 continue;
             }
+            yield;
             if (storeName === SETTINGS_STORE && key.startsWith(SETTING_STAMPS_PREFIX)) continue;
             if (storeName === SETTINGS_STORE && key.startsWith('script_settingsMap')) {
                 const stampKey = `${SETTING_STAMPS_PREFIX}${key}`;
@@ -1980,6 +2167,7 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
             delete out[key];
         }
         stores[storeName] = out;
+        yield;
     }
 
     const externalKeys = externalKeyRecord();
@@ -1998,7 +2186,9 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
     // and asked for a reload over nothing.
     // Asked the way a local apply would fold, retention and all: entries this
     // device's own cap would drop on arrival are not news it can take
-    return { text, remoteAdds: addsToRemote(text, localText, { forUpload: false }), dropsFromRemote };
+    yield;
+    const remoteAdds = yield* addsToRemoteSteps(text, localText, { forUpload: false });
+    return { text, remoteAdds, dropsFromRemote };
 }
 
 /**
@@ -2032,15 +2222,40 @@ export function mergeForUpload(localText, remoteText, baseline, { revisionFold =
  *   would change anything
  * @returns {boolean} True when pushing would change what the gist holds
  */
-export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
+export function addsToRemote(localText, remoteText, options = {}) {
+    return runSteps(addsToRemoteSteps(localText, remoteText, options));
+}
+
+/**
+ * {@link addsToRemote}, handing the page a frame between keys: the same answer, for a caller on the page's
+ * thread with a whole gist to weigh.
+ * @param {string} localText - This device's payload
+ * @param {string} remoteText - The gist's payload
+ * @param {{forUpload?: boolean}} [options] - As for `addsToRemote`
+ * @returns {Promise<boolean>} True when pushing would change what the gist holds
+ */
+export function addsToRemoteSliced(localText, remoteText, options = {}) {
+    return runStepsSliced(addsToRemoteSteps(localText, remoteText, options));
+}
+
+/**
+ * The body of {@link addsToRemote}, yielding between units of work.
+ * @param {string} localText - This device's payload
+ * @param {string} remoteText - The gist's payload
+ * @param {{forUpload?: boolean}} [options] - As for `addsToRemote`
+ * @returns {Generator<void, boolean>} Steps; returns the answer
+ */
+function* addsToRemoteSteps(localText, remoteText, { forUpload = true } = {}) {
     let local;
     let remote;
     try {
         local = JSON.parse(localText)?.stores || {};
+        yield;
         remote = JSON.parse(remoteText)?.stores || {};
     } catch {
         return true;
     }
+    yield;
     for (const [storeName, entries] of Object.entries(local)) {
         const theirs = remote[storeName] && typeof remote[storeName] === 'object' ? remote[storeName] : {};
         // A key outside its owner's retention window, over both sides' keys, is
@@ -2051,6 +2266,7 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
         for (const [key, value] of Object.entries(entries || {})) {
             if (outside.has(key)) continue;
             if (!Object.hasOwn(theirs, key)) return true;
+            yield;
             const registration = mergeForKey(storeName, key);
             let folded = value;
             if (registration) {
@@ -2064,6 +2280,8 @@ export function addsToRemote(localText, remoteText, { forUpload = true } = {}) {
                     folded = value;
                 }
             }
+            // A fold that handed back the gist's own copy changed nothing in it
+            if (folded === theirs[key]) continue;
             if (stableStringify(folded) !== stableStringify(theirs[key])) return true;
         }
     }

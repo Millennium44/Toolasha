@@ -78,45 +78,56 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 }));
 
 const applies = vi.hoisted(() => ({ complete: true, texts: [] }));
-vi.mock('./sync-payload.js', () => ({
-    resetLeftOutLogForTests: () => {},
-    retryPendingDisplacedDeletes: async () => 0,
-    // Read by the write counter in sync-dirty.js, which this storage fake never feeds
-    payloadCarriesKey: () => true,
-    buildPayloadJSON: async () => world.content,
-    applyPayload: async (json) => {
-        applies.texts.push(json);
-        // A pull that lands makes this device's data the payload's data, which
-        // is what stops the very next rebuild reading as "changed here"
-        if (applies.complete !== false) world.content = json;
-        return {
-            restored: {},
-            failed: applies.complete === false ? [{ store: 'settings' }] : [],
-            complete: applies.complete !== false,
-            merged: [],
-            mergeFailed: [],
-            mergeHeld: [],
-            exportedAt: null,
-            applied: json,
-        };
-    },
-    contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
-    hashPayload: (text) => `raw:${text}`,
-    // The real one folds by registered merge; these payloads are opaque text
-    addsToRemote: (local, remote) => local !== remote,
-    // Opaque payload text here: the merged upload is the two texts side by side
-    mergeForUpload: (local, remote) => ({ text: `${remote}+${local}`, remoteAdds: local !== remote }),
-    restampRestoredSettings: () => {},
-    assertExternalKeysSaved: async () => {},
-    learnExternalKeysFromText: () => false,
-    RESTORED_BASELINE: '\u0000restoredAt',
-    exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
-    // Opaque payloads hold no registered history to cut
-    registeredKeysDiverge: () => false,
-    pushTrimsRegisteredKeys: () => false,
-    trimmedRegisteredKeys: () => [],
-    wholeKeyHashes: () => ({}),
+// The sliced variants answer as the plain ones do; these fakes hold no work worth slicing
+const withSlicedPayload = vi.hoisted(() => (mod) => ({
+    ...mod,
+    addsToRemoteSliced: async (...args) => mod.addsToRemote(...args),
+    mergeForUploadSliced: async (...args) => mod.mergeForUpload(...args),
+    wholeKeyHashesSliced: async (...args) => mod.wholeKeyHashes(...args),
+    exchangeBaselineSliced: async (...args) => mod.exchangeBaseline(...args),
 }));
+vi.mock('./sync-payload.js', () => {
+    const mod = {
+        resetLeftOutLogForTests: () => {},
+        retryPendingDisplacedDeletes: async () => 0,
+        // Read by the write counter in sync-dirty.js, which this storage fake never feeds
+        payloadCarriesKey: () => true,
+        buildPayloadJSON: async () => world.content,
+        applyPayload: async (json) => {
+            applies.texts.push(json);
+            // A pull that lands makes this device's data the payload's data, which
+            // is what stops the very next rebuild reading as "changed here"
+            if (applies.complete !== false) world.content = json;
+            return {
+                restored: {},
+                failed: applies.complete === false ? [{ store: 'settings' }] : [],
+                complete: applies.complete !== false,
+                merged: [],
+                mergeFailed: [],
+                mergeHeld: [],
+                exportedAt: null,
+                applied: json,
+            };
+        },
+        contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
+        hashPayload: (text) => `raw:${text}`,
+        // The real one folds by registered merge; these payloads are opaque text
+        addsToRemote: (local, remote) => local !== remote,
+        // Opaque payload text here: the merged upload is the two texts side by side
+        mergeForUpload: (local, remote) => ({ text: `${remote}+${local}`, remoteAdds: local !== remote }),
+        restampRestoredSettings: () => {},
+        assertExternalKeysSaved: async () => {},
+        learnExternalKeysFromText: () => false,
+        RESTORED_BASELINE: '\u0000restoredAt',
+        exchangeBaseline: (uploaded, local) => ({ uploaded, local }),
+        // Opaque payloads hold no registered history to cut
+        registeredKeysDiverge: () => false,
+        pushTrimsRegisteredKeys: () => false,
+        trimmedRegisteredKeys: () => [],
+        wholeKeyHashes: () => ({}),
+    };
+    return withSlicedPayload(mod);
+});
 
 // Sync in the clear, so the gist's payload here is the payload text itself and
 // a test can say what an older build would read out of it

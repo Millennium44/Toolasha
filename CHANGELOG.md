@@ -26,6 +26,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Audit fixes before release
 
+- A sync pull of a large Gist no longer freezes the page: it reads in batches and yields to the browser between steps, and a takeover while it is finishing leaves the pull marked for a retry.
 - Enhancer achievements now give Iron Cow characters a route: the owned piece needing the fewest attempts (with attempts, protections and missing materials), else the cheapest qualifying piece to craft.
 - Party finder: a Ranged (sundering crossbow) template, every teammate and template assumed to share your game mode (the game only parties within a mode), a compact "Match my build" score line that also says when a template cannot reach your build, and a Score column blending EXP/hr with Profit/hr at a weight you set.
 - Party finder templates are now eight anonymized live endgame builds (smash, spear, slash, cursed bow, nature, fire, water, bulwark tank) at standardized levels, and a "Match my build" option tunes each one to your combat levels and build score.

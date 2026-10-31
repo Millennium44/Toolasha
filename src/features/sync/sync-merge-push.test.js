@@ -73,6 +73,8 @@ vi.mock('../../core/storage.js', () => {
 });
 
 vi.mock('../../core/settings-storage.js', () => ({ default: { reconcileKeyMigrationState: async () => {} } }));
+// The pull's frames are macrotasks, which these tests' fake timers would never run
+vi.mock('../../utils/yield-to-browser.js', () => ({ yieldToBrowser: async () => {} }));
 vi.mock('../../utils/persisted-record.js', () => ({ flushPersistedRecords: async () => {} }));
 
 const toasts = vi.hoisted(() => []);

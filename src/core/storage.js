@@ -1368,6 +1368,74 @@ class Storage {
     }
 
     /**
+     * `tryGet` for several keys of one store, on one readonly transaction.
+     *
+     * All or nothing: when any read fails, or the transaction aborts, the answer is `null` and not a
+     * partial map, so a caller that must tell "absent" from "unreadable" per key re-reads them one by
+     * one (`tryGet`) and learns exactly which.
+     * @param {Array<string>} keys - Storage keys
+     * @param {string} storeName - Object store name (default: 'settings')
+     * @returns {Promise<Map<string, {found: boolean, value: *}>|null>} key → read, or null when the batch could
+     *   not be trusted
+     */
+    async tryGetMany(keys, storeName = 'settings') {
+        if (keys.length === 0) return new Map();
+        if (!this.db && !(await this._awaitConnection())) {
+            console.warn(`[Storage] Database not available, cannot read ${keys.length} keys in ${storeName}`);
+            return null;
+        }
+
+        return this._guardedRead('tryGetMany', `${keys.length} keys`, storeName, null, () =>
+            this._runTryGetMany(keys, storeName)
+        );
+    }
+
+    /**
+     * The body of `tryGetMany` — one transaction carrying every key.
+     * @param {Array<string>} keys - Storage keys
+     * @param {string} storeName - Object store name
+     * @returns {Promise<Map<string, {found: boolean, value: *}>|null>} The reads, or null when any failed
+     * @private
+     */
+    _runTryGetMany(keys, storeName) {
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                resolve(value);
+            };
+            try {
+                const transaction = this.db.transaction([storeName], 'readonly');
+                const store = transaction.objectStore(storeName);
+                const result = new Map();
+                const pending = { count: keys.length };
+                transaction.onabort = () => {
+                    console.warn(`[Storage] tryGetMany transaction aborted for ${storeName}:`, transaction.error);
+                    finish(null);
+                };
+                transaction.onerror = () => finish(null);
+                for (const key of keys) {
+                    const request = store.get(key);
+                    request.onsuccess = () => {
+                        const value = request.result;
+                        result.set(key, value != null ? { found: true, value } : { found: false, value: null });
+                        pending.count -= 1;
+                        if (pending.count === 0) finish(result);
+                    };
+                    request.onerror = () => {
+                        console.error(`[Storage] Failed to read key ${key}:`, request.error);
+                        finish(null);
+                    };
+                }
+            } catch (error) {
+                console.error(`[Storage] tryGetMany transaction failed for ${storeName}:`, error);
+                finish(isConnectionGone(error) ? READ_WEDGED : null);
+            }
+        });
+    }
+
+    /**
      * Set a value in storage (debounced by default)
      * @param {string} key - Storage key
      * @param {*} value - Value to store
