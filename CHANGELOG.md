@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### October 31 audit fixes: valuation, planner and guild trials
+
+- Gold Sources no longer overstates alchemy profit on bulk transmutes and coinifies: each attempt is now charged for every copy it consumes.
+- The inventory craft-cost badge uses your real Artisan bonus instead of a flat 10%, and draws no badge when an input has no price rather than a cost too low.
+- House costs, guild credit exchange tables and profile scores price purchases with your buy-side price override, not the sell one.
+- A protection or catalyst with only a partial price is no longer treated as a firm cost in Risk of Ruin, XP/hr rows and Gold Sources.
+- Refined cape enhancing costs and net worth now compare mirror routes with the plain-copy price in place, so the cheaper route is picked.
+- The shrine "spend everything" plan keeps looking for a later affordable buy after one becomes unaffordable.
+- The Goal Planner keeps a fully stocked house goal's materials reserved until it is built, charges the enhancing tea bill, and counts the Artisan and tea level bonus when checking a crafted prerequisite.
+- Alchemy achievement rows gate on the action's level, not the item's, and achievement hints refresh after a reconnect.
+- The live guild trial estimate leaves out members signed up for another trial this week, and a fresher login snapshot replaces an older trial reading.
+- On the test server a completed skilling trial marker expires at the daily cycle.
+
 ### Saved loadouts in the Metz simulator export
 
 - Your saved combat loadouts now travel with the Metz simulator export, so its loadout picker can switch between them (from upstream); written only when a loadout changes.
