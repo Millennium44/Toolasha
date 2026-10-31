@@ -44,9 +44,6 @@ const {
     MAX_AURA_OPTIONS,
     TOMBSTONE_MAX_AGE_MS,
     mergeRoster,
-    partyModeOf,
-    teammateModeOf,
-    teammateModeFit,
 } = await import('./party-roster.js');
 const { isLiveSafeKey, mergeForKey } = await import('../../utils/sync-merge-registry.js');
 
@@ -377,24 +374,11 @@ describe('teammate game mode', () => {
         expect(roster.entries.map((e) => e.gameMode)).toEqual(['ironcow', null]);
         const old = normalizeRoster({ entries: [{ id: 'x', name: 'Old', dto: dto(), updatedAt: 1 }] });
         expect(old.entries[0].gameMode).toBeNull();
-        expect(teammateModeOf(old.entries[0])).toBeNull();
-        expect(teammateModeFit(old.entries[0], 'market')).toBe('unknown');
     });
 
     test('a build that carries its own mode supplies it', async () => {
         const { roster } = await addTeammates([{ name: 'Cow', dto: dto({ gameMode: 'legacy_ironcow' }) }]);
         expect(roster.entries[0].gameMode).toBe('legacy_ironcow');
-        expect(teammateModeOf({ dto: { gameMode: 'standard' } })).toBe('market');
-    });
-
-    test('maps modes to party pools', () => {
-        expect(partyModeOf('standard')).toBe('market');
-        expect(partyModeOf('ironcow')).toBe('ironcow');
-        expect(partyModeOf('legacy_ironcow')).toBe('ironcow');
-        expect(partyModeOf(undefined)).toBeNull();
-        expect(partyModeOf('')).toBeNull();
-        expect(teammateModeFit({ gameMode: 'ironcow' }, 'market')).toBe('mismatch');
-        expect(teammateModeFit({ gameMode: 'ironcow' }, null)).toBe('match');
     });
 
     test('replacing a build keeps the saved mode unless the new one says otherwise', async () => {

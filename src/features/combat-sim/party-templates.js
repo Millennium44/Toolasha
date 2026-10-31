@@ -1,7 +1,7 @@
 /**
  * Ready-made teammate builds the Party tab offers beside the player's saved builds. They ship with the script, are
  * read-only and are never written to the roster record; adding one copies it into the roster as an ordinary teammate.
- * They carry no game mode, so they fit either a market or an Iron Cow party.
+ * They carry no game mode: like every teammate they are taken to be of the searching character's own mode.
  *
  * The builds are standard endgame setups: items, consumables, abilities, triggers, house rooms and guild shrine levels
  * as recorded, with levels standardized so the styles compare fairly (main stat 150, other stats 125, abilities 75,

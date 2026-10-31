@@ -564,62 +564,44 @@ describe('party game mode', () => {
     const cow = (id, name) => ({ ...mate(id, name, power(id)), gameMode: 'ironcow' });
     const labels = (plan) => plan.tasks.map((t) => partyLabel(t.comp));
 
-    test('a market character never gets an Iron Cow teammate', () => {
-        const plan = planSweep({ zones: [ZONE], roster: [market('a', 'Ann'), cow('b', 'Bob')], selfMode: 'market' });
-        expect(plan.total).toBe(2);
-        expect(labels(plan).join('|')).not.toContain('Bob');
-        expect(plan.excluded.map((e) => e.name)).toEqual(['Bob']);
-        expect(plan.excluded[0].reason).toContain('Iron Cow');
-    });
-
-    test('an Iron Cow never gets a market teammate, legacy Iron Cows count as Iron Cows', () => {
-        const roster = [
-            market('a', 'Ann'),
-            cow('b', 'Bob'),
-            { ...mate('c', 'Cy', power('c')), gameMode: 'legacy_ironcow' },
-        ];
-        const plan = planSweep({ zones: [ZONE], roster, selfMode: 'ironcow' });
-        expect(plan.excluded.map((e) => e.name)).toEqual(['Ann']);
-        expect(plan.total).toBe(4);
-    });
-
-    test('a mode carried by the build counts as much as one saved beside it', () => {
-        const roster = [mate('a', 'Ann', { ...dto(), gameMode: 'ironcow' })];
-        expect(planSweep({ zones: [ZONE], roster, selfMode: 'market' }).excluded).toHaveLength(1);
-    });
-
-    test('a teammate whose mode is unknown stays in, with a note', () => {
+    test("every teammate is assumed to be of the searcher's mode: a mixed roster is searched whole", () => {
         const plan = planSweep({
             zones: [ZONE],
-            roster: [mate('a', 'Ann', power('a')), cow('b', 'Bob')],
-            selfMode: 'market',
+            roster: [
+                market('a', 'Ann'),
+                cow('b', 'Bob'),
+                { ...mate('c', 'Cy', power('c')), gameMode: 'legacy_ironcow' },
+                mate('d', 'Di', { ...power('d'), gameMode: 'ironcow' }),
+                mate('e', 'Ed', power('e')),
+            ],
         });
-        expect(plan.total).toBe(2);
-        expect(plan.notes.join(' ')).toContain('Ann: game mode unknown');
-    });
-
-    test('an unknown live mode excludes no one and notes nothing', () => {
-        const plan = planSweep({ zones: [ZONE], roster: [market('a', 'Ann'), cow('b', 'Bob')], selfMode: null });
-        expect(plan.excluded).toEqual([]);
-        expect(plan.total).toBe(4);
+        expect(plan).not.toHaveProperty('excluded');
         expect(plan.notes).toEqual([]);
+        expect(labels(plan).join('|')).toContain('Bob');
+        expect(labels(plan).join('|')).toContain('Cy');
+        // Same count as the identical roster with no mode stored anywhere
+        const bare = planSweep({
+            zones: [ZONE],
+            roster: ['a', 'b', 'c', 'd', 'e'].map((id) => mate(id, id, power(id))),
+        });
+        expect(plan.total).toBe(bare.total);
     });
 
-    test('an excluded teammate stays out even when set to Always', () => {
+    test('an Always teammate of any stored mode is in every party', () => {
         const plan = planSweep({
             zones: [ZONE],
             roster: [market('a', 'Ann'), cow('b', 'Bob')],
             choices: { b: 'always' },
-            selfMode: 'market',
         });
-        expect(plan.total).toBe(2);
+        // Solo, Bob, Ann + Bob
+        expect(plan.total).toBe(3);
         expect(plan.perZone[0].note).toBeNull();
     });
 
-    test('every teammate of the other mode leaves the no-teammates-of-this-mode state', () => {
-        const plan = planSweep({ zones: [ZONE], roster: [cow('a', 'Ann'), cow('b', 'Bob')], selfMode: 'market' });
-        expect(plan.total).toBe(0);
-        expect(plan.perZone[0].note).toBe("no teammates of this character's mode");
+    test('narrowRoster no longer reports excluded teammates', () => {
+        const out = narrowRoster([market('a', 'Ann'), cow('b', 'Bob')], {}, null);
+        expect(out.pool.map((t) => t.name)).toEqual(['Ann', 'Bob']);
+        expect(out).not.toHaveProperty('excluded');
     });
 });
 
@@ -774,12 +756,8 @@ describe('your own auras', () => {
     });
 
     test('with no teammate that can join, your aura solo rows are still planned beside the baseline', () => {
-        const ironCow = { ...mate('a', 'Ann', dto(81)), gameMode: 'ironcow' };
-        for (const [roster, selfMode] of [
-            [[], null],
-            [[ironCow], 'market'],
-        ]) {
-            const plan = planSweep({ zones: [ZONE], roster, gameData, selfMode, selfAuras: owned, selfDto: dto(90) });
+        for (const roster of [[]]) {
+            const plan = planSweep({ zones: [ZONE], roster, gameData, selfAuras: owned, selfDto: dto(90) });
             expect(plan.tasks.map((t) => partyLabel(t.comp))).toEqual([
                 'Solo',
                 'Solo (you: Fierce Aura 20)',

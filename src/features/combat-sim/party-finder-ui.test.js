@@ -946,7 +946,7 @@ describe('teammates of the other game mode', () => {
     const planText = () => el('plan').textContent;
     const member = (id) => tab.root.querySelector(`[data-pf-member="${id}"]`);
 
-    test('a market character searches without its Iron Cow teammates, who show greyed with the reason', async () => {
+    test('a stored mode never leaves a teammate out: a market character keeps its Iron Cow teammate', async () => {
         state.gameMode = 'standard';
         seedRoster([
             ['a', 'Ann', build(80), 'standard'],
@@ -954,49 +954,42 @@ describe('teammates of the other game mode', () => {
             ['c', 'Cy', build(82)],
         ]);
         await mountTab();
-        expect(member('b').textContent).toContain("Iron Cow — can't party with a market character");
-        expect(member('b').querySelector('[data-pf-choice]').disabled).toBe(true);
-        expect(member('a').querySelector('[data-pf-choice]').disabled).toBe(false);
-        expect(member('c').textContent).toContain('game mode unknown');
-        expect(planText()).toContain('Left out, other game mode: Bob');
-        // Bob out leaves solo, Ann, Cy and both per zone/tier; with him in it would be more
+        expect(member('b').textContent).not.toMatch(/can't party|game mode unknown/);
+        expect(member('c').textContent).not.toMatch(/can't party|game mode unknown/);
+        expect(member('b').querySelector('[data-pf-choice]').disabled).toBe(false);
+        expect(member('b').hasAttribute('data-pf-excluded')).toBe(false);
+        expect(planText()).not.toMatch(/other game mode|game mode unknown/);
         const withBob = Number(/^(\d+) quick sim/.exec(planText())[1]);
+        // The same plan with the live mode unknown, or the other one: nobody is filtered either way
         state.gameMode = undefined;
         tab._renderRoster();
-        expect(Number(/^(\d+) quick sim/.exec(planText())[1])).toBeGreaterThan(withBob);
-    });
-
-    test('an Iron Cow searches without its market teammates', async () => {
+        expect(Number(/^(\d+) quick sim/.exec(planText())[1])).toBe(withBob);
         state.gameMode = 'legacy_ironcow';
-        seedRoster([
-            ['a', 'Ann', build(80), 'standard'],
-            ['b', 'Bob', build(81), 'ironcow'],
-        ]);
-        await mountTab();
-        expect(member('a').textContent).toContain("market character — can't party with an Iron Cow");
-        expect(member('b').textContent).not.toContain("can't party");
-        expect(planText()).toContain('Left out, other game mode: Ann');
+        tab._renderRoster();
+        expect(Number(/^(\d+) quick sim/.exec(planText())[1])).toBe(withBob);
     });
 
-    test('when every teammate is of the other mode, the plan and the status say so', async () => {
+    test('when every stored teammate is of the other mode, the search still runs with them', async () => {
         state.gameMode = 'standard';
         seedRoster([
             ['a', 'Ann', build(80), 'ironcow'],
             ['b', 'Bob', build(81), 'ironcow'],
         ]);
         await mountTab();
-        expect(planText()).toContain("No teammates of this character's mode");
-        await tab.start();
+        expect(planText()).not.toContain("No teammates of this character's mode");
+        tab.start();
         await flush();
-        expect(lastStatus()).toContain("No teammates of this character's mode");
-        expect(state.calls).toHaveLength(0);
+        expect(lastStatus()).not.toContain("No teammates of this character's mode");
+        expect(tab._running).toBe(true);
     });
 
-    test('an unknown live mode excludes nobody', async () => {
-        seedRoster([['a', 'Ann', build(80), 'ironcow']]);
+    test("planned teammates take the live character's mode, whatever they were saved with", async () => {
+        state.gameMode = 'ironcow';
+        seedRoster([['a', 'Ann', build(80), 'standard']]);
         await mountTab();
-        expect(member('a').textContent).not.toContain("can't party");
-        expect(planText()).not.toContain('other game mode');
+        expect(tab._planRoster(null).roster[0].dto.gameMode).toBe('ironcow');
+        state.gameMode = undefined;
+        expect(tab._planRoster(null).roster[0].dto).not.toHaveProperty('gameMode');
     });
 
     test('copying your own build saves the live mode with it', async () => {
@@ -1006,7 +999,7 @@ describe('teammates of the other game mode', () => {
         expect(tab._roster.entries[0].gameMode).toBe('ironcow');
     });
 
-    test('a party loaded into the editor carries each teammate mode with their build', async () => {
+    test("a party loaded into the editor carries the live character's mode on each teammate", async () => {
         state.gameMode = 'ironcow';
         seedRoster([
             ['a', 'Ann', build(80), 'ironcow'],
@@ -1020,8 +1013,8 @@ describe('teammates of the other game mode', () => {
         const both = tab.sortedRows().find((r) => r.comp.members.length === 2);
         tab.root.querySelector(`[data-pf-load="${both.id}"]`).click();
         const [party] = host._editor.loadParty.mock.calls[0];
-        // Ann's mode was on her entry alone; Bob's build already said his own
-        expect(party.slice(1).map((p) => p.gameMode)).toEqual(['ironcow', 'legacy_ironcow']);
+        // Ann's stored mode and Bob's own build mode are both ignored: everyone is the live character's
+        expect(party.slice(1).map((p) => p.gameMode)).toEqual(['ironcow', 'ironcow']);
         // You are the live character, whose mode the live sync knows; nothing is stamped on you
         expect(party[0].gameMode).toBeUndefined();
     });
@@ -1046,9 +1039,10 @@ describe('teammates of the other game mode', () => {
         el('add-editor').click();
         await flush();
         expect(state.db.entries.map((e) => e.gameMode)).toEqual(['ironcow', 'ironcow']);
+        // Stored modes stay on the entries, but a market character still searches with both
         state.gameMode = 'standard';
         tab._renderRoster();
-        expect(planText()).toContain("No teammates of this character's mode");
+        expect(planText()).not.toContain('other game mode');
     });
 });
 
@@ -1641,7 +1635,7 @@ describe('saved builds', () => {
             { abilityHrid: '/abilities/fierce_aura', level: 20 },
             { abilityHrid: '/abilities/mystic_aura', level: 7 },
         ];
-        seedRoster([['a', 'Ann', build(80), 'ironcow']]);
+        seedRoster([]);
         state.gameMode = 'standard';
         await mountTab();
         el('self-auras').checked = true;

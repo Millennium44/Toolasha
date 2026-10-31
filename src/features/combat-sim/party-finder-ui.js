@@ -51,10 +51,6 @@ import {
     setTeammateAuras,
     normalizeAuraOptions,
     MAX_AURA_OPTIONS,
-    partyModeOf,
-    teammateModeOf,
-    teammateModeFit,
-    modeMismatchReason,
     buildFingerprint,
 } from './party-roster.js';
 import { tuneTemplate, clearTunerCache } from './party-template-tuner.js';
@@ -610,7 +606,6 @@ export class PartyFinderTab {
             list.appendChild(empty);
         }
         const names = displayNames(entries);
-        const selfMode = this._selfMode();
         for (const entry of entries) {
             const row = document.createElement('div');
             row.dataset.pfMember = entry.id;
@@ -621,20 +616,6 @@ export class PartyFinderTab {
             name.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
             name.textContent = names.get(entry.id);
             name.title = `Saved from ${entry.source}`;
-            const fit = teammateModeFit(entry, selfMode);
-            let modeTag = null;
-            if (fit === 'mismatch' || (fit === 'unknown' && selfMode)) {
-                modeTag = document.createElement('span');
-                modeTag.dataset.pfModeNote = fit;
-                modeTag.style.cssText = 'font-size:10px; color:#ff9800; white-space:nowrap;';
-                modeTag.textContent =
-                    fit === 'mismatch' ? modeMismatchReason(teammateModeOf(entry)) : 'game mode unknown, kept';
-                if (fit === 'mismatch') {
-                    row.dataset.pfExcluded = '';
-                    name.style.opacity = '0.45';
-                    modeTag.style.color = '#888';
-                }
-            }
 
             const choice = document.createElement('select');
             choice.className = 'toolasha-select';
@@ -652,10 +633,6 @@ export class PartyFinderTab {
                 choice.appendChild(option);
             }
             choice.value = this._choices[entry.id] || 'try';
-            if (fit === 'mismatch') {
-                choice.disabled = true;
-                choice.style.opacity = '0.45';
-            }
             choice.addEventListener('change', () => {
                 this._choices[entry.id] = choice.value;
                 this._renderPlan();
@@ -673,7 +650,6 @@ export class PartyFinderTab {
             const auraCount = entry.auras?.length || 0;
             row.append(
                 name,
-                ...(modeTag ? [modeTag] : []),
                 choice,
                 button(auraCount ? `Auras (${auraCount})` : 'Auras', 'Aura options to try this teammate with', () => {
                     this._auraOpen = this._auraOpen === entry.id ? null : entry.id;
@@ -785,7 +761,6 @@ export class PartyFinderTab {
             this._rosterNote('Still matching a template to your build. One moment.');
             return;
         }
-        // No game mode: a template fits a market party and an Iron Cow one alike
         let dto = structuredClone(template.playerDto);
         let tuned = null;
         if (this._matchBuild) {
@@ -1286,10 +1261,8 @@ export class PartyFinderTab {
         }
         if (!editor.isInitialized?.()) editor.resetToSelf?.();
         const dto = structuredClone(entry.dto);
-        // A mode saved on the entry alone (a copy of your own build) rides with the build, so saving it back as a new
-        // teammate, or simming it as "you", still knows which characters it can party with
-        if (!dto.gameMode && entry.gameMode) dto.gameMode = entry.gameMode;
-        editor.importPlayers([dto], [entry.name]);
+        // Taken to be of the live character's mode, whatever was saved with it
+        editor.importPlayers([this._withAssumedMode(dto)], [entry.name]);
         this._rosterNote(`${entry.name} is in the editor. Change them there, then save back here with "replacing".`);
         this.host._switchTab?.('configure');
     }
@@ -1482,20 +1455,29 @@ export class PartyFinderTab {
     }
 
     /**
-     * The party pool of the character the search is for: the live character's game mode, or for another player
-     * loaded in the editor and picked as "you" the one their build carries. Read from the picker, without building
-     * a DTO.
-     * @returns {'market'|'ironcow'|null} null when not known (no teammate is excluded)
+     * The game mode every teammate and template is taken to have: the live character's own. The game parties only
+     * characters of one mode, so a teammate's stored mode is never read to include or leave anyone out or to price
+     * them.
+     * @returns {string|undefined}
      * @private
      */
-    _selfMode() {
-        const choice = this._el('self')?.value || 'live';
-        if (choice.startsWith('editor:')) {
-            const hrid = choice.slice('editor:'.length);
-            const player = this._editorPlayers().find((p) => p.hrid === hrid);
-            if (player && hrid !== this.host?._editor?.getSelfHrid?.()) return partyModeOf(player.dto?.gameMode);
-        }
-        return partyModeOf(dataManager.getCurrentCharacterGameMode?.());
+    _assumedMode() {
+        return dataManager.getCurrentCharacterGameMode?.() || undefined;
+    }
+
+    /**
+     * A copy of a teammate's build carrying the assumed game mode in place of any other it came with, so whatever
+     * prices or taxes them later reads the live character's mode.
+     * @param {Object} dto
+     * @returns {Object}
+     * @private
+     */
+    _withAssumedMode(dto) {
+        const copy = { ...dto };
+        const mode = this._assumedMode();
+        if (mode) copy.gameMode = mode;
+        else delete copy.gameMode;
+        return copy;
     }
 
     /**
@@ -1692,9 +1674,8 @@ export class PartyFinderTab {
                 skipped.push(`${names.get(entry.id)} (unknown ${unknown.slice(0, 2).join(', ')})`);
                 continue;
             }
-            // A mode saved on the entry alone rides with the build, so a party loaded into the editor (and saved
-            // back from there) still knows who each teammate can party with
-            const dto = !entry.dto?.gameMode && entry.gameMode ? { ...entry.dto, gameMode: entry.gameMode } : entry.dto;
+            // Every teammate is taken to be of the live character's game mode, whatever was saved with them
+            const dto = this._withAssumedMode(entry.dto);
             roster.push({ ...entry, name: names.get(entry.id), dto });
         }
         return { roster, skipped };
@@ -1716,7 +1697,6 @@ export class PartyFinderTab {
             choices: this._choices,
             maxPartySize: settings.maxPartySize,
             gameData,
-            selfMode: this._selfMode(),
             selfAuras: mine.auras,
             selfDto: mine.dto,
         });
@@ -1748,15 +1728,6 @@ export class PartyFinderTab {
             notes.push(
                 `${plan.total} quick sim${plan.total === 1 ? '' : 's'} at ${quickHours} h` +
                     (plan.rerunMax ? `, then up to ${plan.rerunMax} re-run at ${fullHours} h.` : '.')
-            );
-        }
-        if (plan.excluded?.length) {
-            const left = this._roster.entries.length - plan.skipped.length - plan.excluded.length;
-            notes.push(
-                left > 0
-                    ? `Left out, other game mode: ${plan.excluded.map((e) => e.name).join(', ')}.`
-                    : "No teammates of this character's mode: every saved teammate is of the other game mode " +
-                          '(market characters only party with market characters, Iron Cows with Iron Cows).'
             );
         }
         for (const zone of plan.perZone) {
@@ -1809,11 +1780,7 @@ export class PartyFinderTab {
             return;
         }
         if (!plan.total) {
-            this._status(
-                plan.excluded?.length && plan.excluded.length === this._roster.entries.length - plan.skipped.length
-                    ? "No teammates of this character's mode: every saved teammate is of the other game mode."
-                    : 'Nothing to run: no party fits these zones and choices.'
-            );
+            this._status('Nothing to run: no party fits these zones and choices.');
             this._renderPlan();
             return;
         }

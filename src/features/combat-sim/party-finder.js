@@ -24,7 +24,7 @@
 import { calculateSimRevenue, recomputeLevelGapDebuffs } from './combat-sim-adapter.js';
 import { capProfitRateCached } from '../../utils/liquidity-cap.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
-import { buildFingerprint, teammateModeFit, teammateModeOf, modeMismatchReason } from './party-roster.js';
+import { buildFingerprint } from './party-roster.js';
 
 /** Largest party the game lets into an ordinary combat zone */
 export const ZONE_MAX_PARTY = 3;
@@ -193,28 +193,19 @@ export function buildSelfVariants(options, selfDto, gameData) {
  * @param {Array<{id: string, name: string, dto: Object, auras?: Array, includeAsBuilt?: boolean}>} roster
  * @param {Object<string, 'try'|'always'|'never'>} [choices] - By teammate id; missing means 'try'
  * @param {Object|null} [gameData] - Judges aura options and names them
- * @param {'market'|'ironcow'|null} [selfMode] - The live character's party pool: market characters only party with
- *   market characters and Iron Cows with Iron Cows, so teammates of the other pool are excluded whatever their
- *   choice. A teammate whose mode is unknown stays in (with a note); null excludes no one.
  * @returns {{pool: Array<{id: string, name: string, variants: Array<Object>}>, mustInclude: Array<Object>,
- *   notes: Array<string>, excluded: Array<{id: string, name: string, reason: string}>}} `pool` holds every
- *   teammate that may be picked (the must-includes among them); `excluded` those of the other game mode
+ *   notes: Array<string>}} `pool` holds every teammate that may be picked (the must-includes among them). Every
+ *   teammate is taken to be of the searching character's own game mode (the game parties no other), so none is
+ *   left out for it.
  */
-export function narrowRoster(roster, choices = {}, gameData = null, selfMode = null) {
+export function narrowRoster(roster, choices = {}, gameData = null) {
     const pool = [];
     const mustInclude = [];
     const notes = [];
-    const excluded = [];
     const nameOf = (hrid) => gameData?.abilityDetailMap?.[hrid]?.name || hrid?.split('/').pop() || '';
     for (const entry of Array.isArray(roster) ? roster : []) {
-        const fit = teammateModeFit(entry, selfMode);
-        if (fit === 'mismatch') {
-            excluded.push({ id: entry.id, name: entry.name, reason: modeMismatchReason(teammateModeOf(entry)) });
-            continue;
-        }
         const choice = choices?.[entry.id] || 'try';
         if (choice === 'never') continue;
-        if (fit === 'unknown' && selfMode) notes.push(`${entry.name}: game mode unknown, kept in the search`);
         const options = Array.isArray(entry.auras) ? entry.auras : [];
         const variants = [];
         if (!options.length || entry.includeAsBuilt !== false) {
@@ -253,7 +244,7 @@ export function narrowRoster(roster, choices = {}, gameData = null, selfMode = n
         pool.push(teammate);
         if (choice === 'always') mustInclude.push(teammate);
     }
-    return { pool, mustInclude, notes, excluded };
+    return { pool, mustInclude, notes };
 }
 
 /**
@@ -347,14 +338,12 @@ export function enumerateCompositions(pool, mustInclude, maxMembers) {
  * @param {Object} [options.choices] - Include/exclude by teammate id
  * @param {number} [options.maxPartySize] - Largest party to try, you included; capped by each zone's own
  * @param {Object|null} [options.gameData] - Judges aura options
- * @param {'market'|'ironcow'|null} [options.selfMode] - The live character's party pool (see {@link narrowRoster})
  * @param {Array<{hrid: string, level: number}>} [options.selfAuras] - Auras YOU may wear: each adds a variant of
  *   you, tried solo and in every party, beside you as worn (see {@link buildSelfVariants})
  * @param {Object|null} [options.selfDto] - Your build, to tell which aura option is already worn
  * @returns {{tasks: Array<{zone: Object, zoneKey: string, comp: Object}>, perZone: Array<{zone: Object,
  *   zoneKey: string, count: number, note: string|null}>, total: number, refused: string|null,
- *   notes: Array<string>, excluded: Array<Object>}} `refused` explains a sweep too large to plan; `notes` names aura
- *   options left out; `excluded` the teammates of the other game mode
+ *   notes: Array<string>}} `refused` explains a sweep too large to plan; `notes` names aura options left out
  */
 export function planSweep({
     zones,
@@ -362,11 +351,10 @@ export function planSweep({
     choices = {},
     maxPartySize = DUNGEON_MAX_PARTY,
     gameData = null,
-    selfMode = null,
     selfAuras = [],
     selfDto = null,
 }) {
-    const { pool, mustInclude, notes, excluded } = narrowRoster(roster, choices, gameData, selfMode);
+    const { pool, mustInclude, notes } = narrowRoster(roster, choices, gameData);
     const self = buildSelfVariants(selfAuras, selfDto, gameData);
     notes.push(...self.notes);
     const selfVariants = self.variants;
@@ -397,7 +385,6 @@ export function planSweep({
             refused: tooManyText(bound),
             selfAuraCount: selfVariants.length - 1,
             notes,
-            excluded,
         };
     }
 
@@ -418,11 +405,7 @@ export function planSweep({
         const comps = compsByCap.get(entry.maxMembers);
         // With no teammate that may join, the baseline alone answers nothing
         if (comps.length === 1) {
-            entry.note = pool.length
-                ? 'no party fits the size limit'
-                : excluded.length && excluded.length === (Array.isArray(roster) ? roster.length : 0)
-                  ? "no teammates of this character's mode"
-                  : 'no teammates to try';
+            entry.note = pool.length ? 'no party fits the size limit' : 'no teammates to try';
             // Your aura variants alone are still answers: whether an aura helps you solo. The zone still runs
             // those, so the note must not read as if nothing runs here
             if (selfVariants.length === 1) continue;
@@ -457,7 +440,6 @@ export function planSweep({
         refused: tasks.length > MAX_QUICK_RUNS ? tooManyText(tasks.length) : null,
         selfAuraCount: selfVariants.length - 1,
         notes,
-        excluded,
     };
 }
 
