@@ -2,11 +2,12 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ actions: [], active: true }));
+const game = vi.hoisted(() => ({ actions: [], active: true, types: {} }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentActions: () => game.actions,
+        getActionDetails: (hrid) => (game.types[hrid] ? { type: game.types[hrid] } : null),
         isFromActiveSocket: (context) => (context?.socket === 'old' ? false : game.active),
     },
 }));
@@ -27,8 +28,15 @@ describe('which fight is on screen', () => {
 
     test('a Chinese labyrinth header counts, by the running action rather than the English word', () => {
         header('迷宫 - 独眼巨人 Lv.200');
-        game.actions = [action('/actions/combat/labyrinth/explore')];
+        game.actions = [action('/actions/labyrinth/explore')];
         expect(isLabyrinthFightActive()).toBe(true);
+    });
+
+    test('the lab is recognized by action type even when the hrid is unfamiliar', () => {
+        game.actions = [action('/actions/other/thing')];
+        game.types = { '/actions/other/thing': '/action_types/labyrinth' };
+        expect(isLabyrinthFightActive()).toBe(true);
+        game.types = {};
     });
 
     test('a zone fight under a labyrinth-looking header is not a labyrinth fight', () => {
@@ -38,10 +46,7 @@ describe('which fight is on screen', () => {
     });
 
     test('a queued zone behind the running labyrinth action does not decide it', () => {
-        game.actions = [
-            action('/actions/combat/fly', { id: 2, ordinal: 2 }),
-            action('/actions/combat/labyrinth/explore'),
-        ];
+        game.actions = [action('/actions/combat/fly', { id: 2, ordinal: 2 }), action('/actions/labyrinth/explore')];
         expect(isLabyrinthFightActive()).toBe(true);
     });
 
