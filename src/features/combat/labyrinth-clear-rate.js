@@ -1125,10 +1125,12 @@ class LabyrinthClearRate {
      *
      * @returns {number} Ratio, 0 when the buff is not running
      */
-    getCommunityExperienceBonus() {
+    getCommunityExperienceBonus(levelOverride = null) {
         const level = Math.max(
             0,
-            Math.floor(Number(dataManager.getCommunityBuffLevel?.('/community_buff_types/experience')) || 0)
+            Math.floor(
+                Number(levelOverride ?? dataManager.getCommunityBuffLevel?.('/community_buff_types/experience')) || 0
+            )
         );
         if (level <= 0) return 0;
 
@@ -1155,9 +1157,11 @@ class LabyrinthClearRate {
      *
      * @param {string[]|null} [crateHrids] - Crates to count instead of the ones equipped (a simulated
      *   context, such as Lab Sim's picks); null reads the live crates
+     * @param {number|null} [communityLevel] - Experience community buff level to count instead of the
+     *   live one; null reads the live level
      * @returns {number} Ratio, 0 when nothing applies
      */
-    getCombatExperienceBonus(crateHrids = null) {
+    getCombatExperienceBonus(crateHrids = null, communityLevel = null) {
         let bonus = this.getLabyrinthUpgrades().experience * UPGRADE_STEP;
         let crateBuffs;
         if (Array.isArray(crateHrids)) {
@@ -1170,7 +1174,7 @@ class LabyrinthClearRate {
             if (buff?.typeHrid !== '/buff_types/wisdom') continue;
             bonus += (Number(buff.flatBoost) || 0) + (Number(buff.ratioBoost) || 0);
         }
-        return bonus + this.getCommunityExperienceBonus();
+        return bonus + this.getCommunityExperienceBonus(communityLevel);
     }
 
     /**
