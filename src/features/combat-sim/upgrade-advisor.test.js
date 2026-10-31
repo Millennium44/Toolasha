@@ -9787,7 +9787,7 @@ describe('the drink bar and the ability bar offer only what the character can us
     });
 
     test('an Intelligence bonus does not open a slot: base 49 leaves slot 3 shut, 50 and 90 open it', () => {
-        const data = gameData({ abilitySlotsLevelRequirementList: [1, 1, 20, 50, 90] });
+        const data = gameData({ abilitySlotsLevelRequirementList: [0, 1, 1, 20, 50, 90] });
 
         expect(abilitySlotUnlocks({ intelligenceLevel: 49, combatDetails: { intelligenceLevel: 80 } }, data)).toEqual([
             true,
@@ -9796,6 +9796,9 @@ describe('the drink bar and the ability bar offer only what the character can us
             false,
             false,
         ]);
+        // The live list (test server) has six entries, indexed by the game's slot number; the bar's slot i reads i + 1
+        expect(abilitySlotUnlocks({ intelligenceLevel: 30 }, data)).toEqual([true, true, true, false, false]);
+        expect(abilitySlotUnlocks({ intelligenceLevel: 60 }, data)).toEqual([true, true, true, true, false]);
         expect(abilitySlotUnlocks({ intelligenceLevel: 50 }, data)).toEqual([true, true, true, true, false]);
         expect(abilitySlotUnlocks({ intelligenceLevel: 90 }, data)).toEqual([true, true, true, true, true]);
         // Without the list or the level nothing is guessed shut
@@ -9823,7 +9826,7 @@ describe('the drink bar and the ability bar offer only what the character can us
             actionDetailMap: {},
             itemDetailMap: ITEMS,
             abilityDetailMap: ABILITIES,
-            abilitySlotsLevelRequirementList: [1, 1, 20, 50, 90],
+            abilitySlotsLevelRequirementList: [0, 1, 1, 20, 50, 90],
         };
         const dto = (intelligenceLevel) => ({
             intelligenceLevel,
