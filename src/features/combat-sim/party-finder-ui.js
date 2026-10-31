@@ -760,14 +760,13 @@ export class PartyFinderTab {
                 name.style.cssText =
                     'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
                 name.textContent = template.label;
-                name.title = template.source;
                 const tuned = this._matchBuild ? this._tuned.get(template.id) : null;
                 const tunedLine =
                     tuned && tuned.ownerId === dataManager.getCurrentCharacterId() ? this._tunedLine(tuned) : null;
                 const add = document.createElement('button');
                 add.style.cssText = SMALL_BTN_STYLE;
                 add.textContent = 'Add as teammate';
-                add.title = `Add a copy to the roster, then set Try/Always/Never and Auras. ${template.source}`;
+                add.title = `Add a copy to the roster, then set Try/Always/Never and Auras.`;
                 add.addEventListener('click', () => this._onAddTemplateAsTeammate(template));
                 row.append(name, add);
                 body.appendChild(row);

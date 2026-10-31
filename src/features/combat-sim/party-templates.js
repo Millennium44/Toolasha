@@ -3,10 +3,10 @@
  * read-only and are never written to the roster record; adding one copies it into the roster as an ordinary teammate.
  * They carry no game mode, so they fit either a market or an Iron Cow party.
  *
- * The builds are anonymized live-server
- * character exports: items, consumables, abilities, triggers, house rooms and guild shrine levels as exported, with
- * levels standardized so the styles compare fairly (main stat 150, other stats 125, abilities 75, gear +12 weapon,
- * +10 armor and off hand, +7 jewelry, +5 neck/charm/pouch/cape/trinket). Every item and ability hrid was checked against live game data on 2026-10-29.
+ * The builds are standard endgame setups: items, consumables, abilities, triggers, house rooms and guild shrine levels
+ * as recorded, with levels standardized so the styles compare fairly (main stat 150, other stats 125, abilities 75,
+ * gear +12 weapon, +10 armor and off hand, +7 jewelry, +5 neck/charm/pouch/cape/trinket). Every item and ability hrid
+ * was checked against live game data on 2026-10-29.
  */
 
 function deepFreeze(value) {
@@ -27,14 +27,13 @@ export const TEMPLATE_ROLE_GROUPS = deepFreeze([
     { id: 'melee', label: 'Melee', roles: ['melee_stab', 'melee_slash', 'melee_smash'] },
 ]);
 
-/** @type {ReadonlyArray<{id: string, role: string, label: string, source: string, playerDto: Object}>} */
+/** @type {ReadonlyArray<{id: string, role: string, label: string, playerDto: Object}>} */
 export const PARTY_TEMPLATES = deepFreeze([
-    // melee-smash: from an anonymized live-server character export
+    // melee-smash
     {
         id: 'melee-smash',
         role: 'melee_smash',
         label: 'Melee smash (flail)',
-        source: 'from an anonymized live-server character export',
         guildCombatBuffLevels: { force: 5, tempo: 5, spirit: 1, rarity: 0, scholar: 3 },
         playerDto: {
             staminaLevel: 125,
@@ -140,12 +139,11 @@ export const PARTY_TEMPLATES = deepFreeze([
             },
         },
     },
-    // melee-spear: from an anonymized live-server character export
+    // melee-spear
     {
         id: 'melee-spear',
         role: 'melee_stab',
         label: 'Melee stab (spear)',
-        source: 'from an anonymized live-server character export',
         guildCombatBuffLevels: { force: 5, tempo: 5, spirit: 3, rarity: 0, scholar: 4 },
         playerDto: {
             staminaLevel: 125,
@@ -314,12 +312,11 @@ export const PARTY_TEMPLATES = deepFreeze([
             },
         },
     },
-    // melee-slash: from an anonymized live-server character export
+    // melee-slash
     {
         id: 'melee-slash',
         role: 'melee_slash',
         label: 'Melee slash (sword)',
-        source: 'from an anonymized live-server character export',
         guildCombatBuffLevels: { force: 4, tempo: 4, spirit: 3, rarity: 0, scholar: 3 },
         playerDto: {
             staminaLevel: 125,
@@ -506,12 +503,11 @@ export const PARTY_TEMPLATES = deepFreeze([
             },
         },
     },
-    // ranged-cursed-bow: from an anonymized live-server character export
+    // ranged-cursed-bow
     {
         id: 'ranged-cursed-bow',
         role: 'ranged',
         label: 'Ranged (cursed bow)',
-        source: 'from an anonymized live-server character export',
         guildCombatBuffLevels: { force: 5, tempo: 5, spirit: 3, rarity: 0, scholar: 3 },
         playerDto: {
             staminaLevel: 125,
@@ -691,12 +687,11 @@ export const PARTY_TEMPLATES = deepFreeze([
             },
         },
     },
-    // magic-nature: from an anonymized live-server character export
+    // magic-nature
     {
         id: 'magic-nature',
         role: 'nature_mage',
         label: 'Nature mage',
-        source: 'from an anonymized live-server character export',
         guildCombatBuffLevels: { force: 5, tempo: 5, spirit: 3, rarity: 0, scholar: 4 },
         playerDto: {
             staminaLevel: 125,
@@ -877,12 +872,11 @@ export const PARTY_TEMPLATES = deepFreeze([
             },
         },
     },
-    // magic-fire: from an anonymized live-server character export
+    // magic-fire
     {
         id: 'magic-fire',
         role: 'fire_mage',
         label: 'Fire mage',
-        source: 'from an anonymized live-server character export',
         guildCombatBuffLevels: { force: 5, tempo: 5, spirit: 2, rarity: 0, scholar: 3 },
         playerDto: {
             staminaLevel: 125,
@@ -1057,12 +1051,11 @@ export const PARTY_TEMPLATES = deepFreeze([
             },
         },
     },
-    // magic-water: from an anonymized live-server character export
+    // magic-water
     {
         id: 'magic-water',
         role: 'water_mage',
         label: 'Water mage',
-        source: 'from an anonymized live-server character export',
         guildCombatBuffLevels: { force: 5, tempo: 5, spirit: 5, rarity: 1, scholar: 4 },
         playerDto: {
             staminaLevel: 125,
@@ -1232,12 +1225,11 @@ export const PARTY_TEMPLATES = deepFreeze([
             },
         },
     },
-    // tank-bulwark: from an anonymized live-server character export
+    // tank-bulwark
     {
         id: 'tank-bulwark',
         role: 'tank',
         label: 'Tank (bulwark)',
-        source: 'from an anonymized live-server character export',
         guildCombatBuffLevels: { force: 5, tempo: 4, spirit: 1, rarity: 0, scholar: 3 },
         playerDto: {
             staminaLevel: 125,

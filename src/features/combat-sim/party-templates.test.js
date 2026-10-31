@@ -15,7 +15,8 @@ describe('party templates', () => {
         expect(clean.food).toHaveLength(3);
         expect(clean.drinks).toHaveLength(3);
         expect(clean.abilities).toHaveLength(5);
-        expect(t.label && t.source).toBeTruthy();
+        expect(t.label).toBeTruthy();
+        expect(t).not.toHaveProperty('source');
         // Equipment is keyed by full hrid
         for (const key of Object.keys(t.playerDto.equipment)) expect(key).toMatch(/^\/equipment_types\//);
         // No game mode: fits either party
@@ -102,7 +103,7 @@ describe('party templates', () => {
 
     test('no template carries a player name', () => {
         for (const t of PARTY_TEMPLATES) {
-            expect(JSON.stringify([t.id, t.label, t.source])).not.toMatch(/Millennium|lab loadout|bWarkb/i);
+            expect(JSON.stringify([t.id, t.label])).not.toMatch(/Millennium|lab loadout|bWarkb/i);
         }
     });
 

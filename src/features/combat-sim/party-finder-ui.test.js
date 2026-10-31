@@ -1301,14 +1301,15 @@ describe('saved builds', () => {
             expect(templates.compareDocumentPosition(builds) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
         });
 
-        test('opening lists every template by role, with the source in a tooltip', async () => {
+        test('opening lists every template by role, with no source text anywhere', async () => {
             await mountTab();
             toggle().click();
             expect(tab.root.querySelectorAll('[data-pf-template]')).toHaveLength(PARTY_TEMPLATES.length);
             const body = tab.root.querySelector('[data-pf-templates-body]').textContent;
             for (const label of ['Ranger', 'Nature', 'Fire', 'Water', 'Tank', 'Melee']) expect(body).toContain(label);
             const t = PARTY_TEMPLATES[0];
-            expect(tplRow(t.id).querySelector('span').title).toBe(t.source);
+            expect(tplRow(t.id).querySelector('span').title).toBe('');
+            expect(tplRow(t.id).innerHTML).not.toMatch(/anonymi|live.server|export/i);
             // No rename or delete on a template
             const labels = [...tplRow(t.id).querySelectorAll('button')].map((b) => b.textContent);
             expect(labels).toEqual(['Add as teammate']);
