@@ -2284,6 +2284,54 @@ describe('the panel, end to end', () => {
         expect(guildTrials.record.tiles['skilling::alchemy'].samples).toHaveLength(1);
     });
 
+    test('a trial view already on screen is drawn by initialize itself, without waiting for a tick', async () => {
+        // The startup delay: the observer only fires on nodes that mount or change after it
+        // was registered, so a Guild panel that was already open stayed bare until the next
+        // sampler tick. The timers are fake and never advanced, so only initialize can draw.
+        trialsFeature.cleanup();
+        resetTrialsSingleton();
+        game.store = {};
+        buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+        expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+
+        const pending = trialsFeature.initialize();
+        // Before the record load has settled
+        expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
+        expect(text()).toContain('Trial payout');
+        // The first pass saves nothing: the stored record has not been read yet
+        expect(Object.keys(game.store)).toEqual([]);
+
+        await pending;
+        expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
+    });
+
+    test('the draw after the record load shows what was stored, not only this session', async () => {
+        trialsFeature.cleanup();
+        resetTrialsSingleton();
+        game.store = {};
+        buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+
+        await trialsFeature.initialize();
+
+        // Redrawn after the load, so the record it drew from is the merged one
+        expect(guildTrials.record).toBeTruthy();
+        expect(guildTrials.record.tiles['skilling::alchemy'].samples.length).toBeGreaterThan(0);
+        expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
+        expect(guildTrials._suppressSave).toBe(false);
+    });
+
+    test('with the feature off, initialize draws nothing even over a mounted trial view', async () => {
+        trialsFeature.cleanup();
+        resetTrialsSingleton();
+        game.settings = { guildTrialsInfo: false };
+        buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
+
+        await trialsFeature.initialize();
+
+        expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+        expect(guildTrials.record).toBeNull();
+    });
+
     test('a sampler that has stopped is started again by the next tab event', () => {
         buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
         vi.advanceTimersByTime(5000);

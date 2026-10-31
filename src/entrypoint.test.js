@@ -1214,6 +1214,21 @@ describe('the registry entries the entrypoint hands over', () => {
         expect(registered.filter((entry) => entry.concurrent).length).toBeGreaterThan(1);
     });
 
+    test('Guild Trials starts near the front, after the XP tracker whose guild data it reads', () => {
+        // It used to start behind ~22 serial async features, five seconds after the game's own
+        // trial view was up. The tracker stays ahead of it: both listen to the same guild socket
+        // events and Guild Trials reads the tracker's name, id and roster inside its handler.
+        const keys = registered.map((entry) => entry.key);
+        const trials = keys.indexOf('guildTrialsInfo');
+        const tracker = keys.indexOf('guildXPTracker');
+
+        expect(trials, 'guildTrialsInfo is no longer registered').toBeGreaterThanOrEqual(0);
+        expect(tracker, 'guildXPTracker is no longer registered').toBeGreaterThanOrEqual(0);
+        expect(tracker).toBeLessThan(trials);
+        expect(trials).toBeLessThan(5);
+        expect(registered[trials].concurrent).toBe(true);
+    });
+
     test('the Bestiary points alert is live-stopped, so clearing its setting removes its combat handlers', () => {
         const entry = registered.find((e) => e.key === 'bestiaryPointsAlerts');
 
