@@ -116,6 +116,10 @@ beforeEach(() => {
     storageMock.store.clear();
     for (const fn of Object.values(storageMock)) fn.mockClear?.();
     storageMock.isQuotaExceeded.mockImplementation(() => false);
+    storageMock.set.mockImplementation(async (key, value) => {
+        storageMock.store.set(key, value);
+        return true;
+    });
     game.charId = 'cow1';
     game.quests = [];
     tracker.forget();
@@ -427,6 +431,30 @@ describe('where the completions are kept', () => {
         tracker._unsaved.clear();
         await tracker.load();
         expect(tracker.entries.map((completion) => completion.questId).sort((a, b) => a - b)).toEqual([9, 10, 11]);
+    });
+
+    test('a claim stays unsaved when the queued write is refused after save() already resolved', async () => {
+        // The debounced write resolves false when its timer fires (a full disk), long after save() returned
+        storageMock.set.mockImplementation(async () => {
+            await Promise.resolve();
+            return false;
+        });
+        tracker.ingest([claimed({ id: 9 }), claimed({ id: 10 })]);
+        await tracker.flush();
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+
+        expect(tracker._unsaved.has(9)).toBe(true);
+        expect(tracker._unsaved.has(10)).toBe(true);
+        // The reconnect re-read finds neither claim on disk, and must still carry both
+        const reread = await tracker.load();
+        expect(reread.map((completion) => completion.questId).sort((a, b) => a - b)).toEqual([9, 10]);
+    });
+
+    test('a claim is forgotten as unsaved once its write has landed', async () => {
+        tracker.ingest([claimed({ id: 9 })]);
+        await tracker.flush();
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        expect(tracker._unsaved.size).toBe(0);
     });
 
     test('a character switch drops the unsaved claims of the one who left', async () => {

@@ -797,9 +797,14 @@ class TaskCompletionTracker {
      */
     async _markSaved(charId, generation, entries) {
         const ids = entries.map((entry) => entry.questId);
-        const saved = await this._store.save(charId, entries);
-        if (saved === false || this._generation !== generation) return;
-        for (const id of ids) this._unsaved.delete(id);
+        // The save resolves when its debounced writes are QUEUED, so an id is only safe to forget once
+        // they have landed: a full disk refuses them later, and `load()` still has to carry the claim
+        await this._store.save(charId, entries, {
+            onLanded: (landed) => {
+                if (!landed || this._generation !== generation) return;
+                for (const id of ids) this._unsaved.delete(id);
+            },
+        });
     }
 
     /**

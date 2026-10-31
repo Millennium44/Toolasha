@@ -467,6 +467,26 @@ describe('artisan tea', () => {
     });
 });
 
+describe('collectMissingMaterials tradability', () => {
+    test('a known input with no isTradable field (the game omits it when untradable) is not tradeable', () => {
+        const plan = computeBestCraftingPlan(BOOTS, 1);
+        delete game.itemDetails[COWHIDE].isTradable;
+
+        const missing = collectMissingMaterials(plan, []);
+
+        expect(missing.find((m) => m.itemHrid === COWHIDE).isTradeable).toBe(false);
+    });
+
+    test('an input with no item details at all keeps counting as tradeable', () => {
+        const plan = computeBestCraftingPlan(BOOTS, 1);
+        delete game.itemDetails[COWHIDE];
+
+        const missing = collectMissingMaterials(plan, []);
+
+        expect(missing.find((m) => m.itemHrid === COWHIDE).isTradeable).toBe(true);
+    });
+});
+
 describe('artisan requirement mode', () => {
     // One craft consumes whole units, so a 2.7-hide craft can take 3. The
     // "Missing materials: Artisan requirement mode" setting decides whether a

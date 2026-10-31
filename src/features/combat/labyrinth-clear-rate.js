@@ -3700,7 +3700,7 @@ class LabyrinthClearRate {
         }
 
         this.tileCalcRunning = true;
-        this.beginSimBatch();
+        const batch = this.beginSimBatch();
         const epoch = this.simEpoch();
         const tileGen = this._tileGen || 0;
         // Torn down (`disable()` epoch) or superseded by a floor change
@@ -3743,12 +3743,12 @@ class LabyrinthClearRate {
             for (const target of combatTargets) {
                 // Between rooms as well as during one: cancelling an uncapped
                 // batch has to stop the queue, not just the fight in flight
-                if (this.simCancelled() || epochGone() || floorGone()) {
+                if (this.simCancelled(batch) || epochGone() || floorGone()) {
                     cancelled = true;
                     break;
                 }
                 const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel, { uncapped });
-                if (result?.cancelled || this.simCancelled() || epochGone() || floorGone()) {
+                if (result?.cancelled || this.simCancelled(batch) || epochGone() || floorGone()) {
                     cancelled = true;
                     break;
                 }

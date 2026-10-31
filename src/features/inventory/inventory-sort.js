@@ -676,8 +676,13 @@ class InventorySort {
         items.sort((a, b) => b.value - a.value);
 
         // Assign sequential order values (0, 1, 2, 3...)
+        // Write only when the value differs: a repeat pass over an unchanged grid then touches
+        // no style at all, so the browser has nothing to restyle
         items.forEach((item, index) => {
-            item.elem.style.order = index;
+            const next = String(index);
+            if (item.elem.style.order !== next) {
+                item.elem.style.order = next;
+            }
         });
     }
 

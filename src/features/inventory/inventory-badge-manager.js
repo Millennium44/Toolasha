@@ -9,8 +9,13 @@ import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
-import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import networthCache from '../networth/networth-cache.js';
+import {
+    benchParamsFor,
+    usablePath,
+    pathPartial,
+    isCacheableEnhancementCost,
+} from '../networth/enhancement-cost-rules.js';
 import { validateNetworthCache } from '../networth/networth-cache-validation.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { getItemPrice } from '../../utils/market-data.js';
@@ -643,7 +648,13 @@ class InventoryBadgeManager {
 
     /**
      * The enhancement cost of a +N piece, through the shared net-worth cache and this pass's memo.
-     * A path that cannot be built is remembered for the pass too, so duplicates do not retry it.
+     *
+     * Follows net worth's rules exactly, because both read and write the same cache entries: an
+     * untradable cape is costed on the valuation bench and never cached; a path with an unpriced
+     * material is no figure at all (null, and not cached); a usable path whose bill is a floor is
+     * cached with its partial flag, which net worth reads back with the cost. A path that cannot be
+     * built is remembered across passes until a price, a setting or the character moves, so the
+     * next pass does not run the search again.
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level
      * @param {Object} pass - From {@link createPricingPass}
@@ -659,26 +670,43 @@ class InventoryBadgeManager {
         if (!pass.validated) {
             validateNetworthCache({ force: false });
             pass.validated = true;
+            pass.failedPaths = this._failedPathsFor(this._pricingFingerprint());
         }
 
-        let cost = networthCache.get(itemHrid, enhancementLevel);
-        if (cost === null) {
-            const enhancementParams = getEnhancingParams();
-            const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementParams, {
+        const cacheable = isCacheableEnhancementCost(itemHrid);
+        let cost = cacheable ? networthCache.get(itemHrid, enhancementLevel) : null;
+        if (cost === null && !pass.failedPaths?.has(memoKey)) {
+            const enhancementPath = calculateEnhancementPath(itemHrid, enhancementLevel, benchParamsFor(itemHrid), {
                 priceContext: 'networth',
             });
-            if (enhancementPath && enhancementPath.optimalStrategy) {
+            if (usablePath(enhancementPath)) {
                 cost = enhancementPath.optimalStrategy.totalCost;
-                networthCache.set(
-                    itemHrid,
-                    enhancementLevel,
-                    cost,
-                    enhancementPath.inputsPartial === true || enhancementPath.pricesPartial === true
-                );
+                if (cacheable) networthCache.set(itemHrid, enhancementLevel, cost, pathPartial(enhancementPath));
+            } else {
+                pass.failedPaths?.add(memoKey);
             }
         }
         pass.enhancementCosts.set(memoKey, cost);
         return cost;
+    }
+
+    /**
+     * The set of +N pieces whose enhancement path could not be built under this pricing fingerprint.
+     * A new fingerprint (a price, setting, character or inventory change) starts an empty set; a
+     * fingerprint that cannot be watched keeps nothing past the pass.
+     * @param {string|null} fingerprint - From {@link _pricingFingerprint}
+     * @returns {Set<string>}
+     * @private
+     */
+    _failedPathsFor(fingerprint) {
+        if (fingerprint === null) {
+            this._failedPaths = null;
+            return new Set();
+        }
+        if (this._failedPaths?.fingerprint !== fingerprint) {
+            this._failedPaths = { fingerprint, keys: new Set() };
+        }
+        return this._failedPaths.keys;
     }
 
     /**

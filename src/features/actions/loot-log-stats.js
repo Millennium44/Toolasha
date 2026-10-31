@@ -248,6 +248,8 @@ export function buildLootLogChatLine(
  * rare drop no longer sets the whole figure.
  */
 const MIN_DAILY_EXTRAPOLATION_SECONDS = 600;
+/** Most drop-luck percentiles kept for the session (one small number each, keyed per loot-log entry) */
+const LUCK_CACHE_MAX = 1000;
 
 class LootLogStats {
     constructor() {
@@ -1468,13 +1470,18 @@ class LootLogStats {
         // time this was cached (gear or drinks changed while the panel stayed open)
         const key = `${logData.actionHrid}|${logData.actionCount}|${Math.round(reading.income)}|${reading.gatheringQuantity || 0}`;
         let percentile = this.luckCache.get(key);
-        if (percentile === undefined) {
-            percentile = gatheringSessionLuck(reading.session, reading.income).percentile;
-            // Prices move and entries churn; the cache is a session-length
-            // convenience, not a store, so it is dropped rather than evicted
-            if (this.luckCache.size > 200) this.luckCache.clear();
+        if (percentile !== undefined) {
+            // Least recently used last: a hit moves the key to the end of the Map's order
+            this.luckCache.delete(key);
             this.luckCache.set(key, percentile);
+            return percentile;
         }
+        percentile = gatheringSessionLuck(reading.session, reading.income).percentile;
+        // Prices move and entries churn; the cache is a session-length convenience, not a store.
+        // The oldest-used entry is evicted, so a list longer than the cap keeps its recent rows
+        // rather than being wiped and recomputed whole on every redraw
+        if (this.luckCache.size >= LUCK_CACHE_MAX) this.luckCache.delete(this.luckCache.keys().next().value);
+        this.luckCache.set(key, percentile);
         return percentile;
     }
 

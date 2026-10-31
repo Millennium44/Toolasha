@@ -70,8 +70,10 @@ export function calculateMissingSupplies() {
         const itemHrid = selectedTier(kind, hrids, counts);
         if (!itemHrid) continue;
         const details = itemMap[itemHrid];
-        // Untradable supplies cannot be bought; nothing to put on the list
-        if (details?.isTradable === false) continue;
+        // Untradable supplies cannot be bought; nothing to put on the list. The game omits
+        // `isTradable` on untradable items, so a known item is tradable only when it says so.
+        // An item with no details at all stays on the list (nothing says it cannot be bought).
+        if (details && details.isTradable !== true) continue;
 
         const stated = Number(info?.[CAP_FIELD[kind]]);
         const cap = stated > 0 ? stated : BASE_CAPS[kind];

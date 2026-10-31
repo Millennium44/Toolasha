@@ -718,7 +718,10 @@ export function collectMissingMaterials(plan, inventory) {
         const owned = ownedStock.get(itemHrid) || 0;
         const short = Math.max(0, required - owned);
         if (short <= 0) continue;
-        const isTradeable = dataManager.getItemDetails(itemHrid)?.isTradable !== false;
+        // The game omits `isTradable` on untradable items, so a known item is tradable only when it
+        // says so; an item with no details at all keeps counting as tradable.
+        const itemDetails = dataManager.getItemDetails(itemHrid);
+        const isTradeable = !itemDetails || itemDetails.isTradable === true;
         // The caller re-subtracts the player's real inventory from `required`.
         // Count owned stock spent by craft nodes, but not output surplus already
         // deducted from this buy leg's shortfall.
