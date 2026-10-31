@@ -2383,6 +2383,8 @@ class ActionTimeDisplay {
      *   count is what the player asked to run. Only the queue walks, which cost each row
      *   against a running ledger, ask for the cap. `actionContext` ({equipment, drinks}) times
      *   the action with that gear instead of the worn gear (a panel's resolved context).
+     *   `countSelfReturns: false` costs a transmute's input without crediting its expected
+     *   self-returns, for a caller that must not promise supply random rolls may not deliver.
      * @returns {Object} { totalTime, actionTimeSeconds, count, baseActionsNeeded, isTrulyInfinite,
      *      isInfinite, materialLimit, limitType, limitLabel, materialLimitIsEstimated, isEnhancing }
      */
@@ -2455,7 +2457,8 @@ class ActionTimeDisplay {
                     actionDetails,
                     inventoryLookup,
                     artisanBonus,
-                    actionObj
+                    actionObj,
+                    { countSelfReturns: options.countSelfReturns !== false }
                 );
                 if (limitResult) {
                     materialLimit = limitResult.maxActions;
@@ -2469,7 +2472,9 @@ class ActionTimeDisplay {
             if (!isInfinite) {
                 count = actionObj.maxCount - actionObj.currentCount;
                 if (options.limitCountedByMaterials) {
-                    const capped = this.capCountedRequestByMaterials(count, actionDetails, inventoryLookup, actionObj);
+                    const capped = this.capCountedRequestByMaterials(count, actionDetails, inventoryLookup, actionObj, {
+                        countSelfReturns: options.countSelfReturns !== false,
+                    });
                     count = capped.count;
                     if (capped.limitType !== null) {
                         materialLimit = capped.count;
@@ -4318,7 +4323,9 @@ class ActionTimeDisplay {
         const bulkMultiplier = alchItemDetails?.alchemyDetail?.bulkMultiplier || 1;
         const exact = { perAction: bulkMultiplier, isEstimated: false };
         if (getAlchemyTypeFromActionHrid(actionDetails?.hrid) !== 'transmute') return exact;
-        const { itemHrid } = this.parseItemHash(actionObj?.primaryItemHash || '');
+        const { itemHrid, level: inputLevel } = this.parseItemHash(actionObj?.primaryItemHash || '');
+        // A self-return arrives as a +0 copy: it cannot refill an enhanced input's own stack
+        if (inputLevel > 0) return exact;
         const selfDrop = (alchItemDetails?.alchemyDetail?.transmuteDropTable || []).find(
             (drop) => drop?.itemHrid === itemHrid
         );
@@ -4400,17 +4407,24 @@ class ActionTimeDisplay {
      * @param {Object} actionDetails - Action detail object for the row
      * @param {Object} inventoryLookup - Maps from buildInventoryLookup; read, never mutated
      * @param {Object} actionObj - Character action object (carries the item hashes)
+     * @param {Object} [limitOptions] - Passed to `calculateMaterialLimit` ({countSelfReturns})
      * @returns {{count: number, limitType: string|null, isEstimated: boolean}} Capped count,
      *      always a finite non-negative integer
      */
-    capCountedRequestByMaterials(requested, actionDetails, inventoryLookup, actionObj) {
+    capCountedRequestByMaterials(requested, actionDetails, inventoryLookup, actionObj, limitOptions = {}) {
         // Neither a display nor the ledger may ever see Infinity, NaN or a negative
         const count = Number.isFinite(requested) ? Math.max(0, Math.floor(requested)) : 0;
         const unlimited = { count, limitType: null, isEstimated: false };
         if (!inventoryLookup || !actionDetails) return unlimited;
 
         const artisanBonus = this.getArtisanBonusForAction(actionDetails);
-        const limitResult = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj);
+        const limitResult = this.calculateMaterialLimit(
+            actionDetails,
+            inventoryLookup,
+            artisanBonus,
+            actionObj,
+            limitOptions
+        );
         if (!limitResult || !Number.isFinite(limitResult.maxActions)) return unlimited;
 
         const cap = Math.max(0, Math.floor(limitResult.maxActions));
@@ -4627,12 +4641,16 @@ class ActionTimeDisplay {
         // because a caller that passes a raw count (the edit menu's current-action block) must
         // still be charged only for what it can pay for.
         let performed = Number.isFinite(timing.count) ? Math.max(0, Math.floor(timing.count)) : 0;
-        const limit = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj);
+        // A caller that credits no expected yield also counts no expected self-return: the same
+        // random roll cannot fund the next action here and be ignored on the credit side.
+        const creditStochastic = options.creditStochastic !== false;
+        const limit = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj, {
+            countSelfReturns: creditStochastic,
+        });
         if (limit && Number.isFinite(limit.maxActions)) {
             performed = Math.min(performed, Math.max(0, limit.maxActions));
         }
         if (performed <= 0) return 0;
-        const creditStochastic = options.creditStochastic !== false;
         const credit = () => {
             this.creditQueueActionOutputs(inventoryLookup, actionDetails, actionObj, performed, creditStochastic);
             return performed;
@@ -4679,7 +4697,9 @@ class ActionTimeDisplay {
                 const alchItemDetails = dataManager.getItemDetails(itemHrid);
                 // Net of self-returns, which the output credit leaves out, so the limit that
                 // counted them and the spend that pays for them agree
-                const inputPerAction = this.getAlchemyNetInputPerAction(actionDetails, alchItemDetails, actionObj);
+                const inputPerAction = creditStochastic
+                    ? this.getAlchemyNetInputPerAction(actionDetails, alchItemDetails, actionObj)
+                    : { perAction: alchItemDetails?.alchemyDetail?.bulkMultiplier || 1 };
                 spend(itemHrid, performed * inputPerAction.perAction, level);
 
                 // The fee is absent from the game's action data; utils/alchemy-fees.js is the
