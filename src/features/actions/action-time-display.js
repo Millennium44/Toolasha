@@ -2363,7 +2363,8 @@ class ActionTimeDisplay {
      *   what the lookup can actually pay for. Off by default: this helper also answers for a
      *   single, unqueued action, where the whole bag is the right basis and the requested
      *   count is what the player asked to run. Only the queue walks, which cost each row
-     *   against a running ledger, ask for the cap.
+     *   against a running ledger, ask for the cap. `actionContext` ({equipment, drinks}) times
+     *   the action with that gear instead of the worn gear (a panel's resolved context).
      * @returns {Object} { totalTime, actionTimeSeconds, count, baseActionsNeeded, isTrulyInfinite,
      *      isInfinite, materialLimit, limitType, limitLabel, materialLimitIsEstimated, isEnhancing }
      */
@@ -2405,7 +2406,12 @@ class ActionTimeDisplay {
                 totalTime = Infinity;
             }
         } else {
-            const timeData = this.calculateActionTime(actionDetails, actionObj.actionHrid, actionObj);
+            const timeData = this.calculateActionTime(
+                actionDetails,
+                actionObj.actionHrid,
+                actionObj,
+                options.actionContext ?? null
+            );
             if (!timeData) {
                 return {
                     totalTime: 0,
@@ -3819,11 +3825,13 @@ class ActionTimeDisplay {
      * @param {string} actionHrid - Action HRID for task detection (optional)
      * @param {Object|null} [actionObj] - The queued action; an alchemy action's level efficiency
      *   is measured against the item it alchemizes, which only its primaryItemHash names
+     * @param {{equipment?: Map, drinks?: Array}|null} [actionContext] - An explicit equipment and
+     *   drinks context (a panel's resolved one); worn gear and the resolved drinks when omitted
      * @returns {Object} {actionTime, totalEfficiency} or null if calculation fails
      */
-    calculateActionTime(actionDetails, actionHrid = null, actionObj = null) {
+    calculateActionTime(actionDetails, actionHrid = null, actionObj = null, actionContext = null) {
         const skills = dataManager.getSkills();
-        const equipment = dataManager.getEquipment();
+        const equipment = actionContext?.equipment ?? dataManager.getEquipment();
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 
         // Use shared calculator with same parameters as main display
@@ -3834,6 +3842,7 @@ class ActionTimeDisplay {
             actionHrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: false,
+            actionContext,
             levelRequirementOverride: this.alchemyLevelRequirement(actionDetails, actionObj, itemDetailMap),
         });
     }
