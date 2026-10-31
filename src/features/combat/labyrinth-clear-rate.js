@@ -4948,7 +4948,13 @@ class LabyrinthClearRate {
         }
         const { options, pathFirst } = this.readBeaconPlanSettings();
         const optionsKey = beaconOptionsKey(options, pathFirst);
-        const plan = computeBeaconPlan(revealed, cols, count, options);
+        // A set count is the floor's own total, so the beacons already used on this floor come off
+        // it before anything is drawn (the staged path does the same in stageBeaconPlan). Zero is
+        // the automatic minimum, so an exhausted count is handled apart from a count of zero.
+        const usedBefore = beaconsUsedOnFloor(revealed, prior).placedBefore;
+        const exhausted = requested > 0 && usedBefore >= requested;
+        const planCount = count > 0 && !exhausted ? Math.min(count, requested - usedBefore) : count;
+        const plan = computeBeaconPlan(revealed, cols, planCount, options);
         if (!plan) {
             this.setTileStatus('Beacon planning failed');
             return;
@@ -4987,6 +4993,19 @@ class LabyrinthClearRate {
                 planFor,
                 optionsKey,
             });
+            return;
+        }
+        if (exhausted) {
+            this._stagedBeaconPlan = {
+                floor: this.currentFloor,
+                n: flat.length,
+                characterId,
+                optionsKey,
+                planFor: 0,
+                placedBefore: usedBefore,
+                all: [],
+            };
+            this.setTileStatus(`All ${requested} beacons set for this floor are used — raise the count to plan more`);
             return;
         }
         // Path first: the beacons the way out depends on take the first labels
@@ -5185,7 +5204,9 @@ class LabyrinthClearRate {
                   ? labels[nowCount]
                   : '';
         const parts = [];
-        if (staged.continued) parts.push(`Continuing the ${total}-beacon plan (${placedBefore} used)`);
+        if (staged.continued && placedBefore > 0) {
+            parts.push(`Continuing the ${total}-beacon plan (${placedBefore} used)`);
+        }
         if (now) {
             parts.push(`Beacons: ${nowCount} now of ${total} planned${minNote}${ownedNote}`);
             parts.push(`reveals ${now.revealedNew} new rooms now, ${all.revealedNew} with all`);

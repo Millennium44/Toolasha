@@ -1862,6 +1862,34 @@ describe('planning against the supplies actually held', () => {
             );
         });
 
+        test('raising the count to the staged total after two are spent draws only the remaining one', () => {
+            buildGrid(7);
+            const count = beaconInput(2);
+            const input = planForInput(3);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._stagedBeaconPlan.all.slice(0, 2)) reveal(c.watch, 7);
+
+            count.value = '3';
+            input.value = '3';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(document.querySelectorAll('[data-beacon-center="1"]')).toHaveLength(1);
+        });
+
+        test('a count already fully spent says so instead of planning it all again', () => {
+            const status = buildGrid(7);
+            const count = beaconInput(2);
+            planForInput(0);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._beaconPlanCells.centers) reveal(c.watch, 7);
+
+            count.value = '2';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(document.querySelectorAll('[data-beacon-center="1"]')).toHaveLength(0);
+            expect(status.textContent).toContain('All 2 beacons set for this floor are used');
+        });
+
         test('lowering plan-for after three are used redraws for the new total, never the old B6', () => {
             const status = buildGrid(7);
             beaconInput(0);
