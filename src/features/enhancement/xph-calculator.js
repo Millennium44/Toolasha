@@ -105,6 +105,8 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
             goldPerXP = totalCost / totalXP;
             costPerHour = totalCost * itemsPerHour;
             protectionItemName = dataManager.getInitClientData()?.itemDetailMap[protectionInfo.itemHrid]?.name || null;
+            // A protection made from an unpriced input understates the run: flag the row, never zero-fill
+            if (protectionInfo.partial) costPartial = true;
         } else {
             costPartial = true;
         }

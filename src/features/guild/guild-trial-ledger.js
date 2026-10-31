@@ -197,7 +197,7 @@ const MAX_WINDOW_SLOTS = 1000;
  * @returns {{from: number, opens: number, end: number}} The cycle's assignment
  *   boundary, when it begins, and when it has run
  */
-function scheduledCycle(at, daily) {
+export function scheduledCycle(at, daily) {
     if (!daily) {
         const from = trialWeekStart(at);
         return { from, opens: from, end: from + WEEK_MS };

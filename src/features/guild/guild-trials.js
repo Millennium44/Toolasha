@@ -1014,6 +1014,42 @@ export function signedUpMembers(trialName, tracker = guildXPTracker) {
 }
 
 /**
+ * Who is known to have signed up for a *different* trial of the same kind this week.
+ *
+ * Membership is only ever excluded on explicit current-week metadata: a member with no sign-up on record
+ * (or a stale week) is unknown, not elsewhere, and stays in whatever roster the caller is estimating.
+ *
+ * @param {string} trialName - The card's trial name
+ * @param {string|null} kind - 'combat' or 'skilling'; anything else compares both kinds
+ * @param {Object} [tracker] - The XP tracker, injectable for tests
+ * @returns {Set<string>} Lowercased names of members signed up for another trial
+ */
+export function signedUpElsewhere(trialName, kind, tracker = guildXPTracker) {
+    const currentWeek = tracker?.getCurrentWeekStartAt?.() || null;
+    const names = new Set();
+
+    for (const member of tracker?.getMemberList?.() || []) {
+        const meta = tracker?.getMemberMeta?.(member.characterID) || member;
+        // No known current week means no way to tell a stale sign-up from a live one: exclude nobody
+        if (!currentWeek || meta?.signupWeekStartAt !== currentWeek) continue;
+
+        const hrids =
+            kind === 'combat'
+                ? [meta?.signedUpCombatTrialHrid]
+                : kind === 'skilling'
+                  ? [meta?.signedUpSkillingTrialHrid]
+                  : [meta?.signedUpSkillingTrialHrid, meta?.signedUpCombatTrialHrid];
+        const joined = hrids.filter(Boolean);
+        if (!joined.length || matchTrialHrid(trialName, joined)) continue;
+
+        const name = meta?.name || member?.name || null;
+        if (name) names.add(String(name).toLowerCase());
+    }
+
+    return names;
+}
+
+/**
  * A number, or a dash.
  * @param {number|null} value - The number
  * @returns {string} Formatted
@@ -3440,8 +3476,8 @@ class GuildTrials {
      * said nothing at all.
      *
      * The character payload carries the same `currentTrialsData` as of login
-     * ({@link _noteInitialTrials}); a `guild_updated` always outranks it, and
-     * only the socket's copy arms anything.
+     * ({@link _noteInitialTrials}); a `guild_updated` outranks it unless the login payload was sent
+     * later (a reconnect), and only the socket's copy arms anything.
      *
      * @param {Object} [data] - A `guild_updated`-shaped payload
      * @param {Object} [options] - Where it came from
@@ -3452,7 +3488,21 @@ class GuildTrials {
         try {
             const read = parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData);
             if (!read) return;
-            if (source === 'init' && this.currentTrials && this.currentTrials.source !== 'init') return;
+            const offsetMs = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
+            if (source === 'init' && this.currentTrials && this.currentTrials.source !== 'init') {
+                // A socket snapshot outranks a login one only while it is the fresher: a reconnect's
+                // init_character_data is read off the server's current state. Compare the two on the local
+                // clock (the login payload's own send time, shifted by the clock offset, against when the
+                // socket copy arrived); a login payload with no send time is taken as just received
+                // With no clock offset known yet the two stamps are on different clocks and cannot be
+                // compared: the login payload wins, as it does on a fresh login
+                const initAt =
+                    Number.isFinite(serverNow) && Number.isFinite(this.serverClockOffsetMs)
+                        ? serverNow + offsetMs
+                        : null;
+                const held = this.currentTrials.at;
+                if (initAt !== null && Number.isFinite(held) && initAt <= held) return;
+            }
 
             const now = Date.now();
             // A login payload sent long ago (read back by a late start) is
@@ -4321,6 +4371,13 @@ class GuildTrials {
             if (phase === 'scheduled') {
                 const signed = new Set(signedUpMembers(tile.name).map((name) => name.toLowerCase()));
                 loadouts = loadouts.filter((entry) => signed.has(String(entry?.name || '').toLowerCase()));
+            } else {
+                // A live (or ended) estimate: a captured fighter known to be on another trial is not in this
+                // one. A member with no sign-up on record stays counted, as before
+                const elsewhere = signedUpElsewhere(tile.name, analysis.kind ?? null);
+                if (elsewhere.size) {
+                    loadouts = loadouts.filter((entry) => !elsewhere.has(String(entry?.name || '').toLowerCase()));
+                }
             }
             const forecast = forecastTrial({
                 analysis,

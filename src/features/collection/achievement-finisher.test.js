@@ -994,6 +994,20 @@ describe('hints on the game achievement cards', () => {
         expect(nav.getItemPriceInfo.mock.calls.length).toBeGreaterThan(second);
     });
 
+    test('a same-character reconnect with replaced inventory recomputes cached readiness', () => {
+        achievementsTab();
+        finisher.initialize();
+        expect(lineOf('Dairy Chef').textContent).toContain('buy ~');
+
+        // The tab reconnected: the whole inventory replaced, no items_updated
+        game.inventory = [
+            ...INVENTORY,
+            { itemHrid: '/items/peach', count: 2, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        game.handlers.character_initialized.forEach((fn) => fn());
+        expect(lineOf('Dairy Chef').textContent).toContain('materials owned');
+    });
+
     test('a pricing input that moves with no event (a settings-panel change) recomputes on the next draw', () => {
         achievementsTab();
         finisher.initialize();

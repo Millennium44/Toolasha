@@ -63,12 +63,12 @@ export async function initialize() {
  * @returns {number} Price in coins
  */
 function materialUnitPrice(itemHrid) {
-    const ask = getItemPrice(itemHrid, { mode: 'ask' });
+    const ask = getItemPrice(itemHrid, { mode: 'ask', side: 'buy' });
     if (ask !== null && ask !== 0) {
         return ask;
     }
 
-    const bid = getItemPrice(itemHrid, { mode: 'bid' });
+    const bid = getItemPrice(itemHrid, { mode: 'bid', side: 'buy' });
     if (bid !== null && bid !== 0) {
         return bid;
     }
