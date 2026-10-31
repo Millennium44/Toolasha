@@ -2146,6 +2146,9 @@ class ActionTimeDisplay {
             // A counted fight with no simulated rate: the queue does end, but not at a time
             // anyone can say, so every clock after it is withheld and the total is incomplete
             let hasUnknown = false;
+            // Rows no queued action could be matched to: they add no time, so a total built
+            // without them is a floor, never a complete figure
+            let unmatchedRows = 0;
 
             // Include current action time in total (same as edit menu)
             const currentActionTime = this.calculateCurrentActionTime(currentActions, inventoryLookup);
@@ -2170,6 +2173,8 @@ class ActionTimeDisplay {
 
                 if (!actionObj) {
                     this.appendTimeToActionDiv(actionDiv, '[Unknown action]');
+                    hasUnknown = true;
+                    unmatchedRows++;
                     continue;
                 }
 
@@ -2270,11 +2275,23 @@ class ActionTimeDisplay {
                     totalText = `Total: ${totalMark}${timeReadable(accumulatedTime)}`;
                 }
                 totalDiv.textContent = totalText;
+                totalDiv.title = this.unmatchedRowsTitle(unmatchedRows);
                 actionsContainer.appendChild(totalDiv);
             }
         } catch (error) {
             console.error('[Action Time Display] Error injecting queue tooltip times:', error);
         }
+    }
+
+    /**
+     * The hover text for a queue total that skipped rows it could not identify.
+     * @param {number} unmatchedRows - Rows no queued action could be matched to
+     * @returns {string} Empty when nothing was skipped
+     */
+    unmatchedRowsTitle(unmatchedRows) {
+        return unmatchedRows > 0
+            ? `At least this long: ${unmatchedRows} queue ${unmatchedRows === 1 ? 'row' : 'rows'} could not be identified and ${unmatchedRows === 1 ? 'is' : 'are'} not counted.`
+            : '';
     }
 
     /**
@@ -4880,6 +4897,9 @@ class ActionTimeDisplay {
             // As in the tooltip: a counted fight with no simulated rate ends at a time nobody can
             // say, so the clocks after it are withheld and the total says it is incomplete
             let hasUnknown = false;
+            // Rows no queued action could be matched to; as in the tooltip they make the total
+            // a floor rather than a complete figure
+            let unmatchedRows = 0;
             // Whether the total leans on a simulated combat rate, or on a material limit that
             // rests on an expected draw rather than a guaranteed count — either way `hasEstimate`
             // carries the mark; these two are tracked separately only so the total's hover text
@@ -5117,6 +5137,8 @@ class ActionTimeDisplay {
                         margin-top: 2px;
                     `;
                     timeDiv.textContent = '[Unknown action]';
+                    hasUnknown = true;
+                    unmatchedRows++;
 
                     const actionTextContainer = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
                     if (actionTextContainer) {
@@ -5462,13 +5484,15 @@ class ActionTimeDisplay {
             const xpText = this.queueXpTotalText(xpTally);
 
             totalDiv.innerHTML = totalText + xpText;
+            if (unmatchedRows > 0) totalDiv.title = this.unmatchedRowsTitle(unmatchedRows);
 
             // Say why the total is marked when a material limit is the reason (or part of it) —
             // the sim-rate case is already explained on the combat row itself
             if (hasMaterialLimitEstimate) {
-                totalDiv.title = usesSimRate
+                const estimateTitle = usesSimRate
                     ? 'Estimated, not measured: includes both a simulated combat rate and a material limit resting on an expected draw.'
                     : 'Estimated, not measured: a material limit in this total rests on an expected draw, not a guaranteed count.';
+                totalDiv.title = totalDiv.title ? `${totalDiv.title} ${estimateTitle}` : estimateTitle;
             }
 
             // Insert after queue menu

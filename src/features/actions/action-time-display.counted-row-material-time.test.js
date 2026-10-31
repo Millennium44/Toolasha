@@ -541,3 +541,69 @@ describe('an upgrade craft credits its output at the level the upgrade carries',
         expect(lookup.byEnhancedKey[`${UPGRADED}::10`]).toBe(3);
     });
 });
+
+describe('rows no queued action matches make the total incomplete, not a confident 0s', () => {
+    const rowsHtml = (names) =>
+        names
+            .map(
+                (name, i) => `
+                <div class="QueuedActions_action__item">
+                    <div class="QueuedActions_actionText__y">
+                        <div class="QueuedActions_text__z">#${i + 1}${name}</div>
+                    </div>
+                </div>`
+            )
+            .join('');
+
+    test('the tooltip total reads [?] and names the unmatched rows', () => {
+        game.inventory = [stack(LOG, 80)];
+        game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
+
+        const el = queueTooltipPopper(['苹果', '蓝莓']);
+        observerState.handler(el);
+
+        const total = el.querySelector('.mwi-queue-tooltip-total');
+        expect(rowLimits(el)).toEqual(['[Unknown action]', '[Unknown action]']);
+        expect(total.textContent).toBe('Total: [?]');
+        expect(total.title).toContain('2 queue rows could not be identified');
+    });
+
+    test('a matched row keeps its time and the total is a floor', () => {
+        game.inventory = [stack(LOG, 80)];
+        game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
+
+        const el = queueTooltipPopper(['Plank', '苹果']);
+        observerState.handler(el);
+
+        expect(el.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: 0h 01m 40s + [?]');
+        expect(el.querySelector('.mwi-queue-tooltip-total').title).toContain('1 queue row could not be identified');
+    });
+
+    test('the edit menu total reads [?] instead of 0s', () => {
+        game.inventory = [stack(LOG, 80)];
+        game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
+
+        const el = document.createElement('div');
+        el.className = 'QueuedActions_queuedActions__menu';
+        el.innerHTML = rowsHtml(['苹果', '蓝莓']);
+        document.body.appendChild(el);
+        actionTimeDisplay.injectQueueTimes(el);
+
+        const total = document.querySelector('#mwi-queue-total-time');
+        expect(total.textContent).toContain('Total time: [?]');
+        expect(total.textContent).not.toContain('0s');
+        expect(total.title).toContain('2 queue rows could not be identified');
+    });
+
+    test('a fully matched queue is unchanged', () => {
+        game.inventory = [stack(LOG, 80)];
+        game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
+
+        const el = queueTooltipPopper(['Plank']);
+        observerState.handler(el);
+
+        const total = el.querySelector('.mwi-queue-tooltip-total');
+        expect(total.textContent).toBe('Total: 0h 01m 40s');
+        expect(total.title).toBe('');
+    });
+});
