@@ -26,6 +26,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Audit fixes before release
 
+- The Labyrinth room grid Size control now goes down to 75% as well as up to 200%, for smaller screens.
 - Labyrinth beacon planning gets four settings in the ⚙ panel: Most rooms or Fewest holes (no dark gaps left between beacons), 1 or 2 routes to the exit, Stay near the way out, and path-first numbering so the beacons the route needs are placed first.
 - A sync pull of a large Gist no longer freezes the page: it reads in batches and yields to the browser between steps, and a takeover while it is finishing leaves the pull marked for a retry.
 - Enhancer achievements now give Iron Cow characters a route: the owned piece needing the fewest attempts (with attempts, protections and missing materials), else the cheapest qualifying piece to craft.

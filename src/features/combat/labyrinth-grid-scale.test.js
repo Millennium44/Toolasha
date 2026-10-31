@@ -80,7 +80,8 @@ describe('normalizeScale', () => {
     test('snaps to quarter steps within 1x-2x', () => {
         expect(normalizeScale(1.3)).toBe(1.25);
         expect(normalizeScale('1.5')).toBe(1.5);
-        expect(normalizeScale(0.5)).toBe(1);
+        expect(normalizeScale(0.5)).toBe(0.75);
+        expect(normalizeScale(0.8)).toBe(0.75);
         expect(normalizeScale(3)).toBe(2);
     });
 
@@ -106,7 +107,17 @@ describe('labyrinth grid scale', () => {
         const larger = header.querySelector('[data-role="larger"]');
         const smaller = header.querySelector('[data-role="smaller"]');
 
+        expect(smaller.disabled).toBe(false);
+        expect(styleText()).toBeNull();
+
+        smaller.click();
+        expect(config.getSettingValue('labyrinthGridScale')).toBe(0.75);
+        expect(header.querySelector('[data-role="value"]').textContent).toBe('75%');
+        expect(styleText()).toContain('zoom: 0.75');
         expect(smaller.disabled).toBe(true);
+
+        larger.click();
+        expect(config.getSettingValue('labyrinthGridScale')).toBe(1);
         expect(styleText()).toBeNull();
 
         larger.click();

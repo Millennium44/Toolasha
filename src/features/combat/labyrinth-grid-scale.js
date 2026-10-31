@@ -1,6 +1,6 @@
 /**
  * Labyrinth Grid Scale
- * Scales the Labyrinth room grid, and adds a - / + stepper to the header row to change it. The game
+ * Scales the Labyrinth room grid (75% to 200%), and adds a - / + stepper to the header row to change it. The game
  * renders each tile at a fixed 2.875rem, which leaves most of the panel empty. The grid is scaled
  * with CSS `zoom` so tiles, icons, level text and the clear rate badges all grow together.
  *
@@ -24,7 +24,9 @@ const CONTROL_SETTING = 'labyrinthGridScaleControl';
 /** The room calculator's toolbar holds the stepper while this is on */
 const TOOLBAR_SETTING = 'labyrinthClearRate';
 
-export const MIN_SCALE = 1;
+/** The game's own size: no zoom is applied at this scale */
+export const DEFAULT_SCALE = 1;
+export const MIN_SCALE = 0.75;
 export const MAX_SCALE = 2;
 export const SCALE_STEP = 0.25;
 
@@ -45,18 +47,18 @@ let unregisterToolbarListener = null;
  */
 export function normalizeScale(value) {
     const parsed = parseFloat(value);
-    if (!Number.isFinite(parsed)) return MIN_SCALE;
+    if (!Number.isFinite(parsed)) return DEFAULT_SCALE;
     const stepped = Math.round(parsed / SCALE_STEP) * SCALE_STEP;
     return Math.min(MAX_SCALE, Math.max(MIN_SCALE, stepped));
 }
 
 function getScale() {
-    return normalizeScale(config.getSettingValue(SCALE_SETTING, MIN_SCALE));
+    return normalizeScale(config.getSettingValue(SCALE_SETTING, DEFAULT_SCALE));
 }
 
 function applyScale(scale) {
     removeStyles(STYLE_ID);
-    if (scale === MIN_SCALE) return;
+    if (scale === DEFAULT_SCALE) return;
     addStyles(`[class*="LabyrinthPanel_roomGrid"], [${GRID_ATTR}] { zoom: ${scale}; }`, STYLE_ID);
 }
 

@@ -2846,7 +2846,7 @@ export const settingsGroups = {
                 label: 'Labyrinth: Room grid size',
                 type: 'slider',
                 default: 1,
-                min: 1,
+                min: 0.75,
                 max: 2,
                 step: 0.25,
                 help: 'Scale of the Labyrinth room grid. Also adjustable with the - / + control (the labyrinth toolbar gear panel)',
