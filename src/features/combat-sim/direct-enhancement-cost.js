@@ -87,9 +87,8 @@ export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel
     // free. Quoting protection at zero made the most-protected path the cheapest
     // by construction and put it top of the rankings.
     const { price: protPrice, itemHrid: protHrid, partial: protPartial } = getCheapestProtectionPrice(itemHrid);
-    // A protection price built on a partial bill is a floor: a run protected by it cannot be quoted, and
-    // quoting the unprotected strategies alone would rank the row on a cost it may not be able to meet
-    if (protPartial) return null;
+    // A protection price built on a partial bill is a floor: it only matters when the cheapest plan actually
+    // spends it (checked after the sweep), because an unprotected cheapest plan is a complete quote
 
     try {
         // From the level the piece is actually at, not the difference between
@@ -118,6 +117,9 @@ export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel
             protectionOptions: protPrice > 0 ? [{ itemHrid: protHrid, price: protPrice }] : [],
             hasMissingPrices: materials.hasMissingPrices || materials.hasPartialPrices,
         });
+
+        // The cheapest plan spends a protection whose price is a floor: the quote is a partial bill, so unknown
+        if (plan && protPartial && plan.protectFrom > 0 && plan.protectionItemHrid) return null;
 
         // Nothing about the run could be priced — unknown, not free
         return plan ? Math.max(0, Math.round(plan.cost)) : null;

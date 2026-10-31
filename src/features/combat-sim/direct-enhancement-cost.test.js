@@ -49,11 +49,15 @@ describe('calculateDirectEnhancementCost', () => {
         expect(calculateDirectEnhancementCost(SWORD, 0, 3, gameData)).toBeNull();
     });
 
-    test('a protection priced from a partial bill is a missing price: the quote is unknown', () => {
-        state.protection = { price: 500, itemHrid: '/items/mirror_of_protection', partial: true };
-        expect(calculateDirectEnhancementCost(SWORD, 0, 3, gameData)).toBeNull();
-        state.protection = { price: 500, itemHrid: '/items/mirror_of_protection', partial: false };
+    test('a partial protection price makes the quote unknown only when the cheapest plan spends it', () => {
+        // Too dear to be worth using: the cheapest plan is unprotected, so the quote is complete
+        state.protection = { price: 5_000_000, itemHrid: '/items/mirror_of_protection', partial: true };
         expect(calculateDirectEnhancementCost(SWORD, 0, 3, gameData)).toBeGreaterThan(0);
+        // Cheap enough to be spent on a long run: the figure is a floor, so unknown
+        state.protection = { price: 1, itemHrid: '/items/mirror_of_protection', partial: true };
+        expect(calculateDirectEnhancementCost(SWORD, 0, 12, gameData)).toBeNull();
+        state.protection = { price: 1, itemHrid: '/items/mirror_of_protection', partial: false };
+        expect(calculateDirectEnhancementCost(SWORD, 0, 12, gameData)).toBeGreaterThan(0);
     });
 
     test('nothing priced at all is unknown too', () => {
