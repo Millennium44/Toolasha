@@ -22,6 +22,17 @@ import {
     priceProtection,
 } from '../../utils/enhancement-input-pricing.js';
 
+/**
+ * The plain item a refined piece is mirrored with, or null for anything else.
+ * @param {string} itemHrid - e.g. `/items/griffin_bulwark_refined`
+ * @returns {string|null}
+ */
+function unrefinedBaseOf(itemHrid) {
+    if (!String(itemHrid || '').endsWith('_refined')) return null;
+    const base = String(itemHrid).replace(/_refined$/, '');
+    return dataManager.getInitClientData()?.itemDetailMap?.[base] ? base : null;
+}
+
 /** How long one slice of the pricing pass may run before it yields to the browser */
 const YIELD_SLICE_MS = 12;
 
@@ -773,10 +784,21 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
             if (!enhancementUnpriced) {
                 // Apply Philosopher's Mirror optimization — literally the tooltip's pass, so the two
                 // cannot drift (it starts at +3: the game will not mirror an item below +2)
+                // A refined piece is mirrored with plain copies of its unrefined base: the route is compared with
+                // the copy lineage priced in place, exactly as the tooltip and the net-worth worker do
+                const copyHrid = unrefinedBaseOf(item.itemHrid);
+                const copyPrice = copyHrid ? priceBase(copyHrid, ASK).price || 0 : 0;
+                const copyCosts =
+                    copyPrice > 0
+                        ? targetCosts.map((cost, level) =>
+                              level === 0 ? copyPrice : Math.max(0, cost - targetCosts[0]) + copyPrice
+                          )
+                        : null;
                 applyMirrorOptimization(
                     targetCosts,
                     priceMirror(ASK).price || 0,
-                    blessedMirrorChance(enhancementParams)
+                    blessedMirrorChance(enhancementParams),
+                    copyCosts
                 );
             }
             itemCost = enhancementUnpriced ? 0 : targetCosts[item.enhancementLevel];
