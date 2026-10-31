@@ -185,6 +185,7 @@ let calculateMinimumSellPrice;
 let calculatePerAttemptMaterialCost;
 let getCheapestProtectionPrice;
 let getRealisticBaseItemPrice;
+let buildMaterialBill;
 
 beforeAll(async () => {
     globalThis.math = mathjs;
@@ -196,6 +197,7 @@ beforeAll(async () => {
         calculatePerAttemptMaterialCost,
         getCheapestProtectionPrice,
         getRealisticBaseItemPrice,
+        buildMaterialBill,
     } = await import('./tooltip-enhancement.js'));
 });
 
@@ -453,6 +455,22 @@ describe('calculateEnhancementPath', () => {
  * *consistent with the totals beside it* — a list that does not reconcile is worse than none.
  */
 describe('the material bill a path expects to consume', () => {
+    test('a protection row priced from a fallback quote says so instead of passing it off as a price', () => {
+        const row = (parts) =>
+            buildMaterialBill({ protectionItemHrid: PROTECTION, protectionCount: 3, ...parts }).find(
+                (line) => line.kind === 'protection'
+            );
+
+        expect(row({ protectionUnitPrice: 900, protectionPartial: true })).toMatchObject({
+            unitPrice: 900,
+            totalCost: 2700,
+            partial: true,
+        });
+        // No price at all: the row is flagged, not left looking like three free protections
+        expect(row({ protectionUnitPrice: 0, protectionPartial: true })).toMatchObject({ unitPrice: 0, partial: true });
+        expect(row({ protectionUnitPrice: 900 }).partial).toBeUndefined();
+    });
+
     /**
      * @param {Array<Object>} bill - A material bill
      * @param {string} kind - Which line kind to total
@@ -838,6 +856,18 @@ describe('mirroring a refined piece', () => {
         expect(bases.find((line) => line.itemHrid === ITEM)?.count).toBe(
             copies.reduce((sum, item) => sum + item.quantity, 0)
         );
+    });
+
+    test('a route only feasible with the cheap plain copy is compared at the copy price', () => {
+        // Refined +2 plus a plain +1 and a mirror is the cheapest +3. Pricing the +1 as refined
+        // (400,000 + 10,000) rejected that route and quoted the dearer traditional one.
+        const data = calculateEnhancementPath(REFINED, 3, enhancingConfig);
+        const strategy = data.optimalStrategy;
+        expect(strategy.usedMirror).toBe(true);
+        expect(strategy.totalCost).toBeCloseTo(442651.5747, 3);
+        expect(strategy.totalCost).toBeLessThan(strategy.traditionalCost);
+        const copies = strategy.consumedItems.filter((item) => !item.primary);
+        expect(copies.map((item) => [item.itemHrid, item.level, item.quantity])).toEqual([[ITEM, 1, 1]]);
     });
 
     test('says what the primary copy costs inside the total, even when the +0 quote differs', () => {

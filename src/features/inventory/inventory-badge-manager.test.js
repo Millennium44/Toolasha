@@ -83,6 +83,7 @@ vi.mock('../market/expected-value-calculator.js', () => ({
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.prices[hrid] ?? null }));
+vi.mock('../../utils/artisan-bonus.js', () => ({ getArtisanBonus: () => 0.1 }));
 vi.mock('../../utils/number-parser.js', () => ({
     parseItemCount: (text) => parseInt(text, 10) || 0,
     parseShorthandAmount: (text) => parseInt(text, 10) || null,
@@ -168,7 +169,7 @@ describe('buildNameToHridMap / findItemHrid', () => {
 });
 
 describe('calculateCraftingCost', () => {
-    test('sums input costs at ask price, applies the 0.9x artisan reduction, adds upgrade cost, divides by output count', () => {
+    test('sums input costs at ask price, applies the real Artisan reduction, adds upgrade cost, divides by output count', () => {
         mocks.initData = {
             actionDetailMap: {
                 '/actions/craft/thing': {

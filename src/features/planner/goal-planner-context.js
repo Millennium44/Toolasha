@@ -56,7 +56,7 @@ import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { GATHERING_TYPES, PRODUCTION_TYPES, MARKET_TAX } from '../../utils/profit-constants.js';
-import { outputTaxRate } from '../../utils/profit-helpers.js';
+import { outputTaxRate, calculateDrinksPerHour } from '../../utils/profit-helpers.js';
 import { getPriceAgeString } from '../../utils/market-data.js';
 import { priceMaterial } from '../../utils/enhancement-input-pricing.js';
 import { effectiveInventory, shortfallNote } from '../../utils/inventory-reservations.js';
@@ -762,6 +762,32 @@ function measureEnhancingRates() {
         .sort((a, b) => (b.details.itemLevel || 0) - (a.details.itemLevel || 0))
         .slice(0, ENHANCING_XP_CANDIDATES);
 
+    // The teas the bench drinks while it works: every one the benefits above credit (the flags), and the
+    // equipped enhancing drinks (wisdom tea has no flag). Drunk by the clock, at the bench's concentration
+    const teaHrids = new Set();
+    const teaFlags = {
+        enhancing: '/items/enhancing_tea',
+        superEnhancing: '/items/super_enhancing_tea',
+        ultraEnhancing: '/items/ultra_enhancing_tea',
+        blessed: '/items/blessed_tea',
+    };
+    for (const [flag, teaHrid] of Object.entries(teaFlags)) {
+        if (params.teas?.[flag]) teaHrids.add(teaHrid);
+    }
+    // Through the same action context the XP side resolves (a saved enhancing loadout's drinks, stocked
+    // ones only), so a tea that lifts the predicted XP is the tea that is charged and reserved
+    for (const drink of resolveActionContext('/action_types/enhancing').drinks || []) {
+        if (drink?.itemHrid) teaHrids.add(drink.itemHrid);
+    }
+    const teasPerHour = calculateDrinksPerHour((Number(params.drinkConcentration) || 0) / 100);
+    const teaBill = [...teaHrids].map((itemHrid) => {
+        const priced = priceMaterial(itemHrid);
+        const price = !priced.partial && priced.price > 0 ? priced.price : null;
+        return { itemHrid, perHour: teasPerHour, unitPrice: price };
+    });
+    // Unpriced is unknown, not free: only the priced teas are in the coin figure
+    const teaPerHour = teaBill.reduce((sum, tea) => sum + (tea.unitPrice ?? 0) * tea.perHour, 0);
+
     const rates = [];
     for (const { hrid, details } of held) {
         try {
@@ -818,7 +844,11 @@ function measureEnhancingRates() {
                 // Enhancing has no efficiency repeats, so the level-by-level
                 // climb the skilling calculator models does not apply
                 flatRate: true,
-                goldPerHour: -(materialPerAttempt * 3600) / run.perActionTime,
+                // The economic cost of an hour: materials plus every tea drunk, whether held or bought. The
+                // planner turns it into coins out of pocket by netting the held tea off (teaBill)
+                goldPerHour: -(materialPerAttempt * 3600) / run.perActionTime - teaPerHour,
+                drinkCostPerHour: teaPerHour,
+                teaBill,
             });
         } catch (error) {
             console.error(`[GoalPlanner] Rating enhancing on ${hrid} failed:`, error);
@@ -840,9 +870,21 @@ function acquisitionFor(itemHrid) {
 
     const requires = [];
     if (plan.strategy === 'craft' && plan.actionHrid) {
-        const requirement = dataManager.getActionDetails(plan.actionHrid)?.levelRequirement;
-        if (requirement?.skillHrid && requirement.level > 1) {
-            requires.push({ skillHrid: requirement.skillHrid, level: requirement.level });
+        const action = dataManager.getActionDetails(plan.actionHrid);
+        const requirement = action?.levelRequirement;
+        if (requirement?.skillHrid) {
+            // The same start rule the game and the crafted price use: an Action Level tea (Artisan) raises
+            // the requirement and a skill-level tea lifts the level, so the bare skill level is not the test
+            let bonuses = { teaSkillLevelBonus: 0, actionLevelBonus: 0 };
+            try {
+                const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap;
+                if (action?.type && itemDetailMap) bonuses = startBonuses(action, itemDetailMap);
+            } catch (error) {
+                console.error('[GoalPlanner] Reading the start bonuses for a craft failed:', error);
+            }
+            if (requirement.level > 1 || Math.trunc(bonuses.actionLevelBonus) > 0) {
+                requires.push({ skillHrid: requirement.skillHrid, level: requirement.level, ...bonuses });
+            }
         }
     }
 
@@ -922,13 +964,41 @@ function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
     // The per-attempt bill the optimiser already priced, reused rather than
     // rebuilt so a partial run and a full one cannot disagree about materials
     const perAttempt = strategy.expectedAttempts > 0 ? strategy.materialCost / strategy.expectedAttempts : 0;
-    const protectionUnit =
-        strategy.protectionCount > 0
-            ? strategy.protectionCost / strategy.protectionCount
-            : getCheapestProtectionPrice(itemHrid)?.price || 0;
+    // The optimiser's own protection price when it spent any; otherwise the cheapest protection on the
+    // book. One nobody prices, or a craft bill missing an input, is an unknown cost: the run keeps its
+    // protection line flagged rather than pricing the protections at zero
+    let protectionUnit = 0;
+    let protectionUnknown = false;
+    let protectionItemHrid = null;
+    if (strategy.protectionCount > 0) {
+        protectionUnit = strategy.protectionCost / strategy.protectionCount;
+    } else if (run.protectionCount > 0) {
+        const cheapest = getCheapestProtectionPrice(itemHrid);
+        protectionItemHrid = cheapest?.itemHrid || null;
+        if (cheapest?.price > 0) protectionUnit = cheapest.price;
+        protectionUnknown = !(cheapest?.price > 0) || Boolean(cheapest.partial);
+    }
 
     const materialCost = perAttempt * run.attempts;
     const protectionCost = protectionUnit * run.protectionCount;
+    const bill = rescaleMaterialBill(strategy.materialBill, {
+        attempts: run.attempts,
+        fromAttempts: strategy.expectedAttempts,
+        protectionCount: run.protectionCount,
+        fromProtectionCount: strategy.protectionCount,
+    });
+    // The optimiser spent no protection, so its bill has no line for one: add the priced-or-flagged line
+    if (strategy.protectionCount <= 0 && run.protectionCount > 0) {
+        bill.push({
+            itemHrid: protectionItemHrid,
+            name: protectionItemHrid ? protectionItemHrid.split('/').pop() : 'protection',
+            count: run.protectionCount,
+            unitPrice: protectionUnit,
+            totalCost: protectionCost,
+            kind: 'protection',
+            ...(protectionUnknown ? { partial: true } : {}),
+        });
+    }
 
     return {
         ...common,
@@ -941,12 +1011,7 @@ function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
         // a run that starts from a copy already held pays for no base at all
         baseCost: 0,
         totalCost: materialCost + protectionCost,
-        materialBill: rescaleMaterialBill(strategy.materialBill, {
-            attempts: run.attempts,
-            fromAttempts: strategy.expectedAttempts,
-            protectionCount: run.protectionCount,
-            fromProtectionCount: strategy.protectionCount,
-        }),
+        materialBill: bill,
         fromLevel: startLevel,
     };
 }

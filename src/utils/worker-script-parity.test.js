@@ -265,6 +265,50 @@ describe('generated worker sources', () => {
         expect(calculateEnhancementCost({ ...params, targetLevel: 3 })).toBeCloseTo(hardTwo + 10100 + 2000, 6);
     });
 
+    test('the networth worker compares a refined mirror route with the plain copy already priced', async () => {
+        // Refined +2, a plain +1 and a mirror is the cheapest +3; pricing the +1 as refined rejected that
+        // route in favor of the dearer traditional one. Same fixture as the tooltip test.
+        vi.resetModules();
+        const { calculateItemValueBatch } = await import('./networth-worker-manager.js');
+        const source = await captureWorkerScript(() =>
+            calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} })
+        );
+        const calculateEnhancementCost = new Function(
+            'self',
+            `${source}
+; return calculateEnhancementCost;`
+        )({
+            postMessage: () => {},
+            onmessage: null,
+        });
+        const params = {
+            itemHrid: '/items/test_sword_refined',
+            targetLevel: 3,
+            enhancementParams: { enhancingLevel: 100, toolBonus: 0, houseLevel: 0, speedBonus: 0 },
+            itemDetails: {
+                itemLevel: 10,
+                enhancementCosts: [{ itemHrid: '/items/test_material', count: 1 }],
+                allItemDetails: {},
+            },
+            priceMap: {
+                '/items/test_sword_refined:0': 400000,
+                '/items/test_sword_refined:0_ask': 400000,
+                '/items/test_sword_refined:0_bid': 390000,
+                '/items/test_material:0': 5000,
+                '/items/test_material:0_ask': 5000,
+                '/items/philosophers_mirror:0': 2000,
+            },
+            recipes: {},
+        };
+        const withCopy = calculateEnhancementCost({
+            ...params,
+            inputPrices: { copyPrice: { '/items/test_sword_refined': 100 } },
+        });
+        expect(withCopy).toBeCloseTo(442651.5747, 3);
+        // Without a plain copy on the books the traditional route stands
+        expect(calculateEnhancementCost(params)).toBeGreaterThan(withCopy);
+    });
+
     test('an unquoted enhancement material is costed by recipe or the path is unavailable, never at its sell price or a negative one', async () => {
         // The marketplace answers "no quote" with -1 on a side, which is why the
         // worker already swaps a negative side for the positive one. When BOTH

@@ -9,14 +9,15 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ clientData: null, prices: {}, estimated: new Set() }));
+const mocks = vi.hoisted(() => ({ clientData: null, prices: {}, estimated: new Set(), sides: [] }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: { getInitClientData: () => mocks.clientData },
 }));
 vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid) => mocks.prices[hrid] ?? null,
-    getItemPriceInfo: (hrid) => {
+    getItemPriceInfo: (hrid, opts) => {
+        mocks.sides.push(opts?.side);
         const price = mocks.prices[hrid] ?? null;
         // A price the module treats as an estimate is one the value map filled in for an
         // item with no order book — the tests name those in `mocks.estimated`
@@ -48,6 +49,7 @@ beforeEach(() => {
     };
     mocks.prices = { '/items/cheese': 1000, '/items/milk': 300 };
     mocks.estimated = new Set();
+    mocks.sides = [];
 });
 
 describe('gold per credit', () => {
@@ -147,5 +149,21 @@ describe('an estimated direct price for the credit item itself', () => {
         mocks.prices[CREDIT] = 5;
 
         expect(priceGuildCreditCosts([{ itemHrid: CREDIT, count: 2 }]).lines[0].goldEach).toBe(5);
+    });
+});
+
+describe('transaction side', () => {
+    test('an acquisition caller names the buy side on every lookup; the default names none', () => {
+        buildGoldPerCredit('ask', { side: 'buy' });
+        expect(mocks.sides.length).toBeGreaterThan(0);
+        expect(mocks.sides.every((side) => side === 'buy')).toBe(true);
+
+        mocks.sides = [];
+        priceGuildCreditCosts([{ itemHrid: '/items/cheese', count: 1 }], { goldPerCredit: {}, side: 'buy' });
+        expect(mocks.sides).toEqual(['buy']);
+
+        mocks.sides = [];
+        buildGoldPerCredit('bid');
+        expect(mocks.sides.every((side) => side === undefined)).toBe(true);
     });
 });

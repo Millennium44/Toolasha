@@ -115,9 +115,10 @@ export function buildEnhancementModel(itemHrid, params) {
 
     let protectionCostOnFailure = 0;
     if (protectFrom > 0 && protectFrom < targetLevel) {
-        const protectionPrice = getCheapestProtectionPrice(itemHrid)?.price;
-        if (!Number.isFinite(protectionPrice)) return { error: 'incomplete-prices' };
-        protectionCostOnFailure = protectionPrice;
+        const protection = getCheapestProtectionPrice(itemHrid);
+        // A protection whose own bill has an unpriced input is a lower bound: refused like a partial material
+        if (!Number.isFinite(protection?.price) || protection.partial) return { error: 'incomplete-prices' };
+        protectionCostOnFailure = protection.price;
     }
 
     // Same double-jump ratio buildEnhancementMarkov() applies: the item's own blessed-tea
