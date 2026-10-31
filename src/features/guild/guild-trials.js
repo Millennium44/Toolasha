@@ -1014,6 +1014,41 @@ export function signedUpMembers(trialName, tracker = guildXPTracker) {
 }
 
 /**
+ * Who is known to have signed up for a *different* trial of the same kind this week.
+ *
+ * Membership is only ever excluded on explicit current-week metadata: a member with no sign-up on record
+ * (or a stale week) is unknown, not elsewhere, and stays in whatever roster the caller is estimating.
+ *
+ * @param {string} trialName - The card's trial name
+ * @param {string|null} kind - 'combat' or 'skilling'; anything else compares both kinds
+ * @param {Object} [tracker] - The XP tracker, injectable for tests
+ * @returns {Set<string>} Lowercased names of members signed up for another trial
+ */
+export function signedUpElsewhere(trialName, kind, tracker = guildXPTracker) {
+    const currentWeek = tracker?.getCurrentWeekStartAt?.() || null;
+    const names = new Set();
+
+    for (const member of tracker?.getMemberList?.() || []) {
+        const meta = tracker?.getMemberMeta?.(member.characterID) || member;
+        if (currentWeek && meta?.signupWeekStartAt !== currentWeek) continue;
+
+        const hrids =
+            kind === 'combat'
+                ? [meta?.signedUpCombatTrialHrid]
+                : kind === 'skilling'
+                  ? [meta?.signedUpSkillingTrialHrid]
+                  : [meta?.signedUpSkillingTrialHrid, meta?.signedUpCombatTrialHrid];
+        const joined = hrids.filter(Boolean);
+        if (!joined.length || matchTrialHrid(trialName, joined)) continue;
+
+        const name = meta?.name || member?.name || null;
+        if (name) names.add(String(name).toLowerCase());
+    }
+
+    return names;
+}
+
+/**
  * A number, or a dash.
  * @param {number|null} value - The number
  * @returns {string} Formatted
@@ -4279,6 +4314,13 @@ class GuildTrials {
             if (phase === 'scheduled') {
                 const signed = new Set(signedUpMembers(tile.name).map((name) => name.toLowerCase()));
                 loadouts = loadouts.filter((entry) => signed.has(String(entry?.name || '').toLowerCase()));
+            } else {
+                // A live (or ended) estimate: a captured fighter known to be on another trial is not in this
+                // one. A member with no sign-up on record stays counted, as before
+                const elsewhere = signedUpElsewhere(tile.name, analysis.kind ?? null);
+                if (elsewhere.size) {
+                    loadouts = loadouts.filter((entry) => !elsewhere.has(String(entry?.name || '').toLowerCase()));
+                }
             }
             const forecast = forecastTrial({
                 analysis,
