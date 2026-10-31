@@ -683,6 +683,7 @@ class LabyrinthClearRate {
             this.cancelAutoPath();
             this.pathCalcRunning = false;
             this._pathQueued = false;
+            this._pathQueuedAuto = false;
             pruneEmptyAnnotationContainers();
 
             if (this._editClickHandler) {
@@ -924,6 +925,7 @@ class LabyrinthClearRate {
                 if (this.tileCalcRunning) {
                     this.tileCalcRunning = false;
                     this._pathQueued = false;
+                    this._pathQueuedAuto = false;
                     this.setPathButtonRunning(false);
                     this.syncTileCalcButton();
                 }
@@ -3751,6 +3753,7 @@ class LabyrinthClearRate {
         const settledIdle = () => {
             if (!this._pathQueued || this.autoTileTimer) return;
             this._pathQueued = false;
+            this._pathQueuedAuto = false;
             this.setPathButtonRunning(false);
             this.runPathCalculation();
         };
@@ -4080,7 +4083,10 @@ class LabyrinthClearRate {
                 this._autoCalcDeferred = false;
                 const followUp = retryScheduled || (deferred && !cancelled);
                 const wantsPath = this._pathQueued && !followUp;
-                if (!followUp || cancelled) this._pathQueued = false;
+                if (!followUp || cancelled) {
+                    this._pathQueued = false;
+                    this._pathQueuedAuto = false;
+                }
                 this.setPathButtonRunning(false);
                 if (wantsPath && !cancelled) this.runPathCalculation();
                 // A retry already scheduled covers the new rooms; a user cancel
@@ -4088,6 +4094,7 @@ class LabyrinthClearRate {
                 if (deferred && !retryScheduled && !cancelled) this.scheduleAutoTileCalc();
             } else {
                 this._pathQueued = false;
+                this._pathQueuedAuto = false;
             }
         }
     }
@@ -4376,7 +4383,14 @@ class LabyrinthClearRate {
         // …including the gap before a scheduled auto retry, which is the same
         // calculation still settling
         if (this.tileCalcRunning || this.autoTileTimer) {
-            this._pathQueued = !this._pathQueued;
+            if (this._pathQueuedAuto) {
+                // Waiting on Auto-path's behalf: the press makes the wait its own
+                // (so turning Auto-path off no longer withdraws it) rather than
+                // reading as the second press that cancels a wait
+                this._pathQueuedAuto = false;
+            } else {
+                this._pathQueued = !this._pathQueued;
+            }
             this.setPathButtonRunning(false);
             return;
         }
@@ -5146,8 +5160,12 @@ class LabyrinthClearRate {
             }
             if (this.tileCalcRunning || this.autoTileTimer) {
                 // The room calculation the reveal set off runs first; the path
-                // follows it once, and a cancel of it withdraws this too
-                this._pathQueued = true;
+                // follows it once, and a cancel of it withdraws this too. A
+                // wait a Path press already queued stays that press's.
+                if (!this._pathQueued) {
+                    this._pathQueued = true;
+                    this._pathQueuedAuto = true;
+                }
                 this.setPathButtonRunning(false);
                 return;
             }
@@ -5155,10 +5173,17 @@ class LabyrinthClearRate {
         }, AUTO_PATH_DELAY_MS);
     }
 
-    /** Drop a pending automatic re-path */
+    /** Drop a pending automatic re-path, and an automatic one queued behind a room calculation */
     cancelAutoPath() {
         if (this.autoPathTimer) clearTimeout(this.autoPathTimer);
         this.autoPathTimer = null;
+        // A path Auto-path queued behind a room calculation is withdrawn with
+        // it; one a Path press queued is left to run
+        if (this._pathQueuedAuto) {
+            this._pathQueuedAuto = false;
+            this._pathQueued = false;
+            this.setPathButtonRunning(!!this.pathCalcRunning);
+        }
     }
 
     /**

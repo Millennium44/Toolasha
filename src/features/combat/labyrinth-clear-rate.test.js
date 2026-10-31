@@ -7367,6 +7367,46 @@ describe('auto-path after a beacon reveal', () => {
         expect(labyrinthClearRate._pathQueued).toBe(true);
     });
 
+    test('turning Auto-path off withdraws a path it already queued behind a room calculation', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+
+        // What the toggle does when switched off
+        setSettings({ autoPath: false });
+        labyrinthClearRate.cancelAutoPath();
+
+        // Nothing left for the calculation's completion to start
+        expect(labyrinthClearRate._pathQueued).toBe(false);
+    });
+
+    test('a Path press already queued is not withdrawn by Auto-path going off', () => {
+        labyrinthClearRate.tileCalcRunning = true;
+        labyrinthClearRate._pathQueued = true; // the press, waiting on the calculation
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        setSettings({ autoPath: false });
+        labyrinthClearRate.cancelAutoPath();
+
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
+
+    test('a Path press while Auto-path is waiting makes the wait its own', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        pathSpy.mockRestore();
+
+        labyrinthClearRate.runPathCalculation();
+        // Not read as the second press that cancels a wait...
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+        // ...and no longer Auto-path's to withdraw
+        labyrinthClearRate.cancelAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
+
     test('cancelling the room calculation withdraws a pending re-path', () => {
         labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
         labyrinthClearRate.tileCalcRunning = true;
