@@ -429,6 +429,33 @@ describe('ensureOwnScore', () => {
         expect(await waiting).toBeNull();
     });
 
+    test('after a gear swap with the pricing unchanged, the score of the old build is not handed back', async () => {
+        game.equipment = [['/item_locations/head', { itemHrid: '/items/helmet', enhancementLevel: 5 }]];
+        game.scoreResult = { total: 100 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 100 });
+        // Items updated, the debounced refresh has not run, and the minimum interval has not passed
+        game.equipment = [['/item_locations/head', { itemHrid: '/items/helmet', enhancementLevel: 12 }]];
+        game.scoreResult = { total: 900 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 900 });
+        // Nothing changed since: the held score is returned without scoring again
+        game.scoreResult = { total: 1 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 900 });
+    });
+
+    test('a changed ability level or house room is a different build too', async () => {
+        game.scoreResult = { total: 100 };
+        await ensureOwnScore({ stamp: scorePricingStamp() });
+        game.combined = { characterHouseRoomMap: { '/house_rooms/gym': { level: 3 } } };
+        game.scoreResult = { total: 120 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 120 });
+        game.characterData = {
+            characterAbilities: [{ abilityHrid: '/abilities/fireball', level: 9 }],
+            combatUnit: { combatAbilities: [{ abilityHrid: '/abilities/fireball' }] },
+        };
+        game.scoreResult = { total: 150 };
+        expect(await ensureOwnScore({ stamp: scorePricingStamp() })).toEqual({ total: 150 });
+    });
+
     test('a score computed before a pricing change is recomputed, not handed back stale', async () => {
         await ensureOwnScore({ stamp: scorePricingStamp() });
         game.stamp = 'b';

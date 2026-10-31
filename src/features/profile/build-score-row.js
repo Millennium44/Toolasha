@@ -111,6 +111,25 @@ export function scorePricingStamp() {
     return `${pricingStamp()}|${marketAPI.priceVersion}|${useCost}|${minLevel}`;
 }
 
+/**
+ * Everything `calculateCombatScore` reads for the own profile, as one string: worn items with their enhancement,
+ * equipped abilities with their levels, house rooms and guild shrine levels. Two builds with the same fingerprint
+ * score the same; a swap of gear changes it before the debounced refresh has run.
+ * @param {{profile: Object}|null} profileData - {@link ownProfileData}
+ * @returns {string|null} null before the character has loaded
+ */
+export function buildFingerprint(profileData) {
+    const p = profileData?.profile;
+    if (!p) return null;
+    const sortedEntries = (map) => Object.entries(map || {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return JSON.stringify([
+        sortedEntries(p.wearableItemMap).map(([slot, item]) => [slot, item.itemHrid, item.enhancementLevel]),
+        (p.equippedAbilities || []).map((a) => [a.abilityHrid, a.level]),
+        sortedEntries(p.characterHouseRoomMap),
+        sortedEntries(p.characterGuildBuffMap),
+    ]);
+}
+
 class BuildScore {
     constructor() {
         this.watching = false;
@@ -118,6 +137,8 @@ class BuildScore {
         this.computedAt = 0;
         /** The {@link scorePricingStamp} the held score was computed under */
         this.stamp = null;
+        /** The {@link buildFingerprint} of the build the held score was computed for */
+        this.fingerprint = null;
         this.inflight = null;
         this.pending = null;
         this.running = false;
@@ -173,6 +194,7 @@ class BuildScore {
 
         const generation = this.generation;
         const stamp = scorePricingStamp();
+        const fingerprint = buildFingerprint(profileData);
         this.running = true;
         try {
             const result = await calculateCombatScore(profileData);
@@ -187,6 +209,7 @@ class BuildScore {
                 this.score = result;
                 this.computedAt = Date.now();
                 this.stamp = stamp;
+                this.fingerprint = fingerprint;
             }
         } catch (error) {
             console.error('[BuildScore] Scoring the build failed:', error);
@@ -204,6 +227,7 @@ class BuildScore {
         this.watching = false;
         this.score = null;
         this.stamp = null;
+        this.fingerprint = null;
         this.running = false;
         this.inflight = null;
         this.generation += 1;
@@ -244,7 +268,12 @@ export function readOwnScore() {
  */
 export async function ensureOwnScore({ stamp = null, timeoutMs = 15000 } = {}) {
     buildScore.ensureWatching();
-    const fresh = () => buildScore.score && (stamp === null || buildScore.stamp === stamp);
+    // Fresh means priced under this stamp AND for the build worn now: a gear swap changes what is worn well before
+    // the debounced refresh scores it
+    const fresh = () =>
+        buildScore.score &&
+        (stamp === null || buildScore.stamp === stamp) &&
+        buildScore.fingerprint === buildFingerprint(ownProfileData());
     if (fresh()) return buildScore.score;
     const deadline = Date.now() + timeoutMs;
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
