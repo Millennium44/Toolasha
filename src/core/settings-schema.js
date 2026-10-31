@@ -3027,7 +3027,7 @@ export const settingsGroups = {
                 label: 'Labyrinth: Auto-path after a beacon',
                 type: 'checkbox',
                 default: true,
-                help: 'While a path is shown on the labyrinth map, works it out again by itself when a beacon reveals rooms on the floor (once per reveal, after any room calculation it triggers)',
+                help: 'Works out the labyrinth path after a beacon reveals rooms on the floor, whether or not a path is shown yet (once per reveal, after any room calculation it triggers)',
             },
             combatBattleCounter: {
                 id: 'combatBattleCounter',

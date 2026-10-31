@@ -7174,7 +7174,6 @@ describe('auto-path after a beacon reveal', () => {
         labyrinthClearRate._pathQueued = false;
         labyrinthClearRate.currentFloor = 3;
         labyrinthClearRate.onLabyrinthUpdated(update(1, 3));
-        labyrinthClearRate._pathShownFloor = 3;
     });
 
     afterEach(() => {
@@ -7189,7 +7188,6 @@ describe('auto-path after a beacon reveal', () => {
         configMock.getSetting.mockImplementation(() => true);
         labyrinthClearRate.roomData = null;
         labyrinthClearRate._labyrinth = null;
-        labyrinthClearRate._pathShownFloor = null;
         labyrinthClearRate._pathQueued = false;
         document.body.innerHTML = '';
     });
@@ -7227,8 +7225,17 @@ describe('auto-path after a beacon reveal', () => {
         expect(pathSpy).not.toHaveBeenCalled();
     });
 
-    test('with no path on the map nothing runs', () => {
-        labyrinthClearRate._pathShownFloor = null;
+    test('with no path on the map yet, a beacon reveal still works one out', () => {
+        labyrinthClearRate.clearPathOverlays();
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('with no path on the map and Auto-path off, nothing runs', () => {
+        setSettings({ autoPath: false });
+        labyrinthClearRate.clearPathOverlays();
         labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
         vi.advanceTimersByTime(2000);
 

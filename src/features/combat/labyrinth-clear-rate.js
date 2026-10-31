@@ -3453,13 +3453,13 @@ class LabyrinthClearRate {
         body.insertBefore(autoButton, status);
         syncAuto();
 
-        // Re-path on its own when a beacon reveals rooms, while a path is shown
+        // Path on its own when a beacon reveals rooms
         const autoPathOn = () => !!config.getSetting('labyrinthAutoPath');
         const autoPathButton = document.createElement('button');
         autoPathButton.className = `${TILE_CONTROLS_CLASS}-auto-path-toggle`;
         autoPathButton.style.cssText = autoButton.style.cssText;
         autoPathButton.title =
-            'While a path is shown, work it out again by itself when a beacon reveals rooms on this floor';
+            'Works out the path after a beacon reveals rooms on this floor, once per beacon, after any room calculation it sets off';
         const syncAutoPath = () => {
             const on = autoPathOn();
             autoPathButton.textContent = on ? 'Auto-path: on' : 'Enable auto-path';
@@ -4469,9 +4469,6 @@ class LabyrinthClearRate {
                 this.appendPathOverlay(cell, color, label);
             }
 
-            // A path is on the map: auto-path keeps this one current
-            this._pathShownFloor = this.currentFloor;
-
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
             const unknownText = unknownCount ? ` · ${plural(unknownCount, 'unrevealed room')}` : '';
 
@@ -4565,8 +4562,6 @@ class LabyrinthClearRate {
 
     clearPathOverlays() {
         document.querySelectorAll(`.${PATH_OVERLAY_CLASS}`).forEach((el) => el.remove());
-        // No path on the map any more, so nothing for auto-path to keep current
-        this._pathShownFloor = null;
     }
 
     /**
@@ -4976,25 +4971,22 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Work the shown path out again once a beacon has revealed rooms. One run
-     * per reveal burst: a pending run absorbs every reveal that lands before
-     * it fires. Only while a path is on the map for this floor, never once a
-     * calculation is cancelled, and behind a room calculation in progress (it
-     * queues as a Path press would, without the press's toggle).
+     * Work out the path once a beacon has revealed rooms, whether or not one
+     * is on the map yet: the reveal is what a path waits for. One run per
+     * reveal burst: a pending run absorbs every reveal that lands before it
+     * fires. Never once a calculation is cancelled, and behind a room
+     * calculation in progress (it queues as a Path press would, without the
+     * press's toggle).
      */
     scheduleAutoPath() {
         if (!config.getSetting('labyrinthAutoPath')) return;
-        // A path on the map for this floor, or one being worked out right now
-        // (which cleared the old one first and has not drawn its own yet)
-        if (this._pathShownFloor !== this.currentFloor && !this.pathCalcRunning) return;
         if (this.autoPathTimer) return;
         const floor = this.currentFloor;
         const characterId = dataManager.getCurrentCharacterId();
         this.autoPathTimer = setTimeout(() => {
             this.autoPathTimer = null;
             if (!config.getSetting('labyrinthAutoPath')) return;
-            // The floor, the character and the shown path all still the ones
-            // the reveal was about
+            // The floor and the character still the ones the reveal was about
             if (this.currentFloor !== floor || dataManager.getCurrentCharacterId() !== characterId) return;
             if (!this.roomData) return;
             if (this.pathCalcRunning) {
@@ -5002,7 +4994,6 @@ class LabyrinthClearRate {
                 this.scheduleAutoPath();
                 return;
             }
-            if (this._pathShownFloor !== floor) return;
             if (this.tileCalcRunning || this.autoTileTimer) {
                 // The room calculation the reveal set off runs first; the path
                 // follows it once, and a cancel of it withdraws this too
