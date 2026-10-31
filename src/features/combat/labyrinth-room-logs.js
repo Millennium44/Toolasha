@@ -1312,6 +1312,7 @@ class LabyrinthRoomLogs {
             return {
                 clearChance: keep(forecast.clearChance),
                 expectedSeconds: Number.isFinite(forecast.expectedSeconds) ? forecast.expectedSeconds : null,
+                avgFightSeconds: keep(forecast.avgFightSeconds),
                 successChance: keep(forecast.successChance),
                 doubleChance: keep(forecast.doubleChance),
                 xpPerRoom: keep(forecast.xpPerRoom),
