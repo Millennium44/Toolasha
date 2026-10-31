@@ -3452,7 +3452,12 @@ class GuildTrials {
                 // init_character_data is read off the server's current state. Compare the two on the local
                 // clock (the login payload's own send time, shifted by the clock offset, against when the
                 // socket copy arrived); a login payload with no send time is taken as just received
-                const initAt = Number.isFinite(serverNow) ? serverNow + offsetMs : null;
+                // With no clock offset known yet the two stamps are on different clocks and cannot be
+                // compared: the login payload wins, as it does on a fresh login
+                const initAt =
+                    Number.isFinite(serverNow) && Number.isFinite(this.serverClockOffsetMs)
+                        ? serverNow + offsetMs
+                        : null;
                 const held = this.currentTrials.at;
                 if (initAt !== null && Number.isFinite(held) && initAt <= held) return;
             }

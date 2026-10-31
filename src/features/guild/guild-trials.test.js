@@ -7511,6 +7511,19 @@ describe('after a reload, before any guild message', () => {
         expect(guildTrials.currentTrials).toBe(held);
     });
 
+    test('with no clock offset known, a login payload is accepted instead of compared across clocks', async () => {
+        const { INIT_CHARACTER_DATA, sentAt } = await load();
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+        expect(guildTrials.currentTrials.source).toBe('socket');
+
+        // A login payload stamped before the socket copy would be refused on a known offset; without one
+        // the server and local clocks cannot be compared, so it is taken
+        guildTrials.serverClockOffsetMs = null;
+        const stamped = { ...INIT_CHARACTER_DATA, currentTimestamp: new Date(sentAt - 60_000).toISOString() };
+        guildTrials._noteInitialTrials(stamped);
+        expect(guildTrials.currentTrials.source).toBe('init');
+    });
+
     test('a payload read back hours after login is dated when it was sent and bounds nothing', async () => {
         // A late start reads the login payload off the data manager. Taken as
         // received now, it bounded the offset at three hours and drew the
