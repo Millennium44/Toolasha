@@ -838,21 +838,29 @@ class LabyrinthRoomLogs {
 
         if (!prev || nextCounter <= prevCounter) return null;
 
-        if (nextCounter - prevCounter > 1) {
+        const gap = nextCounter - prevCounter > 1;
+        if (gap) {
             session.incomplete = true;
             for (let c = prevCounter + 1; c < nextCounter; c++) {
                 session.actions.push({ outcome: 'unknown', text: '?' });
             }
         }
 
-        const action = this.deriveAction(prev, snapshot);
-        // Counted here rather than from the drawn list, which is trimmed once a
-        // room runs long — the rate has to survive the trimming
-        session.actionCount = (session.actionCount || 0) + 1;
-        if (action.outcome === 'success' || action.outcome === 'double') {
-            session.successCount = (session.successCount || 0) + 1;
+        let action = this.deriveAction(prev, snapshot);
+        if (gap) {
+            // Several actions arrived as one change of work: the change is no single action's
+            // outcome, so it is kept out of the success and double rates and out of their
+            // denominator rather than scored as one oversized action
+            action = { outcome: 'unknown', text: action.text };
+        } else {
+            // Counted here rather than from the drawn list, which is trimmed once a
+            // room runs long — the rate has to survive the trimming
+            session.actionCount = (session.actionCount || 0) + 1;
+            if (action.outcome === 'success' || action.outcome === 'double') {
+                session.successCount = (session.successCount || 0) + 1;
+            }
+            if (action.outcome === 'double') session.doubleCount = (session.doubleCount || 0) + 1;
         }
-        if (action.outcome === 'double') session.doubleCount = (session.doubleCount || 0) + 1;
 
         session.actions.push(action);
         if (session.actions.length > MAX_ACTIONS) {
