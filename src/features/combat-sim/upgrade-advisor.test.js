@@ -10046,6 +10046,21 @@ describe('main hand and off hand do not conflict; free ability slots are capacit
         expect(hands.attemptsSaved).toBe(9);
     });
 
+    test('a two-hander displaced by a better main hand gives its off-hand reservation back', () => {
+        const row = (slot, gain, cost) => ({
+            candidate: { ...enhance(slot), description: `${slot} +5`, currentLevel: 0 },
+            cost,
+            attemptsDelta: -gain,
+            significant: true,
+        });
+        const plan = planWithinBudget([row(TWO, 5, 1), row(MAIN, 10, 10), row(OFF, 4, 100)], 1000, {
+            singleLoadout: true,
+        });
+
+        expect(plan.picks.map((pick) => pick.candidate.slot).sort()).toEqual([MAIN, OFF].sort());
+        expect(plan.attemptsSaved).toBe(14);
+    });
+
     test('Confirm together accepts independent hands and still refuses a genuine overlap', async () => {
         runSimulation.mockReset();
         runSimulation.mockResolvedValue({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 10 });

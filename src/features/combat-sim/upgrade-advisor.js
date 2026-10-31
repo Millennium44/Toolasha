@@ -7094,7 +7094,18 @@ export function planWithinBudget(
     const holdKeys = (entry) => {
         for (const key of entry.keys) {
             if (!groupsHolding.has(key)) groupsHolding.set(key, []);
-            groupsHolding.get(key).push({ group: entry.key, savings: entry.savings });
+            groupsHolding
+                .get(key)
+                .push({ group: entry.key, savings: entry.savings, candidate: entry.result.candidate });
+        }
+    };
+    // A pick taken back out gives its keys back: an off hand it was reserving is free to be bought again
+    const releaseKeys = (candidate) => {
+        for (const [key, holders] of groupsHolding) {
+            groupsHolding.set(
+                key,
+                holders.filter((held) => held.candidate !== candidate)
+            );
         }
     };
     // In one loadout any other group holding a key is a piece that cannot be worn with this one. Across loadouts
@@ -7252,6 +7263,7 @@ export function planWithinBudget(
         const displaced = displacedBy(entry);
         for (const i of displaced) {
             const older = picks[i];
+            releaseKeys(older.candidate);
             spent -= older.cost;
             picks.splice(i, 1);
             skipped.push({ result: older, reason: 'a later pick covers every room it did' });
