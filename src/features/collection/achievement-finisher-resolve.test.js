@@ -62,19 +62,36 @@ describe('resolveAchievement: the nine listed achievements', () => {
         expect(res.level).toBe(60);
     });
 
-    test('decompose: the alchemy tab on the item, gated by the item level, with its coin fee', () => {
+    test('decompose: the alchemy tab on the item, gated by the action level (not the item level), with its coin fee', () => {
         expect(resolve('decompose_bamboo_gloves')).toEqual({
             kind: 'alchemy',
             actionHrid: '/actions/alchemy/decompose',
             alchemyType: 'decompose',
             itemHrid: '/items/bamboo_gloves',
             skillHrid: '/skills/alchemy',
-            level: 10,
+            level: 1,
             inputs: [
                 { itemHrid: '/items/bamboo_gloves', count: 1 },
                 { itemHrid: '/items/coin', count: 100 },
             ],
         });
+    });
+
+    test('an alchemy row above the Alchemy level is not "level not met"; the action requirement is', () => {
+        const low = context({ skillLevels: new Map([['/skills/alchemy', 1]]) });
+        expect(readiness(resolve('decompose_bamboo_gloves'), low).levelMet).toBe(true);
+        const gated = {
+            ...DATA,
+            actionDetailMap: {
+                ...DATA.actionDetailMap,
+                '/actions/alchemy/decompose': {
+                    levelRequirement: { skillHrid: '/skills/alchemy', level: 20 },
+                },
+            },
+        };
+        const res = resolveAchievement(ACHIEVEMENTS['/achievements/decompose_bamboo_gloves'], gated);
+        expect(res.level).toBe(20);
+        expect(readiness(res, low).levelMet).toBe(false);
     });
 
     test('defeat: the non-dungeon zone that spawns the boss, tier 0', () => {
