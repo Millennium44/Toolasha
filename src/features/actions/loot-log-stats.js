@@ -536,7 +536,8 @@ class LootLogStats {
                 marketTax: isIronCowCharacter() ? 0 : MARKET_TAX,
             });
             if (!summary) return;
-            summary.protectionPartial = Boolean(protectionQuote?.partial) && summary.expectedProtects > 0;
+            summary.protectionPartial =
+                Boolean(protectionQuote?.partial) && (summary.expectedProtects > 0 || summary.actualProtects > 0);
 
             const div = document.createElement('div');
             div.className = 'mwi-loot-log-enhancing';
