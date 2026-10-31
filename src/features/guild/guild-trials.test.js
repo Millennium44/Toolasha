@@ -2288,7 +2288,7 @@ describe('the panel, end to end', () => {
         // The startup delay: the observer only fires on nodes that mount or change after it
         // was registered, so a Guild panel that was already open stayed bare until the next
         // sampler tick. The timers are fake and never advanced, so only initialize can draw.
-        trialsFeature.cleanup();
+        await trialsFeature.cleanup();
         resetTrialsSingleton();
         game.store = {};
         buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
@@ -2305,8 +2305,25 @@ describe('the panel, end to end', () => {
         expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
     });
 
+    test('the pre-load draw records nothing: no sample, no first-tier guess, no footer stats', async () => {
+        // The stored record and the learned work bases are not in yet, so a card with no badge and
+        // no socket reading would be filed under tier 1 and merged into saved history by the load
+        await trialsFeature.cleanup();
+        resetTrialsSingleton();
+        game.store = {};
+        buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+
+        const pending = trialsFeature.initialize();
+        expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
+        expect(Object.keys(guildTrials.record?.tiles || {})).toEqual([]);
+
+        await pending;
+        // Only the post-load draw records
+        expect(guildTrials.record.tiles['skilling::alchemy']).toBeTruthy();
+    });
+
     test('the draw after the record load shows what was stored, not only this session', async () => {
-        trialsFeature.cleanup();
+        await trialsFeature.cleanup();
         resetTrialsSingleton();
         game.store = {};
         buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
@@ -2321,7 +2338,7 @@ describe('the panel, end to end', () => {
     });
 
     test('with the feature off, initialize draws nothing even over a mounted trial view', async () => {
-        trialsFeature.cleanup();
+        await trialsFeature.cleanup();
         resetTrialsSingleton();
         game.settings = { guildTrialsInfo: false };
         buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);

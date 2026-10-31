@@ -3049,18 +3049,26 @@ class GuildTrials {
     }
 
     /**
-     * One draw of whatever trial view is mounted, with every record save suppressed.
+     * One draw of whatever trial view is mounted, presentation only.
+     *
+     * The stored record and the learned work bases are not in yet, so what this pass samples (a
+     * first-tier guess for a trial whose base is not known, footer stats filed under that tier)
+     * would be merged into saved history by the load. It therefore draws from a throwaway record,
+     * which is dropped afterwards, and saves nothing; the draw after the load is the one that records.
      * @returns {void}
      * @private
      */
     _drawWithoutSaving() {
         this._suppressSave = true;
+        const held = this.record;
+        this.record = null;
         try {
             this._onTab(findTrialsRoot());
         } catch (error) {
             console.error('[GuildTrials] The first draw failed:', error);
         } finally {
             this._suppressSave = false;
+            this.record = held;
         }
     }
 
