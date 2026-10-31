@@ -3742,12 +3742,14 @@ class LabSimUI {
         }
         if (signature === this._editorEditSig) return false;
         this._editorEditSig = signature;
-        // A Find Max level was searched for the build as it stood
-        if (Object.keys(this._maxLevelByMonster).length) {
+        // A Find Max level was searched for the build as it stood; only the Configure scope
+        // reads the editor, so a saved-loadout scope keeps what it searched
+        const configureScope = this._getUpgradeScopeMode() === 'current';
+        if (configureScope && Object.keys(this._maxLevelByMonster).length) {
             this._maxLevelByMonster = {};
             this._refreshLevelSourceReadout();
         }
-        if (this._getUpgradeScopeMode() === 'current') this._onTriggerScopeChanged();
+        if (configureScope) this._onTriggerScopeChanged();
         return true;
     }
 
