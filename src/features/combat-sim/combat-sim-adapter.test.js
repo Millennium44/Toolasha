@@ -1029,6 +1029,20 @@ describe('a gearless player with any raised combat level is not treated as blank
         expect(result.players[0][key]).toBe(50);
     });
 
+    test('an import without an Intelligence level is marked unknown; one that carries it is not', () => {
+        const without = parseShykaiImport(
+            JSON.stringify({ player: { attackLevel: 1, meleeLevel: 90, equipment: [] } })
+        );
+        expect(without.players[0].intelligenceLevel).toBe(1);
+        expect(without.players[0].intelligenceUnknown).toBe(true);
+
+        const withInt = parseShykaiImport(
+            JSON.stringify({ player: { attackLevel: 1, meleeLevel: 90, intelligenceLevel: 60, equipment: [] } })
+        );
+        expect(withInt.players[0].intelligenceLevel).toBe(60);
+        expect(withInt.players[0].intelligenceUnknown).toBeUndefined();
+    });
+
     test('a genuinely blank player (every level at 1, no equipment) is still dropped', () => {
         const payload = JSON.stringify({ player: { attackLevel: 1, staminaLevel: 1, equipment: [] } });
 
@@ -1687,6 +1701,25 @@ describe('buildShykaiExportPlayer round trips through parseShykaiImport', () => 
         const byItem = Object.fromEntries(exportObj.player.equipment.map((e) => [e.itemHrid, e.itemLocationHrid]));
         expect(byItem['/items/helm']).toBe('/item_locations/head');
         expect(byItem['/items/bludgeon']).toBe('/item_locations/two_hand');
+    });
+
+    test('a cleared trigger list stays cleared on re-import while a default one stays default', () => {
+        const dto = fullDTO();
+        dto.food[0].triggers = [];
+        dto.drinks[0].triggers = [];
+        dto.abilities[0].triggers = [];
+
+        const exportObj = buildShykaiExportPlayer(dto, 'Milkman');
+        expect(exportObj.triggerMap['/abilities/aura']).toEqual([]);
+        // null means "follow the game's defaults": nothing is written for it
+        expect(exportObj.triggerMap['/abilities/strike']).toHaveLength(1);
+        dto.abilities[1].triggers = null;
+        expect(buildShykaiExportPlayer(dto, 'Milkman').triggerMap['/abilities/strike']).toBeUndefined();
+
+        const back = parseShykaiImport(JSON.stringify(exportObj)).players[0];
+        expect(back.abilities[0].triggers).toEqual([]);
+        expect(back.food[0].triggers).toEqual([]);
+        expect(back.drinks[0].triggers).toEqual([]);
     });
 
     describe('guild shrine levels: unknown vs. confirmed guildless', () => {

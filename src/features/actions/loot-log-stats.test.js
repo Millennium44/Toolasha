@@ -122,6 +122,63 @@ describe('the loot log records enhancing costs at the ask', () => {
     });
 });
 
+describe('a partial protection price is shown as a floor', () => {
+    const summaryText = (protection) => {
+        enhancing.calculateEnhancement = () => ({ attempts: 6, protectionCount: 2 });
+        enhancing.protection.mockReturnValue(protection);
+        enhancing.material.mockReturnValue(10);
+        dataManager.getInitClientData.mockReturnValue({
+            itemDetailMap: {
+                '/items/sword': { itemLevel: 10, enhancementCosts: [{ itemHrid: '/items/shard', count: 1 }] },
+            },
+        });
+        try {
+            const div = document.createElement('div');
+            new LootLogStats().injectEnhancingSummary(div, {
+                drops: { '/items/sword::0': 5, '/items/sword::1': 1 },
+                actionCount: 6,
+            });
+            return div.textContent;
+        } finally {
+            enhancing.calculateEnhancement = null;
+            enhancing.protection.mockReturnValue({ price: 0 });
+            enhancing.material.mockReturnValue(0);
+        }
+    };
+
+    test('flagged when the protection quote is partial, silent when it is whole', () => {
+        expect(summaryText({ price: 5000, partial: true })).toContain('protection price is a floor');
+        expect(summaryText({ price: 5000, partial: false })).not.toContain('protection price is a floor');
+        expect(summaryText({ price: 5000 })).not.toContain('protection price is a floor');
+    });
+});
+
+describe('a partial protection price still flags a run whose protections were used', () => {
+    test('floor note shows when the model expects none but the drops show some were spent', () => {
+        // Expected protections 0 (the model says none), yet the level counts show three were burned.
+        enhancing.calculateEnhancement = () => ({ attempts: 6, protectionCount: 0 });
+        enhancing.protection.mockReturnValue({ price: 5000, partial: true });
+        enhancing.material.mockReturnValue(10);
+        dataManager.getInitClientData.mockReturnValue({
+            itemDetailMap: {
+                '/items/sword': { itemLevel: 10, enhancementCosts: [{ itemHrid: '/items/shard', count: 1 }] },
+            },
+        });
+        try {
+            const div = document.createElement('div');
+            new LootLogStats().injectEnhancingSummary(div, {
+                drops: { '/items/sword::2': 3 },
+                actionCount: 3,
+            });
+            expect(div.textContent).toContain('protection price is a floor');
+        } finally {
+            enhancing.calculateEnhancement = null;
+            enhancing.protection.mockReturnValue({ price: 0 });
+            enhancing.material.mockReturnValue(0);
+        }
+    });
+});
+
 describe('LootLogStats.calculateExpectedRunValue', () => {
     let stats;
 

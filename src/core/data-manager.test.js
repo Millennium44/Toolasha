@@ -1683,6 +1683,33 @@ describe('socket ownership across a character switch', () => {
         expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 11 }]);
     });
 
+    test('a discarded quest leaves characterQuests like a claimed one, and a live one stays', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.lastCharacterSwitchTime = 0;
+        await loginOn({ id: 'char-1', name: 'One' }, socketA);
+
+        // The exact message the test server sent when task 1469689 was discarded
+        const live = { id: 2, status: '/quest_status/in_progress', actionHrid: '/actions/milking/cow' };
+        dataManager.characterQuests = [
+            { id: 1469689, status: '/quest_status/in_progress', actionHrid: '/actions/milking/crimson_cow' },
+            live,
+            { id: 3, status: '/quest_status/in_progress', actionHrid: '/actions/milking/cow' },
+        ];
+        webSocketHandlers.get('quests_updated')(
+            {
+                type: 'quests_updated',
+                endCharacterQuests: [
+                    { id: 1469689, status: '/quest_status/discarded', actionHrid: '/actions/milking/crimson_cow' },
+                    { id: 3, status: '/quest_status/claimed', actionHrid: '/actions/milking/cow' },
+                ],
+            },
+            { socket: socketA }
+        );
+
+        expect(dataManager.characterQuests).toEqual([live]);
+    });
+
     test('binding happens before the switch chain drains, not inside it', async () => {
         // The init handler queues its body behind _switchChain, which suspends on a
         // storage flush and on awaited character_switching listeners. Everything the

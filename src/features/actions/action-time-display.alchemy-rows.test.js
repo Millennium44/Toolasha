@@ -328,3 +328,78 @@ describe('a transmute’s input lasts through its own self-returns', () => {
         expect(net).toEqual({ perAction: 1, isEstimated: false });
     });
 });
+
+describe('a conservative projection does not count a transmute’s random self-returns', () => {
+    const enhancedStack = (itemHrid, count, enhancementLevel) => ({
+        itemHrid,
+        count,
+        enhancementLevel,
+        itemLocationHrid: '/item_locations/inventory',
+    });
+
+    test('countSelfReturns:false leaves the input-count floor and an exact limit', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(CAPE, 100), PURSE]);
+        const row = actionTimeDisplay.calculateSingleQueueActionTime(
+            queued(1, TRANSMUTE, CAPE),
+            game.actionDetails[TRANSMUTE],
+            lookup,
+            { countSelfReturns: false }
+        );
+
+        expect(row.materialLimit).toBe(100);
+        expect(row.materialLimitIsEstimated).toBe(false);
+        expect(row.totalTime).toBe(1000);
+    });
+
+    test('creditStochastic:false spends the whole input and credits no virtual self-return', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(CAPE, 100), PURSE]);
+        const action = queued(1, TRANSMUTE, CAPE);
+        const timing = actionTimeDisplay.calculateSingleQueueActionTime(action, game.actionDetails[TRANSMUTE], lookup, {
+            countSelfReturns: false,
+        });
+
+        const performed = actionTimeDisplay.deductQueueActionMaterials(
+            lookup,
+            game.actionDetails[TRANSMUTE],
+            action,
+            timing,
+            { creditStochastic: false }
+        );
+
+        expect(performed).toBe(100);
+        expect(lookup.byHrid[CAPE]).toBe(0);
+        expect(lookup.byEnhancedKey[`${CAPE}::0`]).toBe(0);
+        expect(lookup.byHrid[CHANCE_CAPE] || 0).toBe(0);
+        // The next transmute on the same capes has nothing to run on
+        const next = actionTimeDisplay.calculateSingleQueueActionTime(
+            queued(2, TRANSMUTE, CAPE),
+            game.actionDetails[TRANSMUTE],
+            lookup,
+            { countSelfReturns: false }
+        );
+        expect(next.materialLimit).toBe(0);
+    });
+
+    test('a counted row is capped without the self-return too', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([stack(CAPE, 100), PURSE]);
+        const row = actionTimeDisplay.calculateSingleQueueActionTime(
+            queued(1, TRANSMUTE, CAPE, { maxCount: 500 }),
+            game.actionDetails[TRANSMUTE],
+            lookup,
+            { limitCountedByMaterials: true, countSelfReturns: false }
+        );
+        expect(row.count).toBe(100);
+    });
+
+    test('expected mode: +0 self-returns cannot refill a selected +5 stack', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup([enhancedStack(CAPE, 100, 5), PURSE]);
+        const row = actionTimeDisplay.calculateSingleQueueActionTime(
+            queued(1, TRANSMUTE, CAPE, { enhancementLevel: 5 }),
+            game.actionDetails[TRANSMUTE],
+            lookup
+        );
+
+        expect(row.materialLimit).toBe(100);
+        expect(row.materialLimitIsEstimated).toBe(false);
+    });
+});

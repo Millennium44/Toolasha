@@ -135,6 +135,7 @@ vi.mock('./combat-sim-ui.js', async (importOriginal) => {
 vi.mock('../combat/labyrinth-clear-rate.js', () => ({
     SKIP_THRESHOLD_RANGE: 60,
     default: {
+        getCombatExperienceBonus: () => 0,
         getLabyrinthCombatBuffs: () => [],
         getCombatSkipRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
         getCombatRoomLevel: (hrid) => game.skipLevels[hrid] || 0,

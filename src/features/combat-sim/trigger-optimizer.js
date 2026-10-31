@@ -16,6 +16,7 @@
 import config from '../../core/config.js';
 import { calculateSimRevenue } from './combat-sim-adapter.js';
 import { saleTaxRateOf } from './upgrade-advisor.js';
+import { seedRunPriceCache } from './sim-price-seed.js';
 import { runSimulation, getMaxWorkers } from './combat-sim-runner.js';
 import { getGameData, setGameData } from './engine/game-data.js';
 import Monster from './engine/monster.js';
@@ -367,6 +368,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     // Every price is read once and held for the whole run. Sims finish over minutes, and valuing each
     // against whatever the market said when it finished made a price update look like a trigger effect.
     const priceCache = new Map();
+    seedRunPriceCache(priceCache, gameData, { zoneHrid, playerDTOs, saleTaxRates });
     // A sim that failed stops the rest: the queue would otherwise keep starting sims for a run already lost
     let failed = false;
     const stopped = () => failed || Boolean(abortSignal?.());

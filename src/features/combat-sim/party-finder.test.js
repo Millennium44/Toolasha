@@ -5,7 +5,7 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const pricing = vi.hoisted(() => ({ throwFor: null, unpriced: [], capped: null }));
+const pricing = vi.hoisted(() => ({ throwFor: null, unpriced: [], consumables: [], keys: [], capped: null }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
     // Profit read from a test-only `__profit` map, keyed by the player asked for
@@ -15,8 +15,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
             netPerHour: ((simResult.__profit || simResult.lootStates?.__profit)?.[playerHrid] ?? 0) / hours,
             dropEntries: [{ itemHrid: '/items/x', name: 'X', countPerHour: 1 }],
             unpricedDrops: pricing.unpriced,
-            unpricedConsumables: [],
-            unpricedKeys: [],
+            unpricedConsumables: pricing.consumables,
+            unpricedKeys: pricing.keys,
         };
     },
     // Highest combat level takes no penalty; everyone below takes 0.1 per member above them, enough to tell
@@ -83,6 +83,8 @@ const DUNGEON = { zoneHrid: '/actions/combat/chimerical_den', difficultyTier: 0,
 beforeEach(() => {
     pricing.throwFor = null;
     pricing.unpriced = [];
+    pricing.consumables = [];
+    pricing.keys = [];
     pricing.capped = null;
 });
 
@@ -257,6 +259,20 @@ describe('readResult', () => {
         const s = sim(100, 100);
         pricing.throwFor = s;
         expect(readResult(s, {}, 2).profitPerHour).toBeNull();
+    });
+
+    test('an unpriced consumable or key is named apart from an unpriced drop (#651 T02)', () => {
+        pricing.unpriced = ['/items/mystery_box'];
+        pricing.consumables = ['/items/mystery_coffee'];
+        pricing.keys = ['/items/mystery_key'];
+        const metrics = readResult(sim(100, 100), {}, 2);
+
+        expect(metrics.unpriced).toEqual(['/items/mystery_box', '/items/mystery_coffee', '/items/mystery_key']);
+        expect(metrics.unpricedCost).toEqual(['/items/mystery_coffee', '/items/mystery_key']);
+        pricing.unpriced = [];
+        pricing.consumables = [];
+        pricing.keys = [];
+        expect(readResult(sim(100, 100), {}, 2).unpricedCost).toEqual([]);
     });
 
     test('unpriced loot is named on the row', () => {

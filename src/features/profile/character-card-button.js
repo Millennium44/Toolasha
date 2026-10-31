@@ -54,6 +54,17 @@ function convertCombatConsumablesToSlots(combatConsumables, clientData) {
 }
 
 /**
+ * The character name the native profile modal currently shows. The game may keep the same modal
+ * root while another profile is opened into it, so root identity alone cannot tell profiles apart.
+ * @param {Element|null} modal - Profile modal root
+ * @returns {string} Trimmed displayed name ('' when there is no name node)
+ */
+function readDisplayedProfileName(modal) {
+    const nameEl = modal?.querySelector?.('[class*="CharacterName_characterName"]');
+    return (nameEl?.textContent || '').trim();
+}
+
+/**
  * Handle View Card button click - opens character sheet in new tab
  * @param {Object} profileData - Profile data from WebSocket (profile_shared event)
  */
@@ -96,6 +107,7 @@ export async function handleViewCardClick(profileData) {
         // closed modal, another profile, or a character swap during it drops the result.
         const _modal = document.querySelector(PROFILE_MODAL_SELECTOR);
         const startCharacterId = dataManager.getCurrentCharacterId?.() ?? null;
+        const startDisplayedName = readDisplayedProfileName(_modal);
 
         // Calculate combat score
         let combatScore = null;
@@ -110,6 +122,7 @@ export async function handleViewCardClick(profileData) {
         // replaced it, or the player switched characters. Opening a tab now would show the wrong card.
         if (
             (_modal && document.querySelector(PROFILE_MODAL_SELECTOR) !== _modal) ||
+            (_modal && readDisplayedProfileName(_modal) !== startDisplayedName) ||
             (dataManager.getCurrentCharacterId?.() ?? null) !== startCharacterId
         ) {
             return;
@@ -135,9 +148,10 @@ export async function handleViewCardClick(profileData) {
 /**
  * Handle View Card click using a saved loadout snapshot for equipment/abilities/food.
  * Skills, housing, achievements, and cosmetics are always taken from live character data.
- * @param {string} snapshotName - Name of the loadout snapshot to use
+ * @param {string} snapshotName - Name of the loadout snapshot to use (fallback when no id is given)
+ * @param {string|number} [snapshotId] - Stable snapshot id; duplicate names are allowed, so the id wins
  */
-export async function handleViewCardFromSnapshot(snapshotName) {
+export async function handleViewCardFromSnapshot(snapshotName, snapshotId) {
     try {
         const clientData = dataManager.getInitClientData();
         const characterData = dataManager.characterData;
@@ -148,7 +162,11 @@ export async function handleViewCardFromSnapshot(snapshotName) {
         }
 
         const startCharacterId = dataManager.getCurrentCharacterId?.() ?? null;
-        const snapshot = loadoutSnapshot.getAllSnapshots().find((s) => s.name === snapshotName);
+        const allSnapshots = loadoutSnapshot.getAllSnapshots();
+        const hasId = snapshotId !== undefined && snapshotId !== null && snapshotId !== '';
+        const snapshot =
+            (hasId ? allSnapshots.find((s) => String(s.id) === String(snapshotId)) : null) ||
+            allSnapshots.find((s) => s.name === snapshotName);
         if (!snapshot) {
             console.error('[CharacterCardButton] Snapshot not found:', snapshotName);
             return;

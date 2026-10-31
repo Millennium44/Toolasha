@@ -402,6 +402,26 @@ describe('stale response guard', () => {
     });
 });
 
+describe('a recreated panel for the same item', () => {
+    test('is filled again instead of staying blank behind the loaded-key fast path', async () => {
+        historyApi.rows = [
+            { a: 110, b: 90, p: 100, v: 10, time: Math.floor(Date.now() / 1000) - 3600 },
+            { a: 110, b: 90, p: 120, v: 5, time: Math.floor(Date.now() / 1000) - 3500 },
+        ];
+        buildCurrentItem('/items/coin');
+        await marketVolumeStats.initialize();
+        marketVolumeStats.update();
+        await vi.waitFor(() => expect(marketVolumeStats.loadedKey).toBe('/items/coin:0'));
+        expect(panelText()).toContain('1d');
+
+        // The card is replaced by a new node for the same item with no empty selection in between
+        buildCurrentItem('/items/coin');
+        marketVolumeStats.update();
+        await vi.waitFor(() => expect(panelText()).toContain('1d'));
+        expect(document.querySelectorAll('.mwi-volume-stats')).toHaveLength(1);
+    });
+});
+
 describe('navigating from "View All Enhancement Levels"', () => {
     test('picking a level from the all-levels list reuses the same card — no added node for domObserver to see — and is still picked up', async () => {
         // On live, an equipment order book reached by opening "View All

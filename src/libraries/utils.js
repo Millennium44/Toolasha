@@ -102,6 +102,9 @@ import * as toast from '../utils/toast.js';
 // apply the same bound (see utils/liquidity-cap.js). Needs a matching
 // utilsExternalGlobals entry in rollup.config.js to be deduplicated.
 import * as liquidityCap from '../utils/liquidity-cap.js';
+// The upgrade-craft output level rule, shared by the actions queue ledger and the
+// market bundle. Needs a matching utilsExternalGlobals entry in rollup.config.js.
+import * as upgradeEnhancement from '../utils/upgrade-enhancement.js';
 // Chat stamps read as dates, shared by the dungeon tracker (combat) and the
 // chat history (ui). Needs a matching utilsExternalGlobals entry in rollup.config.js.
 import * as localeDateOrder from '../utils/locale-date-order.js';
@@ -297,6 +300,7 @@ toolashaRoot.Utils = {
     scrollBuffValues,
     toast,
     liquidityCap,
+    upgradeEnhancement,
     localeDateOrder,
     combatScrollBuffs,
     fightConfidence,

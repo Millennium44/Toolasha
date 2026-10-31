@@ -147,6 +147,7 @@ export function computeLiveProjection(now = Date.now()) {
         // early. Without the cap the projection reported an idle time far later than the truth.
         const timing = actionTimeDisplay.calculateSingleQueueActionTime(actionObj, actionDetails, inventoryLookup, {
             limitCountedByMaterials: true,
+            countSelfReturns: false,
         });
 
         // The walk is sequential in time, so it has to be sequential in materials too: this

@@ -1918,8 +1918,11 @@ class DataManager {
                         this.characterQuests.push(updatedQuest);
                     }
                 }
-                // Remove claimed quests
-                this.characterQuests = this.characterQuests.filter((q) => q.status !== '/quest_status/claimed');
+                // Remove quests that left the board: claimed, or discarded (the server keeps the
+                // id and sends status '/quest_status/discarded', captured live on the test server)
+                this.characterQuests = this.characterQuests.filter(
+                    (q) => q.status !== '/quest_status/claimed' && q.status !== '/quest_status/discarded'
+                );
             }
         });
 

@@ -29,6 +29,23 @@ import { allowNavRowToWrap } from '../../utils/market-nav-row.js';
 
 const NAV_CONTAINER_SEL = '[class*="MarketplacePanel_marketNavButtonContainer"]';
 const GRID_ITEM_SEL = 'div[class*="Item_itemContainer"]';
+/**
+ * Whether an element is actually on screen: not inside the game's hidden tab wrapper and with no
+ * ancestor that is display:none, visibility:hidden or `hidden`.
+ * @param {Element|null} el - Element to test
+ * @returns {boolean} False for a missing or hidden element
+ */
+function isShown(el) {
+    if (!el) return false;
+    if (el.closest('[class*="TabPanel_hidden"]')) return false;
+    for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
+        if (node.hidden) return false;
+        const style = window.getComputedStyle?.(node);
+        if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    }
+    return true;
+}
+
 const MODAL_SEL = '[class*="Modal_modalContainer"]';
 const BTN_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
 const PREV_BTN_ID = 'mwi-item-hop-prev';
@@ -204,8 +221,12 @@ class MarketItemHop {
         if (event.isComposing || event.keyCode === 229) return;
         if (event.ctrlKey || event.metaKey || event.altKey) return;
         if (isTypingTarget(event)) return;
-        if (!document.querySelector(GAME.MARKETPLACE_PANEL)) return;
-        if (!document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM)) return;
+        // The game keeps a visited tab's panel mounted behind another tab; a retained marketplace that
+        // cannot be seen must not consume the key
+        // Any visible match counts: a hidden retained copy can precede the live one in the document
+        const anyShown = (selector) => Array.from(document.querySelectorAll(selector)).some(isShown);
+        if (!anyShown(GAME.MARKETPLACE_PANEL)) return;
+        if (!anyShown(GAME.MARKETPLACE_CURRENT_ITEM)) return;
 
         if (event.key === 'Escape') {
             // A modal's own Escape handling outranks this; the marketplace is behind it.

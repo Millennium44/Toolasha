@@ -305,6 +305,15 @@ describe('calculateSimRevenue unpriced items', () => {
         expect(costPerHour).toBe(0);
     });
 
+    test('an unpriced consumable carries how much of it the run spends per hour', () => {
+        const { simResult, gameData } = simDropping('/items/unlisted_drop', KILLS, 0);
+        simResult.consumablesUsed = { player1: { '/items/unlisted_tea': 5 } };
+
+        const { unpricedRates } = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
+
+        expect(unpricedRates).toEqual({ '/items/unlisted_tea': 5 / HOURS });
+    });
+
     test('a custom price of 0 is a price, not a missing one', () => {
         const { simResult, gameData } = simDropping('/items/free_drop', KILLS, 0);
         delete mocks.prices['/items/free_drop'];

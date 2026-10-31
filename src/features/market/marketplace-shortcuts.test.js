@@ -570,3 +570,66 @@ describe('buy autofocus respects mobile and deliberate editing', () => {
         expect(focus).not.toHaveBeenCalled();
     });
 });
+
+describe('a shortcut intent cannot outlive the action that made it', () => {
+    test('when no opener succeeds the stored quantity is cleared and never fills a later manual form', async () => {
+        vi.useFakeTimers();
+        const instant = vi
+            .spyOn(marketplaceShortcuts, 'clickInstantActionButton')
+            .mockRejectedValue(new Error('Timeout'));
+        const listing = vi.spyOn(marketplaceShortcuts, 'clickListingButton').mockRejectedValue(new Error('Timeout'));
+        try {
+            document.body.innerHTML = `<div class="Item_amountInputContainer"><input value="500" /></div>`;
+            const pending = marketplaceShortcuts.executeAction('sell', '/items/a', 0);
+            await vi.advanceTimersByTimeAsync(300);
+            await pending;
+            expect(marketplaceShortcuts.pendingQuantity).toBeNull();
+
+            const modal = document.createElement('div');
+            modal.innerHTML = `
+                <div class="MarketplacePanel_header__x">Buy Now</div>
+                <div class="MarketplacePanel_quantityInputs__x"><input value="1" /></div>`;
+            document.body.appendChild(modal);
+            marketplaceShortcuts.autofillQuantity(modal);
+            await vi.advanceTimersByTimeAsync(200);
+            expect(modal.querySelector('input').value).toBe('1');
+        } finally {
+            instant.mockRestore();
+            listing.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    test('a newer shortcut revokes the older one before it clicks anything', async () => {
+        vi.useFakeTimers();
+        const instant = vi.spyOn(marketplaceShortcuts, 'clickInstantActionButton').mockResolvedValue();
+        try {
+            const first = marketplaceShortcuts.executeAction('sell', '/items/a', 0);
+            const second = marketplaceShortcuts.executeAction('buy', '/items/b', 0);
+            await vi.advanceTimersByTimeAsync(300);
+            await Promise.all([first, second]);
+            expect(instant).toHaveBeenCalledTimes(1);
+            expect(instant.mock.calls[0][0]).toBe('Buy');
+        } finally {
+            instant.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    test('a quantity left after a successful open is dropped once the window passes', async () => {
+        vi.useFakeTimers();
+        const instant = vi.spyOn(marketplaceShortcuts, 'clickInstantActionButton').mockResolvedValue();
+        try {
+            document.body.innerHTML = `<div class="Item_amountInputContainer"><input value="7" /></div>`;
+            const pending = marketplaceShortcuts.executeAction('buy', '/items/a', 0);
+            await vi.advanceTimersByTimeAsync(300);
+            await pending;
+            expect(marketplaceShortcuts.pendingQuantity).toBe(7);
+            await vi.advanceTimersByTimeAsync(3100);
+            expect(marketplaceShortcuts.pendingQuantity).toBeNull();
+        } finally {
+            instant.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+});

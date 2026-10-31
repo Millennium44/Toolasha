@@ -213,6 +213,30 @@ describe('drawing into character select', () => {
         expect(collector.checkpointForCharacterSelect).toHaveBeenCalledTimes(2);
     });
 
+    test('an older mount whose checkpoint finishes late does not replace the newer mount’s slots', async () => {
+        store.records['1234'] = storedRecord('1234', 4 * HOUR);
+        let releaseOld;
+        collector.checkpointForCharacterSelect.mockImplementationOnce(
+            () => new Promise((resolve) => (releaseOld = () => resolve(true)))
+        );
+        const oldRoot = mountCharacterSelect(['1234']);
+        const oldMount = renderer.onCharacterSelectMounted(oldRoot);
+        await flush();
+
+        // The page swaps roots while the old checkpoint is still pending
+        oldRoot.remove();
+        const newRoot = mountCharacterSelect(['1234']);
+        await renderer.onCharacterSelectMounted(newRoot);
+        const trackedBefore = renderer.trackedSlots.get('1234').slotElement;
+        expect(trackedBefore.isConnected).toBe(true);
+
+        releaseOld();
+        await oldMount;
+
+        expect(renderer.trackedSlots.get('1234').slotElement).toBe(trackedBefore);
+        expect(renderer.trackedSlots.get('1234').slotElement.isConnected).toBe(true);
+    });
+
     test('retries a checkpoint that storage reports did not land', async () => {
         collector.checkpointForCharacterSelect.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
         const root = mountCharacterSelect(['1234']);
