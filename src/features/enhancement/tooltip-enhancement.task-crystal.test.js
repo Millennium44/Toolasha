@@ -12,7 +12,7 @@
  * path builder are the real modules.
  */
 
-import { describe, test, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import * as mathjs from 'mathjs';
 
 const BADGE = '/items/expert_task_badge';
@@ -228,6 +228,29 @@ describe('Task Crystal price', () => {
         breakIt();
         expect(priceMaterial(CRYSTAL)).toMatchObject({ price: null, unpriced: true });
         expect(perAttemptMaterialCost(gameData.itemDetailMap[BADGE])).toMatchObject({ hasMissingPrices: true });
+    });
+
+    describe('in the split production build', () => {
+        // The utils bundle inlines its own, never-initialized calculator; the market bundle's copy is the
+        // live one, published on the namespace
+        afterEach(() => {
+            vi.unstubAllGlobals();
+        });
+
+        const publish = (calculator) =>
+            vi.stubGlobal('window', { Toolasha: { Market: { expectedValueCalculator: calculator } } });
+
+        test('prices from the market bundle copy while the inlined copy is uninitialized', () => {
+            state.evReady = false;
+            publish({ isInitialized: true, calculateExpectedValue: (hrid) => state.ev[hrid] ?? null });
+            expect(priceMaterial(CRYSTAL)).toMatchObject({ price: CRYSTAL_PRICE, tokenValued: true });
+        });
+
+        test('stays unpriced when neither copy is ready', () => {
+            state.evReady = false;
+            publish({ isInitialized: false, calculateExpectedValue: () => null });
+            expect(priceMaterial(CRYSTAL)).toMatchObject({ price: null, unpriced: true });
+        });
     });
 
     test('a missing shop map stays unpriced', () => {
