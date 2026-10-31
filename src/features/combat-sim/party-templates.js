@@ -687,6 +687,197 @@ export const PARTY_TEMPLATES = deepFreeze([
             },
         },
     },
+    // ranged-sundering-crossbow
+    {
+        id: 'ranged-sundering-crossbow',
+        role: 'ranged',
+        label: 'Ranged (sundering crossbow)',
+        guildCombatBuffLevels: { force: 5, tempo: 5, spirit: 2, rarity: 1, scholar: 3 },
+        playerDto: {
+            staminaLevel: 125,
+            intelligenceLevel: 125,
+            attackLevel: 125,
+            meleeLevel: 125,
+            defenseLevel: 125,
+            rangedLevel: 150,
+            magicLevel: 125,
+            equipment: {
+                '/equipment_types/back': { hrid: '/items/chimerical_quiver', enhancementLevel: 5 },
+                '/equipment_types/body': { hrid: '/items/kraken_tunic_refined', enhancementLevel: 10 },
+                '/equipment_types/charm': { hrid: '/items/grandmaster_ranged_charm', enhancementLevel: 5 },
+                '/equipment_types/earrings': { hrid: '/items/philosophers_earrings', enhancementLevel: 7 },
+                '/equipment_types/feet': { hrid: '/items/pathfinder_boots_refined', enhancementLevel: 10 },
+                '/equipment_types/hands': { hrid: '/items/marksman_bracers_refined', enhancementLevel: 10 },
+                '/equipment_types/head': { hrid: '/items/acrobatic_hood_refined', enhancementLevel: 10 },
+                '/equipment_types/legs': { hrid: '/items/kraken_chaps_refined', enhancementLevel: 10 },
+                '/equipment_types/main_hand': { hrid: '/items/sundering_crossbow_refined', enhancementLevel: 12 },
+                '/equipment_types/neck': { hrid: '/items/philosophers_necklace', enhancementLevel: 5 },
+                '/equipment_types/off_hand': { hrid: '/items/manticore_shield', enhancementLevel: 10 },
+                '/equipment_types/pouch': { hrid: '/items/guzzling_pouch', enhancementLevel: 5 },
+                '/equipment_types/ring': { hrid: '/items/philosophers_ring', enhancementLevel: 7 },
+                '/equipment_types/trinket': { hrid: '/items/basic_task_badge', enhancementLevel: 5 },
+            },
+            food: [
+                {
+                    hrid: '/items/spaceberry_cake',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/missing_hp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 350,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/items/spaceberry_donut',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/missing_hp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 280,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/items/star_fruit_yogurt',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/missing_mp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 350,
+                        },
+                    ],
+                },
+            ],
+            drinks: [
+                {
+                    hrid: '/items/critical_coffee',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/critical_coffee',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/items/swiftness_coffee',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/swiftness_coffee',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/items/ultra_ranged_coffee',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/ranged_coffee',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                    ],
+                },
+            ],
+            abilities: [
+                {
+                    hrid: '/abilities/critical_aura',
+                    level: 75,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/critical_aura',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/abilities/frenzy',
+                    level: 75,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/frenzy',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/current_mp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 250,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/abilities/berserk',
+                    level: 75,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/berserk',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/current_mp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 600,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/abilities/rain_of_arrows',
+                    level: 75,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/all_enemies',
+                            conditionHrid: '/combat_trigger_conditions/number_of_active_units',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 2,
+                        },
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/all_enemies',
+                            conditionHrid: '/combat_trigger_conditions/current_hp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 1500,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/abilities/penetrating_shot',
+                    level: 75,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/all_enemies',
+                            conditionHrid: '/combat_trigger_conditions/current_hp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 3210,
+                        },
+                    ],
+                },
+            ],
+            houseRooms: {
+                '/house_rooms/archery_range': 5,
+                '/house_rooms/armory': 3,
+                '/house_rooms/dining_room': 5,
+                '/house_rooms/dojo': 6,
+                '/house_rooms/gym': 4,
+                '/house_rooms/library': 5,
+                '/house_rooms/mystical_study': 3,
+            },
+        },
+    },
     // magic-nature
     {
         id: 'magic-nature',
