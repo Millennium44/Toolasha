@@ -5392,6 +5392,8 @@ export function computeMetrics(simResult, gameData, playerHrid, hours, { priceCa
         // The expense side of `unpriced` (consumables, dungeon keys). A drop left out only makes profit a floor; an
         // expense left out can make a profit gain a loss, so `newlyUnpricedCosts` reads this apart from the rest
         unpricedCost: [...(revenue.unpricedConsumables || []), ...(revenue.unpricedKeys || [])],
+        // Per hour, by item, for `unpricedCost`: what `newlyUnpricedCosts` compares when both runs left one unpriced
+        unpricedCostRates: revenue.unpricedRates || {},
         deathsPerHour: deaths,
         encountersPerHour: encounters,
         dps: (simResult.totalDamageDealt?.[playerHrid] || 0) / (simHours * 3600),
@@ -5596,12 +5598,25 @@ export function withLevelGapsFor(playerDTOs, candidate) {
  * payback are provisional rather than figures.
  * @param {Object} baseline - `computeMetrics` of the baseline
  * @param {Object} upgraded - `computeMetrics` of the candidate (or the basket)
- * @returns {string[]} Names nothing priced, empty when every expense of the candidate was priced
+ * @returns {string[]} Names nothing priced that the baseline did not leave unpriced, or that the candidate spends
+ *   more of (per hour, past a 2% sampling margin); empty when every expense of the candidate was priced
  */
 export function newlyUnpricedCosts(baseline, upgraded) {
     const already = new Set(baseline?.unpricedCost || []);
-    return (upgraded?.unpricedCost || []).filter((name) => !already.has(name));
+    const baseRates = baseline?.unpricedCostRates || {};
+    const upRates = upgraded?.unpricedCostRates || {};
+    return (upgraded?.unpricedCost || []).filter((name) => {
+        if (!already.has(name)) return true;
+        // Unpriced in both runs, but the candidate spends more of it: the extra is counted as free too, so the
+        // profit gain is still a ceiling. A hair of difference between two sampled runs is not "more"
+        const base = baseRates[name];
+        const up = upRates[name];
+        return Number.isFinite(base) && Number.isFinite(up) && up > base * (1 + UNPRICED_MORE_TOLERANCE);
+    });
 }
+
+/** How much more of an already-unpriced item a candidate must spend, as a share, before it counts as more */
+const UNPRICED_MORE_TOLERANCE = 0.02;
 
 /**
  * Economics with an unknown running cost marked: no ROI or repay time is quoted (a finite figure would read as a

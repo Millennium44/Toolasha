@@ -9663,6 +9663,18 @@ describe('an unpriced running cost keeps a profit gain provisional (#651 T02)', 
         expect(flagged.roiAnnualPct).toBeNull();
     });
 
+    test('an item both runs left unpriced is flagged when the candidate spends more of it', () => {
+        const base = { unpricedCost: ['Food'], unpricedCostRates: { Food: 10 } };
+        // Twice the food, counted as free: the gain is still a ceiling
+        expect(newlyUnpricedCosts(base, { unpricedCost: ['Food'], unpricedCostRates: { Food: 20 } })).toEqual(['Food']);
+        // The same, or a hair more from sampling: not new
+        expect(newlyUnpricedCosts(base, { unpricedCost: ['Food'], unpricedCostRates: { Food: 10.1 } })).toEqual([]);
+        // Less is not a hidden cost
+        expect(newlyUnpricedCosts(base, { unpricedCost: ['Food'], unpricedCostRates: { Food: 4 } })).toEqual([]);
+        // No rates to compare (an older result): name-only, as before
+        expect(newlyUnpricedCosts({ unpricedCost: ['Food'] }, { unpricedCost: ['Food'] })).toEqual([]);
+    });
+
     test('an item the baseline also left unpriced is not new to the candidate', () => {
         expect(newlyUnpricedCosts({ unpricedCost: ['Food'] }, { unpricedCost: ['Food', 'Coffee'] })).toEqual([
             'Coffee',

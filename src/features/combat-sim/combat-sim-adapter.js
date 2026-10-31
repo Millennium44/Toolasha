@@ -2180,6 +2180,9 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
     let costPerHour = 0;
     const consumableEntries = [];
     const unpricedConsumables = [];
+    // How much of each unpriced expense a run spends per hour: a candidate that eats more of an item the baseline
+    // also left unpriced is understating its cost by more than the baseline did
+    const unpricedRates = {};
     const consumablesUsed = simResult.consumablesUsed?.[playerHrid] || {};
     for (const [itemHrid, count] of Object.entries(consumablesUsed)) {
         const { unitCost, priced } = held(`buy|${itemHrid}`, () => consumableUnitCost(itemHrid));
@@ -2190,6 +2193,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
             consumableEntries.push({ name: itemName, countPerHour: count / hours, unitCost, totalCost: perHour });
         } else if (count > 0) {
             unpricedConsumables.push(itemHrid);
+            unpricedRates[itemHrid] = count / hours;
         }
     }
 
@@ -2213,6 +2217,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
         };
         for (const key of calculateDungeonKeyCosts(dropMap, keyPrice)) {
             keyCostPerHour += key.totalCost / hours;
+            if (unpricedKeys.includes(key.itemHrid)) unpricedRates[key.itemHrid] = key.count / hours;
         }
         costPerHour += keyCostPerHour;
     }
@@ -2227,6 +2232,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours, opti
         unpricedDrops,
         unpricedConsumables,
         unpricedKeys,
+        unpricedRates,
     };
 }
 
