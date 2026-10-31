@@ -1153,11 +1153,20 @@ class LabyrinthClearRate {
      * Milking room and exactly nothing in a fight. The two rooms pay on the same
      * formula and the buff applies to both.
      *
+     * @param {string[]|null} [crateHrids] - Crates to count instead of the ones equipped (a simulated
+     *   context, such as Lab Sim's picks); null reads the live crates
      * @returns {number} Ratio, 0 when nothing applies
      */
-    getCombatExperienceBonus() {
+    getCombatExperienceBonus(crateHrids = null) {
         let bonus = this.getLabyrinthUpgrades().experience * UPGRADE_STEP;
-        for (const buff of this.getCombatCrateBuffs()) {
+        let crateBuffs;
+        if (Array.isArray(crateHrids)) {
+            const detail = dataManager.getInitClientData()?.labyrinthCrateDetailMap;
+            crateBuffs = crateHrids.flatMap((hrid) => (Array.isArray(detail?.[hrid]) ? detail[hrid] : []));
+        } else {
+            crateBuffs = this.getCombatCrateBuffs();
+        }
+        for (const buff of crateBuffs) {
             if (buff?.typeHrid !== '/buff_types/wisdom') continue;
             bonus += (Number(buff.flatBoost) || 0) + (Number(buff.ratioBoost) || 0);
         }

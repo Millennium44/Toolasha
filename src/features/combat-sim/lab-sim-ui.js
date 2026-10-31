@@ -3105,14 +3105,18 @@ class LabSimUI {
                 // Filed against the monster it was searched for, so the Upgrade
                 // tab's "Sim max" can use it without re-searching and without
                 // reading whichever fight happened to be searched last
+                // A search that clears nothing is the newest answer too: keeping the
+                // earlier clearing level would have the Upgrade tab analyse a room
+                // this build no longer clears
                 if (maxResult.cleared) this._maxLevelByMonster[monsterHrid] = maxResult.maxLevel;
+                else delete this._maxLevelByMonster[monsterHrid];
                 const levelInput = this.panel.querySelector('#mwi-labsim-level');
                 // Nothing cleared means there is no level to put in the box —
                 // writing 0 would sim a room that does not exist
                 if (levelInput && maxResult.cleared) levelInput.value = maxResult.maxLevel;
                 this._refreshLevelSourceReadout();
 
-                this._displayFindMaxResults(maxResult, monsterHrid, simStartTime);
+                this._displayFindMaxResults(maxResult, monsterHrid, simStartTime, crates);
             } else {
                 const simResult = await runLabyrinthSimulation(
                     {
@@ -3336,7 +3340,7 @@ class LabSimUI {
      * since skip is a level offset.
      * @private
      */
-    _displayFindMaxResults(maxResult, monsterHrid, simStartTime) {
+    _displayFindMaxResults(maxResult, monsterHrid, simStartTime, crates = null) {
         const container = this.panel?.querySelector('#mwi-labsim-results');
         if (!container) return;
 
@@ -3365,17 +3369,18 @@ class LabSimUI {
             const xpPerHour = (labyrinthClearRate() || bundledLabyrinthClearRate).estimateCombatXpPerHour(
                 maxResult.maxLevel,
                 maxResult.avgFightSeconds,
-                maxResult.winRate
+                maxResult.winRate,
+                // The crates the search simmed with, not the ones equipped now
+                crates
             );
             // Skip is a level offset, so it only exists once there is a level
-            // to offset from; and it never sensibly goes below 1
+            // to offset from. It is signed: the game accepts -999..999, and a
+            // cleared room below your own level is a negative offset
             const rawSkip = effectiveCombatLevel > 0 ? maxResult.maxLevel - Math.floor(effectiveCombatLevel) + 1 : null;
             const skipText =
                 rawSkip === null
                     ? 'unavailable until your combat level is known'
-                    : rawSkip < 1
-                      ? `1 (the lowest the game accepts \u2014 level ${maxResult.maxLevel} is below your own level)`
-                      : String(rawSkip);
+                    : String(Math.max(-999, Math.min(999, rawSkip)));
 
             headline = `<div style="font-size:24px; font-weight:700; color:#4caf50; margin-bottom:6px;">
                     Level ${maxResult.maxLevel}${maxResult.atCeiling ? '+' : ''}
@@ -3737,6 +3742,11 @@ class LabSimUI {
         }
         if (signature === this._editorEditSig) return false;
         this._editorEditSig = signature;
+        // A Find Max level was searched for the build as it stood
+        if (Object.keys(this._maxLevelByMonster).length) {
+            this._maxLevelByMonster = {};
+            this._refreshLevelSourceReadout();
+        }
         if (this._getUpgradeScopeMode() === 'current') this._onTriggerScopeChanged();
         return true;
     }
@@ -5312,6 +5322,7 @@ class LabSimUI {
                 );
 
                 if (maxResult?.cleared) this._maxLevelByMonster[monsterHrid] = maxResult.maxLevel;
+                else if (maxResult) delete this._maxLevelByMonster[monsterHrid];
                 this._refreshLevelSourceReadout();
             } catch (error) {
                 if (error?.message !== 'Cancelled') {
