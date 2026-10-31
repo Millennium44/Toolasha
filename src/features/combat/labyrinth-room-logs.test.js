@@ -1334,6 +1334,13 @@ describe('the fight recorder path measures whole fights', () => {
         expect(noted.mock.calls.at(-1)[0].predicted).toBe(0.42);
     });
 
+    test('the captured forecast keeps the average fight length', () => {
+        labyrinthRoomLogs.simSource = { forecast: () => ({ clearChance: 0.5, avgFightSeconds: 30 }) };
+        expect(labyrinthRoomLogs.forecastFor('/monsters/cyclops', 200, 'combat').avgFightSeconds).toBe(30);
+        labyrinthRoomLogs.simSource = { forecast: () => ({ clearChance: 0.5 }) };
+        expect(labyrinthRoomLogs.forecastFor('/monsters/cyclops', 200, 'combat').avgFightSeconds).toBeNull();
+    });
+
     test('unknown-outcome attempts stay out of the fight-length aggregate', () => {
         const recorded = [];
         labyrinthRoomLogs.simSource = { record: (entry) => recorded.push(entry) };

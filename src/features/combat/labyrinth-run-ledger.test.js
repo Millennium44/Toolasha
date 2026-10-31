@@ -37,18 +37,26 @@ const storageMock = vi.hoisted(() => {
         getAllKeys: async (store = 'settings') => Array.from(storeFor(store).keys()),
     };
 });
-const game = vi.hoisted(() => ({ characterId: 'char1' }));
+const game = vi.hoisted(() => ({ characterId: 'char1', ws: {} }));
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
         getCurrentCharacterGameMode: () => 'standard',
+        isFromActiveSocket: (context) => context?.socket !== 'old',
         characterData: null,
     },
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (type, handler) => {
+            game.ws[type] = handler;
+        },
+        off: () => {},
+    },
+}));
 vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'char1',
     requestAdoptionConsent: () => Promise.resolve(null),
@@ -301,6 +309,30 @@ describe('foldSighting', () => {
         const s = foldSighting(start, active(), 1000).state;
         expect(foldSighting(s, {}, 2000).ended).toBeNull();
         expect(foldSighting(s, {}, 2000).state.phase).toBe('active');
+    });
+});
+
+describe('which socket the ledger listens to', () => {
+    test('a labyrinth_updated frame from a stale socket is ignored', () => {
+        labyrinthRunLedger.unregister = null;
+        labyrinthRunLedger.state = { phase: 'unknown', run: null };
+        labyrinthRunLedger.initialize();
+        const frame = {
+            labyrinth: {
+                isActive: true,
+                startedAt: 'S1',
+                currentFloor: 2,
+                torchCount: 10,
+                shroudCount: 1,
+                beaconCount: 1,
+            },
+        };
+        game.ws.labyrinth_updated(frame, { socket: 'old' });
+        expect(labyrinthRunLedger.state.phase).toBe('unknown');
+        game.ws.labyrinth_updated(frame, { socket: 'new' });
+        expect(labyrinthRunLedger.state.phase).toBe('active');
+        labyrinthRunLedger.unregister?.();
+        labyrinthRunLedger.unregister = null;
     });
 });
 

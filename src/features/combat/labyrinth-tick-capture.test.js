@@ -122,6 +122,18 @@ afterEach(() => {
 });
 
 describe('labyrinth tick capture', () => {
+    test('frames from a stale socket are not captured', () => {
+        capture.startCapture(null, { stopOnLeave: false });
+        vi.spyOn(dataManager, 'isFromActiveSocket').mockReturnValue(false);
+        emit('battle_updated', battle);
+        emit('new_battle', { battleId: 'b1' });
+        expect(capture.heldTickCount()).toBe(0);
+        vi.restoreAllMocks();
+        emit('battle_updated', battle);
+        expect(capture.heldTickCount()).toBe(1);
+        capture.stopCapture();
+    });
+
     test('room swaps retain ordered equipment evidence and detached fight-opening client builds', () => {
         const item = { itemHrid: '/items/sword', enhancementLevel: 3, id: 123 };
         const gear = vi.spyOn(dataManager, 'getEquipment').mockReturnValue(new Map([['main_hand', item]]));

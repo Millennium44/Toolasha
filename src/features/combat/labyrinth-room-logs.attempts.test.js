@@ -165,6 +165,23 @@ describe('skilling attempts are logged one per retry', () => {
         expect(labyrinthRoomLogs.activeSession.attempts).toHaveLength(100);
     });
 
+    test('a skipped progress frame is not scored as one doubled action', () => {
+        play([
+            [0, 0],
+            [1, 10],
+            // a dropped update: the counter jumps by two and the work by twenty
+            [3, 30],
+            [4, 40],
+        ]);
+        const session = labyrinthRoomLogs.activeSession;
+        expect(session.doubleCount || 0).toBe(0);
+        // The gap frame is outside both the success rate and its denominator
+        expect(session.actionCount).toBe(2);
+        expect(session.successCount).toBe(2);
+        expect(session.actions.filter((a) => a.outcome === 'unknown')).toHaveLength(2);
+        expect(session.incomplete).toBe(true);
+    });
+
     test('joining an attempt already under way counts the actions it missed and marks it partial', () => {
         play([
             [5, 50],

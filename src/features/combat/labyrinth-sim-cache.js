@@ -1031,11 +1031,14 @@ export const simCacheMethods = {
      * @param {number} roomLevel - The room's level
      * @param {number} avgFightSeconds - Mean length of one attempt, win or lose
      * @param {number} clearChance - 0-1
+     * @param {string[]|null} [crateHrids] - The crates the sim ran with; null reads the equipped ones
+     * @param {number|null} [communityLevel] - The Experience community buff level the sim ran with;
+     *   null reads the live level
      * @returns {number} Experience per hour, 0 when the room never clears
      */
-    estimateCombatXpPerHour(roomLevel, avgFightSeconds, clearChance) {
+    estimateCombatXpPerHour(roomLevel, avgFightSeconds, clearChance, crateHrids = null, communityLevel = null) {
         if (!(roomLevel > 0) || !(clearChance > 0) || !(avgFightSeconds > 0)) return 0;
-        const xpPerRoom = roomLevel * 50 * (1 + this.getCombatExperienceBonus());
+        const xpPerRoom = roomLevel * 50 * (1 + this.getCombatExperienceBonus(crateHrids, communityLevel));
         return roomXpPerHour(xpPerRoom, avgFightSeconds / clearChance, clearChance);
     },
 

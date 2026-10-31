@@ -284,6 +284,54 @@ describe('what each slot is doing to the party this fight', () => {
         expect(players[0].damage).toBe(30);
     });
 
+    test('a stall inside one fight keeps its damage in the totals and out of the rate', () => {
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Eye' } },
+        });
+
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        vi.setSystemTime(Date.now() + 5000);
+        tick({ 0: { hp: 450, dmg: 1 } }, { 0: { hp: 2000 } });
+        // Ten seconds of throttled tab, then one more hit lands in the same fight
+        vi.setSystemTime(Date.now() + 10_000);
+        tick({ 0: { hp: 400, dmg: 2 } }, { 0: { hp: 2000 } });
+        vi.setSystemTime(Date.now() + 1000);
+        tick({ 0: { hp: 350, dmg: 3 } }, { 0: { hp: 2000 } });
+
+        const fight = tracker.battleTakenBreakdown();
+        // All three hits are real damage; only the last frame (1 s, 50 damage) is timed
+        expect(fight.enemies['0'].damage).toBe(150);
+        expect(fight.enemies['0'].dps).toBeCloseTo(50);
+        const you = tracker.takenBreakdown().players[0];
+        expect(you.damage).toBe(150);
+        expect(you.hits).toBe(3);
+        expect(tracker.takenBreakdown().seconds).toBeCloseTo(1);
+    });
+
+    test('a stalled frame that kills the player still counts its damage', () => {
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Eye' } },
+        });
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        vi.setSystemTime(Date.now() + 8000);
+        tick({ 0: { hp: 0, dmg: 1 } }, { 0: { hp: 2000 } });
+        const you = tracker.takenBreakdown().players[0];
+        expect(you.damage).toBe(500);
+    });
+
+    test('the first tick after a new battle is kept whatever the wait before it', () => {
+        listeners.new_battle({ players: { 0: { name: 'You' } }, monsters: { 0: { name: 'Eye' } } });
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        vi.setSystemTime(Date.now() + 30_000);
+        listeners.new_battle({ players: { 0: { name: 'You' } }, monsters: { 0: { name: 'Eye' } } });
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        vi.setSystemTime(Date.now() + 1000);
+        tick({ 0: { hp: 450, dmg: 1 } }, { 0: { hp: 2000 } });
+        expect(tracker.battleTakenBreakdown().enemies['0'].damage).toBe(50);
+    });
+
     test('too little of a fight gives damage and no rate', () => {
         listeners.new_battle({
             players: { 0: { name: 'You' } },
