@@ -392,6 +392,9 @@ class BulkSellAssistant {
          * skip after it has to wait for Next rather than open another book.
          */
         this._navigatedSinceClick = false;
+        // Bumped whenever a step's transient state is cleared (Stop, Skip, next step, teardown): openers,
+        // quantity fills and their timeouts started under an older value are dead and must do nothing.
+        this._opSeq = 0;
         /** Why the last Confirm press was refused, shown on the strip */
         this.confirmNote = '';
         /**
@@ -2241,15 +2244,20 @@ class BulkSellAssistant {
         this.decision = result.decision;
         const { insta, askPrice, bidPrice } = result;
 
+        const opSeq = this._opSeq;
+        const isStale = () => opSeq !== this._opSeq;
         const open = insta
-            ? marketplaceShortcuts.clickInstantActionButton('Sell')
-            : marketplaceShortcuts.clickListingButton('+ New Sell Listing', 'Button_sell');
+            ? marketplaceShortcuts.clickInstantActionButton('Sell', 3000, isStale)
+            : marketplaceShortcuts.clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isStale);
         open.then(() => {
-            if (this.state !== 'preparing') return;
+            if (isStale() || this.state !== 'preparing') return;
             this.state = 'awaiting_confirm';
             this._render();
             this._watchClose();
         }).catch(() => {
+            // Stopped, skipped or moved on: a late timeout is not this step's failure and must not
+            // fall back, skip, or close whatever modal is open now
+            if (isStale()) return;
             if (!insta) {
                 this._skip('sell button not found');
                 return;
@@ -2262,14 +2270,16 @@ class BulkSellAssistant {
                 reason: 'no sellable bid',
             };
             marketplaceShortcuts
-                .clickListingButton('+ New Sell Listing', 'Button_sell')
+                .clickListingButton('+ New Sell Listing', 'Button_sell', 3000, isStale)
                 .then(() => {
-                    if (this.state !== 'preparing') return;
+                    if (isStale() || this.state !== 'preparing') return;
                     this.state = 'awaiting_confirm';
                     this._render();
                     this._watchClose();
                 })
-                .catch(() => this._skip('sell button not found'));
+                .catch(() => {
+                    if (!isStale()) this._skip('sell button not found');
+                });
         });
     }
 
@@ -2487,7 +2497,10 @@ class BulkSellAssistant {
 
         const count = this.current.count;
         const wantedHrid = this.current.itemHrid;
+        const opSeq = this._opSeq;
         setTimeout(() => {
+            // Stop or a new step since the modal opened: this fill belongs to a run that is over
+            if (opSeq !== this._opSeq) return;
             // Checked here rather than above because the icon is not reliably in
             // the modal the instant the observer sees it. A modal about some
             // other item is one the player opened themselves during the run's
@@ -2516,6 +2529,7 @@ class BulkSellAssistant {
         if (text.includes('Sell Now') && this.decision?.insta && this.decision.price > 0) {
             const price = this.decision.price;
             setTimeout(() => {
+                if (opSeq !== this._opSeq) return;
                 const shown = this._modalItemHrid(modal);
                 if (shown && shown !== wantedHrid) return;
                 const priceRow = modal.querySelector('div[class*="MarketplacePanel_priceInputs"]');
@@ -2524,6 +2538,7 @@ class BulkSellAssistant {
                     priceRow.querySelector('div[class*="MarketplacePanel_priceDisplay"]')?.click();
                 }
                 setTimeout(() => {
+                    if (opSeq !== this._opSeq) return;
                     const priceInput = priceRow.querySelector('input');
                     if (!priceInput) return;
                     nativeInputValueSetter.call(priceInput, String(price));
@@ -2659,6 +2674,7 @@ class BulkSellAssistant {
     }
 
     _clearTransient() {
+        this._opSeq++;
         this._cancelVendorWait();
         this._releaseSaleGuard();
         this._stopTrackingVendorArming();

@@ -860,6 +860,7 @@ class LabSimUI {
         // Monster hrid → the level its last Find Max search cleared at. Per
         // monster because a max level belongs to a fight, not to the panel.
         this._maxLevelByMonster = {};
+        this._maxLevelSigByMonster = {};
         this._labyFindMaxMode = false;
         this._labyResults = null;
         this._upgradeAborted = false;
@@ -2062,7 +2063,7 @@ class LabSimUI {
     _resolveTargetLevel(monsterHrid = this.panel?.querySelector('#mwi-labsim-monster')?.value || '') {
         return resolveLabTargetLevel({
             source: this._getLevelSource(),
-            simMaxLevel: this._maxLevelByMonster[monsterHrid] || 0,
+            simMaxLevel: this._maxLevelFor(monsterHrid),
             skipLevel: this._skipRoomLevel(monsterHrid),
             configureLevel: this._configureLevel(),
         });
@@ -3105,14 +3106,17 @@ class LabSimUI {
                 // Filed against the monster it was searched for, so the Upgrade
                 // tab's "Sim max" can use it without re-searching and without
                 // reading whichever fight happened to be searched last
-                if (maxResult.cleared) this._maxLevelByMonster[monsterHrid] = maxResult.maxLevel;
+                // A search that clears nothing is the newest answer too: keeping the
+                // earlier clearing level would have the Upgrade tab analyse a room
+                // this build no longer clears
+                this._storeMaxLevel(monsterHrid, maxResult.cleared ? maxResult.maxLevel : 0);
                 const levelInput = this.panel.querySelector('#mwi-labsim-level');
                 // Nothing cleared means there is no level to put in the box —
                 // writing 0 would sim a room that does not exist
                 if (levelInput && maxResult.cleared) levelInput.value = maxResult.maxLevel;
                 this._refreshLevelSourceReadout();
 
-                this._displayFindMaxResults(maxResult, monsterHrid, simStartTime);
+                this._displayFindMaxResults(maxResult, monsterHrid, simStartTime, crates, communityBuffs?.comExp);
             } else {
                 const simResult = await runLabyrinthSimulation(
                     {
@@ -3336,7 +3340,7 @@ class LabSimUI {
      * since skip is a level offset.
      * @private
      */
-    _displayFindMaxResults(maxResult, monsterHrid, simStartTime) {
+    _displayFindMaxResults(maxResult, monsterHrid, simStartTime, crates = null, communityLevel = null) {
         const container = this.panel?.querySelector('#mwi-labsim-results');
         if (!container) return;
 
@@ -3365,17 +3369,19 @@ class LabSimUI {
             const xpPerHour = (labyrinthClearRate() || bundledLabyrinthClearRate).estimateCombatXpPerHour(
                 maxResult.maxLevel,
                 maxResult.avgFightSeconds,
-                maxResult.winRate
+                maxResult.winRate,
+                // The crates and community level the search simmed with, not the live ones
+                crates,
+                communityLevel
             );
             // Skip is a level offset, so it only exists once there is a level
-            // to offset from; and it never sensibly goes below 1
+            // to offset from. It is signed: the game accepts -999..999, and a
+            // cleared room below your own level is a negative offset
             const rawSkip = effectiveCombatLevel > 0 ? maxResult.maxLevel - Math.floor(effectiveCombatLevel) + 1 : null;
             const skipText =
                 rawSkip === null
                     ? 'unavailable until your combat level is known'
-                    : rawSkip < 1
-                      ? `1 (the lowest the game accepts \u2014 level ${maxResult.maxLevel} is below your own level)`
-                      : String(rawSkip);
+                    : String(Math.max(-999, Math.min(999, rawSkip)));
 
             headline = `<div style="font-size:24px; font-weight:700; color:#4caf50; margin-bottom:6px;">
                     Level ${maxResult.maxLevel}${maxResult.atCeiling ? '+' : ''}
@@ -3696,6 +3702,39 @@ class LabSimUI {
     }
 
     /**
+     * Remember a Find Max result together with the Configure build it was searched for.
+     * @param {string} monsterHrid
+     * @param {number} level - 0 forgets the monster's entry
+     * @private
+     */
+    _storeMaxLevel(monsterHrid, level) {
+        if (level) {
+            this._maxLevelByMonster[monsterHrid] = level;
+            this._maxLevelSigByMonster[monsterHrid] = this._editorEditSignature();
+        } else {
+            delete this._maxLevelByMonster[monsterHrid];
+            delete this._maxLevelSigByMonster[monsterHrid];
+        }
+    }
+
+    /**
+     * A monster's Find Max level, or 0. Under the Configure scope an entry searched for an earlier
+     * editor build is stale whatever scope the edit happened under; saved-loadout scopes keep it.
+     * @param {string} monsterHrid
+     * @returns {number}
+     * @private
+     */
+    _maxLevelFor(monsterHrid) {
+        const level = this._maxLevelByMonster[monsterHrid] || 0;
+        if (!level) return 0;
+        const sig = this._maxLevelSigByMonster?.[monsterHrid];
+        if (this._getUpgradeScopeMode() === 'current' && sig !== undefined && sig !== this._editorEditSignature()) {
+            return 0;
+        }
+        return level;
+    }
+
+    /**
      * What the Configure editor holds right now, as a comparable string.
      * @returns {string|null}
      * @private
@@ -3737,7 +3776,15 @@ class LabSimUI {
         }
         if (signature === this._editorEditSig) return false;
         this._editorEditSig = signature;
-        if (this._getUpgradeScopeMode() === 'current') this._onTriggerScopeChanged();
+        // A Find Max level was searched for the build as it stood; only the Configure scope
+        // reads the editor, so a saved-loadout scope keeps what it searched
+        const configureScope = this._getUpgradeScopeMode() === 'current';
+        if (configureScope && Object.keys(this._maxLevelByMonster).length) {
+            this._maxLevelByMonster = {};
+            this._maxLevelSigByMonster = {};
+            this._refreshLevelSourceReadout();
+        }
+        if (configureScope) this._onTriggerScopeChanged();
         return true;
     }
 
@@ -5277,7 +5324,7 @@ class LabSimUI {
         communityBuffs,
         labyrinthCombatBuffs,
     }) {
-        if (this._getLevelSource() === 'sim_max' && monsterHrid && !this._maxLevelByMonster[monsterHrid]) {
+        if (this._getLevelSource() === 'sim_max' && monsterHrid && !this._maxLevelFor(monsterHrid)) {
             try {
                 const text = this.panel?.querySelector('#mwi-labsim-upgrade-progress-text');
                 const fill = this.panel?.querySelector('#mwi-labsim-upgrade-progress-fill');
@@ -5311,7 +5358,7 @@ class LabSimUI {
                     }
                 );
 
-                if (maxResult?.cleared) this._maxLevelByMonster[monsterHrid] = maxResult.maxLevel;
+                if (maxResult) this._storeMaxLevel(monsterHrid, maxResult.cleared ? maxResult.maxLevel : 0);
                 this._refreshLevelSourceReadout();
             } catch (error) {
                 if (error?.message !== 'Cancelled') {
@@ -9275,7 +9322,7 @@ class LabSimUI {
         if (usesSkipLevels && r.skillHrid && clearRate) {
             const skip = clearRate.getSkipThreshold?.(r.skillHrid);
             const basis = clearRate.getEffectiveLevel?.(r.skillHrid);
-            if (Number.isFinite(skip) && Number.isFinite(basis) && skip > 0) {
+            if (Number.isFinite(skip) && Number.isFinite(basis) && clearRate.hasSkillSkipSetting?.(r.skillHrid)) {
                 // Explain the − 1: the trigger is the gap at which skipping starts,
                 // so the hardest room you actually enter is one below it.
                 lines.push(`Room ${room} — the hardest room you still fight`);
@@ -10500,6 +10547,7 @@ class LabSimUI {
         // character could clear, fed straight into the next fight setup as
         // `simMaxLevel`.
         this._maxLevelByMonster = {};
+        this._maxLevelSigByMonster = {};
         this._allFightsResult = null;
         this._upgradePlayerName = null;
         this._houseScanNote = null;

@@ -17,7 +17,7 @@ vi.mock('./combat-sim-runner.js', () => ({
     getMaxWorkers: () => 4,
 }));
 vi.mock('./combat-sim-adapter.js', () => ({
-    seedSimPriceCache: (cache) => cache,
+    seedSimPriceCache: vi.fn((cache) => cache),
 
     calculateSimRevenue: (result, gameData, hrid) => {
         if (result.valuationThrows) throw new Error('no price data');
@@ -28,6 +28,8 @@ vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } })
 
 const { runTriggerOptimization, sampleFromResult, monsterMaxHpReader } = await import('./trigger-optimizer.js');
 const { getGameData, setGameData } = await import('./engine/game-data.js');
+const { seedSimPriceCache } = await import('./combat-sim-adapter.js');
+const { runSimulation } = await import('./combat-sim-runner.js');
 
 const HOUR_NS = 3600 * 1e9;
 const FIREBALL = '/abilities/fireball';
@@ -219,6 +221,36 @@ describe('runTriggerOptimization', () => {
         communityBuffs: {},
         precision: 'quick',
     };
+
+    test('every price the search can read is taken before its first simulation (#651 T01)', async () => {
+        seedSimPriceCache.mockClear();
+        runSimulation.mockClear();
+        const withFood = (hrid) => ({
+            ...dto(hrid),
+            food: [{ hrid: '/items/donut' }, null, null],
+            drinks: [{ hrid: '/items/coffee' }, null, null],
+        });
+        await runTriggerOptimization({
+            ...base,
+            playerDTOs: [withFood('player1'), withFood('player2')],
+            playerIndex: 0,
+            scope: 'me',
+            selfHrid: 'player1',
+        });
+
+        expect(seedSimPriceCache.mock.calls.length).toBeGreaterThan(0);
+        // One seeding per distinct sale tax in the party: the live character and a teammate priced at their own
+        const rates = seedSimPriceCache.mock.calls.map(([, , options]) => options.saleTaxRate ?? null);
+        expect(new Set(rates).size).toBe(rates.length);
+        for (const [cache, , options] of seedSimPriceCache.mock.calls) {
+            expect(cache).toBeInstanceOf(Map);
+            expect(options.zoneHrid).toBe('/actions/combat/fly');
+            expect(options.consumableHrids.sort()).toEqual(['/items/coffee', '/items/donut']);
+        }
+        expect(Math.max(...seedSimPriceCache.mock.invocationCallOrder)).toBeLessThan(
+            runSimulation.mock.invocationCallOrder[0]
+        );
+    });
 
     test('reports nothing to tune when no trigger qualifies', async () => {
         const result = await runTriggerOptimization({

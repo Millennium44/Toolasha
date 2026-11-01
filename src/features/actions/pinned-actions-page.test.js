@@ -36,8 +36,13 @@ vi.mock('../../utils/combat-zone-open.js', () => ({
 
 // The manifest fetch is a real network call in production; loadActions' progressive-
 // render tests only care that it doesn't block the first paint, not what it fetches.
+const spriteGate = vi.hoisted(() => ({ waiters: [] }));
 vi.mock('../../utils/asset-manifest.js', () => ({
-    default: { getSpriteUrl: async () => null },
+    default: {
+        // Resolves at once unless a test has queued a gate for a cold-asset load
+        getSpriteUrl: () =>
+            spriteGate.waiters.length ? new Promise((resolve) => spriteGate.waiters.shift()(resolve)) : null,
+    },
 }));
 
 // Mutated per test — see `src/features/ui/combat-level-panel.test.js`'s pattern:
@@ -684,5 +689,43 @@ describe('Pinned follows the native sidebar collapse state', () => {
         expect(document.querySelector('#toolasha-pinned-nav-layout')).toBeNull();
         page.injectNavButton();
         expect(getComputedStyle(page.navButton.lastElementChild).display).toBe('none');
+    });
+});
+
+describe('a pending Materials draw', () => {
+    test('does not append into a tab that replaced it, nor duplicate Materials', async () => {
+        const gates = [];
+        spriteGate.waiters.push((resolve) => gates.push(resolve));
+        spriteGate.waiters.push((resolve) => gates.push(resolve));
+        page.itemsSpriteUrl = null;
+        page.allActions = [];
+        page.contentArea = document.createElement('div');
+
+        // Materials starts cold, then the player switches to Overview
+        page.activeTab = 'materials';
+        page.renderContent();
+        page.activeTab = 'overview';
+        page.renderContent();
+        expect(page.contentArea.textContent).toContain('No pinned actions');
+        gates[0]('sprite');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(page.contentArea.textContent).not.toContain('No production actions pinned');
+
+        // Materials -> Overview -> Materials with the first draw still pending
+        page.itemsSpriteUrl = null;
+        page.activeTab = 'materials';
+        page.renderContent();
+        page.activeTab = 'overview';
+        page.renderContent();
+        page.activeTab = 'materials';
+        spriteGate.waiters.push((resolve) => gates.push(resolve));
+        page.renderContent();
+        gates[1]('sprite');
+        gates[2]('sprite');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(page.contentArea.textContent.match(/No production actions pinned/g)).toHaveLength(1);
+
+        page.contentArea = null;
+        page.activeTab = 'overview';
     });
 });

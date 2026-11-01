@@ -53,8 +53,18 @@ vi.mock('../../core/data-manager.js', () => ({
 
 // A flat 10s per action with no efficiency keeps every expected time a round number.
 const ACTION_TIME = 10;
+const calc = vi.hoisted(() => ({ lastOptions: null }));
 vi.mock('../../utils/action-calculator.js', () => ({
-    calculateActionStats: () => ({ actionTime: ACTION_TIME, totalEfficiency: 0 }),
+    calculateActionStats: (_details, options) => {
+        calc.lastOptions = options;
+        return { actionTime: ACTION_TIME, totalEfficiency: 0 };
+    },
+}));
+
+const actionContext = vi.hoisted(() => ({ equipment: new Map(), drinks: [] }));
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => actionContext,
+    default: { resolveActionContext: () => actionContext },
 }));
 
 const settings = vi.hoisted(() => ({ values: {} }));
@@ -752,5 +762,62 @@ describe('redraw cost', () => {
         expect(profitSummaryText(container)).toContain('mat: 40');
 
         walk.mockRestore();
+    });
+});
+
+describe('the Repeat infinity estimate uses the resolved action context', () => {
+    beforeEach(() => {
+        game.actionDetails[CRAFT_PLANK] = {
+            hrid: CRAFT_PLANK,
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: LOG, count: 2 }],
+            outputItems: [{ itemHrid: PLANK, count: 1 }],
+        };
+        game.inventory = [stack(LOG, 20)];
+        clearUnlimitedEstimateCache();
+        calc.lastOptions = null;
+        actionContext.equipment = new Map();
+        actionContext.drinks = [];
+    });
+
+    test('the resolved context, not worn gear, reaches the time calculator', () => {
+        const saved = new Map([['/equipment_types/main_hand', { itemHrid: '/items/saved_tool', enhancementLevel: 3 }]]);
+        actionContext.equipment = saved;
+        estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
+        expect(calc.lastOptions.actionContext).toBe(actionContext);
+        expect(calc.lastOptions.equipment).toBe(saved);
+    });
+
+    test('a changed context is a different cache entry inside the TTL', () => {
+        actionContext.equipment = new Map([
+            ['/equipment_types/main_hand', { itemHrid: '/items/a', enhancementLevel: 0 }],
+        ]);
+        estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
+        calc.lastOptions = null;
+        actionContext.equipment = new Map([
+            ['/equipment_types/main_hand', { itemHrid: '/items/b', enhancementLevel: 0 }],
+        ]);
+        estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
+        expect(calc.lastOptions).not.toBeNull();
+    });
+
+    test('an enhancement level change is a different cache entry', () => {
+        actionContext.equipment = new Map([
+            ['/equipment_types/main_hand', { itemHrid: '/items/a', enhancementLevel: 1 }],
+        ]);
+        estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
+        calc.lastOptions = null;
+        actionContext.equipment = new Map([
+            ['/equipment_types/main_hand', { itemHrid: '/items/a', enhancementLevel: 2 }],
+        ]);
+        estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
+        expect(calc.lastOptions).not.toBeNull();
+    });
+
+    test('an unchanged context still hits the cache', () => {
+        estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
+        calc.lastOptions = null;
+        estimateUnlimitedAction({ actionHrid: CRAFT_PLANK });
+        expect(calc.lastOptions).toBeNull();
     });
 });

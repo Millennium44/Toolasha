@@ -55,6 +55,7 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import { isFromActiveSocket } from './labyrinth-activity.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { labyrinthRunState } from '../notifications/notification-predicates.js';
@@ -497,7 +498,8 @@ class LabyrinthRunLedger {
 
     initialize() {
         if (this.unregister) return;
-        const onUpdate = (data) => {
+        const onUpdate = (data, context) => {
+            if (!isFromActiveSocket(context)) return;
             try {
                 this.observe(data?.labyrinth);
             } catch (error) {

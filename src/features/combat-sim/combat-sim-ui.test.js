@@ -11,6 +11,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('../profile/build-score-row.js', () => ({
     readOwnScore: () => null,
     ensureOwnScore: async () => null,
+    ownProfileData: () => null,
+    buildFingerprint: () => null,
     scorePricingStamp: () => '',
 }));
 vi.mock('../profile/score-calculator.js', () => ({ calculateCombatScore: async () => null }));
@@ -846,6 +848,33 @@ describe('planUpgradeBudget', () => {
         expect(plan.gainTotal).toBeCloseTo(50);
     });
 
+    test('a row whose profit counted an unpriced running cost as free is left out, with the reason, and never summed', () => {
+        const flagged = {
+            ...row('Coffee row', { slot: '/equipment_types/ring', cost: 100, profitGain: 900 }),
+            costUnpriced: ['Wisdom Coffee'],
+        };
+        const firm = row('Firm neck', { slot: '/equipment_types/neck', cost: 100, profitGain: 50 });
+        const plan = planUpgradeBudget([flagged, firm], 1000, { baseline: BASELINE });
+
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Firm neck']);
+        expect(plan.gainTotal).toBeCloseTo(50);
+        const skipped = plan.skipped.find((entry) => entry.result.candidate === flagged.candidate);
+        expect(skipped).toMatchObject({ kind: 'cost-unpriced' });
+        expect(skipped.reason).toContain('Wisdom Coffee');
+        // A pin of it is refused rather than summed as a firm gain
+        const pinned = planUpgradeBudget([flagged, firm], 1000, {
+            baseline: BASELINE,
+            required: [candidateKey(flagged)],
+        });
+        expect(pinned.blocked[0].kind).toBe('cost-unpriced');
+        // The DPS axis does not depend on the running cost: still planned there
+        const dps = planUpgradeBudget([{ ...flagged, metrics: { ...flagged.metrics, dps: 150 } }], 1000, {
+            baseline: BASELINE,
+            metricKey: 'dps',
+        });
+        expect(dps.picks).toHaveLength(1);
+    });
+
     test('never buys two pieces for the same slot', () => {
         const rows = [
             row('Body A', { slot: '/equipment_types/body', cost: 100, profitGain: 40 }),
@@ -1327,6 +1356,62 @@ describe('the panel', () => {
         expect(text()).toContain('Analysis cancelled — showing 1 completed candidate.');
         expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).toContain('Cheap ring');
         expect(ui._upgradeRunning).toBe(false);
+    });
+
+    test('a build that carries more than it can use is warned about, and an unpriced running cost is named on its row', async () => {
+        mocks.upgradeResult = {
+            baseline: BASELINE,
+            results: [
+                {
+                    ...row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+                    costUnpriced: ['Wisdom Coffee'],
+                },
+            ],
+            slotWarnings: ['2 saved drinks sit beyond the 1 slot this build pouch gives.'],
+            food: null,
+        };
+        selectZone();
+
+        await ui._onUpgradeAnalyze();
+
+        const results = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        expect(results.querySelector('[data-upgrade-slot-warnings]').textContent).toContain('2 saved drinks');
+        expect(results.querySelector('[data-cost-unpriced]').textContent).toContain('Wisdom Coffee');
+        expect(results.querySelector('[data-cost-unpriced]').textContent).toContain('ceiling');
+    });
+
+    test('a row with an unpriced running cost marks its ΔProfit as a ceiling, names the reason on the error bar, exports it, and keeps Time', async () => {
+        const unpriced = {
+            ...row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+            costUnpriced: ['Wisdom Coffee'],
+            noise: { dps: 1, xp: 1, profit: 1, encounters: 1, deaths: 1 },
+            significantBy: { dps: true, xp: true, profit: false, encounters: true, deaths: true },
+            economics: { profitGainPerHour: 50, paybackHours: 5, repayHours: Infinity, roiAnnualPct: null },
+        };
+        mocks.upgradeResult = { baseline: BASELINE, results: [unpriced], food: null };
+        selectZone();
+        // ΔProfit is hidden by default
+        ui._upgradeHiddenColumns = new Set();
+        const exported = [];
+        const original = ui._addCsvExport.bind(ui);
+        vi.spyOn(ui, '_addCsvExport').mockImplementation((container, stem, build) => {
+            exported.push(build);
+            return original(container, stem, build);
+        });
+
+        await ui._onUpgradeAnalyze();
+
+        const results = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        const flagged = [...results.querySelectorAll('[data-cost-unpriced]')].map((node) => node.textContent);
+        expect(flagged.some((text) => text.startsWith('≤'))).toBe(true);
+        // The profit error bar gives the reason, not "within noise"
+        expect(flagged.some((text) => text.includes('ceiling: no price for Wisdom Coffee'))).toBe(true);
+        expect(results.textContent).not.toMatch(/Profit\/day[\s\S]*within noise[\s\S]*EPH/);
+        // The Time column stays finite when the cost is known
+        expect(results.textContent).toContain('5.0h');
+        const sheet = exported[exported.length - 1]();
+        expect(sheet.columns.map((c) => c.key)).toContain('costUnpriced');
+        expect(sheet.rows[0].costUnpriced).toBe('Wisdom Coffee');
     });
 
     test('a stopped run says it covers only part of the run, in the table, the budget and when remembered', async () => {
@@ -3010,6 +3095,88 @@ describe('results outliving the character they were run for', () => {
 
         expect(mocks.upgradeRuns).toBe(0);
         expect(ui._upgradeRunning).toBe(false);
+    });
+
+    test('an old profile read that ends after a switch leaves a newer run’s busy latch alone', async () => {
+        let releaseProfiles;
+        mocks.buildPlayerDTOs = () =>
+            new Promise((resolve) => {
+                releaseProfiles = resolve;
+            });
+        ui.buildPanel();
+        selectZone();
+
+        const analysis = ui._onUpgradeAnalyze();
+        mocks.characterId = 'char2';
+        // The arriving character's own run has claimed the latch by the time the old read returns
+        ui._analysisGen += 1;
+        ui._upgradeRunning = true;
+        releaseProfiles({ players: mocks.playerDTOs });
+        await analysis;
+
+        expect(mocks.upgradeRuns).toBe(0);
+        expect(ui._upgradeRunning).toBe(true);
+    });
+
+    test('an old read that finds no players leaves a newer run’s busy latch alone', async () => {
+        let releaseProfiles;
+        mocks.buildPlayerDTOs = () =>
+            new Promise((resolve) => {
+                releaseProfiles = resolve;
+            });
+        ui.buildPanel();
+        selectZone();
+
+        const analysis = ui._onUpgradeAnalyze();
+        ui._analysisGen += 1;
+        ui._upgradeRunning = true;
+        releaseProfiles({ players: [] });
+        await analysis;
+
+        expect(ui._upgradeRunning).toBe(true);
+    });
+
+    test('an upgrade run that ends after a newer one claimed the latch leaves it alone', async () => {
+        ui.buildPanel();
+        selectZone();
+        mocks.onRun = () => {
+            ui._analysisGen += 1;
+            ui._upgradeRunning = true;
+        };
+        try {
+            await ui._onUpgradeAnalyze();
+        } finally {
+            mocks.onRun = null;
+        }
+
+        expect(ui._upgradeRunning).toBe(true);
+    });
+
+    test('a trigger run that ends after a newer one claimed the latch leaves it alone', async () => {
+        ui.buildPanel();
+        selectZone();
+        ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
+            box.checked = box.getAttribute('data-upgrade-mode') === 'triggers';
+        });
+        mocks.editedDTOs = { player1: { hrid: 'player1', abilities: [], food: [], drinks: [] } };
+        const result = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 10 };
+        Object.defineProperty(mocks, 'triggerResult', {
+            configurable: true,
+            get() {
+                ui._analysisGen += 1;
+                ui._upgradeRunning = true;
+                return result;
+            },
+        });
+        try {
+            await ui._onUpgradeAnalyze();
+        } finally {
+            delete mocks.triggerResult;
+            mocks.triggerResult = null;
+            mocks.editedDTOs = null;
+        }
+
+        expect(ui._upgradeRunning).toBe(true);
     });
 });
 

@@ -140,6 +140,7 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     guildMemberSkills: () => null,
     missingMaterialsButton: () => null,
     loadoutSnapshot: () => null,
+    webSocketHook: () => ({ on: () => {}, off: () => {} }),
     combatSimUI: () => null,
 }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));

@@ -209,12 +209,20 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
     }
 
     if (terminalCause === 'unknown' || segments.length === 0) {
-        const last = segments[segments.length - 1];
+        // The segment running now, not the uncertain tail behind it: a known prefix keeps its own
+        // identity until it ends. Only once every known segment is over does the tail show.
+        const current = findSegmentAtTime(segments, now) || {
+            segment: segments[segments.length - 1],
+            index: segments.length - 1,
+        };
+        const shown = current.segment;
         return {
-            firstLineText: last ? formatActivityLine(last, false, 0) : 'No active action expected',
+            firstLineText: shown
+                ? formatActivityLine(shown, false, Math.max(0, segments.length - current.index - 1))
+                : 'No active action expected',
             limiterColor: 'neutral',
             limiterText: 'End time unavailable',
-            actionTypeHrid: last?.actionTypeHrid ?? null,
+            actionTypeHrid: shown?.actionTypeHrid ?? null,
         };
     }
 

@@ -43,6 +43,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { isFromActiveSocket } from '../combat/labyrinth-activity.js';
 import webSocketHook from '../../core/websocket.js';
 import { seatFromBattle, seatFromTick, guessContradicted, rosterHp } from './own-seat.js';
 import { attributeIncoming, newTakenState, seedTakenState, resolveName } from '../../utils/damage-taken.js';
@@ -249,7 +250,8 @@ export function detectDeath(signal, info = {}) {
 }
 
 /** Handle a `new_battle` */
-function onNewBattle(data) {
+function onNewBattle(data, context) {
+    if (!isFromActiveSocket(context)) return;
     try {
         const own = seatFromBattle(data);
 
@@ -336,7 +338,8 @@ function carryOmitted(data, index) {
 }
 
 /** Handle a `battle_updated` tick */
-function onBattleUpdated(data) {
+function onBattleUpdated(data, context) {
+    if (!isFromActiveSocket(context)) return;
     try {
         if (data?.battleId !== battleId) {
             battleId = data?.battleId;

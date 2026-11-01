@@ -56,6 +56,18 @@ export function restoreSignature(detail) {
 }
 
 /**
+ * Whether a resolved price is a figure to search on. A zero is unpriced (nothing quoted it) unless the player
+ * typed it as a custom price: a farmed or gifted food really is free to them.
+ * @param {number|null} price - `resolveItemPrice().price`
+ * @param {boolean} custom - `resolveItemPrice().custom`
+ * @returns {boolean}
+ */
+function isKnownPrice(price, custom) {
+    if (!Number.isFinite(price)) return false;
+    return price > 0 || (price === 0 && custom === true);
+}
+
+/**
  * Build the candidate pools from game data, one per restore signature, each
  * sorted by restore amount ascending (the axis the binary search runs on).
  * @param {Object} gameData - Game data payload (itemDetailMap)
@@ -72,8 +84,8 @@ export function buildConsumablePools(gameData) {
         const signature = restoreSignature(detail);
         if (!signature) continue;
 
-        const { price } = resolveItemPrice(hrid, { side: 'buy' });
-        if (!price || price <= 0) continue;
+        const { price, custom } = resolveItemPrice(hrid, { side: 'buy' });
+        if (!isKnownPrice(price, custom)) continue;
 
         const hpRestore = Number(detail.hitpointRestore) || 0;
         const mpRestore = Number(detail.manapointRestore) || 0;
@@ -139,7 +151,7 @@ export function buildBuffDrinkPools(gameData) {
         const family = buffs[0].uniqueHrid;
         if (!family) continue;
 
-        const { price } = resolveItemPrice(hrid, { side: 'buy' });
+        const { price, custom } = resolveItemPrice(hrid, { side: 'buy' });
 
         if (!pools.has(family)) pools.set(family, []);
         pools.get(family).push({
@@ -148,7 +160,7 @@ export function buildBuffDrinkPools(gameData) {
             family,
             itemLevel: item.itemLevel || 0,
             buffTypes: buffs.map((buff) => buff.typeHrid).filter(Boolean),
-            price: price > 0 ? price : null,
+            price: isKnownPrice(price, custom) ? price : null,
             triggers: detail.defaultCombatTriggers || null,
         });
     }
@@ -421,7 +433,18 @@ export async function runFoodOptimization(params, onProgress, options = {}) {
     const searchSlots = buildSearchSlots(originalFood, itemDetailMap, pools);
     if (searchSlots.length === 0) return null;
 
+    // Every price the search reads, taken now: sims finish over minutes, and a food priced when the sim that
+    // used it finished could read a refresh as the cheaper setup
     const priceCache = {};
+    for (const hrid of [
+        ...originalFood.map((slot) => slot?.hrid),
+        ...(playerDTOs[playerIndex].drinks || []).map((slot) => slot?.hrid),
+        ...[...pools.values()].flatMap((pool) => pool.map((entry) => entry.hrid)),
+    ]) {
+        if (!hrid || priceCache[hrid] !== undefined) continue;
+        const price = resolveItemPrice(hrid, { side: 'buy' }).price;
+        priceCache[hrid] = Number.isFinite(price) ? price : null;
+    }
     let simCount = 0;
 
     /**

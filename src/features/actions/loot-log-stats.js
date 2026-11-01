@@ -56,6 +56,7 @@ const PROTECT_ASSUMED_NOTE =
 /** Costs are understated when a per-attempt material has no price at all. */
 const UNPRICED_NOTE = 'a material has no price; costs are understated';
 const PROTECTION_UNPRICED_NOTE = 'the protection item has no price; its cost is left out';
+const PROTECTION_PARTIAL_NOTE = 'the protection price is a floor (a recipe input has no price); costs are understated';
 
 /** The loot log export, one row per item per logged session */
 export const LOOT_LOG_CSV_COLUMNS = [
@@ -515,6 +516,9 @@ class LootLogStats {
             const params = enhancementConfig()?.getEnhancingParams?.();
             if (typeof calculateEnhancement !== 'function' || !params) return;
 
+            // The protection quote is read once: a craft-priced protection with an unpriced input comes back
+            // flagged partial, so the figure is a floor and the row says so instead of reading as firm
+            const protectionQuote = getCheapestProtectionPrice(run.baseHrid, { mode: 'ask' });
             const summary = computeEnhancingSummary(run, {
                 calculateEnhancement,
                 params,
@@ -522,7 +526,7 @@ class LootLogStats {
                 // figures line up with it — getEnhancementMaterialPrice carries the
                 // production-cost/NPC fallbacks that a raw market lookup lacks.
                 materialPrice: (hrid) => getEnhancementMaterialPrice(hrid, 'ask') || 0,
-                protectionPrice: (baseHrid) => getCheapestProtectionPrice(baseHrid, { mode: 'ask' })?.price || 0,
+                protectionPrice: () => protectionQuote?.price || 0,
                 itemValue: (hrid, level) => {
                     const prices = getItemPrices(hrid, level);
                     return prices ? prices.bid : null;
@@ -532,6 +536,8 @@ class LootLogStats {
                 marketTax: isIronCowCharacter() ? 0 : MARKET_TAX,
             });
             if (!summary) return;
+            summary.protectionPartial =
+                Boolean(protectionQuote?.partial) && (summary.expectedProtects > 0 || summary.actualProtects > 0);
 
             const div = document.createElement('div');
             div.className = 'mwi-loot-log-enhancing';
@@ -622,6 +628,7 @@ class LootLogStats {
                 `<span style="color:rgba(232,236,245,0.6);">(${picks.length} picked across ${items.size} items).</span>`;
         } else {
             const merged = mergeEnhancingSummaries(entries.map((e) => e.summary));
+            if (merged) merged.protectionPartial = entries.some((e) => e.summary.protectionPartial);
             panel.innerHTML = this.buildMergedSummaryHtml(merged, entries[0].itemName);
         }
 
@@ -667,6 +674,9 @@ class LootLogStats {
         }
         if (m.protectionUnpriced) {
             html += ` · <span style="color:rgba(232,236,245,0.6);">${PROTECTION_UNPRICED_NOTE}</span>`;
+        }
+        if (m.protectionPartial) {
+            html += ` · <span style="color:rgba(232,236,245,0.6);">${PROTECTION_PARTIAL_NOTE}</span>`;
         }
         return html;
     }
@@ -718,6 +728,7 @@ class LootLogStats {
         }
         if (s.materialsUnpriced) html += ` · <span style="color:${DIM};">${UNPRICED_NOTE}</span>`;
         if (s.protectionUnpriced) html += ` · <span style="color:${DIM};">${PROTECTION_UNPRICED_NOTE}</span>`;
+        if (s.protectionPartial) html += ` · <span style="color:${DIM};">${PROTECTION_PARTIAL_NOTE}</span>`;
         return html;
     }
 

@@ -38,6 +38,7 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     },
 }));
 
+import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import { handleViewCardClick, handleViewCardFromSnapshot } from './character-card-button.js';
 
 function addModal() {
@@ -110,5 +111,40 @@ describe('character card button', () => {
         game.resolveScore({ total: 1 });
         await pending;
         expect(window.open).not.toHaveBeenCalled();
+    });
+    test('drops the result when the same modal root now shows a different profile', async () => {
+        const modal = addModal();
+        const name = document.createElement('div');
+        name.className = 'CharacterName_characterName__x';
+        name.textContent = 'Alice';
+        modal.appendChild(name);
+        const pending = handleViewCardClick(profile);
+        await flush();
+        name.textContent = 'Bob';
+        game.resolveScore({ total: 123 });
+        await pending;
+        expect(window.open).not.toHaveBeenCalled();
+    });
+
+    test('snapshot card uses the selected id when two loadouts share a name', async () => {
+        const mk = (id, item) => ({
+            id,
+            name: 'Same',
+            equipment: [{ itemLocationHrid: '/item_locations/main_hand', itemHrid: item }],
+            abilities: [],
+            food: [],
+            drinks: [],
+        });
+        game.snapshots = [mk('a', '/items/first'), mk('b', '/items/second')];
+        const resolveEquipment = vi.fn(() => []);
+        const origResolve = loadoutSnapshot.resolveEquipment;
+        loadoutSnapshot.resolveEquipment = resolveEquipment;
+        const pending = handleViewCardFromSnapshot('Same', 'b');
+        await flush();
+        game.resolveScore({ total: 1 });
+        await pending;
+        loadoutSnapshot.resolveEquipment = origResolve;
+        expect(resolveEquipment).toHaveBeenCalledTimes(1);
+        expect(resolveEquipment.mock.calls[0][0].id).toBe('b');
     });
 });

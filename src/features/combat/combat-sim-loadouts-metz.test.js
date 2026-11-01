@@ -263,10 +263,30 @@ describe('collect, stored copy and publisher', () => {
 
     test('getMetzLoadouts falls back to the stored copy for the same character only', () => {
         const stored = [{ id: '1', name: 'Stored' }];
+        mocks.ready = false;
         globalThis.GM_getValue = vi.fn(() => JSON.stringify({ characterId: 'char-1', loadouts: stored }));
 
         expect(getMetzLoadouts('char-1')).toEqual(stored);
         expect(getMetzLoadouts('char-2')).toEqual([]);
+    });
+
+    test('getMetzLoadouts reports a loaded store with nothing to export instead of the stored copy', () => {
+        const stored = [{ id: 'old', name: 'Stale' }];
+        globalThis.GM_getValue = vi.fn(() => JSON.stringify({ characterId: 'char-1', loadouts: stored }));
+
+        // The last saved loadout was deleted: the store is loaded and empty
+        mocks.snapshots = [];
+        expect(getMetzLoadouts('char-1')).toEqual([]);
+
+        // Every saved loadout needs gear the character no longer owns, with an inventory to judge by
+        mocks.snapshots = [{ ...MELEE_SET, equipment: [piece('body', 'gone_body', 3)] }];
+        mocks.items = [{ itemHrid: '/items/other_thing', enhancementLevel: 0, count: 1 }];
+        expect(getMetzLoadouts('char-1')).toEqual([]);
+
+        // The store has not loaded (the Metz site, or early in login): empty is not known
+        mocks.snapshots = [];
+        mocks.ready = false;
+        expect(getMetzLoadouts('char-1')).toEqual(stored);
     });
 
     test('getMetzLoadouts prefers the live store over storage', () => {

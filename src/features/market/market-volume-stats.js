@@ -317,7 +317,11 @@ class MarketVolumeStats {
         const enhancementLevel = this.getCurrentEnhancementLevel();
         const key = `${itemHrid}:${enhancementLevel}`;
         if (key === this.currentKey) {
-            this.attachPanel(currentItemElement);
+            const panelBefore = this.panel?.isConnected ? this.panel : null;
+            const panelNow = this.attachPanel(currentItemElement);
+            // The loaded marker belongs to a panel, not just an item key: a recreated panel for the same
+            // item is empty, so it has to be filled again
+            if (panelNow !== panelBefore) this.loadedKey = null;
             // A fetch for this key can have been discarded mid-flight (superseded by
             // another for the same key, e.g. a redundant retrigger racing a
             // "Refresh now") — nothing else would ever refetch it, and the panel

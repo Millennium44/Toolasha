@@ -60,7 +60,7 @@
  */
 
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
-import { copyReplayInputs, replayBuildKey, replayBuildIdFor } from './labyrinth-replay-inputs.js';
+import { copyReplayInputs, replayBuildKey, legacyReplayBuildKey, replayBuildIdFor } from './labyrinth-replay-inputs.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { clearRecord, clearedAtOf, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import { scriptVersion } from '../../utils/script-version.js';
@@ -877,9 +877,11 @@ export function attemptsFromRecordingFile(file) {
     if (!Array.isArray(file.attempts)) {
         throw new Error('[LabyrinthFightRecorder] This recording is missing attempts.');
     }
-    const entries = file.attempts;
+    let entries = file.attempts;
     if (buildFormat === REPLAY_BUILD_FORMAT) {
         const carriers = new Map();
+        // Ids from before scroll buffs left the build key: same build, older id
+        const reIded = new Map();
         for (const entry of entries) {
             const id = entry?.replayBuildId == null ? null : String(entry.replayBuildId);
             if (entry?.replayInputs == null) continue;
@@ -891,14 +893,26 @@ export function attemptsFromRecordingFile(file) {
                 throw new Error(`[LabyrinthFightRecorder] Saved build ${id} is unreadable.`);
             }
             const key = replayBuildKey(inputs);
+            let carrierId = id;
             if (replayBuildIdFor(key) !== id) {
-                throw new Error(`[LabyrinthFightRecorder] Saved build id ${id} does not match its saved build.`);
+                if (replayBuildIdFor(legacyReplayBuildKey(inputs)) !== id) {
+                    throw new Error(`[LabyrinthFightRecorder] Saved build id ${id} does not match its saved build.`);
+                }
+                carrierId = replayBuildIdFor(key);
+                reIded.set(id, carrierId);
             }
-            const held = carriers.get(id);
+            const held = carriers.get(carrierId);
             if (held !== undefined && held !== key) {
                 throw new Error(`[LabyrinthFightRecorder] Saved build id ${id} is claimed by different builds.`);
             }
-            carriers.set(id, key);
+            carriers.set(carrierId, key);
+        }
+        if (reIded.size) {
+            entries = entries.map((entry) =>
+                entry?.replayBuildId != null && reIded.has(String(entry.replayBuildId))
+                    ? { ...entry, replayBuildId: reIded.get(String(entry.replayBuildId)) }
+                    : entry
+            );
         }
         for (const entry of entries) {
             const id = entry?.replayBuildId == null ? null : String(entry.replayBuildId);

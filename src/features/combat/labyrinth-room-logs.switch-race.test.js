@@ -64,6 +64,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getSkills: () => null,
         getCurrentCharacterId: () => world.characterId,
         getCurrentCharacterGameMode: () => 'standard',
+        isFromActiveSocket: (context) => context?.socket !== 'old',
         characterData: null,
     },
 }));
@@ -359,5 +360,41 @@ describe('a character switch with a room still waiting to be reported', () => {
         await expect(labyrinthRoomLogs.disable()).resolves.toBeUndefined();
         expect(errors).toHaveBeenCalled();
         errors.mockRestore();
+    });
+});
+
+describe('raw frames from a departing socket', () => {
+    beforeEach(async () => {
+        world.gate = null;
+        world.characterId = 'char1';
+        await labyrinthRoomLogs.disable();
+        socket.handlers = {};
+    });
+
+    afterEach(async () => {
+        await labyrinthRoomLogs.disable();
+        vi.restoreAllMocks();
+    });
+
+    test('are not recorded, while current ones are', async () => {
+        await labyrinthRoomLogs.initialize();
+        const progress = vi.spyOn(labyrinthRoomLogs, 'onRoomProgress').mockImplementation(() => {});
+        const battle = vi.spyOn(labyrinthRoomLogs, 'onBattleUpdated').mockImplementation(() => {});
+        const fresh = vi.spyOn(labyrinthRoomLogs, 'onNewBattle').mockImplementation(() => {});
+        const frame = { actionCounter: 1 };
+
+        for (const type of ['labyrinth_room_progress', 'battle_updated', 'new_battle']) {
+            for (const handler of socket.handlers[type]) handler(frame, { socket: 'old' });
+        }
+        expect(progress).not.toHaveBeenCalled();
+        expect(battle).not.toHaveBeenCalled();
+        expect(fresh).not.toHaveBeenCalled();
+
+        for (const type of ['labyrinth_room_progress', 'battle_updated', 'new_battle']) {
+            for (const handler of socket.handlers[type]) handler(frame, { socket: 'current' });
+        }
+        expect(progress).toHaveBeenCalledTimes(1);
+        expect(battle).toHaveBeenCalledTimes(1);
+        expect(fresh).toHaveBeenCalledTimes(1);
     });
 });

@@ -10,6 +10,46 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Guild Trials now starts first at login and draws its info boxes from what is already on screen, instead of several seconds later once the other features and its first sample had run.
 
+### October 31 audit fixes: Labyrinth
+
+- The beacon planner's minimum counts revealed islands that already link two beacons, so it no longer asks for one more than needed.
+- A started beacon plan keeps its centers on a second unchanged recalculation, and raising the count after spending some draws only the remaining ones.
+- Path results from an old floor or a cancelled run are no longer drawn on the new floor or counted as unsimulated fights.
+- Find Max recommends a negative skip when the cleared room is below your combat level, and a skip you saved as 0 now counts as set.
+- A Find Max search that clears nothing, or an edit to the build, drops the old "Sim max" level; its XP/hr uses the crates selected in the panel.
+- When every upgrade already wins a room, the room-level shortlist ranks them by XP/hr instead of showing nothing.
+- The fight-length accuracy row appears, a dropped progress update no longer counts as a double, and damage that arrives after a long stall still counts in your totals but no longer inflates damage taken per second.
+- Replay check no longer splits fights into separate groups because a combat scroll changed.
+- The enhancing room's hover uses the enhancing clear chance, matching its badge.
+- Room logs and live clear odds recognize a Labyrinth fight from the running action rather than English header text, and the Labyrinth trackers and death recap ignore messages from a stale connection.
+- Replay recordings exported before this update still import, and the enhancing room's hover prints the formula it actually uses.
+
+### October 31 audit fixes: Combat Sim
+
+- Verify, the trigger search, Party search and the food search now read every price once before simulating, so one refresh can't tilt a close comparison.
+- An upgrade whose running cost includes an item with no price is marked as such: its profit gain is a ceiling (shown with ≤), it shows no ROI, and profit-ranked budget plans leave it out and say so; Party search marks the gap.
+- In the Labyrinth upgrade table, XP and Community Experience rows now count the XP a room win pays, which the simulator never awarded.
+- The upgrade advisor no longer suggests a drink or ability in a slot your build hasn't unlocked, and warns about a build with more than it can use.
+- Budget plans and Confirm together no longer treat a main-hand and an off-hand pick, or two different empty ability slots, as rivals.
+- In a party, a combat level-up row now includes the level-gap penalty change.
+- A custom food price of 0 counts as priced.
+- Fury that ran out while a unit was down no longer comes back after a revive in the simulator.
+- A Shykai export keeps a trigger list you cleared, so re-importing it doesn't restore the defaults.
+- The Metz export no longer includes a loadout you have just deleted, and an old run finishing after a character switch no longer unlocks a newer one's busy guard.
+
+### October 31 audit fixes: action queue, profiles and marketplace
+
+- The Repeat ∞ time estimate now uses the same loadout as the finite figure beside it (enhancing still times with your worn gear), and refreshes when you change the scroll selection.
+- The queue's material ledger credits an upgrade craft's output at its real enhancement level, not +0.
+- A queue total with rows Toolasha couldn't identify shows as incomplete instead of a confident "0s".
+- The character-select slot shows the action running now, and conservative deadlines no longer count on random alchemy self-returns.
+- A discarded task leaves the task list, so its reroll spend is retired.
+- A slow profile score no longer replaces a newer profile's panel, and View Card picks the loadout by id when two share a name.
+- Marketplace shortcuts no longer carry a quantity into a later, unrelated order form; Item Hop keys only act while the marketplace is visible; and the bulk-sell opener stops cleanly on Stop without closing another window.
+- Volume stats redraw when the same item's panel is reopened, and a touch drag ends when its listing row disappears.
+- The Materials tab no longer draws into another tab after a quick switch, and Overlay tile resizing follows one pointer and stops when the panel closes.
+- Equipment savings and loot-log enhancing costs flag a protection price that is only a floor.
+
 ### October 31 audit fixes: valuation, planner and guild trials
 
 - Gold Sources no longer overstates alchemy profit on bulk transmutes and coinifies: each attempt is now charged for every copy it consumes.
