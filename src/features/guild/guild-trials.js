@@ -3873,7 +3873,9 @@ class GuildTrials {
      * Nothing is written without a record of this character's own in hand: none
      * is read yet at startup or mid character or guild switch, and the record's
      * guild stamp would then be the departing one's. Those paths call this again once
-     * the record is adopted. A record naming another guild is left to
+     * the record is adopted: the load at startup, the arriving character's read
+     * and login payload (a switch ends here once the character ids agree), and
+     * a finished guild-name adoption. A record naming another guild is left to
      * `_healStaleRecord`, which archives it. Saved only when something changed;
      * the save re-checks the character and guild after its own await.
      *
@@ -3882,6 +3884,10 @@ class GuildTrials {
      */
     _fileServerTrials(now = Date.now()) {
         try {
+            // The ids agreeing again is what ends a switch, and nothing else may
+            // have asked yet: the arriving character's own record and login
+            // payload are often the first things to land
+            if (this.awaitingCharacter) this._resolveGuildName();
             if (!this.initialized || this.awaitingCharacter || !this.record || !this.currentTrials) return false;
             // Mid guild adoption the record in hand may be the guild just left
             // while the payload is the one joined; the next message files it

@@ -1998,6 +1998,23 @@ describe('the panel, end to end', () => {
             expect(guildTrials.record.tiles).toEqual({});
         });
 
+        test('after a character switch the arriving character’s login payload is filed without another message', async () => {
+            const loginPayload = {
+                character: { id: 999, name: 'Arriving' },
+                currentTimestamp: new Date(now).toISOString(),
+                guild: message(now).guild,
+            };
+            guildTrials._forgetCharacter(999);
+            // The arriving character's data lands: the ids agree, and its login payload is noted
+            game.characterId = 999;
+            for (const handler of game.dmHandlers.character_initialized || []) handler(loginPayload);
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(guildTrials.awaitingCharacter).toBe(false);
+            expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+            game.characterId = null;
+        });
+
         test('the message that names the guild is filed once the record has moved onto the guild key', async () => {
             // Started before anything had said which guild: the record is on the fallback key
             await trialsFeature.cleanup();
