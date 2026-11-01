@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task reroll walk bar tidied
+
+- The reroll walk bar sits in the Task Board toolbar beside "Rerolls" instead of floating over the task cards, shows only on the Task Board, and shrinks to a "Walk again" button with its summary on hover once a walk is done.
+
 ### Guild trial info boxes appear sooner
 
 - Guild Trials now starts first at login and draws its info boxes from what is already on screen, instead of several seconds later once the other features and its first sample had run.
