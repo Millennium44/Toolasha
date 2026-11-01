@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Untradable capes valued the same everywhere
+
+- The coinify, decompose and transmute history viewers and the gold-source cost basis now value untradable capes (refined or not, at any level) through the same cape setting the alchemy profit calculator uses, instead of leaving them unpriced or counting only the refining materials.
+
+### Consumables buy by order when nothing is for sale
+
+- When an item has buy listings but no sell listings, the Consumables panel now recommends a buy order (opening + New Buy Listing, priced by your buy auto-fill setting) instead of an instant buy that could not happen, and it says so if the market form fails to open.
+
 ### Guild trial sign-up levels stay current
 
 - The Guild Trial Sim's assignment planner keeps a member's skilling sign-up level when they switch trials, and picks up the guild's sign-up levels when the roster updates, instead of keeping the login copy.
