@@ -1495,6 +1495,9 @@ class GoalPlannerPanel {
                 return;
             }
 
+            // The pricing these rates belong to, fixed now: a Refresh during the search swaps
+            // `this.pricedAt`, and stamping the finished route with the new one would hide that it is old
+            const pricedAt = this.pricedAt;
             const rates = await context.routeRates(goal.skillHrid);
             if (!live()) return;
 
@@ -1538,7 +1541,7 @@ class GoalPlannerPanel {
                 level: Number(skill.level) || 1,
                 experience: Number(skill.experience) || 0,
                 gold,
-                pricedAt: this.pricedAt,
+                pricedAt,
             };
         } catch (error) {
             if (!mine()) return;

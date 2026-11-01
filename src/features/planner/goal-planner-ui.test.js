@@ -1172,6 +1172,20 @@ describe('the leveling route', () => {
         expect(text()).toContain('Out of date: prices were refreshed since');
     });
 
+    test('a refresh during the search still marks the finished route out of date', async () => {
+        await open();
+        let release;
+        route.gate = new Promise((resolve) => (release = resolve));
+        const pending = goalPlannerPanel.optimizeRoute('g-cook');
+        await settled();
+        plannerContext.value = { ...plannerContext.value, pricedAt: 2_000 };
+        await goalPlannerPanel.refresh();
+        release();
+        await pending;
+        expect(text()).toContain('Route total');
+        expect(text()).toContain('Out of date: prices were refreshed since');
+    });
+
     test('a changed input searches again', async () => {
         await open();
         await goalPlannerPanel.optimizeRoute('g-cook');

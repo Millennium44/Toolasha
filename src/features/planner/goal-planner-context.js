@@ -757,8 +757,8 @@ function measureXpRates(
  * @returns {Promise<Array<Object>>} Rates for every action of the skill, best first
  */
 async function measureRouteRates(skillHrid) {
-    const measuredAtLevel = skillState(skillHrid).level;
     if (skillHrid === ENHANCING_SKILL) {
+        const measuredAtLevel = skillState(skillHrid).level;
         return measureEnhancingRates().map((rate) => ({ ...rate, measuredAtLevel }));
     }
     const gameData = dataManager.getInitClientData();
@@ -790,6 +790,8 @@ async function measureRouteRates(skillHrid) {
         }
     }
     await boundTrainingMargins(sales, margin, saleCap);
+    // Read after the awaits, beside the experience rates: the efficiency inside them is this level's
+    const measuredAtLevel = skillState(skillHrid).level;
     return measureXpRates(skillHrid, margin, drinkCost, upfront, saleCap).map((rate) => ({
         ...rate,
         measuredAtLevel,
