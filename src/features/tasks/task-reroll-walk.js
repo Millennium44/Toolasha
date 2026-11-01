@@ -69,7 +69,6 @@
  */
 
 import config from '../../core/config.js';
-import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
@@ -430,11 +429,6 @@ class TaskRerollWalk {
          */
         this.pendingClaim = null;
         this.claimWaits = 0;
-        /**
-         * Whether the board has been sorted since this walk finished. A finished
-         * walk offers Sort first and Walk again after it.
-         */
-        this.sortedAfterDone = false;
         /** The last finished walk's summary, kept after its widget goes away */
         this.summary = '';
         /** Bumped by every start and every stop, so an in-flight start can tell it was abandoned */
@@ -1373,7 +1367,6 @@ class TaskRerollWalk {
         this.tally = { claimed: 0, kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
         this.pendingClaim = null;
         this.claimWaits = 0;
-        this.sortedAfterDone = false;
         // A new walk is what finally replaces the last one's summary
         this.summary = '';
         this.message = '';
@@ -1415,7 +1408,6 @@ class TaskRerollWalk {
         this.pendingBill = null;
         this.pendingClaim = null;
         this.claimWaits = 0;
-        this.sortedAfterDone = false;
         this.awaitingReadSort = false;
         this.timerRegistry.clearAll();
         this.sortTimerRegistry.clearAll();
@@ -1451,7 +1443,6 @@ class TaskRerollWalk {
             this._replanSoon(UI_SETTLE_MS);
         } else {
             this.state = this.message ? 'stopped' : 'done';
-            this.sortedAfterDone = false;
             this.summary = this._summaryText();
         }
         this._render();
@@ -1784,10 +1775,9 @@ class TaskRerollWalk {
         // that ends a walk is also the press that destroys its only account of
         // what it spent
         if (this.state === 'idle') return this.summary ? `▶ Reroll walk — last: ${this.summary}` : '▶ Reroll walk';
-        // A finished walk offers the board's Sort first, with the summary kept
-        // beside it, and Walk again once that has been pressed
-        const action = this.sortedAfterDone ? '↻ Walk again' : '↕ Sort';
-        return `${action} · ✓ Done — ${this._summaryText()}`;
+        // A finished walk collapses to a Walk again chip; its summary is the
+        // chip's hover title
+        return '↻ Walk again';
     }
 
     /**
@@ -1849,15 +1839,21 @@ class TaskRerollWalk {
             this._removeWidget();
             return null;
         }
-        if (this.widget && document.body.contains(this.widget.element)) return this.widget;
-        // A replaced task board can take its docked widget out of the DOM.
-        // Dispose its observer/listeners before losing the old widget handle.
+        // The widget lives in the Task Board's own toolbar row (beside the
+        // reroll-spend badge and the merged crafting walk), so it can never
+        // cover a card, and the board's tab panel hides it with the board.
+        const header = document.querySelector(GAME.TASK_PANEL);
+        if (!header) {
+            this._removeWidget();
+            return null;
+        }
+        if (this.widget && header.contains(this.widget.element)) return this.widget;
+        // A re-rendered toolbar takes its docked widget with it. Dispose the
+        // old handle before losing it so nothing is left dangling or doubled.
         this._removeWidget();
 
         const widget = createFloatingWidget({
             id: CHIP_ID,
-            top: '110px',
-            right: '24px',
             accent: config.COLOR_ACCENT || '#8ecfff',
             positionKey: PANEL_POSITION_KEY,
             position: null,
@@ -1873,56 +1869,32 @@ class TaskRerollWalk {
         // the shield popup's thresholds say the moment it is opened
         widget.gear.addEventListener('click', () => this._renderSettings());
 
-        document.body.appendChild(widget.element);
-        // Restore before the responsive dock captures desktop geometry. The
-        // shared shell normally defers this until layout, which is too late
-        // once the strip has already moved into its narrow flow row.
-        if (this.panelPosition) {
-            const { left, top } = this.panelPosition;
-            widget.element.style.left = `${Math.max(0, Math.min(left, window.innerWidth - widget.element.offsetWidth))}px`;
-            widget.element.style.top = `${Math.max(0, Math.min(top, window.innerHeight - widget.element.offsetHeight))}px`;
-            widget.element.style.right = 'auto';
-        }
-        const list = document.querySelector(GAME.TASK_LIST);
-        if (list?.parentElement) {
-            // Keep the walk below the tabs and in the board's scroll flow, not
-            // fixed over the page heading. Desktop keeps its saved position.
-            let wideInline = null;
-            const detach = dockWhenNarrow(widget.element, {
-                host: list.parentElement,
-                before: list,
-                measure: list.closest(GAME.GAME_PANEL) || list.parentElement,
-                // Nothing re-injects the walk, so a lost wide position falls back to the body it opened in
-                onHomeLost: (element) => document.body.appendChild(element),
-                onChange: (narrow) => {
-                    widget.element.style.touchAction = narrow ? 'auto' : 'none';
-                    widget.element.style.cursor = narrow ? 'default' : 'move';
-                    const touched = [
-                        [widget.main, 'whiteSpace', 'normal'],
-                        [widget.main, 'minWidth', '0'],
-                        [widget.main, 'maxWidth', '100%'],
-                        [widget.main, 'overflowWrap', 'anywhere'],
-                        [widget.status, 'minWidth', '0'],
-                        [widget.status, 'maxWidth', '100%'],
-                    ];
-                    if (narrow) {
-                        // What the wide layout had, so leaving the narrow one puts back exactly that
-                        wideInline = touched.map(([node, property]) => node.style[property]);
-                        for (const [node, property, value] of touched) node.style[property] = value;
-                    } else if (wideInline) {
-                        touched.forEach(([node, property], index) => {
-                            node.style[property] = wideInline[index];
-                        });
-                        wideInline = null;
-                    }
-                },
-            });
-            const remove = widget.remove;
-            widget.remove = () => {
-                detach();
-                remove();
-            };
-        }
+        // Docked, not floating: in the toolbar's flow, undraggable, and the
+        // settings drawer drops below the strip instead of growing the row.
+        const style = widget.element.style;
+        style.position = 'relative';
+        style.top = '';
+        style.right = '';
+        style.zIndex = '';
+        style.display = 'inline-flex';
+        style.verticalAlign = 'middle';
+        style.marginLeft = '12px';
+        style.boxShadow = 'none';
+        style.cursor = 'default';
+        style.touchAction = 'auto';
+        style.maxWidth = '100%';
+        widget.element.dataset.toolashaDocked = 'true';
+        const drawer = widget.settings.style;
+        drawer.position = 'absolute';
+        drawer.top = '100%';
+        drawer.left = '0';
+        drawer.zIndex = String(CHIP_Z_INDEX);
+        drawer.background = 'rgba(12,16,30,0.97)';
+        drawer.border = '1px solid rgba(74,158,255,0.45)';
+        drawer.borderRadius = '7px';
+        drawer.padding = '6px 9px';
+        drawer.marginTop = '4px';
+        header.appendChild(widget.element);
         this.widget = widget;
         this._renderSettings();
         return widget;
@@ -1967,10 +1939,8 @@ class TaskRerollWalk {
      * @private
      */
     _sortBoard() {
-        let sorted = false;
         try {
             taskSorter.sortTasks(true);
-            sorted = true;
         } catch (error) {
             console.error('[TaskRerollWalk] Sorting from the widget failed:', error);
         }
@@ -1979,11 +1949,6 @@ class TaskRerollWalk {
         // that is actually there, rather than leaving the next press to
         // abort with "Slot N is not the card it was".
         if (this.state === 'ready') this._replan();
-        // A sorted finished board is what turns the main button into Walk again
-        if (sorted && this.state === 'done' && !this.sortedAfterDone) {
-            this.sortedAfterDone = true;
-            this._render();
-        }
     }
 
     /** @private */
@@ -1993,11 +1958,6 @@ class TaskRerollWalk {
             return;
         }
         if (this.state === 'waiting') return;
-        // A finished walk offers the sort first; the press after it walks again
-        if (this.state === 'done' && !this.sortedAfterDone) {
-            this._sortBoard();
-            return;
-        }
         // A click handler cannot await; the walk's own state is what the press
         // after this one reads, and a failed read leaves the thresholds as they
         // were rather than stopping the walk
@@ -2085,10 +2045,15 @@ class TaskRerollWalk {
                     : 'One press, one game action. Nothing else happens until you press again.'
                 : this.state === 'idle'
                   ? 'Start at the top of the board. Every press does one thing, then says what the next would do.'
-                  : this.state === 'done' && !this.sortedAfterDone
-                    ? 'Sort the board, the same way the Sort Tasks button does. The press after it walks the board again from the top.'
-                    : 'Press to walk the board again from the top.';
+                  : `✓ Done — ${this._summaryText()}. Press to walk the board again from the top.`;
         if (widget.main.title !== title) widget.main.title = title;
+        // Done is a small chip: just Walk again and the ✕. Sort and the
+        // settings drawer have nothing to say about a finished walk.
+        const done = this.state === 'done';
+        const collapsed = done ? 'none' : '';
+        if (widget.extras.style.display !== collapsed) widget.extras.style.display = collapsed;
+        if (widget.gear.style.display !== collapsed) widget.gear.style.display = collapsed;
+        if (done && widget.settingsOpen) widget.setSettingsOpen(false);
     }
 
     /** @private */
@@ -2121,7 +2086,6 @@ class TaskRerollWalk {
         this.summary = '';
         this.pendingClaim = null;
         this.claimWaits = 0;
-        this.sortedAfterDone = false;
         this.isInitialized = false;
     }
 
