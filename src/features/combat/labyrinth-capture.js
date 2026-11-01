@@ -27,6 +27,7 @@
 
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import { isFromActiveSocket } from './labyrinth-activity.js';
 
 /** Recursion limit. Generous, because the whole point is not knowing the shape */
 const MAX_DEPTH = 9;
@@ -132,7 +133,8 @@ export function captureLab(seconds = 60) {
     const raw = {};
     const changed = new Map();
 
-    const handler = (data) => {
+    const handler = (data, context) => {
+        if (!isFromActiveSocket(context)) return;
         const type = String(data?.type || 'unknown');
         counts.set(type, (counts.get(type) || 0) + 1);
         raw[type] = data;
@@ -293,7 +295,8 @@ export function watchLabXp(seconds = 120) {
     const startedAt = performance.now();
 
     const handlers = TYPES.map((type) => {
-        const handler = () => {
+        const handler = (_data, context) => {
+            if (!isFromActiveSocket(context)) return;
             const now = totals();
             if (!now || !last) {
                 last = now || last;

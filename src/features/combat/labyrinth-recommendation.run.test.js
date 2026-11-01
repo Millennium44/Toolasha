@@ -103,6 +103,7 @@ describe('Recommend run over skilling and combat rooms', () => {
         vi.spyOn(panel, 'extractRoomHrid').mockImplementation((el) => el.getAttribute('data-hrid'));
         vi.spyOn(panel, 'getSkipThreshold').mockReturnValue(5);
         vi.spyOn(panel, 'getCombatSkipThreshold').mockReturnValue(5);
+        vi.spyOn(panel, '_hasSkipSetting').mockReturnValue(true);
         vi.spyOn(panel, 'getEffectiveLevel').mockReturnValue(100);
         vi.spyOn(panel, 'computeSkillingClear').mockReturnValue({ clearChance: 0.5, expectedSeconds: 60 });
         vi.spyOn(panel, 'computeEnhancingClear').mockReturnValue({ clearChance: 0.5, expectedSeconds: 60 });
@@ -307,6 +308,43 @@ describe('Recommend run over skilling and combat rooms', () => {
         panel.beginSimBatch();
         expect(await panel.findRecommendedThresholdCombat('/monsters/imp', 0.3)).toBeNull();
     });
+    test('a time search never probes below the lowest skip threshold the game accepts', async () => {
+        const rooms = [];
+        await panel._searchSeconds(5000, 300, (room) => {
+            rooms.push(room);
+            return { seconds: 1000 };
+        });
+        // Room = 5000 + threshold - 1, threshold >= -999
+        expect(Math.min(...rooms)).toBe(5000 - 999 - 1);
+    });
+
+    describe('Fill with a saved threshold of zero', () => {
+        test('fills 0 when the key is saved, and nothing when it was never saved', async () => {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_skipThreshold_abc';
+            cell.setAttribute('data-hrid', '/skills/milking');
+            const input = document.createElement('input');
+            const button = document.createElement('button');
+            button.textContent = 'Edit';
+            cell.append(input, button);
+            document.body.appendChild(cell);
+            vi.spyOn(panel, 'extractRoomHrid').mockReturnValue('/skills/milking');
+            vi.spyOn(panel, 'getCurrentRecommendation').mockReturnValue(null);
+            vi.spyOn(panel, 'getSkipThreshold').mockReturnValue(0);
+
+            const has = vi.spyOn(panel, '_hasSkipSetting').mockReturnValue(false);
+            input.value = 'x';
+            panel.onSkipEditClick({ target: button });
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            expect(input.value).toBe('x');
+
+            has.mockReturnValue(true);
+            panel.onSkipEditClick({ target: button });
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            expect(input.value).toBe('0');
+        });
+    });
+
     describe('readers while a run has seen its inputs change', () => {
         const cellOf = (hrid) => document.querySelector(`[data-hrid="${hrid}"]`);
         const autofill = async (hrid) => {

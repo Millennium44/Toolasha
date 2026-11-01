@@ -48,6 +48,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
         getCurrentCharacterGameMode: () => 'standard',
+        isFromActiveSocket: (context) => context?.socket !== 'old',
         getInitClientData: () => game.clientData,
     },
 }));
@@ -91,6 +92,18 @@ describe('labyrinth tracker', () => {
         await labyrinthTracker.initialize();
 
         expect(game.wsHandlers.labyrinth_updated).toBeUndefined();
+    });
+
+    test('a labyrinth_updated frame from a stale socket is ignored', async () => {
+        await labyrinthTracker.initialize();
+
+        game.wsHandlers.labyrinth_updated({ labyrinth: { roomData: [[combatRoom()]] } });
+        game.wsHandlers.labyrinth_updated(
+            { labyrinth: { roomData: [[combatRoom({ isCleared: true })]] } },
+            { socket: 'old' }
+        );
+
+        expect(labyrinthTracker.getBestLevel('/monsters/chimerical_beast')).toBeNull();
     });
 
     test('the first update is only a snapshot — nothing to diff against yet', async () => {

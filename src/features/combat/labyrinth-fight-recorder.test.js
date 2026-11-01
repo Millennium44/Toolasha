@@ -65,7 +65,7 @@ import recorder, {
     attemptsFromRecordingFile,
 } from './labyrinth-fight-recorder.js';
 import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
-import { replayBuildIdFor } from './labyrinth-replay-inputs.js';
+import { replayBuildIdFor, replayBuildKey, legacyReplayBuildKey } from './labyrinth-replay-inputs.js';
 
 /**
  * The fights as stored under this character's key.
@@ -1046,6 +1046,35 @@ describe('the exported file interns saved builds the way the stored pool does', 
         const read = attemptsFromRecordingFile(legacy);
         expect(read.map((entry) => entry.recordId)).toEqual(['a', 'b', 'c']);
         expect(read.map((entry) => entry.replayInputs?.playerDTO?.attackLevel ?? null)).toEqual([10, 10, null]);
+    });
+
+    test('a recording whose ids predate the scroll-free build key is re-id-ed, not refused', () => {
+        const withScroll = (scroll) => {
+            const inputs = build(10);
+            inputs.playerDTO.scrollBuffs = scroll;
+            return inputs;
+        };
+        const a = withScroll([{ typeHrid: '/buff_types/damage', flatBoost: 5 }]);
+        const b = withScroll([]);
+        const oldA = replayBuildIdFor(legacyReplayBuildKey(a));
+        const oldB = replayBuildIdFor(legacyReplayBuildKey(b));
+        // The scenario the change is for: the two ids differed before, the new key makes one build
+        expect(oldA).not.toBe(oldB);
+        expect(replayBuildKey(a)).toBe(replayBuildKey(b));
+        const old = {
+            format: RECORDING_FORMAT,
+            version: RECORDING_VERSION,
+            replayBuildFormat: REPLAY_BUILD_FORMAT,
+            attempts: [
+                { ...attempt(), recordId: 'a', replayBuildId: oldA, replayInputs: a },
+                { ...attempt(), recordId: 'a2', replayBuildId: oldA, replayInputs: null },
+                { ...attempt(), recordId: 'b', replayBuildId: oldB, replayInputs: b },
+            ],
+        };
+        const read = attemptsFromRecordingFile(JSON.parse(JSON.stringify(old)));
+        const newId = replayBuildIdFor(replayBuildKey(a));
+        expect(read.map((entry) => entry.replayBuildId)).toEqual([newId, newId, newId]);
+        expect(read.every((entry) => entry.replayInputs != null)).toBe(true);
     });
 
     test('a file interned under a newer scheme is refused, not read as buildless', () => {

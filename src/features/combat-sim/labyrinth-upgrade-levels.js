@@ -28,6 +28,27 @@ import { labyrinthFloorForLevel } from '../combat/labyrinth-formulas.js';
 export const ROOM_LEVEL_SHORTLIST_SIZE = 6;
 
 /**
+ * Order two rows by price without mixing units: gold-priced rows by gold, then token-priced rows
+ * by tokens, then unpriced rows. An unpriced row sorts after every priced one rather than as a
+ * free upgrade, and 500 gold is never compared with 5 tokens.
+ * @param {Object} a
+ * @param {Object} b
+ * @returns {number} Negative when `a` is the cheaper
+ */
+function compareByPrice(a, b) {
+    const priced = (row) => {
+        const gold = row.cost == null ? NaN : Number(row.cost);
+        if (Number.isFinite(gold)) return { unit: 0, amount: gold };
+        const tokens = row.tokenCost == null ? NaN : Number(row.tokenCost);
+        if (Number.isFinite(tokens)) return { unit: 1, amount: tokens };
+        return { unit: 2, amount: 0 };
+    };
+    const x = priced(a);
+    const y = priced(b);
+    return x.unit - y.unit || x.amount - y.amount;
+}
+
+/**
  * The candidates worth paying a full level search for.
  *
  * Only rows ranked on the win rate, and only ones that moved it upward: a
@@ -35,15 +56,28 @@ export const ROOM_LEVEL_SHORTLIST_SIZE = 6;
  * push the highest cleared level up either, and a row ranked on experience
  * (the community buffs) never touches whether a room is cleared at all.
  *
+ * A saturated room is the exception. At a room every candidate already wins
+ * every fight, no win rate can move, so the filter above keeps nothing and the
+ * table would stay blank although an upgrade may well push the frontier deeper.
+ * Then the win-rate rows that did not lose ground are kept, ranked on the room's
+ * experience-per-hour gain when the row carries one (`xpPerHourDelta`) and
+ * otherwise on price, cheapest first, unpriced last.
+ *
  * @param {Array<Object>} results - Rows from `runLabyrinthUpgradeAnalysis`
  * @param {number} [size=ROOM_LEVEL_SHORTLIST_SIZE] - How many to keep
  * @returns {Array<Object>} The kept rows, best first
  */
 export function shortlistForRoomLevels(results, size = ROOM_LEVEL_SHORTLIST_SIZE) {
     const keep = Math.max(0, Math.floor(Number(size) || 0));
-    return (Array.isArray(results) ? results : [])
-        .filter((r) => r && r.metricType === 'winRate' && (r.winRateDelta || 0) > 0)
-        .sort((a, b) => (b.winRateDelta || 0) - (a.winRateDelta || 0))
+    const rows = (Array.isArray(results) ? results : []).filter((r) => r && r.metricType === 'winRate');
+    const movers = rows.filter((r) => (r.winRateDelta || 0) > 0);
+    if (movers.length) {
+        return movers.sort((a, b) => (b.winRateDelta || 0) - (a.winRateDelta || 0)).slice(0, keep);
+    }
+    const saturated = rows.filter((r) => (r.winRateDelta || 0) > -1e-9 && (Number(r.winRate) || 0) >= 0.99);
+    const gain = (r) => (Number.isFinite(r.xpPerHourDelta) ? r.xpPerHourDelta : -Infinity);
+    return saturated
+        .sort((a, b) => (gain(b) === gain(a) ? 0 : gain(b) - gain(a)) || compareByPrice(a, b))
         .slice(0, keep);
 }
 
