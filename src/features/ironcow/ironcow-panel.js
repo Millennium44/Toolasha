@@ -179,14 +179,18 @@ function numberBox(value, onInput) {
 
 /** The durations worth one press, in hours */
 const QUEUE_PRESETS = [
-    { label: '8h', hours: 8 },
-    { label: '16h', hours: 16 },
     { label: '1 day', hours: 24 },
     { label: '1 week', hours: 168 },
+    { label: '2 weeks', hours: 336 },
+    { label: '30 days', hours: 720 },
 ];
 
-/** A batch longer than this is not a queue, it is a typo */
-const MAX_QUEUE_HOURS = 24 * 30;
+/**
+ * Not a game limit — the game states none for a queue's length. A typo guard well past any real plan (ten
+ * years): the walk splits a leg into repeats of 100,000 actions, so an absurd finite duration like 1e12 days
+ * would build billions of steps and hang the tab.
+ */
+const MAX_QUEUE_HOURS = 24 * 365 * 10;
 
 /**
  * A titled block.
@@ -1142,7 +1146,9 @@ class IronCowFarmPanel {
             return holder;
         }
 
-        const hoursBox = numberBox(round1(this.batchHours), (raw) => this._setBatchHours(Number(raw), 'hours'));
+        // Shown in the unit the select is on: batchHours is always hours, and the select remembers 'd'
+        const shownDuration = this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours;
+        const hoursBox = numberBox(round1(shownDuration), (raw) => this._setBatchHours(Number(raw), 'hours'));
         const unit = document.createElement('select');
         for (const [value, label] of [
             ['h', 'hours'],
