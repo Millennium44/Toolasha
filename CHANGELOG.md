@@ -20,6 +20,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Tests for skill, collection, quest, queued-action and guild sign-up handling now read payloads captured from the game on the test server, so they can no longer agree with a message shape the game never sends.
 
+### Production build value check
+
+- The build now loads both the production and the single-file builds and fails if a chest value, the Task Token and Task Crystal values or an enhancing input cost differ between them.
+
 ### Game message audit script
 
 - A developer script (`npm run audit:handlers`) compares the fields Toolasha reads from each game message with the fields the game's own client reads, to catch features reading a field the game never sends.
