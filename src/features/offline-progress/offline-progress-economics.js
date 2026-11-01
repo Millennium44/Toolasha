@@ -10,10 +10,11 @@
  * aware stack as every other profit figure in the script (see offline-economics-calculator).
  * Items that could not be priced are named, not silently folded into the total as zero.
  *
- * Experience is the one figure on this block that is not sourced that way: the payload behind
- * `offlineItems` carries no experience total, so it is read off the native modal's per-skill
- * experience cells instead (`readExperience`; the retired welcome-back-value.js one-liner this
- * block replaced scraped the text and misread item counts as experience). It is summed per skill the way the modal lists it, and rated per hour against
+ * Experience comes from the same payload's `offlineSkills` (`[{skillHrid, offlineExperience}]`,
+ * what the native modal itself renders), so it does not depend on the game's language or markup.
+ * Only when a payload lacks that field is it read off the native modal's per-skill experience
+ * cells instead (`readExperience`; the retired welcome-back-value.js one-liner this
+ * block replaced scraped the text and misread item counts as experience). It is summed per skill, and rated per hour against
  * the same `durationSeconds` the Revenue/Cost/Profit per-day figures use — the full time away,
  * not the offline-hour-capped portion — so the rate on this row means the same "per hour offline"
  * as everywhere else in the block.
@@ -128,6 +129,7 @@ class OfflineProgressEconomics {
         } else {
             this.currentOfflineData = {
                 offlineItems,
+                offlineSkills: Array.isArray(data.offlineSkills) ? data.offlineSkills : undefined,
                 currentTimestamp: data.currentTimestamp,
                 lastOfflineTime: data.character?.lastOfflineTime,
                 offlineHourCap: dataManager.getOfflineHourCap(),
@@ -263,7 +265,8 @@ class OfflineProgressEconomics {
      */
     computeEconomics(offlineData, modalContentNode) {
         const economics = calculateOfflineEconomics(offlineData);
-        const experience = readExperience(modalContentNode);
+        const payloadExperience = sumOfflineExperience(offlineData?.offlineSkills);
+        const experience = payloadExperience ?? readExperience(modalContentNode);
         return {
             ...economics,
             experience,
@@ -430,6 +433,25 @@ export function readNativeSignature(root) {
     };
     walk(root);
     return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Total offline experience from the login payload's `offlineSkills`.
+ *
+ * Handler shape read from the game client (Welcome Back modal): an array of
+ * `{skillHrid, offlineExperience}`, each cell skipped when it formats to "0".
+ *
+ * @param {Array<{skillHrid?: string, offlineExperience?: number}>|undefined} offlineSkills
+ * @returns {number|null} Total, or null when the payload carries no `offlineSkills` array (use the DOM)
+ */
+export function sumOfflineExperience(offlineSkills) {
+    if (!Array.isArray(offlineSkills)) return null;
+    let total = 0;
+    for (const entry of offlineSkills) {
+        const value = Number(entry?.offlineExperience);
+        if (Number.isFinite(value) && value > 0) total += value;
+    }
+    return total;
 }
 
 /**
