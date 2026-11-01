@@ -1505,7 +1505,7 @@ export function getCombatZones() {
  *
  * `combatMonsterDetailMap` carries no ordering field of its own — its key
  * order is alphabetical, an artifact of how the client serializes the map,
- * not a game-chosen order. The labyrinth's `/actions/combat/labyrinth/explore`
+ * not a game-chosen order. The labyrinth's `/actions/labyrinth/explore`
  * action has an empty `combatZoneInfo`, so there is no spawn list to read one
  * from either.
  *

@@ -29,6 +29,7 @@ import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/combat-level.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
+import { isFromActiveSocket, isLabyrinthFightActive } from './labyrinth-activity.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 import { estimateLiveClearChance, FIGHT_TIMEOUT_SECONDS, MIN_ELAPSED_SECONDS } from './labyrinth-live-combat.js';
 import { isFreshLabyrinthFight } from './labyrinth-fight-log.js';
@@ -352,13 +353,19 @@ class LabyrinthClearRate {
         if (!config.getSetting('labyrinthLiveProgress')) return;
         if (this.liveProgressHandler) return;
 
-        this.liveProgressHandler = (data) => this.onLiveProgress(data);
+        this.liveProgressHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onLiveProgress(data);
+        };
         webSocketHook.on('labyrinth_room_progress', this.liveProgressHandler);
 
-        this.battleHandler = (data) => this.onBattleUpdated(data);
+        this.battleHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onBattleUpdated(data);
+        };
         webSocketHook.on('battle_updated', this.battleHandler);
 
-        this.newBattleHandler = (data) => this.onNewBattle(data);
+        this.newBattleHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onNewBattle(data);
+        };
         webSocketHook.on('new_battle', this.newBattleHandler);
     }
 
@@ -372,7 +379,9 @@ class LabyrinthClearRate {
             return;
         }
 
-        this.wsHandler = (data) => this.onLabyrinthUpdated(data);
+        this.wsHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onLabyrinthUpdated(data);
+        };
         webSocketHook.on('labyrinth_updated', this.wsHandler);
 
         // Settings fire for every character-setting change — including editing a
@@ -607,14 +616,15 @@ class LabyrinthClearRate {
         // A time recommendation that only found the closest miss is not a level
         // worth filling into the field
         const recommended = rec?.qualifies === false ? null : rec?.threshold;
-        const current = roomHrid.startsWith('/skills/')
-            ? this.getSkipThreshold(roomHrid)
-            : this.getCombatSkipThreshold(roomHrid);
-        // Thresholds are signed: a negative recommendation is as fillable as a positive
-        // one. Zero is the only value worth refusing, because it is also what the reader
-        // returns for a setting that was never saved.
-        const value = Number.isFinite(recommended) && recommended !== 0 ? recommended : current;
-        if (!Number.isFinite(value) || value === 0) return;
+        const isSkill = roomHrid.startsWith('/skills/');
+        const current = isSkill ? this.getSkipThreshold(roomHrid) : this.getCombatSkipThreshold(roomHrid);
+        const currentKey = isSkill ? `labyrinthSkip${this._skillSuffix(roomHrid)}` : this._combatSkipKey(roomHrid);
+        // Thresholds are signed and 0 is a real value. A recommendation fills as it is; the saved
+        // value fills only when the key is present, since the reader also returns 0 for a setting
+        // that was never saved.
+        const useRecommended = Number.isFinite(recommended);
+        const value = useRecommended ? recommended : current;
+        if (!Number.isFinite(value) || (!useRecommended && !this._hasSkipSetting(currentKey))) return;
 
         // React renders the input a beat after the click; retry briefly
         let attempts = 0;
@@ -975,6 +985,13 @@ class LabyrinthClearRate {
                 // here.
                 this._tileGen = (this._tileGen || 0) + 1;
                 this._autoCalcDeferred = false;
+                // The same hand-back for a Path still simulating on the floor just left: the new
+                // floor's presses must not be refused as "already running". The old run is
+                // fenced by the same generation (it neither draws nor clears a newer run's flag).
+                if (this.pathCalcRunning) {
+                    this.pathCalcRunning = false;
+                    this.setPathButtonRunning(false);
+                }
                 if (this.tileCalcRunning) {
                     this.tileCalcRunning = false;
                     this._pathQueued = false;
@@ -1166,7 +1183,11 @@ class LabyrinthClearRate {
         let crateBuffs;
         if (Array.isArray(crateHrids)) {
             const detail = dataManager.getInitClientData()?.labyrinthCrateDetailMap;
-            crateBuffs = crateHrids.flatMap((hrid) => (Array.isArray(detail?.[hrid]) ? detail[hrid] : []));
+            // The tea crate's wisdom belongs to skilling rooms; a fight counts coffee and food only,
+            // as `getCombatCrateBuffs` does for the live crates
+            crateBuffs = crateHrids
+                .filter((hrid) => !/_tea_crate$/.test(String(hrid)))
+                .flatMap((hrid) => (Array.isArray(detail?.[hrid]) ? detail[hrid] : []));
         } else {
             crateBuffs = this.getCombatCrateBuffs();
         }
@@ -1617,6 +1638,9 @@ class LabyrinthClearRate {
         result.effectiveLevel = effectiveLevel;
         result.baseLevel = baseLevel;
         result.successChance = successChance;
+        // The two terms successChance is built from, for the hover text that spells them out
+        result.levelBonus = levelBonus;
+        result.successBonus = metrics.successBonus;
         result.doubleChance = doubleChance;
         result.attempts = attempts;
         result.actionSeconds = actionSeconds;
@@ -2041,12 +2065,11 @@ class LabyrinthClearRate {
      */
     getTargetRoomLevel(skillHrid) {
         const skipThreshold = this.getSkipThreshold(skillHrid);
-        // Zero is the unset sentinel, not a threshold of zero: `getSkipThreshold` returns it
-        // for a setting that was never saved, and the automation panel reads a room level of
-        // 0 as "no skip configured, draw no badge". Without this a skill with no threshold
-        // reported effectiveLevel - 1 and every row grew a badge (and queued a sim) for a
-        // skip the player never set.
-        if (skipThreshold === 0) return 0;
+        // Unset means the key is absent from characterSetting, not that it holds 0: the game
+        // ships every threshold at 100 and a saved 0 is a real value (skip rooms from your own
+        // level up). The automation panel reads a room level of 0 as "no skip configured, draw
+        // no badge", so only an absent key may report it.
+        if (skipThreshold === 0 && !this._hasSkipSetting(`labyrinthSkip${this._skillSuffix(skillHrid)}`)) return 0;
         const effectiveLevel = this.getEffectiveLevel(skillHrid);
         return Math.max(0, Math.floor(effectiveLevel + skipThreshold - 1));
     }
@@ -2062,13 +2085,42 @@ class LabyrinthClearRate {
         const charSetting = dataManager.characterData?.characterSetting;
         if (!charSetting) return 0;
 
-        const monsterName = monsterHrid.replace('/monsters/', '');
-        const pascal = monsterName
+        return Math.floor(Number(charSetting[this._combatSkipKey(monsterHrid)]) || 0);
+    }
+
+    /** @private characterSetting key of a combat room's skip threshold */
+    _combatSkipKey(monsterHrid) {
+        const pascal = monsterHrid
+            .replace('/monsters/', '')
             .split('_')
             .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
             .join('');
-        const key = `labyrinthSkip${pascal}`;
-        return Math.floor(Number(charSetting[key]) || 0);
+        return `labyrinthSkip${pascal}`;
+    }
+
+    /** @private Capitalized skill id used in a skill room's skip key */
+    _skillSuffix(skillHrid) {
+        const skillId = skillHrid.replace('/skills/', '');
+        return `${skillId.charAt(0).toUpperCase()}${skillId.slice(1)}`;
+    }
+
+    /**
+     * Whether the character has a saved skip threshold under this key. A saved 0 counts; only an
+     * absent (or non-numeric) value does not.
+     * @private
+     */
+    _hasSkipSetting(key) {
+        const value = dataManager.characterData?.characterSetting?.[key];
+        return value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value));
+    }
+
+    /**
+     * Whether the character has a saved skip threshold for a skilling room. A saved 0 counts.
+     * @param {string} skillHrid
+     * @returns {boolean}
+     */
+    hasSkillSkipSetting(skillHrid) {
+        return this._hasSkipSetting(`labyrinthSkip${this._skillSuffix(skillHrid)}`);
     }
 
     /**
@@ -2077,8 +2129,8 @@ class LabyrinthClearRate {
      */
     getCombatSkipRoomLevel(monsterHrid) {
         const skipThreshold = this.getCombatSkipThreshold(monsterHrid);
-        // Zero means unset — see getTargetRoomLevel
-        if (skipThreshold === 0) return 0;
+        // Unset means an absent key, not a saved 0 — see getTargetRoomLevel
+        if (skipThreshold === 0 && !this._hasSkipSetting(this._combatSkipKey(monsterHrid))) return 0;
         const effectiveCombatLevel = this.getPlayerEffectiveCombatLevel();
         if (!(effectiveCombatLevel > 0)) return 0;
         return Math.max(0, Math.floor(effectiveCombatLevel + skipThreshold - 1));
@@ -2204,8 +2256,7 @@ class LabyrinthClearRate {
      * @returns {boolean}
      */
     inLabyrinthFight() {
-        const row = document.querySelector("div[class*='Header_actionName']");
-        return !!row && /labyrinth/i.test(row.textContent || '');
+        return isLabyrinthFightActive();
     }
 
     /**
@@ -4587,6 +4638,13 @@ class LabyrinthClearRate {
         this.clearPathOverlays();
         this.pathCalcRunning = true;
         this.setPathButtonRunning(true);
+        // What owns this run: a teardown (epoch), a floor change (tile generation) or a newer
+        // run (id) each end it, and an ended run neither draws nor clears a newer run's flag
+        const pathRunId = (this._pathRunId = (this._pathRunId || 0) + 1);
+        const pathEpoch = this.simEpoch();
+        const pathFloorGen = this._tileGen || 0;
+        const pathEnded = () =>
+            this._pathRunId !== pathRunId || this.simEpoch() !== pathEpoch || (this._tileGen || 0) !== pathFloorGen;
 
         try {
             // Clear chances, worked out once and keyed by what they are about
@@ -4642,6 +4700,19 @@ class LabyrinthClearRate {
                 const { monsterHrid, roomLevel, key } = combatToSim[i];
                 this.setTileStatus(`Pathing: fight sims ${i + 1}/${combatToSim.length}`);
                 const result = await this.computeCombatClear(monsterHrid, roomLevel);
+                // A cancelled sim, a torn-down run or a different floor stops the whole pass: the
+                // result is not an unsimmed fight and the route would be drawn for a board that
+                // is gone
+                if (result?.cancelled || pathEnded()) {
+                    if (this._pathRunId === pathRunId && this.simEpoch() === pathEpoch) {
+                        this.setTileStatus(
+                            result?.cancelled
+                                ? 'Path cancelled'
+                                : 'The floor changed while the sims ran — press Path again'
+                        );
+                    }
+                    return;
+                }
                 if (!result || result.failed) {
                     unsimmed++;
                     continue;
@@ -4810,8 +4881,11 @@ class LabyrinthClearRate {
             console.error('[LabyrinthClearRate] Path calculation failed:', error);
             this.setTileStatus('Path failed');
         } finally {
-            this.pathCalcRunning = false;
-            this.setPathButtonRunning(false);
+            // Only the run that still owns the flag releases it
+            if (this._pathRunId === pathRunId) {
+                this.pathCalcRunning = false;
+                this.setPathButtonRunning(false);
+            }
         }
     }
 
@@ -4910,12 +4984,42 @@ class LabyrinthClearRate {
         }
         const { options, pathFirst } = this.readBeaconPlanSettings();
         const optionsKey = beaconOptionsKey(options, pathFirst);
-        const plan = computeBeaconPlan(revealed, cols, count, options);
+        // A set count is the floor's own total, so the beacons already used on this floor come off
+        // it before anything is drawn (the staged path does the same in stageBeaconPlan). Zero is
+        // the automatic minimum, so an exhausted count is handled apart from a count of zero.
+        const usedBefore = beaconsUsedOnFloor(revealed, prior).placedBefore;
+        const exhausted = requested > 0 && usedBefore >= requested;
+        const planCount = count > 0 && !exhausted ? Math.min(count, requested - usedBefore) : count;
+        const plan = computeBeaconPlan(revealed, cols, planCount, options);
         if (!plan) {
             this.setTileStatus('Beacon planning failed');
             return;
         }
+        // An exhausted count is reported before an unreachable exit: with every set beacon spent there
+        // is nothing to plan, whatever the planner makes of the floor
+        const markExhausted = () => {
+            this._beaconPlanCells = null;
+            this._stagedBeaconPlan = {
+                floor: this.currentFloor,
+                n: flat.length,
+                characterId,
+                optionsKey,
+                planFor: 0,
+                placedBefore: usedBefore,
+                all: [],
+            };
+            // Nothing needed is not "used up": say the way out is open, not that the count ran out
+            this.setTileStatus(
+                plan.feasible && plan.minNeeded === 0
+                    ? 'Path to the exit is already revealed — no beacons needed'
+                    : `All ${requested} beacons set for this floor are used — raise the count to plan more`
+            );
+        };
         if (!plan.feasible) {
+            if (exhausted) {
+                markExhausted();
+                return;
+            }
             this.setTileStatus('No beacon chain can reach the exit');
             return;
         }
@@ -4949,6 +5053,10 @@ class LabyrinthClearRate {
                 planFor,
                 optionsKey,
             });
+            return;
+        }
+        if (exhausted) {
+            markExhausted();
             return;
         }
         // Path first: the beacons the way out depends on take the first labels
@@ -5147,7 +5255,9 @@ class LabyrinthClearRate {
                   ? labels[nowCount]
                   : '';
         const parts = [];
-        if (staged.continued) parts.push(`Continuing the ${total}-beacon plan (${placedBefore} used)`);
+        if (staged.continued && placedBefore > 0) {
+            parts.push(`Continuing the ${total}-beacon plan (${placedBefore} used)`);
+        }
         if (now) {
             parts.push(`Beacons: ${nowCount} now of ${total} planned${minNote}${ownedNote}`);
             parts.push(`reveals ${now.revealedNew} new rooms now, ${all.revealedNew} with all`);

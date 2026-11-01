@@ -27,6 +27,7 @@ import { characterKey } from '../../utils/character-key.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
+import { isFromActiveSocket, isLabyrinthFightActive } from './labyrinth-activity.js';
 import { classifyFight, fightTally, failureShape, isFreshLabyrinthFight } from './labyrinth-fight-log.js';
 import { summarizePool, poolHygiene, nearMissRemainder } from './labyrinth-replay-check.js';
 import { isCurrentFingerprintVersion } from './labyrinth-fingerprint.js';
@@ -462,20 +463,28 @@ class LabyrinthRoomLogs {
             })
             .catch((error) => console.error('[LabyrinthRoomLogs] Loading the autosaved capture failed:', error));
 
-        this.progressHandler = (data) => this.onRoomProgress(data);
+        this.progressHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onRoomProgress(data);
+        };
         webSocketHook.on('labyrinth_room_progress', this.progressHandler);
 
-        this.labyrinthHandler = (data) => this.onLabyrinthUpdated(data);
+        this.labyrinthHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onLabyrinthUpdated(data);
+        };
         webSocketHook.on('labyrinth_updated', this.labyrinthHandler);
 
-        this.battleHandler = (data) => this.onBattleUpdated(data);
+        this.battleHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onBattleUpdated(data);
+        };
         webSocketHook.on('battle_updated', this.battleHandler);
 
         // The full start-of-fight snapshot. battle_updated alone joins every
         // fight late — the monster HP lost before the first retained tick was
         // never counted — so the snapshot is both the authoritative attempt
         // boundary and the true baseline the first tick is measured against.
-        this.newBattleHandler = (data) => this.onNewBattle(data);
+        this.newBattleHandler = (data, context) => {
+            if (isFromActiveSocket(context)) this.onNewBattle(data);
+        };
         webSocketHook.on('new_battle', this.newBattleHandler);
 
         // A page reloaded mid-room gets no labyrinth_updated until the next
@@ -499,7 +508,9 @@ class LabyrinthRoomLogs {
         // works whichever message brings it and whether it turns up during the
         // room or a moment after it.
         this.xpBaseline = this.totalExperience();
-        const absorb = () => this.absorbExperience();
+        const absorb = (_data, context) => {
+            if (isFromActiveSocket(context)) this.absorbExperience();
+        };
         for (const type of ['action_completed', 'skills_updated', 'labyrinth_updated']) {
             webSocketHook.on(type, absorb);
             this.xpHandlers.push([type, absorb]);
@@ -709,8 +720,7 @@ class LabyrinthRoomLogs {
      * @returns {boolean}
      */
     inLabyrinthFight() {
-        const row = document.querySelector("div[class*='Header_actionName']");
-        return !!row && /labyrinth/i.test(row.textContent || '');
+        return isLabyrinthFightActive();
     }
 
     // -------------------------------------------------------------------------
@@ -838,21 +848,29 @@ class LabyrinthRoomLogs {
 
         if (!prev || nextCounter <= prevCounter) return null;
 
-        if (nextCounter - prevCounter > 1) {
+        const gap = nextCounter - prevCounter > 1;
+        if (gap) {
             session.incomplete = true;
             for (let c = prevCounter + 1; c < nextCounter; c++) {
                 session.actions.push({ outcome: 'unknown', text: '?' });
             }
         }
 
-        const action = this.deriveAction(prev, snapshot);
-        // Counted here rather than from the drawn list, which is trimmed once a
-        // room runs long — the rate has to survive the trimming
-        session.actionCount = (session.actionCount || 0) + 1;
-        if (action.outcome === 'success' || action.outcome === 'double') {
-            session.successCount = (session.successCount || 0) + 1;
+        let action = this.deriveAction(prev, snapshot);
+        if (gap) {
+            // Several actions arrived as one change of work: the change is no single action's
+            // outcome, so it is kept out of the success and double rates and out of their
+            // denominator rather than scored as one oversized action
+            action = { outcome: 'unknown', text: action.text };
+        } else {
+            // Counted here rather than from the drawn list, which is trimmed once a
+            // room runs long — the rate has to survive the trimming
+            session.actionCount = (session.actionCount || 0) + 1;
+            if (action.outcome === 'success' || action.outcome === 'double') {
+                session.successCount = (session.successCount || 0) + 1;
+            }
+            if (action.outcome === 'double') session.doubleCount = (session.doubleCount || 0) + 1;
         }
-        if (action.outcome === 'double') session.doubleCount = (session.doubleCount || 0) + 1;
 
         session.actions.push(action);
         if (session.actions.length > MAX_ACTIONS) {
@@ -1312,6 +1330,7 @@ class LabyrinthRoomLogs {
             return {
                 clearChance: keep(forecast.clearChance),
                 expectedSeconds: Number.isFinite(forecast.expectedSeconds) ? forecast.expectedSeconds : null,
+                avgFightSeconds: keep(forecast.avgFightSeconds),
                 successChance: keep(forecast.successChance),
                 doubleChance: keep(forecast.doubleChance),
                 xpPerRoom: keep(forecast.xpPerRoom),

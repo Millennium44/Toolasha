@@ -640,10 +640,13 @@ function beaconGrid(n, cols) {
  * @param {number} n - Cell count
  * @param {Set<number>} startRegion - Revealed region holding the entrance
  * @param {Set<number>} endRegion - Revealed region holding the exit
- * @returns {Object} { startOK, distToEnd, minNeeded } — minNeeded is Infinity
- *   when no chain reaches the exit
+ * @param {boolean[]} [revealed] - Flat grid of revealed rooms. Revealed islands that are neither
+ *   the entrance's nor the exit's region (left by earlier beacons) link every pair of beacons
+ *   that touch them, however far apart, so a chain can hop across one for free.
+ * @returns {Object} { startOK, distToEnd, minNeeded, linked } — minNeeded is Infinity
+ *   when no chain reaches the exit; linked(a, b) says whether two beacon centers chain
  */
-function beaconChainReach(grid, n, startRegion, endRegion) {
+function beaconChainReach(grid, n, startRegion, endRegion, revealed = null) {
     const { manhattan, neighbors, diamond } = grid;
 
     // A beacon "touches" a region when its reveal area contains a cell in the
@@ -664,8 +667,30 @@ function beaconChainReach(grid, n, startRegion, endRegion) {
         endOK[c] = touchesRegion(c, endRegion);
     }
 
+    // Revealed islands: components of revealed rooms joined to neither end. Two beacons that
+    // both touch one are connected through it, so they chain at any distance.
+    const islandMembers = [];
+    if (revealed) {
+        const seen = new Set();
+        for (let i = 0; i < n; i++) {
+            if (!revealed[i] || seen.has(i) || startRegion.has(i) || endRegion.has(i)) continue;
+            const island = grid.regionFrom(i, (j) => revealed[j]);
+            for (const j of island) seen.add(j);
+            islandMembers.push(island);
+        }
+    }
+    const islandsOf = [];
+    for (let c = 0; c < n; c++) {
+        islandsOf[c] = [];
+        for (let k = 0; k < islandMembers.length; k++) {
+            if (touchesRegion(c, islandMembers[k])) islandsOf[c].push(k);
+        }
+    }
+    const linked = (a, b) => manhattan(a, b) <= BEACON_CHAIN_DIST || islandsOf[a].some((k) => islandsOf[b].includes(k));
+
     // Two beacons chain when their diamonds intersect or touch (centers within
-    // Manhattan distance 5). distToEnd[c] = beacons still needed after c.
+    // Manhattan distance 5), or both touch the same revealed island.
+    // distToEnd[c] = beacons still needed after c.
     const distToEnd = new Array(n).fill(Infinity);
     let frontier = [];
     for (let c = 0; c < n; c++) {
@@ -678,7 +703,7 @@ function beaconChainReach(grid, n, startRegion, endRegion) {
         const next = [];
         for (const c of frontier) {
             for (let other = 0; other < n; other++) {
-                if (distToEnd[other] === Infinity && manhattan(c, other) <= BEACON_CHAIN_DIST) {
+                if (distToEnd[other] === Infinity && linked(c, other)) {
                     distToEnd[other] = distToEnd[c] + 1;
                     next.push(other);
                 }
@@ -693,7 +718,7 @@ function beaconChainReach(grid, n, startRegion, endRegion) {
             minNeeded = Math.min(minNeeded, distToEnd[c] + 1);
         }
     }
-    return { startOK, distToEnd, minNeeded };
+    return { startOK, distToEnd, minNeeded, linked };
 }
 
 /**
@@ -888,7 +913,7 @@ function createPlacementScorer(grid, revealed, cols, detour, gradient, options =
             }
         }
         if (!gradient) return 1;
-        const { minNeeded } = beaconChainReach(grid, n, queuedSet(startSize), endRegion);
+        const { minNeeded } = beaconChainReach(grid, n, queuedSet(startSize), endRegion, revealed);
         return Number.isFinite(minNeeded) ? minNeeded : RESIDUAL_UNREACHABLE;
     };
 
@@ -1125,11 +1150,12 @@ function refinePairs(grid, scorer, n, settled) {
  * @param {boolean[]} startOK - Per cell: reveal area touches the entrance region
  * @param {number[]} distToEnd - Per cell: beacons still needed after it
  * @param {number} minNeeded - Chain length
+ * @param {function(number, number): boolean} linked - Whether two beacon centers chain
  * @returns {number[][]} Chains, best coverage first
  */
-function minimalChains(grid, revealed, startOK, distToEnd, minNeeded) {
+function minimalChains(grid, revealed, startOK, distToEnd, minNeeded, linked) {
     const n = revealed.length;
-    const { manhattan, diamond } = grid;
+    const { diamond } = grid;
     const newCells = (c, union) => diamond(c).filter((d) => !revealed[d] && !union.has(d));
     const BEAM_WIDTH = 300;
 
@@ -1143,7 +1169,7 @@ function minimalChains(grid, revealed, startOK, distToEnd, minNeeded) {
         for (const state of states) {
             const last = state.chain[state.chain.length - 1];
             for (let c = 0; c < n; c++) {
-                if (manhattan(c, last) > BEACON_CHAIN_DIST) continue;
+                if (!linked(last, c)) continue;
                 if (state.chain.includes(c)) continue;
                 if (distToEnd[c] > minNeeded - depth - 1) continue;
                 const union = new Set(state.union);
@@ -1216,9 +1242,9 @@ export function computeBeaconPlan(revealedRooms, cols, beaconCount = 0, options 
     };
     const connected = touches(endRegion, isRevealed);
 
-    const { startOK, distToEnd, minNeeded } = connected
-        ? { startOK: [], distToEnd: [], minNeeded: 0 }
-        : beaconChainReach(grid, n, startRegion, endRegion);
+    const { startOK, distToEnd, minNeeded, linked } = connected
+        ? { startOK: [], distToEnd: [], minNeeded: 0, linked: null }
+        : beaconChainReach(grid, n, startRegion, endRegion, revealed);
 
     const nothingPlanned = (feasible) => ({
         feasible,
@@ -1249,7 +1275,7 @@ export function computeBeaconPlan(revealedRooms, cols, beaconCount = 0, options 
     const coverageSeed = growForCoverage(grid, revealed, count, detour, []);
     if (coverageSeed.length) seeds.push(coverageSeed);
     if (!connected && coversPath) {
-        const chains = minimalChains(grid, revealed, startOK, distToEnd, minNeeded);
+        const chains = minimalChains(grid, revealed, startOK, distToEnd, minNeeded, linked);
         // Asked for the minimum and there is no chain to be found: the honest
         // answer is that the exit cannot be covered, not a plan that misses it
         if (!chains.length && beaconCount <= 0) return nothingPlanned(false);
@@ -1487,7 +1513,10 @@ export function stageBeaconPlan({
     let continued = null;
     if (prior && Array.isArray(prior.all)) {
         const sameSettings = (prior.optionsKey ?? beaconOptionsKey()) === beaconOptionsKey(options, pathFirst);
-        if (used.length && prior.planFor === target && sameSettings) {
+        // Continued once a beacon is spent, and on every recalculation after: a continued draw
+        // stores only the beacons left and folds the spent ones into `placedBefore`, so a second
+        // unchanged recalculation sees no newly used beacon and must still keep the plan
+        if ((used.length || placedBefore > 0) && prior.planFor === target && sameSettings) {
             const left = prior.all.filter((c) => !used.includes(c));
             const grid = beaconGrid(n, cols);
             if (left.length && left.every((c) => grid.diamond(c.idx).some(dark))) continued = left;

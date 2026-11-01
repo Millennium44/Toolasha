@@ -553,7 +553,7 @@ describe('where the clicked unit was met', () => {
 
     test('a labyrinth monster resolves to the labyrinth', () => {
         world.header = 'Labyrinth - Room 206';
-        world.actionHrid = '/actions/combat/labyrinth';
+        world.actionHrid = '/actions/labyrinth/explore';
         panel.showFor(unit());
 
         expect(panel.last.zone).toBeNull();

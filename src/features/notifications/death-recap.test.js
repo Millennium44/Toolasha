@@ -25,6 +25,7 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
+        isFromActiveSocket: (context) => context?.socket !== 'old',
         get battleData() {
             return game.battleData;
         },
@@ -132,6 +133,18 @@ describe('death recap', () => {
         await feature.initialize();
         expect(game.ws.new_battle).toBeUndefined();
         expect(game.ws.battle_updated).toBeUndefined();
+    });
+
+    test('frames from a stale socket are ignored', () => {
+        game.ws.new_battle(battle([['me', 0]]), { socket: 'old' });
+        vi.advanceTimersByTime(700);
+        game.ws.battle_updated(tick([0]), { socket: 'old' });
+        expect(recap.recapHistory()).toHaveLength(0);
+        // the current socket still records
+        send('new_battle', battle([['me', 0]]));
+        run([100]);
+        run([0]);
+        expect(recap.recapHistory()).toHaveLength(1);
     });
 
     test('HP reaching 0 freezes an unconfirmed recap holding the last ten seconds', () => {
