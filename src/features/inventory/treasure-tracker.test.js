@@ -81,6 +81,8 @@ const socketMock = vi.hoisted(() => {
 });
 vi.mock('../../core/websocket.js', () => ({ default: socketMock }));
 const dm = vi.hoisted(() => ({
+    /** Handlers the module registered with `dataManager.on`, by event */
+    handlers: {},
     dropTables: {},
     shop: {},
     labyrinthShop: {},
@@ -111,7 +113,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => dm.characterId,
         isFromActiveSocket: () => true,
         getCurrentCharacterGameMode: () => dm.gameMode ?? 'standard',
-        on: () => {},
+        on: (event, handler) => {
+            (dm.handlers[event] ??= []).push(handler);
+        },
         off: () => {},
     },
 }));
@@ -1685,6 +1689,17 @@ describe('the Treasure tile summarises its own inputs', () => {
         const before = version();
 
         bridge.ev = { isInitialized: true };
+        expect(version()).not.toBe(before);
+        bridge.ev = null;
+    });
+
+    test('so does the calculator publishing a recompute while it stays ready', () => {
+        treasureTracker.tally = { '/items/chimerical_chest': { opened: 3, loot: { '/items/coin': 90 } } };
+        bridge.ev = { isInitialized: true };
+        const before = version();
+
+        // One of its own settings changed and it recomputed between overlay ticks
+        for (const handler of dm.handlers.expected_value_initialized || []) handler({ timestamp: 1 });
         expect(version()).not.toBe(before);
         bridge.ev = null;
     });

@@ -2609,6 +2609,15 @@ marketAPI.on(() => {
     priceFeed++;
 });
 
+// Tokens and nested chests are priced through the expected-value calculator,
+// which recomputes (and publishes again) when one of its own settings changes.
+// A recompute that finishes between overlay ticks leaves `isInitialized` true
+// as before, so the tile's key would not move without this
+dataManager.on('expected_value_initialized', () => {
+    priceFeed++;
+    if (treasureTracker.isInitialized && treasureTracker.panel) treasureTracker._render();
+});
+
 /**
  * What the Treasure tile would summarise, without summarising it.
  *
