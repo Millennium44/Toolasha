@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tests use captured game messages
+
+- Tests for skill, collection, quest, queued-action and guild sign-up handling now read payloads captured from the game on the test server, so they can no longer agree with a message shape the game never sends.
+
 ### Skill, collection and Labyrinth fight updates
 
 - Skill level updates the game sends outside an action, and partial Collections updates, are now applied instead of ignored or wiping the rest of the list.
