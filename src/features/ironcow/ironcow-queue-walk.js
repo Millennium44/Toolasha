@@ -34,8 +34,8 @@ import { formatWithSeparator } from '../../utils/formatters.js';
 import craftingPlanWalk from '../crafting-plan/crafting-plan-walk.js';
 
 /** The alchemy actions the loop uses. One action apiece, item chosen separately. */
-export const DECOMPOSE_ACTION = '/actions/alchemy/decompose';
-export const COINIFY_ACTION = '/actions/alchemy/coinify';
+import { DECOMPOSE_ACTION, COINIFY_ACTION } from './ironbell-cycle.js';
+export { DECOMPOSE_ACTION, COINIFY_ACTION };
 
 /** What the strip says to do about a slot the script is not allowed to fill */
 const SELECT_NOTE = 'put it in the alchemy slot';

@@ -599,6 +599,15 @@ describe('lifecycle', () => {
         vi.restoreAllMocks();
     });
 
+    test('the action-bar strip starts with the feature and stops with it', async () => {
+        const { default: strip } = await import('./ironcow-action-strip.js');
+        await ironCowFarmPanel.initialize();
+        expect(strip.active).toBe(true);
+        ironCowFarmPanel.disable();
+        expect(strip.active).toBe(false);
+        expect(document.querySelector('[data-mwi-ironbell-strip]')).toBeNull();
+    });
+
     test("a character switch to one with no snapshot of their own does not inherit the last character's costed loop", async () => {
         // Character A costs the loop; the store now holds A's snapshot.
         await ironCowFarmPanel.load();

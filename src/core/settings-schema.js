@@ -3934,7 +3934,11 @@ export const settingsGroups = {
                     'decompose → coinify loop — with each stage ticking itself off against your own levels, gear ' +
                     'and house. Costs the loop from your actual rates through the gathering and alchemy ' +
                     'calculators, and converts it to bells per hour, per day and per week at the current cowbell ' +
-                    'price. All its gold is coinify output, never a market sale, because an iron cow cannot sell',
+                    'price. All its gold is coinify output, never a market sale, because an iron cow cannot sell. ' +
+                    'On an iron cow, while a leg of that loop is the running action, lines under the action bar ' +
+                    'show the bells you can buy now without starving the queue, what is left of the queued cycle ' +
+                    'and when it ends, the gold and bells it earns by then, the offline cap when the cycle ' +
+                    'outlasts it, and which leg runs out of gold for its fees and when',
             },
             draggableModals: {
                 id: 'draggableModals',
