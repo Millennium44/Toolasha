@@ -1883,6 +1883,15 @@ class TaskRerollWalk {
         style.cursor = 'default';
         style.touchAction = 'auto';
         style.maxWidth = '100%';
+        style.minWidth = '0';
+        style.flex = '0 1 auto';
+        // Long labels wrap inside the toolbar instead of overflowing it
+        for (const node of [widget.main, widget.status]) {
+            node.style.whiteSpace = 'normal';
+            node.style.minWidth = '0';
+            node.style.maxWidth = '100%';
+            node.style.overflowWrap = 'anywhere';
+        }
         widget.element.dataset.toolashaDocked = 'true';
         const drawer = widget.settings.style;
         drawer.position = 'absolute';

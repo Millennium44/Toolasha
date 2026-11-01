@@ -2256,6 +2256,17 @@ describe('toolbar docking', () => {
         expect(el.dataset.toolashaDocked).toBe('true');
     });
 
+    test('the docked main button can shrink and wrap a long label', async () => {
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+
+        const main = document.querySelector('.mwi-task-reroll-walk-advance');
+        expect(main.style.whiteSpace).toBe('normal');
+        expect(main.style.minWidth).toBe('0');
+        expect(main.style.overflowWrap).toBe('anywhere');
+        expect(document.getElementById('mwi-task-reroll-walk-chip').style.minWidth).toBe('0');
+    });
+
     test('a toolbar re-render rebuilds one widget in the new toolbar, never two', async () => {
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         await walk.start();
