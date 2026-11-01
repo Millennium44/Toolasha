@@ -272,7 +272,7 @@ function registerOwnCommands() {
  * settings button, which does not go through the palette at all — must not
  * vanish because they changed character while watching it.
  */
-const OWN_COMMANDS = ['Settings', 'Guild Trials', 'Health report', 'PFormance'];
+const OWN_COMMANDS = ['Settings', 'Guild Trials', 'Health report', 'Performance'];
 
 /**
  * Every setting the schema names, flattened.

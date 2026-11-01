@@ -725,7 +725,7 @@ describe('the PFormance entry', () => {
         palette.open();
         await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalled());
 
-        expect(drawnLabels()).toContain('PFormance');
+        expect(drawnLabels()).toContain('Performance');
     });
 
     test('initialize() only registers the command; it does not open the panel', () => {
@@ -735,10 +735,10 @@ describe('the PFormance entry', () => {
 
     test('cleanup withdraws the command', () => {
         palette.initialize();
-        expect(registeredCommands().map((c) => c.name)).toContain('PFormance');
+        expect(registeredCommands().map((c) => c.name)).toContain('Performance');
 
         palette.cleanup();
-        expect(registeredCommands().map((c) => c.name)).not.toContain('PFormance');
+        expect(registeredCommands().map((c) => c.name)).not.toContain('Performance');
     });
 
     /**
@@ -766,7 +766,7 @@ describe('the PFormance entry', () => {
         };
         palette.initialize();
         registeredCommands()
-            .find((c) => c.name === 'PFormance')
+            .find((c) => c.name === 'Performance')
             .run();
         expect(document.getElementById('toolasha-pformance-panel')).not.toBeNull();
 
@@ -802,7 +802,7 @@ describe('the commands the palette has always had', () => {
         'Goal Planner',
         'Iron Bell Farming',
         'Treasure Tracker',
-        'PFormance',
+        'Performance',
         'Combat Simulator',
         'Enhancement Tracker',
         'Lab Simulator',
@@ -818,7 +818,7 @@ describe('the commands the palette has always had', () => {
     // Registered directly by the palette itself (see `registerOwnCommands` /
     // `OWN_COMMANDS` in command-palette.js) rather than by another feature's
     // `initialize()` — these are exercised for real below, never stood in for.
-    const PALETTE_OWNED = ['Settings', 'Guild Trials', 'Health report', 'PFormance'];
+    const PALETTE_OWNED = ['Settings', 'Guild Trials', 'Health report', 'Performance'];
 
     test('every one is still present once the palette and the feature list have run', () => {
         // Stand-ins for the feature-list registrations this file cannot cheaply

@@ -2424,7 +2424,7 @@ class SettingsUI {
         buttonsDiv.appendChild(treasureBtn);
 
         const pformanceBtn = document.createElement('button');
-        pformanceBtn.textContent = 'PFormance';
+        pformanceBtn.textContent = 'Performance';
         pformanceBtn.className = 'toolasha-utility-button';
         pformanceBtn.addEventListener('click', () => pformancePanel.toggle());
         buttonsDiv.appendChild(pformanceBtn);
