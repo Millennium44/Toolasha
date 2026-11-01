@@ -34,6 +34,7 @@ import { getArtisanBonus } from './artisan-bonus.js';
 import { findProducingAction } from './production-index.js';
 import { getCapeBaseValue, getCapeBaseValueMode, isUntradableCape } from './untradable-cape.js';
 import { getMarketValuesEpoch } from './market-values.js';
+import { taskShopTokenPrice } from './task-shop-value.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
 
 /**
@@ -53,6 +54,8 @@ import { getCustomPriceVersion } from '../features/settings/custom-price-overrid
  * enhancement work and is priced by the market like anything else.
  */
 export const TRAINEE_SHOP_PRICE = 250_000;
+
+const TASK_CRYSTAL = '/items/task_crystal';
 
 /**
  * Production cost and chain time memos. Both depend on market prices and on the
@@ -306,16 +309,27 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask') {
     }
     // The prices this cost reads, kept with it for the replay above; null (unknown) without a recorder
     const recorder = typeof marketAPI?.recordPriceReads === 'function' ? marketAPI.recordPriceReads() : null;
+    // A recipe that leads back to its own output cannot be costed: unpriced, partial, never remembered
+    const inProgress = `${itemHrid}|${mode}`;
+    if (_costing.has(inProgress)) return { cost: 0, partial: true, volatile: true };
+    _costing.add(inProgress);
     let result;
     try {
         result = _computeProductionCost(itemHrid, mode);
     } finally {
+        _costing.delete(inProgress);
         recorder?.stop();
     }
+    // A figure missing only because the Task Shop valuation was not ready yet is not remembered: nothing
+    // the cache watches changes when that valuation arrives
+    if (result.volatile) return result;
     const reads = recorder && !recorder.wide ? recorder.keys : null;
     _costCache.set(cacheKey, { version: feedVersion, buffVersion, customVersion, value: result, reads });
     return result;
 }
+
+/** Items whose production cost is being worked out right now, to stop a recipe cycle */
+const _costing = new Set();
 
 function _computeProductionCost(itemHrid, mode = 'ask') {
     const gameData = dataManager.getInitClientData();
@@ -335,6 +349,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
     const outputCount = producer.output.count || 1;
     let totalPrice = 0;
     let partial = false;
+    let volatile = false;
 
     // Compute artisan tea reduction dynamically (same approach as material-calculator.js).
     // resolveActionContext drops a drink that is slotted but out of stock and no longer
@@ -354,6 +369,21 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
                 const crafted = getProductionCostDetailed(input.itemHrid, mode);
                 inputPrice = crafted.cost;
                 if (crafted.partial) partial = true;
+                if (crafted.volatile) volatile = true;
+            }
+            // A Task Crystal is untradable with no recipe: it is worth the Task Tokens it is bought with
+            // (an estimate, the same valuation the enhancement input rule gives it). This is what lets a
+            // task badge, whose recipe is crystals plus the lower badge, be priced by what it costs to make
+            if (inputPrice === 0 && input.itemHrid === TASK_CRYSTAL) {
+                const tokens = taskShopTokenPrice(input.itemHrid);
+                if (tokens) {
+                    inputPrice = tokens.price;
+                    if (tokens.partial) partial = true;
+                }
+                // Never cached either way: the token value moves with the profit pricing mode and the
+                // chests' expected values, none of which the cache's versions track, so a cached badge
+                // would keep its old cost while the crystal beside it was repriced
+                volatile = true;
             }
             if (!(inputPrice > 0) && input.count > 0) partial = true;
             totalPrice += inputPrice * input.count * (1 - artisanBonus);
@@ -374,6 +404,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
             upgradePrice = upgradeMarketPrice || upgradeCraftPrice;
             if (!upgradeMarketPrice && upgradeCraft.partial) partial = true;
         }
+        if (upgradeCraft.volatile) volatile = true;
         // An untradable cape has no market and no recipe: the base of a refined one is what the cape
         // setting assumes (nothing by default, which stays a partial bill below)
         if (!(upgradePrice > 0) && isUntradableCape(action.upgradeItemHrid)) {
@@ -383,7 +414,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
         totalPrice += upgradePrice;
     }
 
-    return { cost: totalPrice / outputCount, partial };
+    return { cost: totalPrice / outputCount, partial, ...(volatile ? { volatile: true } : {}) };
 }
 
 /**
