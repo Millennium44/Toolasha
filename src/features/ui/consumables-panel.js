@@ -51,6 +51,7 @@ import {
 } from '../../utils/floating-widget.js';
 import { shortDuration, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { showToast } from '../../utils/toast.js';
 import { currentTarget, cycleTarget, loadTarget } from '../../utils/consumable-target.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import {
@@ -1738,7 +1739,7 @@ class ConsumablesPanel {
             this.hide();
             this.autofill.setQuantity(count, { itemHrid: entry.itemHrid });
             navigateToMarketplace(entry.itemHrid);
-            this._openRecommendedForm(strategy);
+            this._openRecommendedForm(strategy, entry.itemHrid);
         } catch (error) {
             console.error('[ConsumablesPanel] Opening the marketplace failed:', error);
         }
@@ -1754,8 +1755,9 @@ class ConsumablesPanel {
      * quantity parked, waiting for a hand.
      *
      * @param {Object|null} strategy - From `buyStrategy`
+     * @param {string} [itemHrid] - The item, for naming it when the button never shows
      */
-    _openRecommendedForm(strategy) {
+    _openRecommendedForm(strategy, itemHrid = '') {
         if (!strategy || !config.getSetting('market_consumableBuyOpenRecommended')) return;
         const shortcuts = window.Toolasha?.Market?.marketplaceShortcuts;
         if (!shortcuts) return;
@@ -1767,10 +1769,17 @@ class ConsumablesPanel {
                 strategy.mode === 'instant'
                     ? shortcuts.clickInstantActionButton?.('Buy')
                     : shortcuts.clickListingButton?.('+ New Buy Listing', 'Button_buy');
-            open?.catch?.(() => {
+            open?.catch?.((error) => {
                 // No matching button (an empty book's Buy Now has nothing to
                 // take) — the marketplace is open and the quantity is parked,
-                // which is the old behaviour and still useful
+                // which is still useful, but say so rather than doing nothing.
+                // A cancelled search is the player moving on, not a failure
+                if (error?.message === 'Cancelled') return;
+                const name = dataManager.getItemDetails?.(itemHrid)?.name || 'this item';
+                const form = strategy.mode === 'instant' ? 'Buy Now' : 'New Buy Listing';
+                showToast(`Could not open ${form} for ${name} — the quantity is filled in, finish it by hand.`, {
+                    kind: 'warn',
+                });
             });
         }, 400);
     }
@@ -3324,7 +3333,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         if (need.count) {
             const strategy = buyStrategy({
                 count: need.count,
-                ask: entry.price,
+                // No sell listing at all is told apart from a priced one, so a bid-only book is bought by order
+                ask: !entry.costPerDaySides.ask && entry.costPerDaySides.bid ? null : entry.price,
                 bid: entry.costPerDaySides.bid && entry.perDay ? entry.costPerDaySides.bid / entry.perDay : null,
                 secondsLeft: entry.secondsLeft,
                 fillSeconds: this._fillSeconds(entry.itemHrid, need.count),

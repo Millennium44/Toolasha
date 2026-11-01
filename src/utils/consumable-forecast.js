@@ -359,8 +359,8 @@ export function exactDrinkRates(breakdown, drinkConcentration = 0, itemDetails =
  *   saving — (ask − bid) × count — is under this many coins. 0 turns it off.
  * @param {number} [input.minOrderValue] - Buy instantly when the order's total
  *   (bid × count) is under this — too small to be worth an order slot. 0 turns it off.
- * @returns {{mode: string, saving: number, savingPerHour: number|null, measured: boolean, reason: string}}
- *   `order` or `instant`
+ * @returns {{mode: string, saving: number, savingPerHour: number|null, measured: boolean, reason: string, noAsk?: boolean}}
+ *   `order` or `instant`; `noAsk` marks an order chosen because nothing is for sale
  */
 export function buyStrategy({
     count,
@@ -377,6 +377,18 @@ export function buyStrategy({
     // it can say so rather than presenting a guess as an estimate
     const measured = Number.isFinite(fillSeconds);
     const waitSeconds = measured ? fillSeconds : 6 * 3600;
+    if (count > 0 && !(ask > 0) && bid > 0) {
+        // Nothing for sale: Buy Now has nothing to take, so an order at the bid is the only buy that can happen.
+        // There is no spread to weigh, and running out first changes nothing — instant is not on offer
+        return {
+            mode: 'order',
+            saving: 0,
+            savingPerHour: null,
+            measured,
+            noAsk: true,
+            reason: 'Nothing is for sale, so Buy Now has nothing to take — an order at the bid is the only way to buy.',
+        };
+    }
     if (!(count > 0) || !(ask > 0)) {
         return { mode: 'instant', saving: 0, savingPerHour: null, measured, reason: 'No price to compare.' };
     }

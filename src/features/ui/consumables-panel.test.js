@@ -263,6 +263,47 @@ describe('whether the panel was open', () => {
     });
 });
 
+describe('opening the recommended buy form', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        delete window.Toolasha;
+        document.body.innerHTML = '';
+    });
+
+    const open = async (strategy, shortcuts) => {
+        vi.useFakeTimers();
+        window.Toolasha = { Market: { marketplaceShortcuts: shortcuts } };
+        consumablesPanel._openRecommendedForm(strategy, '/items/swiftness_coffee');
+        await vi.advanceTimersByTimeAsync(500);
+    };
+
+    test('a bid-only order opens New Buy Listing, not Buy Now', async () => {
+        const shortcuts = {
+            clickInstantActionButton: vi.fn(() => Promise.resolve()),
+            clickListingButton: vi.fn(() => Promise.resolve()),
+        };
+        await open({ mode: 'order', noAsk: true }, shortcuts);
+        expect(shortcuts.clickListingButton).toHaveBeenCalledWith('+ New Buy Listing', 'Button_buy');
+        expect(shortcuts.clickInstantActionButton).not.toHaveBeenCalled();
+    });
+
+    test('a Buy Now that never appears says so instead of failing silently', async () => {
+        const shortcuts = {
+            clickInstantActionButton: vi.fn(() =>
+                Promise.reject(new Error('Timeout waiting for instant action button: Buy'))
+            ),
+        };
+        await open({ mode: 'instant' }, shortcuts);
+        expect(document.body.textContent).toContain('Could not open Buy Now');
+    });
+
+    test('a cancelled search is not reported', async () => {
+        const shortcuts = { clickInstantActionButton: vi.fn(() => Promise.reject(new Error('Cancelled'))) };
+        await open({ mode: 'instant' }, shortcuts);
+        expect(document.body.textContent).not.toContain('Could not open');
+    });
+});
+
 describe('the dungeon entry-key row', () => {
     const DEN = '/actions/combat/chimerical_den';
     const KEY = '/items/chimerical_entry_key';

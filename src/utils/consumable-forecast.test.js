@@ -396,6 +396,19 @@ describe('buyStrategy', () => {
         expect(buyStrategy({ ...base, bid: 0 }).mode).toBe('instant');
     });
 
+    test('a bid-only book is bought by order, however soon it runs out', () => {
+        const result = buyStrategy({ ...base, ask: null, secondsLeft: 60 });
+        expect(result.mode).toBe('order');
+        expect(result.noAsk).toBe(true);
+        expect(buyStrategy({ ...base, ask: 0, bid: 5080, count: 1950 }).mode).toBe('order');
+    });
+
+    test('no book at all stays instant', () => {
+        const result = buyStrategy({ ...base, ask: null, bid: null });
+        expect(result.mode).toBe('instant');
+        expect(result.noAsk).toBeUndefined();
+    });
+
     test('nothing to buy needs no strategy', () => {
         expect(buyStrategy({ ...base, count: 0 }).mode).toBe('instant');
     });
