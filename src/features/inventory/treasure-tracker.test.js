@@ -169,6 +169,16 @@ vi.mock('../../utils/token-valuation.js', async (importOriginal) => {
             actual.shopPurchasePrice(itemHrid, shopMaps, (hrid) => (hrid ? (tokenValue.of(hrid) ?? 1) : null)),
     };
 });
+// The expected-value calculator (nested chests) and the task shop are reached through the bridge
+const bridge = vi.hoisted(() => ({ ev: null, taskBest: null }));
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    expectedValueCalculator: () => bridge.ev,
+}));
+vi.mock('../../utils/task-shop-value.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    findBestTaskShopValue: () => bridge.taskBest,
+}));
 vi.mock('../../utils/panel-z-index.js', () => ({
     registerFloatingPanel: () => {},
     unregisterFloatingPanel: () => {},
@@ -1475,6 +1485,117 @@ const { registeredRows } = await import('../../utils/overlay-rows.js');
  * verdict that only moves when a chest is opened, a price lands, or the settings
  * that value an unpriceable reward change.
  */
+describe('tokens and nested containers found inside a chest', () => {
+    const TOKEN = '/items/chimerical_token';
+    const LAB = '/items/labyrinth_token';
+    const TASK = '/items/task_token';
+    const CHEST = '/items/small_treasure_chest';
+    const GIFT = '/items/purples_gift';
+    let saved;
+
+    beforeEach(() => {
+        saved = { items: dm.items, shop: dm.shop, labyrinthShop: dm.labyrinthShop, dropTables: dm.dropTables };
+        dm.items = {
+            [TOKEN]: { name: 'Chimerical Token', categoryHrid: '/item_categories/currency' },
+            [LAB]: { name: 'Labyrinth Token', categoryHrid: '/item_categories/currency' },
+            [TASK]: { name: 'Task Token', categoryHrid: '/item_categories/currency' },
+            [CHEST]: { name: 'Small Treasure Chest', categoryHrid: '/item_categories/loot', isOpenable: true },
+            [GIFT]: { name: "Purple's Gift", categoryHrid: '/item_categories/loot', isOpenable: true },
+            '/items/tradable': { name: 'Tradable' },
+            '/items/cape': { name: 'Cape', equipmentDetail: { type: '/equipment_types/back' } },
+        };
+        dm.dropTables = {
+            [CHEST]: [{ itemHrid: '/items/coin', dropRate: 1, minCount: 1, maxCount: 1 }],
+            [GIFT]: [{ itemHrid: '/items/coin', dropRate: 1, minCount: 1, maxCount: 1 }],
+        };
+        dm.shop = { cape: { itemHrid: '/items/cape', costs: [{ itemHrid: TOKEN, count: 10 }] } };
+        dm.labyrinthShop = { a: { itemHrid: '/items/lab_reward', cost: { count: 5 }, outputCount: 1 } };
+        tokenValue.of = (hrid) => (hrid === TOKEN ? 1000 : null);
+        prices['/items/lab_reward'] = 5000;
+        prices['/items/tradable'] = 777;
+        for (const hrid of [TOKEN, LAB, TASK, CHEST, GIFT, '/items/cape']) prices[hrid] = 0;
+        bridge.ev = { isInitialized: true, resolveContainerValue: (hrid) => ({ value: hrid === CHEST ? 4200 : 0 }) };
+        bridge.taskBest = { perToken: 650 };
+        treasureTracker.settings.capeValue = 'token';
+        treasureTracker.settings.scrollValue = 'token';
+    });
+
+    afterEach(() => {
+        Object.assign(dm, saved);
+        tokenValue.of = () => 0;
+        for (const key of Object.keys(prices)) delete prices[key];
+        bridge.ev = null;
+        bridge.taskBest = null;
+    });
+
+    const priceOf = (hrid, cape = 'token') => {
+        treasureTracker.settings.capeValue = cape;
+        return treasureTracker._priceOf()(hrid);
+    };
+
+    test.each(['token', 'mirror', 'zero'])('a dungeon token is valued by its shop in cape mode %s', (cape) => {
+        expect(priceOf(TOKEN, cape)).toBe(1000);
+    });
+
+    test('a dungeon token whose valuer has no prices stays unpriced, never 0', () => {
+        tokenValue.of = () => null;
+        expect(priceOf(TOKEN)).toBeNull();
+        tokenValue.of = () => 0;
+        expect(priceOf(TOKEN)).toBeNull();
+    });
+
+    test('a labyrinth token is the best labyrinth shop line per token', () => {
+        expect(priceOf(LAB)).toBe(1000); // 5000 / 5
+    });
+
+    test('a labyrinth token with no shop data or no priced line stays unpriced', () => {
+        dm.labyrinthShop = undefined;
+        expect(priceOf(LAB)).toBeNull();
+        dm.labyrinthShop = { a: { itemHrid: '/items/lab_reward', cost: { count: 5 } } };
+        prices['/items/lab_reward'] = 0;
+        expect(priceOf(LAB)).toBeNull();
+    });
+
+    test('a task token is the task shop best per-token value, and unpriced until the calculator is ready', () => {
+        expect(priceOf(TASK)).toBe(650);
+        bridge.ev = { ...bridge.ev, isInitialized: false };
+        expect(priceOf(TASK)).toBeNull();
+        bridge.ev = null;
+        expect(priceOf(TASK)).toBeNull();
+        bridge.ev = { isInitialized: true };
+        bridge.taskBest = null;
+        expect(priceOf(TASK)).toBeNull();
+    });
+
+    test.each(['token', 'mirror', 'zero'])('a nested chest is its expected contents in cape mode %s', (cape) => {
+        expect(priceOf(CHEST, cape)).toBe(4200);
+    });
+
+    test('a nested chest is unpriced, never 0, when the calculator is not ready or has nothing', () => {
+        bridge.ev = { isInitialized: false, resolveContainerValue: () => ({ value: 4200 }) };
+        expect(priceOf(CHEST)).toBeNull();
+        bridge.ev = null;
+        expect(priceOf(CHEST)).toBeNull();
+        bridge.ev = { isInitialized: true, resolveContainerValue: () => null };
+        expect(priceOf(CHEST)).toBeNull();
+        bridge.ev = { isInitialized: true, resolveContainerValue: () => ({ value: 0 }) };
+        expect(priceOf(GIFT)).toBeNull();
+    });
+
+    test("Purple's Gift is valued like any other container", () => {
+        bridge.ev = { isInitialized: true, resolveContainerValue: (hrid) => ({ value: hrid === GIFT ? 123 : 0 }) };
+        expect(priceOf(GIFT)).toBe(123);
+    });
+
+    test('a tradable item, equipment and the Mirror mode are unchanged', () => {
+        expect(priceOf('/items/tradable')).toBe(777);
+        expect(priceOf('/items/cape', 'token')).toBe(10_000);
+        prices['/items/mirror_of_protection'] = 9_000_000;
+        expect(priceOf('/items/cape', 'mirror')).toBe(9_000_000);
+        expect(priceOf('/items/cape', 'zero')).toBeNull();
+    });
+});
+
 describe('the Treasure tile summarises its own inputs', () => {
     const version = () =>
         registeredRows()
@@ -1519,6 +1640,15 @@ describe('the Treasure tile summarises its own inputs', () => {
 
         treasureTracker.tally = { '/items/chimerical_chest': { opened: 3, loot: { '/items/coin': 900 } } };
         expect(version()).not.toBe(before);
+    });
+
+    test('the expected-value calculator coming ready moves it', () => {
+        treasureTracker.tally = { '/items/chimerical_chest': { opened: 3, loot: { '/items/coin': 90 } } };
+        const before = version();
+
+        bridge.ev = { isInitialized: true };
+        expect(version()).not.toBe(before);
+        bridge.ev = null;
     });
 
     test('and so does changing what an unpriceable reward is worth', () => {

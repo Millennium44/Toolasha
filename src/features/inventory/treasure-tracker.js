@@ -62,7 +62,15 @@ import {
     findEdibleToolsData,
     mergeTally,
 } from '../../utils/chest-import.js';
-import { labyrinthRewardValue, shopPurchasePriceByMode } from '../../utils/token-valuation.js';
+import {
+    DUNGEON_TOKEN_HRIDS,
+    calculateDungeonTokenValue,
+    labyrinthRewardValue,
+    labyrinthTokenValue,
+    shopPurchasePriceByMode,
+} from '../../utils/token-valuation.js';
+import { findBestTaskShopValue, TASK_TOKEN_HRID } from '../../utils/task-shop-value.js';
+import { expectedValueCalculator } from '../../utils/bundle-bridge.js';
 import { COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createPersistedRecord } from '../../utils/persisted-record.js';
@@ -222,6 +230,7 @@ export function formatReturn(ratio) {
 
 /** What the game calls a scroll; see {@link isScrollItem} */
 const SCROLL_CATEGORY = '/item_categories/scroll';
+const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
 
 /**
  * An item hrid as a readable name, falling back to the hrid's own last segment
@@ -1056,6 +1065,11 @@ class TreasureTracker {
             return this.settings.scrollValue === 'zero' ? null : this._tokenValue(itemHrid);
         }
 
+        // Tokens and nested containers are valued by the valuers the rest of Toolasha
+        // uses, in every cape mode; null (never 0) when that valuer has nothing yet
+        const derived = this._derivedValue(itemHrid);
+        if (derived !== undefined) return derived;
+
         // Only equipment answers to the cape button. A Mirror of Protection stands
         // in for a cape; it is not what a token, a nested chest, a cache, a crate
         // or a task item is worth, so those take the token path in every mode.
@@ -1065,6 +1079,52 @@ class TreasureTracker {
         if (mode === 'zero') return null;
         if (mode === 'mirror') return getItemPrice(MIRROR_HRID, { context: 'profit', side: 'sell' }) || null;
         return this._tokenValue(itemHrid);
+    }
+
+    /**
+     * What a currency token or a container found inside a chest is worth.
+     *
+     * Each goes through the valuer the rest of Toolasha already uses, which
+     * keeps its own pricing side and tax convention — none is added here:
+     * dungeon tokens through their shop (`calculateDungeonTokenValue`), the
+     * labyrinth token through the labyrinth shop, a task token through the task
+     * shop, and a chest, cache, crate or gift through its expected contents. The
+     * expected-value calculator is read through the bundle bridge (the one copy
+     * that ran `initialize()`); it values its own contents and never calls back
+     * into this tracker, so a container cannot loop here.
+     *
+     * @param {string} itemHrid - The item
+     * @returns {number|null|undefined} Coins; null when the valuer has no answer
+     *   yet (never 0); undefined when the item is neither a token nor a container
+     */
+    _derivedValue(itemHrid) {
+        const positive = (value) => (value > 0 ? value : null);
+
+        if (DUNGEON_TOKEN_HRIDS.has(itemHrid)) return positive(calculateDungeonTokenValue(itemHrid));
+
+        if (itemHrid === LABYRINTH_TOKEN_HRID) {
+            const shopMap = dataManager.getInitClientData()?.labyrinthShopItemDetailMap;
+            if (!shopMap) return null;
+            return positive(
+                labyrinthTokenValue(shopMap, (hrid) => getItemPrice(hrid, { context: 'profit', side: 'sell' }))
+            );
+        }
+
+        if (itemHrid === TASK_TOKEN_HRID) {
+            // The task shop prices an openable line through the calculator, so before it is
+            // ready the best line (and the token) would be undervalued
+            if (!expectedValueCalculator()?.isInitialized) return null;
+            return positive(findBestTaskShopValue()?.perToken);
+        }
+
+        const dropTable = dataManager.getInitClientData()?.openableLootDropMap?.[itemHrid];
+        if (Array.isArray(dropTable) && dropTable.length > 0) {
+            const calculator = expectedValueCalculator();
+            if (!calculator?.isInitialized) return null;
+            return positive(calculator.resolveContainerValue(itemHrid)?.value);
+        }
+
+        return undefined;
     }
 
     /**
@@ -1531,7 +1591,8 @@ class TreasureTracker {
             () => CAPE_VALUE_LABEL[this.settings.capeValue],
             'Untradable equipment — capes, quivers, cloaks — has no market price. ' +
                 'Value it at what its tokens would have bought, at a Mirror of Protection, or at nothing. ' +
-                'Scrolls, tokens and other untradable items are not affected.',
+                'Scrolls are not affected. Tokens and chests found inside chests are valued at what they buy, ' +
+                'or at their expected contents.',
             () => {
                 this.settings.capeValue = CAPE_VALUE_CYCLE[this.settings.capeValue] || 'token';
                 this._saveSettings();
@@ -2544,6 +2605,10 @@ function treasureVersion() {
         settings.capeValue,
         settings.scrollValue,
         settings.valueCowbells ? 1 : 0,
+        // Tokens and nested chests are valued by the expected-value calculator and
+        // the token valuers; the calculator coming ready moves them
+        expectedValueCalculator()?.isInitialized ? 1 : 0,
+        config.getSettingValue?.('expectedValue_respectPricingMode', true) ? 1 : 0,
     ].join('|');
 }
 
