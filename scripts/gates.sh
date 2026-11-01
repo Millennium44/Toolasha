@@ -4,7 +4,7 @@
 #
 # Mirrors .github/workflows/ci.yml step for step: ESLint, Prettier with CI's
 # own globs (not `prettier --check .`, which also flags files CI ignores), the
-# test suite, both builds, the 2 MiB @require ceiling, and the bundle-sharing
+# test suite, both builds, the split-bundle smoke test, the 2 MiB @require ceiling, and the bundle-sharing
 # check that `npm run build` already runs.
 #
 # Prettier is here because agent commits skip the pre-commit hook by design
@@ -31,6 +31,9 @@ step 'Build: production (includes bundle-sharing check)'
 BUILD_MODE=production npx rollup -c 2>&1 | tail -1
 node scripts/check-bundle-sharing.mjs
 node scripts/check-bundle-load-order.mjs
+
+step 'Split-bundle smoke test (load order, namespaces, bridge identity, no stray singleton copies)'
+node scripts/check-bundle-smoke.mjs --require-build
 
 step 'Bundle sizes (2097152-byte @require ceiling)'
 limit=2097152

@@ -77,6 +77,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getActionDrinkSlots: () => [],
         getAchievementBuffFlatBoost: () => 0,
         getPersonalBuffFlatBoost: () => 0,
+        getOfflineHourCap: () => game.characterData?.characterInfo?.offlineHourCap ?? null,
         get characterData() {
             return game.characterData;
         },
@@ -478,10 +479,14 @@ describe('loop health checks', () => {
     test('the offline window says when it is the plan’s figure and not yours', async () => {
         expect(offlineWindow()).toEqual({ hours: ASSUMED_OFFLINE_HOURS, assumed: true });
         expect((await warnings()).find((entry) => entry.id === 'offline').text).toContain('assumed offline window');
+        expect((await warnings()).find((entry) => entry.id === 'offline').text).not.toContain('does not report');
 
-        game.characterData = { offlineHours: 24 };
-        expect(offlineWindow()).toEqual({ hours: 24, assumed: false });
-        expect((await warnings()).find((entry) => entry.id === 'offline').text).toContain('your offline window');
+        // 82 h: the 20 h base plus bought upgrades, as the game reports it
+        game.characterData = { characterInfo: { offlineHourCap: 82 } };
+        expect(offlineWindow()).toEqual({ hours: 82, assumed: false });
+        expect((await warnings()).find((entry) => entry.id === 'offline').text).toContain(
+            'Queue enough for 82h, which is your offline window'
+        );
     });
 
     test('an unpriced cowbell is a warning of its own', async () => {

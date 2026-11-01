@@ -15,7 +15,8 @@
  *   - Materials: `resolveItemPrice` on the buy side of the chosen context
  *     (custom price, Iron Cow valuation, reconciled book on the mode's side,
  *     shop floor, production cost), with trainee charms at the shop price and
- *     coins at 1 settled first. Unpriced is `null` and flagged, never 0.
+ *     coins at 1 settled first. Unpriced is `null` and flagged, never 0. A Task Crystal nothing quotes
+ *     is valued through the Task Tokens it costs (`tokenValued`, an estimate, at the profit-side token value).
  *   - Protection: the cheapest of {the item itself, Mirror of Protection, the
  *     item's listed protection items}, each priced as below.
  *   - Mirror and base item: the resolver's price put through the inflation
@@ -45,6 +46,7 @@ import config from '../core/config.js';
 import { getItemPrices, getPricingMode } from './market-data.js';
 import { resolveItemPrice } from './profit-helpers.js';
 import { getShopCoinCost } from './game-lookups.js';
+import { taskShopTokenPrice } from './task-shop-value.js';
 import { testerShopEnabled } from './tester-shop.js';
 import { getMarketValuesEpoch } from './market-values.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
@@ -59,6 +61,7 @@ import {
 } from './enhancement-pricing.js';
 
 const PHILOSOPHERS_MIRROR = '/items/philosophers_mirror';
+const TASK_CRYSTAL = '/items/task_crystal';
 
 /** Build the result record from a bare price. */
 function result(price, estimated = false, custom = false, partial = false) {
@@ -143,6 +146,12 @@ export function priceMaterial(itemHrid, options = {}) {
     if (itemHrid.startsWith('/items/trainee_')) return result(TRAINEE_SHOP_PRICE);
     if (itemHrid === '/items/coin') return result(1);
     const resolved = resolve(itemHrid, options);
+    // Task Crystal is untradable: nothing quotes it, so what it costs is the Task Tokens it is bought with.
+    // A custom price, a quote or a shop figure the resolver found still wins; this only fills "unpriced".
+    if (!(resolved.price > 0) && !resolved.custom && itemHrid === TASK_CRYSTAL) {
+        const tokens = taskShopTokenPrice(itemHrid);
+        if (tokens) return { ...result(tokens.price, true, false, tokens.partial), tokenValued: true };
+    }
     const partial = Boolean(resolved.production) && craftPartial(itemHrid, buySide(options));
     return result(resolved.price, resolved.estimated, Boolean(resolved.custom), partial);
 }

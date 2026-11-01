@@ -928,6 +928,55 @@ describe('the queue helper', () => {
         expect(boxes()[0].value).toBe('168');
     });
 
+    test('the presets are a day, a week, two weeks and thirty days', async () => {
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        const labels = [...ironCowFarmPanel.panel.querySelectorAll('button')]
+            .map((element) => element.textContent)
+            .filter((label) => /day|week/.test(label) && !label.startsWith('Walk'));
+        expect(labels).toEqual(['1 day', '1 week', '2 weeks', '30 days']);
+    });
+
+    test('a duration in days is restored in days when the panel is reopened', async () => {
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+        const select = () => ironCowFarmPanel.panel.querySelector('select');
+
+        select().value = 'd';
+        select().dispatchEvent(new Event('change', { bubbles: true }));
+        boxes()[0].value = '34';
+        boxes()[0].dispatchEvent(new Event('input', { bubbles: true }));
+        expect(ironCowFarmPanel.batchHours).toBe(34 * 24);
+
+        ironCowFarmPanel.hide({ remember: true });
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        expect(select().value).toBe('d');
+        expect(boxes()[0].value).toBe('34');
+    });
+
+    test('a month is not the ceiling: 34 days and 720 days are different batches', async () => {
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+        const select = ironCowFarmPanel.panel.querySelector('select');
+        select.value = 'd';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+
+        boxes()[0].value = '34';
+        boxes()[0].dispatchEvent(new Event('input', { bubbles: true }));
+        const thirtyFour = { hours: ironCowFarmPanel.batchHours, bells: boxes()[1].value };
+
+        boxes()[0].value = '720';
+        boxes()[0].dispatchEvent(new Event('input', { bubbles: true }));
+
+        expect(thirtyFour.hours).toBe(816);
+        expect(ironCowFarmPanel.batchHours).toBe(720 * 24);
+        expect(Number(boxes()[1].value)).toBeGreaterThan(Number(thirtyFour.bells));
+        expect(text()).not.toContain(FAILED);
+    });
+
     test('with no cowbell price the bell field disables itself and says why, and the duration still works', async () => {
         loop.result = costedLoop({ bellPrice: null, bellPricing: { price: null }, bells: null });
         loop.pricing = { price: null };
