@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Budget plan pins are remembered
+
+- Pinned and excluded picks in the Combat Sim's upgrade budget plan are now saved per character, survive a fresh analysis (a pick that left the results is marked rather than dropped), and the plan shows what the constraints cost against the unconstrained plan.
+
 ### Guild trial sign-up levels stay current
 
 - The Guild Trial Sim's assignment planner keeps a member's skilling sign-up level when they switch trials, and picks up the guild's sign-up levels when the roster updates, instead of keeping the login copy.
