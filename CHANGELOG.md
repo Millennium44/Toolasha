@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Queue times follow each action's own loadout
+
+- Queued action times, material limits and the Artisan discount use the loadout chosen for that queued action (or your worn gear for "No Loadout") instead of the skill's default.
+- Queue menu rows are matched to their action by their position number, so totals stay right in any game language.
+- The action panel's Max uses the upgrade item the slot shows (a +7 copy, not your +0 stack), and offers nothing while no upgrade item is selected.
+
 ### Task reroll walk bar tidied
 
 - The reroll walk bar sits in the Task Board toolbar as ordinary toolbar buttons with a short label (details on hover) instead of floating over the task cards, shows only on the Task Board, and shrinks to a "Walk again" button once a walk is done; a new "Reroll walk bar position" setting keeps it floating if you prefer.
