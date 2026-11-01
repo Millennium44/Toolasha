@@ -19,3 +19,6 @@ docs/*
 
 # Agent worktrees and session files
 .claude/
+
+# Game bundles cached by scripts/audit-game-handlers.mjs --fetch
+.cache/
