@@ -41,7 +41,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { dirname, join, normalize, relative, basename } from 'path';
+import { dirname, join, normalize, relative, basename, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { init as initLexer, parse as parseModule } from 'es-module-lexer';
 
@@ -587,6 +587,91 @@ export function importSpecifiers(filePath) {
 }
 
 /**
+ * What an import or re-export statement takes from its module.
+ * @param {string} statement - The statement's source text, e.g. `import x, { a as b } from './m.js'`
+ * @returns {{defaultImport: boolean, namespace: boolean, named: string[]}} The shapes it uses
+ */
+export function importedNames(statement) {
+    const text = statement.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const clause = text.match(/^\s*(?:import|export)\s+(?:type\s+)?([\s\S]*?)\s*(?:from\s*)?['"][^'"]+['"]/);
+    const out = { defaultImport: false, namespace: false, named: [] };
+    if (!clause || !clause[1].trim()) return out; // side-effect import
+    let body = clause[1].trim();
+    if (text.trimStart().startsWith('export') && body.startsWith('*')) {
+        return { ...out, namespace: true };
+    }
+    const braces = body.match(/\{([\s\S]*)\}/);
+    if (braces) {
+        for (const part of braces[1].split(',')) {
+            const name = part
+                .trim()
+                .split(/\s+as\s+/)[0]
+                .trim();
+            if (name) out.named.push(name);
+        }
+        body = body.replace(braces[0], '');
+    }
+    if (/\*\s*as\s+\w+/.test(body)) out.namespace = true;
+    else if (/[\w$]/.test(body.replace(/,/g, '').trim())) out.defaultImport = true;
+    return out;
+}
+
+/**
+ * Importers inside a bundle that take something from a routed singleton that the routing cannot provide.
+ *
+ * A routed singleton reaches the bundle as the owner's published global — the INSTANCE for a default
+ * export, or the module namespace when the entry lists `named`. A named or namespace import from a module
+ * whose global is the instance resolves to `undefined` in the release (the instance has no such property),
+ * and a feature's try/catch turns that into a section that silently vanishes. The dev build is one bundle
+ * and keeps the real module, so only the released script shows it. PR #685 shipped exactly this for the
+ * labyrinth run ledger's pure helpers.
+ *
+ * @param {Object} args
+ * @param {string} args.bundle - Bundle name
+ * @param {Map<string, {global: string, named?: string[]}>} args.routed - Module path → ownership entry, for
+ *   every module this bundle reaches through an external or stand-in
+ * @param {Set<string>} args.inline - Absolute paths of the modules this bundle compiles
+ * @param {(filePath: string) => Array<{specifier: string, statement: string}>} args.statements - Import statements
+ * @param {(specifier: string, importer: string) => string|null} args.resolve - Specifier resolver
+ * @returns {Array<{bundle: string, importer: string, modulePath: string, unsupported: string[]}>} Violations
+ */
+export function findRoutedImportMisuse({ bundle, routed, inline, statements, resolve }) {
+    const found = [];
+    for (const importer of inline) {
+        for (const { specifier, statement } of statements(importer)) {
+            const resolved = resolve(specifier, importer);
+            const entry = resolved && routed.get(resolved);
+            if (!entry) continue;
+            const used = importedNames(statement);
+            const allowed = new Set(entry.named || []);
+            const unsupported = [...used.named.filter((name) => !allowed.has(name))];
+            if (used.namespace && allowed.size === 0) unsupported.push('* (namespace)');
+            if (unsupported.length === 0) continue;
+            found.push({
+                bundle,
+                importer: relative(projectRoot, importer).split(sep).join('/'),
+                modulePath: relative(projectRoot, resolved).split(sep).join('/'),
+                unsupported,
+            });
+        }
+    }
+    return found.sort((a, b) => a.importer.localeCompare(b.importer));
+}
+
+/**
+ * Every import statement of a module, with its text.
+ * @param {string} filePath - Absolute path
+ * @returns {Array<{specifier: string, statement: string}>} Statements with a static specifier
+ */
+export function importStatements(filePath) {
+    const source = readFileSync(filePath, 'utf-8');
+    const [imports] = parseModule(source, filePath);
+    return imports
+        .filter((record) => record.n)
+        .map((record) => ({ specifier: record.n, statement: source.slice(record.ss, record.se) }));
+}
+
+/**
  * Resolve a specifier relative to its importer, or null when it is not part
  * of the bundled project graph (bare, virtual, or plugin-suffixed).
  * @param {string} specifier - As written in the import statement
@@ -645,6 +730,8 @@ async function main() {
     const inlineIn = new Map();
     // every module (absolute path) -> bundle names that carry it inline, for the singleton-ownership sweep
     const allInline = new Map();
+    // bundle name -> { inline: modules it compiles, routed: owned singletons it reaches through the owner }
+    const perBundle = new Map();
 
     for (const config of configs) {
         const entry = normalize(join(projectRoot, config.input));
@@ -653,7 +740,14 @@ async function main() {
         // An import the build routes to a stand-in (the owner loads after this bundle) compiles no copy
         const { standIns } = singletonRouting(bundleName);
         const isExternal = (id) => declaredExternal(id) || standIns.has(normalize(id));
-        for (const modulePath of walkBundle(entry, isExternal)) {
+        const inlineModules = walkBundle(entry, isExternal);
+        const { externals: routedExternals } = singletonRouting(bundleName);
+        const routed = new Map();
+        for (const modulePath of [...routedExternals.keys(), ...standIns.keys()]) {
+            routed.set(modulePath, singletonOwnership.get(modulePath));
+        }
+        perBundle.set(bundleName, { inline: inlineModules, routed });
+        for (const modulePath of inlineModules) {
             if (!allInline.has(modulePath)) allInline.set(modulePath, new Set());
             allInline.get(modulePath).add(bundleName);
             const relPath = relative(projectRoot, modulePath).split('\\').join('/');
@@ -684,6 +778,29 @@ async function main() {
     const owners = moduleOwners(configs, singletonOwnership);
     const foreignCopies = findForeignSingletonCopies(allInline, owners, classNameOf);
     const unownedCopies = findUnownedSingletonCopies(allInline, owners, classNameOf);
+    const routedMisuse = [...perBundle].flatMap(([bundle, { inline, routed }]) =>
+        findRoutedImportMisuse({
+            bundle,
+            routed,
+            inline,
+            statements: importStatements,
+            resolve: resolveSpecifier,
+        })
+    );
+
+    if (routedMisuse.length > 0) {
+        console.error('');
+        console.error('[check-bundle-sharing] FAILED: a bundle imports names a routed singleton cannot provide.');
+        console.error('');
+        for (const { bundle, importer, modulePath, unsupported } of routedMisuse) {
+            console.error(`  ${importer} (${bundle} bundle) imports ${unsupported.join(', ')} from ${modulePath}`);
+        }
+        console.error('');
+        console.error('That module is routed to its owner published instance, which has none of those names, so in');
+        console.error('the release they are undefined. Move the pure helpers into their own module and import them');
+        console.error('from there, or list the names in the `named` list in singletonOwnership (rollup.config.js).');
+        console.error('');
+    }
 
     if (foreignCopies.length > 0) {
         console.error('');
@@ -747,7 +864,8 @@ async function main() {
         console.error('');
     }
 
-    if (violations.length > 0 || foreignCopies.length > 0 || unownedCopies.length > 0) process.exit(1);
+    if (violations.length > 0 || foreignCopies.length > 0 || unownedCopies.length > 0 || routedMisuse.length > 0)
+        process.exit(1);
 
     const tolerated = [...FOREIGN_COPY_ALLOWLIST.values()].reduce((n, bundles) => n + bundles.size, 0);
     console.log(

@@ -254,6 +254,36 @@ export function ownershipFailures(root, ownership) {
 }
 
 /**
+ * The labyrinth run ledger's pure helpers must reach the ui bundle from their own module.
+ *
+ * The ledger singleton is published as `Toolasha.Combat.labyrinthRunLedger` and the ui bundle's import of that
+ * module is the iife external, i.e. the INSTANCE: it has no `sparkText`/`observedUse`. The Consumables panel
+ * uses those through `labyrinth-run-ledger-math.js`, which the ui bundle compiles itself; calling them through
+ * the instance made the whole Labyrinth section vanish in the release (the panel's try/catch swallowed
+ * "observedUse is not a function"). Checks both halves: the instance really lacks the helper (so the routing
+ * could not have served it) and the ui bundle carries the helper's own code (the spark glyph ladder).
+ * @param {Object} root - `window.Toolasha`
+ * @param {string} uiText - The built ui bundle
+ * @returns {string[]} Failures
+ */
+export function ledgerHelperFailures(root, uiText) {
+    const failures = [];
+    const ledger = root?.Combat?.labyrinthRunLedger;
+    if (!ledger) return ['Toolasha.Combat.labyrinthRunLedger is not published'];
+    for (const name of ['sparkText', 'observedUse', 'rushFloorTable']) {
+        if (typeof ledger[name] === 'function') {
+            failures.push(`the ledger instance now has ${name}(); the math module split in the ui bundle is moot`);
+        }
+    }
+    if (!uiText.includes('▁')) {
+        failures.push(
+            'toolasha-ui.js does not carry the ledger math (spark glyph ladder missing): its helpers are gone'
+        );
+    }
+    return failures;
+}
+
+/**
  * The bridge as the utils bundle ships it, run against the live namespace, must hand back the exact
  * instances the owners published — the property #671 lost for the one module it imported instead.
  * @param {Object} root - `window.Toolasha`
@@ -326,6 +356,8 @@ async function main() {
 
     process.env.BUILD_MODE = 'production';
     const rollupConfig = await import(pathToFileURL(join(projectRoot, 'rollup.config.js')).href);
+    if (errors.length === 0)
+        failures.push(...ledgerHelperFailures(window.Toolasha, readFileSync(bundlePath('ui'), 'utf8')));
     if (errors.length === 0) failures.push(...ownershipFailures(window.Toolasha, rollupConfig.singletonOwnership));
     const configs = rollupConfig.default;
     const { ownedSingletons, FOREIGN_COPY_ALLOWLIST } = await import('./check-bundle-sharing.mjs');

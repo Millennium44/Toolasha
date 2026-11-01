@@ -5,7 +5,9 @@ import {
     FOREIGN_COPY_ALLOWLIST,
     UNOWNED_SINGLETON_ALLOWLIST,
     findForeignSingletonCopies,
+    findRoutedImportMisuse,
     findUnownedSingletonCopies,
+    importedNames,
     moduleOwners,
     singletonClassName,
 } from './check-bundle-sharing.mjs';
@@ -138,5 +140,60 @@ describe('FOREIGN_COPY_ALLOWLIST', () => {
         for (const bundles of FOREIGN_COPY_ALLOWLIST.values()) {
             for (const reason of bundles.values()) expect(reason).toMatch(/bridge \+ fallback|KNOWN DEBT/);
         }
+    });
+});
+
+describe('importedNames', () => {
+    test('reads default, named (with aliases) and namespace shapes', () => {
+        expect(importedNames("import x from './m.js'")).toEqual({ defaultImport: true, namespace: false, named: [] });
+        expect(importedNames("import x, { a as b, c } from './m.js'")).toEqual({
+            defaultImport: true,
+            namespace: false,
+            named: ['a', 'c'],
+        });
+        expect(importedNames("import {\n    rushFloorTable,\n    sparkText, // note\n} from '../m.js'")).toEqual({
+            defaultImport: false,
+            namespace: false,
+            named: ['rushFloorTable', 'sparkText'],
+        });
+        expect(importedNames("import * as m from './m.js'").namespace).toBe(true);
+        expect(importedNames("import './m.js'")).toEqual({ defaultImport: false, namespace: false, named: [] });
+        expect(importedNames("export { a } from './m.js'").named).toEqual(['a']);
+    });
+});
+
+describe('findRoutedImportMisuse - the ledger helpers shape', () => {
+    const importer = abs('src/features/ui/consumables-panel.js');
+    const ledger = abs('src/features/combat/labyrinth-run-ledger.js');
+    const run = (statement, entry) =>
+        findRoutedImportMisuse({
+            bundle: 'ui',
+            routed: new Map([[ledger, entry]]),
+            inline: new Set([importer]),
+            statements: () => [{ specifier: './l.js', statement }],
+            resolve: () => ledger,
+        });
+
+    test('flags named imports from a module routed to an instance global', () => {
+        const found = run("import { observedUse, sparkText } from '../combat/labyrinth-run-ledger.js'", {
+            global: 'Toolasha.Combat.labyrinthRunLedger',
+        });
+        expect(found).toEqual([
+            {
+                bundle: 'ui',
+                importer: 'src/features/ui/consumables-panel.js',
+                modulePath: 'src/features/combat/labyrinth-run-ledger.js',
+                unsupported: ['observedUse', 'sparkText'],
+            },
+        ]);
+    });
+
+    test('a default import is fine, listed names are fine, an unlisted one and a namespace are not', () => {
+        const instance = { global: 'Toolasha.Combat.labyrinthRunLedger' };
+        expect(run("import ledger from './l.js'", instance)).toEqual([]);
+        const namespace = { global: 'Toolasha.Combat.buildScoreRow', named: ['ensureOwnScore'] };
+        expect(run("import { ensureOwnScore } from './l.js'", namespace)).toEqual([]);
+        expect(run("import { ensureOwnScore, other } from './l.js'", namespace)[0].unsupported).toEqual(['other']);
+        expect(run("import * as l from './l.js'", instance)[0].unsupported).toEqual(['* (namespace)']);
     });
 });

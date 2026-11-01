@@ -85,7 +85,9 @@ function main() {
         console.error('[check-bundle-load-order] FAILED: a bundle reads a library that has not loaded yet.');
         console.error(`  Load order: ${order.join(' → ')}`);
         for (const { bundle, references } of violations) {
-            console.error(`  toolasha-${bundle}.js reads Toolasha.${references[0].toUpperCase()}${references.slice(1)}.*`);
+            console.error(
+                `  toolasha-${bundle}.js reads Toolasha.${references[0].toUpperCase()}${references.slice(1)}.*`
+            );
         }
         console.error('');
         console.error('That bundle throws as it loads and nothing after it registers. Cut the import that');
@@ -94,7 +96,9 @@ function main() {
         console.error('');
         process.exit(1);
     }
-    console.log(`[check-bundle-load-order] OK: every bundle reads only libraries loaded before it (${order.join(' → ')}).`);
+    console.log(
+        `[check-bundle-load-order] OK: every bundle reads only libraries loaded before it (${order.join(' → ')}).`
+    );
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
