@@ -384,6 +384,9 @@ const value = await storage.get('key', 'storeName', defaultValue);
 ## Tooling Rules
 
 - ESLint: no `var`, no `eval`, prefer `const`, no duplicate imports.
+- `npm run audit:handlers -- --fetch` (network, test server only; not in gates) compares the fields Toolasha reads
+  from `webSocketHook.on(...)` messages with the fields the game's own handlers read. Run it after a game patch;
+  a "reads but game never reads" line is the `skills_updated` bug class. `--bundle <file>` uses a saved chunk.
 
 ## Cursor / Copilot Rules
 
