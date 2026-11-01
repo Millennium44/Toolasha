@@ -521,6 +521,93 @@ describe('importEverything reports what did not land', () => {
         expect(keys.has('enhancementTracker_sessionTombstones_abc')).toBe(true);
     });
 
+    describe('the market listing archive and its deletions', () => {
+        const CHUNK = 'marketListingArchiveRec_abc_2026-03';
+        const TOMBS = 'marketListingArchiveRecTomb_abc';
+        const stone = { at: 1000, fp: 'f', bulk: false };
+        const row = (id) => ({ id, timestamp: Date.UTC(2026, 2, 5), itemHrid: '/items/a', status: 'filled' });
+
+        /** A storage with a read, which the default stand-in lacks */
+        const withTryGet = () => {
+            storageMock.tryGet = vi.fn(async (key, storeName) => {
+                const map = db.get(storeName);
+                return map?.has(key) ? { found: true, value: map.get(key) } : { found: false, value: null };
+            });
+        };
+
+        test("a restored chunk takes this device tombstones for its rows out of the character's map", async () => {
+            withTryGet();
+            db.set('marketListings', new Map([[TOMBS, { 11: stone, 12: stone }]]));
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11), row(13)] };
+
+            const result = await importEverything(payload);
+
+            // 11 is back in the restored chunk and so is not hidden; 12 is not in it and stays deleted
+            expect(db.get('marketListings').get(TOMBS)).toEqual({ 12: stone });
+            expect(result.writtenKeys.marketListings).toContain(TOMBS);
+            delete storageMock.tryGet;
+        });
+
+        test('a backup that carries its own map keeps the deletions of rows it does not restore', async () => {
+            withTryGet();
+            db.set('marketListings', new Map());
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)], [TOMBS]: { 11: stone, 99: stone } };
+
+            await importEverything(payload);
+
+            expect(db.get('marketListings').get(TOMBS)).toEqual({ 99: stone });
+            delete storageMock.tryGet;
+        });
+
+        test('a chunk with no map anywhere writes no map', async () => {
+            withTryGet();
+            db.set('marketListings', new Map());
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)] };
+
+            await importEverything(payload);
+
+            expect(db.get('marketListings').has(TOMBS)).toBe(false);
+            delete storageMock.tryGet;
+        });
+
+        test("latches the character's deletions map with a restored chunk", async () => {
+            withTryGet();
+            const storage = (await import('../core/storage.js')).default;
+            db.set('marketListings', new Map([[TOMBS, { 12: stone }]]));
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)] };
+
+            await importEverything(payload);
+
+            const keys = storage.finishRestore.mock.calls[0][0].get('marketListings');
+            expect(keys.has(CHUNK)).toBe(true);
+            expect(keys.has(TOMBS)).toBe(true);
+            delete storageMock.tryGet;
+        });
+
+        test('chunks and their map go out and come back unchanged', async () => {
+            db.set(
+                'marketListings',
+                new Map([
+                    [CHUNK, [row(11), row(12)]],
+                    [TOMBS, { 99: stone }],
+                ])
+            );
+            const payload = await exportEverything();
+            db.set('marketListings', new Map());
+
+            await importEverything(payload);
+
+            expect(Object.fromEntries(db.get('marketListings'))).toEqual({
+                [CHUNK]: [row(11), row(12)],
+                [TOMBS]: { 99: stone },
+            });
+        });
+    });
+
     test('a live-safe record is written but not latched, and a restore of only those latches nothing', async () => {
         const { registerSyncMerge } = await import('./sync-merge-registry.js');
         const unregister = registerSyncMerge({

@@ -75,12 +75,13 @@ const dataManagerMock = vi.hoisted(() => ({
 /** Only the surface market-history-viewer.js actually calls */
 const estimatedListingAgeMock = vi.hoisted(() => ({
     personalListings: vi.fn(async () => []),
+    allPersonalListings: vi.fn(async () => []),
     addAnchors: vi.fn(async () => {}),
     loadHistoricalData: vi.fn(async () => {}),
     markActiveListings: vi.fn(async () => {}),
     deleteListing: vi.fn(async () => {}),
-    clearPersonalListings: vi.fn(async () => {}),
-    importListings: vi.fn(async () => true),
+    clearPersonalListings: vi.fn(async () => true),
+    importListingsDetailed: vi.fn(async () => ({ ok: true, toLog: 0, toArchive: 0 })),
 }));
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
@@ -120,7 +121,8 @@ beforeEach(() => {
     for (const fn of [storageMock.get, storageMock.set, storageMock.delete, storageMock.getJSON, storageMock.setJSON])
         fn.mockClear();
     for (const fn of Object.values(estimatedListingAgeMock)) fn.mockClear();
-    estimatedListingAgeMock.personalListings.mockResolvedValue([]);
+    estimatedListingAgeMock.allPersonalListings.mockResolvedValue([]);
+    estimatedListingAgeMock.importListingsDetailed.mockResolvedValue({ ok: true, toLog: 0, toArchive: 0 });
 
     marketHistoryViewer.listings = [];
     marketHistoryViewer.filteredListings = [];
@@ -244,7 +246,7 @@ describe('importCSV grows the anchor pool', () => {
     });
 
     test('rows skipped as duplicates are not sent to addAnchors', async () => {
-        estimatedListingAgeMock.personalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
+        estimatedListingAgeMock.allPersonalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
         dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
 
         const csv = [
@@ -292,7 +294,7 @@ describe('rows an import cannot use', () => {
 
         // A NaN timestamp is dropped by addAnchors and drawn as "Invalid Date"
         // for ever, so the row must not reach storage in the first place
-        const stored = estimatedListingAgeMock.importListings.mock.calls[0][0];
+        const stored = estimatedListingAgeMock.importListingsDetailed.mock.calls[0][0];
         expect(stored.map((listing) => listing.id)).toEqual([2]);
         expect(estimatedListingAgeMock.addAnchors).toHaveBeenCalledWith([
             { id: 2, timestamp: new Date('2026-02-01T00:00:00.000Z').getTime() },
@@ -304,7 +306,7 @@ describe('rows an import cannot use', () => {
 
         await marketHistoryViewer.importEdibleToolsData(payload);
 
-        expect(estimatedListingAgeMock.importListings.mock.calls[0][0]).toEqual([]);
+        expect(estimatedListingAgeMock.importListingsDetailed.mock.calls[0][0]).toEqual([]);
         expect(estimatedListingAgeMock.addAnchors).toHaveBeenCalledWith([]);
     });
 
@@ -319,7 +321,7 @@ describe('rows an import cannot use', () => {
 
         await marketHistoryViewer.importCSV(csv);
 
-        const stored = estimatedListingAgeMock.importListings.mock.calls[0][0];
+        const stored = estimatedListingAgeMock.importListingsDetailed.mock.calls[0][0];
         expect(stored.map((listing) => listing.id)).toEqual([556]);
     });
 });
@@ -327,7 +329,7 @@ describe('rows an import cannot use', () => {
 describe('what an import hands the listing log', () => {
     test('only the rows from the file, so its restore stamp cannot cover rows already in the log', async () => {
         dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
-        estimatedListingAgeMock.personalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
+        estimatedListingAgeMock.allPersonalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
         const csv = [
             'Date,Item,Enhancement,Type,Status,Price,Quantity,Filled,Total,ID',
             '2026-01-01T00:00:00.000Z,Widget,0,Sell,filled,100,1,1,100,556',
@@ -335,23 +337,27 @@ describe('what an import hands the listing log', () => {
 
         await marketHistoryViewer.importCSV(csv);
 
-        expect(estimatedListingAgeMock.importListings.mock.calls[0][0].map((listing) => listing.id)).toEqual([556]);
+        expect(estimatedListingAgeMock.importListingsDetailed.mock.calls[0][0].map((listing) => listing.id)).toEqual([
+            556,
+        ]);
     });
 
     test('the same for an Edible Tools import', async () => {
-        estimatedListingAgeMock.personalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
+        estimatedListingAgeMock.allPersonalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
         const payload = JSON.stringify([{ id: 2, createdTimestamp: '2026-02-01T00:00:00.000Z', itemHrid: '/items/a' }]);
 
         await marketHistoryViewer.importEdibleToolsData(payload);
 
-        expect(estimatedListingAgeMock.importListings.mock.calls[0][0].map((listing) => listing.id)).toEqual([2]);
+        expect(estimatedListingAgeMock.importListingsDetailed.mock.calls[0][0].map((listing) => listing.id)).toEqual([
+            2,
+        ]);
     });
 });
 
 describe('an import the listing log refuses', () => {
     test('a CSV import says it failed rather than complete', async () => {
         dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
-        estimatedListingAgeMock.importListings.mockResolvedValueOnce(false);
+        estimatedListingAgeMock.importListingsDetailed.mockResolvedValueOnce(false);
         const csv = [
             'Date,Item,Enhancement,Type,Status,Price,Quantity,Filled,Total,ID',
             '2026-01-01T00:00:00.000Z,Widget,0,Sell,filled,100,1,1,100,556',
@@ -362,11 +368,136 @@ describe('an import the listing log refuses', () => {
     });
 
     test('an Edible Tools import says it failed rather than complete', async () => {
-        estimatedListingAgeMock.importListings.mockResolvedValueOnce(false);
+        estimatedListingAgeMock.importListingsDetailed.mockResolvedValueOnce(false);
         const payload = JSON.stringify([{ id: 2, createdTimestamp: '2026-02-01T00:00:00.000Z', itemHrid: '/items/a' }]);
 
         await expect(marketHistoryViewer.importEdibleToolsData(payload)).rejects.toThrow(/not imported/);
         expect(estimatedListingAgeMock.addAnchors).not.toHaveBeenCalled();
+    });
+});
+
+describe('the archive behind the 90-day log', () => {
+    const csvOf = (...ids) =>
+        [
+            'Date,Item,Enhancement,Type,Status,Price,Quantity,Filled,Total,ID',
+            ...ids.map((id) => `2026-01-01T00:00:00.000Z,Widget,0,Sell,filled,100,1,1,100,${id}`),
+        ].join('\n');
+    const alertText = () => globalThis.alert.mock.calls.at(-1)[0];
+    const withWidget = () => {
+        dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
+    };
+    const resetFilters = () => {
+        marketHistoryViewer.filters = {
+            dateFrom: null,
+            dateTo: null,
+            selectedItems: [],
+            selectedEnhLevels: [],
+            selectedTypes: [],
+        };
+        marketHistoryViewer.searchTerm = '';
+        marketHistoryViewer.typeFilter = 'all';
+        marketHistoryViewer.statusFilter = 'all';
+    };
+
+    test('the table and its total count the log and the archive together', async () => {
+        resetFilters();
+        estimatedListingAgeMock.allPersonalListings.mockResolvedValue([
+            { id: 1, itemHrid: '/items/a', timestamp: 1000, createdTimestamp: '2026-02-01T00:00:00.000Z' },
+            { id: 2, itemHrid: '/items/a', timestamp: 2000, createdTimestamp: '2026-03-01T00:00:00.000Z' },
+            { id: 3, itemHrid: '/items/a', timestamp: 3000, createdTimestamp: '2026-10-29T00:00:00.000Z' },
+        ]);
+
+        await Object.getPrototypeOf(marketHistoryViewer).loadListings.call(marketHistoryViewer);
+
+        expect(marketHistoryViewer.listings).toHaveLength(3);
+        expect(marketHistoryViewer.filteredListings).toHaveLength(3);
+        expect(estimatedListingAgeMock.personalListings).not.toHaveBeenCalled();
+    });
+
+    test('Export CSV writes the archived rows too', async () => {
+        resetFilters();
+        const written = [];
+        vi.stubGlobal(
+            'Blob',
+            class {
+                constructor(parts) {
+                    written.push(...parts);
+                }
+            }
+        );
+        vi.spyOn(marketHistoryViewer, 'getItemName').mockReturnValue('Widget');
+        URL.createObjectURL = vi.fn(() => 'blob:test');
+        URL.revokeObjectURL = vi.fn();
+        marketHistoryViewer.filteredListings = [
+            { id: 1, itemHrid: '/items/a', createdTimestamp: '2026-02-01T00:00:00.000Z', price: 5, filledQuantity: 1 },
+            { id: 3, itemHrid: '/items/a', createdTimestamp: '2026-10-29T00:00:00.000Z', price: 7, filledQuantity: 1 },
+        ];
+
+        marketHistoryViewer.exportCSV();
+
+        expect(written[0]).toContain('"1"');
+        expect(written[0]).toContain('"3"');
+        marketHistoryViewer.getItemName.mockRestore();
+        vi.unstubAllGlobals();
+    });
+
+    test('an id the archive already holds is a duplicate: skipped, and reported as skipped', async () => {
+        withWidget();
+        estimatedListingAgeMock.allPersonalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
+        estimatedListingAgeMock.importListingsDetailed.mockResolvedValue({ ok: true, toLog: 0, toArchive: 1 });
+
+        await marketHistoryViewer.importCSV(csvOf(555, 556));
+
+        expect(estimatedListingAgeMock.importListingsDetailed.mock.calls[0][0].map((row) => row.id)).toEqual([556]);
+        expect(alertText()).toContain('Skipped: 1 duplicates or invalid rows');
+    });
+
+    test('the import alert says how many rows went to the recent log, how many to the archive, and how many were skipped', async () => {
+        withWidget();
+        estimatedListingAgeMock.allPersonalListings.mockResolvedValue([{ id: 555, itemHrid: '/items/a' }]);
+        estimatedListingAgeMock.importListingsDetailed.mockResolvedValue({ ok: true, toLog: 1, toArchive: 2 });
+
+        await marketHistoryViewer.importCSV(csvOf(555, 556, 557, 558));
+
+        expect(alertText()).toBe(
+            'Import complete!\n\n' +
+                'Added to recent history: 1\n' +
+                'Added to archive (older than 90 days): 2\n' +
+                'Skipped: 1 duplicates or invalid rows\n' +
+                'Total: 4 listings'
+        );
+    });
+
+    test('an Edible Tools row keeps its status; one the log does not record reads as unknown', async () => {
+        const payload = JSON.stringify([
+            { id: 1, createdTimestamp: '2026-02-01T00:00:00.000Z', itemHrid: '/items/a', status: 'filled' },
+            { id: 2, createdTimestamp: '2026-02-01T00:00:00.000Z', itemHrid: '/items/a', status: 'weird' },
+            { id: 3, createdTimestamp: '2026-02-01T00:00:00.000Z', itemHrid: '/items/a' },
+            { id: 4, createdTimestamp: '2026-02-01T00:00:00.000Z', itemHrid: '/items/a', status: 'canceled' },
+        ]);
+
+        await marketHistoryViewer.importEdibleToolsData(payload);
+
+        const rows = estimatedListingAgeMock.importListingsDetailed.mock.calls[0][0];
+        expect(rows.map((row) => row.status)).toEqual(['filled', 'unknown', 'unknown', 'canceled']);
+    });
+
+    test('a CSV status the log does not record reads as unknown', async () => {
+        withWidget();
+        const csv = csvOf(1).replace(',filled,', ',nonsense,');
+
+        await marketHistoryViewer.importCSV(csv);
+
+        expect(estimatedListingAgeMock.importListingsDetailed.mock.calls[0][0][0].status).toBe('unknown');
+    });
+
+    test('Clear History says so when the archive could not be emptied', async () => {
+        marketHistoryViewer.listings = [{ id: 1, timestamp: 1000, itemHrid: '/items/a' }];
+        estimatedListingAgeMock.clearPersonalListings.mockResolvedValueOnce(false);
+
+        await marketHistoryViewer.clearHistory();
+
+        expect(alertText()).toMatch(/Failed to clear history/);
     });
 });
 

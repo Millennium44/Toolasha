@@ -24,6 +24,40 @@ const HISTORY_SURFACE = { surface: 'history' };
 import estimatedListingAge from './estimated-listing-age.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
+/** Statuses a listing is recorded with; anything else in an imported file reads as unknown */
+const KNOWN_STATUSES = new Set(['active', 'filled', 'canceled', 'expired', 'unknown']);
+
+/**
+ * The status an imported row is stored with.
+ * @param {*} status - What the file said
+ * @returns {string} The status when it is one the log records, else 'unknown'
+ */
+function normalizeImportedStatus(status) {
+    const text = typeof status === 'string' ? status.trim().toLowerCase() : '';
+    return KNOWN_STATUSES.has(text) ? text : 'unknown';
+}
+
+/**
+ * The text of the alert an import ends with.
+ * @param {Object} counts
+ * @param {number} counts.imported - Rows accepted from the file
+ * @param {number} counts.skipped - Rows left out as duplicates or invalid
+ * @param {{toLog: number, toArchive: number}} counts.placed - Where the accepted rows went
+ * @param {number} counts.total - Listings now held, log and archive
+ * @returns {string}
+ */
+export function importSummary({ imported, skipped, placed, total }) {
+    // Accepted rows the archive already held add nothing anywhere; they are duplicates all the same
+    const uncounted = Math.max(0, imported - placed.toLog - placed.toArchive);
+    return (
+        'Import complete!\n\n' +
+        `Added to recent history: ${placed.toLog}\n` +
+        `Added to archive (older than 90 days): ${placed.toArchive}\n` +
+        `Skipped: ${skipped + uncounted} duplicates or invalid rows\n` +
+        `Total: ${total} listings`
+    );
+}
+
 class MarketHistoryViewer {
     constructor() {
         this.isInitialized = false;
@@ -269,11 +303,11 @@ class MarketHistoryViewer {
     }
 
     /**
-     * Load listings from storage
+     * Load listings from storage: the 90-day log and the archive of everything older
      */
     async loadListings() {
         try {
-            const stored = await estimatedListingAge.personalListings();
+            const stored = await estimatedListingAge.allPersonalListings();
             // Belt and braces: anchors are split off before this point, but a
             // row with no item is not a row this table can draw
             this.listings = stored.filter((listing) => listing && listing.itemHrid);
@@ -1737,8 +1771,8 @@ class MarketHistoryViewer {
             markToolashaSurface(progressMsg, 'popover');
             document.body.appendChild(progressMsg);
 
-            // Load existing listings
-            const existingListings = await estimatedListingAge.personalListings();
+            // Load existing listings: the log and the archive both, so a row is a duplicate wherever it lives
+            const existingListings = await estimatedListingAge.allPersonalListings();
             const existingIds = new Set(existingListings.map((l) => l.id));
 
             let imported = 0;
@@ -1851,7 +1885,7 @@ class MarketHistoryViewer {
                     orderQuantity: orderQuantity,
                     filledQuantity: filledQuantity,
                     isSell: typeStr.toLowerCase() === 'sell',
-                    status: statusStr || 'unknown',
+                    status: normalizeImportedStatus(statusStr),
                 };
 
                 existingListings.push(listing);
@@ -1861,7 +1895,8 @@ class MarketHistoryViewer {
             }
 
             // Save to storage
-            if (!(await estimatedListingAge.importListings(importedListings))) {
+            const placed = await estimatedListingAge.importListingsDetailed(importedListings);
+            if (!placed.ok) {
                 throw new Error('the listing log could not be read or written, so the listings were not imported');
             }
             await estimatedListingAge.addAnchors(newAnchors);
@@ -1870,9 +1905,7 @@ class MarketHistoryViewer {
             document.body.removeChild(progressMsg);
 
             // Show success message
-            alert(
-                `Import complete!\n\nImported: ${imported} new listings\nSkipped: ${skipped} duplicates or invalid rows\nTotal: ${existingListings.length} listings`
-            );
+            alert(importSummary({ imported, skipped, placed, total: existingListings.length }));
 
             // Reload and render table
             await this.loadListings();
@@ -1996,8 +2029,9 @@ class MarketHistoryViewer {
             markToolashaSurface(progressMsg, 'popover');
             document.body.appendChild(progressMsg);
 
-            // Convert imported format to Toolasha format
-            const existingListings = await estimatedListingAge.personalListings();
+            // Convert imported format to Toolasha format. Existing rows are the log and the archive both,
+            // so a row is a duplicate wherever it lives
+            const existingListings = await estimatedListingAge.allPersonalListings();
             const existingIds = new Set(existingListings.map((l) => l.id));
 
             let imported = 0;
@@ -2040,6 +2074,7 @@ class MarketHistoryViewer {
                     orderQuantity: etListing.orderQuantity,
                     filledQuantity: etListing.filledQuantity,
                     isSell: etListing.isSell,
+                    status: normalizeImportedStatus(etListing.status),
                 };
 
                 existingListings.push(toolashaListing);
@@ -2049,7 +2084,8 @@ class MarketHistoryViewer {
             }
 
             // Save to storage
-            if (!(await estimatedListingAge.importListings(importedListings))) {
+            const placed = await estimatedListingAge.importListingsDetailed(importedListings);
+            if (!placed.ok) {
                 throw new Error('the listing log could not be read or written, so the listings were not imported');
             }
             await estimatedListingAge.addAnchors(newAnchors);
@@ -2058,9 +2094,7 @@ class MarketHistoryViewer {
             document.body.removeChild(progressMsg);
 
             // Show success message
-            alert(
-                `Import complete!\n\nImported: ${imported} new listings\nSkipped: ${skipped} duplicates or invalid rows\nTotal: ${existingListings.length} listings`
-            );
+            alert(importSummary({ imported, skipped, placed, total: existingListings.length }));
 
             // Reload and render table
             await this.loadListings();
@@ -2118,7 +2152,9 @@ class MarketHistoryViewer {
             // The log's owner clears it: its saves merge what is stored under
             // what is in memory, so a bare empty write here would be refilled
             // from its memory on the next listing event
-            await estimatedListingAge.clearPersonalListings();
+            if ((await estimatedListingAge.clearPersonalListings()) === false) {
+                throw new Error('the archive of older listings could not be cleared');
+            }
 
             // Clear local data
             this.listings = [];

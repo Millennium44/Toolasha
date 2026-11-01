@@ -58,6 +58,18 @@ const storageMock = vi.hoisted(() => {
             return true;
         }),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+        // What the listing archive's chunked history reads through
+        tryGetAllKeys: vi.fn(async (store = 'settings') =>
+            storageMock.unavailable ? null : Array.from(storeFor(store).keys())
+        ),
+        getMany: vi.fn(async (keys, store = 'settings') => {
+            const map = storeFor(store);
+            const result = new Map();
+            for (const key of keys) result.set(key, map.has(key) ? structuredClone(map.get(key)) : null);
+            return result;
+        }),
+        putAll: vi.fn(async () => 0),
+        isQuotaExceeded: vi.fn(() => false),
         getJSON: vi.fn(async (key, store = 'settings', fallback = null) => {
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
@@ -1559,6 +1571,8 @@ describe('listing log retention — the personal log no longer grows for life', 
         const batch = Array.from({ length: RETENTION_SWEEP_EVERY }, (_, i) => aged(0, { id: 800_000 + i }));
         estimatedListingAge.recordListings(batch);
         expect(sweep).toHaveBeenCalledTimes(1);
+        // The pass moves the old rows into the archive and lets the log go of them once that has landed
+        await sweep.mock.results[0].value;
         expect(estimatedListingAge.knownListings.some((l) => l.id === aged(100).id)).toBe(false);
 
         // And the counter starts again, so the next small batch is free

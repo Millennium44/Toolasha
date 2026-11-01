@@ -18,6 +18,7 @@ import { showsOrderBookAge, formatListingTimestamp } from './listing-age-display
 import { readScoped } from '../../utils/character-key.js';
 import { GAME } from '../../utils/selectors.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
+import listingArchive, { listingTime } from './listing-archive.js';
 
 /** Store both halves of the old shared key live in */
 const LISTINGS_STORE = 'marketListings';
@@ -87,7 +88,9 @@ const ANCHOR_POOL_MAX = 3000;
  * bound. Measured from the newest listing rather than from the clock so a
  * character that has not listed in a while keeps the history it has until it
  * lists again. Your own still-active listings are never dropped, whatever
- * their age.
+ * their age. What leaves the log is not lost: it moves into the listing archive
+ * (`listing-archive.js`) first, which the Market History table reads and the
+ * age estimate does not.
  */
 const LISTING_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -426,18 +429,6 @@ function mergeAnchorPools(base, fresh) {
 }
 
 /**
- * When a listing was created, for retention: its recorded `timestamp`, else
- * its `createdTimestamp`, else 0 (undatable rows sort as the oldest).
- * @param {Object} listing
- * @returns {number} Epoch ms
- */
-function listingTime(listing) {
-    if (Number.isFinite(listing.timestamp)) return listing.timestamp;
-    const parsed = Date.parse(listing.createdTimestamp);
-    return Number.isFinite(parsed) ? parsed : 0;
-}
-
-/**
  * Whether a known listing is the one an expired My Listings row describes.
  *
  * Enhancement level is compared alongside side/price/quantity because two
@@ -497,17 +488,24 @@ function matchesBeyondTopRow(listing, candidate) {
 }
 
 /**
- * The personal log with its retention applied: listings older than
- * LISTING_RETENTION_MS before the newest one go, then, if more than
- * LISTING_RETENTION_MAX remain, the oldest beyond that cap go too. A listing
- * whose status is 'active' is kept regardless — it is still on the market,
- * still highlighted in the book, still matched by id. What is kept is kept
- * as-is, so estimation over the remaining points is unchanged.
+ * Which listings the log's retention lets go of, and which it keeps.
+ *
+ * Listings older than LISTING_RETENTION_MS before the newest one go, then, if
+ * more than LISTING_RETENTION_MAX remain, the oldest beyond that cap go too. A
+ * listing whose status is 'active' is kept regardless — it is still on the
+ * market, still highlighted in the book, still matched by id. What is kept is
+ * kept as-is, so estimation over the remaining points is unchanged.
+ *
+ * Pure: it only says what retention would do. The log's owner moves what it
+ * drops into the listing archive before letting go of it (see
+ * {@link EstimatedListingAge#_retire}), so a pass that drops a row is never the
+ * end of that row.
  * @param {Array<Object>} listings - Sorted by id
- * @returns {Array<Object>} The same array when nothing is dropped, else a new one sorted by id
+ * @returns {{kept: Array<Object>, dropped: Array<Object>}} `kept` is the same array when nothing is
+ *   dropped, else a new one sorted by id
  */
-function applyListingRetention(listings) {
-    if (!Array.isArray(listings) || listings.length === 0) return listings;
+function splitListingRetention(listings) {
+    if (!Array.isArray(listings) || listings.length === 0) return { kept: listings, dropped: [] };
 
     let newest = -Infinity;
     for (const listing of listings) {
@@ -515,46 +513,81 @@ function applyListingRetention(listings) {
         if (time > newest) newest = time;
     }
     const cutoff = newest - LISTING_RETENTION_MS;
-    const kept = listings.filter((listing) => listing.status === 'active' || listingTime(listing) >= cutoff);
+    const dropped = [];
+    const kept = [];
+    for (const listing of listings) {
+        if (listing.status === 'active' || listingTime(listing) >= cutoff) kept.push(listing);
+        else dropped.push(listing);
+    }
 
     if (kept.length > LISTING_RETENTION_MAX) {
         const active = kept.filter((listing) => listing.status === 'active');
         const rest = kept
             .filter((listing) => listing.status !== 'active')
-            .sort((a, b) => listingTime(b) - listingTime(a))
-            .slice(0, Math.max(0, LISTING_RETENTION_MAX - active.length));
-        return [...active, ...rest].sort((a, b) => a.id - b.id);
+            .sort((a, b) => listingTime(b) - listingTime(a));
+        const room = Math.max(0, LISTING_RETENTION_MAX - active.length);
+        dropped.push(...rest.slice(room));
+        return { kept: [...active, ...rest.slice(0, room)].sort((a, b) => a.id - b.id), dropped };
     }
 
-    return kept.length === listings.length ? listings : kept;
+    return { kept: dropped.length === 0 ? listings : kept, dropped };
 }
 
 /**
- * Two copies of a listing log folded for sync: the union, with the log's own
- * retention applied to it.
- *
- * The union alone kept every listing either side ever held, so a listing this
- * device had let go of by retention came back with every pull, was pruned again
- * by the next load, and made every merged push look like news. Retention is
- * measured from the newest listing in the log and capped by a constant, so it
- * gives the same answer on every device; what it drops here is exactly what the
- * owner's next load would drop from the union on disk. Applied to uploads as
- * well, which is how the gist sheds what every device has pruned.
+ * The personal log with its retention applied; see {@link splitListingRetention}.
+ * @param {Array<Object>} listings - Sorted by id
+ * @returns {Array<Object>} The same array when nothing is dropped, else a new one sorted by id
+ */
+function applyListingRetention(listings) {
+    return splitListingRetention(listings).kept;
+}
+
+/**
+ * A listing log with its retention applied, for one side of a sync fold.
  *
  * Only the personal rows are judged, as the owner judges them: entries without
  * an `itemHrid` are anchors (the pre-split shared key still holds some) and are
  * passed through.
+ * @param {Array<Object>} log - One side's log
+ * @returns {Array<Object>} The same array when nothing is dropped
+ */
+function retainedSide(log) {
+    if (!Array.isArray(log)) return log;
+    const personal = log.filter((entry) => entry && entry.itemHrid);
+    const kept = applyListingRetention(personal);
+    if (kept === personal) return log;
+    const keptSet = new Set(kept);
+    return log.filter((entry) => !(entry && entry.itemHrid) || keptSet.has(entry));
+}
+
+/**
+ * Two copies of a listing log folded for sync: the union, with the log's own
+ * retention applied to the side that has to shed.
+ *
+ * The union alone kept every listing either side ever held, so a listing this
+ * device had let go of by retention came back with every pull, was pruned again
+ * by the next load, and made every merged push look like news. Retention is
+ * measured from the newest listing in a log and capped by a constant, so it
+ * gives the same answer on every device.
+ *
+ * **Each side is judged against its own newest listing, not the union's, and a
+ * pull judges only the incoming side.** Rows leaving the log now move into the
+ * listing archive, and a pure fold cannot write the archive. So a fold must never
+ * be what removes a row from this device's stored log: a pull keeps every row
+ * this device holds (the owner moves the ones now outside the window into the
+ * archive on its next load, before it lets go of them) and drops only what the
+ * gist holds that the gist's own newest listing already put outside the window. An
+ * upload sheds from both sides, because it builds the gist's copy and leaves this
+ * device's stored log alone. The gist still sheds what every device has retired,
+ * as before, and a pull of a log the gist has already shed from changes nothing.
  * @param {Array<Object>} local - This device's log
  * @param {Array<Object>} incoming - The other side's log
+ * @param {{forUpload?: boolean}} [context] - Set when the fold builds an upload
  * @returns {Array<Object>} Merged, sorted by id
  */
-function mergeListingLogsForSync(local, incoming) {
-    const merged = mergeListingLogs(local, incoming);
-    const personal = merged.filter((entry) => entry.itemHrid);
-    const kept = applyListingRetention(personal);
-    if (kept === personal) return merged;
-    const others = merged.filter((entry) => !entry.itemHrid);
-    return [...others, ...kept].sort((a, b) => a.id - b.id);
+function mergeListingLogsForSync(local, incoming, context) {
+    const forUpload = context?.forUpload === true;
+    return mergeListingLogs(forUpload ? retainedSide(local) : local, retainedSide(incoming));
 }
 
 class EstimatedListingAge {
@@ -952,7 +985,10 @@ class EstimatedListingAge {
             // has not seen yet (another tab's write landed in between, or a save
             // is still in flight) is kept rather than dropped on the floor
             const merged = this._mergeListings(personal, this.knownListings);
-            this.knownListings = applyListingRetention(merged);
+            // Rows retention lets go of move into the archive first; if that write fails they stay
+            const retained = await this._retire(merged, owner);
+            if (!this._ownsMemory(owner)) return;
+            this.knownListings = retained;
 
             // An array adopted from before the split still carries its anchor
             // half; drop it now rather than re-filtering it on every read. A log
@@ -960,7 +996,7 @@ class EstimatedListingAge {
             // A shorter `personal` than `stored` also means a resurrected row was
             // just pruned, and the prune has to reach the key or the next pull
             // pushes it back out
-            if (personal.length !== stored.length || this.knownListings.length !== merged.length) {
+            if (personal.length !== stored.length || retained.length !== merged.length) {
                 await this.saveHistoricalData({ owner });
             }
         } catch (error) {
@@ -985,6 +1021,31 @@ class EstimatedListingAge {
      */
     _mergeListings(base, fresh) {
         return mergeListingLogs(base, fresh);
+    }
+
+    /**
+     * Apply the log's retention to a fold of it — by moving, not dropping.
+     *
+     * The rows retention would drop are written to the listing archive first, and the log lets go of them
+     * only once that write has landed. When it does not land (storage refused, or could not be read) the
+     * rows stay in the log and the next pass tries again: a failed archive write must cost nothing but a
+     * log that stays longer than 90 days.
+     *
+     * Rows recorded or updated while the archive was being written are in memory and not in `listings`, so
+     * they are folded back in (memory winning) before the moved rows are removed; only the very objects that
+     * were archived are removed, so a row whose status changed meanwhile stays and moves on the next pass.
+     * @param {Array<Object>} listings - The fold of the log, sorted by id
+     * @param {{generation: number, charId: string}} owner - From {@link _owner}
+     * @returns {Promise<Array<Object>>} The log to keep: `listings` itself when nothing moved
+     * @private
+     */
+    async _retire(listings, owner) {
+        const { dropped } = splitListingRetention(listings);
+        if (dropped.length === 0) return listings;
+        const { ok } = await listingArchive.add(owner.charId, dropped);
+        if (!ok || !this._ownsMemory(owner)) return listings;
+        const moved = new Set(dropped);
+        return mergeListingLogs(listings, this.knownListings).filter((listing) => !moved.has(listing));
     }
 
     /**
@@ -1099,6 +1160,24 @@ class EstimatedListingAge {
     async personalListings() {
         await this.loadHistoricalData();
         return this.knownListings.map((listing) => ({ ...listing }));
+    }
+
+    /**
+     * Every listing of this character — the 90-day log and the archive behind it — one row per id.
+     *
+     * For the readers that exist to show or export history (the Market History table, its totals and CSV,
+     * the import's duplicate check). Estimation and everything about the live book keeps reading
+     * {@link personalListings}, the log alone: an archived listing is months old and says nothing about
+     * where ids are now. The log's copy of an id wins, since it is the one still being updated.
+     * @returns {Promise<Array>} Copies, sorted by id
+     */
+    async allPersonalListings() {
+        const owner = this._owner();
+        const log = await this.personalListings();
+        const archived = await listingArchive.read(owner.charId);
+        const byId = new Map(archived.map((listing) => [listing.id, listing]));
+        for (const listing of log) byId.set(listing.id, listing);
+        return [...byId.values()].sort((a, b) => a.id - b.id);
     }
 
     /**
@@ -1238,11 +1317,13 @@ class EstimatedListingAge {
                         this.listingGraves
                     );
                     // Retention again over the fold, or rows the log had already
-                    // let go of would come back from storage on every save. The
+                    // let go of would come back from storage on every save. Rows it
+                    // drops are moved into the archive before the write below. The
                     // tombstones again too: memory can hold a row another tab or a
                     // pull deleted, and the write below is memory
-                    const merged = applyListingRetention(
-                        applyListingGraves(this._mergeListings(personal, this.knownListings), this.listingGraves)
+                    const merged = await this._retire(
+                        applyListingGraves(this._mergeListings(personal, this.knownListings), this.listingGraves),
+                        owner
                     );
                     if (!this._ownsMemory(owner)) return false;
                     // By ids, not length: a fold can bury one held row and add one stored row
@@ -1299,10 +1380,14 @@ class EstimatedListingAge {
         await this._recordGraves([listingId], owner);
         if (!this._ownsMemory(owner)) return;
         await this.saveHistoricalData({ overwrite: true, owner });
+        // A listing the log had already retired lives in the archive, which keeps its own deletions
+        if (!(await listingArchive.remove(owner.charId, [listingId]))) {
+            console.error('[EstimatedListingAge] The deleted listing could not be removed from the archive');
+        }
     }
 
     /**
-     * Fold imported listings into this character's log and persist.
+     * Fold imported listings into this character's history and persist.
      *
      * Through the owner rather than a direct write, so the import lands in the
      * in-memory log as well as in storage — an import written around it used
@@ -1312,46 +1397,85 @@ class EstimatedListingAge {
      *   tombstones could not be taken back, since the next save or load would bury them again
      */
     async importListings(listings) {
+        return (await this.importListingsDetailed(listings)).ok;
+    }
+
+    /**
+     * {@link importListings}, saying where the rows went.
+     *
+     * The log keeps the last 90 days, so rows past its retention go straight to the archive instead of into
+     * a log that would only move them there on its next pass (and would, before the archive existed, have
+     * dropped them). Rows retention would move out of the log anyway go with them.
+     *
+     * Nothing is added anywhere unless the archive write landed: a failure puts the tombstones back and
+     * leaves the log as it was. A failure of the log's own write after that rolls the log rows back; rows
+     * the archive had already taken stay there, and importing the file again counts them as duplicates.
+     * @param {Array<Object>} listings - Full listing records, as the log stores them
+     * @returns {Promise<{ok: boolean, toLog: number, toArchive: number}>} `toLog` imported rows now in the
+     *   log, `toArchive` imported rows that were new to the archive
+     */
+    async importListingsDetailed(listings) {
         const owner = this._owner();
         const ids = (Array.isArray(listings) ? listings : [])
             .map((listing) => listing?.id)
             .filter((id) => typeof id === 'number');
+        const importedIds = new Set(ids);
         // On the save chain, and the rows into memory only once their tombstones are taken back: a save
         // already holding the old tombstones would otherwise strip the imported rows from memory
         let taken = null;
         let before = null;
+        let toLog = 0;
+        let toArchive = 0;
         const run = async () => {
             if (!this._ownsMemory(owner)) return false;
             taken = await this._restoreGraves(ids, owner);
             if (!taken) return false;
             if (!this._ownsMemory(owner)) return false;
             before = this.knownListings;
-            this.knownListings = applyListingRetention(this._mergeListings(this.knownListings, listings));
+            const merged = this._mergeListings(this.knownListings, listings);
+            const { kept, dropped } = splitListingRetention(merged);
+            if (dropped.length > 0) {
+                const fromLog = dropped.filter((listing) => !importedIds.has(listing.id));
+                const fromFile = dropped.filter((listing) => importedIds.has(listing.id));
+                const moved = await listingArchive.add(owner.charId, fromLog);
+                const imported = moved.ok
+                    ? await listingArchive.add(owner.charId, fromFile, { importedAt: Date.now() })
+                    : moved;
+                if (!imported.ok) {
+                    await this._undoRestoreGraves(taken, owner);
+                    return false;
+                }
+                toArchive = imported.added;
+            }
+            if (!this._ownsMemory(owner)) return false;
+            const gone = new Set(dropped);
+            this.knownListings = mergeListingLogs(merged, this.knownListings).filter((listing) => !gone.has(listing));
+            toLog = kept.filter((listing) => importedIds.has(listing.id)).length;
             this.rebuildEstimationPoints();
             return true;
         };
         this._saveChain = (this._saveChain || Promise.resolve()).then(run, run);
-        if (!(await this._saveChain)) return false;
+        if (!(await this._saveChain)) return { ok: false, toLog: 0, toArchive: 0 };
         // The rollback runs inside the write's own chain step (`onFail`), not as a step queued after it: a
         // save a listing event queued while the write was out would otherwise run first and persist the
         // imported rows from memory before they were taken back
         const rollBack = async () => {
             if (this._ownsMemory(owner)) {
-                const imported = new Set(ids);
                 const prior = new Map(before.map((listing) => [listing?.id, listing]));
                 const rows = new Map();
                 for (const listing of this.knownListings) {
-                    if (!imported.has(listing?.id)) rows.set(listing?.id, listing);
+                    if (!importedIds.has(listing?.id)) rows.set(listing?.id, listing);
                 }
                 for (const [id, listing] of prior) {
-                    if (imported.has(id) || !rows.has(id)) rows.set(id, listing);
+                    if (importedIds.has(id) || !rows.has(id)) rows.set(id, listing);
                 }
                 this.knownListings = [...rows.values()].sort((a, b) => a.id - b.id);
                 this.rebuildEstimationPoints();
             }
             await this._undoRestoreGraves(taken, owner);
         };
-        return (await this.saveHistoricalData({ owner, onFail: rollBack })) === true;
+        const written = (await this.saveHistoricalData({ owner, onFail: rollBack })) === true;
+        return written ? { ok: true, toLog, toArchive } : { ok: false, toLog: 0, toArchive: 0 };
     }
 
     /**
@@ -1359,6 +1483,7 @@ class EstimatedListingAge {
      *
      * The one write that is meant to lose entries, so it bypasses the
      * merge-on-write that every other save goes through.
+     * @returns {Promise<boolean>} False when the archive could not be emptied
      */
     async clearPersonalListings() {
         const owner = this._owner();
@@ -1369,8 +1494,12 @@ class EstimatedListingAge {
         // a tombstone per row the log's union fold takes every one of them back
         // from the first peer that still holds them
         await this._recordGraves(ids, owner, { clearAll: true });
-        if (!this._ownsMemory(owner)) return;
+        // The archive behind the log goes too, by the captured character: a switch landing in between
+        // must not empty the arriving one's, and must not leave this one's behind either
+        const archiveCleared = await listingArchive.clear(owner.charId);
+        if (!this._ownsMemory(owner)) return archiveCleared;
         await this.saveHistoricalData({ overwrite: true, owner });
+        return archiveCleared;
     }
 
     /**
@@ -1794,7 +1923,7 @@ class EstimatedListingAge {
         // since its last pass, and in any case before the log is saved
         this.knownListings.sort((a, b) => a.id - b.id);
         this._recordedSinceRetention += recorded;
-        if (this._recordedSinceRetention >= RETENTION_SWEEP_EVERY) this._applyRetention();
+        if (this._recordedSinceRetention >= RETENTION_SWEEP_EVERY) void this._applyRetention();
         this.rebuildEstimationPoints();
 
         // Save to storage (debounced)
@@ -1836,19 +1965,27 @@ class EstimatedListingAge {
     }
 
     /**
-     * Apply retention to the log and say whether anything was dropped.
+     * Apply retention to the in-memory log and say whether anything left it.
      *
-     * Resets the since-last-pass counter either way: a pass that dropped
-     * nothing is still a pass.
-     * @returns {boolean} Whether the log changed
+     * Moves rather than drops (see {@link _retire}), so it settles after the archive write. Resets the
+     * since-last-pass counter either way: a pass that moved nothing is still a pass.
+     * @returns {Promise<boolean>} Whether the log changed
      * @private
      */
-    _applyRetention() {
+    async _applyRetention() {
         this._recordedSinceRetention = 0;
-        const kept = applyListingRetention(this.knownListings);
-        if (kept === this.knownListings) return false;
-        this.knownListings = kept;
-        return true;
+        const owner = this._owner();
+        try {
+            const before = this.knownListings;
+            const retained = await this._retire(before, owner);
+            if (!this._ownsMemory(owner) || retained === before) return false;
+            this.knownListings = retained;
+            this.rebuildEstimationPoints();
+            return true;
+        } catch (error) {
+            console.error('[EstimatedListingAge] Retention pass failed:', error);
+            return false;
+        }
     }
 
     /** @private */
@@ -1857,9 +1994,9 @@ class EstimatedListingAge {
         this._saveTimer = null;
         this._pendingSave = null;
         this._resolvePendingSave = null;
-        // The last moment before the log is written: prune whatever the
-        // batch-count gate has not got to yet, so nothing stale is persisted
-        if (this._recordedSinceRetention > 0 && this._applyRetention()) this.rebuildEstimationPoints();
+        // The save applies retention to the fold it writes (moving what it drops into the archive), which
+        // is the last moment before the log is written; the batch-count gate has nothing left to do
+        this._recordedSinceRetention = 0;
         resolve(this.saveHistoricalData());
     }
 
@@ -2680,6 +2817,7 @@ export {
     LISTING_RETENTION_MAX,
     RETENTION_SWEEP_EVERY,
     applyListingRetention,
+    splitListingRetention,
     ORDER_BOOK_CACHE_MAX_ITEMS,
     ORDER_BOOK_PERSISTED_ROWS,
     LISTING_SAVE_DEBOUNCE_MS,

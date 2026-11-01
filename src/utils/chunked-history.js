@@ -1334,6 +1334,10 @@ class ChunkedHistory {
      *   changed since the last save. An append knows exactly one — `groupOf(entry)` — and passing
      *   it skips serialising every other chunk just to discover they are identical. Omit it and
      *   every chunk is compared, which is always correct and always the full cost.
+     * @param {Array<Object>} [options.deleted] - Entries this save takes out ON PURPOSE (a delete button, not a
+     *   window sliding). Each is tombstoned whatever its position in the order, which the interior-only rule
+     *   cannot promise for the oldest or newest entry or for the last one left; an entry still in the list
+     *   is not touched. For a history that never prunes itself, so every removal is a deliberate one
      * @param {function(boolean): void} [options.onLanded] - Called once every write this save queued
      *   (and any earlier write still in flight) has settled, with whether all of them landed. The
      *   returned promise resolves at QUEUE time for a debounced store, so it cannot say whether the
@@ -1380,7 +1384,7 @@ class ChunkedHistory {
         const before = owns ? this._entries : [];
         if (owns) {
             this._entries = this._sorted(list);
-            this._recordDeletions(charId, before, this._entries);
+            this._recordDeletions(charId, before, this._entries, options.deleted);
         }
 
         if (owns && this._legacy) {
@@ -1804,38 +1808,49 @@ class ChunkedHistory {
      * @param {string} charId - Whose history
      * @param {Array<Object>} previous - The list as this store last knew it, sorted
      * @param {Array<Object>} next - The list being saved, sorted
+     * @param {Array<Object>} [explicit] - Entries the caller says it deleted on purpose (see `save`)
      * @returns {void}
      * @private
      */
-    _recordDeletions(charId, previous, next) {
-        if (previous.length === 0) return;
+    _recordDeletions(charId, previous, next, explicit = []) {
         const surviving = new Set();
         for (const entry of next) {
             const id = this._identity(entry);
             if (id !== undefined && id !== null) surviving.add(id);
         }
-        if (surviving.size === 0) return;
-
-        let first = -1;
-        let last = -1;
-        for (let index = 0; index < previous.length; index += 1) {
-            if (!surviving.has(this._identity(previous[index]))) continue;
-            if (first === -1) first = index;
-            last = index;
-        }
-
         const at = Date.now();
         let added = false;
-        for (let index = first + 1; index < last; index += 1) {
-            const entry = previous[index];
+
+        // Deletions the caller named: tombstoned wherever they sat, last survivor or not
+        for (const entry of Array.isArray(explicit) ? explicit : []) {
             const id = this._identity(entry);
             if (id === undefined || id === null || surviving.has(id)) continue;
             const stone = this._stoneFor(entry, at, false);
             this._tombs[id] = stone;
-            // Under the earlier identity too, so a device on the earlier build
-            // drops its own copy instead of handing it back on the next sync
             for (const legacy of this._legacyIdentities(entry, id)) this._tombs[legacy] = { ...stone };
             added = true;
+        }
+
+        if (previous.length > 0 && surviving.size > 0) {
+            let first = -1;
+            let last = -1;
+            for (let index = 0; index < previous.length; index += 1) {
+                if (!surviving.has(this._identity(previous[index]))) continue;
+                if (first === -1) first = index;
+                last = index;
+            }
+
+            for (let index = first + 1; index < last; index += 1) {
+                const entry = previous[index];
+                const id = this._identity(entry);
+                if (id === undefined || id === null || surviving.has(id)) continue;
+                const stone = this._stoneFor(entry, at, false);
+                this._tombs[id] = stone;
+                // Under the earlier identity too, so a device on the earlier build
+                // drops its own copy instead of handing it back on the next sync
+                for (const legacy of this._legacyIdentities(entry, id)) this._tombs[legacy] = { ...stone };
+                added = true;
+            }
         }
         if (!added) return;
 

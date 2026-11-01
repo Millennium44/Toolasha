@@ -77,6 +77,18 @@ const storageMock = vi.hoisted(() => {
             return true;
         }),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+        // What the listing archive's chunked history reads through
+        tryGetAllKeys: vi.fn(async (store = 'settings') =>
+            storageMock.unavailable ? null : Array.from(storeFor(store).keys())
+        ),
+        getMany: vi.fn(async (keys, store = 'settings') => {
+            const map = storeFor(store);
+            const result = new Map();
+            for (const key of keys) result.set(key, map.has(key) ? structuredClone(map.get(key)) : null);
+            return result;
+        }),
+        putAll: vi.fn(async () => 0),
+        isQuotaExceeded: vi.fn(() => false),
         getJSON: vi.fn(async (key, store = 'settings', fallback = null) => {
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null ? structuredClone(map.get(key)) : fallback;
