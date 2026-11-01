@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Production build value check
+
+- The build now loads both the production and the single-file builds and fails if a chest value, the Task Token and Task Crystal values or an enhancing input cost differ between them.
+
 ### Skill, collection and Labyrinth fight updates
 
 - Skill level updates the game sends outside an action, and partial Collections updates, are now applied instead of ignored or wiping the rest of the list.
