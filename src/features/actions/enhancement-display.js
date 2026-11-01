@@ -1134,9 +1134,11 @@ export function protectSweepHTML({
             const bestXp = index === sweep.bestGoldPerXpIndex;
             const current = isCurrentRow(row);
             const marks = [];
-            if (cheapest) marks.push('<span title="Cheapest expected cost" style="color:#88ff88;">★</span>');
-            if (bestXp) marks.push(`<span title="Best gold per XP" style="color:${config.COLOR_XP_RATE};">✦</span>`);
-            if (current) marks.push('<span title="The panel\'s current setting" style="color:#ffa500;">◂</span>');
+            const tag = (text, title, color) =>
+                `<span class="mwi-protsweep-tag" title="${title}" style="color:${color};">${text}</span>`;
+            if (cheapest) marks.push(tag('cheapest', 'Lowest expected cost to reach the target', '#88ff88'));
+            if (bestXp) marks.push(tag('best gold/XP', 'Fewest coins per XP gained', config.COLOR_XP_RATE));
+            if (current) marks.push(tag('your setting', 'What Protect From Level is set to now', '#ffa500'));
             let rowStyle = 'border-bottom:1px solid #333;';
             if (cheapest) rowStyle += ' background:rgba(136,255,136,0.08);';
             else if (bestXp) rowStyle += ' background:rgba(255,215,0,0.06);';
@@ -1176,7 +1178,7 @@ export function protectSweepHTML({
                         bestXp ? config.COLOR_XP_RATE : '#ccc',
                         bestXp ? 'font-weight:bold;' : ''
                     ) +
-                    `<td style="padding:2px 0; white-space:nowrap;">${marks.join(' ')}</td></tr>`
+                    `<td class="mwi-protsweep-note" style="padding:2px 0; font-size:0.85em; white-space:nowrap;">${marks.join(' · ')}</td></tr>`
             );
         });
 
@@ -1212,7 +1214,7 @@ export function protectSweepHTML({
         if (testerShopEnabled()) notes.push('Tester shop prices floor the materials and protection.');
         notes.push(
             'p10–p90 is the spread a run can land in — exact on the "none" row and approximate (≈) wherever ' +
-                "protection is used. ★ cheapest expected, ✦ best gold per XP, ◂ the panel's current setting. From +0."
+                'protection is used. From +0.'
         );
 
         const pickerHTML =
@@ -1238,7 +1240,7 @@ export function protectSweepHTML({
             pickerHTML +
             `<div style="color:#888; font-size:0.8em; margin:4px 0;">${notes.join(' ')}</div>` +
             '<div style="overflow-x:auto;"><table id="mwi-protsweep-table" style="font-size:0.85em; border-collapse:collapse; width:100%;">' +
-            `<tr style="border-bottom:1px solid #444;">${th('Protect from', 'left')}${th('Expected cost')}${th('p10 – p90 (approx.)', 'right', SPREAD_APPROX_NOTE)}${th('Attempts')}${th('Protections')}${th('Time')}${th('XP')}${th('Gold/XP')}${th('', 'left')}</tr>` +
+            `<tr style="border-bottom:1px solid #444;">${th('Protect from', 'left')}${th('Expected cost')}${th('p10 – p90 (approx.)', 'right', SPREAD_APPROX_NOTE)}${th('Attempts')}${th('Protections')}${th('Time')}${th('XP')}${th('Gold/XP')}${th('Note', 'left')}</tr>` +
             `${rows.join('')}</table></div></div></div>`
         );
     } catch (error) {

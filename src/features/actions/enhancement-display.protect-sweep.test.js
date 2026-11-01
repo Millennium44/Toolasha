@@ -201,7 +201,51 @@ function buildPanel({
     return panel;
 }
 
+/** The note-cell tag words a sweep row carries */
+const tagsOf = (row) => row.querySelector('.mwi-protsweep-note')?.textContent ?? '';
+
 describe('protect-from sweep in the enhancing panel', () => {
+    test('each marked row says why in words, with a hover, and unmarked rows leave the note empty', async () => {
+        const panel = buildPanel();
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const rows = Array.from(panel.querySelectorAll('.mwi-protsweep-row'));
+        const titles = {
+            cheapest: 'Lowest expected cost to reach the target',
+            'best gold/XP': 'Fewest coins per XP gained',
+            'your setting': 'What Protect From Level is set to now',
+        };
+        let marked = 0;
+        for (const row of rows) {
+            const tags = Array.from(row.querySelectorAll('.mwi-protsweep-tag'));
+            expect(tagsOf(row)).toBe(tags.map((tag) => tag.textContent).join(' · '));
+            if (tags.length === 0) {
+                expect(tagsOf(row)).toBe('');
+                continue;
+            }
+            marked += 1;
+            for (const tag of tags) expect(tag.getAttribute('title')).toBe(titles[tag.textContent]);
+        }
+        expect(marked).toBeGreaterThan(0);
+        expect(rows.some((row) => tagsOf(row).includes('cheapest'))).toBe(true);
+        expect(rows.some((row) => tagsOf(row).includes('your setting'))).toBe(true);
+        // The symbols are gone, from the rows and the legend alike
+        const text = panel.textContent;
+        expect(text).not.toMatch(/[★✦◂]/);
+        expect(text).toContain('From +0.');
+    });
+
+    test('a row that is several things joins its tags', async () => {
+        const panel = buildPanel({ protectFrom: 0, protection: null });
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const rows = Array.from(panel.querySelectorAll('.mwi-protsweep-row'));
+        const none = rows.find((row) => row.dataset.protectFrom === '0');
+        expect(tagsOf(none)).toContain('your setting');
+        for (const row of rows) {
+            const tags = Array.from(row.querySelectorAll('.mwi-protsweep-tag')).map((tag) => tag.textContent);
+            expect(tagsOf(row)).toBe(tags.join(' · '));
+        }
+    });
+
     test('draws a collapsed sweep with a row per protect-from level for the slot item and the cheapest alternative', async () => {
         const panel = buildPanel();
         await displayEnhancementStats(panel, '/items/cheese_sword');
@@ -225,13 +269,13 @@ describe('protect-from sweep in the enhancing panel', () => {
         expect(stats.textContent).toContain('cheapest alternative');
 
         // The panel's own setting — protect from +3 with the mirror — is the marked row
-        const current = rows.filter((row) => row.textContent.includes('◂'));
+        const current = rows.filter((row) => tagsOf(row).includes('your setting'));
         expect(current).toHaveLength(1);
         expect(current[0].dataset.protectFrom).toBe('3');
         expect(current[0].dataset.item).toBe('/items/mirror_of_protection');
 
-        // Exactly one cheapest star
-        expect(rows.filter((row) => row.textContent.includes('★'))).toHaveLength(1);
+        // Exactly one cheapest row
+        expect(rows.filter((row) => tagsOf(row).includes('cheapest'))).toHaveLength(1);
 
         // The header toggles it open
         stats.querySelector('.mwi-enh-toggle[data-target="mwi-enh-protsweep"]').click();
@@ -254,7 +298,7 @@ describe('protect-from sweep in the enhancing panel', () => {
         ).toBe(true);
         expect(emptySlot.textContent).toContain('Nothing in the protection slot');
         // No protection is the panel's setting, so the none row is the marked one
-        const current = rows.filter((row) => row.textContent.includes('◂'));
+        const current = rows.filter((row) => tagsOf(row).includes('your setting'));
         expect(current).toHaveLength(1);
         expect(current[0].dataset.protectFrom).toBe('0');
     });
@@ -520,14 +564,14 @@ describe('protect-from sweep spending held protection', () => {
         expect(within.querySelector('.mwi-protsweep-stock')).toBeNull();
     });
 
-    test('the cheapest star weighs held stock with everything else', async () => {
+    test('the cheapest tag weighs held stock with everything else', async () => {
         stockOn(2);
         // Copies that would fetch almost nothing are almost free to spend
         state.sellPrices = { [SWORD]: 1 };
         state.inventory = [stack(SWORD, 40)];
         const stats = await render();
         const starred = Array.from(stats.querySelectorAll('.mwi-protsweep-row')).filter((row) =>
-            row.textContent.includes('★')
+            tagsOf(row).includes('cheapest')
         );
         expect(starred).toHaveLength(1);
         expect(starred[0].dataset.item).toBe(SWORD);
