@@ -44,17 +44,20 @@ vi.mock('../../utils/offline-economics-calculator.js', () => ({
     calculateOfflineEconomics: ({ offlineItems }) => ({ profit: offlineItems.length * 1000 }),
 }));
 // A saved loadout the forecasts would prefer. A recorded run must never read it
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({
-        equipment: new Map([
-            [
-                '/equipment_types/pouch',
-                { itemLocationHrid: '/equipment_types/pouch', itemHrid: '/items/guzzling_pouch' },
-            ],
-        ]),
-        drinks: [{ itemHrid: '/items/artisan_tea' }],
-    }),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({
+            equipment: new Map([
+                [
+                    '/equipment_types/pouch',
+                    { itemLocationHrid: '/equipment_types/pouch', itemHrid: '/items/guzzling_pouch' },
+                ],
+            ]),
+            drinks: [{ itemHrid: '/items/artisan_tea' }],
+        }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../../utils/tea-parser.js', () => ({
     getDrinkConcentration: (equipment) => {
         state.parsedEquipment = equipment;

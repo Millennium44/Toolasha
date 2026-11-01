@@ -69,9 +69,12 @@ vi.mock('../../utils/tea-parser.js', () => ({
 // returns is not what this suite is pinning — only that calling it does not
 // throw (the real one reaches a loadout-snapshot feature module this suite
 // never mocks).
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 
 vi.mock('../../utils/action-calculator.js', () => ({
     calculateActionStats: () => buffs.actionStats,

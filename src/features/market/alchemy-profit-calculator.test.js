@@ -99,12 +99,15 @@ vi.mock('../../utils/action-calculator.js', () => ({
 // Mirrors the dataManager.getEquipment()/getActionDrinkSlots() mocks above by default, so a
 // test only needs to set mocks.resolvedDrinks/resolvedEquipment when it wants the resolved
 // (loadout-snapshot-aware) context to diverge from what's raw-slotted.
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({
-        equipment: mocks.resolvedEquipment ?? new Map(),
-        drinks: mocks.resolvedDrinks ?? mocks.drinkSlots,
-    }),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({
+            equipment: mocks.resolvedEquipment ?? new Map(),
+            drinks: mocks.resolvedDrinks ?? mocks.drinkSlots,
+        }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../../utils/house-efficiency.js', () => ({ calculateHouseRareFind: () => 0 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null, on: () => () => {} } }));
 vi.mock('./expected-value-calculator.js', () => ({

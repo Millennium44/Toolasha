@@ -29,9 +29,12 @@ vi.mock('../core/data-manager.js', () => ({
     },
 }));
 
-vi.mock('./action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: state.equipment, drinks: state.drinks }),
-}));
+vi.mock('./action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: state.equipment, drinks: state.drinks }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 
 const {
     parseEquipmentWisdom,

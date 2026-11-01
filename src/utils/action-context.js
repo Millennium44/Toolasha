@@ -48,6 +48,18 @@ export function resolveActionContext(actionTypeHrid) {
     const rawDrinks =
         loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager.getActionDrinkSlots(actionTypeHrid);
 
+    return {
+        equipment: loadoutSnapshot.getSnapshotForSkill(actionTypeHrid) ?? dataManager.getEquipment(),
+        drinks: activeDrinksOf(rawDrinks),
+    };
+}
+
+/**
+ * Only the drinks that will actually buff the next action.
+ * @param {Array|null} rawDrinks - Slotted drinks
+ * @returns {Array} The ones in stock or still running
+ */
+function activeDrinksOf(rawDrinks) {
     // Only include drinks that will actually buff the next action. A slot with no stock left
     // brews nothing — but the buff from the last cup keeps running until it expires, and the
     // slot says so (`isActive` with time remaining). Dropping it the moment the stack hit zero
@@ -56,12 +68,49 @@ export function resolveActionContext(actionTypeHrid) {
     const inventory = dataManager.getInventory() || [];
     const inStock = (hrid) => inventory.some((i) => i.itemHrid === hrid && (i.count || 0) > 0);
     const stillRunning = (d) => d?.isActive === true && (d?.duration || 0) > 0;
-    const drinks = (rawDrinks || []).filter((d) => d?.itemHrid && (inStock(d.itemHrid) || stillRunning(d)));
+    return (rawDrinks || []).filter((d) => d?.itemHrid && (inStock(d.itemHrid) || stillRunning(d)));
+}
 
+/**
+ * The equipment and drinks a QUEUED action actually runs with. Every queued action carries the
+ * characterLoadoutID it was queued under: a saved loadout's id, or 0 for "No Loadout" (the
+ * gear worn right now). The per-skill default pick of 
+esolveActionContext answers a different
+ * question — what a fresh action would start with — and would cost a row at gear the game never
+ * puts on for it.
+ *
+ * An id that is not a number (a row from before the field existed), or a saved id this build
+ * has no snapshot for (loadout feature off, not yet loaded), falls back to
+ * 
+esolveActionContext. A saved loadout with no equipment (or no drinks) inherits the worn
+ * gear (or current drinks) for that half, as the game does.
+ *
+ * @param {string} actionTypeHrid - e.g. "/action_types/cooking"
+ * @param {number|null|undefined} characterLoadoutID - The queued action's loadout id
+ * @returns {{equipment: Map, drinks: Array}}
+ */
+export function resolveLoadoutContext(actionTypeHrid, characterLoadoutID) {
+    if (typeof characterLoadoutID !== 'number' || !Number.isFinite(characterLoadoutID)) {
+        return resolveActionContext(actionTypeHrid);
+    }
+    if (characterLoadoutID <= 0) {
+        return {
+            equipment: dataManager.getEquipment(),
+            drinks: activeDrinksOf(dataManager.getActionDrinkSlots(actionTypeHrid)),
+        };
+    }
+    const store = loadouts();
+    const snapshot = store.getSnapshotById?.(characterLoadoutID) ?? null;
+    if (!snapshot) return resolveActionContext(actionTypeHrid);
+
+    const worn = snapshot.equipment?.length
+        ? new Map(store.resolveEquipment(snapshot).map((e) => [e.itemLocationHrid, e]))
+        : null;
+    const filled = (snapshot.drinks || []).filter((d) => d.itemHrid);
     return {
-        equipment: loadoutSnapshot.getSnapshotForSkill(actionTypeHrid) ?? dataManager.getEquipment(),
-        drinks,
+        equipment: worn ?? dataManager.getEquipment(),
+        drinks: activeDrinksOf(filled.length > 0 ? filled : dataManager.getActionDrinkSlots(actionTypeHrid)),
     };
 }
 
-export default { resolveActionContext };
+export default { resolveActionContext, resolveLoadoutContext };

@@ -92,9 +92,12 @@ vi.mock('./house-efficiency.js', () => ({
     calculateHouseActionSpeed: () => parsers.houseSpeed,
 }));
 
-vi.mock('./action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: [], drinks: parsers.drinks }),
-}));
+vi.mock('./action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: [], drinks: parsers.drinks }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 
 const { calculateActionStats } = await import('./action-calculator.js');
 

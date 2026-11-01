@@ -54,12 +54,15 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: vi.fn(() => ({
-        equipment: new Map(),
-        drinks: [{ itemHrid: '/items/super_cheesesmithing_tea', isActive: true, duration: 3e11 }],
-    })),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: vi.fn(() => ({
+            equipment: new Map(),
+            drinks: [{ itemHrid: '/items/super_cheesesmithing_tea', isActive: true, duration: 3e11 }],
+        })),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../../utils/action-calculator.js', () => ({
     calculateActionStats: vi.fn(() => ({ actionTime: 8.5176 })),
 }));

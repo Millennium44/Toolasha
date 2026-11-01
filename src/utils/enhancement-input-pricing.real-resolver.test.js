@@ -49,7 +49,10 @@ vi.mock('./ironcow-valuation.js', () => ({
     getIronCowValue: (_hrid, level = 0) => (level ? null : state.ironCow),
     isIronCowCharacter: () => false,
 }));
-vi.mock('./action-context.js', () => ({ resolveActionContext: () => ({ equipment: new Map(), drinks: [] }) }));
+vi.mock('./action-context.js', () => {
+    const mod = { resolveActionContext: () => ({ equipment: new Map(), drinks: [] }) };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('./game-lookups.js', () => ({ getShopCoinCost: (hrid) => state.shop[hrid] || 0 }));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({
     getCustomPrice: () => null,

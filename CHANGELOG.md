@@ -14,6 +14,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Shared calculators across the split bundles
 
 - Chest, decompose, offline, protection-substitute, tea, Risk of Ruin, bonus-revenue and liquidity figures now use the same live expected-value, alchemy-profit and market-history data as the rest of Toolasha, instead of a private copy that was never kept up to date in the released build.
+### Queue times follow each action's own loadout
+
+- Queued action times, material limits and the Artisan discount use the loadout chosen for that queued action (or your worn gear for "No Loadout") instead of the skill's default.
+- Queue menu rows are matched to their action by their position number, so totals stay right in any game language.
+- The action panel's Max uses the upgrade item the slot shows (a +7 copy, not your +0 stack), and offers nothing while no upgrade item is selected.
 
 ### Task reroll walk bar tidied
 

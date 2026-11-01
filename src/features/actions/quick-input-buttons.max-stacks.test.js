@@ -101,3 +101,48 @@ describe('Max for production', () => {
         expect(quickInputButtons.calculateMaxValue(null, ADVANCED_CHARM, { itemDetailMap: {} })).toBe(1);
     });
 });
+
+describe('Max follows the upgrade stack the slot shows', () => {
+    /** An action panel whose upgrade slot shows `itemTail` at `badge` ('+7', or '' for +0); no tail = empty */
+    function panelWithSlot(itemTail, badge = '') {
+        const panel = document.createElement('div');
+        const icon = itemTail
+            ? `<div class="Item_item__x"><svg><use href="/static/media/items_sprite.abc.svg#${itemTail}"></use></svg>${
+                  badge ? `<div class="Item_enhancementLevel__y">${badge}</div>` : ''
+              }<div class="Item_count__z">3</div></div>`
+            : '<div class="SkillActionDetail_warning__w">No upgrade item selected</div>';
+        panel.innerHTML = `<div class="SkillActionDetail_upgradeItemSelectorInput__q">${icon}</div>`;
+        return panel;
+    }
+
+    beforeEach(() => {
+        game.inventory = [row(VERDANT_CHEESE, 1000), row(CHEESE_SWORD, 2, 0), row(CHEESE_SWORD, 3, 7)];
+    });
+
+    test('a +0 selection counts the +0 stack', () => {
+        const panel = panelWithSlot('cheese_sword');
+        expect(quickInputButtons.calculateMaxValue(panel, VERDANT_SWORD, { itemDetailMap: {} })).toBe(2);
+    });
+
+    test('a +7 selection counts the +7 stack, not the +0 one', () => {
+        const panel = panelWithSlot('cheese_sword', '+7');
+        expect(quickInputButtons.calculateMaxValue(panel, VERDANT_SWORD, { itemDetailMap: {} })).toBe(3);
+    });
+
+    test('a +7 selection with no +7 copy in the bag affords nothing even with +0 copies held', () => {
+        game.inventory = [row(VERDANT_CHEESE, 1000), row(CHEESE_SWORD, 2, 0)];
+        const panel = panelWithSlot('cheese_sword', '+7');
+        expect(quickInputButtons.calculateMaxValue(panel, VERDANT_SWORD, { itemDetailMap: {} })).toBe(0);
+    });
+
+    test('an empty slot is 0 even with stock, as in the game', () => {
+        expect(quickInputButtons.calculateMaxValue(panelWithSlot(null), VERDANT_SWORD, { itemDetailMap: {} })).toBe(0);
+    });
+
+    test('an enhanced selection of the item that is also an input leaves the +0 copies to the input', () => {
+        game.inventory = [row(CHARM, 4, 0), row(CHARM, 5, 3), row(CHARM_MATS, 1000)];
+        // +3 slot: five upgrade copies; the four +0 charms feed the one-per-craft input
+        const panel = panelWithSlot('foraging_charm', '+3');
+        expect(quickInputButtons.calculateMaxValue(panel, ADVANCED_CHARM, { itemDetailMap: {} })).toBe(4);
+    });
+});

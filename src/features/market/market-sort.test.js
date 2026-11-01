@@ -120,12 +120,15 @@ vi.mock('./alchemy-profit-calculator.js', () => {
     };
 });
 
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => {
-        engine.contextResolves += 1;
-        return { equipment: new Map(), drinks: [], marker: 'sweep-context' };
-    },
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => {
+            engine.contextResolves += 1;
+            return { equipment: new Map(), drinks: [], marker: 'sweep-context' };
+        },
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../../utils/yield-to-browser.js', () => ({
     yieldToBrowser: async () => {
         engine.yields += 1;

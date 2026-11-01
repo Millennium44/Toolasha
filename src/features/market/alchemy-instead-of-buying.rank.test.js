@@ -56,12 +56,15 @@ vi.mock('../../core/data-manager.js', () => {
         },
     };
 });
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({
-        equipment: new Map(),
-        drinks: world.loadoutDrinks.map((itemHrid) => ({ itemHrid })),
-    }),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({
+            equipment: new Map(),
+            drinks: world.loadoutDrinks.map((itemHrid) => ({ itemHrid })),
+        }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 // 5 s an action and no efficiency: 720 actions an hour
 vi.mock('../../utils/action-calculator.js', () => ({
     calculateActionStats: () => ({ actionTime: 5, totalEfficiency: 0 }),

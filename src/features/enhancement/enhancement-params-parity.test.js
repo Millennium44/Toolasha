@@ -72,9 +72,12 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: character.equipment, drinks: character.drinks }),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: character.equipment, drinks: character.drinks }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 
 vi.mock('../../utils/mobile.js', () => ({ isMobileMode: () => false }));
 
