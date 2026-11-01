@@ -5585,7 +5585,7 @@ class GuildTrials {
      */
     _maybeAutoOpenScoreboard(watched) {
         if (!watched || !this._autoOpenLoaded) return;
-        if (!config.getSetting('guildTrialAutoOpenScoreboard', true)) return;
+        if (!config.getSetting('guildTrialAutoOpenScoreboard', false)) return;
 
         const breakdown = guildTrialDamage.breakdown?.() || {};
         // The game having already ended this fight is not "starting to be

@@ -4839,6 +4839,13 @@ describe('the panel, end to end', () => {
             expect(game.scoreboardOpen).toBe(false);
         });
 
+        test('never opens it when the setting was never saved: off is the default', () => {
+            delete game.settings.guildTrialAutoOpenScoreboard;
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(0);
+        });
+
         test('never opens it when the setting is off', () => {
             game.settings.guildTrialAutoOpenScoreboard = false;
             game.breakdown = watchedFight();
