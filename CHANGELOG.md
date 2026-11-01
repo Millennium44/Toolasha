@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Past weeks no longer shows 0 pts for trials it never saw
+
+- A guild trial cycle whose cards were saved before showing any result now reads "— pts · — tokens each" in Past weeks instead of a false 0; a party that really wiped before tier 1 still shows T0 and 0 pts.
+
 ### Goal Planner says when it could not check a market's volume
 
 - When a sale item's market volume could not be fetched, the Goal Planner's skill estimate now warns that its sales are counted at full price (so the real cost may be higher) instead of silently leaving the market cap out.
