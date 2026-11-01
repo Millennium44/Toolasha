@@ -5,6 +5,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runningAction } from '../utils/combat-actions.js';
 import { buildActionCompleted } from '../__fixtures__/wire/action-completed.js';
+import { buildItemsUpdated } from '../__fixtures__/wire/items-updated.js';
 import { buildCharacterAction } from '../__fixtures__/wire/character-actions.js';
 import { buildCollectionRow, buildCollectionsUpdated } from '../__fixtures__/wire/collections-updated.js';
 import { buildSkillRow, buildSkillsUpdated } from '../__fixtures__/wire/skills-updated.js';
@@ -1623,19 +1624,7 @@ describe('socket ownership across a character switch', () => {
 
         // Inventory: char-1's last gather, arriving after char-2 is live
         dataManager.characterItems = [];
-        webSocketHandlers.get('items_updated')(
-            {
-                endCharacterItems: [
-                    {
-                        id: 'i-1',
-                        itemHrid: '/items/coin',
-                        count: 999,
-                        itemLocationHrid: '/item_locations/inventory',
-                    },
-                ],
-            },
-            stale
-        );
+        webSocketHandlers.get('items_updated')(buildItemsUpdated(), stale);
         expect(dataManager.characterItems).toEqual([]);
 
         // Skills: char-1's levels would otherwise overwrite char-2's wholesale

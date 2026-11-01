@@ -6,6 +6,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { buildOrderBooksUpdated } from '../../../__fixtures__/wire/market.js';
 
 const storageMock = vi.hoisted(() => {
     const mock = {
@@ -93,6 +94,16 @@ describe('onOrderBooks', () => {
         expect(entry).toMatchObject({ ask: 100, bid: 90, askQty: 5, bidQty: 3 });
         expect(listener).toHaveBeenCalledWith(['/items/cheese:0']);
         expect(marketPriceStore.dirty).toBe(true);
+    });
+
+    test('a captured book with asks and an empty bids array records the ask and no bid', () => {
+        dataManagerMock.handlers['market_item_order_books_updated'](buildOrderBooksUpdated());
+
+        const entry = marketPriceStore.get('/items/cheese', 0);
+        expect(entry.ask).toBe(1000000000);
+        expect(entry.askQty).toBe(1000000);
+        // No bids: the store keeps its -1 "no price" sentinel
+        expect(entry.bid).toBe(-1);
     });
 
     test('a null slot in a sparse orderBooks array is skipped, not stored as empty', () => {

@@ -9,6 +9,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { buildNewBattle } from '../../__fixtures__/wire/new-battle.js';
 
 const game = vi.hoisted(() => ({
     setting: true,
@@ -101,7 +102,7 @@ describe('combat battle counter', () => {
         game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
 
-        game.wsHandlers.new_battle({ battleId: 7 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 7 }));
 
         expect(counterText()).toBe('· Battle #7');
     });
@@ -110,7 +111,7 @@ describe('combat battle counter', () => {
         game.actions = [{ actionHrid: '/actions/combat/dungeon_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/dungeon_zone'] = { combatZoneInfo: { isDungeon: true } };
 
-        game.wsHandlers.new_battle({ battleId: 3, wave: 5 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 3, wave: 5 }));
 
         expect(counterText()).toBe('· Wave 5 · Battle #3');
     });
@@ -127,7 +128,7 @@ describe('combat battle counter', () => {
         game.actionDetails['/actions/combat/sorcerers_tower'] = { combatZoneInfo: { isDungeon: false } };
         game.actionDetails['/actions/combat/dungeon_zone'] = { combatZoneInfo: { isDungeon: true } };
 
-        game.wsHandlers.new_battle({ battleId: 3, wave: 45 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 3, wave: 45 }));
 
         expect(counterText()).toBe('· Wave 45 · Battle #3');
     });
@@ -139,7 +140,7 @@ describe('combat battle counter', () => {
         game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
 
-        game.wsHandlers.new_battle({ battleId: 7 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 7 }));
         expect(counterText()).toBe('· Battle #7');
 
         game.wsHandlers.new_battle({});
@@ -149,7 +150,7 @@ describe('combat battle counter', () => {
 
     test('a labyrinth fight shows "Attempt #N" from the room entry count, never a battle number', () => {
         buildHeader('Labyrinth - Chimerical Beast');
-        game.wsHandlers.new_battle({ battleId: 99 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 99 }));
 
         game.wsHandlers.labyrinth_updated({
             labyrinth: {
@@ -166,7 +167,7 @@ describe('combat battle counter', () => {
         buildHeader('Chimerical Beast 245');
         game.actions = [{ actionHrid: '/actions/labyrinth/explore', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/labyrinth/explore'] = { type: '/action_types/labyrinth' };
-        game.wsHandlers.new_battle({ battleId: 99 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 99 }));
 
         game.wsHandlers.labyrinth_updated({
             labyrinth: {
@@ -181,7 +182,7 @@ describe('combat battle counter', () => {
 
     test('a labyrinth title with no attempt count yet shows nothing rather than a battle number', () => {
         buildHeader('Labyrinth - Chimerical Beast');
-        game.wsHandlers.new_battle({ battleId: 99 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 99 }));
 
         expect(counterText()).toBeNull();
     });
@@ -234,7 +235,7 @@ describe('combat battle counter', () => {
 
     test('a skilling action in front of the queue shows no counter at all', () => {
         game.actions = [{ actionHrid: '/actions/foraging/something', isDone: false, ordinal: 0 }];
-        game.wsHandlers.new_battle({ battleId: 5 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 5 }));
 
         expect(counterText()).toBeNull();
     });
@@ -242,7 +243,7 @@ describe('combat battle counter', () => {
     test('combat ending via endCharacterActions removes the counter', () => {
         game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
-        game.wsHandlers.new_battle({ battleId: 7 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 7 }));
         expect(counterText()).toBe('· Battle #7');
 
         game.dmHandlers.actions_updated({
@@ -258,7 +259,7 @@ describe('combat battle counter', () => {
         beforeEach(() => {
             game.actions = [FIGHT];
             game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
-            game.wsHandlers.new_battle({ battleId: 7 });
+            game.wsHandlers.new_battle(buildNewBattle({ battleId: 7 }));
             expect(counterText()).toBe('· Battle #7');
         });
 
@@ -300,7 +301,7 @@ describe('combat battle counter', () => {
     test('a fresh non-combat action starting up front re-evaluates and clears a stale counter', () => {
         game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
-        game.wsHandlers.new_battle({ battleId: 7 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 7 }));
         expect(counterText()).toBe('· Battle #7');
 
         game.actions = [{ actionHrid: '/actions/alchemy/something', isDone: false, ordinal: 0, currentCount: 0 }];
@@ -317,7 +318,7 @@ describe('combat battle counter', () => {
         combatBattleCounter.initialize();
         game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
-        game.wsHandlers.new_battle({ battleId: 7 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 7 }));
         expect(counterText()).toBe('· Battle #7');
 
         // The registry's disableAllFeatures runs later on the async lifecycle
@@ -355,7 +356,7 @@ describe('combat battle counter', () => {
     test('disable removes the counter element and resets state', () => {
         game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
-        game.wsHandlers.new_battle({ battleId: 7 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 7 }));
 
         combatBattleCounter.disable();
 
@@ -366,7 +367,7 @@ describe('combat battle counter', () => {
     test('the DOM observer re-injects the counter into a header React replaced', () => {
         game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
-        game.wsHandlers.new_battle({ battleId: 7 });
+        game.wsHandlers.new_battle(buildNewBattle({ battleId: 7 }));
 
         buildHeader('Chimerical Den');
         expect(counterText()).toBeNull();
@@ -404,7 +405,7 @@ describe('the re-inject poll', () => {
         combatBattleCounter.disable();
         vi.useFakeTimers();
         combatBattleCounter.initialize();
-        game.wsHandlers['new_battle']({ battleId: 42 });
+        game.wsHandlers['new_battle'](buildNewBattle({ battleId: 42 }));
         expect(document.getElementById('mwi-battle-counter')?.textContent).toContain('#42');
 
         // React rewrites the row's children in place: no element replaced, so
@@ -421,7 +422,7 @@ describe('the re-inject poll', () => {
         combatBattleCounter.disable();
         vi.useFakeTimers();
         combatBattleCounter.initialize();
-        game.wsHandlers['new_battle']({ battleId: 42 });
+        game.wsHandlers['new_battle'](buildNewBattle({ battleId: 42 }));
         game.actions = [];
         game.dmHandlers['actions_updated']({
             endCharacterActions: [{ isDone: true, actionHrid: '/actions/combat/some_zone' }],
@@ -437,7 +438,7 @@ describe('the re-inject poll', () => {
         combatBattleCounter.disable();
         vi.useFakeTimers();
         combatBattleCounter.initialize();
-        game.wsHandlers['new_battle']({ battleId: 42 });
+        game.wsHandlers['new_battle'](buildNewBattle({ battleId: 42 }));
         combatBattleCounter.disable();
         document.querySelector('[class*="Header_actionName"]').textContent = 'Golem Cave (T2)';
 
@@ -454,7 +455,7 @@ describe('the re-inject poll', () => {
         combatBattleCounter.disable();
         vi.useFakeTimers();
         combatBattleCounter.initialize();
-        game.wsHandlers['new_battle']({ battleId: 42 });
+        game.wsHandlers['new_battle'](buildNewBattle({ battleId: 42 }));
 
         game.throwOnUnregister = true;
         combatBattleCounter.disable();

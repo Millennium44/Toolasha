@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, afterEach } from 'vitest';
+import { buildOrderBooksUpdated } from '../__fixtures__/wire/market.js';
 
 const mocks = vi.hoisted(() => ({
     payload: null,
@@ -545,6 +546,13 @@ describe('the band pushed with an order book', () => {
         expect(clampToBand(1, '/items/rainbow_sword', 0)).toBe(250000);
         expect(clampToBand(9e9, '/items/rainbow_sword', 1)).toBe(380000);
         expect(reconcileBook(9e9, 1, '/items/rainbow_sword', 1)).toMatchObject({ ask: 380000, bid: 297000 });
+    });
+
+    test('a captured book carries its band as arrays indexed by level', () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 527.83 } });
+        mocks.handlers.get('market_item_order_books_updated')(buildOrderBooksUpdated());
+        expect(clampToBand(1, '/items/cheese', 0)).toBe(476);
+        expect(clampToBand(9e9, '/items/cheese', 0)).toBe(584);
     });
 
     test('clamps an item with no official value, without inventing a missing side', () => {

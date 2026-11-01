@@ -9,6 +9,7 @@
 /** @vitest-environment happy-dom */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { buildListingPlaced, buildListingCancelled } from '../../__fixtures__/wire/market.js';
 import { _resetGameNumberSeparators } from '../../utils/number-parser.js';
 
 /**
@@ -1286,6 +1287,23 @@ describe('the wire payload is never written on', () => {
         // ...without the shared object being touched
         expect(payload._toolashaStatus).toBeUndefined();
         expect(payload.orderQuantity).toBe(100);
+
+        estimatedListingAge.unregisterWebSocket();
+    });
+
+    test('a captured place then cancel of one listing ends as one canceled entry', () => {
+        estimatedListingAge.setupWebSocketListeners();
+        const placed = buildListingPlaced();
+        const cancelled = buildListingCancelled();
+
+        dataManagerMock.handlers.market_listings_updated(placed);
+        dataManagerMock.handlers.market_listings_updated(cancelled);
+
+        const known = estimatedListingAge.knownListings.filter((l) => l.id === placed.endMarketListings[0].id);
+        expect(known).toHaveLength(1);
+        expect(known[0].status).toBe('canceled');
+        // The wire objects stay as the game sent them
+        expect(cancelled.endMarketListings[0]._toolashaStatus).toBeUndefined();
 
         estimatedListingAge.unregisterWebSocket();
     });

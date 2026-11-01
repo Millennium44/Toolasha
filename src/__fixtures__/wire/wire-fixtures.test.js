@@ -3,6 +3,12 @@ import { buildSkillsUpdated } from './skills-updated.js';
 import { buildActionCompleted } from './action-completed.js';
 import { buildQuestDiscarded } from './quests-updated.js';
 import { buildCollectionsUpdated } from './collections-updated.js';
+import { buildCombatActionCompleted } from './action-completed-combat.js';
+import { buildNewBattle } from './new-battle.js';
+import { buildBattleUpdated, BATTLE_UPDATED_SHAPES } from './battle-updated.js';
+import { buildBattleConsumableAbilityUpdated } from './battle-consumable-ability-updated.js';
+import { buildItemsUpdated } from './items-updated.js';
+import { buildListingPlaced, buildListingCancelled, buildOrderBooksUpdated } from './market.js';
 import { buildCharacterAction } from './character-actions.js';
 import { buildGuildMember } from './guild-members.js';
 import {
@@ -36,6 +42,87 @@ describe('wire fixtures keep the captured field names', () => {
                 'endCharacterQuests',
             ])
         );
+    });
+
+    test('a combat action_completed carries null quests and full database rows', () => {
+        const m = buildCombatActionCompleted();
+        expect(m.endCharacterQuests).toBeNull();
+        expect(m.endCharacterAction.characterLoadoutID).not.toBe(0);
+        expect(m.endCharacterSkills[0]).toHaveProperty('offlineExperience');
+        expect(m.endCharacterAbilities[0]).toHaveProperty('slotNumber');
+    });
+
+    test('new_battle lists players and monsters whole', () => {
+        const m = buildNewBattle();
+        expect(Object.keys(m).sort()).toEqual(
+            ['battleId', 'combatStartTime', 'monsters', 'players', 'type', 'wave'].sort()
+        );
+        const [player] = m.players;
+        // The kit, consumables, buffs and loot sit on the unit itself; combatDetails holds only stats.
+        expect(player.combatAbilities.length).toBeGreaterThan(0);
+        expect(player.combatDetails).not.toHaveProperty('combatAbilities');
+        expect(player.combatDetails).toHaveProperty('combatStats');
+        expect(Object.keys(player.combatBuffMap)[0]).toMatch(/^\/buff_uniques\//);
+        expect(Object.keys(player.totalLootMap)[0]).toContain(String(player.character.id));
+        expect(m.monsters.length).toBeGreaterThan(1);
+        // Monsters carry a zeroed character block and null player-only maps.
+        expect(m.monsters[0].character.id).toBe(0);
+        expect(m.monsters[0].combatConsumables).toBeNull();
+        expect(m.monsters[0].totalLootMap).toBeNull();
+    });
+
+    test('battle_updated is a delta keyed by unit index, and an empty mMap is real', () => {
+        for (let i = 0; i < BATTLE_UPDATED_SHAPES; i++) {
+            const m = buildBattleUpdated(i);
+            expect(m.battleId).toBe(buildNewBattle().battleId);
+            expect(Object.keys(m.pMap)).toEqual(['0']);
+            expect(m.pMap[0]).toEqual(expect.objectContaining({ cHP: expect.any(Number), cMP: expect.any(Number) }));
+        }
+        expect(buildBattleUpdated(1).mMap).toEqual({});
+        expect(Object.keys(buildBattleUpdated(0).mMap)).toEqual(['2']);
+    });
+
+    test('battle_consumable_ability_updated carries an ability object, not a bare hrid', () => {
+        const { ability } = buildBattleConsumableAbilityUpdated();
+        expect(Object.keys(ability).sort()).toEqual(['abilityHrid', 'availableTime', 'experience', 'level']);
+    });
+
+    test('items_updated rows are whole inventory rows', () => {
+        const [row] = buildItemsUpdated().endCharacterItems;
+        expect(Object.keys(row).sort()).toEqual(
+            [
+                'id',
+                'characterID',
+                'itemLocationHrid',
+                'itemHrid',
+                'enhancementLevel',
+                'count',
+                'offlineCount',
+                'hash',
+                'createdAt',
+                'updatedAt',
+            ].sort()
+        );
+    });
+
+    test('a listing is placed and cancelled with different timestamp precision', () => {
+        const [placed] = buildListingPlaced().endMarketListings;
+        const [cancelled] = buildListingCancelled().endMarketListings;
+        expect(placed.status).toBe('/market_listing_status/active');
+        expect(cancelled.status).toBe('/market_listing_status/cancelled');
+        expect(placed).toHaveProperty('characterID');
+        expect(placed.id).toBe(cancelled.id);
+        expect(placed.createdTimestamp).toMatch(/\.\d{9}Z$/);
+        expect(cancelled.createdTimestamp).toMatch(/\.\d{2}Z$/);
+    });
+
+    test('an order book is arrays indexed by enhancement level, and bids may be empty', () => {
+        const { marketItemOrderBooks: b } = buildOrderBooksUpdated();
+        expect(Object.keys(b).sort()).toEqual(
+            ['itemHrid', 'marketValues', 'orderBooks', 'priceBandMaxs', 'priceBandMins'].sort()
+        );
+        expect(Object.keys(b.orderBooks[0].asks[0]).sort()).toEqual(['listingId', 'price', 'quantity']);
+        expect(b.orderBooks[0].bids).toEqual([]);
     });
 
     test('a discarded task keeps its id and changes status', () => {

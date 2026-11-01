@@ -37,6 +37,8 @@ vi.mock('../../core/websocket.js', () => ({
 // The panel prices items through this, which drags in the market API and its socket
 vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: () => ({ price: null }) }));
 
+const { buildBattleConsumableAbilityUpdated } =
+    await import('../../__fixtures__/wire/battle-consumable-ability-updated.js');
 const manaTracker = (await import('./mana-tracker.js')).default;
 const { resetManaTally, manaSpend, abilityLabel } = await import('./mana-tracker.js');
 
@@ -67,12 +69,12 @@ describe('mana tracker wiring', () => {
     });
 
     test('a cast is costed from abilityDetailMap and tallied', () => {
-        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15, name: 'Fireball' };
+        game.abilityDetailMap['/abilities/entangle'] = { manaCost: 15, name: 'Entangle' };
         manaTracker.initialize();
 
         game.handlers['new_battle']();
-        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
-        game.handlers['battle_consumable_ability_updated']({ ability: { abilityHrid: '/abilities/fireball' } });
+        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/entangle' });
+        game.handlers['battle_consumable_ability_updated'](buildBattleConsumableAbilityUpdated(2));
 
         const summary = manaSpend();
         expect(summary.fights).toBe(1);
@@ -94,13 +96,12 @@ describe('mana tracker wiring', () => {
         // No new_battle ever fires for a trial being watched, so these casts
         // would add mana with no fight to divide it by — inflating
         // Mana/fight and every per-ability share
-        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15 };
+        game.abilityDetailMap['/abilities/entangle'] = { manaCost: 15 };
         manaTracker.initialize();
 
-        game.handlers['battle_consumable_ability_updated']({
-            ability: '/abilities/fireball',
-            isGuildBattle: true,
-        });
+        game.handlers['battle_consumable_ability_updated'](
+            buildBattleConsumableAbilityUpdated(0, { isGuildBattle: true })
+        );
 
         expect(manaSpend().abilities).toHaveLength(0);
         expect(manaSpend().mana).toBe(0);
@@ -127,10 +128,10 @@ describe('mana tracker wiring', () => {
         // for the same reason: a mid-run tally is only meaningful for the
         // character it was measured on, and carrying it across a switch mislabels
         // the arriving character's mana spend as including the departing one's.
-        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15 };
+        game.abilityDetailMap['/abilities/entangle'] = { manaCost: 15 };
         manaTracker.initialize();
         game.handlers['new_battle']();
-        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        game.handlers['battle_consumable_ability_updated'](buildBattleConsumableAbilityUpdated());
         expect(manaSpend().mana).toBe(15);
 
         game.dataManagerHandlers['character_switching']?.();
@@ -140,10 +141,10 @@ describe('mana tracker wiring', () => {
     });
 
     test('a switch made while disabled clears what the previous character left behind', () => {
-        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15 };
+        game.abilityDetailMap['/abilities/entangle'] = { manaCost: 15 };
         manaTracker.initialize();
         game.handlers['new_battle']();
-        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        game.handlers['battle_consumable_ability_updated'](buildBattleConsumableAbilityUpdated());
         manaTracker.cleanup();
 
         game.characterId = 'char2';
@@ -154,10 +155,10 @@ describe('mana tracker wiring', () => {
     });
 
     test('the same character re-enabling keeps the tally', () => {
-        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15 };
+        game.abilityDetailMap['/abilities/entangle'] = { manaCost: 15 };
         manaTracker.initialize();
         game.handlers['new_battle']();
-        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        game.handlers['battle_consumable_ability_updated'](buildBattleConsumableAbilityUpdated());
         manaTracker.cleanup();
 
         manaTracker.initialize();
@@ -167,10 +168,10 @@ describe('mana tracker wiring', () => {
     });
 
     test('resetManaTally starts the count over', () => {
-        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15 };
+        game.abilityDetailMap['/abilities/entangle'] = { manaCost: 15 };
         manaTracker.initialize();
         game.handlers['new_battle']();
-        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        game.handlers['battle_consumable_ability_updated'](buildBattleConsumableAbilityUpdated());
 
         resetManaTally();
 
@@ -185,8 +186,8 @@ describe('abilityLabel', () => {
     });
 
     test('uses the game-supplied name when the ability is known', () => {
-        game.abilityDetailMap['/abilities/fireball'] = { name: 'Fireball' };
-        expect(abilityLabel('/abilities/fireball')).toBe('Fireball');
+        game.abilityDetailMap['/abilities/entangle'] = { name: 'Entangle' };
+        expect(abilityLabel('/abilities/entangle')).toBe('Entangle');
     });
 
     test('falls back to a de-slugged hrid tail for an unknown ability', () => {
