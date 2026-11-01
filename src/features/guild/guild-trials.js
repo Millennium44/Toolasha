@@ -3544,6 +3544,17 @@ class GuildTrials {
      */
     _noteCurrentTrials(data, { source = 'socket', serverNow = null } = {}) {
         try {
+            if (source === 'socket') {
+                // A guild message landing mid character switch is the departing
+                // character's guild until the ids agree again; held, it would be
+                // filed into the arriving character's record
+                if (this.awaitingCharacter) this._resolveGuildName();
+                if (this.awaitingCharacter) return;
+                // …and one naming a guild other than the character's own is not this guild's
+                const sentFor = data?.guild?.id ?? null;
+                const own = dataManager.characterData?.guild?.id ?? null;
+                if (sentFor !== null && own !== null && String(sentFor) !== String(own)) return;
+            }
             const read = parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData);
             if (!read) return;
             const offsetMs = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
@@ -3630,6 +3641,13 @@ class GuildTrials {
             const id = data?.character?.id ?? null;
             const current = dataManager.getCurrentCharacterId?.() ?? this.characterId ?? null;
             if (id !== null && current !== null && String(id) !== String(current)) return;
+            // This character's guild states no trial: whatever is held is
+            // another guild's or another cycle's, and must not be filed here
+            if (data && !parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData)) {
+                this.currentTrials = null;
+                this.serverTierClears = null;
+                return;
+            }
             const serverNow = Date.parse(data?.currentTimestamp ?? '');
             this._noteCurrentTrials(data, {
                 source: 'init',

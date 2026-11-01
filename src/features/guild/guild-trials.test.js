@@ -1998,6 +1998,46 @@ describe('the panel, end to end', () => {
             expect(guildTrials.record.tiles).toEqual({});
         });
 
+        test('a late message for the departing character’s guild is never filed for the arriving one', async () => {
+            guildTrials._forgetCharacter(999);
+            // The guild just left sends one more update before the arriving character's data lands
+            hear(message(now));
+            expect(guildTrials.currentTrials).toBeNull();
+
+            // The arriving character's guild has no trial running
+            game.characterId = 999;
+            for (const handler of game.dmHandlers.character_initialized || []) {
+                handler({
+                    character: { id: 999 },
+                    currentTimestamp: new Date(now).toISOString(),
+                    guild: { name: 'Andromeda' },
+                });
+            }
+            await vi.advanceTimersByTimeAsync(10);
+            expect(guildTrials.currentTrials).toBeNull();
+            expect(guildTrials.record.tiles).toEqual({});
+            game.characterId = null;
+        });
+
+        test('a login payload with no trial data drops what was held', () => {
+            hear(message(now));
+            expect(guildTrials.currentTrials).not.toBeNull();
+            guildTrials._noteInitialTrials({
+                currentTimestamp: new Date(now).toISOString(),
+                guild: { name: 'Milky Way' },
+            });
+            expect(guildTrials.currentTrials).toBeNull();
+        });
+
+        test('a message naming another guild than the character’s own is not noted', () => {
+            game.characterData = { guild: { id: 'g-own', name: 'Milky Way' } };
+            const stray = message(now);
+            stray.guild.id = 'g-other';
+            hear(stray);
+            expect(guildTrials.currentTrials).toBeNull();
+            game.characterData = null;
+        });
+
         test('after a character switch the arriving character’s login payload is filed without another message', async () => {
             const loginPayload = {
                 character: { id: 999, name: 'Arriving' },
