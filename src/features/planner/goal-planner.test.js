@@ -1352,6 +1352,12 @@ describe('a skill target - costing a climb that spans levels', () => {
         expect(Math.abs(train.goldDelta - 5_400 * train.timeHours)).toBeLessThanOrEqual(oneCycle + 1e-6);
     });
 
+    test('sales counted without a market check carry a warning', () => {
+        const unchecked = rate({ goldPerHour: 54_000, saleUnmeasured: 'Expert Coffee Crate' });
+        expect(plan(10, [unchecked]).warnings.join(' ')).toMatch(/Expert Coffee Crate could not be checked/);
+        expect(plan(10, [rate({ goldPerHour: 54_000 })]).warnings.join(' ')).not.toMatch(/could not be checked/);
+    });
+
     test('an unknown margin stays unknown, never zero', () => {
         const result = plan(10, [rate({ goldPerHour: null, goldKnown: false })]);
         expect(step(result, 'train').goldDelta).toBe(0);

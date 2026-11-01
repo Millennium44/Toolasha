@@ -438,12 +438,24 @@ async function boundTrainingMargins(sales, trainingMargin, trainingSaleCap) {
                 proceeds += output.proceeds;
                 unsold += output.proceeds - Math.max(0, kept);
             }
+            // Volume figures landed for other items but not this one (a refused or cooling-down history
+            // pool): its sales were counted at full price, not checked. Said apart from a cap, because
+            // another measurement of the same action may later find the cap that this one could not.
+            const unmeasured = sale.outputs
+                .map((output) => byKey.get(`${sale.actionHrid}|${output.itemHrid}`))
+                .find((rate) => (rate?.limits || []).some((limit) => limit.kind === 'unmeasured'));
+            const unmeasuredName = unmeasured ? unmeasured.sells?.[0]?.name || unmeasured.sells?.[0]?.itemHrid : null;
             const margin = trainingMargin.get(sale.actionHrid);
-            if (unsold > 0 && typeof margin === 'number') {
-                trainingMargin.set(sale.actionHrid, margin - unsold);
+            const capped = unsold > 0 && typeof margin === 'number';
+            if (capped) trainingMargin.set(sale.actionHrid, margin - unsold);
+            if (capped || unmeasuredName) {
                 // The hourly cap does not grow when efficiency shortens a climb, so the planner needs it
                 // apart from the per-completion margin: see planSkillGoal
-                trainingSaleCap.set(sale.actionHrid, { proceedsPerHour: proceeds, capPerHour: proceeds - unsold });
+                trainingSaleCap.set(sale.actionHrid, {
+                    proceedsPerHour: capped ? proceeds : 0,
+                    capPerHour: capped ? proceeds - unsold : 0,
+                    ...(unmeasuredName ? { unmeasured: unmeasuredName } : {}),
+                });
             }
         }
     } catch (error) {
@@ -720,11 +732,15 @@ function measureXpRates(
                 upfrontCost: measuredType ? (upfrontByAction.get(hrid) ?? 0) : 0,
                 // Set only when the book limits the sales: goldPerHour already has the cap applied (at the
                 // starting pace), these let a climb that speeds up keep the cap at its hourly figure
-                ...(measuredType && saleCapByAction.get(hrid)
+                ...(measuredType && saleCapByAction.get(hrid)?.proceedsPerHour > 0
                     ? {
                           saleProceedsPerHour: saleCapByAction.get(hrid).proceedsPerHour,
                           saleCapPerHour: saleCapByAction.get(hrid).capPerHour,
                       }
+                    : {}),
+                // Set when the book's volume for what it sells was not measured: its sales are at full price
+                ...(measuredType && saleCapByAction.get(hrid)?.unmeasured
+                    ? { saleUnmeasured: saleCapByAction.get(hrid).unmeasured }
                     : {}),
                 goldKnown: !measuredType || Number.isFinite(goldByAction.get(hrid)),
             });

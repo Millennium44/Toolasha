@@ -77,7 +77,7 @@ vi.mock('../alchemy/alchemy-rankings.js', () => ({
     },
 }));
 vi.mock('./combat-rates.js', () => ({ loadCombatRates: async () => rates.combat }));
-const liquidity = vi.hoisted(() => ({ measured: true, throttle: {} }));
+const liquidity = vi.hoisted(() => ({ measured: true, throttle: {}, unmeasured: {} }));
 // Bounding rates by market volume reaches a third-party history server, and what
 // this file is about is which rates get ranked, not how fast they sell. The
 // liquidity bound has its own tests; here it passes everything through and says
@@ -87,7 +87,11 @@ vi.mock('./market-liquidity.js', () => ({
     applyLiquidityLimits: async (rates) => ({
         rates: rates.map((rate) => {
             const share = Math.min(1, ...(rate.sells || []).map((sold) => liquidity.throttle[sold.itemHrid] ?? 1));
-            return share < 1 ? { ...rate, goldPerHour: rate.goldPerHour * share } : rate;
+            const bounded = share < 1 ? { ...rate, goldPerHour: rate.goldPerHour * share } : rate;
+            // The real module marks a rate whose output went unmeasured while others were
+            return (rate.sells || []).some((sold) => liquidity.unmeasured[sold.itemHrid])
+                ? { ...bounded, limits: [{ kind: 'unmeasured', note: 'market volume not measured' }] }
+                : bounded;
         }),
         measured: liquidity.measured,
     }),
@@ -182,6 +186,7 @@ beforeEach(() => {
     reservations.calls = [];
     liquidity.measured = true;
     liquidity.throttle = {};
+    liquidity.unmeasured = {};
     game.actionDetailMap = {
         '/actions/milking/cow': {
             type: '/action_types/milking',
@@ -822,6 +827,24 @@ describe('training margins are held to what the market absorbs', () => {
         liquidity.throttle = {};
         const [open] = (await buildPlannerContext()).xpRates('/skills/cooking');
         expect(open.saleCapPerHour).toBeUndefined();
+    });
+
+    test('an output whose volume was not measured is flagged on the rate, not silently counted as free of a cap', async () => {
+        rates.production = { '/actions/cooking/stew': stew };
+        liquidity.unmeasured['/items/stew'] = true;
+
+        const context = await buildPlannerContext();
+        const [quick] = context.xpRates('/skills/cooking');
+        expect(quick.goldPerHour).toBe(56_000);
+        expect(quick.saleUnmeasured).toBeTruthy();
+        expect(quick.saleCapPerHour).toBeUndefined();
+
+        // The same action measured when the pool answers is capped, and carries no flag
+        delete liquidity.unmeasured['/items/stew'];
+        liquidity.throttle['/items/stew'] = 0.25;
+        const [route] = await (await buildPlannerContext()).routeRates('/skills/cooking');
+        expect(route.saleUnmeasured).toBeUndefined();
+        expect(route.saleCapPerHour).toBe(24_000);
     });
 
     test('the training step and its funding follow the capped margin', async () => {
