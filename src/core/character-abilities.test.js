@@ -126,8 +126,8 @@ describe('experience ticks', () => {
 describe('the kit a battle reports', () => {
     const battle = {
         players: [
-            { character: { id: 1, name: 'Me' }, combatDetails: { combatAbilities: kit(['/abilities/cleave', 1]) } },
-            { character: { id: 2, name: 'Them' }, combatDetails: { combatAbilities: kit(['/abilities/smack', 1]) } },
+            { character: { id: 1, name: 'Me' }, combatAbilities: kit(['/abilities/cleave', 1]) },
+            { character: { id: 2, name: 'Them' }, combatAbilities: kit(['/abilities/smack', 1]) },
         ],
     };
 

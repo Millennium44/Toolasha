@@ -423,16 +423,15 @@ describe('equipped abilities through a labyrinth run', () => {
             players: [
                 {
                     character: { id: 'char-1', name: 'Tester' },
-                    combatDetails: {
-                        combatAbilities: [
-                            { abilityHrid: '/abilities/aura', slotNumber: 1, level: 10 },
-                            { abilityHrid: '/abilities/smack', slotNumber: 2, level: 3 },
-                        ],
-                    },
+                    // Real shape: the kit sits on the player, not under combatDetails
+                    combatAbilities: [
+                        { abilityHrid: '/abilities/aura', slotNumber: 1, level: 10 },
+                        { abilityHrid: '/abilities/smack', slotNumber: 2, level: 3 },
+                    ],
                 },
                 {
                     character: { id: 'char-9', name: 'Somebody Else' },
-                    combatDetails: { combatAbilities: [{ abilityHrid: '/abilities/impale', slotNumber: 1 }] },
+                    combatAbilities: [{ abilityHrid: '/abilities/impale', slotNumber: 1 }],
                 },
             ],
         });
