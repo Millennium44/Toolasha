@@ -12,8 +12,9 @@
  * …" for as long as the player was willing to sit and stare at it. They are
  * written down instead, keyed by guild name — following the `guildXP_<name>`
  * precedent in `guild-xp-tracker.js`, because trial state belongs to the guild
- * and not to whichever alt happened to look at it — and thrown away when the
- * week rolls over, since last week's trials are a different ladder.
+ * and not to whichever alt happened to look at it — and put into the history
+ * when the week rolls over, since last week's trials are a different ladder
+ * (see `rollRecordToWeek`).
  *
  * ## Building bonuses
  *
@@ -338,6 +339,47 @@ export const MAX_ARCHIVED_CYCLES = 4;
 
 /** The reason stamped on tiles archived by {@link archiveEarlierCycles} */
 const EARLIER_CYCLE_REASON = 'an earlier cycle of this week';
+
+/** The reason stamped on a week's tiles archived by {@link rollRecordToWeek} */
+export const WEEK_ROLLOVER_REASON = 'the week rolled over';
+
+/**
+ * Start a later week's record from an earlier week's, keeping the earlier week.
+ *
+ * Every rollover path — the panel's render, the guild payload's filing, a load
+ * of last week's stored record, and a merge of two records from different weeks
+ * — used to replace the earlier week with an empty record, history and all, so
+ * a guild's own finished week was never archived and "Past weeks" only ever
+ * showed another guild's cycles or a test-server earlier cycle. The week's tiles
+ * now go into `history` through {@link archiveCycle}, under one reason and
+ * stamped as archived the moment the week rolled: two tabs or devices rolling
+ * the same week write the same entry, and the archive's own rule keeps the copy
+ * that states more of it. The history cap ({@link MAX_ARCHIVED_CYCLES}) holds.
+ *
+ * The test server's earlier-cycle stamp (`cycleStart`) is the earlier week's
+ * and is not carried.
+ *
+ * @param {Object} record - A record of an earlier week (not mutated)
+ * @param {number} weekStart - The week to start, in ms
+ * @param {Object} [options] - Context
+ * @param {string|null} [options.guildId] - Provenance for a record that has none
+ * @param {string|null} [options.guildName] - Provenance for a record that has none
+ * @param {Object|null} [options.accuracy] - The week's attribution accuracy, see {@link archiveCycle}
+ * @returns {Object} The new week's record; the same object when it is not an earlier week's
+ */
+export function rollRecordToWeek(record, weekStart, { guildId = null, guildName = null, accuracy = null } = {}) {
+    if (!record || !Number.isFinite(record.weekStart) || !Number.isFinite(weekStart) || record.weekStart >= weekStart) {
+        return record;
+    }
+    const archived = archiveCycle(record, WEEK_ROLLOVER_REASON, weekStart, { accuracy });
+    return {
+        weekStart,
+        tiles: {},
+        guildId: record.guildId ?? guildId ?? null,
+        guildName: record.guildName ?? guildName ?? null,
+        history: archived.history,
+    };
+}
 
 /**
  * How far before an hour's stated start a stamp may sit and still be that
@@ -1105,14 +1147,34 @@ export function mergeTrialRecords(base, incoming) {
     });
     if (baseWeek === null) return incoming ? whole(incoming) : emptyRecord(0);
     if (incomingWeek === null) return whole(base);
-    if (baseWeek !== incomingWeek) return whole(baseWeek > incomingWeek ? base : incoming);
+    if (baseWeek !== incomingWeek) {
+        // The earlier week is archived onto the later one rather than dropped:
+        // a stale tab's or another device's copy of last week is that week's
+        // result, and the later side may never have seen it
+        const week = Math.max(baseWeek, incomingWeek);
+        return mergeTrialRecords(rollRecordToWeek(base, week), rollRecordToWeek(incoming, week));
+    }
 
     // Archived cycles unioned, not concatenated: both sides usually hold the
-    // same cycles, and doubling them up would push the oldest past the cap
+    // same cycles, and doubling them up would push the oldest past the cap. One
+    // entry per week, reason and cycle, as `archiveCycle` keeps them — the copy
+    // that states more wins — so two sides archiving the same week at different
+    // moments are one archive, not two
     const history = [];
     const seenCycles = new Set();
     for (const cycle of [...(base.history || []), ...(incoming.history || [])]) {
         if (!cycle) continue;
+        if (Number.isFinite(cycle.weekStart)) {
+            const same = history.findIndex(
+                (held) =>
+                    held.weekStart === cycle.weekStart &&
+                    held.reason === cycle.reason &&
+                    (held.cycleFrom ?? null) === (cycle.cycleFrom ?? null)
+            );
+            if (same === -1) history.push(cycle);
+            else if (!statesAsMuch(history[same], cycle)) history[same] = cycle;
+            continue;
+        }
         const mark = `${cycle.archivedAt ?? ''}:${cycle.weekStart ?? ''}:${cycle.reason ?? ''}:${cycle.cycleFrom ?? ''}`;
         if (seenCycles.has(mark)) continue;
         seenCycles.add(mark);
@@ -1220,8 +1282,11 @@ export function mergeTrialRecords(base, incoming) {
     // own clear stamp, and a trial filed off the guild payload alone has no bar
     // sample to be kept by. Only what is stamped since the archive stays, so a
     // stale copy that heard the statement keeps none of its archived readings.
+    // An archive of another week is another week's trials, never a stale copy
+    // of this one's: the same trial runs under the same key every week
     const newestSample = (tile) => tile?.samples?.[tile.samples.length - 1]?.t ?? 0;
     for (const cycle of provenance.history) {
+        if (Number.isFinite(cycle?.weekStart) && cycle.weekStart !== baseWeek) continue;
         const newestOf = Number.isFinite(cycle?.cycleFrom) ? newestTileStamp : newestSample;
         for (const [key, archived] of Object.entries(cycle?.tiles || {})) {
             if (!tiles[key] || newestOf(tiles[key]) > newestOf(archived)) continue;
@@ -1256,7 +1321,7 @@ registerSyncMerge({
 });
 
 /**
- * Read a guild's record, discarding one from a previous week.
+ * Read a guild's record, archiving one from a previous week into this week's history.
  *
  * "Absent" and "unreadable" are different answers. No record, or last week's,
  * is a fresh week and says so; a read that could not be made (the connection
@@ -1281,15 +1346,18 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
         const record = probe.found ? probe.value : null;
         if (!record || typeof record !== 'object') return fresh();
 
-        // A record from a previous week is last week's ladder, not this one's
-        if (record.weekStart !== weekStart) return fresh();
-
         // A record that names another guild cannot be this guild's, whatever key
         // it was filed under — which is exactly how the reported one survived
         if (recordProvenance(record, { guildId, guildName }) === 'foreign') {
             console.warn('[GuildTrialsStore] Discarding a trial record belonging to another guild');
             return fresh();
         }
+
+        // A record from a previous week is last week's ladder, not this one's —
+        // but it is last week's result, and goes into the history on the way
+        // (see `rollRecordToWeek` below). One with no week, or a later one, is
+        // nothing this week can use
+        if (!Number.isFinite(record.weekStart) || record.weekStart > weekStart) return fresh();
 
         // Self-heal on the way in. What is already stored was written by an
         // older build with a looser card filter, and a filter fixed today does
@@ -1324,7 +1392,8 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             // lose tiles a merge would bring straight back
             await saveTrialRecord(guildName, adopted.record, characterId, { guildId, overwrite: true });
         }
-        return adopted.record;
+        // Not written here: the next save merges the stored copy, which rolls it the same way
+        return rollRecordToWeek(adopted.record, weekStart, { guildId, guildName });
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial samples:', error);
         return null;

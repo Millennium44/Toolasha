@@ -2016,6 +2016,88 @@ describe('the panel, end to end', () => {
             expect(game.store[KEY].tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
         });
 
+        describe('a live week rolling over', () => {
+            const WEEK = 7 * 24 * 60 * 60_000;
+            /** Last week as this tab left it: a Badger card read, Alchemy filed off the payload alone */
+            const lastWeeksRecord = (weekStart) => ({
+                ...emptyRecord(weekStart, { guildName: 'Milky Way' }),
+                tiles: {
+                    'combat::trial badger': {
+                        name: 'Trial Badger',
+                        kind: 'combat',
+                        level: 150,
+                        tier: 6,
+                        points: 2240,
+                        pointsByTier: { 6: 2240 },
+                        samples: [{ t: weekStart + 60_000, readings: [{ current: 5, max: 10 }] }],
+                        tiers: [],
+                    },
+                    'skilling::alchemy': {
+                        name: 'Alchemy',
+                        kind: 'skilling',
+                        samples: [],
+                        tiers: [],
+                        pointsByTier: {},
+                        tierSeenAt: {},
+                        serverTier: 9,
+                        serverTierAt: weekStart + 120_000,
+                        serverDone: true,
+                    },
+                },
+            });
+
+            test('with the tab shut, the finished week is archived and shows in Past weeks', async () => {
+                guildTrials.record = lastWeeksRecord(trialWeekStart(now) - WEEK);
+                hear(message(now));
+                await vi.advanceTimersByTimeAsync(10);
+
+                expect(guildTrials.record.weekStart).toBe(trialWeekStart(now));
+                const [archived] = guildTrials.record.history;
+                expect(archived).toMatchObject({
+                    reason: 'the week rolled over',
+                    weekStart: trialWeekStart(now) - WEEK,
+                });
+                // This week's trials start on their own tiles
+                expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+                expect(guildTrials.record.tiles['combat::trial badger']).toBeUndefined();
+
+                const [summary] = guildTrials._pastWeekSummaries(now);
+                expect(summary).toMatchObject({ when: 'last week', combatTier: 6, skillingTier: 9 });
+                expect(game.store[KEY].history).toHaveLength(1);
+            });
+
+            test('with the tab open, the render rolls the week the same way, once', async () => {
+                guildTrials.record = lastWeeksRecord(trialWeekStart(now) - WEEK);
+                buildTrialsTabFor('Alchemy', 120, 300);
+                fire();
+                vi.setSystemTime(now + 5_000);
+                fire();
+                await vi.advanceTimersByTimeAsync(10);
+
+                expect(guildTrials.record.history).toHaveLength(1);
+                expect(guildTrials.record.history[0].reason).toBe('the week rolled over');
+                expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ tier: 3 });
+                expect(game.store[KEY].history).toHaveLength(1);
+            });
+
+            test('a payload of an hour that began before the rollover is filed into the archived week', async () => {
+                const weekStart = trialWeekStart(now);
+                // Five minutes into the new week, from an hour that began fifteen minutes before it
+                vi.setSystemTime(weekStart + 5 * 60_000);
+                guildTrials.record = lastWeeksRecord(weekStart - WEEK);
+                hear(
+                    message(weekStart + 5 * 60_000, (payload) => {
+                        payload.skilling.parties['/guild_skilling/alchemy'].highestTier = 11;
+                    })
+                );
+                await vi.advanceTimersByTimeAsync(10);
+
+                expect(guildTrials.record.weekStart).toBe(weekStart);
+                expect(guildTrials.record.tiles).toEqual({});
+                expect(guildTrials.record.history[0].tiles['skilling::alchemy']).toMatchObject({ serverTier: 11 });
+            });
+        });
+
         test('on the test server, an earlier cycle is put away and keeps its server tier, tab shut', async () => {
             game.testServer = true;
             const earlier = now - 3 * 60 * 60_000;

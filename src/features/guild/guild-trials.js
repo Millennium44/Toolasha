@@ -186,6 +186,7 @@ import {
 import {
     archiveCycle,
     archiveEarlierCycles,
+    WEEK_ROLLOVER_REASON,
     trialHourStartedAt,
     emptyRecord,
     loadTrialRecord,
@@ -196,6 +197,7 @@ import {
     recordProvenance,
     recordServerTiers,
     recordTileSample,
+    rollRecordToWeek,
     saveTrialRecord,
     saveWorkBases,
     scrubWaveObservations,
@@ -3769,6 +3771,95 @@ class GuildTrials {
     }
 
     /**
+     * Start this week's record if the one in hand is another week's.
+     *
+     * The finished week is archived into the history ({@link rollRecordToWeek})
+     * rather than dropped, which is what "Past weeks" is drawn from. A record
+     * naming another guild is not this guild's week and is dropped as before;
+     * one from a later week (a clock set back) is not archived either.
+     *
+     * @param {number} now - Clock
+     * @returns {boolean} Whether a finished week was archived (a fresh record started over nothing, or over
+     *   another guild's, is not worth a save of its own)
+     */
+    _rollWeek(now) {
+        const weekStart = trialWeekStart(now);
+        if (this.record && this.record.weekStart === weekStart) return false;
+        const context = { guildId: this._guildId(), guildName: this.guildName };
+        const record = this.record;
+        if (
+            !record ||
+            !Number.isFinite(record.weekStart) ||
+            record.weekStart > weekStart ||
+            recordProvenance(record, context) === 'foreign'
+        ) {
+            this.record = emptyRecord(weekStart, context);
+            return false;
+        }
+        this.record = rollRecordToWeek(record, weekStart, {
+            ...context,
+            accuracy: guildTrialDamage.accuracySummary?.({ trace: guildTrialTrace.status?.() ?? null }) || null,
+        });
+        this.blockHtml.clear();
+        return true;
+    }
+
+    /**
+     * The trial week the guild payload's running hours belong to.
+     *
+     * The week the earliest hour in progress started in, so a trial that
+     * straddles the Friday 00:00 UTC rollover stays with the week it started
+     * in. The start is placed through the clock offset when one is known, and
+     * on the server's clock otherwise (seconds out, which no week boundary
+     * minds).
+     *
+     * @param {number} now - Clock
+     * @returns {number|null} Week start, ms; null when no hour in progress states a start
+     */
+    _payloadWeek(now) {
+        const held = this.currentTrials;
+        if (!held || !Number.isFinite(held.at) || now - held.at > TRIAL_ACTIVE_MS) return null;
+        const offset = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
+        const starts = [held.skilling, held.combat]
+            .map((entry) => trialHourStartedAt(entry, offset))
+            .filter((start) => Number.isFinite(start));
+        return starts.length ? trialWeekStart(Math.min(...starts)) : null;
+    }
+
+    /**
+     * File the guild payload into the week its trials belong to.
+     *
+     * This week's record, as a rule. A payload whose hour began in the week
+     * before — the last hour of a cycle running past the rollover — is filed
+     * into that week's archived tiles instead, so the archive carries the
+     * finished result and the new week does not start with last week's trial.
+     *
+     * @param {Object} record - The week's record
+     * @param {number} now - Clock
+     * @returns {Object} The record, the same object when nothing was written
+     */
+    _fileIntoPayloadWeek(record, now) {
+        const week = this._payloadWeek(now);
+        if (!record || week === null || week === record.weekStart) return this._recordServerTiers(record, now);
+        if (week > record.weekStart) return record;
+
+        const history = Array.isArray(record.history) ? record.history : [];
+        const index = history.findIndex(
+            (cycle) =>
+                cycle?.weekStart === week &&
+                cycle?.reason === WEEK_ROLLOVER_REASON &&
+                !Number.isFinite(cycle?.cycleFrom)
+        );
+        if (index === -1) return record;
+        const archived = { weekStart: week, tiles: history[index].tiles || {} };
+        const filed = this._recordServerTiers(archived, now);
+        if (filed === archived) return record;
+        const next = [...history];
+        next[index] = { ...history[index], tiles: filed.tiles };
+        return { ...record, history: next };
+    }
+
+    /**
      * File the guild payload's trials into the record, whatever tab is open.
      *
      * Every other record write is `_render`'s, which returns early unless a
@@ -3803,19 +3894,18 @@ class GuildTrials {
             const provenance = recordProvenance(this.record, { guildId: this._guildId(), guildName: this.guildName });
             if (provenance === 'foreign') return false;
 
-            const weekStart = trialWeekStart(now);
-            if (this.record.weekStart !== weekStart) {
-                // The week rolled over with the tab shut: `_render` starts the
-                // new week's record the same way
-                this.record = emptyRecord(weekStart, { guildId: this._guildId(), guildName: this.guildName });
-            }
+            // The week rolled over with the tab shut: the same roll `_render` makes
+            const rolled = this._rollWeek(now);
 
             const before = this.record;
             // Saves on its own when it archives
             this._archiveEarlierCycles(now);
-            const archived = this.record !== before;
-            const filed = this._recordServerTiers(this.record, now);
-            if (filed === this.record) return archived;
+            const archived = rolled || this.record !== before;
+            const filed = this._fileIntoPayloadWeek(this.record, now);
+            if (filed === this.record) {
+                if (rolled) this._persistRecord();
+                return archived;
+            }
             this.record = filed;
             this._publishTrialNames();
             this._persistRecord();
@@ -3943,12 +4033,9 @@ class GuildTrials {
             if (!config.getSetting('guildTrialsInfo', true)) return;
 
             const now = Date.now();
-            const weekStart = trialWeekStart(now);
-            if (!this.record || this.record.weekStart !== weekStart) {
-                // A week's roll-over is a different ladder; the record for it
-                // starts empty and stamped with whose it is
-                this.record = emptyRecord(weekStart, { guildId: this._guildId(), guildName: this.guildName });
-            }
+            // A week's roll-over is a different ladder; the record for it starts
+            // empty and stamped with whose it is, the finished week archived
+            if (this._rollWeek(now) && !this._suppressSave) this._persistRecord();
 
             // Every card on either tab, bar or no bar. A Trials card carries the
             // tier, the points and the sign-ups; the In Progress card carries the
@@ -4124,7 +4211,7 @@ class GuildTrials {
             // Every trial the guild payload states, on screen or not — a mates'
             // trial has no card on the In Progress tab, and its clears arrived
             // while the panel was shut
-            this.record = this._recordServerTiers(this.record, now);
+            this.record = this._fileIntoPayloadWeek(this.record, now);
             // Persisted at the sampling cadence, never the render cadence: the
             // observer fires on every React burst and this used to write the
             // full record — hundreds of samples per tile — to IndexedDB on
@@ -5391,7 +5478,8 @@ class GuildTrials {
             `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
                 'title="The last few finished cycles, kept when the week rolled over. Newest first. ' +
                 '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
-                'Token figures are derived from today’s building bonuses, which is what the ~ marks.">' +
+                'Token figures, and points priced from a tier the guild stated rather than a card, are ' +
+                'derived from today’s building bonuses, which is what the ~ marks.">' +
                 'Past weeks</div>',
         ];
         for (const summary of summaries) {
