@@ -1321,9 +1321,14 @@ class EstimatedListingAge {
                     // drops are moved into the archive before the write below. The
                     // tombstones again too: memory can hold a row another tab or a
                     // pull deleted, and the write below is memory
-                    const merged = await this._retire(
-                        applyListingGraves(this._mergeListings(personal, this.knownListings), this.listingGraves),
-                        owner
+                    // The tombstones are applied once more to what the move hands back: it folds memory back in
+                    // (rows recorded while the archive was written), and memory is exactly where a buried row sits
+                    const merged = applyListingGraves(
+                        await this._retire(
+                            applyListingGraves(this._mergeListings(personal, this.knownListings), this.listingGraves),
+                            owner
+                        ),
+                        this.listingGraves
                     );
                     if (!this._ownsMemory(owner)) return false;
                     // By ids, not length: a fold can bury one held row and add one stored row

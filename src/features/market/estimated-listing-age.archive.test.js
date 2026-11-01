@@ -382,6 +382,20 @@ describe('retention moves rows into the archive instead of dropping them', () =>
         expect(ids(store().get(LOG_KEY))).toEqual([SAMPLE[0].id, RECENT.id]);
     });
 
+    test('a save that moves rows still leaves out a row the tombstones bury, though memory holds it', async () => {
+        const buried = recentRow(190000005, 2);
+        store().set(LOG_KEY, copies([SAMPLE[0], RECENT]));
+        // Memory holds a row another tab or a pull deleted; the tombstone for it has arrived
+        estimatedListingAge.knownListings = copies([SAMPLE[0], RECENT, buried]);
+        estimatedListingAge.listingGraves = { removed: { [buried.id]: Date.now() }, clearedThrough: 0 };
+
+        await estimatedListingAge.saveHistoricalData();
+
+        expect(ids(store().get(LOG_KEY))).toEqual([RECENT.id]);
+        expect(ids(estimatedListingAge.knownListings)).toEqual([RECENT.id]);
+        expect(await archivedNow()).toEqual([SAMPLE[0].id]);
+    });
+
     test('the save that follows a listing batch moves the rows its fold retires', async () => {
         await seedLog([SAMPLE[0], SAMPLE[1]]);
         // Both are still in the log: nothing newer yet
