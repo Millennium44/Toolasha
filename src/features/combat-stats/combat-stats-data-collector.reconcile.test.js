@@ -218,6 +218,16 @@ describe('the first battle after load', () => {
     });
 });
 
+describe('a guild trial consumable event', () => {
+    test('is not counted as the player’s own consumption', async () => {
+        await warmUp((battleId) => battle({ battleId, self: [slot(GUMMY, 1000)] }));
+        await collector.onConsumableUsed({ ...used(GUMMY, 999), isGuildBattle: true });
+
+        expect(self().actualConsumed[GUMMY]).toBeUndefined();
+        expect(self().lastEventByItem[GUMMY]).toBeUndefined();
+    });
+});
+
 describe('a normal tick', () => {
     test('events count the uses and a matching snapshot adds nothing', async () => {
         await collector.onNewBattle(battle({ self: [slot(GUMMY, 1000)] }));
