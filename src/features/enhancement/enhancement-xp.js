@@ -311,15 +311,21 @@ export function getEnhancingSpeedBreakdown(itemHrid) {
  * @param {number} startLevel - Starting enhancement level
  * @param {number} targetLevel - Target enhancement level
  * @param {number} protectFrom - Level to start using protection
+ * @param {Object} [options]
+ * @param {{equipment: Map, drinks: Array}|null} [options.actionContext=null] - Gear and drinks to
+ *   predict with (a queued row's loadout); the per-skill default pick when omitted
+ * @param {boolean} [options.timeFromContext=false] - Time the attempts from the context's own
+ *   detected speed rather than the live buff maps (set when the context is not the worn gear)
  * @returns {Object|null} Prediction data or null if cannot calculate
  */
-export function calculateEnhancementPredictions(itemHrid, startLevel, targetLevel, protectFrom) {
+export function calculateEnhancementPredictions(itemHrid, startLevel, targetLevel, protectFrom, options = {}) {
+    const { actionContext = null, timeFromContext = false } = options;
     try {
         // Get item level
         const itemLevel = getBaseItemLevel(itemHrid);
 
         // Use getEnhancingParams() for all character stats (level, speed, success, teas, etc.)
-        const params = getEnhancingParams();
+        const params = getEnhancingParams({ actionContext });
 
         // Check for blessed tea
         const hasBlessed = params.teas?.blessed || false;
@@ -327,7 +333,10 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
         // Per-action time from the game's buff maps (authoritative source), handed to the
         // calculator as an override so the prediction and anything reading result.totalTime
         // later work off one time base instead of two that can disagree.
-        const perActionTime = getEnhancingActionTime(itemHrid);
+        // The buff maps describe the gear worn now. A context that is a different loadout times
+        // the action from its own detected speed instead (0 leaves the calculator's own figure);
+        // typed-in manual parameters have no detected gear to time from, so they keep the maps.
+        const perActionTime = timeFromContext && params.paramsSource === 'auto' ? 0 : getEnhancingActionTime(itemHrid);
 
         const calculation = {
             enhancingLevel: params.enhancingLevel,

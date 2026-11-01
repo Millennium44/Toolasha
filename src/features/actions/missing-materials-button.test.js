@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
     // What `calculateMaterialRequirements` hands back to the click handlers —
     // a test sets this before driving `openMissingMaterials`.
     actionMaterials: [],
+    calcCalls: [],
     autofill: {
         initialize: vi.fn(),
         cleanup: vi.fn(),
@@ -79,7 +80,10 @@ vi.mock('../../utils/action-panel-helper.js', () => ({
     }),
 }));
 vi.mock('../../utils/material-calculator.js', () => ({
-    calculateMaterialRequirements: () => state.actionMaterials,
+    calculateMaterialRequirements: (...args) => {
+        state.calcCalls.push(args);
+        return state.actionMaterials;
+    },
     calculateEnhancementMaterialRequirements: (...args) => {
         state.enhancementCalls.push(args);
         return state.enhancementMaterials;
@@ -643,6 +647,7 @@ function buildMarketplaceDom() {
  */
 describe('the marketplace clear-all control', () => {
     beforeEach(() => {
+        state.calcCalls = [];
         state.autofill.setPendingCalculation.mockClear();
         state.autofill.clearQuantity.mockClear();
         state.wsOn.mockClear();
@@ -750,22 +755,25 @@ describe('the marketplace clear-all control', () => {
         // A +10 in the bag is not stock against a +12, and the +0 order book is
         // not where a +12 is bought
         state.inventory = [{ itemHrid: '/items/furious_spear', enhancementLevel: 10, count: 1 }];
+        // What the calculator answers at +12: the +10 is not stock against it
         state.actionMaterials = [
             { itemHrid: '/items/shard', itemName: 'Shard', missing: 267, required: 267, isTradeable: true },
             {
                 itemHrid: '/items/furious_spear',
                 itemName: 'Furious Spear',
-                missing: 0,
+                missing: 1,
                 required: 1,
-                have: 1,
+                have: 0,
                 queued: 0,
-                available: 1,
+                available: 0,
                 isTradeable: true,
                 isUpgradeItem: true,
+                enhancementLevel: 12,
             },
         ];
 
         await openMissingMaterials('/actions/refine', 1, { upgradeItemLevel: 12 });
+        expect(state.calcCalls.at(-1)[3]).toMatchObject({ upgradeItemLevel: 12 });
 
         const spearTab = container.querySelector('[data-item-hrid="/items/furious_spear"]');
         // The +10 stopped counting, so the line is short again
@@ -773,6 +781,33 @@ describe('the marketplace clear-all control', () => {
         spearTab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
         expect(handleGoToMarketplace).toHaveBeenCalledWith('/items/furious_spear', 12);
+    });
+
+    test('a levelled line keeps the queue deduction the calculator applied', async () => {
+        const { container } = buildMarketplaceDom();
+        state.items = { '/items/furious_spear': { name: 'Furious Spear', isTradable: true } };
+        // The one +12 is already spoken for by a queued craft; the calculator says 1 is missing
+        state.inventory = [{ itemHrid: '/items/furious_spear', enhancementLevel: 12, count: 1 }];
+        state.actionMaterials = [
+            {
+                itemHrid: '/items/furious_spear',
+                itemName: 'Furious Spear',
+                missing: 1,
+                required: 1,
+                have: 1,
+                queued: 1,
+                available: 0,
+                isTradeable: true,
+                isUpgradeItem: true,
+                enhancementLevel: 12,
+            },
+        ];
+
+        await openMissingMaterials('/actions/refine', 1, { upgradeItemLevel: 12 });
+
+        expect(
+            container.querySelector('[data-item-hrid="/items/furious_spear"]').getAttribute('data-missing-quantity')
+        ).toBe('1');
     });
 
     test('a copy already at the level is stock, and the consumables are untouched by it', async () => {
@@ -787,13 +822,14 @@ describe('the marketplace clear-all control', () => {
             {
                 itemHrid: '/items/furious_spear',
                 itemName: 'Furious Spear',
-                missing: 1,
+                missing: 0,
                 required: 1,
-                have: 0,
+                have: 1,
                 queued: 0,
-                available: 0,
+                available: 1,
                 isTradeable: true,
                 isUpgradeItem: true,
+                enhancementLevel: 12,
             },
         ];
 

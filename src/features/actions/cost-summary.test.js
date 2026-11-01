@@ -11,7 +11,10 @@ import { describe, test, expect, vi } from 'vitest';
 const prices = vi.hoisted(() => ({ byHrid: {} }));
 
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => (hrid in prices.byHrid ? prices.byHrid[hrid] : null),
+    getItemPrice: (hrid, options = {}) => {
+        const key = options.enhancementLevel > 0 ? `${hrid}@${options.enhancementLevel}` : hrid;
+        return key in prices.byHrid ? prices.byHrid[key] : null;
+    },
     formatPrice: (value) => String(value),
 }));
 
@@ -33,6 +36,15 @@ function material(overrides = {}) {
 }
 
 describe('computeDirectCosts', () => {
+    test('a levelled upgrade line is priced at its own level, and unpriced there is flagged', () => {
+        prices.byHrid = { '/items/staff': 10, '/items/staff@3': 500 };
+        const line = material({ itemHrid: '/items/staff', required: 1, missing: 1, enhancementLevel: 3 });
+        expect(computeDirectCosts([line])).toMatchObject({ directCost: 500, missingCost: 500 });
+
+        prices.byHrid = { '/items/staff': 10 };
+        expect(computeDirectCosts([line])).toMatchObject({ directComplete: false, missingComplete: false });
+    });
+
     test('prices an ordinary tradeable material at its buy-side quote', () => {
         prices.byHrid = { '/items/wood': 50 };
 

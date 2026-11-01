@@ -14,6 +14,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { onDetailPanel, resolveDetailPanel } from '../../utils/action-panel-helper.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { release, reserve } from '../../utils/inventory-reservations.js';
+import { upgradeLevelForPanel } from '../../utils/upgrade-slot.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const PRODUCTION_TYPES = [
@@ -63,9 +64,10 @@ function findActionInput(panel) {
  * Binary search for maximum actions producible within budget.
  * @param {string} actionHrid
  * @param {number} budget
+ * @param {number|null} [upgradeItemLevel=0] - Level of the stack the panel's upgrade slot shows (null: empty slot)
  * @returns {{n: number, materials: Array, unresolvedMaterials: Array<string>}|null} null if game data is unavailable
  */
-function findMaxActions(actionHrid, budget) {
+function findMaxActions(actionHrid, budget, upgradeItemLevel = 0) {
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData?.actionDetailMap[actionHrid];
     if (!actionDetail) return null;
@@ -88,7 +90,10 @@ function findMaxActions(actionHrid, budget) {
      */
     const costForN = (n) => {
         if (n <= 0) return 0;
-        const mats = calculateMaterialRequirements(actionHrid, n, false, { ownerId: RESERVATION_OWNER });
+        const mats = calculateMaterialRequirements(actionHrid, n, false, {
+            ownerId: RESERVATION_OWNER,
+            upgradeItemLevel,
+        });
         let total = 0;
         for (const mat of mats) {
             if (mat.itemHrid === COIN_HRID) {
@@ -96,7 +101,7 @@ function findMaxActions(actionHrid, budget) {
                 continue;
             }
             if (!mat.isTradeable || mat.missing <= 0) continue;
-            const price = marketAPI.getPrice(mat.itemHrid);
+            const price = marketAPI.getPrice(mat.itemHrid, mat.enhancementLevel || 0);
             if (!(price?.ask > 0)) return Infinity;
             total += mat.missing * price.ask;
         }
@@ -110,7 +115,10 @@ function findMaxActions(actionHrid, budget) {
      * @returns {Array<string>}
      */
     const unresolvedForN = (n) => {
-        const mats = calculateMaterialRequirements(actionHrid, n, false, { ownerId: RESERVATION_OWNER });
+        const mats = calculateMaterialRequirements(actionHrid, n, false, {
+            ownerId: RESERVATION_OWNER,
+            upgradeItemLevel,
+        });
         return [
             ...new Set(
                 mats
@@ -118,7 +126,7 @@ function findMaxActions(actionHrid, budget) {
                         // The coin fee is priced by the budget, never "cannot buy"
                         if (mat.itemHrid === COIN_HRID || mat.missing <= 0) return false;
                         if (!mat.isTradeable) return true;
-                        return !(marketAPI.getPrice(mat.itemHrid)?.ask > 0);
+                        return !(marketAPI.getPrice(mat.itemHrid, mat.enhancementLevel || 0)?.ask > 0);
                     })
                     .map((mat) => mat.itemName)
             ),
@@ -149,7 +157,10 @@ function findMaxActions(actionHrid, budget) {
         maxInRange(ARTISAN_ROUNDING_THRESHOLD, MAX_AFFORDABLE_ACTIONS)
     );
 
-    const materials = calculateMaterialRequirements(actionHrid, n, false, { ownerId: RESERVATION_OWNER });
+    const materials = calculateMaterialRequirements(actionHrid, n, false, {
+        ownerId: RESERVATION_OWNER,
+        upgradeItemLevel,
+    });
     return { n, materials, unresolvedMaterials: unresolvedForN(n + 1) };
 }
 
@@ -227,7 +238,8 @@ function showBreakdownModal(budget, result) {
     const rows = result.materials
         .map((mat) => {
             const isCoin = mat.itemHrid === COIN_HRID;
-            const price = mat.isTradeable && !isCoin ? marketAPI.getPrice(mat.itemHrid) : null;
+            const price =
+                mat.isTradeable && !isCoin ? marketAPI.getPrice(mat.itemHrid, mat.enhancementLevel || 0) : null;
             const ask = isCoin ? 1 : price?.ask > 0 ? price.ask : null;
             // The coin fee is spent in full out of the budget, as the search counted it
             const lineCost = isCoin ? mat.required : ask && mat.missing > 0 ? mat.missing * ask : 0;
@@ -366,7 +378,11 @@ function showBreakdownModal(budget, result) {
             Promise.resolve(
                 reserve(
                     RESERVATION_OWNER,
-                    result.materials.map((mat) => ({ itemHrid: mat.itemHrid, count: mat.required })),
+                    result.materials.map((mat) => ({
+                        itemHrid: mat.itemHrid,
+                        count: mat.required,
+                        ...(mat.enhancementLevel > 0 ? { enhancementLevel: mat.enhancementLevel } : {}),
+                    })),
                     { label: 'Budget calculator' }
                 )
             ).catch((error) => {
@@ -541,7 +557,11 @@ class BudgetCalculator {
             const actionHrid = getActionHridFromPanel(panel);
             if (!actionHrid) return;
 
-            const result = findMaxActions(actionHrid, budget);
+            const result = findMaxActions(
+                actionHrid,
+                budget,
+                upgradeLevelForPanel(panel, resolveDetailPanel(panel).actionDetails?.upgradeItemHrid)
+            );
             if (!result) {
                 calcBtn.textContent = 'No data';
                 this.timerRegistry.scheduleTimeout(() => {

@@ -91,14 +91,18 @@ function getLiveOnlyEnhancingBonuses({ includeAchievement = true } = {}) {
  * layers the Pro-rates toggle and the own-bench rule over this. This is the layer underneath:
  * detection when auto-detect is on, the manual panel when it is off.
  *
+ * @param {Object} [options]
+ * @param {{equipment: Map, drinks: Array}|null} [options.actionContext=null] - Detect from this gear
+ *   and these drinks (a queued row's loadout) instead of the per-skill default pick. Only the
+ *   detected (auto) path reads it: manual parameters describe a bench the player typed in.
  * @returns {Object} Enhancement parameters for simulator, tagged with `paramsSource`
  *   ('auto' | 'manual') and `manualOverrides` (labels of edited fields)
  */
-export function getEnhancingParams() {
+export function getEnhancingParams({ actionContext = null } = {}) {
     const autoDetect = config.getSettingValue('enhanceSim_autoDetect', false);
 
     if (autoDetect) {
-        return getAutoDetectedParams();
+        return getAutoDetectedParams(actionContext);
     } else {
         return getManualParams();
     }
@@ -209,15 +213,17 @@ export function describeParamsSource(params) {
 
 /**
  * Get auto-detected enhancing parameters from character data
+ * @param {{equipment: Map, drinks: Array}|null} [actionContext=null] - Gear and drinks to detect
+ *   from; the per-skill default pick when omitted
  * @returns {Object} Auto-detected parameters
  */
-export function getAutoDetectedParams() {
+export function getAutoDetectedParams(actionContext = null) {
     // The gear the character would be wearing to enhance, not whatever is on
     // them at this instant. Somebody in combat kit reading their enhancing
     // costs off a battleaxe gets a run nobody would ever make; the loadout is
     // what they actually enhance in. Skill-specific default first, then the
     // all-skills default, then anything saved, then what is worn.
-    const { equipment, drinks: drinkSlots } = resolveActionContext('/action_types/enhancing');
+    const { equipment, drinks: drinkSlots } = actionContext ?? resolveActionContext('/action_types/enhancing');
     const skills = dataManager.getSkills();
     const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 

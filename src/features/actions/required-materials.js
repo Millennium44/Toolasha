@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import { numberFormatter } from '../../utils/formatters.js';
 import { calculateMaterialRequirements, isArtisanTeaOutOfStock } from '../../utils/material-calculator.js';
+import { upgradeLevelForPanel } from '../../utils/upgrade-slot.js';
 import {
     findActionInput,
     attachInputListeners,
@@ -94,7 +95,9 @@ class RequiredMaterials {
 
         // Use shared material calculator with queue accounting (always enabled for Required Materials)
         // When indeterminate, pass 1 just to get the item list for rendering placeholders
-        const materials = calculateMaterialRequirements(actionHrid, isIndeterminate ? 1 : numActions, true);
+        const materials = calculateMaterialRequirements(actionHrid, isIndeterminate ? 1 : numActions, true, {
+            upgradeItemLevel: upgradeLevelForPanel(panel, resolveDetailPanel(panel).actionDetails?.upgradeItemHrid),
+        });
         if (!materials || materials.length === 0) {
             return;
         }
