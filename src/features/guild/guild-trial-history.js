@@ -245,8 +245,10 @@ export function pastCycles(history, now = Date.now()) {
  * stated one. A trial whose tier came from the guild payload alone (no card was
  * read, or the card was read before the party's last clear) has no stated
  * points: its tiers are priced off the ladder at the bonus passed in, which
- * marks the sum `pointsDerived`, and with no usable bonus, or on a foreign
- * cycle, the sum is null rather than a total missing that trial. `tokens` is
+ * marks the sum `pointsDerived`. With no usable bonus, or on a foreign cycle,
+ * the card's own lower figure stands as a floor (also `pointsDerived`), and
+ * only a trial with no figure at all makes the sum null rather than a total
+ * missing that trial. `tokens` is
  * derived from it with the bonuses passed in, which are the guild's *current*
  * ones: close enough for this guild's own recent weeks, marked `~` by the line,
  * and never computed for a foreign cycle at all.
@@ -286,9 +288,16 @@ export function summariseArchivedCycle(
         }
         // The payload's tier with no card figure for it: the ladder's price, at
         // today's Builder's Hall — a floor, since a part-cleared last tier pays
-        // a little on top
+        // a little on top. Without a usable bonus, a card that stated points
+        // for a lower tier is still a floor for this trial; only a trial with
+        // no figure at all leaves the total unknown
         if (foreign || !hallUsable) {
-            pointsMissing = true;
+            if (Number.isFinite(tile?.points) && tile.points > 0) {
+                points = (points ?? 0) + tile.points;
+                pointsDerived = true;
+            } else {
+                pointsMissing = true;
+            }
             continue;
         }
         const kind = tile?.kind === 'combat' ? 'combat' : 'skilling';

@@ -368,6 +368,26 @@ describe('a tier only the guild payload stated', () => {
         expect(pastWeekLine(summary)).toContain('skilling T6 · — pts');
     });
 
+    test('with no bonus to price the server’s tier, a card’s lower stated figure is kept as a floor', () => {
+        const c = cycle({
+            tiles: {
+                'combat::trial chameleon': { name: 'Trial Chameleon', kind: 'combat', tier: 5, points: 1440 },
+                // Card read at T6 for 980; the guild then banked two more
+                'skilling::alchemy': serverOnly('skilling', 8, { tier: 6, points: 980, pointsByTier: { 6: 980 } }),
+            },
+        });
+        const summary = summariseArchivedCycle(c, { now, buildersHallBonus: null, treasuryBonus: null });
+        expect(summary.skillingTier).toBe(8);
+        expect(summary.points).toBe(1440 + 980);
+        expect(summary.pointsDerived).toBe(true);
+        expect(pastWeekLine(summary)).toContain('~2,420 pts');
+
+        // The same on another guild's cycle, which is never priced with this guild's buildings
+        const foreign = summariseArchivedCycle({ ...c, reason: FOREIGN_CYCLE_REASON }, bonuses);
+        expect(foreign.points).toBe(1440 + 980);
+        expect(foreign.pointsDerived).toBe(true);
+    });
+
     test('another guild’s cycle is never priced with this guild’s buildings', () => {
         const c = cycle({ reason: FOREIGN_CYCLE_REASON, tiles: { 'skilling::alchemy': serverOnly('skilling', 6) } });
         const summary = summariseArchivedCycle(c, bonuses);
