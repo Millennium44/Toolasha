@@ -590,6 +590,21 @@ class AlchemyProfitCalculator {
         return buildActionSpeedStats(actionDetails, params);
     }
 
+    /**
+     * Alchemy Success from the drinks of an explicit context (a queued row's loadout), with the
+     * Drink Concentration of that context's gear. The live buff map describes whatever is
+     * running now, which can be another loadout.
+     * @param {{equipment?: Map, drinks?: Array}|null} actionContext - Gear and drinks to read
+     * @returns {number|null} Bonus as a decimal, or null when no context is given
+     */
+    successBonusFromContext(actionContext) {
+        if (!actionContext) return null;
+        const itemDetailMap = this.getItemDetailMap();
+        const equipment = actionContext.equipment ?? dataManager.getEquipment();
+        const drinks = actionContext.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+        return getAlchemySuccessBonusFromDrinks(drinks, itemDetailMap, getDrinkConcentration(equipment, itemDetailMap));
+    }
+
     catalystSuccessBonus(catalystHrid) {
         if (!catalystHrid) return 0;
         if (catalystHrid === CATALYST_HRIDS.prime) return CATALYST_BONUSES.prime;

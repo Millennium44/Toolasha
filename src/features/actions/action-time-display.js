@@ -3310,7 +3310,13 @@ class ActionTimeDisplay {
         }
 
         // Get predictions from the enhancement calculator
-        const predictions = calculateEnhancementPredictions(itemHrid, currentLevel, targetLevel, protectFrom);
+        const predictions = calculateEnhancementPredictions(
+            itemHrid,
+            currentLevel,
+            targetLevel,
+            protectFrom,
+            this.enhancementRowOptions(action)
+        );
         if (!predictions) {
             this.displayElement.innerHTML = '';
             this.clearAppendedStats(actionNameElement);
@@ -3470,7 +3476,13 @@ class ActionTimeDisplay {
 
         if (targetLevel <= currentLevel) return null;
 
-        const predictions = calculateEnhancementPredictions(itemHrid, currentLevel, targetLevel, protectFrom);
+        const predictions = calculateEnhancementPredictions(
+            itemHrid,
+            currentLevel,
+            targetLevel,
+            protectFrom,
+            this.enhancementRowOptions(actionObj)
+        );
         if (!predictions || predictions.expectedAttempts <= 0) return null;
 
         const perActionTime = predictions.perActionTime;
@@ -3895,6 +3907,24 @@ class ActionTimeDisplay {
     }
 
     /**
+     * The gear a queued enhancing row is predicted with. A row queued under a saved loadout is
+     * timed and rolled on that loadout's detected stats; a row queued on "No Loadout" (id 0) is
+     * the gear worn now, so the live buff maps stay its time base. A row with no loadout id
+     * keeps the per-skill default it always had.
+     * @param {Object|null} actionObj - The queued action
+     * @returns {{actionContext?: Object, timeFromContext?: boolean}} Options for
+     *   `calculateEnhancementPredictions`
+     */
+    enhancementRowOptions(actionObj) {
+        const id = actionObj?.characterLoadoutID;
+        if (typeof id !== 'number' || !Number.isFinite(id)) return {};
+        return {
+            actionContext: resolveLoadoutContext('/action_types/enhancing', id),
+            timeFromContext: id > 0,
+        };
+    }
+
+    /**
      * The level an alchemy action's level efficiency is measured from: the alchemized item's
      * level, not the action's own requirement (1 for every alchemy action). The action bar and
      * the alchemy profit calculator both measure it this way; a queued row that did not would
@@ -4034,7 +4064,13 @@ class ActionTimeDisplay {
         // an unknown one, so the row is exactly what it was without protection.
         if (protectFrom <= 0 || protectFrom >= targetLevel) return null;
 
-        const predictions = calculateEnhancementPredictions(itemHrid, currentLevel, targetLevel, protectFrom);
+        const predictions = calculateEnhancementPredictions(
+            itemHrid,
+            currentLevel,
+            targetLevel,
+            protectFrom,
+            this.enhancementRowOptions(actionObj)
+        );
         const attempts = predictions?.expectedAttempts;
         const protections = predictions?.expectedProtections;
         if (!Number.isFinite(attempts) || attempts <= 0) return unquantified;
@@ -4388,8 +4424,18 @@ class ActionTimeDisplay {
             if (!(baseRate > 0)) return fallback;
             const { itemHrid: catalystHrid } = this.parseItemHash(actionObj?.secondaryItemHash || '');
             const catalystBonus = calc.catalystSuccessBonus?.(catalystHrid || null) || 0;
-            const levelPenalty = calc.getUnderLevelPenalty?.(alchItemDetails?.itemLevel || 1) || 0;
-            const rate = calc.calculateSuccessRateBreakdown(baseRate, catalystBonus, null, levelPenalty)?.total;
+            // The row's own loadout supplies the tea and the alchemy level it is penalised at; a
+            // row with no loadout id keeps the live buffs and the per-skill default gear
+            const context = this.queuedActionContext(actionDetails, actionObj);
+            const levelPenalty =
+                (context
+                    ? calc.getUnderLevelPenalty?.(alchItemDetails?.itemLevel || 1, null, {
+                          drinkSlots: context.drinks,
+                          equipment: context.equipment,
+                      })
+                    : calc.getUnderLevelPenalty?.(alchItemDetails?.itemLevel || 1)) || 0;
+            const teaBonus = calc.successBonusFromContext?.(context) ?? null;
+            const rate = calc.calculateSuccessRateBreakdown(baseRate, catalystBonus, teaBonus, levelPenalty)?.total;
             return Number.isFinite(rate) && rate > 0 ? rate : fallback;
         } catch (error) {
             console.error('[ActionTimeDisplay] Working out a queued alchemy success rate failed:', error);
@@ -5178,6 +5224,7 @@ class ActionTimeDisplay {
                         actionsToCalculate.push({
                             actionHrid: currentAction.actionHrid,
                             primaryItemHash: currentAction.primaryItemHash || null,
+                            characterLoadoutID: currentAction.characterLoadoutID,
                             timeSeconds: actionTimeSeconds,
                             count: count,
                             baseActionsNeeded: baseActionsNeeded,
@@ -5400,6 +5447,7 @@ class ActionTimeDisplay {
                     actionsToCalculate.push({
                         actionHrid: actionObj.actionHrid,
                         primaryItemHash: actionObj.primaryItemHash || null,
+                        characterLoadoutID: actionObj.characterLoadoutID,
                         timeSeconds: actionTimeSeconds,
                         count: count,
                         baseActionsNeeded: baseActionsNeeded,
@@ -5754,7 +5802,9 @@ class ActionTimeDisplay {
         }
 
         if (!profitData) {
-            const gatheringProfit = await calculateGatheringProfit(action.actionHrid);
+            // The row's own gear and drinks (null for a row with no loadout id: the default pick)
+            const actionContext = this.queuedActionContext(actionDetails, action);
+            const gatheringProfit = await calculateGatheringProfit(action.actionHrid, { actionContext });
             if (gatheringProfit) {
                 profitData = gatheringProfit;
             } else if (actionDetails.outputItems?.[0]?.itemHrid) {
@@ -5763,6 +5813,7 @@ class ActionTimeDisplay {
                 profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
                     actionHrid: action.actionHrid,
                     upgradeItemLevel: this.getProductionUpgradeLevel(actionDetails, action),
+                    actionContext,
                 });
             }
         }
@@ -6168,13 +6219,15 @@ class ActionTimeDisplay {
             }
 
             if (!profitData) {
-                const gatheringProfit = await calculateGatheringProfit(actionHrid);
+                const actionContext = this.queuedActionContext(actionDetails, action);
+                const gatheringProfit = await calculateGatheringProfit(actionHrid, { actionContext });
                 if (gatheringProfit) {
                     profitData = gatheringProfit;
                 } else if (actionDetails.outputItems?.[0]?.itemHrid) {
                     profitData = await profitCalculator.calculateProfit(actionDetails.outputItems[0].itemHrid, {
                         actionHrid,
                         upgradeItemLevel: this.getProductionUpgradeLevel(actionDetails, action),
+                        actionContext,
                     });
                 }
             }

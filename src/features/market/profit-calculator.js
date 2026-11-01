@@ -86,9 +86,14 @@ class ProfitCalculator {
      *   action consumes (the stack the player selected). The input is priced at that level and the
      *   output at the level the craft carries over (70% with a chance of one more, or all of it for
      *   a recipe that retains enhancement). Callers with no selected stack leave it at +0.
+     * @param {{equipment: Map, drinks: Array}|null} [options.actionContext=null] - Gear and drinks to
+     *   cost the action with (a queued row's own loadout); the per-skill default when omitted
      * @returns {Promise<Object|null>} Profit data or null if not craftable
      */
-    async calculateProfit(itemHrid, { actionHrid, keepSellTax = false, upgradeItemLevel = 0 } = {}) {
+    async calculateProfit(
+        itemHrid,
+        { actionHrid, keepSellTax = false, upgradeItemLevel = 0, actionContext = null } = {}
+    ) {
         // Get item details
         const itemDetails = dataManager.getItemDetails(itemHrid);
         if (!itemDetails) {
@@ -125,6 +130,7 @@ class ProfitCalculator {
         const effCtx = getActionEfficiencyContext(actionDetails, {
             isProduction: true,
             communityEfficiency,
+            actionContext,
         });
 
         const {

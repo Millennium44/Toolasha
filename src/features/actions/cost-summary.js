@@ -14,6 +14,7 @@ import {
     onDetailPanel,
     resolveDetailPanel,
 } from '../../utils/action-panel-helper.js';
+import { upgradeLevelForPanel } from '../../utils/upgrade-slot.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
 import { getItemPrice, formatPrice } from '../../utils/market-data.js';
 import { computeBestCraftingPlan } from '../../features/crafting-plan/crafting-plan-calculator.js';
@@ -90,7 +91,13 @@ function updatePanel(panel, value) {
     const outputHrid = output?.itemHrid || null;
     const outputCount = (output?.count || 1) * numActions;
 
-    const block = buildBlock(actionHrid, numActions, outputHrid, outputCount);
+    const block = buildBlock(
+        actionHrid,
+        numActions,
+        outputHrid,
+        outputCount,
+        upgradeLevelForPanel(panel, actionDetail.upgradeItemHrid)
+    );
     insertBlock(panel, block);
 }
 
@@ -137,7 +144,11 @@ export function computeDirectCosts(materials) {
             continue;
         }
         if (!mat.isTradeable) continue;
-        const unitPrice = getItemPrice(mat.itemHrid, { context: 'profit', side: 'buy' });
+        const unitPrice = getItemPrice(mat.itemHrid, {
+            context: 'profit',
+            side: 'buy',
+            enhancementLevel: mat.enhancementLevel || 0,
+        });
         if (unitPrice === null) {
             if (mat.required > 0) directComplete = false;
             if (mat.missing > 0) missingComplete = false;
@@ -150,8 +161,8 @@ export function computeDirectCosts(materials) {
     return { directCost, missingCost, directComplete, missingComplete };
 }
 
-function buildBlock(actionHrid, numActions, outputHrid, outputCount) {
-    const materials = calculateMaterialRequirements(actionHrid, numActions, true);
+function buildBlock(actionHrid, numActions, outputHrid, outputCount, upgradeItemLevel = 0) {
+    const materials = calculateMaterialRequirements(actionHrid, numActions, true, { upgradeItemLevel });
     const { directCost, missingCost, directComplete, missingComplete } = computeDirectCosts(materials);
 
     let planCost = null;
