@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     priceVersion: 1,
     stamp: 'a',
     characterId: 'c1',
+    buffVersion: 1,
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
@@ -21,7 +22,9 @@ vi.mock('../../api/marketplace.js', () => ({
         liveSourced: false,
     },
 }));
-vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => mocks.characterId } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getCurrentCharacterId: () => mocks.characterId, getBuffStateVersion: () => mocks.buffVersion },
+}));
 vi.mock('../../utils/enhancement-input-pricing.js', () => ({ pricingStamp: () => mocks.stamp }));
 
 vi.mock('../../utils/untradable-cape.js', () => ({ isUntradableCape: (hrid) => mocks.capes.has(hrid) }));
@@ -50,6 +53,7 @@ beforeEach(() => {
     mocks.priceVersion = 1;
     mocks.stamp = 'a';
     mocks.characterId = 'c1';
+    mocks.buffVersion = 1;
     mocks.capes = new Set([CAPE]);
     mocks.baseCost = { value: 1000, partial: false };
     mocks.path = { optimalStrategy: { totalCost: 9000 }, pricesPartial: false, inputsPartial: false };
@@ -151,6 +155,13 @@ describe('getUntradableCapeValue', () => {
             'pricing stamp (modes, cape setting, custom price, value map)',
             () => {
                 mocks.stamp = 'b';
+                return getUntradableCapeValue(CAPE, 3);
+            },
+        ],
+        [
+            'production buffs (Artisan tea in the refining slots)',
+            () => {
+                mocks.buffVersion = 2;
                 return getUntradableCapeValue(CAPE, 3);
             },
         ],

@@ -23,9 +23,9 @@ import { enhancementParamsFor } from './enhancement-params-source.js';
 // The enhancement path is a full strategy sweep and its callers ask for it on every recalculation, so the
 // answer is kept. What the answer reads besides the item, level and params (which are in the entry key) is
 // the `epoch`: the order book (priceVersion), the pricing modes, cape setting, custom prices and the game's
-// value map (pricingStamp) and the character. When any of them moves the whole table is dropped rather than
-// left to grow a generation per price tick. (No Task Crystal token value is in this: no enhancement input is
-// priced from a token.)
+// value map (pricingStamp), the production buffs a refined cape's refinement cost reads (Artisan tea in the
+// refining slots, via the buff state version) and the character. When any of them moves the whole table is
+// dropped rather than left to grow a generation per price tick. (No cape input is priced from a task token.)
 const _pathCache = new Map();
 let _epoch = null;
 
@@ -46,6 +46,7 @@ function currentEpoch() {
         marketAPI.priceVersion,
         marketAPI.liveSourced === true,
         pricingStamp(),
+        dataManager.getBuffStateVersion?.() ?? '',
         dataManager.getCurrentCharacterId?.() ?? '',
     ].join('|');
 }
