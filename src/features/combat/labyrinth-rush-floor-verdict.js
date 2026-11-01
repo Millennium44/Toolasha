@@ -54,7 +54,7 @@
  */
 
 import { nearMissRemainder, MIN_LAB_FIGHTS } from './labyrinth-replay-check.js';
-import { burnSummary } from './labyrinth-run-ledger.js';
+import { burnSummary } from './labyrinth-run-ledger-math.js';
 import { gearChangedSince } from './labyrinth-sim-cache.js';
 
 /**

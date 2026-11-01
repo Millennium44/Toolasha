@@ -187,7 +187,7 @@ export function buildQueueSteps(loop, batch) {
 export function startQueueWalk(loop, batch) {
     const steps = buildQueueSteps(loop, batch);
     if (!steps.length) return false;
-    return craftingPlanWalk.start(steps);
+    return craftingPlanWalk.start(steps, 'ironcow-queue');
 }
 
 export default { buildQueueSteps, startQueueWalk, DECOMPOSE_ACTION, COINIFY_ACTION, MAX_STEP_ACTIONS };

@@ -38,6 +38,9 @@ import myListingsPriceRefresh from '../features/market/mooket/my-listings-price-
 // actually sells, and a second copy would mean a second five-minute fetch cache
 // asking the same third-party server the same questions.
 import marketHistoryAPI from '../features/market/mooket/market-history-api.js';
+// The persisted price store the mooket panel initializes; the crafting-plan calculator (utils and actions
+// bundles) reads it, and a copy each would be a store nothing ever feeds. See singletonOwnership in rollup.config.js.
+import marketPriceStore from '../features/market/mooket/market-price-store.js';
 import * as marketHistoryData from '../features/market/mooket/market-history-data.js';
 import philoCalculator from '../features/market/philo-calculator.js';
 import tradeHistory from '../features/market/trade-history.js';
@@ -142,6 +145,7 @@ toolashaRoot.Market = {
     marketHistoryPanel,
     myListingsPriceRefresh,
     marketHistoryAPI,
+    marketPriceStore,
     marketHistoryData,
     philoCalculator,
     tradeHistory,

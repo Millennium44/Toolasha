@@ -230,6 +230,60 @@ export function duplicateSingletonFailures({ singletons, order, readBundle, allo
 }
 
 /**
+ * Every owned singleton must actually be published where the build's stand-ins and externals look for it.
+ * A mistyped global in `singletonOwnership` (rollup.config.js) or a missing export in the owner's
+ * src/libraries file would leave every other bundle reading `undefined` for the whole release.
+ * @param {Object} root - `window.Toolasha`
+ * @param {Map<string, {global: string, named?: string[]}>} ownership - rollup.config.js's `singletonOwnership`
+ * @returns {string[]} Failures
+ */
+export function ownershipFailures(root, ownership) {
+    const failures = [];
+    for (const [modulePath, { global, named = [] }] of ownership) {
+        const [, library, key] = global.split('.');
+        const published = root?.[library]?.[key];
+        if (published === undefined || published === null) {
+            failures.push(`${global} is not published, but ${modulePath} is routed to it`);
+            continue;
+        }
+        for (const name of named) {
+            if (typeof published[name] !== 'function') failures.push(`${global}.${name} is not a function`);
+        }
+    }
+    return failures;
+}
+
+/**
+ * The labyrinth run ledger's pure helpers must reach the ui bundle from their own module.
+ *
+ * The ledger singleton is published as `Toolasha.Combat.labyrinthRunLedger` and the ui bundle's import of that
+ * module is the iife external, i.e. the INSTANCE: it has no `sparkText`/`observedUse`. The Consumables panel
+ * uses those through `labyrinth-run-ledger-math.js`, which the ui bundle compiles itself; calling them through
+ * the instance made the whole Labyrinth section vanish in the release (the panel's try/catch swallowed
+ * "observedUse is not a function"). Checks both halves: the instance really lacks the helper (so the routing
+ * could not have served it) and the ui bundle carries the helper's own code (the spark glyph ladder).
+ * @param {Object} root - `window.Toolasha`
+ * @param {string} uiText - The built ui bundle
+ * @returns {string[]} Failures
+ */
+export function ledgerHelperFailures(root, uiText) {
+    const failures = [];
+    const ledger = root?.Combat?.labyrinthRunLedger;
+    if (!ledger) return ['Toolasha.Combat.labyrinthRunLedger is not published'];
+    for (const name of ['sparkText', 'observedUse', 'rushFloorTable']) {
+        if (typeof ledger[name] === 'function') {
+            failures.push(`the ledger instance now has ${name}(); the math module split in the ui bundle is moot`);
+        }
+    }
+    if (!uiText.includes('▁')) {
+        failures.push(
+            'toolasha-ui.js does not carry the ledger math (spark glyph ladder missing): its helpers are gone'
+        );
+    }
+    return failures;
+}
+
+/**
  * The bridge as the utils bundle ships it, run against the live namespace, must hand back the exact
  * instances the owners published — the property #671 lost for the one module it imported instead.
  * @param {Object} root - `window.Toolasha`
@@ -301,11 +355,15 @@ async function main() {
     }
 
     process.env.BUILD_MODE = 'production';
-    const configs = (await import(pathToFileURL(join(projectRoot, 'rollup.config.js')).href)).default;
+    const rollupConfig = await import(pathToFileURL(join(projectRoot, 'rollup.config.js')).href);
+    if (errors.length === 0)
+        failures.push(...ledgerHelperFailures(window.Toolasha, readFileSync(bundlePath('ui'), 'utf8')));
+    if (errors.length === 0) failures.push(...ownershipFailures(window.Toolasha, rollupConfig.singletonOwnership));
+    const configs = rollupConfig.default;
     const { ownedSingletons, FOREIGN_COPY_ALLOWLIST } = await import('./check-bundle-sharing.mjs');
     failures.push(
         ...duplicateSingletonFailures({
-            singletons: ownedSingletons(configs),
+            singletons: ownedSingletons(configs, rollupConfig.singletonOwnership),
             order,
             readBundle: (name) => readFileSync(bundlePath(name), 'utf8'),
             allowlist: FOREIGN_COPY_ALLOWLIST,

@@ -10,7 +10,7 @@
  */
 
 import craftingPlanDisplay from './crafting-plan-display.js';
-import craftingPlanWalk from './crafting-plan-walk.js';
+import craftingPlanWalk, { CRAFTING_PLAN_STARTER } from './crafting-plan-walk.js';
 
 export default {
     name: 'Crafting Plan',
@@ -21,7 +21,8 @@ export default {
     },
     disable: () => {
         craftingPlanDisplay.disable();
-        craftingPlanWalk.disable();
+        // An Iron Cow queue walk in progress is not this feature's to end
+        craftingPlanWalk.disable(CRAFTING_PLAN_STARTER);
     },
     /** The walk itself, for tests and for anything that wants to drive it */
     walk: craftingPlanWalk,

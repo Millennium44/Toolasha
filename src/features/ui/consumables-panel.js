@@ -95,7 +95,7 @@ import {
     burnSummary,
     torchesPerFloor,
     sparkText,
-} from '../combat/labyrinth-run-ledger.js';
+} from '../combat/labyrinth-run-ledger-math.js';
 import { rushFloorVerdict } from '../combat/labyrinth-rush-floor-verdict.js';
 import storage from '../../core/storage.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';

@@ -10,6 +10,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Guild Trial Sim's assignment planner keeps a member's skilling sign-up level when they switch trials, and picks up the guild's sign-up levels when the roster updates, instead of keeping the login copy.
 
+### One shared copy of each stateful module in the released build
+
+- Loadout snapshots, the market price store, loot log history, task tracking, undercut alerts, the spawn census, scroll selections, the Labyrinth ledger and clear rates, build scores, the crafting walk and action-panel sorting now exist once in the released build instead of a separate, partly uninitialized copy per bundle, so every panel sees the same data; the build fails if a new copy appears.
+- In the released build, Crafting Plan now sees live order-book depth for thin buy legs, as the single-file build already did, so some plans change.
+- Turning Crafting Plan off no longer stops an Iron Cow queue walk in progress.
+
 ### Game message audit script
 
 - A developer script (`npm run audit:handlers`) compares the fields Toolasha reads from each game message with the fields the game's own client reads, to catch features reading a field the game never sends.

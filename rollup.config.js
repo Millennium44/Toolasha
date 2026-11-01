@@ -791,45 +791,178 @@ const prodEntrypoint = {
     plugins: [terser(terserOptions(entrypointHeader))],
 };
 
-const sharedCoreGlobals = buildGlobals(coreExternalGlobals);
-const sharedFeatureGlobals = buildGlobals(new Map([...coreExternalGlobals, ...utilsExternalGlobals]));
+/**
+ * The @require order of the production libraries (library-headers/entrypoint.txt). A bundle can
+ * reference another library's global only when that library loads BEFORE it: the reference is an
+ * iife argument, read the moment the bundle loads.
+ */
+const LIBRARY_LOAD_ORDER = ['core', 'utils', 'sim', 'market', 'actions', 'combat', 'ui'];
 
 /**
- * Keeps the labyrinth clear-rate module (and the room logs, outcome log, sim
- * cache and recorders it drags in, several hundred KB) out of the sim bundle.
+ * Stateful singletons that exactly one library owns, whichever bundle imports them.
  *
- * The sim's lab panel and upgrade advisor import it only as a *fallback*: every
- * call site reads `labyrinthClearRate() || bundledLabyrinthClearRate`, where the
- * first is the combat bundle's live instance (`Toolasha.Combat.labyrinthClearRate`).
- * Combat is always loaded by the time a panel is opened, but it loads AFTER sim,
- * so it cannot be an iife argument (that is read at load time and would throw).
- * In the split build this resolves the import to a stand-in that reads the
- * combat bundle's instance lazily, on each access. The dev standalone is one
- * bundle with a single copy, so it is not routed through here.
+ * Each entry is a module that constructs a stateful singleton (listeners, caches, a loaded record)
+ * and whose owner is the library its `global` names — the one that publishes it and runs its
+ * initialize(). A bundle that imports one of these without being the owner must not compile a copy:
+ * the copy is separately constructed, never initialized, and answers null/empty forever (PR #671).
+ * How the import is routed depends on load order (see {@link singletonRouting}):
+ * - the owner loads BEFORE the importing bundle: the module is external, an iife argument naming the
+ *   owner's global;
+ * - the owner loads AFTER it: the import resolves to a stand-in that reads the owner's instance
+ *   lazily, on each access (an iife argument would throw at load).
+ * The dev standalone is one bundle with a single copy, so it is not routed through here.
  *
+ * `named` lists the owner's named exports that importers use when the global is the module namespace
+ * rather than the default instance.
+ *
+ * scripts/check-bundle-sharing.mjs reads this map, so it can never drift from what the build does.
+ *
+ * @type {Map<string, {global: string, named?: string[]}>}
+ */
+export const singletonOwnership = new Map([
+    // The market bundle's calculators and history cache, read directly by the utils and sim bundles that load
+    // before it (they had been the "known debt" copies: a private, never-invalidated cache each)
+    [
+        normalize(join(__dirname, 'src/features/market/expected-value-calculator.js')),
+        { global: 'Toolasha.Market.expectedValueCalculator' },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/market/alchemy-profit-calculator.js')),
+        { global: 'Toolasha.Market.alchemyProfitCalculator' },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/market/mooket/market-history-api.js')),
+        { global: 'Toolasha.Market.marketHistoryAPI' },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/actions/action-panel-sort.js')),
+        { global: 'Toolasha.Actions.actionPanelSort' },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/crafting-plan/crafting-plan-walk.js')),
+        { global: 'Toolasha.Actions.craftingPlanWalk' },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/market/mooket/market-price-store.js')),
+        { global: 'Toolasha.Market.marketPriceStore' },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/combat/loadout-snapshot.js')),
+        { global: 'Toolasha.Combat.loadoutSnapshot' },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/combat/scroll-simulator.js')),
+        { global: 'Toolasha.Combat.scrollSimulator' },
+    ],
+    [normalize(join(__dirname, 'src/features/combat/spawn-census.js')), { global: 'Toolasha.Combat.spawnCensus' }],
+    [
+        normalize(join(__dirname, 'src/features/combat/labyrinth-run-ledger.js')),
+        { global: 'Toolasha.Combat.labyrinthRunLedger' },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/combat/labyrinth-clear-rate.js')),
+        { global: 'Toolasha.Combat.labyrinthClearRate' },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/combat-stats/combat-stats-data-collector.js')),
+        { global: 'Toolasha.Combat.combatStatsDataCollector' },
+    ],
+    // A namespace, not an instance: the importers use its named functions over the module's singleton
+    [
+        normalize(join(__dirname, 'src/features/profile/build-score-row.js')),
+        {
+            global: 'Toolasha.Combat.buildScoreRow',
+            named: ['ensureOwnScore', 'scorePricingStamp', 'ownProfileData', 'buildFingerprint', 'readOwnScore'],
+        },
+    ],
+    [
+        normalize(join(__dirname, 'src/features/tasks/task-completion-tracker.js')),
+        { global: 'Toolasha.UI.taskCompletionTracker' },
+    ],
+    [normalize(join(__dirname, 'src/features/actions/loot-log-history.js')), { global: 'Toolasha.UI.lootLogHistory' }],
+    [
+        normalize(join(__dirname, 'src/features/notifications/market-undercut-alerts.js')),
+        { global: 'Toolasha.UI.marketUndercutAlerts' },
+    ],
+]);
+
+/**
+ * How one bundle reaches the singletons it does not own.
+ * @param {string} bundleKey - Library key, e.g. 'actions'
+ * @returns {{externals: Map<string, string>, standIns: Map<string, {global: string, named?: string[]}>}}
+ *   `externals`: module path → owner global, for owners that load before the bundle;
+ *   `standIns`: module path → entry, for owners that load after it
+ */
+export function singletonRouting(bundleKey) {
+    const position = LIBRARY_LOAD_ORDER.indexOf(bundleKey);
+    const externals = new Map();
+    const standIns = new Map();
+    for (const [modulePath, entry] of singletonOwnership) {
+        const owner = entry.global.match(/^Toolasha\.([A-Za-z]+)\./)?.[1]?.toLowerCase();
+        const ownerPosition = LIBRARY_LOAD_ORDER.indexOf(owner);
+        if (ownerPosition === -1 || ownerPosition === position) continue;
+        if (ownerPosition < position) externals.set(modulePath, entry.global);
+        else standIns.set(modulePath, entry);
+    }
+    return { externals, standIns };
+}
+
+/**
+ * Routes an import of a singleton whose owner loads AFTER this bundle to a stand-in that reads the
+ * owner's live instance on each access.
+ *
+ * Most such importers already read `ownerAccessor() || bundledCopy`, importing the module only as the
+ * fallback for the single-bundle dev build — and left alone, that import compiled a whole second copy
+ * (and everything it drags in) into the release. The stand-in keeps the call sites unchanged: the
+ * default export is a Proxy over `window.Toolasha.<Library>.<name>`, and any `named` exports forward
+ * to the same object.
+ *
+ * @param {Map<string, {global: string, named?: string[]}>} standIns - From {@link singletonRouting}
  * @returns {import('rollup').Plugin} Rollup plugin
  */
-function labyrinthClearRateStandInPlugin() {
-    const target = normalize(join(__dirname, 'src/features/combat/labyrinth-clear-rate.js'));
-    const virtualId = ' labyrinth-clear-rate-stand-in';
+export function singletonStandInPlugin(standIns) {
+    const prefix = ' toolasha-stand-in:';
     return {
-        name: 'labyrinth-clear-rate-stand-in',
+        name: 'singleton-stand-in',
         resolveId(source, importer) {
-            if (!importer || !source.endsWith('labyrinth-clear-rate.js')) return null;
+            if (!importer || !source.startsWith('.')) return null;
             const resolved = normalize(join(dirname(importer.split('?')[0]), source));
-            return resolved === target ? virtualId : null;
+            return standIns.has(resolved) ? prefix + resolved : null;
         },
         load(id) {
-            if (id !== virtualId) return null;
+            if (!id.startsWith(prefix)) return null;
+            const entry = standIns.get(id.slice(prefix.length));
+            const [, library, name] = entry.global.split('.');
+            const named = (entry.named || [])
+                .map(
+                    (exportName) =>
+                        `export const ${exportName} = (...args) => {
+    const module = live();
+    if (!module) throw new Error('[Toolasha] ${library}.${name} is not loaded yet');
+    return module.${exportName}(...args);
+};`
+                )
+                .join('\n');
             return `
-const live = () => (typeof window !== 'undefined' ? window.Toolasha?.Combat?.labyrinthClearRate : null) || null;
+const live = () => (typeof window !== 'undefined' ? window.Toolasha?.${library}?.${name} : null) || null;
 export default new Proxy({}, {
     get(_target, key) {
         const module = live();
         const value = module ? module[key] : undefined;
         return typeof value === 'function' ? value.bind(module) : value;
     },
+    set(_target, key, value) {
+        const module = live();
+        if (!module) return false;
+        module[key] = value;
+        return true;
+    },
+    has(_target, key) {
+        const module = live();
+        return module ? key in module : false;
+    },
 });
+${named}
 `;
         },
     };
@@ -840,18 +973,29 @@ const prodConfig = [
         const { key, ...libraryConfig } = lib;
         let external = null;
         let globals = null;
+        // Owned singletons: the ones whose owner loads before this bundle are externals too, and the ones whose
+        // owner loads after it are routed to stand-ins by a plugin below
+        const { externals: ownedExternals, standIns } = singletonRouting(key);
 
         if (key === 'utils') {
-            external = buildExternal(coreExternalGlobals);
-            globals = sharedCoreGlobals;
+            const utilsExternals = new Map([...coreExternalGlobals, ...ownedExternals]);
+            external = buildExternal(utilsExternals);
+            globals = buildGlobals(utilsExternals);
         } else if (key === 'sim') {
             // The engine is self-contained apart from core and utils; it must
             // NOT treat itself as external or the bundle would be empty
-            external = buildExternal(new Map([...coreExternalGlobals, ...utilsExternalGlobals]));
-            globals = sharedFeatureGlobals;
+            const simExternals = new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...ownedExternals]);
+            external = buildExternal(simExternals);
+            globals = buildGlobals(simExternals);
         } else if (key === 'market') {
-            external = buildExternal(new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...simExternalGlobals]));
-            globals = buildGlobals(new Map([...coreExternalGlobals, ...utilsExternalGlobals, ...simExternalGlobals]));
+            const marketExternals = new Map([
+                ...coreExternalGlobals,
+                ...utilsExternalGlobals,
+                ...simExternalGlobals,
+                ...ownedExternals,
+            ]);
+            external = buildExternal(marketExternals);
+            globals = buildGlobals(marketExternals);
         } else if (key !== 'core') {
             // actions, combat, ui — need core + utils + sim + market externals
             const allExternals = new Map([
@@ -859,6 +1003,7 @@ const prodConfig = [
                 ...utilsExternalGlobals,
                 ...simExternalGlobals,
                 ...marketExternalGlobals,
+                ...ownedExternals,
             ]);
             // ui and actions also treat combat feature singletons as externals to avoid duplicate instances
             if (key === 'ui' || key === 'actions') {
@@ -876,7 +1021,7 @@ const prodConfig = [
                 ...(globals ? { globals } : {}),
             },
             plugins: [
-                ...(key === 'sim' ? [labyrinthClearRateStandInPlugin()] : []),
+                ...(standIns.size > 0 ? [singletonStandInPlugin(standIns)] : []),
                 cssRawPlugin(),
                 changelogPlugin(),
                 overviewPlugin(),

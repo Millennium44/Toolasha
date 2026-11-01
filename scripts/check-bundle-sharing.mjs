@@ -41,7 +41,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { dirname, join, normalize, relative, basename } from 'path';
+import { dirname, join, normalize, relative, basename, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { init as initLexer, parse as parseModule } from 'es-module-lexer';
 
@@ -387,34 +387,50 @@ const ALLOWLIST = new Map([
  * other half is scripts/check-bundle-smoke.mjs, which inspects the built libraries).
  *
  * Keys are `module path` → Map of `bundle name` → why that bundle's copy is tolerated. Granularity
- * is per bundle, so a NEW bundle inlining the module fails. A tolerated entry is one of:
+ * is per bundle, so a NEW bundle inlining the module fails. The map is empty: every owned singleton
+ * is now routed (see `singletonOwnership` in rollup.config.js) — an external when the owner loads
+ * before the importing bundle, a lazy stand-in when it loads after — so no bundle but the owner
+ * compiles a copy. A tolerated entry would be one of:
  * - "bridge + fallback": the importer reads the owner's live instance through bundle-bridge.js and
  *   imports the module only as the fallback for the single-bundle dev build, so the copy is never
- *   the one consulted in production;
- * - "KNOWN DEBT": the importer uses its inline copy directly. Not safe by design — recorded so the
- *   check can pass on main while the duplicates stay visible; the fix is to cut the import and read
- *   the owner through the bridge (utils loads before market, so the global cannot be referenced).
+ *   the one consulted in production (prefer routing it through the stand-in instead);
+ * - "KNOWN DEBT": the importer uses its inline copy directly. Not safe by design.
  */
-export const FOREIGN_COPY_ALLOWLIST = new Map([
+export const FOREIGN_COPY_ALLOWLIST = new Map([]);
+
+/**
+ * Class singletons that no library owns and that several bundles still carry, each with why that is safe.
+ *
+ * The bar is the one the SINGLE_COPY_FEATURES list states in reverse: a copy per bundle must not be a
+ * second truth. That holds only when the module keeps no per-copy state that matters — its state lives
+ * outside the instance (on `globalThis`, in storage, in the shared config) or the class has none.
+ * Anything with real instance state (listeners, caches, a loaded record) belongs in
+ * `singletonOwnership` in rollup.config.js instead, so one library owns it.
+ *
+ * Keys are project-relative paths with forward slashes.
+ */
+export const UNOWNED_SINGLETON_ALLOWLIST = new Map([
     [
-        'src/features/market/expected-value-calculator.js',
-        new Map([
-            [
-                'sim',
-                'bridge + fallback: combat-sim-adapter.js and combat-sim-ui.js call expectedValueCalculator() from ' +
-                    'bundle-bridge and only fall back to the bundled copy',
-            ],
-        ]),
+        'src/features/notifications/notification-service.js',
+        // The cooldown map, the digest buffer, the "already watching settings" flag and the notice log all live
+        // on `globalThis` under shared keys (sharedState() in the module; notice-log.js the same), precisely
+        // because every bundle that notifies carries a copy. The instance holds only the cooldown override and
+        // the focus-listener undo for a title flash it started itself.
+        'state lives on globalThis (sharedState); the instance keeps only a test override and its own flash undo',
     ],
     [
-        'src/features/combat-stats/combat-stats-data-collector.js',
-        new Map([
-            [
-                'market',
-                'bridge + fallback: networth/gold-sources-collect.js reads liveCombatStatsCollector from ' +
-                    'bundle-bridge and only falls back to the bundled copy',
-            ],
-        ]),
+        'src/features/chat/chat-profile-link.js',
+        // The delegated click listener acts on shared DOM, so activation is guarded by a flag on `globalThis`
+        // (see _ensureActive) and a second copy's listener is never attached. The observer each copy registers
+        // decorates names idempotently.
+        'activation guarded by a globalThis flag; decorating a name twice is idempotent',
+    ],
+    [
+        'src/features/settings/iron-cow-mode.js',
+        // A class with no constructor and no instance fields: it reads and writes the shared config, the
+        // storage snapshot and the current character through core singletons at call time, so every copy does
+        // the same thing to the same state.
+        'no instance state; everything is read and written through shared core at call time',
     ],
 ]);
 
@@ -442,9 +458,11 @@ export function singletonClassName(source) {
 /**
  * Which library owns each module that rollup replaces with a `Toolasha.<Library>.*` global.
  * @param {Array<Object>} configs - The production rollup config array
+ * @param {Map<string, {global: string}>} [ownership] - rollup.config.js's `singletonOwnership`: owned
+ *   singletons that every importer may reach through a stand-in, so no bundle's `globals` names them
  * @returns {Map<string, Set<string>>} Normalized absolute module path → owning bundle names
  */
-export function moduleOwners(configs) {
+export function moduleOwners(configs, ownership = new Map()) {
     const bundles = new Set(configs.map((config) => basename(config.input, '.js')));
     const owners = new Map();
     for (const config of configs) {
@@ -456,17 +474,25 @@ export function moduleOwners(configs) {
             owners.get(key).add(library);
         }
     }
+    for (const [modulePath, { global }] of ownership) {
+        const library = global.match(/^Toolasha\.([A-Za-z]+)/)?.[1]?.toLowerCase();
+        if (!library || !bundles.has(library)) continue;
+        const key = normalize(modulePath);
+        if (!owners.has(key)) owners.set(key, new Set());
+        owners.get(key).add(library);
+    }
     return owners;
 }
 
 /**
  * Every module a library owns that constructs a stateful singleton, with the class it constructs.
  * @param {Array<Object>} configs - The production rollup config array
+ * @param {Map<string, {global: string}>} [ownership] - rollup.config.js's `singletonOwnership`
  * @returns {Array<{modulePath: string, className: string, owners: Set<string>}>} Owned singletons
  */
-export function ownedSingletons(configs) {
+export function ownedSingletons(configs, ownership = new Map()) {
     const found = [];
-    for (const [absolutePath, owners] of moduleOwners(configs)) {
+    for (const [absolutePath, owners] of moduleOwners(configs, ownership)) {
         if (!absolutePath.endsWith('.js') || !existsSync(absolutePath)) continue;
         const className = singletonClassName(readFileSync(absolutePath, 'utf-8'));
         if (!className) continue;
@@ -499,6 +525,33 @@ export function findForeignSingletonCopies(inlineByModule, owners, classNameOf, 
 }
 
 /**
+ * Stateful class singletons that no library owns yet several bundles carry: every copy is a separately
+ * constructed, separately initialized instance, so a listener, cache or loaded record lives once per copy.
+ * @param {Map<string, Set<string>>} inlineByModule - Absolute module path → bundles carrying it inline
+ * @param {Map<string, Set<string>>} owners - From moduleOwners
+ * @param {(absolutePath: string) => string|null} classNameOf - singletonClassName of that module's source
+ * @param {Map<string, string>} [allowlist] - Module path → why per-bundle copies are safe
+ * @returns {Array<{modulePath: string, className: string, bundles: string[]}>} Violations
+ */
+export function findUnownedSingletonCopies(
+    inlineByModule,
+    owners,
+    classNameOf,
+    allowlist = UNOWNED_SINGLETON_ALLOWLIST
+) {
+    const found = [];
+    for (const [absolutePath, bundles] of inlineByModule) {
+        if (bundles.size < 2 || owners.has(absolutePath)) continue;
+        const relPath = relative(projectRoot, absolutePath).split('\\').join('/');
+        if (allowlist.has(relPath)) continue;
+        const className = classNameOf(absolutePath);
+        if (!className) continue;
+        found.push({ modulePath: relPath, className, bundles: [...bundles].sort() });
+    }
+    return found.sort((a, b) => a.modulePath.localeCompare(b.modulePath));
+}
+
+/**
  * Directory prefixes the sweep polices.
  *
  * `src/utils` is the historical scope. `src/core` joined it because the same
@@ -521,7 +574,7 @@ const PLUGIN_SUFFIXES = ['?raw', '?worker'];
  * @param {string} filePath - Absolute path of the module
  * @returns {string[]} Raw specifiers as written
  */
-function importSpecifiers(filePath) {
+export function importSpecifiers(filePath) {
     const source = readFileSync(filePath, 'utf-8');
     const [imports] = parseModule(source, filePath);
     const specifiers = [];
@@ -534,13 +587,98 @@ function importSpecifiers(filePath) {
 }
 
 /**
+ * What an import or re-export statement takes from its module.
+ * @param {string} statement - The statement's source text, e.g. `import x, { a as b } from './m.js'`
+ * @returns {{defaultImport: boolean, namespace: boolean, named: string[]}} The shapes it uses
+ */
+export function importedNames(statement) {
+    const text = statement.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const clause = text.match(/^\s*(?:import|export)\s+(?:type\s+)?([\s\S]*?)\s*(?:from\s*)?['"][^'"]+['"]/);
+    const out = { defaultImport: false, namespace: false, named: [] };
+    if (!clause || !clause[1].trim()) return out; // side-effect import
+    let body = clause[1].trim();
+    if (text.trimStart().startsWith('export') && body.startsWith('*')) {
+        return { ...out, namespace: true };
+    }
+    const braces = body.match(/\{([\s\S]*)\}/);
+    if (braces) {
+        for (const part of braces[1].split(',')) {
+            const name = part
+                .trim()
+                .split(/\s+as\s+/)[0]
+                .trim();
+            if (name) out.named.push(name);
+        }
+        body = body.replace(braces[0], '');
+    }
+    if (/\*\s*as\s+\w+/.test(body)) out.namespace = true;
+    else if (/[\w$]/.test(body.replace(/,/g, '').trim())) out.defaultImport = true;
+    return out;
+}
+
+/**
+ * Importers inside a bundle that take something from a routed singleton that the routing cannot provide.
+ *
+ * A routed singleton reaches the bundle as the owner's published global — the INSTANCE for a default
+ * export, or the module namespace when the entry lists `named`. A named or namespace import from a module
+ * whose global is the instance resolves to `undefined` in the release (the instance has no such property),
+ * and a feature's try/catch turns that into a section that silently vanishes. The dev build is one bundle
+ * and keeps the real module, so only the released script shows it. PR #685 shipped exactly this for the
+ * labyrinth run ledger's pure helpers.
+ *
+ * @param {Object} args
+ * @param {string} args.bundle - Bundle name
+ * @param {Map<string, {global: string, named?: string[]}>} args.routed - Module path → ownership entry, for
+ *   every module this bundle reaches through an external or stand-in
+ * @param {Set<string>} args.inline - Absolute paths of the modules this bundle compiles
+ * @param {(filePath: string) => Array<{specifier: string, statement: string}>} args.statements - Import statements
+ * @param {(specifier: string, importer: string) => string|null} args.resolve - Specifier resolver
+ * @returns {Array<{bundle: string, importer: string, modulePath: string, unsupported: string[]}>} Violations
+ */
+export function findRoutedImportMisuse({ bundle, routed, inline, statements, resolve }) {
+    const found = [];
+    for (const importer of inline) {
+        for (const { specifier, statement } of statements(importer)) {
+            const resolved = resolve(specifier, importer);
+            const entry = resolved && routed.get(resolved);
+            if (!entry) continue;
+            const used = importedNames(statement);
+            const allowed = new Set(entry.named || []);
+            const unsupported = [...used.named.filter((name) => !allowed.has(name))];
+            if (used.namespace && allowed.size === 0) unsupported.push('* (namespace)');
+            if (unsupported.length === 0) continue;
+            found.push({
+                bundle,
+                importer: relative(projectRoot, importer).split(sep).join('/'),
+                modulePath: relative(projectRoot, resolved).split(sep).join('/'),
+                unsupported,
+            });
+        }
+    }
+    return found.sort((a, b) => a.importer.localeCompare(b.importer));
+}
+
+/**
+ * Every import statement of a module, with its text.
+ * @param {string} filePath - Absolute path
+ * @returns {Array<{specifier: string, statement: string}>} Statements with a static specifier
+ */
+export function importStatements(filePath) {
+    const source = readFileSync(filePath, 'utf-8');
+    const [imports] = parseModule(source, filePath);
+    return imports
+        .filter((record) => record.n)
+        .map((record) => ({ specifier: record.n, statement: source.slice(record.ss, record.se) }));
+}
+
+/**
  * Resolve a specifier relative to its importer, or null when it is not part
  * of the bundled project graph (bare, virtual, or plugin-suffixed).
  * @param {string} specifier - As written in the import statement
  * @param {string} importer - Absolute path of the importing module
  * @returns {string|null} Absolute path, or null to skip
  */
-function resolveSpecifier(specifier, importer) {
+export function resolveSpecifier(specifier, importer) {
     if (PLUGIN_SUFFIXES.some((suffix) => specifier.endsWith(suffix))) return null;
     if (!specifier.startsWith('.')) return null; // bare (node_modules) or virtual: module
     const resolved = normalize(join(dirname(importer), specifier));
@@ -557,7 +695,7 @@ function resolveSpecifier(specifier, importer) {
  * @param {(id: string) => boolean} isExternal - The bundle's external predicate
  * @returns {Set<string>} Absolute paths of every module bundled inline
  */
-function walkBundle(entry, isExternal) {
+export function walkBundle(entry, isExternal) {
     const inline = new Set();
     const queue = [entry];
     while (queue.length > 0) {
@@ -580,7 +718,9 @@ async function main() {
     // The real build config, so the check can never drift from what rollup
     // actually does. BUILD_MODE selects the multi-bundle production array.
     process.env.BUILD_MODE = 'production';
-    const configs = (await import('../rollup.config.js')).default;
+    const rollupConfig = await import('../rollup.config.js');
+    const configs = rollupConfig.default;
+    const { singletonOwnership, singletonRouting } = rollupConfig;
     if (!Array.isArray(configs)) {
         console.error('[check-bundle-sharing] Expected the production config array from rollup.config.js');
         process.exit(2);
@@ -590,12 +730,24 @@ async function main() {
     const inlineIn = new Map();
     // every module (absolute path) -> bundle names that carry it inline, for the singleton-ownership sweep
     const allInline = new Map();
+    // bundle name -> { inline: modules it compiles, routed: owned singletons it reaches through the owner }
+    const perBundle = new Map();
 
     for (const config of configs) {
         const entry = normalize(join(projectRoot, config.input));
         const bundleName = basename(config.input, '.js');
-        const isExternal = typeof config.external === 'function' ? config.external : () => false;
-        for (const modulePath of walkBundle(entry, isExternal)) {
+        const declaredExternal = typeof config.external === 'function' ? config.external : () => false;
+        // An import the build routes to a stand-in (the owner loads after this bundle) compiles no copy
+        const { standIns } = singletonRouting(bundleName);
+        const isExternal = (id) => declaredExternal(id) || standIns.has(normalize(id));
+        const inlineModules = walkBundle(entry, isExternal);
+        const { externals: routedExternals } = singletonRouting(bundleName);
+        const routed = new Map();
+        for (const modulePath of [...routedExternals.keys(), ...standIns.keys()]) {
+            routed.set(modulePath, singletonOwnership.get(modulePath));
+        }
+        perBundle.set(bundleName, { inline: inlineModules, routed });
+        for (const modulePath of inlineModules) {
             if (!allInline.has(modulePath)) allInline.set(modulePath, new Set());
             allInline.get(modulePath).add(bundleName);
             const relPath = relative(projectRoot, modulePath).split('\\').join('/');
@@ -623,7 +775,32 @@ async function main() {
         }
         return classNames.get(absolutePath);
     };
-    const foreignCopies = findForeignSingletonCopies(allInline, moduleOwners(configs), classNameOf);
+    const owners = moduleOwners(configs, singletonOwnership);
+    const foreignCopies = findForeignSingletonCopies(allInline, owners, classNameOf);
+    const unownedCopies = findUnownedSingletonCopies(allInline, owners, classNameOf);
+    const routedMisuse = [...perBundle].flatMap(([bundle, { inline, routed }]) =>
+        findRoutedImportMisuse({
+            bundle,
+            routed,
+            inline,
+            statements: importStatements,
+            resolve: resolveSpecifier,
+        })
+    );
+
+    if (routedMisuse.length > 0) {
+        console.error('');
+        console.error('[check-bundle-sharing] FAILED: a bundle imports names a routed singleton cannot provide.');
+        console.error('');
+        for (const { bundle, importer, modulePath, unsupported } of routedMisuse) {
+            console.error(`  ${importer} (${bundle} bundle) imports ${unsupported.join(', ')} from ${modulePath}`);
+        }
+        console.error('');
+        console.error('That module is routed to its owner published instance, which has none of those names, so in');
+        console.error('the release they are undefined. Move the pure helpers into their own module and import them');
+        console.error('from there, or list the names in the `named` list in singletonOwnership (rollup.config.js).');
+        console.error('');
+    }
 
     if (foreignCopies.length > 0) {
         console.error('');
@@ -641,6 +818,27 @@ async function main() {
         console.error('(add an accessor there if it has none). A bridge read that keeps the import only as a');
         console.error('dev-build fallback, or a documented known debt, goes in FOREIGN_COPY_ALLOWLIST in');
         console.error('scripts/check-bundle-sharing.mjs with the reason.');
+        console.error('');
+    }
+
+    if (unownedCopies.length > 0) {
+        console.error('');
+        console.error(
+            '[check-bundle-sharing] FAILED: a stateful singleton with no owner is bundled inline more than once.'
+        );
+        console.error('');
+        for (const { modulePath, className, bundles } of unownedCopies) {
+            console.error(`  ${modulePath} (new ${className}())`);
+            console.error(`      carried inline by: ${bundles.join(', ')}`);
+        }
+        console.error('');
+        console.error('Each bundle above constructs its own instance, with its own listeners, caches and loaded');
+        console.error('record. Give it one owner: add it to singletonOwnership in rollup.config.js with the global');
+        console.error('its owning library publishes (and export it from that library in src/libraries/) - a');
+        console.error('bundle that loads after the owner then references the global, and one that loads before it');
+        console.error('gets a lazy stand-in. Only a class whose per-copy state does not matter (it lives on');
+        console.error('globalThis, in storage or in shared core) may instead go in UNOWNED_SINGLETON_ALLOWLIST');
+        console.error('in scripts/check-bundle-sharing.mjs, with the reason.');
         console.error('');
     }
 
@@ -666,12 +864,14 @@ async function main() {
         console.error('');
     }
 
-    if (violations.length > 0 || foreignCopies.length > 0) process.exit(1);
+    if (violations.length > 0 || foreignCopies.length > 0 || unownedCopies.length > 0 || routedMisuse.length > 0)
+        process.exit(1);
 
     const tolerated = [...FOREIGN_COPY_ALLOWLIST.values()].reduce((n, bundles) => n + bundles.size, 0);
     console.log(
         `[check-bundle-sharing] OK: no unshared cross-bundle src/utils or src/core modules (${inlineIn.size} checked); ` +
-            `no owned singleton inline outside its owner beyond the ${tolerated} documented copies.`
+            `no owned singleton inline outside its owner beyond the ${tolerated} documented copies; ` +
+            `no unowned class singleton carried by two bundles beyond the ${UNOWNED_SINGLETON_ALLOWLIST.size} documented.`
     );
 }
 
