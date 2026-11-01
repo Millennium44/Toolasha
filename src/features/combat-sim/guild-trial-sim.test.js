@@ -834,10 +834,40 @@ describe('Assign skilling view while the planner runs', () => {
         harness.ws.guild_trial_signup_updated({
             characterId: 20001,
             signedUpSkillingTrialHrid: '/guild_skilling/cooking',
+            trialSignupLevels: { combatLevel: 150, skillingTrialLevel: 140 },
+        });
+        expect(feature.assign.signupLevelMap[20001]).toEqual({ combatLevel: 150, skillingTrialLevel: 140 });
+        expect(feature.assign.signupLevelMap[11519].skillingTrialLevel).toBe(105);
+    });
+
+    test('a member moving skilling trial gets the game’s new level, not a dropped entry', () => {
+        harness.ws.guild_updated({
+            guildTrialSignupLevelMap: { 10013: { combatLevel: 152, skillingTrialLevel: 154 } },
+        });
+        harness.ws.guild_trial_signup_updated({
+            characterId: 10013,
+            signedUpSkillingTrialHrid: '/guild_skilling/brewing',
+            trialSignupLevels: { combatLevel: 152, skillingTrialLevel: 131 },
+        });
+        expect(feature.assign.signupLevelMap).toEqual({ 10013: { combatLevel: 152, skillingTrialLevel: 131 } });
+    });
+
+    test('a top-level skilling level on a sign-up message is still read as a fallback', () => {
+        harness.ws.guild_trial_signup_updated({
+            characterId: 20001,
+            signedUpSkillingTrialHrid: '/guild_skilling/cooking',
             skillingTrialLevel: 140,
         });
         expect(feature.assign.signupLevelMap[20001]).toEqual({ skillingTrialLevel: 140 });
-        expect(feature.assign.signupLevelMap[11519].skillingTrialLevel).toBe(105);
+    });
+
+    test('guild_characters_updated replaces the sign-up level map, as the game does', () => {
+        harness.ws.guild_updated({ guildTrialSignupLevelMap: { 1: { combatLevel: 1, skillingTrialLevel: 1 } } });
+        const map = { 10013: { combatLevel: 152, skillingTrialLevel: 160 } };
+        harness.ws.guild_characters_updated({ guildTrialSignupLevelMap: map });
+        expect(feature.assign.signupLevelMap).toBe(map);
+        harness.ws.guild_characters_updated({});
+        expect(feature.assign.signupLevelMap).toEqual({});
     });
 
     test('a guild update carries the trial minimum levels to the planner', () => {
@@ -946,7 +976,7 @@ describe('roster changes come from the guild XP tracker', () => {
             harness.ws.guild_trial_signup_updated({ characterId: 1 });
             vi.runAllTimers();
             expect(changed).not.toHaveBeenCalled();
-            expect(harness.ws.guild_characters_updated).toBeUndefined();
+            expect(harness.ws.guild_characters_updated).toBeDefined(); // the sign-up level map rides it
             // Fires after the tracker's own (possibly awaited) write
             listener();
             vi.runAllTimers();
