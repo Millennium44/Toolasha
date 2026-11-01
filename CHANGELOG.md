@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Basic, Advanced and Expert Task Badges are now priced at the Task Crystals it takes to craft them (1, 5 and 21) at the crystals' token value, so enhancing one shows its base cost and offers the badge itself as priced protection instead of "no price".
 
+### Treasure values tokens and chests found in chests
+
+- Dungeon, labyrinth and task tokens are now valued at what they buy, and chests, caches, crates and Purple's Gift found inside a chest at their expected contents, instead of counting as nothing in that chest's value.
+
 ### Treasure no longer prices tokens, scrolls and chests at a mirror
 
 - Treasure's "Mirror value" now applies only to untradable capes, quivers and cloaks; it used to price every untradable drop (scrolls, dungeon tokens, nested chests, task items) at a Mirror of Protection. Scrolls have their own token value / no value button, and an expanded chest labels its Qty, Value and vs-expected columns.
