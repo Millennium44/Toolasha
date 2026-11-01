@@ -345,6 +345,27 @@ function gatheringSaleLines(profit) {
 }
 
 /**
+ * What a production method sells each hour: its main item, with what that is worth before tax. Bonus
+ * drops are in the margin's tax but not listed here, so they are never throttled.
+ *
+ * @param {Object|null} profit - A result from `calculateProductionProfit`
+ * @returns {Array<{itemHrid: string, name: string|null, unitsPerHour: number, grossPerHour: number}>}
+ */
+function productionSaleLines(profit) {
+    return profit?.itemHrid
+        ? [
+              {
+                  itemHrid: profit.itemHrid,
+                  name: profit.itemName || null,
+                  unitsPerHour: Number(profit.totalItemsPerHour) || 0,
+                  // The main item alone: bonus drops are in marketTax but not here
+                  grossPerHour: Number(profit.revenuePerHour) || 0,
+              },
+          ]
+        : [];
+}
+
+/**
  * Remember what a trained action sells, output by output, for {@link boundTrainingMargins}.
  *
  * Each output carries its own net proceeds: units per hour times the price the calculator used,
@@ -555,22 +576,7 @@ async function measureGoldRates() {
             trainingMargin.set(hrid, trainingMarginOf(profit));
             trainingDrinkCost.set(hrid, trainingDrinkCostOf(profit));
             trainingUpfront.set(hrid, productionUpfrontCost(profit));
-            noteTrainingSales(
-                trainingSales,
-                hrid,
-                profit,
-                profit?.itemHrid
-                    ? [
-                          {
-                              itemHrid: profit.itemHrid,
-                              name: profit.itemName || null,
-                              unitsPerHour: Number(profit.totalItemsPerHour) || 0,
-                              // The main item alone: bonus drops are in marketTax but not here
-                              grossPerHour: Number(profit.revenuePerHour) || 0,
-                          },
-                      ]
-                    : []
-            );
+            noteTrainingSales(trainingSales, hrid, profit, productionSaleLines(profit));
             if (!(profit?.profitPerHour > 0)) continue;
             if (costSideIncomplete(profit)) {
                 unpriceable += 1;
@@ -729,6 +735,65 @@ function measureXpRates(
 
     rates.sort((a, b) => b.xpPerHour - a.xpPerHour);
     return rates;
+}
+
+/**
+ * Every action of one skill, with its coin side, including the ones not yet unlocked — for the leveling
+ * route optimizer, on request only.
+ *
+ * The quick estimate only ever trains with what the character can start today, so the margins it reads
+ * ({@link measureGoldRates}) are measured for those actions alone, and a locked action reaches it with an
+ * unknown margin. A route that switches at an unlock needs that margin. This measures it with the same
+ * calculators and the same rules — margin unknown when an input has no price, drinks apart (charged by
+ * the clock), one completion's materials as the upfront bill, proceeds held to what the book absorbs — and
+ * hands the result to {@link measureXpRates}, so a route rate and a quick-estimate rate cannot disagree
+ * about an action both of them can see. The level every rate was measured at rides along, because a route
+ * stage that starts higher swaps that level's efficiency for its own.
+ *
+ * Enhancing has one action whose rate depends on the item, every candidate open from level 1: its rates
+ * are the quick estimate's own.
+ *
+ * @param {string} skillHrid - The skill
+ * @returns {Promise<Array<Object>>} Rates for every action of the skill, best first
+ */
+async function measureRouteRates(skillHrid) {
+    const measuredAtLevel = skillState(skillHrid).level;
+    if (skillHrid === ENHANCING_SKILL) {
+        return measureEnhancingRates().map((rate) => ({ ...rate, measuredAtLevel }));
+    }
+    const gameData = dataManager.getInitClientData();
+    if (!gameData?.actionDetailMap) return [];
+
+    const margin = new Map();
+    const drinkCost = new Map();
+    const upfront = new Map();
+    const saleCap = new Map();
+    const sales = [];
+    for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
+        if (action.experienceGain?.skillHrid !== skillHrid) continue;
+        try {
+            if (GATHERING_TYPES.includes(action.type)) {
+                const profit = await calculateGatheringProfit(hrid, { keepSellTax: true });
+                margin.set(hrid, trainingMarginOf(profit));
+                drinkCost.set(hrid, trainingDrinkCostOf(profit));
+                upfront.set(hrid, 0);
+                noteTrainingSales(sales, hrid, profit, gatheringSaleLines(profit));
+            } else if (PRODUCTION_TYPES.includes(action.type)) {
+                const profit = await calculateProductionProfit(hrid, { keepSellTax: true });
+                margin.set(hrid, trainingMarginOf(profit));
+                drinkCost.set(hrid, trainingDrinkCostOf(profit));
+                upfront.set(hrid, productionUpfrontCost(profit));
+                noteTrainingSales(sales, hrid, profit, productionSaleLines(profit));
+            }
+        } catch (error) {
+            console.error(`[GoalPlanner] Costing ${hrid} for a route failed:`, error);
+        }
+    }
+    await boundTrainingMargins(sales, margin, saleCap);
+    return measureXpRates(skillHrid, margin, drinkCost, upfront, saleCap).map((rate) => ({
+        ...rate,
+        measuredAtLevel,
+    }));
 }
 
 /**
@@ -1088,6 +1153,7 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
     const acquisitions = new Map();
     const runs = new Map();
     const xpCache = new Map();
+    const routeCache = new Map();
     const houseCosts = new Map();
 
     return {
@@ -1130,6 +1196,25 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
                     : measureXpRates(skillHrid, goldByAction, drinkCostByAction, upfrontByAction, saleCapByAction);
             xpCache.set(skillHrid, measured);
             return measured;
+        },
+
+        // Every action of the skill, locked ones included, for the leveling route optimizer. Asked only
+        // when the player presses Optimize route; memoised with the rest of this pricing, so Refresh
+        // (a new context) is what re-measures it
+        routeRates: (skillHrid) => {
+            if (!routeCache.has(skillHrid)) {
+                const pending = (async () => {
+                    try {
+                        return await measureRouteRates(skillHrid);
+                    } catch (error) {
+                        // A failed measurement is not remembered: the next press tries again
+                        routeCache.delete(skillHrid);
+                        throw error;
+                    }
+                })();
+                routeCache.set(skillHrid, pending);
+            }
+            return routeCache.get(skillHrid);
         },
 
         acquire: (itemHrid) => {

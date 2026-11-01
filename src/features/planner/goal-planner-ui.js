@@ -66,6 +66,7 @@ import {
 } from './goal-planner.js';
 import { shortDuration } from '../../utils/overlay-format.js';
 import { buildPlannerContext, withHouseCosts, coinsHeld } from './goal-planner-context.js';
+import { prepareRouteInput, routeCacheKey, runRouteSearch, ROUTE_OBJECTIVES } from './leveling-route.js';
 import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, saveCombatGear } from './goal-planner-store.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { releaseMissing, reserve, reservationsEnabled } from '../../utils/inventory-reservations.js';
@@ -73,6 +74,16 @@ import { releaseMissing, reserve, reservationsEnabled } from '../../utils/invent
 const PANEL_ID = 'toolasha-goal-planner-panel';
 const GEOMETRY_KEY = 'goalPlannerPanel';
 const DEFAULT_PANEL = { width: 560, height: 620 };
+/** Finished route searches kept for an identical second press */
+const ROUTE_CACHE_SIZE = 8;
+
+/**
+ * Let the browser paint and take input between slices of a route search.
+ * @returns {Promise<void>} Resolves on the next macrotask
+ */
+function yieldToBrowser() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 const COLORS = {
     background: 'rgba(10, 12, 20, 0.97)',
@@ -361,6 +372,13 @@ class GoalPlannerPanel {
         this.formType = null;
         this.loaded = null;
         this.generation = 0;
+        /**
+         * Leveling routes by goal id: what the Optimize route button last asked for and what came back.
+         * In memory only — a route is an answer to one moment's prices and levels, not something to keep.
+         */
+        this.routes = new Map();
+        /** Finished searches by their full input key, so an identical second press does not search again */
+        this.routeCache = new Map();
     }
 
     /**
@@ -392,6 +410,8 @@ class GoalPlannerPanel {
      */
     hide({ remember = true } = {}) {
         if (remember) saveOpenState(GEOMETRY_KEY, false);
+        // A search nobody can see is work for nothing: closing stops it, and reopening says so
+        for (const state of this.routes.values()) this._stopRouteState(state);
         this._remove();
     }
 
@@ -445,6 +465,8 @@ class GoalPlannerPanel {
         this.combatStatus = null;
         this.pricedAt = null;
         this.notice = null;
+        this.routes = new Map();
+        this.routeCache = new Map();
     }
 
     /**
@@ -648,6 +670,8 @@ class GoalPlannerPanel {
         if (!current()) return;
         this.goals = goals;
         this.plans = this.plans.filter((plan) => plan.goalId !== goalId);
+        // Dropping the state is what stops a running search: it checks it is still the goal's own
+        this.routes.delete(goalId);
 
         if (!this.context) {
             // Nothing has been priced this session, so there is nothing to
@@ -1100,6 +1124,17 @@ class GoalPlannerPanel {
             card.appendChild(span(`⚠ ${warning}`, { display: 'block', color: COLORS.warn, fontSize: '11px' }));
         }
 
+        if (goal.type === 'skill' && !plan.satisfied) {
+            try {
+                card.appendChild(this._routeSection(goal));
+            } catch (error) {
+                console.error('[GoalPlanner] Drawing the leveling route failed:', error);
+                card.appendChild(
+                    span('The leveling route could not be drawn.', { display: 'block', color: COLORS.bad })
+                );
+            }
+        }
+
         // The pricing note is the same sentence on every card, because every
         // card was priced by the same fetch. Repeated per goal it was four
         // copies of one fact taking up more room than some of the plans; it is
@@ -1410,6 +1445,366 @@ class GoalPlannerPanel {
         );
 
         return row;
+    }
+
+    // -------------------------------------------------------------------------
+    // Leveling routes
+    // -------------------------------------------------------------------------
+
+    /**
+     * Search for a leveling route for one skill goal. Runs only from the Optimize route button.
+     *
+     * Two awaits can outlive the press: pricing every action of the skill, and the search, which yields
+     * to the browser between slices. After each, the character and the request are checked again — a
+     * newer press, Stop, a removed goal or a character switch leaves this run with nothing to draw.
+     *
+     * @param {string} goalId - The goal
+     * @returns {Promise<void>}
+     */
+    async optimizeRoute(goalId) {
+        const goal = this.goals.find((entry) => entry.id === goalId && entry.type === 'skill');
+        if (!goal) return;
+        const current = this._currentOperation();
+        const previous = this.routes.get(goalId);
+        if (previous) previous.stopRequested = true;
+        const state = {
+            status: 'pricing',
+            objective: previous?.objective || 'fastest',
+            progress: null,
+            result: null,
+            basis: null,
+            cached: false,
+            stopRequested: false,
+            progressEl: null,
+        };
+        this.routes.set(goalId, state);
+        // Still this goal's newest request, for this character, and not stopped
+        const mine = () => current() && this.routes.get(goalId) === state;
+        const live = () => mine() && !state.stopRequested;
+        this._render();
+
+        try {
+            if (!this.context) {
+                await this.replan({ reprice: true });
+                if (!live()) return;
+            }
+            const context = this.context;
+            if (!context || typeof context.routeRates !== 'function') {
+                state.status = 'error';
+                state.message = 'Prices are not loaded — press Refresh, then Optimize route.';
+                return;
+            }
+
+            const rates = await context.routeRates(goal.skillHrid);
+            if (!live()) return;
+
+            const skill = context.skill?.(goal.skillHrid) || {};
+            const gold = coinsHeld();
+            const input = prepareRouteInput({
+                skillHrid: goal.skillHrid,
+                targetLevel: goal.targetLevel,
+                level: skill.level,
+                experience: skill.experience,
+                rates,
+                table: context.levelExperienceTable,
+                gold,
+                heldOf: (itemHrid) => Number(context.owned?.(itemHrid, goal.id)) || 0,
+            });
+            const key = routeCacheKey(input);
+            let result = this.routeCache.get(key) || null;
+            state.cached = Boolean(result);
+            if (!result) {
+                state.status = 'searching';
+                this._render();
+                result = await runRouteSearch(input, {
+                    shouldStop: () => !live(),
+                    onProgress: (progress) => {
+                        state.progress = progress;
+                        this._drawRouteProgress(state);
+                    },
+                    yieldToBrowser,
+                });
+                if (!mine()) return;
+                if (result.status !== 'stopped') {
+                    this.routeCache.set(key, result);
+                    while (this.routeCache.size > ROUTE_CACHE_SIZE) {
+                        this.routeCache.delete(this.routeCache.keys().next().value);
+                    }
+                }
+            }
+            state.result = result;
+            state.status = result.status === 'stopped' ? 'stopped' : 'done';
+            state.basis = {
+                level: Number(skill.level) || 1,
+                experience: Number(skill.experience) || 0,
+                gold,
+                pricedAt: this.pricedAt,
+            };
+        } catch (error) {
+            if (!mine()) return;
+            console.error('[GoalPlanner] Optimizing a route failed:', error);
+            state.status = 'error';
+            state.message = 'The route search failed — see the console.';
+        } finally {
+            if (mine()) this._render();
+        }
+    }
+
+    /**
+     * Stop a goal's running route search.
+     * @param {string} goalId - The goal
+     */
+    stopRoute(goalId) {
+        const state = this.routes.get(goalId);
+        if (!state) return;
+        this._stopRouteState(state);
+        this._render();
+    }
+
+    /**
+     * @param {Object} state - A route state
+     */
+    _stopRouteState(state) {
+        if (state.status !== 'pricing' && state.status !== 'searching') return;
+        state.stopRequested = true;
+        // The search notices between slices; pricing has no slices, so it is marked now and its answer dropped
+        state.status = 'stopped';
+    }
+
+    /**
+     * Rewrite the progress line in place, without redrawing the panel under the player's pointer.
+     * @param {Object} state - A route state
+     */
+    _drawRouteProgress(state) {
+        if (!state.progressEl || !state.progress) return;
+        const { done, total } = state.progress;
+        state.progressEl.textContent = `Searching… ${total > 0 ? Math.floor((done / total) * 100) : 0}%`;
+    }
+
+    /**
+     * The leveling-route part of a skill goal's card.
+     * @param {Object} goal - A skill goal
+     * @returns {HTMLElement} The section
+     */
+    _routeSection(goal) {
+        const state = this.routes.get(goal.id) || null;
+        const section = document.createElement('div');
+        Object.assign(section.style, {
+            borderTop: `1px solid ${COLORS.hairline}`,
+            marginTop: '6px',
+            paddingTop: '5px',
+        });
+
+        const header = document.createElement('div');
+        Object.assign(header.style, { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' });
+        header.appendChild(span('Leveling route', { fontWeight: 'bold' }));
+        const running = state && (state.status === 'pricing' || state.status === 'searching');
+        if (running) {
+            const progress = span(state.status === 'pricing' ? 'Pricing every action of this skill…' : 'Searching…', {
+                color: COLORS.textDim,
+                fontSize: '11px',
+            });
+            state.progressEl = progress;
+            this._drawRouteProgress(state);
+            header.appendChild(progress);
+            header.appendChild(button('Stop', () => this.stopRoute(goal.id)));
+        } else {
+            const optimize = button(state ? 'Optimize again' : 'Optimize route', () => this.optimizeRoute(goal.id));
+            optimize.title =
+                'Search for a sequence of actions that switches as you level: fastest, cheapest, and fastest ' +
+                'within the coins you hold. Prices every action of this skill, so it only runs when pressed.';
+            header.appendChild(optimize);
+        }
+        section.appendChild(header);
+
+        const note = (text, color = COLORS.textDim) =>
+            section.appendChild(span(text, { display: 'block', color, fontSize: '11px', marginTop: '3px' }));
+
+        if (!state || running) return section;
+        if (state.status === 'stopped') {
+            note('Stopped — no route was drawn.');
+            return section;
+        }
+        if (state.status === 'error') {
+            note(state.message || 'The route search failed — see the console.', COLORS.bad);
+            return section;
+        }
+
+        const result = state.result;
+        if (result.status !== 'route') {
+            note(result.message, result.status === 'reached' ? COLORS.good : COLORS.warn);
+            return section;
+        }
+
+        const stale = this._routeStale(goal, state);
+        if (stale) note(`Out of date: ${stale}. Press Optimize again.`, COLORS.warn);
+
+        const chips = document.createElement('div');
+        Object.assign(chips.style, { display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '4px 0' });
+        for (const [objective, label] of Object.entries(ROUTE_OBJECTIVES)) {
+            const chip = button(label, () => {
+                state.objective = objective;
+                this._render();
+            });
+            if (state.objective === objective) chip.style.background = 'rgba(127, 176, 255, 0.22)';
+            if (!result.routes[objective]) chip.style.opacity = '0.6';
+            chips.appendChild(chip);
+        }
+        section.appendChild(chips);
+
+        const route = result.routes[state.objective];
+        if (!route) {
+            note(result.unavailable[state.objective] || 'No route.', COLORS.warn);
+        } else {
+            for (const stage of route.stages) section.appendChild(this._routeStageRow(stage));
+            section.appendChild(this._routeTotalsRow(route, result));
+        }
+
+        for (const line of result.notes) note(line, COLORS.warn);
+        if (result.excluded.length) {
+            note(`Left out (no timed experience): ${result.excluded.map((entry) => entry.label).join(', ')}.`);
+        }
+        note(
+            `Budget: ${formatKMB(Math.round(result.gold))} coins in hand when searched; claims by the goals above ` +
+                'are not deducted. Inputs are priced as bought at the snapshot price and owned materials are not ' +
+                'credited, so no stock counts twice. Switches are considered at every level; leftover XP past a ' +
+                'level is carried but not compared (about one action a level), and each route shown is re-costed ' +
+                'exactly.'
+        );
+        if (state.cached) note('Same inputs as the last search — reused its answer.');
+        return section;
+    }
+
+    /**
+     * Why a drawn route no longer describes the character, if it does not.
+     * @param {Object} goal - The skill goal
+     * @param {Object} state - Its route state
+     * @returns {string|null} The reason, or null when still current
+     */
+    _routeStale(goal, state) {
+        const basis = state.basis;
+        if (!basis) return null;
+        if (basis.pricedAt !== this.pricedAt) return 'prices were refreshed since';
+        const skill = (dataManager.getSkills?.() || []).find((entry) => entry.skillHrid === goal.skillHrid);
+        if (skill && (skill.level !== basis.level || skill.experience !== basis.experience)) {
+            return 'you have gained experience since';
+        }
+        return null;
+    }
+
+    /**
+     * One stage of a route.
+     * @param {Object} stage - From `costRoute`
+     * @returns {HTMLElement} The row
+     */
+    _routeStageRow(stage) {
+        const row = document.createElement('div');
+        Object.assign(row.style, {
+            display: 'grid',
+            gridTemplateColumns: '16px minmax(0, 1fr) 76px 92px',
+            gap: '6px',
+            alignItems: 'baseline',
+            padding: '1px 0',
+        });
+        row.appendChild(span('›', { color: COLORS.textDim }));
+
+        const label = document.createElement('div');
+        Object.assign(label.style, { minWidth: '0', overflowWrap: 'anywhere' });
+        label.appendChild(
+            span(
+                `${stage.label}: ${stage.fromLevel} → ${stage.toLevel}, ` +
+                    `${formatKMB(Math.round(stage.actions))} actions`
+            )
+        );
+        const parts = [];
+        if (stage.costKnown) {
+            if (stage.materialCost > 0) parts.push(`materials ${formatKMB(Math.round(stage.materialCost))}`);
+            if (stage.drinkCost > 0) parts.push(`drinks ${formatKMB(Math.round(stage.drinkCost))}`);
+            if (stage.proceeds > 0) parts.push(`sales ${formatKMB(Math.round(stage.proceeds))}`);
+            for (const tea of stage.teas || []) {
+                if (tea.held > 0) parts.push(`${tea.held} of ${tea.count} teas from the bag`);
+            }
+        } else parts.push('cost unknown — something it uses has no price');
+        if (stage.why) parts.push(stage.why);
+        label.appendChild(span(parts.join(' · '), { display: 'block', color: COLORS.textDim, fontSize: '11px' }));
+        row.appendChild(label);
+
+        row.appendChild(
+            span(stage.costKnown ? signedCoins(stage.goldDelta) : '?', {
+                textAlign: 'right',
+                color: !stage.costKnown
+                    ? COLORS.textDim
+                    : stage.goldDelta > 0
+                      ? COLORS.good
+                      : stage.goldDelta < 0
+                        ? COLORS.bad
+                        : COLORS.textDim,
+            })
+        );
+        row.appendChild(span(duration(stage.timeHours), { textAlign: 'right', color: COLORS.textDim }));
+        return row;
+    }
+
+    /**
+     * A route's bottom line, against the quick estimate's single action.
+     * @param {Object} route - From `costRoute`
+     * @param {Object} result - The search result
+     * @returns {HTMLElement} The row group
+     */
+    _routeTotalsRow(route, result) {
+        const wrapper = document.createElement('div');
+        const row = document.createElement('div');
+        Object.assign(row.style, {
+            display: 'grid',
+            gridTemplateColumns: '16px minmax(0, 1fr) 76px 92px',
+            gap: '6px',
+            alignItems: 'baseline',
+            borderTop: `1px solid ${COLORS.hairline}`,
+            marginTop: '3px',
+            paddingTop: '2px',
+            fontWeight: 'bold',
+        });
+        const { totals } = route;
+        row.appendChild(span(''));
+        row.appendChild(
+            span(
+                `Route total — ${route.stages.length} stage${route.stages.length === 1 ? '' : 's'}` +
+                    (totals.costKnown ? `, lowest coins ${signedCoins(totals.lowestCash)}` : ''),
+                { overflowWrap: 'anywhere' }
+            )
+        );
+        row.appendChild(
+            span(totals.costKnown ? signedCoins(totals.goldDelta) : '?', {
+                textAlign: 'right',
+                color: totals.costKnown ? (totals.goldDelta >= 0 ? COLORS.good : COLORS.bad) : COLORS.textDim,
+            })
+        );
+        row.appendChild(span(duration(totals.timeHours), { textAlign: 'right' }));
+        wrapper.appendChild(row);
+
+        const baseline = result.baseline;
+        if (baseline) {
+            const same =
+                baseline.stages.length === route.stages.length &&
+                route.stages.length === 1 &&
+                baseline.stages[0].actionHrid === route.stages[0].actionHrid &&
+                baseline.stages[0].label === route.stages[0].label;
+            const text = same
+                ? 'Same as the quick estimate: one action the whole way.'
+                : `Quick estimate (${baseline.stages[0].label} the whole way): ${duration(baseline.totals.timeHours)}, ` +
+                  `${baseline.totals.costKnown ? signedCoins(baseline.totals.goldDelta) : 'cost unknown'}.`;
+            wrapper.appendChild(span(text, { display: 'block', color: COLORS.textDim, fontSize: '11px' }));
+        }
+        if (!totals.costKnown) {
+            wrapper.appendChild(
+                span('This route uses an action with no market price on something it consumes: its cost is unknown.', {
+                    display: 'block',
+                    color: COLORS.warn,
+                    fontSize: '11px',
+                })
+            );
+        }
+        return wrapper;
     }
 
     _remove() {
