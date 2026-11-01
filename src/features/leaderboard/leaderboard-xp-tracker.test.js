@@ -485,6 +485,23 @@ describe('leaderboard XP tracker', () => {
         expect(stats.lastXPH).toBe(1000);
     });
 
+    test('a board older than the revision already seen for the same view is not recorded', () => {
+        const read = (xp, leaderboardRevision) =>
+            game.handlers.leaderboard_updated({
+                leaderboardCategory: 'foraging',
+                leaderboardRevision,
+                leaderboard: { rows: [{ name: 'Late', value2: xp, rank: 3 }] },
+            });
+
+        read(900, 10);
+        read(100, 9);
+        expect(leaderboardXPTracker.playerXPHistory['foraging_Late'].map((r) => r.xp)).toEqual([900]);
+
+        // An equal revision is the same board again, and is read
+        read(950, 10);
+        expect(leaderboardXPTracker.playerXPHistory['foraging_Late'].map((r) => r.xp)).toEqual([900, 950]);
+    });
+
     test('a single reading reports itself as one, with when it was taken', () => {
         const now = Date.now();
         leaderboardXPTracker.playerXPHistory['foraging_C'] = [{ t: now - 5 * 60 * 1000, xp: 10 }];
