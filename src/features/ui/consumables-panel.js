@@ -923,9 +923,9 @@ class ConsumablesPanel {
      * Which dungeon this character is about to run, and who with.
      *
      * The live action queue is preferred over `partyInfo` because `partyInfo`
-     * is an `init_character_data` snapshot that nothing updates — it says what
-     * the party was set to when the page loaded, not what the leader picked
-     * since. The queue is kept current but only speaks for you, so the party
+     * is an `init_character_data` snapshot until a `party_updated` message replaces
+     * it — before that it says what the party was set to when the page loaded,
+     * not what the leader picked since. The queue is kept current but only speaks for you, so the party
      * block is the fallback and is marked as such.
      *
      * The roster is not the slot map alone: `partySlotMap` is `{}` for the
@@ -958,7 +958,8 @@ class ConsumablesPanel {
         if (!actionHrid && characterData.partyInfo?.party?.actionHrid) {
             actionHrid = characterData.partyInfo.party.actionHrid;
             tier = Number(characterData.partyInfo.party.difficultyTier) || 0;
-            stale = true;
+            // Login's copy is a snapshot; a party_updated message keeps the block live.
+            stale = dataManager.partyInfoSource !== 'party';
         }
         if (!actionHrid) return null;
 
@@ -1221,7 +1222,7 @@ class ConsumablesPanel {
 
         if (context.stale) {
             model.footnotes.unshift(
-                'The dungeon and tier come from the party block the game sent at login — nothing updates it, ' +
+                'The dungeon and tier come from the party block the game sent at login — no party update has arrived since, ' +
                     'so it may not be what the leader has selected now.'
             );
         }

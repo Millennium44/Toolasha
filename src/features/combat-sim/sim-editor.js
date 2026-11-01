@@ -871,8 +871,8 @@ export class SimEditor {
      * The party as the game states it now: who, how many, and where that came from.
      *
      * `dataManager.getPartyMembers()` prefers the roster the last battle named over
-     * the one `init_character_data` carried, which is the whole reason a party
-     * joined after the page loaded ever reaches this panel.
+     * the one `init_character_data` carried, and a `party_updated` message over
+     * both, which is how a party joined after the page loaded reaches this panel.
      *
      * @private
      * @returns {{key: string, count: number, source: string}}
