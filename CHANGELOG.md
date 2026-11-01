@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Goal Planner can optimize a leveling route
+
+- A skill goal's new "Optimize route" button searches for the action sequence to its target, switching actions as better ones unlock, and offers the fastest, cheapest and fastest-within-your-coins routes with each stage's time, materials, drinks and net cost; it runs only when pressed and can be stopped.
+
 ### The PFormance panel is now called Performance
 
 - Its button, title, command palette entry and setting label say Performance, so typing "performance" in the command palette finds it; saved settings are unaffected.
