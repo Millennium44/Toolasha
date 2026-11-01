@@ -18,7 +18,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const settings = vi.hoisted(() => ({ values: {} }));
+const settings = vi.hoisted(() => ({ values: {}, callbacks: {} }));
 const stored = vi.hoisted(() => ({ values: {}, transactions: [] }));
 const market = vi.hoisted(() => ({ cowbellValue: 8000 }));
 
@@ -26,6 +26,10 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => settings.values[key] ?? false,
         getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
+        onSettingChange: (key, callback) => {
+            (settings.callbacks[key] ||= []).push(callback);
+            return () => {};
+        },
         setSetting: (key, value) => {
             settings.values[key] = value;
         },
@@ -300,6 +304,8 @@ beforeEach(() => {
     vi.useFakeTimers();
     settings.values = {
         tasks_rerollWalk: true,
+        // The full-label suites below read the floating panel; the toolbar mode has its own describe
+        tasks_rerollWalkBarPosition: 'floating',
         tasks_rerollWalkCurrency: 'auto',
         tasks_rerollWalkTrashAtLimit: true,
     };
@@ -2245,35 +2251,91 @@ describe('what start-up costs the settings store', () => {
 
 describe('toolbar docking', () => {
     const toolbarOf = () => document.querySelector('[class*="TasksPanel_taskSlotCount"]');
+    const chipEl = () => document.getElementById('mwi-task-reroll-walk-chip');
+    const mainBtn = () => document.querySelector('.mwi-task-reroll-walk-advance');
+    const oneCard = () => board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
 
-    test('the widget sits in the Task Board toolbar row, not on the body', async () => {
-        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
-        await walk.start();
-
-        const el = document.getElementById('mwi-task-reroll-walk-chip');
-        expect(el.parentElement).toBe(toolbarOf());
-        expect(el.style.position).not.toBe('fixed');
-        expect(el.dataset.toolashaDocked).toBe('true');
+    beforeEach(() => {
+        settings.values.tasks_rerollWalkBarPosition = 'toolbar';
     });
 
-    test('the docked main button can shrink and wrap a long label', async () => {
-        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+    test('the widget sits in the Task Board toolbar row, not on the body', async () => {
+        oneCard();
         await walk.start();
 
-        const main = document.querySelector('.mwi-task-reroll-walk-advance');
-        expect(main.style.whiteSpace).toBe('normal');
-        expect(main.style.minWidth).toBe('0');
-        expect(main.style.overflowWrap).toBe('anywhere');
-        expect(document.getElementById('mwi-task-reroll-walk-chip').style.minWidth).toBe('0');
+        expect(chipEl().parentElement).toBe(toolbarOf());
+        expect(chipEl().style.position).not.toBe('fixed');
+        expect(chipEl().dataset.toolashaDocked).toBe('true');
+    });
+
+    test('toolbar mode has no panel box and wears the toolbar button classes', async () => {
+        oneCard();
+        await walk.start();
+
+        const el = chipEl();
+        expect(el.style.border).toBe('0px');
+        expect(el.style.background).toBe('transparent');
+        expect(el.style.padding).toBe('0px');
+        expect(el.style.boxShadow).toBe('none');
+        for (const button of [mainBtn(), el.querySelector('.mwi-task-reroll-walk-sort')]) {
+            expect(button.className).toContain('Button_button__1Fe9z Button_small__3fqC7');
+        }
+    });
+
+    test('the label is the action and its cost; the rest lives in the title', async () => {
+        oneCard();
+        await walk.start();
+        walk.tally = { claimed: 0, kept: 0, rerolled: 0, trashed: 0, goldSpent: 310000, cowbellsSpent: 31 };
+        walk._render();
+        const long = walk._fullLabel();
+
+        expect(long).toContain('spent');
+        expect(mainBtn().textContent).toMatch(/^[▶👉] Reroll #1 — /);
+        expect(mainBtn().textContent).not.toContain('(');
+        expect(mainBtn().textContent).not.toContain('open the menu');
+        expect(mainBtn().textContent).not.toContain('spent');
+        expect(mainBtn().title).toContain(long);
+        // One line, with an ellipsis rather than wrapping as the narrow-pane safety
+        expect(mainBtn().style.whiteSpace).toBe('nowrap');
+        expect(mainBtn().style.minWidth).toBe('0');
+        expect(mainBtn().style.textOverflow).toBe('ellipsis');
+    });
+
+    test('a very long label stays a short one-line button', async () => {
+        oneCard();
+        await walk.start();
+        walk.step = {
+            ...walk.step,
+            label: 'Reroll #1 — 10.0K🪙 (cheaper than 1🔔 ≈131.5K), open the menu',
+        };
+        walk.tally.goldSpent = 310000;
+        walk.tally.cowbellsSpent = 31;
+        walk._render();
+
+        expect(mainBtn().textContent).toBe('▶ Reroll #1 — 10.0K🪙');
+        expect(mainBtn().title).toContain('cheaper than 1🔔');
+        expect(mainBtn().title).toContain('spent');
+    });
+
+    test('waiting reads Walking… and done reads Walk again with the summary in the title', async () => {
+        oneCard();
+        await walk.start();
+        walk.state = 'waiting';
+        walk._render();
+        expect(mainBtn().textContent).toBe('⏳ Walking…');
+
+        walk.state = 'done';
+        walk._render();
+        expect(mainBtn().textContent).toBe('↻ Walk again');
+        expect(mainBtn().title).toContain('✓ Done');
     });
 
     test('a toolbar re-render rebuilds one widget in the new toolbar, never two', async () => {
-        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        oneCard();
         await walk.start();
-        const oldToolbar = toolbarOf();
         const fresh = document.createElement('div');
         fresh.className = 'TasksPanel_taskSlotCount__fixture';
-        oldToolbar.replaceWith(fresh);
+        toolbarOf().replaceWith(fresh);
 
         walk._syncWidget();
         walk._syncWidget();
@@ -2284,12 +2346,12 @@ describe('toolbar docking', () => {
     });
 
     test('it lives inside the Task Board tab panel, so the game hides it with the board', async () => {
-        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        oneCard();
         const panel = document.querySelector('.TasksPanel_tasksPanel__abc');
         panel.className += ' TabPanel_hidden__fixture';
         await walk.start();
 
-        expect(panel.contains(document.getElementById('mwi-task-reroll-walk-chip'))).toBe(true);
+        expect(panel.contains(chipEl())).toBe(true);
     });
 
     test('without a toolbar there is no widget', () => {
@@ -2298,9 +2360,68 @@ describe('toolbar docking', () => {
     });
 
     test('disabling takes the widget out of the toolbar', async () => {
-        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        oneCard();
         await walk.start();
         walk.cleanup();
-        expect(document.getElementById('mwi-task-reroll-walk-chip')).toBe(null);
+        expect(chipEl()).toBe(null);
+    });
+});
+
+describe('floating mode', () => {
+    const chipEl = () => document.getElementById('mwi-task-reroll-walk-chip');
+    const oneCard = () => board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+
+    beforeEach(() => {
+        settings.values.tasks_rerollWalkBarPosition = 'floating';
+    });
+
+    test('mounts outside the toolbar, draggable, with the full label', async () => {
+        oneCard();
+        await walk.start();
+
+        expect(chipEl().parentElement.matches('[class*="TasksPanel_taskSlotCount"]')).toBe(false);
+        expect(chipEl().dataset.toolashaDocked).toBeUndefined();
+        expect(chipEl().style.border).not.toBe('0px');
+        expect(chipText()).toContain('open the menu');
+    });
+
+    test('is hidden while the Task Board tab panel is hidden, and returns with it', async () => {
+        oneCard();
+        await walk.start();
+        const panel = document.querySelector('.TasksPanel_tasksPanel__abc');
+
+        panel.className += ' TabPanel_hidden__fixture';
+        walk._syncWidget();
+        expect(chipEl()).toBe(null);
+
+        panel.className = 'TasksPanel_tasksPanel__abc';
+        walk._syncWidget();
+        expect(chipEl()).toBeTruthy();
+    });
+
+    test('still collapses to the Walk again chip when done', async () => {
+        walk.protectedHrids = new Set([MILKING]);
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+
+        expect(chipText()).toBe('↻ Walk again');
+        expect(chipTitle()).toContain('✓ Done');
+    });
+
+    test('switching the setting re-mounts the bar live, in both directions', async () => {
+        oneCard();
+        await walk.start();
+        expect(chipEl().dataset.toolashaDocked).toBeUndefined();
+
+        settings.values.tasks_rerollWalkBarPosition = 'toolbar';
+        walk._removeWidget();
+        walk._syncWidget();
+        expect(chipEl().dataset.toolashaDocked).toBe('true');
+
+        settings.values.tasks_rerollWalkBarPosition = 'floating';
+        walk._syncWidget();
+        // A changed mode is noticed even without the setting callback
+        expect(document.querySelectorAll('#mwi-task-reroll-walk-chip')).toHaveLength(1);
+        expect(chipEl().dataset.toolashaDocked).toBeUndefined();
     });
 });
