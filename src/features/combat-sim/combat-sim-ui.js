@@ -13113,7 +13113,11 @@ class CombatSimUI {
         const epoch = this._budgetConstraintsEpoch;
         let failed = false;
         try {
-            await writeScoped(BUDGET_CONSTRAINTS_KEY, payload, 'settings');
+            // storage.set resolves false (no IndexedDB, quota) rather than rejecting
+            if ((await writeScoped(BUDGET_CONSTRAINTS_KEY, payload, 'settings')) === false) {
+                console.error('[CombatSimUI] Failed to save the budget pins and exclusions: storage refused the write');
+                failed = true;
+            }
         } catch (error) {
             console.error('[CombatSimUI] Failed to save the budget pins and exclusions:', error);
             failed = true;

@@ -13755,6 +13755,18 @@ describe('pins and exclusions are remembered per character (#545)', () => {
         expect(container().querySelector('[data-budget-save-failed]')).toBeNull();
     });
 
+    test('a save that resolves false (no IndexedDB, quota) counts as failed', async () => {
+        ui._renderUpgradeResults(analysis());
+        vi.spyOn(storage, 'set').mockResolvedValueOnce(false);
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        click('pin', 'Cape');
+        await settle();
+
+        expect(ui._budgetConstraints().pins.size).toBe(1);
+        expect(container().querySelector('[data-budget-save-failed]')).toBeTruthy();
+    });
+
     test('the constraints say what they cost against the plan without them', () => {
         ui._renderUpgradeResults(analysis());
         expect(container().querySelector('[data-budget-vs-free]')).toBeNull();
