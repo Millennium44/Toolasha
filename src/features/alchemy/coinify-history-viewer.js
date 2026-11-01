@@ -8,6 +8,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { coinifyHistoryTracker } from './coinify-history-tracker.js';
+import { getUntradableCapeValue } from '../enhancement/untradable-cape-value.js';
 import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
@@ -427,7 +428,11 @@ class CoinifyHistoryViewer {
         const { price: inputPrice, basis: inputBasis } = priceInputWithRefinementFallback(
             session.inputItemHrid,
             marketPrice,
-            { enhancementLevel: session.enhancementLevel || 0, marketSource: inputPriceInfo.source }
+            {
+                enhancementLevel: session.enhancementLevel || 0,
+                marketSource: inputPriceInfo.source,
+                capeValue: getUntradableCapeValue,
+            }
         );
         const inputCost = netConsumed * inputPrice;
         const inputUnpriced = inputBasis === null && netConsumed > 0;
