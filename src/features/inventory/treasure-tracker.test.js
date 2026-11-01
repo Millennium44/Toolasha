@@ -143,7 +143,12 @@ vi.mock('../../utils/choice-dialog.js', () => ({
             choice.answer = resolve;
         }),
 }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1, getPricingMode: () => 'bid' }));
+/** Prices by hrid; anything unlisted answers 1, as before */
+const prices = vi.hoisted(() => ({}));
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: (hrid) => (hrid in prices ? prices[hrid] : 1),
+    getPricingMode: () => 'bid',
+}));
 // The overlay tile's `version()` counts price feeds, so the module imports the
 // market API directly now — and the real one opens a socket on import
 vi.mock('../../api/marketplace.js', () => ({ default: { on: () => {} } }));
@@ -1104,6 +1109,116 @@ describe('_untradableValue at token value', () => {
 
         // market-data is mocked to price everything at 1, so the fallback answers 1
         expect(treasureTracker._untradableValue('/items/cape')).toBe(10_001);
+    });
+});
+
+describe('what an untradable item is worth, by kind and by mode', () => {
+    const MIRROR = 9_440_000;
+    const items = {
+        cape: { name: 'Cape', equipmentDetail: { type: '/equipment_types/back' } },
+        scroll: { name: 'Scroll Of X', categoryHrid: '/item_categories/scroll' },
+        token: { name: 'Chimerical Token', categoryHrid: '/item_categories/currency' },
+        nested: { name: 'Small Treasure Chest', categoryHrid: '/item_categories/loot' },
+        tradable: { name: 'Tradable' },
+    };
+    let saved;
+
+    beforeEach(() => {
+        saved = { items: dm.items, shop: dm.shop, labyrinthShop: dm.labyrinthShop };
+        dm.items = Object.fromEntries(Object.entries(items).map(([k, v]) => [`/items/${k}`, v]));
+        // The shop sells the cape, the nested chest and the scroll
+        dm.shop = {
+            cape: { itemHrid: '/items/cape', costs: [{ itemHrid: '/items/chimerical_token', count: 10 }] },
+            scroll: { itemHrid: '/items/scroll', costs: [{ itemHrid: '/items/chimerical_token', count: 3 }] },
+            nested: { itemHrid: '/items/nested', costs: [{ itemHrid: '/items/chimerical_token', count: 2 }] },
+        };
+        tokenValue.of = (hrid) => (hrid === '/items/chimerical_token' ? 1000 : null);
+        for (const hrid of ['cape', 'scroll', 'token', 'nested']) prices[`/items/${hrid}`] = 0;
+        prices['/items/mirror_of_protection'] = MIRROR;
+        prices['/items/tradable'] = 777;
+    });
+
+    afterEach(() => {
+        Object.assign(dm, saved);
+        tokenValue.of = () => 0;
+        for (const key of Object.keys(prices)) delete prices[key];
+        treasureTracker.settings.capeValue = 'token';
+        treasureTracker.settings.scrollValue = 'token';
+    });
+
+    const priceOf = (name, capeValue, scrollValue) => {
+        treasureTracker.settings.capeValue = capeValue;
+        treasureTracker.settings.scrollValue = scrollValue;
+        return treasureTracker._priceOf()(`/items/${name}`);
+    };
+
+    test.each(['token', 'zero'])('a tradable item keeps its market price (cape %s)', (cape) => {
+        expect(priceOf('tradable', cape, 'zero')).toBe(777);
+    });
+
+    test.each(['token', 'zero'])('equipment follows the cape button; scrolls setting %s changes nothing', (scroll) => {
+        expect(priceOf('cape', 'token', scroll)).toBe(10_000);
+        expect(priceOf('cape', 'mirror', scroll)).toBe(MIRROR);
+        expect(priceOf('cape', 'zero', scroll)).toBeNull();
+    });
+
+    test('a scroll follows its own button and never the mirror', () => {
+        for (const cape of ['token', 'mirror', 'zero']) {
+            const value = priceOf('scroll', cape, 'token');
+            expect(value).not.toBe(MIRROR);
+            expect(value).toBe(3000);
+            expect(priceOf('scroll', cape, 'zero')).toBeNull();
+        }
+    });
+
+    test('a scroll with no saved scrollValue reads as token value', () => {
+        treasureTracker.settings.capeValue = 'mirror';
+        delete treasureTracker.settings.scrollValue;
+        expect(treasureTracker._untradableValue('/items/scroll')).toBe(3000);
+    });
+
+    test('a token is never the mirror, in any cape mode', () => {
+        for (const cape of ['token', 'mirror', 'zero']) {
+            expect(priceOf('token', cape, 'token')).toBeNull();
+        }
+    });
+
+    test('a nested chest takes the shop value in every cape mode, never the mirror', () => {
+        for (const cape of ['token', 'mirror', 'zero']) {
+            expect(priceOf('nested', cape, 'zero')).toBe(2000);
+        }
+    });
+});
+
+describe('the expanded chest names its columns', () => {
+    const CHEST = '/items/chimerical_chest';
+
+    beforeEach(() => {
+        treasureTracker.tally = { [CHEST]: { opened: 2, loot: { '/items/coin': 20 }, last: { '/items/coin': 10 } } };
+        dm.dropTables = { [CHEST]: [{ itemHrid: '/items/coin', dropRate: 1, minCount: 10, maxCount: 10 }] };
+    });
+
+    afterEach(() => {
+        treasureTracker.tally = {};
+        dm.dropTables = {};
+    });
+
+    test('a label row sits on the same grids as the item rows, with hovers on the headings', () => {
+        const el = treasureTracker._itemBreakdown({ chestHrid: CHEST });
+        const labels = el.querySelector('[data-role="column-labels"]');
+        expect(labels).not.toBeNull();
+        expect(labels.textContent).toContain('Qty');
+        expect(labels.textContent).toContain('vs exp.');
+        expect(labels.textContent).toContain('Value');
+
+        const itemRow = el.lastElementChild;
+        expect(labels.children.length).toBe(itemRow.children.length);
+        for (let i = 0; i < 3; i++) {
+            expect(labels.children[i].style.gridTemplateColumns).toBe(itemRow.children[i].style.gridTemplateColumns);
+        }
+
+        const headings = [...el.firstElementChild.children];
+        expect(headings.every((h) => h.title.length > 20)).toBe(true);
     });
 });
 

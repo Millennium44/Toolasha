@@ -161,6 +161,28 @@ const NOTABLE_RATIO = 0.05;
 const CAPE_VALUE_CYCLE = { token: 'mirror', mirror: 'zero', zero: 'token' };
 const CAPE_VALUE_LABEL = { token: 'Token value', mirror: 'Mirror value', zero: 'No value' };
 
+/**
+ * How to value a scroll, which is its own question: a scroll is neither equipment
+ * (a Mirror of Protection stands in for a cape, not for a scroll) nor a token. It
+ * is worth what the labyrinth or the shop would have charged for it, or nothing.
+ */
+const SCROLL_VALUE_CYCLE = { token: 'zero', zero: 'token' };
+const SCROLL_VALUE_LABEL = { token: 'Scrolls: token value', zero: 'Scrolls: no value' };
+
+/** The sub-grids of an item row, shared with the label row above the rows */
+const ACTUAL_GRID = '15px 1fr 1fr 54px';
+const EXPECTED_GRID = '1fr 1fr 8px 1fr 1fr';
+
+/** What each expanded-chest heading's sub-columns mean */
+const COLUMN_HELP = [
+    'The last opening of this chest. Per item: how many dropped (Qty), what they were worth (Value), ' +
+        'and how that compares with what one chest is expected to pay (vs exp.).',
+    'Every opening together. Per item: total dropped (Qty), what it was worth (Value), ' +
+        'and how that compares with what the openings were expected to pay (vs exp.).',
+    'What the drop table owes. Left of the bar, per chest: expected quantity and value. ' +
+        'Right of the bar, over every opening: expected quantity and value.',
+];
+
 const MIRROR_HRID = '/items/mirror_of_protection';
 const COWBELL_HRID = '/items/cowbell';
 const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
@@ -168,6 +190,8 @@ const COWBELLS_PER_BAG = 10;
 
 const DEFAULT_SETTINGS = {
     capeValue: 'token',
+    // An older saved settings object has no field here and reads as token value
+    scrollValue: 'token',
     valueCowbells: true,
     hiddenChests: [],
     popupPinned: false,
@@ -242,6 +266,16 @@ export function itemSortIndex(itemHrid) {
  */
 export function isScrollItem(itemHrid) {
     return dataManager.getItemDetails?.(itemHrid)?.categoryHrid === SCROLL_CATEGORY;
+}
+
+/**
+ * Whether an item is wearable equipment (capes, quivers, cloaks), the only kind
+ * of untradable a Mirror of Protection can stand in for.
+ * @param {string} itemHrid - Item
+ * @returns {boolean}
+ */
+function isEquipmentItem(itemHrid) {
+    return Boolean(dataManager.getItemDetails?.(itemHrid)?.equipmentDetail);
 }
 
 /**
@@ -1017,10 +1051,28 @@ class TreasureTracker {
      * @returns {number|null} A value, or null to leave it out of the comparison
      */
     _untradableValue(itemHrid) {
+        // A scroll has its own switch, whatever the cape button says
+        if (isScrollItem(itemHrid)) {
+            return this.settings.scrollValue === 'zero' ? null : this._tokenValue(itemHrid);
+        }
+
+        // Only equipment answers to the cape button. A Mirror of Protection stands
+        // in for a cape; it is not what a token, a nested chest, a cache, a crate
+        // or a task item is worth, so those take the token path in every mode.
+        if (!isEquipmentItem(itemHrid)) return this._tokenValue(itemHrid);
+
         const mode = this.settings.capeValue;
         if (mode === 'zero') return null;
         if (mode === 'mirror') return getItemPrice(MIRROR_HRID, { context: 'profit', side: 'sell' }) || null;
+        return this._tokenValue(itemHrid);
+    }
 
+    /**
+     * What the shop (or the labyrinth shop) charges for an item, in coins.
+     * @param {string} itemHrid - The item
+     * @returns {number|null} A value, or null when no shop sells it
+     */
+    _tokenValue(itemHrid) {
         // Token value: what the tokens it costs would otherwise have bought.
         //
         // Every cost on the line, not `costs[0]`: a line whose first cost is coins
@@ -1477,10 +1529,22 @@ class TreasureTracker {
         // the gear
         this.capeBtn = this._toggleButton(
             () => CAPE_VALUE_LABEL[this.settings.capeValue],
-            'Untradable rewards — capes, quivers, cloaks — have no market price. ' +
-                'Value them at what their tokens would have bought, at a Mirror of Protection, or at nothing.',
+            'Untradable equipment — capes, quivers, cloaks — has no market price. ' +
+                'Value it at what its tokens would have bought, at a Mirror of Protection, or at nothing. ' +
+                'Scrolls, tokens and other untradable items are not affected.',
             () => {
                 this.settings.capeValue = CAPE_VALUE_CYCLE[this.settings.capeValue] || 'token';
+                this._saveSettings();
+                this._refreshToggles();
+                this._render();
+            }
+        );
+
+        this.scrollBtn = this._toggleButton(
+            () => SCROLL_VALUE_LABEL[this.settings.scrollValue] || SCROLL_VALUE_LABEL.token,
+            'Scrolls are not tradable. Value them at what the labyrinth or shop would have charged, or at nothing.',
+            () => {
+                this.settings.scrollValue = SCROLL_VALUE_CYCLE[this.settings.scrollValue] || 'zero';
                 this._saveSettings();
                 this._refreshToggles();
                 this._render();
@@ -1528,7 +1592,7 @@ class TreasureTracker {
             });
         }
 
-        header.append(title, this.capeBtn, this.cowbellBtn, gear, picker, closeBtn);
+        header.append(title, this.capeBtn, this.scrollBtn, this.cowbellBtn, gear, picker, closeBtn);
         this._refreshToggles();
         return header;
     }
@@ -1615,12 +1679,12 @@ class TreasureTracker {
 
     /** Put the current setting back on the face of each toggle */
     _refreshToggles() {
-        for (const button of [this.capeBtn, this.cowbellBtn]) {
+        for (const button of [this.capeBtn, this.scrollBtn, this.cowbellBtn]) {
             if (!button?._label) continue;
             button.textContent = button._label();
             // Dimmed when the setting means "count this as nothing", so the
             // panel says at a glance that something is being left out
-            const counting = !/zero|No value/.test(button.textContent);
+            const counting = !/zero|no value/i.test(button.textContent);
             button.style.color = counting ? COLORS.accent : COLORS.textDim;
             button.style.opacity = counting ? '1' : '0.7';
         }
@@ -2224,13 +2288,13 @@ class TreasureTracker {
         });
 
         wrap.appendChild(
-            this._headerBand([
-                `LAST (×${last.opened || 0})`,
-                `TOTAL (×${total.opened})`,
-                `EXPECTED (×1 / ×${total.opened})`,
-            ])
+            this._headerBand(
+                [`LAST (×${last.opened || 0})`, `TOTAL (×${total.opened})`, `EXPECTED (×1 / ×${total.opened})`],
+                COLUMN_HELP
+            )
         );
         wrap.appendChild(this._summaryBand(last, total));
+        wrap.appendChild(this._columnLabelBand());
 
         for (const item of items) wrap.appendChild(this._breakdownRow(item));
         return wrap;
@@ -2240,15 +2304,45 @@ class TreasureTracker {
      * @param {string[]} titles - Three column titles
      * @returns {HTMLElement}
      */
-    _headerBand(titles) {
+    _headerBand(titles, hovers = []) {
         const band = this._threeColumns();
         Object.assign(band.style, { fontSize: '10px', fontWeight: 'bold', color: '#7fb3ff', padding: '1px 0' });
-        for (const title of titles) {
+        titles.forEach((title, index) => {
             const cell = document.createElement('div');
             cell.textContent = title;
+            if (hovers[index]) cell.title = hovers[index];
             cell.style.textAlign = 'center';
             band.appendChild(cell);
-        }
+        });
+        return band;
+    }
+
+    /**
+     * Names the sub-columns every item row is drawn in, on the same grids
+     * `_actualCell` and `_expectedCell` use so each label sits over its figures.
+     * @returns {HTMLElement}
+     */
+    _columnLabelBand() {
+        const band = this._threeColumns();
+        Object.assign(band.style, { fontSize: '9px', color: COLORS.textDim, opacity: '0.8', padding: '0 0 2px' });
+        band.dataset.role = 'column-labels';
+
+        const grid = (template, labels) => {
+            const cell = document.createElement('div');
+            Object.assign(cell.style, { display: 'grid', gridTemplateColumns: template, gap: '4px' });
+            for (const label of labels) {
+                const span = this._span(label);
+                span.style.textAlign = 'right';
+                cell.appendChild(span);
+            }
+            return cell;
+        };
+        const actual = ['', 'Qty', 'Value', 'vs exp.'];
+        band.append(
+            grid(ACTUAL_GRID, actual),
+            grid(ACTUAL_GRID, actual),
+            grid(EXPECTED_GRID, ['Qty', 'Value', '', 'Qty', 'Value'])
+        );
         return band;
     }
 
@@ -2333,7 +2427,7 @@ class TreasureTracker {
         const cell = document.createElement('div');
         Object.assign(cell.style, {
             display: 'grid',
-            gridTemplateColumns: '15px 1fr 1fr 54px',
+            gridTemplateColumns: ACTUAL_GRID,
             gap: '4px',
             alignItems: 'center',
         });
@@ -2360,7 +2454,7 @@ class TreasureTracker {
         const cell = document.createElement('div');
         Object.assign(cell.style, {
             display: 'grid',
-            gridTemplateColumns: '1fr 1fr 8px 1fr 1fr',
+            gridTemplateColumns: EXPECTED_GRID,
             gap: '4px',
             alignItems: 'center',
             color: COLORS.textDim,
@@ -2446,6 +2540,7 @@ function treasureVersion() {
         // own, and it moves every figure on the tile without touching the ledger
         getPricingMode('profit', 'sell'),
         settings.capeValue,
+        settings.scrollValue,
         settings.valueCowbells ? 1 : 0,
     ].join('|');
 }
