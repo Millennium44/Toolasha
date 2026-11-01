@@ -13755,6 +13755,20 @@ describe('pins and exclusions are remembered per character (#545)', () => {
         expect(container().querySelector('[data-budget-save-failed]')).toBeNull();
     });
 
+    test('a failed save when the last constraint is cleared still says so', async () => {
+        ui._renderUpgradeResults(analysis());
+        click('pin', 'Cape');
+        await settle();
+        vi.spyOn(storage, 'set').mockResolvedValueOnce(false);
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        container().querySelector('[data-budget-clear-all]').click();
+        await settle();
+
+        expect(ui._budgetConstraints().pins.size).toBe(0);
+        expect(container().querySelector('[data-budget-save-failed]')).toBeTruthy();
+    });
+
     test('a save that resolves false (no IndexedDB, quota) counts as failed', async () => {
         ui._renderUpgradeResults(analysis());
         vi.spyOn(storage, 'set').mockResolvedValueOnce(false);

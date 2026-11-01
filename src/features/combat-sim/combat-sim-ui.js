@@ -13211,7 +13211,13 @@ class CombatSimUI {
      * @private
      */
     _renderBudgetConstraints(plan, pins, excludes, { known = null, free = null, saveFailed = false } = {}) {
-        if (!pins.size && !excludes.size) return '';
+        if (!pins.size && !excludes.size) {
+            // Removing the last one can fail to save too, and the stored ones would then come back on reload
+            return saveFailed
+                ? `<div data-budget-save-failed style="margin-top:6px; color:#ff9800; font-size:10px;">Removing your
+                    pins and exclusions could not be saved; they may come back after a reload.</div>`
+                : '';
+        }
         const style =
             'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:0 5px; ' +
             'font-size:10px; cursor:pointer; font-family:inherit; margin-left:4px;';
