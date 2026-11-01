@@ -3038,6 +3038,18 @@ class GuildTrials {
         guildTrialRecorder.setGuildName(this.guildName);
         guildTrialAbilities.setGuildName?.(this.guildName);
         guildTrialDamage.setGuildName?.(this.guildName, this.characterId);
+
+        // Draw what is already on screen now, rather than waiting for DOM churn
+        // or the five-second sampler. The observer above only fires on nodes
+        // that mount or change after it was registered, so a Guild panel that
+        // was open when this feature started stayed bare for up to a sampler
+        // period (~3 s measured after the feature's own start). The guild name
+        // and character are resolved just above, so the block is keyed right;
+        // nothing is saved from this pass, because the stored record has not
+        // been read yet and a save from a blank one is exactly what the load
+        // below exists to prevent. The pass after the load redraws with it.
+        this._drawWithoutSaving();
+
         // Three independent storage reads, awaited together rather than one
         // after another: serially they were three IndexedDB round trips before
         // the first panel could carry stored samples, which is a visible slice
@@ -3066,6 +3078,34 @@ class GuildTrials {
         if (this.characterId !== characterId) return;
         this._adoptStored(stored);
         this._publishTrialNames();
+        // Redraw with the stored record merged in: the early pass above had
+        // only this session's readings. A cleanup that landed in the reads
+        // took the blocks down and must not have them put back.
+        if (this.initialized) this._onTab(findTrialsRoot());
+    }
+
+    /**
+     * One draw of whatever trial view is mounted, presentation only.
+     *
+     * The stored record and the learned work bases are not in yet, so what this pass samples (a
+     * first-tier guess for a trial whose base is not known, footer stats filed under that tier)
+     * would be merged into saved history by the load. It therefore draws from a throwaway record,
+     * which is dropped afterwards, and saves nothing; the draw after the load is the one that records.
+     * @returns {void}
+     * @private
+     */
+    _drawWithoutSaving() {
+        this._suppressSave = true;
+        const held = this.record;
+        this.record = null;
+        try {
+            this._onTab(findTrialsRoot());
+        } catch (error) {
+            console.error('[GuildTrials] The first draw failed:', error);
+        } finally {
+            this._suppressSave = false;
+            this.record = held;
+        }
     }
 
     /**
@@ -3325,6 +3365,8 @@ class GuildTrials {
      * @returns {Promise<boolean>} Whether the write was queued
      */
     async _persistRecord({ overwrite = false } = {}) {
+        // The first draw runs before the stored record is read; see `_drawWithoutSaving`
+        if (this._suppressSave) return false;
         const guildName = this.guildName;
         const characterId = this.characterId;
         const guildId = this._guildId();
@@ -3947,7 +3989,7 @@ class GuildTrials {
             // full record — hundreds of samples per tile — to IndexedDB on
             // each one. Five seconds of samples is the most a crash can lose,
             // which is the sampling interval's own promise anyway.
-            if (tiles.length && now - this.lastRecordSaveAt >= SAMPLE_MS) {
+            if (tiles.length && !this._suppressSave && now - this.lastRecordSaveAt >= SAMPLE_MS) {
                 this.lastRecordSaveAt = now;
                 this._persistRecord();
             }

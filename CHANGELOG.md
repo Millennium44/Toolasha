@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial info boxes appear sooner
+
+- Guild Trials now starts first at login and draws its info boxes from what is already on screen, instead of several seconds later once the other features and its first sample had run.
+
 ### October 31 audit fixes: Labyrinth
 
 - The beacon planner's minimum counts revealed islands that already link two beacons, so it no longer asks for one more than needed.

@@ -756,6 +756,45 @@ function anyPositiveDataset(selector, field) {
  * Register all features from libraries into the feature registry
  */
 function registerFeatures() {
+    // Started ahead of everything else, in this order. Guild Trials is the one
+    // feature whose first paint the player waits on at login (the game's own
+    // trial view is up within a couple of seconds), and it used to start after
+    // ~22 serial async features, five seconds later. It is `concurrent`, so
+    // starting first costs nothing: its synchronous half runs, its record load
+    // overlaps the rest. The XP tracker rides in front of it because both listen
+    // to the same guild socket events and Guild Trials reads the tracker's guild
+    // name, id and roster inside its own handler; registered the other way round
+    // it would see the previous message's values.
+    const leadFeatures = [
+        {
+            key: 'guildXPTracker',
+            name: 'Guild XP Tracker',
+            category: 'Guild',
+            module: Combat.guildXPTracker,
+            async: false,
+            // The key switches only the XP history (its reads, samples and writes), which
+            // the tracker checks itself. The member metadata the trials features read —
+            // sign-ups above all, for the pre-trial loadout check — rides on the same
+            // module, so gating the module on this key took it away too.
+            customCheck: () => true,
+        },
+        {
+            key: 'guildTrialsInfo',
+            name: 'Guild Trials',
+            category: 'Guild',
+            module: Combat.guildTrials,
+            async: true,
+            // Registers every observer and handler before its first await by
+            // design; what it then waits on is its own trial record.
+            concurrent: true,
+            // It gates on `guildTrialsInfo` itself, after watching that setting
+            // — deliberately, so turning it on takes effect without a refresh
+            // and turning it off takes the drawn blocks down. That watch only
+            // exists if the module starts, so it starts regardless.
+            customCheck: () => true,
+        },
+    ];
+
     // Market Features
     const marketFeatures = [
         {
@@ -2498,18 +2537,6 @@ function registerFeatures() {
             async: false,
         },
         {
-            key: 'guildXPTracker',
-            name: 'Guild XP Tracker',
-            category: 'Guild',
-            module: Combat.guildXPTracker,
-            async: false,
-            // The key switches only the XP history (its reads, samples and writes), which
-            // the tracker checks itself. The member metadata the trials features read —
-            // sign-ups above all, for the pre-trial loadout check — rides on the same
-            // module, so gating the module on this key took it away too.
-            customCheck: () => true,
-        },
-        {
             key: 'guildXPDisplay',
             name: 'Guild XP Display',
             category: 'Guild',
@@ -2540,21 +2567,6 @@ function registerFeatures() {
             category: 'Guild',
             module: Combat.guildRosterView,
             async: false,
-        },
-        {
-            key: 'guildTrialsInfo',
-            name: 'Guild Trials',
-            category: 'Guild',
-            module: Combat.guildTrials,
-            async: true,
-            // Registers every observer and handler before its first await by
-            // design; what it then waits on is its own trial record.
-            concurrent: true,
-            // It gates on `guildTrialsInfo` itself, after watching that setting
-            // — deliberately, so turning it on takes effect without a refresh
-            // and turning it off takes the drawn blocks down. That watch only
-            // exists if the module starts, so it starts regardless.
-            customCheck: () => true,
         },
         {
             key: 'guildTrialLedger',
@@ -2850,7 +2862,7 @@ function registerFeatures() {
     ];
 
     // Combine all features
-    const allFeatures = [...marketFeatures, ...actionsFeatures, ...combatFeatures, ...uiFeatures];
+    const allFeatures = [...leadFeatures, ...marketFeatures, ...actionsFeatures, ...combatFeatures, ...uiFeatures];
 
     // Convert to feature registry format
     const features = allFeatures.map((feature) => {
