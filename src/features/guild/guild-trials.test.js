@@ -371,6 +371,7 @@ function resetTrialsSingleton() {
     guildTrials.lastSessionChecked = false;
     guildTrials.blockHtml.clear();
     guildTrials._autoOpenedTrialKey = null;
+    guildTrials._autoOpenLoaded = false;
     guildTrials._scoreboardTabButton = null;
 }
 
@@ -4671,6 +4672,11 @@ describe('the panel, end to end', () => {
             };
         }
 
+        // Turned on: what is under test is what it does when it is
+        beforeEach(() => {
+            game.settings.guildTrialAutoOpenScoreboard = true;
+        });
+
         test('opens once, and not again while the same fight keeps ticking', () => {
             game.breakdown = watchedFight();
             fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
@@ -4697,20 +4703,123 @@ describe('the panel, end to end', () => {
             expect(game.scoreboardOpen).toBe(false);
         });
 
-        test('a new fight (a different battle) opens it again', () => {
+        test('a "new fight" restamp inside the same trial does not reopen a board closed by hand', () => {
             game.breakdown = watchedFight();
             fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
             expect(game.scoreboardOpens).toBe(1);
+            game.scoreboardOpen = false;
 
+            // The damage module decided a new fight began: `fightSeenAt` restamped. The guild
+            // battle id is always 1 on the wire, so it says nothing either way
             vi.setSystemTime(now + 60_000);
             game.breakdown = watchedFight({
-                guildBattleId: 43,
+                guildBattleId: 1,
                 fightStartMs: now + 60_000,
                 fightSeenAt: now + 60_000,
                 pool: { ...watchedFight().pool, at: now + 60_000, tier: 3 },
             });
             fire(buildTab([{ name: 'Trial Chameleon', level: 120, points: 800, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+            expect(game.scoreboardOpen).toBe(false);
+        });
+
+        test('a different trial opens it once', () => {
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+
+            vi.setSystemTime(now + 60_000);
+            const pool = { ...watchedFight().pool, at: now + 60_000, encounter: 'badger' };
+            game.breakdown = watchedFight({ fightSeenAt: now + 60_000, pool });
+            fire(buildTab([{ name: 'Trial Badger', level: 110, points: 400, bar: '' }]));
             expect(game.scoreboardOpens).toBe(2);
+
+            vi.setSystemTime(now + 65_000);
+            game.breakdown = watchedFight({ fightSeenAt: now + 60_000, pool: { ...pool, at: now + 65_000 } });
+            fire(buildTab([{ name: 'Trial Badger', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(2);
+        });
+
+        test('a board closed by hand stays closed after a reload mid-trial', async () => {
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+            game.scoreboardOpen = false;
+            await vi.advanceTimersByTimeAsync(10);
+
+            // A reload: the feature starts over with nothing in memory, the fight still on screen
+            await trialsFeature.cleanup();
+            resetTrialsSingleton();
+            vi.setSystemTime(now + 30_000);
+            game.breakdown = watchedFight({
+                fightSeenAt: now + 30_000,
+                pool: { ...watchedFight().pool, at: now + 30_000 },
+            });
+            buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]);
+
+            await trialsFeature.initialize();
+            fire();
+            expect(game.scoreboardOpens).toBe(1);
+            expect(game.scoreboardOpen).toBe(false);
+        });
+
+        test('on the test server the same cycle is one key whether or not the skilling hour was seen', async () => {
+            game.testServer = true;
+            try {
+                // The combat hour, as `guild_updated` states it: begun ten minutes ago
+                const combatHour = () => ({
+                    ...parseCurrentTrialsData(
+                        JSON.stringify({
+                            skilling: { status: '', parties: null },
+                            combat: {
+                                status: 'in_progress',
+                                parties: {
+                                    '/guild_combat/chameleon': {
+                                        highestTier: 1,
+                                        budgetRemainingMs: 50 * 60_000,
+                                        tierStartedAtMs: now,
+                                        highestTierReachedAtMs: now,
+                                        done: false,
+                                    },
+                                },
+                            },
+                        })
+                    ),
+                    at: now,
+                    source: 'socket',
+                });
+                guildTrials.currentTrials = combatHour();
+                guildTrials.serverClockOffsetMs = 0;
+                // This session watched the skilling hour start an hour before
+                guildTrials.cycleStartMs = now - 70 * 60_000;
+                game.breakdown = watchedFight();
+                fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+                expect(game.scoreboardOpens).toBe(1);
+                game.scoreboardOpen = false;
+                await vi.advanceTimersByTimeAsync(10);
+
+                // A reload mid combat hour: no skilling start seen this time
+                await trialsFeature.cleanup();
+                resetTrialsSingleton();
+                guildTrials.cycleStartMs = null;
+                vi.setSystemTime(now + 30_000);
+                await trialsFeature.initialize();
+                guildTrials.currentTrials = combatHour();
+                guildTrials.serverClockOffsetMs = 0;
+                game.breakdown = watchedFight({ pool: { ...watchedFight().pool, at: now + 30_000 } });
+                fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+                expect(game.scoreboardOpens).toBe(1);
+            } finally {
+                game.testServer = false;
+                guildTrials.cycleStartMs = null;
+            }
+        });
+
+        test('nothing opens before the saved trial has been read', () => {
+            guildTrials._autoOpenLoaded = false;
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(0);
         });
 
         test('a fight first watched mid-tier does not reopen when its next tier states the start', () => {
@@ -4743,16 +4852,30 @@ describe('the panel, end to end', () => {
             expect(game.scoreboardOpens).toBe(0);
         });
 
-        test('a character switch frees the same battle id to auto-open again', () => {
+        test('a character switch hands the arriving character their own memory of the trial', async () => {
             game.breakdown = watchedFight();
             fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
             expect(game.scoreboardOpens).toBe(1);
+            await vi.advanceTimersByTimeAsync(10);
 
-            guildTrials._forgetCharacter(999);
+            // Character 999 closed this same trial's board on an earlier visit
+            game.store['toolasha_local_guildTrialBoardAutoOpened_999'] = guildTrials._autoOpenedTrialKey;
             game.characterId = 999;
+            guildTrials._forgetCharacter(999);
+            // Not until their own key has been read
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+            await vi.advanceTimersByTimeAsync(10);
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
 
+            // A character who never saw it gets it once
+            game.characterId = 998;
+            guildTrials._forgetCharacter(998);
+            await vi.advanceTimersByTimeAsync(10);
             fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
             expect(game.scoreboardOpens).toBe(2);
+            expect(game.store['toolasha_local_guildTrialBoardAutoOpened_998']).toBe(guildTrials._autoOpenedTrialKey);
         });
     });
 

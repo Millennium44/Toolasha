@@ -104,6 +104,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { isTestServer } from '../../utils/game-server.js';
@@ -2786,6 +2787,43 @@ export function blockNearAnchor(block, anchor, root = null) {
     );
 }
 
+/**
+ * Where the trial the damage board was last auto-opened for is kept, per character.
+ *
+ * Device-local (`toolasha_local_`, kept out of sync, exports and backups): a
+ * board closed by hand on this machine is this machine's panel state, as panel
+ * positions are, and another device's choice is not one to pull over it.
+ *
+ * @param {string|number|null} characterId - The character in the tab
+ * @returns {string} Storage key, in the `settings` store
+ */
+export function autoOpenedBoardStorageKey(characterId) {
+    return `toolasha_local_guildTrialBoardAutoOpened_${characterId ?? 'none'}`;
+}
+
+/**
+ * The trial a damage board auto-open is "once per".
+ *
+ * The encounter plus the trial week it runs in: one combat trial of an
+ * encounter per week on live. Not the fight identity — the guild battle id is
+ * always 1, and `fightSeenAt` is restamped whenever the damage module decides a
+ * new fight began inside one trial, which reopened a board closed by hand. The
+ * test server runs several cycles a week, so there the cycle's start is added
+ * when one is known, to ten minutes (the start is derived through a clock
+ * offset that tightens by a trip or so, and cycles are hours apart).
+ *
+ * @param {Object} options - What is known
+ * @param {string|null} options.encounter - e.g. `chameleon`
+ * @param {number|null} options.weekStart - The trial week, ms
+ * @param {number|null} [options.cycleStart] - The cycle's start, client ms (test server only)
+ * @returns {string|null} The key, or null when the encounter is not known yet
+ */
+export function autoOpenTrialKey({ encounter, weekStart, cycleStart = null }) {
+    if (typeof encounter !== 'string' || !encounter || !Number.isFinite(weekStart)) return null;
+    const cycle = Number.isFinite(cycleStart) ? `|${Math.round(cycleStart / 600_000) * 600_000}` : '';
+    return `${encounter}|${weekStart}${cycle}`;
+}
+
 class GuildTrials {
     constructor() {
         this.initialized = false;
@@ -2870,12 +2908,15 @@ class GuildTrials {
         /** Whether that one-shot read has been made (or is in flight) */
         this.lastSessionChecked = false;
         /**
-         * The fight identity (`guildBattleId_fightSeenAt`) the scoreboard has
-         * already been auto-opened for — set once and never re-triggered for
-         * the same fight, so closing it by hand does not pop it back open on
-         * the next render pass. Reset on a character switch.
+         * The trial ({@link autoOpenTrialKey}) the scoreboard has already been
+         * auto-opened for — set once and never re-triggered for the same
+         * trial, so closing it by hand does not pop it back open on the next
+         * render pass, a reload, or a fight restamp. Persisted per character
+         * ({@link autoOpenedBoardStorageKey}); `_autoOpenLoaded` says whether
+         * this character's stored one has been read yet.
          */
         this._autoOpenedTrialKey = null;
+        this._autoOpenLoaded = false;
         /** The toggle button injected beside the guild panel's own tabs */
         this._scoreboardTabButton = null;
     }
@@ -3058,10 +3099,11 @@ class GuildTrials {
         // after another: serially they were three IndexedDB round trips before
         // the first panel could carry stored samples, which is a visible slice
         // of the reported lag on load
-        const [stored, storedBases] = await Promise.all([
+        const [stored, storedBases, , autoOpened] = await Promise.all([
             loadTrialRecord(this.guildName, Date.now(), this.characterId, { guildId: this._guildId() }),
             loadWorkBases(),
             guildLoadoutCapture.initialize(),
+            this._loadAutoOpenedKey(this.characterId),
         ]);
         // A read that could not be made leaves the in-memory record as it is:
         // the one a tick built in the meantime, or none — never a fresh week
@@ -3080,6 +3122,7 @@ class GuildTrials {
         this._purgeWorkBases();
 
         if (this.characterId !== characterId) return;
+        this._adoptAutoOpenedKey(autoOpened);
         this._adoptStored(stored);
         // The login payload was noted before the record was in hand
         this._fileServerTrials();
@@ -3232,10 +3275,11 @@ class GuildTrials {
             restoreFightGrids();
             this.blockHtml.clear();
             guildTrialScoreboard.close?.();
-            // A fight identity is only unique within one guild's battles; the
-            // arriving character's first watched fight must be free to
-            // auto-open even if it happens to reuse a small id
+            // The departing character's closed board is theirs: the arriving
+            // one's is read back with their record, and nothing auto-opens
+            // until it is
             this._autoOpenedTrialKey = null;
+            this._autoOpenLoaded = false;
 
             // The recorder closes its own open session first, and that close
             // folds it into the attendance ledger off the damage module's
@@ -3415,10 +3459,14 @@ class GuildTrials {
         guildTrialRecorder.setGuildName(null);
         guildTrialAbilities.setGuildName?.(null);
         guildTrialDamage.setGuildName?.(null, characterId);
-        const stored = await loadTrialRecord(null, Date.now(), characterId, { guildId: this._guildId() });
+        const [stored, autoOpened] = await Promise.all([
+            loadTrialRecord(null, Date.now(), characterId, { guildId: this._guildId() }),
+            this._loadAutoOpenedKey(characterId),
+        ]);
 
         // Another switch may have happened while the read was in flight
         if (this.characterId !== characterId) return;
+        this._adoptAutoOpenedKey(autoOpened);
 
         // Unreadable: the arriving character's record starts this week empty
         // (the departing one's is not theirs) and is folded in by the next save
@@ -5524,19 +5572,19 @@ class GuildTrials {
      * Open the trial damage board the moment a trial fight starts being
      * watched, if the setting allows it.
      *
-     * "Once per trial" is a fight identity — `guildBattleId` paired with
-     * `fightSeenAt`, which `guild-trial-damage.js` restamps for each new
-     * fight — not "once per render": `watched` goes
-     * null between ticks whenever the pool reading goes stale for a moment,
-     * and that must not read as a new fight starting. The key is recorded
-     * whether or not the board is still open a moment later, so closing it by
-     * hand keeps it closed for the rest of that same trial rather than having
-     * it pop back the next time the pool ticks.
+     * "Once per trial" is the trial itself ({@link autoOpenTrialKey}: the
+     * encounter and the week, plus the cycle on the test server), not a fight
+     * identity and not "once per render": `watched` goes null between ticks
+     * whenever the pool reading goes stale for a moment, and the damage module
+     * restamps a fight inside one trial. The key is recorded and saved whether
+     * or not the board is still open a moment later, so closing it by hand keeps
+     * it closed for the rest of that trial, across reloads too. Nothing opens
+     * until this character's saved key has been read.
      *
      * @param {Object|null} watched - This render's `_spectatedPool` reading
      */
     _maybeAutoOpenScoreboard(watched) {
-        if (!watched) return;
+        if (!watched || !this._autoOpenLoaded) return;
         if (!config.getSetting('guildTrialAutoOpenScoreboard', true)) return;
 
         const breakdown = guildTrialDamage.breakdown?.() || {};
@@ -5546,14 +5594,70 @@ class GuildTrials {
         if (breakdown.endedAt !== null && breakdown.endedAt !== undefined) return;
         if (breakdown.guildBattleId === null || breakdown.guildBattleId === undefined) return;
 
-        // `fightSeenAt`, not `fightStartMs`: a fight first watched mid-tier has
-        // no start until its next tier opens, and the key changing then popped
-        // the board back open on a user who had closed it
-        const key = `${breakdown.guildBattleId}_${breakdown.fightSeenAt ?? ''}`;
+        const now = Date.now();
+        const key = autoOpenTrialKey({
+            encounter: watched.encounter ?? breakdown.encounter ?? null,
+            weekStart: Number.isFinite(this.record?.weekStart) ? this.record.weekStart : trialWeekStart(now),
+            cycleStart: isTestServer() ? this._cycleStartFor(now) : null,
+        });
+        // Not known yet: the next tick has it, and a key without it would be one key for every trial
+        if (key === null) return;
         if (this._autoOpenedTrialKey === key) return;
         this._autoOpenedTrialKey = key;
+        const characterId = this.characterId;
+        storage.set(autoOpenedBoardStorageKey(characterId), key, 'settings').catch((error) => {
+            console.error('[GuildTrials] Saving the auto-opened trial failed:', error);
+        });
 
         guildTrialScoreboard.open();
+    }
+
+    /**
+     * The running cycle's start on the test server, from the guild payload.
+     *
+     * The combat hour's own start first: every guild message of the combat
+     * hour states it, the login payload after a reload included, which is when
+     * the board opens. Only without one the skilling hour's start once seen
+     * (`cycleStartMs`, or the record's copy of it) stands in.
+     * @param {number} now - Clock
+     * @returns {number|null} Client ms, or null when nothing says
+     */
+    _cycleStartFor(now) {
+        const held = this.currentTrials;
+        if (held && Number.isFinite(held.at) && now - held.at <= TRIAL_ACTIVE_MS) {
+            const combatStart = trialHourStartedAt(held.combat, this.serverClockOffsetMs);
+            if (Number.isFinite(combatStart)) return combatStart;
+        }
+        if (Number.isFinite(this.cycleStartMs)) return this.cycleStartMs;
+        return Number.isFinite(this.record?.cycleStart) ? this.record.cycleStart : null;
+    }
+
+    /**
+     * Read a character's saved auto-opened trial.
+     * @param {string|number|null} characterId - Whose
+     * @returns {Promise<string|null|undefined>} The key; null when none is saved; undefined when unreadable
+     */
+    async _loadAutoOpenedKey(characterId) {
+        try {
+            const value = await storage.get(autoOpenedBoardStorageKey(characterId), 'settings', null);
+            return typeof value === 'string' ? value : null;
+        } catch (error) {
+            console.error('[GuildTrials] Reading the auto-opened trial failed:', error);
+            return undefined;
+        }
+    }
+
+    /**
+     * Take a saved auto-opened trial as this character's.
+     *
+     * A key set in memory while the read was in flight is newer and stands. An
+     * unreadable read leaves nothing to compare against, so the board may open
+     * once, as it did before this was kept.
+     * @param {string|null|undefined} stored - From {@link _loadAutoOpenedKey}
+     */
+    _adoptAutoOpenedKey(stored) {
+        if (this._autoOpenedTrialKey === null && typeof stored === 'string') this._autoOpenedTrialKey = stored;
+        this._autoOpenLoaded = true;
     }
 
     /**
@@ -6238,6 +6342,7 @@ class GuildTrials {
         document.querySelectorAll(`[${SCOREBOARD_TAB_ATTR}]`).forEach((el) => el.remove());
         this._scoreboardTabButton = null;
         this._autoOpenedTrialKey = null;
+        this._autoOpenLoaded = false;
         // In-memory only: the persisted copy stays, and the next initialize
         // reads it back
         this.workBases = {};
