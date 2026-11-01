@@ -404,31 +404,6 @@ export const FOREIGN_COPY_ALLOWLIST = new Map([
                 'bridge + fallback: combat-sim-adapter.js and combat-sim-ui.js call expectedValueCalculator() from ' +
                     'bundle-bridge and only fall back to the bundled copy',
             ],
-            [
-                'utils',
-                'KNOWN DEBT: dungeon-chest-adapter.js, bonus-revenue-calculator.js and (via alchemy-profit-calculator) ' +
-                    'import it directly; its pure pricing methods work uninitialized but its cache and invalidation ' +
-                    'listeners are the private copy',
-            ],
-        ]),
-    ],
-    [
-        'src/features/market/alchemy-profit-calculator.js',
-        new Map([
-            [
-                'utils',
-                'KNOWN DEBT: risk-of-ruin-adapters/alchemy-adapter.js imports it directly (utils loads before market)',
-            ],
-        ]),
-    ],
-    [
-        'src/features/market/mooket/market-history-api.js',
-        new Map([
-            [
-                'utils',
-                'KNOWN DEBT: planner/market-liquidity.js imports it directly, so the utils bundle keeps a second ' +
-                    "history cache beside the market bundle's",
-            ],
         ]),
     ],
     [

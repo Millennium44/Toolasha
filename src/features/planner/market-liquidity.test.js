@@ -31,6 +31,16 @@ const history = vi.hoisted(() => ({
     failFor: null,
 }));
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedmarketHistoryAPI = await import('../market/mooket/market-history-api.js');
+    return {
+        ...original,
+        marketHistoryAPI: () => original.marketHistoryAPI() || mockedmarketHistoryAPI.default,
+    };
+});
+
 vi.mock('../market/mooket/market-history-api.js', () => ({
     default: {
         fetchHistory: async (itemHrid, level, days) => {
@@ -601,5 +611,37 @@ describe('bounding a whole ranking', () => {
         expect(history.calls.map((call) => call.itemHrid)).toContain('/items/milk');
         expect(rates.map((rate) => rate.label)).toEqual(['Milk a Cow', 'Broken']);
         vi.restoreAllMocks();
+    });
+});
+
+describe('in the split production build', () => {
+    test('reads the history API the market bundle published, not the inlined module', async () => {
+        const hadWindow = 'window' in globalThis;
+        const previousWindow = globalThis.window;
+        const fetched = [];
+        globalThis.window = {
+            ...(previousWindow || {}),
+            Toolasha: {
+                Market: {
+                    marketHistoryAPI: {
+                        enabled: true,
+                        currentSource: () => ({ key: 'live-pool', hasVolume: true }),
+                        fetchHistory: async (itemHrid) => {
+                            fetched.push(itemHrid);
+                            return tradedAt(500);
+                        },
+                    },
+                },
+            },
+        };
+        try {
+            const answer = await dailyVolume('/items/live_only');
+            expect(fetched).toEqual(['/items/live_only']);
+            expect(answer.known).toBe(true);
+            expect(history.calls).toEqual([]); // the mocked module copy was never asked
+        } finally {
+            if (hadWindow) globalThis.window = previousWindow;
+            else delete globalThis.window;
+        }
     });
 });

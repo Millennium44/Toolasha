@@ -3,6 +3,16 @@ import { describe, expect, test, vi } from 'vitest';
 let mockProfit = null;
 const calculateTransmuteProfit = vi.fn(() => mockProfit);
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('../bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedalchemyProfitCalculator = await import('../../features/market/alchemy-profit-calculator.js');
+    return {
+        ...original,
+        alchemyProfitCalculator: () => original.alchemyProfitCalculator() || mockedalchemyProfitCalculator.default,
+    };
+});
+
 vi.mock('../../features/market/alchemy-profit-calculator.js', () => ({
     default: { calculateTransmuteProfit: (...args) => calculateTransmuteProfit(...args) },
 }));
@@ -297,5 +307,28 @@ describe('buildAlchemyTransmuteModel', () => {
         expect(model.cost).toBe(1005);
         expect(model.breakdown.teaCostPerAttempt).toBe(5);
         expect(model.outcomeDistribution).toEqual([{ prob: 1, net: 2000 - 1005 }]);
+    });
+});
+
+describe('in the split production build', () => {
+    test('models the transmute from the live market-bundle calculator, not the inlined copy', () => {
+        // The inlined copy (mocked above) knows nothing; the namespace's instance has the answer
+        mockProfit = null;
+        const hadWindow = 'window' in globalThis;
+        const previousWindow = globalThis.window;
+        const live = vi.fn(() => baseProfit({ successRate: 0.5 }));
+        globalThis.window = {
+            ...(previousWindow || {}),
+            Toolasha: { Market: { alchemyProfitCalculator: { calculateTransmuteProfit: live } } },
+        };
+        try {
+            const model = buildAlchemyTransmuteModel('/items/live_only');
+            expect(live).toHaveBeenCalledTimes(1);
+            expect(model).not.toBeNull();
+            expect(calculateTransmuteProfit).not.toHaveBeenCalledWith('/items/live_only', expect.anything());
+        } finally {
+            if (hadWindow) globalThis.window = previousWindow;
+            else delete globalThis.window;
+        }
     });
 });
