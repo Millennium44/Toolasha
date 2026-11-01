@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Guild trial info boxes appear sooner
 
 - Guild Trials now starts first at login and draws its info boxes from what is already on screen, instead of several seconds later once the other features and its first sample had run.
+
 ### Iron Bell Farming queue helper
 
 - The Check box uses your real offline cap instead of an assumed 16 hours, and no longer says the game hides it.
@@ -27,9 +28,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The enhancing room's hover uses the enhancing clear chance, matching its badge.
 - Room logs and live clear odds recognize a Labyrinth fight from the running action rather than English header text, and the Labyrinth trackers and death recap ignore messages from a stale connection.
 - Replay recordings exported before this update still import, and the enhancing room's hover prints the formula it actually uses.
+
 ### Task Crystals priced for enhancing
 
 - Task Crystals are now valued at their Task Shop token cost times the gold a Task Token is worth (the Task Token tooltip's figure), marked as an estimate, instead of counting as free; task badge enhancing costs, the protect-or-not choice, net worth, equipment savings, the Goal Planner and build scores all include them.
+
+### Split-bundle checks
+
+- The build now fails when a bundle carries its own copy of another bundle's stateful module, and a smoke test loads the seven production libraries together to check they share live instances, a class of bug the single-file dev build cannot show.
 
 ### October 31 audit fixes: Combat Sim
 

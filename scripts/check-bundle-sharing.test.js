@@ -1,0 +1,92 @@
+import { describe, expect, test } from 'vitest';
+import { join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+    FOREIGN_COPY_ALLOWLIST,
+    findForeignSingletonCopies,
+    moduleOwners,
+    singletonClassName,
+} from './check-bundle-sharing.mjs';
+
+const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
+const abs = (rel) => normalize(join(root, rel));
+
+describe('singletonClassName', () => {
+    test('finds `export default new X()`', () => {
+        expect(singletonClassName('class Foo {}\nexport default new Foo();\n')).toBe('Foo');
+    });
+
+    test('finds the const-then-export shape the managers use', () => {
+        const source =
+            'class ExpectedValueCalculator {\n}\n\nconst expectedValueCalculator = new ExpectedValueCalculator();\n\nexport default expectedValueCalculator;\n';
+        expect(singletonClassName(source)).toBe('ExpectedValueCalculator');
+    });
+
+    test('ignores a class that is only exported, and plain function modules', () => {
+        expect(singletonClassName('export class Foo {}\nexport function make() { return new Foo(); }\n')).toBeNull();
+        expect(singletonClassName('const cache = new Map();\nexport function f() {}\n')).toBeNull();
+    });
+});
+
+describe('findForeignSingletonCopies — the #671 shape', () => {
+    // Market owns the calculator; the utils bundle imported it inline and got its own copy.
+    const evc = abs('src/features/market/expected-value-calculator.js');
+    const owners = new Map([[evc, new Set(['market'])]]);
+    const classNameOf = () => 'ExpectedValueCalculator';
+
+    test('flags a bundle other than the owner carrying the singleton', () => {
+        const inline = new Map([[evc, new Set(['market', 'utils'])]]);
+        expect(findForeignSingletonCopies(inline, owners, classNameOf, new Map())).toEqual([
+            {
+                modulePath: 'src/features/market/expected-value-calculator.js',
+                className: 'ExpectedValueCalculator',
+                owners: ['market'],
+                bundles: ['utils'],
+            },
+        ]);
+    });
+
+    test('passes when only the owner carries it', () => {
+        const inline = new Map([[evc, new Set(['market'])]]);
+        expect(findForeignSingletonCopies(inline, owners, classNameOf, new Map())).toEqual([]);
+    });
+
+    test('an allowlisted bundle passes but a new bundle still fails', () => {
+        const allowlist = new Map([['src/features/market/expected-value-calculator.js', new Map([['sim', 'why']])]]);
+        const inline = new Map([[evc, new Set(['market', 'sim', 'ui'])]]);
+        expect(findForeignSingletonCopies(inline, owners, classNameOf, allowlist).map((v) => v.bundles)).toEqual([
+            ['ui'],
+        ]);
+    });
+
+    test("a module with no owner or no singleton is not this check's business", () => {
+        const inline = new Map([[evc, new Set(['market', 'utils'])]]);
+        expect(findForeignSingletonCopies(inline, new Map(), classNameOf, new Map())).toEqual([]);
+        expect(findForeignSingletonCopies(inline, owners, () => null, new Map())).toEqual([]);
+    });
+});
+
+describe('moduleOwners', () => {
+    test("reads the owning library from each bundle's Toolasha.<Library>.* globals", () => {
+        const configs = [
+            { input: 'src/libraries/market.js', output: {} },
+            {
+                input: 'src/libraries/ui.js',
+                output: {
+                    globals: { [abs('src/a.js')]: 'Toolasha.Market.a', [abs('src/b.js')]: 'Toolasha.Nowhere.b' },
+                },
+            },
+        ];
+        const owners = moduleOwners(configs);
+        expect([...(owners.get(abs('src/a.js')) || [])]).toEqual(['market']);
+        expect(owners.has(abs('src/b.js'))).toBe(false);
+    });
+});
+
+describe('FOREIGN_COPY_ALLOWLIST', () => {
+    test('every tolerated copy states a reason', () => {
+        for (const bundles of FOREIGN_COPY_ALLOWLIST.values()) {
+            for (const reason of bundles.values()) expect(reason).toMatch(/bridge \+ fallback|KNOWN DEBT/);
+        }
+    });
+});

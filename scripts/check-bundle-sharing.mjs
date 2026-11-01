@@ -374,6 +374,156 @@ const ALLOWLIST = new Map([
 ]);
 
 /**
+ * Owned singletons that are knowingly carried inline by a bundle other than their owner.
+ *
+ * The rule (see findForeignSingletonCopies): a module that rollup.config.js assigns to a library
+ * (it is in that library's externals map, so `Toolasha.<Library>.x` is its one live instance) and
+ * that constructs a stateful singleton must not be bundled inline into any other library. A second
+ * copy is never initialized — the owner's initialize() runs on its own instance only — and answers
+ * null/empty forever. PR #671 shipped exactly this: the utils bundle imported the market bundle's
+ * expected-value calculator and its function returned null for every player on the release.
+ *
+ * The dev build is one bundle, so tests never see it; this is the static half of the guard (the
+ * other half is scripts/check-bundle-smoke.mjs, which inspects the built libraries).
+ *
+ * Keys are `module path` → Map of `bundle name` → why that bundle's copy is tolerated. Granularity
+ * is per bundle, so a NEW bundle inlining the module fails. A tolerated entry is one of:
+ * - "bridge + fallback": the importer reads the owner's live instance through bundle-bridge.js and
+ *   imports the module only as the fallback for the single-bundle dev build, so the copy is never
+ *   the one consulted in production;
+ * - "KNOWN DEBT": the importer uses its inline copy directly. Not safe by design — recorded so the
+ *   check can pass on main while the duplicates stay visible; the fix is to cut the import and read
+ *   the owner through the bridge (utils loads before market, so the global cannot be referenced).
+ */
+export const FOREIGN_COPY_ALLOWLIST = new Map([
+    [
+        'src/features/market/expected-value-calculator.js',
+        new Map([
+            [
+                'sim',
+                'bridge + fallback: combat-sim-adapter.js and combat-sim-ui.js call expectedValueCalculator() from ' +
+                    'bundle-bridge and only fall back to the bundled copy',
+            ],
+            [
+                'utils',
+                'KNOWN DEBT: dungeon-chest-adapter.js, bonus-revenue-calculator.js and (via alchemy-profit-calculator) ' +
+                    'import it directly; its pure pricing methods work uninitialized but its cache and invalidation ' +
+                    'listeners are the private copy',
+            ],
+        ]),
+    ],
+    [
+        'src/features/market/alchemy-profit-calculator.js',
+        new Map([
+            [
+                'utils',
+                'KNOWN DEBT: risk-of-ruin-adapters/alchemy-adapter.js imports it directly (utils loads before market)',
+            ],
+        ]),
+    ],
+    [
+        'src/features/market/mooket/market-history-api.js',
+        new Map([
+            [
+                'utils',
+                'KNOWN DEBT: planner/market-liquidity.js imports it directly, so the utils bundle keeps a second ' +
+                    "history cache beside the market bundle's",
+            ],
+        ]),
+    ],
+    [
+        'src/features/combat-stats/combat-stats-data-collector.js',
+        new Map([
+            [
+                'market',
+                'bridge + fallback: networth/gold-sources-collect.js reads liveCombatStatsCollector from ' +
+                    'bundle-bridge and only falls back to the bundled copy',
+            ],
+        ]),
+    ],
+]);
+
+/**
+ * The class a source file instantiates at module scope as its singleton, or null when it does not
+ * construct one. Covers `export default new Foo()` and `const x = new Foo();` for a class declared in
+ * the same file — the shape every stateful manager here uses. Object-literal modules with module-level
+ * `let` state are not detected (see the header of FOREIGN_COPY_ALLOWLIST for why the net is this wide).
+ * @param {string} source - Module source
+ * @returns {string|null} The class name
+ */
+export function singletonClassName(source) {
+    const classes = [...source.matchAll(/^(?:export\s+)?class\s+(\w+)/gm)].map((m) => m[1]);
+    for (const name of classes) {
+        const instance = new RegExp(
+            `^(?:export\\s+default\\s+new\\s+${name}\\b|(?:export\\s+)?(?:const|let)\\s+\\w+\\s*=\\s*new\\s+${name}\\b)`,
+            'm'
+        );
+        if (instance.test(source)) return name;
+    }
+    const direct = source.match(/^export\s+default\s+new\s+([A-Z]\w*)/m);
+    return direct ? direct[1] : null;
+}
+
+/**
+ * Which library owns each module that rollup replaces with a `Toolasha.<Library>.*` global.
+ * @param {Array<Object>} configs - The production rollup config array
+ * @returns {Map<string, Set<string>>} Normalized absolute module path → owning bundle names
+ */
+export function moduleOwners(configs) {
+    const bundles = new Set(configs.map((config) => basename(config.input, '.js')));
+    const owners = new Map();
+    for (const config of configs) {
+        for (const [modulePath, global] of Object.entries(config.output?.globals || {})) {
+            const library = global.match(/^Toolasha\.([A-Za-z]+)/)?.[1]?.toLowerCase();
+            if (!library || !bundles.has(library)) continue;
+            const key = normalize(modulePath);
+            if (!owners.has(key)) owners.set(key, new Set());
+            owners.get(key).add(library);
+        }
+    }
+    return owners;
+}
+
+/**
+ * Every module a library owns that constructs a stateful singleton, with the class it constructs.
+ * @param {Array<Object>} configs - The production rollup config array
+ * @returns {Array<{modulePath: string, className: string, owners: Set<string>}>} Owned singletons
+ */
+export function ownedSingletons(configs) {
+    const found = [];
+    for (const [absolutePath, owners] of moduleOwners(configs)) {
+        if (!absolutePath.endsWith('.js') || !existsSync(absolutePath)) continue;
+        const className = singletonClassName(readFileSync(absolutePath, 'utf-8'));
+        if (!className) continue;
+        found.push({ modulePath: relative(projectRoot, absolutePath).split('\\').join('/'), className, owners });
+    }
+    return found;
+}
+
+/**
+ * Owned stateful singletons that some other bundle carries inline.
+ * @param {Map<string, Set<string>>} inlineByModule - Absolute module path → bundles carrying it inline
+ * @param {Map<string, Set<string>>} owners - From moduleOwners
+ * @param {(absolutePath: string) => string|null} classNameOf - singletonClassName of that module's source
+ * @param {Map<string, Map<string, string>>} [allowlist] - Tolerated copies
+ * @returns {Array<{modulePath: string, className: string, owners: string[], bundles: string[]}>} Violations
+ */
+export function findForeignSingletonCopies(inlineByModule, owners, classNameOf, allowlist = FOREIGN_COPY_ALLOWLIST) {
+    const found = [];
+    for (const [absolutePath, bundles] of inlineByModule) {
+        const owning = owners.get(absolutePath);
+        if (!owning) continue;
+        const relPath = relative(projectRoot, absolutePath).split('\\').join('/');
+        const foreign = [...bundles].filter((bundle) => !owning.has(bundle) && !allowlist.get(relPath)?.has(bundle));
+        if (foreign.length === 0) continue;
+        const className = classNameOf(absolutePath);
+        if (!className) continue;
+        found.push({ modulePath: relPath, className, owners: [...owning].sort(), bundles: foreign.sort() });
+    }
+    return found.sort((a, b) => a.modulePath.localeCompare(b.modulePath));
+}
+
+/**
  * Directory prefixes the sweep polices.
  *
  * `src/utils` is the historical scope. `src/core` joined it because the same
@@ -463,12 +613,16 @@ async function main() {
 
     // module path -> Set of bundle names that carry it inline
     const inlineIn = new Map();
+    // every module (absolute path) -> bundle names that carry it inline, for the singleton-ownership sweep
+    const allInline = new Map();
 
     for (const config of configs) {
         const entry = normalize(join(projectRoot, config.input));
         const bundleName = basename(config.input, '.js');
         const isExternal = typeof config.external === 'function' ? config.external : () => false;
         for (const modulePath of walkBundle(entry, isExternal)) {
+            if (!allInline.has(modulePath)) allInline.set(modulePath, new Set());
+            allInline.get(modulePath).add(bundleName);
             const relPath = relative(projectRoot, modulePath).split('\\').join('/');
             if (!POLICED_PREFIXES.some((prefix) => relPath.startsWith(prefix)) && !SINGLE_COPY_FEATURES.has(relPath))
                 continue;
@@ -486,6 +640,34 @@ async function main() {
         violations.push({ modulePath, bundles: [...bundles].sort() });
     }
     violations.sort((a, b) => a.modulePath.localeCompare(b.modulePath));
+
+    const classNames = new Map();
+    const classNameOf = (absolutePath) => {
+        if (!classNames.has(absolutePath)) {
+            classNames.set(absolutePath, singletonClassName(readFileSync(absolutePath, 'utf-8')));
+        }
+        return classNames.get(absolutePath);
+    };
+    const foreignCopies = findForeignSingletonCopies(allInline, moduleOwners(configs), classNameOf);
+
+    if (foreignCopies.length > 0) {
+        console.error('');
+        console.error('[check-bundle-sharing] FAILED: a singleton is bundled inline outside the bundle that owns it.');
+        console.error('');
+        for (const { modulePath, className, owners, bundles } of foreignCopies) {
+            console.error(`  ${modulePath} (new ${className}())`);
+            console.error(`      owned by: ${owners.join(', ')}; also carried inline by: ${bundles.join(', ')}`);
+        }
+        console.error('');
+        console.error('The owner is the only bundle whose copy gets initialize() called; the copy in each bundle');
+        console.error('above stays empty and answers null/nothing forever (PR #671: a utils function that');
+        console.error('priced a task shop item returned null on the release, invisible to the single-bundle dev');
+        console.error('build). Cut the import and read the owner at call time through src/utils/bundle-bridge.js');
+        console.error('(add an accessor there if it has none). A bridge read that keeps the import only as a');
+        console.error('dev-build fallback, or a documented known debt, goes in FOREIGN_COPY_ALLOWLIST in');
+        console.error('scripts/check-bundle-sharing.mjs with the reason.');
+        console.error('');
+    }
 
     if (violations.length > 0) {
         console.error('');
@@ -507,12 +689,15 @@ async function main() {
         console.error('Only a module that is stateless by design may instead be allowlisted');
         console.error('in scripts/check-bundle-sharing.mjs, with a justification.');
         console.error('');
-        process.exit(1);
     }
 
+    if (violations.length > 0 || foreignCopies.length > 0) process.exit(1);
+
+    const tolerated = [...FOREIGN_COPY_ALLOWLIST.values()].reduce((n, bundles) => n + bundles.size, 0);
     console.log(
-        `[check-bundle-sharing] OK: no unshared cross-bundle src/utils or src/core modules (${inlineIn.size} checked).`
+        `[check-bundle-sharing] OK: no unshared cross-bundle src/utils or src/core modules (${inlineIn.size} checked); ` +
+            `no owned singleton inline outside its owner beyond the ${tolerated} documented copies.`
     );
 }
 
-await main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) await main();

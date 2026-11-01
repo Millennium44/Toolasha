@@ -43,6 +43,12 @@ jobs:
             - name: Build (production libraries)
               run: npm run build
 
+            - name: Smoke test the split bundles
+              # Loads the built dist/libraries in @require order into one window and checks the
+              # cross-bundle wiring. The dev build is a single bundle, so only this sees a library
+              # inlining its own copy of a singleton another one owns (PR #671).
+              run: npm run check:bundle-smoke
+
             - name: Verify bundle sizes
               # 2 MiB is a real delivery limit, not a style preference: every
               # library ships to users through an `@require` URL, and the
