@@ -89,7 +89,9 @@ const STORE_KEY_BUDGETS = {
  * `family` is the key prefix, and the count comes from the caller's
  * `perCharacterCount` — which is the maximum over every character-scoped
  * prefix registered for the store, so this is only exact while a store has one
- * such family. `marketListings` does.
+ * such family. `marketListings` has the ledger's day records and, since the
+ * listing archive, one record per month of archived listings (about sixty a
+ * decade); the count adds them, which is well inside the budget.
  */
 const CHARACTER_FAMILY_BUDGETS = {
     /*

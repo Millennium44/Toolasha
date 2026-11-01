@@ -2106,3 +2106,59 @@ describe('what a pull changes in a running live-safe history', () => {
         expect(heard).toHaveLength(1);
     });
 });
+
+describe('save({ deleted }) — a removal the caller says was deliberate', () => {
+    const stones = () => storageMock.store.get('recTomb_c1') || {};
+
+    test('an oldest, newest or last-remaining entry is tombstoned when named, though the interior rule skips it', async () => {
+        const first = at(2026, 7, 1);
+        const middle = at(2026, 7, 5);
+        const last = at(2026, 7, 10);
+
+        // Without naming them: the oldest and the newest go, and no stone is filed
+        const unnamed = build();
+        await unnamed.save('c1', [first, middle, last]);
+        await unnamed.save('c1', [middle]);
+        expect(storageMock.store.has('recTomb_c1')).toBe(false);
+
+        storageMock.store.clear();
+        const named = build();
+        await named.save('c1', [first, middle, last]);
+        await named.save('c1', [middle], { deleted: [first, last] });
+        expect(Object.keys(stones()).sort()).toEqual([JSON.stringify(first), JSON.stringify(last)].sort());
+
+        // The last remaining entry too
+        await named.save('c1', [], { deleted: [middle] });
+        expect(Object.keys(stones())).toContain(JSON.stringify(middle));
+    });
+
+    test('an entry named but still in the list is not tombstoned', async () => {
+        const history = build();
+        const entry = at(2026, 7, 1);
+        await history.save('c1', [entry, at(2026, 7, 5)]);
+
+        await history.save('c1', [entry, at(2026, 7, 5)], { deleted: [entry] });
+
+        expect(storageMock.store.has('recTomb_c1')).toBe(false);
+    });
+
+    test('a peer copy of a named deletion is dropped by the sync fold', async () => {
+        // Its own prefix: the registry is cleared by other tests, and a prefix registers once per run
+        const history = createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'delRec',
+            legacyKey: (charId) => `delLegacy_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            label: 'DeleteTest',
+        });
+        const first = at(2026, 7, 1);
+        const second = at(2026, 7, 5);
+        await history.save('c1', [first, second]);
+        await history.save('c1', [second], { deleted: [first] });
+
+        const merged = mergeForKey('testStore', 'delRec_c1_2026-07').mergeForPull([second], [first, second]);
+
+        expect(merged.map((point) => point.v)).toEqual([second.v]);
+    });
+});

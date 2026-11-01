@@ -171,6 +171,17 @@ const corpus = [
     { store: 'marketListings', key: 'marketListingGraves', label: 'Market listing deletions' },
     { store: 'marketListings', key: `marketListingGraves_${CHAR}`, label: 'Market listing deletions' },
 
+    // market/listing-archive.js — where the log's retention moves rows. Its record prefix and tombstone key
+    // are spelled apart from the log's and graves' scoped bases, so no base matcher reaches across
+    { store: 'marketListings', key: `marketListingArchiveRec_${CHAR}_2026-03`, label: 'ListingArchive records' },
+    { store: 'marketListings', key: `marketListingArchiveRecTomb_${CHAR}`, label: 'ListingArchive deletions' },
+    // The archive's permanent deletion record: a union, never aged out, apart from every key above
+    {
+        store: 'marketListings',
+        key: `marketListingArchiveGone_${CHAR}`,
+        label: 'ListingArchive permanent deletions',
+    },
+
     // combat-stats/combat-session-history.js
     { store: 'combatStats', key: 'combatSessionHistory', label: 'Combat sessions' },
     { store: 'combatStats', key: `combatSessionHistory_${CHAR}`, label: 'Combat sessions' },

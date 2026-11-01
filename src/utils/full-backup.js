@@ -126,6 +126,41 @@ const LATCH_COMPANIONS = {
 };
 
 /**
+ * Chunked histories whose deletions are one key per character beside many record keys.
+ *
+ * `features/market/listing-archive.js` keeps retired market listings as
+ * `marketListingArchiveRec_<charId>_<YYYY-MM>` and their deletions in
+ * `marketListingArchiveRecTomb_<charId>` (written by `utils/chunked-history.js`). A tombstone buries a
+ * record that matches what was deleted, so a restore that put an archived listing back while this device's
+ * tombstone for it stood hid the restored row again on the next read. Restoring records therefore drops this
+ * device's tombstones for the ids they hold, as {@link reconcileRestoredTombstones} does for the per-key pairs.
+ * Literal names, duplicated for the same reason as {@link TOMBSTONE_COMPANIONS}.
+ *
+ * The archive's permanent deletion record (`marketListingArchiveGone_<charId>`) is deliberately NOT reconciled
+ * here. Restoring writes the keys the backup carries and leaves the rest alone, so: a backup that carries the
+ * record restores it with the months (a rollback to that point, which the next sync's union of the gist's
+ * newer record hides again), and a backup without one (made before the key existed, or before any deletion)
+ * leaves this device's record standing, so rows it deleted or cleared are not resurrected by an older backup.
+ * To bring such rows back on purpose, import them again: an import stamps them after the deletion.
+ */
+const CHUNKED_TOMBSTONES = {
+    marketListings: [{ records: 'marketListingArchiveRec_', tombstones: 'marketListingArchiveRecTomb_' }],
+};
+
+/**
+ * The character a chunked record key belongs to.
+ * @param {string} key - `<records><charId>_<chunk>`
+ * @param {string} records - The record prefix, trailing underscore included
+ * @returns {string|null} The character id, or null for a key that is not one
+ */
+function chunkedRecordCharId(key, records) {
+    if (!key.startsWith(records)) return null;
+    const rest = key.slice(records.length);
+    const end = rest.indexOf('_');
+    return end > 0 ? rest.slice(0, end) : null;
+}
+
+/**
  * The key a restore latches together with this one: its tombstone companion
  * ({@link tombstoneCompanionKey}), or the other half of a pair in
  * {@link LATCH_COMPANIONS}.
@@ -136,6 +171,10 @@ const LATCH_COMPANIONS = {
 function latchCompanionKey(storeName, key) {
     const companion = tombstoneCompanionKey(storeName, key);
     if (companion) return companion;
+    for (const { records, tombstones } of CHUNKED_TOMBSTONES[storeName] || []) {
+        const charId = chunkedRecordCharId(key, records);
+        if (charId) return `${tombstones}${charId}`;
+    }
     for (const { record, tombstones } of LATCH_COMPANIONS[storeName] || []) {
         if (key === record || key.startsWith(`${record}_`)) return `${tombstones}${key.slice(record.length)}`;
         if (key === tombstones || key.startsWith(`${tombstones}_`)) return `${record}${key.slice(tombstones.length)}`;
@@ -176,6 +215,64 @@ export function tombstoneCompanionKey(storeName, key, { recordOnly = false } = {
  * @returns {Promise<Record<string, *>>} `entries`, or a copy with tombstone keys set
  */
 async function reconcileRestoredTombstones(storeName, entries) {
+    return reconcileChunkedTombstones(storeName, await reconcileKeyedTombstones(storeName, entries));
+}
+
+/**
+ * {@link reconcileRestoredTombstones} for the chunked histories in {@link CHUNKED_TOMBSTONES}: each character's
+ * tombstone map loses the ids of the records restored for that character. The map is the payload's when it
+ * carries one, else this device's; a character with no map anywhere has nothing to hide a record behind.
+ * @param {string} storeName
+ * @param {Record<string, *>} entries - What the restore is about to write; not mutated
+ * @returns {Promise<Record<string, *>>} `entries`, or a copy with tombstone keys set
+ */
+async function reconcileChunkedTombstones(storeName, entries) {
+    const rules = CHUNKED_TOMBSTONES[storeName];
+    if (!rules) return entries;
+    let out = entries;
+    for (const { records, tombstones } of rules) {
+        /** charId -> the listing ids the restored records hold */
+        const restoredIds = new Map();
+        for (const key of Object.keys(entries)) {
+            const charId = chunkedRecordCharId(key, records);
+            if (!charId || !Array.isArray(entries[key])) continue;
+            if (!restoredIds.has(charId)) restoredIds.set(charId, new Set());
+            for (const row of entries[key]) {
+                if (row && row.id !== undefined && row.id !== null) restoredIds.get(charId).add(String(row.id));
+            }
+        }
+        for (const [charId, ids] of restoredIds) {
+            const tombKey = `${tombstones}${charId}`;
+            let stones;
+            if (Object.hasOwn(entries, tombKey)) {
+                stones = entries[tombKey];
+            } else {
+                const probed = typeof storage.tryGet === 'function' ? await storage.tryGet(tombKey, storeName) : null;
+                // A read that failed (null) says nothing about what is stored: keep it, rather than write {} over
+                // tombstones this device may hold
+                if (probed === null || !probed.found) continue;
+                stones = probed.value;
+            }
+            const kept = {};
+            if (stones && typeof stones === 'object' && !Array.isArray(stones)) {
+                for (const [id, stone] of Object.entries(stones)) {
+                    if (!ids.has(id)) kept[id] = stone;
+                }
+            }
+            if (out === entries) out = { ...entries };
+            out[tombKey] = kept;
+        }
+    }
+    return out;
+}
+
+/**
+ * {@link reconcileRestoredTombstones} for the per-key record and tombstone pairs in {@link TOMBSTONE_COMPANIONS}.
+ * @param {string} storeName
+ * @param {Record<string, *>} entries - What the restore is about to write; not mutated
+ * @returns {Promise<Record<string, *>>} `entries`, or a copy with tombstone keys set
+ */
+async function reconcileKeyedTombstones(storeName, entries) {
     const rules = TOMBSTONE_COMPANIONS[storeName];
     if (!rules) return entries;
     let out = entries;

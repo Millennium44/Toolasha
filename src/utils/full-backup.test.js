@@ -521,6 +521,138 @@ describe('importEverything reports what did not land', () => {
         expect(keys.has('enhancementTracker_sessionTombstones_abc')).toBe(true);
     });
 
+    describe('the market listing archive and its deletions', () => {
+        const CHUNK = 'marketListingArchiveRec_abc_2026-03';
+        const TOMBS = 'marketListingArchiveRecTomb_abc';
+        const stone = { at: 1000, fp: 'f', bulk: false };
+        const row = (id) => ({ id, timestamp: Date.UTC(2026, 2, 5), itemHrid: '/items/a', status: 'filled' });
+
+        /** A storage with a read, which the default stand-in lacks */
+        const withTryGet = () => {
+            storageMock.tryGet = vi.fn(async (key, storeName) => {
+                const map = db.get(storeName);
+                return map?.has(key) ? { found: true, value: map.get(key) } : { found: false, value: null };
+            });
+        };
+
+        test("a restored chunk takes this device tombstones for its rows out of the character's map", async () => {
+            withTryGet();
+            db.set('marketListings', new Map([[TOMBS, { 11: stone, 12: stone }]]));
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11), row(13)] };
+
+            const result = await importEverything(payload);
+
+            // 11 is back in the restored chunk and so is not hidden; 12 is not in it and stays deleted
+            expect(db.get('marketListings').get(TOMBS)).toEqual({ 12: stone });
+            expect(result.writtenKeys.marketListings).toContain(TOMBS);
+            delete storageMock.tryGet;
+        });
+
+        test('a backup that carries its own map keeps the deletions of rows it does not restore', async () => {
+            withTryGet();
+            db.set('marketListings', new Map());
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)], [TOMBS]: { 11: stone, 99: stone } };
+
+            await importEverything(payload);
+
+            expect(db.get('marketListings').get(TOMBS)).toEqual({ 99: stone });
+            delete storageMock.tryGet;
+        });
+
+        test('a chunk with no map anywhere writes no map', async () => {
+            withTryGet();
+            db.set('marketListings', new Map());
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)] };
+
+            await importEverything(payload);
+
+            expect(db.get('marketListings').has(TOMBS)).toBe(false);
+            delete storageMock.tryGet;
+        });
+
+        test("latches the character's deletions map with a restored chunk", async () => {
+            withTryGet();
+            const storage = (await import('../core/storage.js')).default;
+            db.set('marketListings', new Map([[TOMBS, { 12: stone }]]));
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)] };
+
+            await importEverything(payload);
+
+            const keys = storage.finishRestore.mock.calls[0][0].get('marketListings');
+            expect(keys.has(CHUNK)).toBe(true);
+            expect(keys.has(TOMBS)).toBe(true);
+            delete storageMock.tryGet;
+        });
+
+        test('a tombstone map that cannot be read is left as it is, not overwritten with an empty one', async () => {
+            storageMock.tryGet = vi.fn(async () => null);
+            db.set('marketListings', new Map([[TOMBS, { 12: stone }]]));
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)] };
+
+            await importEverything(payload);
+
+            // The restore wrote the chunk and nothing under the tombstone key
+            expect(db.get('marketListings').get(TOMBS)).toEqual({ 12: stone });
+            expect(db.get('marketListings').has(CHUNK)).toBe(true);
+            delete storageMock.tryGet;
+        });
+
+        test('restoring archived months leaves this device permanent deletion record standing', async () => {
+            withTryGet();
+            const GONE = 'marketListingArchiveGone_abc';
+            const record = { clearedAt: 5000, removed: { 77: 6000 } };
+            db.set('marketListings', new Map([[GONE, record]]));
+            const payload = await exportEverything();
+            // A backup older than the clear: it carries the months and no record
+            payload.stores.marketListings = { [CHUNK]: [row(11)] };
+
+            await importEverything(payload);
+
+            // The restore is a rollback of what the backup carries; the record is not part of it, so the rows
+            // the clear hid stay hidden until they are imported again
+            expect(db.get('marketListings').get(GONE)).toEqual(record);
+            expect(db.get('marketListings').has(CHUNK)).toBe(true);
+            delete storageMock.tryGet;
+        });
+
+        test('a backup that carries the record restores it with the months', async () => {
+            withTryGet();
+            const GONE = 'marketListingArchiveGone_abc';
+            db.set('marketListings', new Map([[GONE, { clearedAt: 9000, removed: {} }]]));
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)], [GONE]: { clearedAt: 100, removed: {} } };
+
+            await importEverything(payload);
+
+            expect(db.get('marketListings').get(GONE)).toEqual({ clearedAt: 100, removed: {} });
+            delete storageMock.tryGet;
+        });
+
+        test('chunks and their map go out and come back unchanged', async () => {
+            db.set(
+                'marketListings',
+                new Map([
+                    [CHUNK, [row(11), row(12)]],
+                    [TOMBS, { 99: stone }],
+                ])
+            );
+            const payload = await exportEverything();
+            db.set('marketListings', new Map());
+
+            await importEverything(payload);
+
+            expect(Object.fromEntries(db.get('marketListings'))).toEqual({
+                [CHUNK]: [row(11), row(12)],
+                [TOMBS]: { 99: stone },
+            });
+        });
+    });
+
     test('a live-safe record is written but not latched, and a restore of only those latches nothing', async () => {
         const { registerSyncMerge } = await import('./sync-merge-registry.js');
         const unregister = registerSyncMerge({

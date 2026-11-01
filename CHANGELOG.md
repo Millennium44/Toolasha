@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market history keeps listings older than 90 days
+
+- Listings past the 90-day window now move to a permanent monthly archive instead of being deleted, and the Market History Viewer, its total and Export CSV include them; importing old listings files them straight into the archive and says how many went where.
+- Deleting an archived listing or clearing the history stays done across synced devices.
+
 ### Task badges have a price when enhancing
 
 - Basic, Advanced and Expert Task Badges are now priced at the Task Crystals it takes to craft them (1, 5 and 21) at the crystals' token value, so enhancing one shows its base cost and offers the badge itself as priced protection instead of "no price".
