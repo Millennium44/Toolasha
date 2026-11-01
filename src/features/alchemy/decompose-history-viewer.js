@@ -8,6 +8,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { decomposeHistoryTracker } from './decompose-history-tracker.js';
+import { getUntradableCapeValue } from '../enhancement/untradable-cape-value.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
@@ -501,7 +502,11 @@ class DecomposeHistoryViewer {
         const { price: inputPrice, basis: inputBasis } = priceInputWithRefinementFallback(
             session.inputItemHrid,
             marketPrice,
-            { enhancementLevel: session.enhancementLevel || 0, marketSource: inputPriceInfo.source }
+            {
+                enhancementLevel: session.enhancementLevel || 0,
+                marketSource: inputPriceInfo.source,
+                capeValue: getUntradableCapeValue,
+            }
         );
         const inputCost = netConsumed * inputPrice;
         const inputUnpriced = inputBasis === null && netConsumed > 0;

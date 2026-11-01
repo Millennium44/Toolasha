@@ -8,6 +8,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { transmuteHistoryTracker } from './transmute-history-tracker.js';
+import { getUntradableCapeValue } from '../enhancement/untradable-cape-value.js';
 import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
@@ -1464,7 +1465,7 @@ class TransmuteHistoryViewer {
         const { price: inputPrice, basis: inputBasis } = priceInputWithRefinementFallback(
             session.inputItemHrid,
             marketPrice,
-            { marketSource: inputPriceInfo.source }
+            { marketSource: inputPriceInfo.source, capeValue: getUntradableCapeValue }
         );
         const inputCost = netConsumed * inputPrice;
         const inputUnpriced = inputBasis === null && netConsumed > 0;

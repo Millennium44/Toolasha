@@ -46,7 +46,9 @@ import itemFlowRecorder from './item-flow-recorder.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { calculateCraftingCostDetailed, networthUnitValue } from './networth-calculator.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { getUntradableCapeValue } from '../enhancement/untradable-cape-value.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { isUntradableCape } from '../../utils/untradable-cape.js';
 import { characterKey } from '../../utils/character-key.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 
@@ -114,6 +116,27 @@ export function createBasisPricer(price = createPricer()) {
         const direct = price(itemHrid, enhancementLevel);
         if (Number.isFinite(direct)) return direct;
         if (!itemHrid) return null;
+
+        // An untradable cape (refined or enhanced, or neither) has no listing, so it takes the shared
+        // cape convention every other panel uses: the cape setting, plus the refinement bill and the
+        // player's own enhancing cost where it has them. A figure that is only a floor (the setting
+        // values the base at nothing, an input is unpriced) is not a carrying value, so it falls
+        // through to the old unvalued behavior below, never to 0.
+        if (isUntradableCape(itemHrid)) {
+            const capeKey = `${itemHrid}:${enhancementLevel || 0}`;
+            if (cache.has(capeKey)) return cache.get(capeKey);
+            let capeBasis = null;
+            try {
+                const cape = getUntradableCapeValue(itemHrid, enhancementLevel || 0, { context: 'networth' });
+                if (cape?.value > 0 && !cape.partial) capeBasis = cape.value;
+            } catch {
+                capeBasis = null;
+            }
+            if (capeBasis !== null) {
+                cache.set(capeKey, capeBasis);
+                return capeBasis;
+            }
+        }
 
         // Both fallbacks below price the BASE item: an expected value and a
         // material cost know nothing about enhancement levels, and a +8 input

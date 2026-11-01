@@ -20,6 +20,9 @@ const game = vi.hoisted(() => ({
     details: {},
     /** Expected-value answers by hrid */
     ev: {},
+    /** Untradable capes: hrid -> level -> {value, partial} from the shared cape convention */
+    capes: {},
+    capeCalls: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -84,6 +87,14 @@ vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: true, calculateExpectedValue: (hrid) => game.ev[hrid] ?? null },
 }));
 
+vi.mock('../../utils/untradable-cape.js', () => ({ isUntradableCape: (hrid) => hrid in game.capes }));
+vi.mock('../enhancement/untradable-cape-value.js', () => ({
+    getUntradableCapeValue: (hrid, level, options) => {
+        game.capeCalls.push([hrid, level, options]);
+        return game.capes[hrid]?.[level] ?? { value: null, partial: true };
+    },
+}));
+
 const { collectGoldSourceInputs, createBasisPricer } = await import('./gold-sources-collect.js');
 
 const session = (start, names = ['Me']) => ({
@@ -95,6 +106,8 @@ const session = (start, names = ['Me']) => ({
 beforeEach(() => {
     game.details = {};
     game.ev = {};
+    game.capes = {};
+    game.capeCalls = [];
     game.archived = [];
     game.live = null;
     game.lastRun = undefined;
@@ -220,5 +233,46 @@ describe('the cost-basis pricer', () => {
     test('a real market price is used at any level before any fallback', () => {
         const basis = createBasisPricer((itemHrid, level) => (level === 8 ? 5_000_000 : null));
         expect(basis('/items/culinary_cape', 8)).toBe(5_000_000);
+    });
+});
+
+describe('the cost-basis pricer: untradable capes', () => {
+    test('an unrefined cape no recipe prices takes the shared cape value, in the networth context', () => {
+        game.capes['/items/gatherer_cape'] = { 0: { value: 4_000_000, partial: false } };
+        expect(createBasisPricer(() => null)('/items/gatherer_cape', 0)).toBe(4_000_000);
+        expect(game.capeCalls[0]).toEqual(['/items/gatherer_cape', 0, { context: 'networth' }]);
+    });
+
+    test('a refined cape at a nonzero level takes the convention figure, not null', () => {
+        game.capes['/items/gatherer_cape_refined'] = {
+            0: { value: 90_000_000, partial: false },
+            4: { value: 120_000_000, partial: false },
+        };
+        const basis = createBasisPricer(() => null);
+        expect(basis('/items/gatherer_cape_refined', 4)).toBe(120_000_000);
+        expect(basis('/items/gatherer_cape_refined', 0)).toBe(90_000_000);
+    });
+
+    test('two capes of one kind, a repeat lookup and a sibling, are each valued and remembered', () => {
+        game.capes['/items/gatherer_cape'] = { 0: { value: 4_000_000, partial: false } };
+        game.capes['/items/chance_cape'] = { 0: { value: 6_000_000, partial: false } };
+        const basis = createBasisPricer(() => null);
+        expect(basis('/items/gatherer_cape', 0)).toBe(4_000_000);
+        expect(basis('/items/chance_cape', 0)).toBe(6_000_000);
+        expect(basis('/items/gatherer_cape', 0)).toBe(4_000_000);
+        expect(game.capeCalls).toHaveLength(2);
+    });
+
+    test('a cape the setting leaves unpriced (nothing or a floor) stays unvalued, never 0', () => {
+        game.capes['/items/gatherer_cape'] = { 0: { value: null, partial: true } };
+        game.capes['/items/chance_cape_refined'] = { 0: { value: 800, partial: true } };
+        const basis = createBasisPricer(() => null);
+        expect(basis('/items/gatherer_cape', 0)).toBeNull();
+        expect(basis('/items/chance_cape_refined', 0)).toBeNull();
+    });
+
+    test('a real market price still wins over the cape value', () => {
+        game.capes['/items/gatherer_cape'] = { 0: { value: 4_000_000, partial: false } };
+        expect(createBasisPricer(() => 7)('/items/gatherer_cape', 0)).toBe(7);
     });
 });

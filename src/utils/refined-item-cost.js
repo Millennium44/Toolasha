@@ -20,6 +20,7 @@ import { getItemPrice, getItemPriceInfo } from './market-data.js';
 import { calculateArtisanBonus } from './material-calculator.js';
 import { formatKMB, formatLargeNumber } from './formatters.js';
 import { resolveItemPrice } from './profit-helpers.js';
+import { isUntradableCape } from './untradable-cape.js';
 
 /** Cached output-hrid → refinement action map, rebuilt when game data changes */
 let refineActionByOutput = null;
@@ -280,17 +281,34 @@ export function resolveRefinedItemCost(itemHrid, options = {}) {
  *   `'book'`/`'value'`/`'custom'` for a real quote). A refined item's `'vendor'`/`'coinify'`
  *   figure is what it could be dumped for, not a cost basis, so it does not win over the
  *   refinement craft cost the way a real quote does — see `craftPreferredQuoteAt`.
+ * @param {Function} [options.capeValue] - `getUntradableCapeValue` (features/enhancement/untradable-cape-value.js),
+ *   injected so this util stays free of the enhancement tree. An untradable cape the market does not price
+ *   is valued through it, the same figure every other panel shows (the cape setting, plus the refinement
+ *   bill and enhancing cost where it has them). A cape it cannot fully value stays unpriced: the old
+ *   refinement-only craft cost left the base cape out, so it is not used for a cape.
  * @returns {{price: number, basis: string|null, unpriced: boolean}} Unit price and its basis
  */
 export function priceInputWithRefinementFallback(itemHrid, marketPrice, options = {}) {
-    const { enhancementLevel = 0, marketBasis = 'current buy', marketSource = null } = options;
+    const { enhancementLevel = 0, marketBasis = 'current buy', marketSource = null, capeValue = null } = options;
+    const untradableCape = typeof capeValue === 'function' && isUntradableCape(itemHrid);
     const isOffMarketValuation = isRefinedItem(itemHrid) && (marketSource === 'vendor' || marketSource === 'coinify');
 
     if (marketPrice > 0 && !isOffMarketValuation) {
         return { price: marketPrice, basis: marketBasis, unpriced: false };
     }
 
-    if (isRefinedItem(itemHrid) && enhancementLevel === 0) {
+    if (untradableCape) {
+        try {
+            const cape = capeValue(itemHrid, enhancementLevel, { context: 'profit' });
+            if (cape?.value > 0 && !cape.partial) {
+                return { price: cape.value, basis: 'untradable-cape value', unpriced: false };
+            }
+        } catch (error) {
+            console.error('[RefinedItemCost] Failed to value untradable cape:', error);
+        }
+    }
+
+    if (isRefinedItem(itemHrid) && enhancementLevel === 0 && !untradableCape) {
         try {
             const resolved = resolveRefinedItemCost(itemHrid, {
                 quoteAt: (level) => craftPreferredQuoteAt(itemHrid, level),
