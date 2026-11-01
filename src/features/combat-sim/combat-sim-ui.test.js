@@ -13755,6 +13755,20 @@ describe('pins and exclusions are remembered per character (#545)', () => {
         expect(container().querySelector('[data-budget-save-failed]')).toBeNull();
     });
 
+    test('the cost line counts an ability order the constraints let ride along', () => {
+        const metric = { format: (v) => `${v > 0 ? '+' : ''}${v}`, label: 'x' };
+        const pins = new Map([['a', 'A']]);
+        // Purchases alone are 10 worse, but a +100 order now fits that the free plan's swap had blocked
+        const html = ui._renderBudgetConstraints(
+            { blocked: null, gainTotal: 40, totalCost: 100, metric },
+            pins,
+            new Map(),
+            { free: { gainTotal: 50, totalCost: 100 }, orderGain: 100, freeOrderGain: 0 }
+        );
+        expect(html).toContain('+90');
+        expect(html).not.toContain('-10');
+    });
+
     test('a failed save when the last constraint is cleared still says so', async () => {
         ui._renderUpgradeResults(analysis());
         click('pin', 'Cape');

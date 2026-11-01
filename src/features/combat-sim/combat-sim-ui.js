@@ -12864,9 +12864,14 @@ class CombatSimUI {
             // The plan with no pins or exclusions, so the constraints can say what they cost
             const constrained = pins.size > 0 || excludes.size > 0;
             const free = constrained ? planUpgradeBudget(rows, budget, { baseline, metricKey }) : null;
+            // A pin or exclusion can decide whether an ability order rides along, and the shown total
+            // includes it, so both sides of the comparison count their own compatible order
+            const orderGainOf = (p) => (p && !p.blocked ? this._planAbilityOrder(p, orderRows, baseline).gain : 0);
             const constraintsHtml = this._renderBudgetConstraints(plan, pins, excludes, {
                 known: new Set(rows.map((row) => candidateKey(row))),
                 free,
+                orderGain: free ? orderGainOf(plan) : 0,
+                freeOrderGain: free ? orderGainOf(free) : 0,
                 saveFailed: Boolean(this._budgetConstraintsSaveFailed),
             });
             // A plan from a stopped run is missing whatever the run never reached, pinned or not
@@ -13210,7 +13215,12 @@ class CombatSimUI {
      * @returns {string} HTML ('' when there is none)
      * @private
      */
-    _renderBudgetConstraints(plan, pins, excludes, { known = null, free = null, saveFailed = false } = {}) {
+    _renderBudgetConstraints(
+        plan,
+        pins,
+        excludes,
+        { known = null, free = null, orderGain = 0, freeOrderGain = 0, saveFailed = false } = {}
+    ) {
         if (!pins.size && !excludes.size) {
             // Removing the last one can fail to save too, and the stored ones would then come back on reload
             return saveFailed
@@ -13236,7 +13246,7 @@ class CombatSimUI {
         // What the constraints cost against the plan without them, when the plan is one
         let costLine = '';
         if (free && !plan.blocked) {
-            const gain = plan.gainTotal - free.gainTotal;
+            const gain = plan.gainTotal + orderGain - (free.gainTotal + freeOrderGain);
             const spend = plan.totalCost - free.totalCost;
             const money = (value) => formatKMB(Math.round(Math.abs(value)));
             costLine = `<div data-budget-vs-free style="color:#aaa; font-size:10px; padding:1px 0;">Against the plan with
