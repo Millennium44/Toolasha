@@ -46,6 +46,18 @@ describe('reading the room off the action bar', () => {
         expect(parseLabyrinthActionName('')).toBeNull();
     });
 
+    test('reads the level by position, with no English label and no labyrinth word, when the caller knows', () => {
+        expect(parseLabyrinthActionName('迷宫 - 宝箱怪 245', { assumeLabyrinth: true })).toEqual({
+            name: '宝箱怪',
+            level: 245,
+        });
+        expect(parseLabyrinthActionName('Chimerical Beast 245', { assumeLabyrinth: true })).toEqual({
+            name: 'Chimerical Beast',
+            level: 245,
+        });
+        expect(parseLabyrinthActionName('迷宫 - 宝箱怪 245')).toMatchObject({ level: 245 });
+    });
+
     test('a labyrinth row with no level is no answer at all, not a level of zero', () => {
         expect(parseLabyrinthActionName('Labyrinth - Skilling Room')).toBeNull();
     });

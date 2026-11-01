@@ -36,6 +36,7 @@ import {
     bossEtaTooltip,
 } from '../../utils/boss-eta.js';
 import { compareActionQueueOrder, runningCombatAction } from '../../utils/combat-actions.js';
+import { isLabyrinthFightActive } from './labyrinth-activity.js';
 
 const ETA_ID = 'mwi-boss-eta';
 
@@ -204,8 +205,7 @@ class CombatBossEta {
         // tracking state is not reset while a zone stays queued behind a
         // skilling action, so without this a shared message names a boss
         // countdown the header is not showing
-        const nameRow = document.querySelector(CURRENT_ACTION_SELECTOR)?.querySelector(ACTION_NAME_SELECTOR);
-        if (this._suppressed(nameRow)) return null;
+        if (this._suppressed()) return null;
 
         let info = null;
         if (this.isDungeon && this.maxWaves > 0 && this.currentWave > 0) {
@@ -220,11 +220,10 @@ class CombatBossEta {
      * Same guards as the battle counter: never on a labyrinth fight (no
      * boss-cycle concept there) or beside a skilling action queued in front of
      * a stale combat state.
-     * @param {Element|null|undefined} nameRow - The header's action-name row, when on screen
      * @returns {boolean}
      */
-    _suppressed(nameRow) {
-        const isLabyrinthFight = /labyrinth/i.test(nameRow?.textContent || '');
+    _suppressed() {
+        const isLabyrinthFight = isLabyrinthFightActive();
         const runningAction = (dataManager.getCurrentActions() || [])
             .filter((action) => !action.isDone)
             .sort(compareActionQueueOrder)[0];
@@ -240,7 +239,7 @@ class CombatBossEta {
 
         let text = '';
         let title = '';
-        if (!this._suppressed(nameRow)) {
+        if (!this._suppressed()) {
             let info = null;
             let noun = 'battle';
             if (this.isDungeon && this.maxWaves > 0 && this.currentWave > 0) {

@@ -236,6 +236,17 @@ describe('combat boss eta', () => {
         game.actionDetails[BOSS_ZONE] = bossZoneDetail;
         game.wsHandlers.new_battle({ battleId: 323 });
 
+        // The running action is a regular zone, so the English title does not make it a labyrinth
+        // fight (a labyrinth run stays active while you fight a zone) and the countdown shows
+        expect(combatBossEta.getEtaText()).toBe('7 to boss');
+    });
+
+    test('a labyrinth fight is told by its running action, whatever language the header is in', () => {
+        buildHeader('Chimerical Beast 245');
+        game.actions = [{ actionHrid: '/actions/labyrinth/explore', isDone: false, ordinal: 0 }];
+        game.actionDetails['/actions/labyrinth/explore'] = { type: '/action_types/labyrinth' };
+        game.wsHandlers.new_battle({ battleId: 323 });
+
         expect(etaText()).toBeNull();
         expect(combatBossEta.getEtaText()).toBeNull();
     });
