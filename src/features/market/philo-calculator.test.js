@@ -1053,6 +1053,22 @@ describe('untradable items with no price', () => {
         expect(calc._craftBaseNotes[REFINED]).toBe('capeSetting');
     });
 
+    test('an unresolved refined cape stays needs-price instead of taking the unrefined base value', () => {
+        const REFINED = '/items/test_cape_refined';
+        mocks.refineActions['/actions/refine_cape'] = {
+            outputItems: [{ itemHrid: REFINED }],
+            inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
+            upgradeItemHrid: CAPE_HRID,
+        };
+        mocks.itemDetails[REFINED] = { equipmentDetail: { type: '/equipment_types/back' } };
+        mocks.capeMode = 'mirror';
+        mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
+        delete mocks.prices[`${OTHER_HRID}+0`]; // a refinement material nobody lists
+        const row = calc.calculateRow(REFINED, cape(REFINED));
+        expect(row.needsPrice).toBe(true);
+        expect(row.profitPerHour).toBeNull();
+    });
+
     test('the cape stand-in is priced on the table own buy side, not the global one', () => {
         mocks.capeMode = 'mirror';
         mocks.globalPricingMode = 'optimistic'; // global buys at bid

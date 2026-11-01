@@ -29,7 +29,7 @@ import { registerCommand, unregisterCommand } from '../../utils/command-registry
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
 import { PHILO_HRID } from '../alchemy/philosophers-stone-hrid.js';
-import { getCapeBaseValue, isUntradableCape } from '../../utils/untradable-cape.js';
+import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/untradable-cape.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -931,7 +931,7 @@ class PhiloCalculator {
         if (!details || details.isTradable === true) return null;
         // Only an unrefined cape is worth the base value; an unresolved refined one is missing its
         // materials too, so it stays a needs-price row
-        if (isUntradableCape(itemHrid)) {
+        if (isUntradableCape(itemHrid) && !isRefinedCape(itemHrid)) {
             const baseValue = this.capeBaseValue();
             if (baseValue > 0) {
                 return { itemCost: baseValue, selfReturnUnitValue: baseValue, source: 'capeSetting', fallbackLevel: 0 };
