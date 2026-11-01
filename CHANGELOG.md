@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Split-bundle checks
+
+- The build now fails when a bundle carries its own copy of another bundle's stateful module, and a smoke test loads the seven production libraries together to check they share live instances, a class of bug the single-file dev build cannot show.
+
 ### October 31 audit fixes: Combat Sim
 
 - Verify, the trigger search, Party search and the food search now read every price once before simulating, so one refresh can't tilt a close comparison.
