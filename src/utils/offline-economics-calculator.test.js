@@ -8,6 +8,16 @@ const { mockGetItemDetails, mockResolveSellSideValue, mockResolveBuySideValue, m
         mockCalculateTaskTokenValue: vi.fn(),
     }));
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('./bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedexpectedValueCalculator = await import('../features/market/expected-value-calculator.js');
+    return {
+        ...original,
+        expectedValueCalculator: () => original.expectedValueCalculator() || mockedexpectedValueCalculator.default,
+    };
+});
+
 vi.mock('../core/data-manager.js', () => ({ default: { getItemDetails: mockGetItemDetails } }));
 vi.mock('../features/market/expected-value-calculator.js', () => ({
     default: { resolveSellSideValue: mockResolveSellSideValue, resolveBuySideValue: mockResolveBuySideValue },

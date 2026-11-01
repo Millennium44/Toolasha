@@ -24,6 +24,18 @@ const engine = vi.hoisted(() => ({
     shop: {},
 }));
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('./bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedexpectedValueCalculator = await import('../features/market/expected-value-calculator.js');
+    const mockedalchemyProfitCalculator = await import('../features/market/alchemy-profit-calculator.js');
+    return {
+        ...original,
+        expectedValueCalculator: () => original.expectedValueCalculator() || mockedexpectedValueCalculator.default,
+        alchemyProfitCalculator: () => original.alchemyProfitCalculator() || mockedalchemyProfitCalculator.default,
+    };
+});
+
 vi.mock('../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ openableLootDropMap: engine.crates, labyrinthShopItemDetailMap: engine.shop }),

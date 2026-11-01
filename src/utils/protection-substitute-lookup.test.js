@@ -1,5 +1,15 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('./bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedexpectedValueCalculator = await import('../features/market/expected-value-calculator.js');
+    return {
+        ...original,
+        expectedValueCalculator: () => original.expectedValueCalculator() || mockedexpectedValueCalculator.default,
+    };
+});
+
 vi.mock('../core/data-manager.js', () => ({
     default: { getInitClientData: vi.fn(), getItemDetails: vi.fn() },
 }));

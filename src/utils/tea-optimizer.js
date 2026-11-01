@@ -21,8 +21,7 @@ import {
 } from './profit-helpers.js';
 import { getItemPrice, getItemPriceInfo } from './market-data.js';
 import { calculateBonusRevenue } from './bonus-revenue-calculator.js';
-import expectedValueCalculator from '../features/market/expected-value-calculator.js';
-import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
+import { alchemyProfitCalculator, expectedValueCalculator } from './bundle-bridge.js';
 import { runningAction } from './combat-actions.js';
 import { expectedProcessedItems } from './gathering-processing.js';
 import { getCommunityGatheringQuantity } from './community-buffs.js';
@@ -605,7 +604,7 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
 
     let profitData = null;
     if (actionType === 'coinify') {
-        profitData = alchemyProfitCalculator.calculateCoinifyProfit(
+        profitData = alchemyProfitCalculator()?.calculateCoinifyProfit(
             itemHrid,
             enhancementLevel,
             false,
@@ -613,7 +612,7 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
             fixedActionContext
         );
     } else if (actionType === 'decompose') {
-        profitData = alchemyProfitCalculator.calculateDecomposeProfit(
+        profitData = alchemyProfitCalculator()?.calculateDecomposeProfit(
             itemHrid,
             enhancementLevel,
             false,
@@ -621,7 +620,7 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
             fixedActionContext
         );
     } else if (actionType === 'transmute') {
-        profitData = alchemyProfitCalculator.calculateTransmuteProfit(
+        profitData = alchemyProfitCalculator()?.calculateTransmuteProfit(
             itemHrid,
             false,
             teaBonusOverride,
@@ -630,7 +629,7 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
             enhancementLevel
         );
     } else if (actionType === 'unrefine') {
-        profitData = alchemyProfitCalculator.calculateUnrefineProfit(
+        profitData = alchemyProfitCalculator()?.calculateUnrefineProfit(
             itemHrid,
             enhancementLevel,
             false,
@@ -927,7 +926,8 @@ export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData)
         const bonus = calculateBonusRevenue(actionDetails, 1, new Map(), gameData?.itemDetailMap || {});
         // A container (taxExempt) valued from only some of its contents keeps a positive EV and no
         // missingPrice; the expected-value calculator records how many contents it left out
-        const containerPartlyUnpriced = (hrid) => (expectedValueCalculator.containerMissingCounts?.get(hrid) || 0) > 0;
+        const containerPartlyUnpriced = (hrid) =>
+            (expectedValueCalculator()?.containerMissingCounts?.get(hrid) || 0) > 0;
         return (bonus?.bonusDrops || []).some(
             (drop) =>
                 drop.dropsPerHour > 0 &&

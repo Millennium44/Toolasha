@@ -16,7 +16,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import expectedValueCalculator from '../features/market/expected-value-calculator.js';
+import { expectedValueCalculator } from './bundle-bridge.js';
 import { calculateTaskTokenValue } from '../features/tasks/task-profit-calculator.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
 import { MARKET_TAX } from './profit-constants.js';
@@ -41,7 +41,7 @@ function resolveUnitValue(itemHrid, enhancementLevel, side, itemDetails) {
     }
 
     if (side === 'sell') {
-        const resolved = expectedValueCalculator.resolveSellSideValue(itemHrid, enhancementLevel);
+        const resolved = expectedValueCalculator()?.resolveSellSideValue(itemHrid, enhancementLevel);
         if (!resolved) return null;
         const value =
             resolved.needsTax && itemDetails?.isTradable !== false
@@ -50,7 +50,7 @@ function resolveUnitValue(itemHrid, enhancementLevel, side, itemDetails) {
         return { value, source: resolved.source };
     }
 
-    const resolved = expectedValueCalculator.resolveBuySideValue(itemHrid, enhancementLevel);
+    const resolved = expectedValueCalculator()?.resolveBuySideValue(itemHrid, enhancementLevel);
     return resolved ? { value: resolved.value, source: resolved.source } : null;
 }
 

@@ -51,6 +51,16 @@ const gameData = {
     },
 };
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedexpectedValueCalculator = await import('../market/expected-value-calculator.js');
+    return {
+        ...original,
+        expectedValueCalculator: () => original.expectedValueCalculator() || mockedexpectedValueCalculator.default,
+    };
+});
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => gameData,

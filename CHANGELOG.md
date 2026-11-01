@@ -11,6 +11,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Skill level updates the game sends outside an action, and partial Collections updates, are now applied instead of ignored or wiping the rest of the list.
 - The battle counter, boss countdown and Labyrinth live readout recognize a Labyrinth fight from the running action rather than English header text, so they work in other game languages.
 - Replay check's damage-per-hit no longer counts health the game reconciled at the end of a fight as if a swing had dealt it.
+### Shared calculators across the split bundles
+
+- Chest, decompose, offline, protection-substitute, tea, Risk of Ruin, bonus-revenue and liquidity figures now use the same live expected-value, alchemy-profit and market-history data as the rest of Toolasha, instead of a private copy that was never kept up to date in the released build.
 
 ### Task reroll walk bar tidied
 

@@ -39,6 +39,16 @@ const engine = vi.hoisted(() => ({
     onYield: null,
 }));
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedalchemyProfitCalculator = await import('./alchemy-profit-calculator.js');
+    return {
+        ...original,
+        alchemyProfitCalculator: () => original.alchemyProfitCalculator() || mockedalchemyProfitCalculator.default,
+    };
+});
+
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => engine.settings[key],
