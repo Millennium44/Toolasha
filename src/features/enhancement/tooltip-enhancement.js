@@ -483,7 +483,8 @@ function priceEnhancementInputs(itemHrid, itemDetails, priceContext = 'profit') 
         materialCostPerAttempt += price * material.count;
         materials.push({
             itemHrid: material.itemHrid,
-            name: materialDetail?.name || material.itemHrid,
+            // A figure valued through the Task Tokens it costs is an estimate, and the row says so
+            name: (materialDetail?.name || material.itemHrid) + (priced.tokenValued ? ' (token value)' : ''),
             countPerAction: material.count,
             unitPrice: price,
             bidPrice: priceMaterial(material.itemHrid, { mode: 'bid' }).price || 0,
