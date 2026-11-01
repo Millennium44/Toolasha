@@ -23,6 +23,7 @@ import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { compareActionQueueOrder, runningCombatAction } from '../../utils/combat-actions.js';
+import { isLabyrinthFightActive } from './labyrinth-activity.js';
 
 const COUNTER_ID = 'mwi-battle-counter';
 
@@ -203,10 +204,9 @@ class CombatBattleCounter {
         const nameRow = currentAction?.querySelector(ACTION_NAME_SELECTOR);
         if (!currentAction || !nameRow) return;
 
-        // The header title decides the variant: labyrinth fights are titled
-        // "Labyrinth - <Monster>" (our appended counter text never contains
-        // the word, so reading the row's full text is safe)
-        const isLabyrinthFight = /labyrinth/i.test(nameRow.textContent || '');
+        // The running action decides the variant (the labyrinth's only action has its own action
+        // type), not the header's English title; the header is read only while no action is known
+        const isLabyrinthFight = isLabyrinthFightActive();
 
         // A battle number describes a fight, so it has no business beside a
         // craft or an alchemy action. The labyrinth variant needs no such

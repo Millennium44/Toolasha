@@ -162,6 +162,23 @@ describe('combat battle counter', () => {
         expect(counterText()).toBe('· Attempt #4');
     });
 
+    test('a labyrinth fight is told by its running action, not by an English header title', () => {
+        buildHeader('Chimerical Beast 245');
+        game.actions = [{ actionHrid: '/actions/labyrinth/explore', isDone: false, ordinal: 0 }];
+        game.actionDetails['/actions/labyrinth/explore'] = { type: '/action_types/labyrinth' };
+        game.wsHandlers.new_battle({ battleId: 99 });
+
+        game.wsHandlers.labyrinth_updated({
+            labyrinth: {
+                isActive: true,
+                pathData: JSON.stringify([{ x: 0, y: 0 }]),
+                roomData: [[{ roomType: '/labyrinth_room_types/combat', entryCount: 4 }]],
+            },
+        });
+
+        expect(counterText()).toBe('· Attempt #4');
+    });
+
     test('a labyrinth title with no attempt count yet shows nothing rather than a battle number', () => {
         buildHeader('Labyrinth - Chimerical Beast');
         game.wsHandlers.new_battle({ battleId: 99 });

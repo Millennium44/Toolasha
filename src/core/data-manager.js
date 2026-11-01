@@ -154,6 +154,22 @@ const INTERACTION_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'wheel'];
  */
 export const RELOAD_RECOVERY_SETTING_MIRROR_KEY = 'toolasha.missedCharacterData.autoReload';
 
+/**
+ * Merge a collections delta into the held rows by itemHrid.
+ * @param {Array<Object>} held - Current rows
+ * @param {Array<Object>} delta - Rows from the message
+ * @returns {Array<Object>} New list
+ */
+function mergeCollectionRows(held, delta) {
+    const merged = [...held];
+    for (const row of delta) {
+        const index = merged.findIndex((r) => r.itemHrid === row.itemHrid);
+        if (index >= 0) merged[index] = row;
+        else merged.push(row);
+    }
+    return merged;
+}
+
 class DataManager {
     constructor() {
         this.webSocketHook = webSocketHook;
@@ -1518,7 +1534,11 @@ class DataManager {
         this.webSocketHook.on('collections_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
             if (!Array.isArray(data?.collections)) return;
-            this.characterCollections = data.collections;
+            // A delta, as the game merges it: rows replace by itemHrid, new items are added. With
+            // nothing held yet (null = not loaded, kept distinct from []) the list is taken as given
+            this.characterCollections = Array.isArray(this.characterCollections)
+                ? mergeCollectionRows(this.characterCollections, data.collections)
+                : data.collections;
             this.characterCollectionsAt = Date.now();
             this.emit('collections_updated', data);
         });
@@ -1769,12 +1789,19 @@ class DataManager {
         this.webSocketHook.on('skills_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
 
-            // Update character skills with new levels
-            if (data.characterSkills) {
+            // The game's own handler reads `endCharacterSkills` (a partial list, merged by skillHrid) and
+            // `endCharacterAbilities`; a full `characterSkills` is still accepted if one ever arrives
+            if (Array.isArray(data.characterSkills)) {
                 this.characterSkills = data.characterSkills;
                 // Keep one array: action_completed levels mutate this.characterSkills in place,
                 // and the simulator exports read characterData.characterSkills.
                 if (this.characterData) this.characterData.characterSkills = data.characterSkills;
+            }
+            if (Array.isArray(data.endCharacterSkills)) {
+                this.mergeSkillUpdates(data.endCharacterSkills);
+            }
+            if (this.applyAbilityUpdates(data.endCharacterAbilities)) {
+                this.emit('abilities_updated', data);
             }
 
             this.emit('skills_updated', data);
@@ -2099,6 +2126,25 @@ class DataManager {
             this.actionTypeDrinkSlotsMap.set(actionTypeHrid, drinks || []);
         }
         this.buffStateVersion++;
+    }
+
+    /**
+     * Merge a partial `endCharacterSkills` list into the held skills by skillHrid, in place, and
+     * keep characterData.characterSkills on the same array. Unknown skills are appended.
+     *
+     * @param {Array<Object>} updates - `endCharacterSkills` from the message
+     */
+    mergeSkillUpdates(updates) {
+        if (!Array.isArray(this.characterSkills)) {
+            this.characterSkills = updates.map((u) => ({ ...u }));
+        } else {
+            for (const update of updates) {
+                const skill = this.characterSkills.find((s) => s.skillHrid === update.skillHrid);
+                if (skill) Object.assign(skill, update);
+                else this.characterSkills.push({ ...update });
+            }
+        }
+        if (this.characterData) this.characterData.characterSkills = this.characterSkills;
     }
 
     /**

@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Skill, collection and Labyrinth fight updates
+
+- Skill level updates the game sends outside an action, and partial Collections updates, are now applied instead of ignored or wiping the rest of the list.
+- The battle counter, boss countdown and Labyrinth live readout recognize a Labyrinth fight from the running action rather than English header text, so they work in other game languages.
+- Replay check's damage-per-hit no longer counts health the game reconciled at the end of a fight as if a swing had dealt it.
+
 ### Task reroll walk bar tidied
 
 - The reroll walk bar sits in the Task Board toolbar as ordinary toolbar buttons with a short label (details on hover) instead of floating over the task cards, shows only on the Task Board, and shrinks to a "Walk again" button once a walk is done; a new "Reroll walk bar position" setting keeps it floating if you prefer.

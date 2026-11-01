@@ -33,30 +33,39 @@ export const BAND_MARGIN_PCT = 4;
  * on a `labyrinth_updated` message, and a page reloaded in the middle of a
  * fight gets neither until the next room is entered.
  *
+ * The level is the last number in the row, and the name is what sits between the first dash and
+ * that number, so neither depends on an English word ("Lv.") being there. The header is still
+ * only a fallback: callers take the room from the labyrinth state and the battle first.
+ *
  * @param {string} text - Contents of the Header_actionName element
+ * @param {Object} [options]
+ * @param {boolean} [options.assumeLabyrinth] - The caller already knows this is a labyrinth fight
+ *   (the running action says so), so the row need not name the labyrinth in English
  * @returns {{name: string, level: number}|null} null when this is not a
  *   labyrinth combat row, or carries no level
  */
-export function parseLabyrinthActionName(text) {
+export function parseLabyrinthActionName(text, { assumeLabyrinth = false } = {}) {
     const raw = String(text || '');
-    if (!/labyrinth/i.test(raw)) return null;
+    if (!assumeLabyrinth && !/labyrinth|迷宫|迷宮/i.test(raw)) return null;
 
-    // "Labyrinth - Mimic Lv.245", with anything this script appended stripped
-    const level = /Lv\.\s*(\d+)/i.exec(raw);
-    if (!level) return null;
+    // Anything this script appended ("· Attempt #9", "[Clear 25–50%? | 97s left]") is not the game's
+    const own = raw.replace(/[[·|].*$/s, '');
+    const numbers = [...own.matchAll(/\d+/g)];
+    const last = numbers[numbers.length - 1];
+    if (!last) return null;
 
     const afterDash =
-        raw
+        own
             .split(/\s[-–—]\s/)
             .slice(1)
-            .join(' - ') || raw;
+            .join(' - ') || own;
     const name = afterDash
-        .replace(/Lv\.\s*\d+.*$/i, '')
-        .replace(/[[·|].*$/, '')
+        .slice(0, Math.max(0, afterDash.lastIndexOf(last[0])))
+        .replace(/\s*\S{0,4}\.\s*$/, '')
         .trim();
     if (!name) return null;
 
-    return { name, level: Math.max(0, Math.floor(Number(level[1]) || 0)) };
+    return { name, level: Math.max(0, Math.floor(Number(last[0]) || 0)) };
 }
 
 /**

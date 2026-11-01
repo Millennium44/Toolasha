@@ -900,6 +900,31 @@ describe('the two sides divide by the same thing', () => {
         expect(g.dmgPerHitFights).toBe(1);
     });
 
+    test('the damage the ticks missed stays out of the swing numerator when the reconciliation was recorded', () => {
+        // Ticks summed 8000 (800 of it DoT) over 40 landed swings; the endpoints say 9000, so 1000
+        // has no swing behind it. 7200 / 40 = 180 per swing, not 8200 / 40
+        const fight = {
+            monsterMaxHp: 100000,
+            monsterHpStart: 100000,
+            monsterHpEnd: 91000,
+            monsterDamage: 8000,
+            playerDamageTaken: 100,
+            unattributedDealt: 1000,
+            seconds: 50,
+            playerHits: 40,
+            playerMisses: 10,
+            playerDotTicks: 10,
+            playerDotDamage: 800,
+        };
+        const [g] = deriveObserved([attempt(fight)]);
+        expect(g.dmgPerHit).toBeCloseTo(180, 5);
+
+        // A recording without the reconciliation keeps the reconciled figure (9000 - 800) / 40
+        const { unattributedDealt: _omitted, ...older } = fight;
+        const [old] = deriveObserved([attempt(older)]);
+        expect(old.dmgPerHit).toBeCloseTo(205, 5);
+    });
+
     test('a fight recorded before DoT damage was split keeps the mixed figure, marked', () => {
         const [g] = deriveObserved([
             attempt({

@@ -2479,10 +2479,21 @@ class LabyrinthClearRate {
             return { monsterHrid: room.monsterHrid, roomLevel: gridLevel, source: 'grid' };
         }
 
+        // Is this a labyrinth fight at all: the running action says so, whatever language the
+        // header is in
+        if (!this.inLabyrinthFight()) return null;
+        // The room's level exists only in the header text (the battle carries no labyrinth level),
+        // read by position — the last number — not by an English label
         const header = document.querySelector("div[class*='Header_actionName']");
-        const parsed = parseLabyrinthActionName(header?.textContent);
+        const parsed = parseLabyrinthActionName(header?.textContent, { assumeLabyrinth: true });
         if (!parsed || !(parsed.level > 0)) return null;
-        const monsterHrid = monsterHridByName(parsed.name, dataManager.getInitClientData()?.combatMonsterDetailMap);
+        // The monster comes from the battle in progress; its display name is the fallback
+        const monsterMap = dataManager.getInitClientData()?.combatMonsterDetailMap;
+        const battleMonsters = dataManager.battleData?.monsters;
+        const battleHrid = (Array.isArray(battleMonsters) ? battleMonsters : Object.values(battleMonsters || {}))[0]
+            ?.hrid;
+        const monsterHrid =
+            battleHrid && monsterMap?.[battleHrid] ? battleHrid : monsterHridByName(parsed.name, monsterMap);
         if (!monsterHrid) return null;
         return { monsterHrid, roomLevel: parsed.level, source: 'header' };
     }

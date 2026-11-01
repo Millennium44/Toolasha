@@ -2301,3 +2301,73 @@ describe('combat triggers and achievements stay live', () => {
         ]);
     });
 });
+
+/**
+ * The game's own handlers read `endCharacterSkills` / `endCharacterAbilities` from skills_updated and
+ * merge `collections` into the held rows by itemHrid; both are deltas, not whole lists.
+ */
+describe('skills_updated and collections_updated are deltas', () => {
+    test('endCharacterSkills merges by skillHrid into both skill views', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const skills = [
+            { skillHrid: '/skills/milking', level: 10, experience: 100 },
+            { skillHrid: '/skills/attack', level: 50, experience: 5 },
+        ];
+        dataManager.characterSkills = skills;
+        dataManager.characterData = { characterSkills: skills };
+
+        webSocketHandlers.get('skills_updated')({
+            endCharacterSkills: [
+                { skillHrid: '/skills/milking', level: 11, experience: 250 },
+                { skillHrid: '/skills/foraging', level: 1, experience: 0 },
+            ],
+        });
+
+        expect(dataManager.characterSkills.find((s) => s.skillHrid === '/skills/milking')).toMatchObject({
+            level: 11,
+            experience: 250,
+        });
+        expect(dataManager.characterSkills.find((s) => s.skillHrid === '/skills/attack').level).toBe(50);
+        expect(dataManager.characterSkills).toHaveLength(3);
+        expect(dataManager.characterData.characterSkills).toBe(dataManager.characterSkills);
+    });
+
+    test('endCharacterAbilities in skills_updated reaches the ability store', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterSkills = [];
+        dataManager.characterData = {
+            characterSkills: [],
+            characterAbilities: [{ abilityHrid: '/abilities/poke', level: 1, experience: 0 }],
+        };
+        webSocketHandlers.get('skills_updated')({
+            endCharacterAbilities: [{ abilityHrid: '/abilities/poke', level: 2, experience: 7 }],
+        });
+        expect(dataManager.characterData.characterAbilities[0]).toMatchObject({ level: 2, experience: 7 });
+    });
+
+    test('collections delta replaces matching rows and adds new ones; null stays unloaded until given', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterCollections = null;
+        webSocketHandlers.get('collections_updated')({
+            collections: [{ itemHrid: '/items/a', count: 1 }],
+        });
+        expect(dataManager.getCharacterCollections()).toEqual([{ itemHrid: '/items/a', count: 1 }]);
+
+        webSocketHandlers.get('collections_updated')({
+            collections: [
+                { itemHrid: '/items/a', count: 5 },
+                { itemHrid: '/items/b', count: 2 },
+            ],
+        });
+        webSocketHandlers.get('collections_updated')({ collections: [{ itemHrid: '/items/c', count: 3 }] });
+        expect(dataManager.getCharacterCollections()).toEqual([
+            { itemHrid: '/items/a', count: 5 },
+            { itemHrid: '/items/b', count: 2 },
+            { itemHrid: '/items/c', count: 3 },
+        ]);
+
+        dataManager.characterCollections = [];
+        webSocketHandlers.get('collections_updated')({ collections: [{ itemHrid: '/items/z', count: 1 }] });
+        expect(dataManager.getCharacterCollections()).toEqual([{ itemHrid: '/items/z', count: 1 }]);
+    });
+});

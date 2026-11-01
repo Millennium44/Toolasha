@@ -2464,6 +2464,37 @@ describe('the live clear chance on the attempt bar', () => {
         dataManagerMock.getInitClientData.mockReturnValue(null);
     });
 
+    test('the room is told by the running action and the battle, not by English header words', () => {
+        buildActionBar('Chimerical Beast 245');
+        dataManagerMock.getCurrentActions = vi.fn(() => [
+            { actionHrid: '/actions/labyrinth/explore', isDone: false, ordinal: 1 },
+        ]);
+        dataManagerMock.getActionDetails = vi.fn(() => ({ type: '/action_types/labyrinth' }));
+        dataManagerMock.battleData = { monsters: [{ hrid: '/monsters/mimic', maxHitpoints: 100 }] };
+        dataManagerMock.getInitClientData.mockReturnValue({
+            // The display name here is not what the header says, so only the battle's hrid can match
+            combatMonsterDetailMap: { '/monsters/mimic': { name: 'Truhe' } },
+        });
+
+        expect(labyrinthClearRate.liveRoomContext()).toEqual({
+            monsterHrid: '/monsters/mimic',
+            roomLevel: 245,
+            source: 'header',
+        });
+
+        // A zone running in front of a labyrinth run is not a labyrinth fight, whatever the title says
+        dataManagerMock.getCurrentActions = vi.fn(() => [
+            { actionHrid: '/actions/combat/fly', isDone: false, ordinal: 1 },
+        ]);
+        dataManagerMock.getActionDetails = vi.fn(() => ({ type: '/action_types/combat' }));
+        expect(labyrinthClearRate.liveRoomContext()).toBeNull();
+
+        delete dataManagerMock.getCurrentActions;
+        delete dataManagerMock.getActionDetails;
+        delete dataManagerMock.battleData;
+        dataManagerMock.getInitClientData.mockReturnValue(null);
+    });
+
     test('once the grid is known it is the authority, not the header', () => {
         buildActionBar('Labyrinth - Mimic Lv.245');
         dataManagerMock.getInitClientData.mockReturnValue({
