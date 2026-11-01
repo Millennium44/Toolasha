@@ -1054,12 +1054,12 @@ class IronCowFarmPanel {
         if (budget.status === 'unquoted') return [line(label, '—', COLORS.textDim, UNQUOTED_NOTE)];
         if (budget.status === 'unreadable') return [line(label, '—', COLORS.textDim, UNREADABLE_NOTE)];
 
-        const { reserve, spenders, estimated, can } = budget;
+        const { reserve, buffer, spenders, estimated, can } = budget;
         const approx = estimated ? '~' : '';
         const estimateNote = estimated ? ESTIMATE_NOTE : '';
 
         const value = `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'})`;
-        const kept = keptNote(reserve, spenders, coins);
+        const kept = keptNote(reserve, spenders, coins, buffer);
         const stopped = stoppedNote(budget.stoppedAt);
         // The price feed carries no depth: every bag is priced at the cheapest listing, so this is a
         // ceiling once that listing runs out, and the tooltip says so
@@ -1074,7 +1074,9 @@ class IronCowFarmPanel {
                 'Kept for the queue',
                 reserve > 0 ? `${approx}${coins(reserve)}` : '0',
                 COLORS.textDim,
-                reserve > 0 ? `For ${spenders.join(', ')}.${estimateNote}` : kept
+                reserve > buffer
+                    ? `For ${spenders.join(', ')}, plus a ${coins(buffer)} safety buffer.${estimateNote}`
+                    : kept
             ),
         ];
     }

@@ -261,12 +261,26 @@ export function bellsAffordable(coins, reserve, pricing) {
  *   `noPrice` with no bag price at all, `unquoted` when the price is only an estimate for an empty
  *   book, `unreadable` when the queue could not be walked (no reserve is better than a low one)
  */
+/** Alchemy is paid for in gold, and a loop that runs dry stops: this much is never spent on bells. */
+export const LOW_GOLD_BUFFER = 3_000_000;
+
 export function bellBudget(walked, coins, pricing) {
     if (!Number.isFinite(pricing?.price) || pricing.price <= 0) return { status: 'noPrice' };
     if (!pricing.quoted) return { status: 'unquoted' };
     if (!walked) return { status: 'unreadable' };
-    const { reserve, spenders, estimated } = coinReserve(walked.stages);
+    const { reserve: fees, spenders, estimated } = coinReserve(walked.stages);
+    // The fees alone leave nothing for a price move or a low fee estimate, so the loop's buffer stays too
+    const reserve = fees + LOW_GOLD_BUFFER;
     const can = bellsAffordable(coins, reserve, pricing);
     if (!can) return { status: 'noPrice' };
-    return { status: 'ok', reserve, spenders, estimated, stoppedAt: walked.stoppedAt ?? null, can };
+    return {
+        status: 'ok',
+        reserve,
+        fees,
+        buffer: LOW_GOLD_BUFFER,
+        spenders,
+        estimated,
+        stoppedAt: walked.stoppedAt ?? null,
+        can,
+    };
 }

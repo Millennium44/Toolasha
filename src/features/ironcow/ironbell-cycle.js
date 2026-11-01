@@ -52,12 +52,20 @@ export const ESTIMATE_NOTE =
  * @param {number} reserve - Coins kept for the queue
  * @param {Array<string>} spenders - The rows that spend it
  * @param {Function} formatCoins - Coins → text, in the caller's style
+ * @param {number} [buffer=0] - The part of `reserve` that is a safety margin rather than fees
  * @returns {string} One or two sentences
  */
-export function keptNote(reserve, spenders, formatCoins) {
-    return reserve > 0
-        ? `Keeps ${formatCoins(reserve)} back: what ${spenders.join(', ')} spends. Coinify earnings ` +
-              'are not counted on, since its rolls can fail.'
+export function keptNote(reserve, spenders, formatCoins, buffer = 0) {
+    const fees = reserve - buffer;
+    const margin = buffer > 0 ? ` plus a ${formatCoins(buffer)} safety buffer` : '';
+    if (fees > 0) {
+        return (
+            `Keeps ${formatCoins(reserve)} back: what ${spenders.join(', ')} spends${margin}. Coinify earnings ` +
+            'are not counted on, since its rolls can fail.'
+        );
+    }
+    return buffer > 0
+        ? `Nothing queued spends gold; ${formatCoins(buffer)} is kept back as a safety buffer.`
         : 'Nothing queued spends gold, so nothing is held back.';
 }
 

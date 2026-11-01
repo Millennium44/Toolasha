@@ -100,9 +100,9 @@ export function stripLines() {
 
     // (a) Spendable on Iron Bells now
     if (budget.status === 'ok') {
-        const { reserve, spenders, estimated, can } = budget;
+        const { reserve, buffer, spenders, estimated, can } = budget;
         const approx = estimated ? '~' : '';
-        const kept = keptNote(reserve, spenders, coins);
+        const kept = keptNote(reserve, spenders, coins, buffer);
         lines.push({
             text:
                 `Iron Bell: spend now ${approx}${formatWithSeparator(can.bells)} bells ` +
