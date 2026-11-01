@@ -54,6 +54,7 @@ vi.mock('../../utils/action-calculator.js', () => ({
 }));
 vi.mock('../../utils/action-context.js', () => ({
     resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+    resolveLoadoutContext: () => ({ equipment: new Map(), drinks: [] }),
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../core/tooltip-observer.js', () => ({

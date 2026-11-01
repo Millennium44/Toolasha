@@ -18,7 +18,10 @@ vi.mock('../../core/dom-observer.js', () => ({
     default: { onClass: () => () => {}, register: () => () => {} },
 }));
 vi.mock('../../utils/action-calculator.js', () => ({ calculateActionStats: mocks.calculateActionStats }));
-vi.mock('../../utils/action-context.js', () => ({ resolveActionContext: mocks.resolveActionContext }));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = { resolveActionContext: mocks.resolveActionContext };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../../core/storage.js', () => ({
     default: { get: vi.fn(async () => false), set: vi.fn() },
 }));

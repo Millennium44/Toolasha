@@ -196,9 +196,12 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: new Map(), drinks: game.drinks }),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: new Map(), drinks: game.drinks }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 
 vi.mock('../../core/dom-observer.js', () => ({
     default: {

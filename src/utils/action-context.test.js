@@ -2,7 +2,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 import dataManager from '../core/data-manager.js';
 import loadoutSnapshot from '../features/combat/loadout-snapshot.js';
-import { resolveActionContext } from './action-context.js';
+import { resolveActionContext, resolveLoadoutContext } from './action-context.js';
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
@@ -16,6 +16,8 @@ vi.mock('../features/combat/loadout-snapshot.js', () => ({
     default: {
         getSnapshotForSkill: vi.fn(),
         getSnapshotDrinksForSkill: vi.fn(),
+        getSnapshotById: vi.fn(),
+        resolveEquipment: vi.fn(),
     },
 }));
 
@@ -128,5 +130,55 @@ describe('a tea whose stack has run out', () => {
         dataManager.getInventory.mockReturnValue([{ itemHrid: '/items/current_tea', count: 2 }]);
 
         expect(resolveActionContext(TYPE).drinks).toEqual([slot]);
+    });
+});
+
+describe("resolveLoadoutContext (a queued action's own loadout)", () => {
+    const SAVED = {
+        id: 30284,
+        equipment: [
+            { itemHrid: '/items/saved_pan', itemLocationHrid: '/item_locations/main_hand', enhancementLevel: 0 },
+        ],
+        drinks: [{ itemHrid: '/items/snapshot_tea' }],
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dataManager.getEquipment.mockReturnValue(CURRENT_EQ);
+        dataManager.getActionDrinkSlots.mockReturnValue(CURRENT_DRINKS);
+        dataManager.getInventory.mockReturnValue([
+            { itemHrid: '/items/current_tea', count: 5 },
+            { itemHrid: '/items/snapshot_tea', count: 3 },
+        ]);
+        // A default loadout exists for the skill: what a fresh action would pick
+        loadoutSnapshot.getSnapshotForSkill.mockReturnValue(SNAPSHOT_EQ);
+        loadoutSnapshot.getSnapshotDrinksForSkill.mockReturnValue(SNAPSHOT_DRINKS);
+        loadoutSnapshot.getSnapshotById.mockImplementation((id) => (id === 30284 ? SAVED : null));
+        loadoutSnapshot.resolveEquipment.mockImplementation((snap) => snap.equipment);
+    });
+
+    test('id 0 (No Loadout) is the worn gear, not the skill default loadout', () => {
+        const result = resolveLoadoutContext(TYPE, 0);
+
+        expect(result.equipment).toBe(CURRENT_EQ);
+        expect(result.drinks).toEqual(CURRENT_DRINKS);
+    });
+
+    test('a saved id is that loadout, not the skill default', () => {
+        const result = resolveLoadoutContext(TYPE, 30284);
+
+        expect([...result.equipment.values()].map((e) => e.itemHrid)).toEqual(['/items/saved_pan']);
+        expect(result.drinks).toEqual(SAVED.drinks);
+    });
+
+    test('a saved loadout with no drinks keeps the current drinks', () => {
+        loadoutSnapshot.getSnapshotById.mockReturnValue({ ...SAVED, drinks: [{ itemHrid: '' }] });
+
+        expect(resolveLoadoutContext(TYPE, 30284).drinks).toEqual(CURRENT_DRINKS);
+    });
+
+    test('an unknown saved id or a missing id falls back to the per-skill resolution', () => {
+        expect(resolveLoadoutContext(TYPE, 99999).equipment).toBe(SNAPSHOT_EQ);
+        expect(resolveLoadoutContext(TYPE, undefined).equipment).toBe(SNAPSHOT_EQ);
     });
 });

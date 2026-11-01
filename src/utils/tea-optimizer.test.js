@@ -23,6 +23,18 @@ const state = vi.hoisted(() => ({
 }));
 const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set(), calls: {} }));
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('./bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedalchemyProfitCalculator = await import('../features/market/alchemy-profit-calculator.js');
+    return {
+        ...original,
+        // The real calculator, imported above for the tests that spy on it; read lazily, at call time
+        expectedValueCalculator: () => original.expectedValueCalculator() || expectedValueCalculator,
+        alchemyProfitCalculator: () => original.alchemyProfitCalculator() || mockedalchemyProfitCalculator.default,
+    };
+});
+
 vi.mock('../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => state.gameData,

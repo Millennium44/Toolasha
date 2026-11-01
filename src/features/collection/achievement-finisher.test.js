@@ -121,9 +121,12 @@ vi.mock('../../utils/bonus-revenue-calculator.js', () => ({
     // Gear tagged with its own Rare Find wins, so a test can tell which gear was read
     getRareFindParts: (type, equipment) => ({ total: equipment?.rareFind ?? game.rareFind }),
 }));
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: (type) => ({ equipment: game.loadoutGear?.[type] ?? game.equipment, drinks: [] }),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: (type) => ({ equipment: game.loadoutGear?.[type] ?? game.equipment, drinks: [] }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
     ...(await importOriginal()),
     missingMaterialsButton: () =>

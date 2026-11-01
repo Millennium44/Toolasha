@@ -51,7 +51,10 @@ vi.mock('../core/data-manager.js', () => ({
         getBuffStateVersion: () => 0,
     },
 }));
-vi.mock('./action-context.js', () => ({ resolveActionContext: () => ({ equipment: new Map(), drinks: [] }) }));
+vi.mock('./action-context.js', () => {
+    const mod = { resolveActionContext: () => ({ equipment: new Map(), drinks: [] }) };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../api/marketplace.js', () => ({ default: market.api }));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPriceVersion: () => 0 }));
 vi.mock('./market-data.js', () => ({

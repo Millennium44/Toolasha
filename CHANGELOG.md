@@ -10,11 +10,25 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The build now loads both the production and the single-file builds and fails if a chest value, the Task Token and Task Crystal values or an enhancing input cost differ between them.
 
+### Game message audit script
+
+- A developer script (`npm run audit:handlers`) compares the fields Toolasha reads from each game message with the fields the game's own client reads, to catch features reading a field the game never sends.
+
 ### Skill, collection and Labyrinth fight updates
 
 - Skill level updates the game sends outside an action, and partial Collections updates, are now applied instead of ignored or wiping the rest of the list.
 - The battle counter, boss countdown and Labyrinth live readout recognize a Labyrinth fight from the running action rather than English header text, so they work in other game languages.
 - Replay check's damage-per-hit no longer counts health the game reconciled at the end of a fight as if a swing had dealt it.
+
+### Shared calculators across the split bundles
+
+- Chest, decompose, offline, protection-substitute, tea, Risk of Ruin, bonus-revenue and liquidity figures now use the same live expected-value, alchemy-profit and market-history data as the rest of Toolasha, instead of a private copy that was never kept up to date in the released build.
+
+### Queue times follow each action's own loadout
+
+- Queued action times, material limits and the Artisan discount use the loadout chosen for that queued action (or your worn gear for "No Loadout") instead of the skill's default.
+- Queue menu rows are matched to their action by their position number, so totals stay right in any game language.
+- The action panel's Max uses the upgrade item the slot shows (a +7 copy, not your +0 stack), and offers nothing while no upgrade item is selected.
 
 ### Task reroll walk bar tidied
 

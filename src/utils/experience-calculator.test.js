@@ -28,9 +28,12 @@ vi.mock('./experience-parser.js', () => ({
     calculateExperienceMultiplier: vi.fn(() => state.xpMultiplierData),
 }));
 
-vi.mock('./action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: state.equipment }),
-}));
+vi.mock('./action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: state.equipment }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 
 // Use the real efficiency + profit-helpers modules — they're small, pure, and already
 // covered elsewhere, so composing through them keeps this test honest about the formula.

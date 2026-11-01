@@ -119,7 +119,7 @@ function queued(id, actionHrid, { maxCount, primaryItemHrid } = {}) {
 }
 
 /** The "+N Queued Actions" popper with one row per queued action. */
-function queueTooltipPopper(rowNames) {
+function queueTooltipPopper(rowNames, firstLabel = 1) {
     const rows = rowNames
         .map((entry, i) => {
             // An enhancing row is recognised by its icon, not its text: the game labels it
@@ -129,7 +129,7 @@ function queueTooltipPopper(rowNames) {
             return `
                 <div class="QueuedActions_action__item">
                     <div class="QueuedActions_actionText__y">
-                        <div class="QueuedActions_text__z">${icon}#${i + 1}${name}</div>
+                        <div class="QueuedActions_text__z">${icon}#${i + firstLabel}${name}</div>
                     </div>
                 </div>`;
         })
@@ -545,13 +545,13 @@ describe('an upgrade craft credits its output at the level the upgrade carries',
 });
 
 describe('rows no queued action matches make the total incomplete, not a confident 0s', () => {
-    const rowsHtml = (names) =>
+    const rowsHtml = (names, firstLabel = 1) =>
         names
             .map(
                 (name, i) => `
                 <div class="QueuedActions_action__item">
                     <div class="QueuedActions_actionText__y">
-                        <div class="QueuedActions_text__z">#${i + 1}${name}</div>
+                        <div class="QueuedActions_text__z">#${i + firstLabel}${name}</div>
                     </div>
                 </div>`
             )
@@ -561,7 +561,7 @@ describe('rows no queued action matches make the total incomplete, not a confide
         game.inventory = [stack(LOG, 80)];
         game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
 
-        const el = queueTooltipPopper(['苹果', '蓝莓']);
+        const el = queueTooltipPopper(['苹果', '蓝莓'], 2);
         observerState.handler(el);
 
         const total = el.querySelector('.mwi-queue-tooltip-total');
@@ -574,7 +574,7 @@ describe('rows no queued action matches make the total incomplete, not a confide
         game.inventory = [stack(LOG, 80)];
         game.currentActions = [queued(1, CRAFT_PLANK, { maxCount: 10 })];
 
-        const el = queueTooltipPopper(['Plank', '苹果']);
+        const el = queueTooltipPopper(['Plank', '苹果'], 2);
         observerState.handler(el);
 
         expect(el.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: 0h 01m 40s + [?]');
@@ -587,7 +587,7 @@ describe('rows no queued action matches make the total incomplete, not a confide
 
         const el = document.createElement('div');
         el.className = 'QueuedActions_queuedActions__menu';
-        el.innerHTML = rowsHtml(['苹果', '蓝莓']);
+        el.innerHTML = rowsHtml(['苹果', '蓝莓'], 2);
         document.body.appendChild(el);
         actionTimeDisplay.injectQueueTimes(el);
 
