@@ -861,7 +861,8 @@ class DungeonTrackerUIHistory {
             return;
         }
 
-        if (envelope.characterId && envelope.characterId !== charIdBefore) {
+        // As text: the game hands out numeric ids, and a file written elsewhere can carry the same id as a string
+        if (envelope.characterId && String(envelope.characterId) !== String(charIdBefore)) {
             const proceed = confirm(
                 `This backup was exported from a different character (${envelope.characterId}), ` +
                     `not the current one (${charIdBefore}).\n\n` +

@@ -765,6 +765,19 @@ describe('importBackupText', () => {
         expect(message).not.toMatch(/CURRENT character's history/);
     });
 
+    test('a file naming the current character as a string is not a different character', async () => {
+        // The game hands out numeric ids; a file written elsewhere can carry the same id as text
+        world.character = { id: 603281, name: 'Marketcow' };
+        window.confirm.mockReturnValue(true);
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: true });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()], { characterId: '603281' })));
+
+        expect(window.confirm).not.toHaveBeenCalledWith(expect.stringContaining('different character'));
+        expect(dungeonTrackerStorage.importRuns).toHaveBeenCalled();
+    });
+
     test('a different characterId proceeds once confirmed', async () => {
         window.confirm.mockReturnValue(true);
         dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: true });
