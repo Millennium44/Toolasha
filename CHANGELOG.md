@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Philo Gamba: untradable capes no longer cost 0
+
+- An untradable base item in the Philo Gamba calculator is valued with your "Untradable capes: base value" setting instead of 0; with that set to nothing the row shows "Set price" and blank profit figures until you click to enter a cost (from upstream).
+- Untradable cape enhancement values are remembered between recalculations instead of re-simulated each time (from upstream).
+
 ### October 31 audit fixes: Combat Sim
 
 - Verify, the trigger search, Party search and the food search now read every price once before simulating, so one refresh can't tilt a close comparison.
