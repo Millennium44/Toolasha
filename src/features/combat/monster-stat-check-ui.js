@@ -1976,6 +1976,9 @@ function isOwnPlayerUnit(unit) {
 
 function handleFetched(data) {
     try {
+        // A guild trial's unit sheet (boss included) rides this message flagged
+        // `isGuildBattle`; it is not an ordinary monster or the player's build.
+        if (data?.isGuildBattle) return;
         const unit = data?.unit;
         if (!unit) return;
         // Clicking yourself fires this too — keep the live stats for the "Check my

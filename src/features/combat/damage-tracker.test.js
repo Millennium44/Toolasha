@@ -532,6 +532,19 @@ describe('the class read off a run', () => {
         expect(runClasses()['0']).toBeUndefined();
     });
 
+    test('a guild trial unit sheet sharing a slot name is ignored', () => {
+        announce();
+        tick({ 1: { preparingAbilityHrid: '/abilities/cleave' } });
+        listeners.battle_unit_fetched({
+            isGuildBattle: true,
+            unit: {
+                character: { name: 'Bob' },
+                combatDetails: { combatStats: { pierce: 0.3, combatStyleHrids: ['/combat_styles/ranged'] } },
+            },
+        });
+        expect(runClasses()['1']?.key).toBe('melee');
+    });
+
     test('a fetched monster sheet matches no slot and changes nothing', () => {
         announce();
         tick({ 0: { preparingAbilityHrid: '/abilities/fireball' } });

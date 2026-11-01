@@ -1203,6 +1203,10 @@ export default {
 
         onUnitFetched = (message) => {
             try {
+                // A guild trial's unit sheet rides the same message flagged
+                // `isGuildBattle`; the game keeps it apart from the party's own.
+                // A spectated player can share a name with a party slot.
+                if (message?.isGuildBattle) return;
                 // Clicking a unit's Battle Info fetches its full sheet — the
                 // one message that states another player's weapon (as the
                 // passive and style on `combatStats`) mid-run, where
