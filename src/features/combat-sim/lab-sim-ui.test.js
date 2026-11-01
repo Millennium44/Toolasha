@@ -1516,6 +1516,49 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         game.editedDTOs = null;
     });
 
+    test('editing the editor keeps Find Max levels when the scope is saved loadouts', () => {
+        const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        const before = scope.value;
+        scope.value = 'all';
+        try {
+            game.editedDTOs = { p1: { abilities: [{ level: 1 }] } };
+            ui._editorEditSig = null;
+            ui._checkEditorEdited();
+            ui._maxLevelByMonster['/monsters/mimic'] = 145;
+            game.editedDTOs = { p1: { abilities: [{ level: 2 }] } };
+            expect(ui._checkEditorEdited()).toBe(true);
+            expect(ui._maxLevelByMonster['/monsters/mimic']).toBe(145);
+        } finally {
+            scope.value = before;
+            game.editedDTOs = null;
+        }
+    });
+
+    test('a Find Max level searched for one build is not used after the editor changed under another scope', () => {
+        const scope = ui.panel.querySelector('#mwi-labsim-upgrade-scope');
+        const before = scope.value;
+        try {
+            game.editedDTOs = { p1: { abilities: [{ level: 1 }] } };
+            ui._editorEditSig = null;
+            ui._checkEditorEdited();
+            ui._storeMaxLevel('/monsters/mimic', 145);
+            expect(ui._maxLevelFor('/monsters/mimic')).toBe(145);
+
+            scope.value = 'all';
+            game.editedDTOs = { p1: { abilities: [{ level: 2 }] } };
+            ui._checkEditorEdited();
+            // Saved-loadout scope keeps what it searched
+            expect(ui._maxLevelFor('/monsters/mimic')).toBe(145);
+
+            scope.value = 'current';
+            expect(ui._maxLevelFor('/monsters/mimic')).toBe(0);
+            expect(ui._resolveTargetLevel('/monsters/mimic').level).not.toBe(145);
+        } finally {
+            scope.value = before;
+            game.editedDTOs = null;
+        }
+    });
+
     test('Find Max recommends a negative skip when the cleared room is below the combat level', () => {
         // The mocked effective combat level is 100: 80 - 100 + 1
         ui._displayFindMaxResults(
@@ -1541,9 +1584,11 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
             },
             '/monsters/mimic',
             Date.now(),
-            ['/items/wisdom_crate']
+            ['/items/wisdom_crate'],
+            7
         );
         expect(game.xpCalls.at(-1)[3]).toEqual(['/items/wisdom_crate']);
+        expect(game.xpCalls.at(-1)[4]).toBe(7);
     });
 
     test('and the Configure box is still exactly what Configure value means', async () => {
@@ -2125,8 +2170,20 @@ describe('the skilling crate dropdowns follow the equipped crates', () => {
         expect(tea.value).toBe('/items/expert_tea_crate');
     });
 
+    test('the row breakdown explains a saved trigger of zero or below, and none for an unset one', () => {
+        const row = { skillName: 'Alchemy', skillHrid: '/skills/alchemy', roomLevel: 108 };
+        const zero = { getSkipThreshold: () => 0, getEffectiveLevel: () => 108, hasSkillSkipSetting: () => true };
+        expect(ui._skillingRowBreakdown(row, true, zero, '')).toContain('trigger 0:');
+        const unset = { ...zero, hasSkillSkipSetting: () => false };
+        expect(ui._skillingRowBreakdown(row, true, unset, '')).not.toContain('trigger');
+    });
+
     test('the row breakdown spells out the room and success working', () => {
-        const clearRate = { getSkipThreshold: () => 67, getEffectiveLevel: () => 108 };
+        const clearRate = {
+            getSkipThreshold: () => 67,
+            getEffectiveLevel: () => 108,
+            hasSkillSkipSetting: () => true,
+        };
         const row = {
             skillName: 'Alchemy',
             skillHrid: '/skills/alchemy',

@@ -857,6 +857,25 @@ describe('the community buffs the server is running reach a labyrinth room', () 
         expect(labyrinthClearRate.getCombatExperienceBonus()).toBeCloseTo(0.25, 10);
     });
 
+    test('a simulated crate set counts coffee and food wisdom but not the tea crate’s', () => {
+        dataManagerMock.getInitClientData.mockReturnValue({
+            labyrinthCrateDetailMap: {
+                '/items/expert_tea_crate': [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.15, ratioBoost: 0 }],
+                '/items/expert_coffee_crate': [{ typeHrid: '/buff_types/wisdom', flatBoost: 0.1, ratioBoost: 0 }],
+            },
+        });
+        const crates = ['/items/expert_tea_crate', '/items/expert_coffee_crate'];
+        expect(labyrinthClearRate.getCombatExperienceBonus(crates)).toBeCloseTo(0.1, 10);
+    });
+
+    test('a quoted XP/hr counts the simulated community level, not the live one', () => {
+        community.levels['/community_buff_types/experience'] = 1;
+        const live = labyrinthClearRate.estimateCombatXpPerHour(100, 30, 1, []);
+        const simulated = labyrinthClearRate.estimateCombatXpPerHour(100, 30, 1, [], 11);
+        // 0.2 live, 0.25 at level 11
+        expect(simulated / live).toBeCloseTo(1.25 / 1.2, 6);
+    });
+
     test('the game’s own numbers win over the fallbacks when they have loaded', () => {
         community.levels['/community_buff_types/experience'] = 3;
         dataManagerMock.getInitClientData.mockReturnValue({
@@ -1879,6 +1898,53 @@ describe('planning against the supplies actually held', () => {
             );
         });
 
+        test('raising the count to the staged total after two are spent draws only the remaining one', () => {
+            buildGrid(7);
+            const count = beaconInput(2);
+            const input = planForInput(3);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._stagedBeaconPlan.all.slice(0, 2)) reveal(c.watch, 7);
+
+            count.value = '3';
+            input.value = '3';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(document.querySelectorAll('[data-beacon-center="1"]')).toHaveLength(1);
+        });
+
+        test('a count already fully spent says so instead of planning it all again', () => {
+            const status = buildGrid(7);
+            const count = beaconInput(2);
+            planForInput(0);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._beaconPlanCells.centers) reveal(c.watch, 7);
+
+            count.value = '2';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(document.querySelectorAll('[data-beacon-center="1"]')).toHaveLength(0);
+            expect(status.textContent).toContain('All 2 beacons set for this floor are used');
+        });
+
+        test('a spent count with the way out already open says no beacons are needed, not that they ran out', () => {
+            const status = buildGrid(7);
+            const count = beaconInput(2);
+            planForInput(0);
+            labyrinthClearRate.runBeaconCalculation();
+            for (const c of labyrinthClearRate._beaconPlanCells.centers) reveal(c.watch, 7);
+            reveal(
+                Array.from({ length: 49 }, (_, i) => i),
+                7
+            );
+
+            count.value = '2';
+            labyrinthClearRate.runBeaconCalculation();
+
+            expect(status.textContent).toContain('Path to the exit is already revealed');
+            expect(status.textContent).not.toContain('are used');
+            expect(labyrinthClearRate._beaconPlanCells).toBeNull();
+        });
+
         test('lowering plan-for after three are used redraws for the new total, never the old B6', () => {
             const status = buildGrid(7);
             beaconInput(0);
@@ -2075,6 +2141,18 @@ describe('the beacon count as a per-floor override', () => {
 
         expect(settings.map.get('labyrinthBeaconCount')).toBe(0);
         expect(input.value).toBe('0');
+    });
+
+    test('a new floor releases a Path still running on the old one, so a press there is not refused', () => {
+        buildToolbar(4);
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate.pathCalcRunning = true;
+        const button = vi.spyOn(labyrinthClearRate, 'setPathButtonRunning');
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+
+        expect(labyrinthClearRate.pathCalcRunning).toBe(false);
+        expect(button).toHaveBeenCalledWith(false);
     });
 
     test('a new floor forgets the last floor’s room results', () => {
@@ -3072,6 +3150,70 @@ describe('re-planning a route after shrouds have been spent', () => {
             expect(marks(parent)).not.toContain('Shroud');
         } finally {
             gear.ready = true;
+        }
+    });
+
+    test('a Path whose sim was cancelled stops instead of drawing a route', async () => {
+        const { status, parent } = buildBoard(unbeatableFloor());
+        labyrinthClearRate.combatCache.clear();
+        const sim = vi
+            .spyOn(labyrinthClearRate, 'computeCombatClear')
+            .mockResolvedValue({ failed: true, cancelled: true });
+        try {
+            await labyrinthClearRate.runPathCalculation();
+            expect(sim).toHaveBeenCalledTimes(1);
+            expect(status.textContent).toBe('Path cancelled');
+            expect(marks(parent).join('')).toBe('');
+            expect(labyrinthClearRate.pathCalcRunning).toBe(false);
+        } finally {
+            sim.mockRestore();
+        }
+    });
+
+    test('a Path started on an earlier floor does not paint the new floor', async () => {
+        const { status, parent } = buildBoard(unbeatableFloor());
+        labyrinthClearRate.combatCache.clear();
+        let release;
+        const sim = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        try {
+            const running = labyrinthClearRate.runPathCalculation();
+            // The floor changes (same grid size) while the sim is out
+            labyrinthClearRate._tileGen = (labyrinthClearRate._tileGen || 0) + 1;
+            release({ clearChance: 0, winRate: 0, expectedSeconds: Infinity, trials: 400, hitTarget: true });
+            await running;
+            expect(status.textContent).toContain('floor changed');
+            expect(marks(parent).join('')).toBe('');
+            expect(labyrinthClearRate.pathCalcRunning).toBe(false);
+        } finally {
+            sim.mockRestore();
+        }
+    });
+
+    test('an ended Path does not clear the running flag of a newer run', async () => {
+        buildBoard(unbeatableFloor());
+        labyrinthClearRate.combatCache.clear();
+        let release;
+        const sim = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        try {
+            const old = labyrinthClearRate.runPathCalculation();
+            // A newer run took over (as after a teardown and re-enable)
+            labyrinthClearRate._pathRunId += 1;
+            release({ failed: true, cancelled: true });
+            await old;
+            expect(labyrinthClearRate.pathCalcRunning).toBe(true);
+        } finally {
+            labyrinthClearRate.pathCalcRunning = false;
+            sim.mockRestore();
         }
     });
 
@@ -4847,6 +4989,49 @@ describe('formulas across the widened ±1000 threshold range', () => {
         expect(above.clearChance).toBeLessThan(0.7);
     });
 
+    test('the enhancing recommendation tooltip quotes the enhancing model, not ordinary skilling', () => {
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/enhancing', level: 100 }]);
+        const effective = labyrinthClearRate.getEffectiveLevel('/skills/enhancing');
+        const threshold = 21;
+        const room = Math.floor(effective + threshold - 1);
+        const expected = labyrinthClearRate.computeEnhancingClear(room);
+        const tip = labyrinthClearRate._recommendationTooltip('/skills/enhancing', { threshold }, 0, 'note', 'time');
+        expect(tip).toContain(`Clear ${(expected.clearChance * 100).toFixed(1)}% at that room`);
+        expect(tip).toContain(`${expected.attempts} attempts to reach +${expected.targetLevel}`);
+        // The ordinary skilling figure for the same room is a different number
+        const ordinary = labyrinthClearRate.computeSkillingClear('/skills/enhancing', room);
+        if (ordinary && Math.abs(ordinary.clearChance - expected.clearChance) > 0.001) {
+            expect(tip).not.toContain(`Clear ${(ordinary.clearChance * 100).toFixed(1)}% at that room`);
+        }
+    });
+
+    test('the enhancing tooltip prints the gear term and the clamp the success chance was built with', () => {
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/enhancing', level: 100 }]);
+        const base = labyrinthClearRate.computeEnhancingClear(100);
+        const crafted = (over) => ({ ...base, ...over });
+        // 0.8 x (1 + 0.1 + 0.2) = 1.04, held to 100%
+        vi.spyOn(labyrinthClearRate, 'computeEnhancingClear').mockReturnValue(
+            crafted({ levelBonus: 0.1, successBonus: 0.2, successChance: 1 })
+        );
+        const tip = labyrinthClearRate._recommendationTooltip(
+            '/skills/enhancing',
+            { threshold: 21 },
+            0,
+            'note',
+            'time'
+        );
+        expect(tip).toContain('Success = 0.8 × (1 + 10.0% + 20.0% gear) = 100.0% (limited to 5%–100%)');
+    });
+
+    test('computeEnhancingClear reports the terms its success chance is made of', () => {
+        const r = labyrinthClearRate.computeEnhancingClear(50);
+        expect(Number.isFinite(r.levelBonus)).toBe(true);
+        expect(r.successChance).toBeCloseTo(
+            Math.min(1, Math.max(0.05, 0.8 * (1 + r.levelBonus + (Number(r.successBonus) || 0)))),
+            10
+        );
+    });
+
     test('the enhancing recommend search terminates finitely over the widened window', () => {
         dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/enhancing', level: 150 }]);
         const threshold = labyrinthClearRate.findRecommendedThreshold('/skills/enhancing', 0.7);
@@ -4915,6 +5100,20 @@ describe('formulas across the widened ±1000 threshold range', () => {
         test('an unset combat threshold names no room either', () => {
             vi.spyOn(labyrinthClearRate, 'getCombatSkipThreshold').mockReturnValue(0);
             vi.spyOn(labyrinthClearRate, 'getPlayerEffectiveCombatLevel').mockReturnValue(150);
+            expect(labyrinthClearRate.getCombatSkipRoomLevel('/monsters/imp')).toBe(0);
+        });
+
+        test('an explicitly saved zero is a real threshold, unlike an absent key', () => {
+            dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/milking', level: 100 }]);
+            dataManagerMock.characterData = { characterSetting: { labyrinthSkipMilking: 0 } };
+            expect(labyrinthClearRate.getTargetRoomLevel('/skills/milking')).toBeGreaterThan(0);
+            dataManagerMock.characterData = { characterSetting: {} };
+            expect(labyrinthClearRate.getTargetRoomLevel('/skills/milking')).toBe(0);
+
+            vi.spyOn(labyrinthClearRate, 'getPlayerEffectiveCombatLevel').mockReturnValue(150);
+            dataManagerMock.characterData = { characterSetting: { labyrinthSkipImp: 0 } };
+            expect(labyrinthClearRate.getCombatSkipRoomLevel('/monsters/imp')).toBe(149);
+            dataManagerMock.characterData = { characterSetting: {} };
             expect(labyrinthClearRate.getCombatSkipRoomLevel('/monsters/imp')).toBe(0);
         });
 

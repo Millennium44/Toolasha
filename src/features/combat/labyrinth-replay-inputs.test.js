@@ -92,6 +92,13 @@ describe('recorded replay builds', () => {
             replayCandidates([...cohort(3), ...cohort(3, { replayInputs: other })], null).candidates[0].group.fights
         ).toBe(6);
     });
+    test('a scroll swap, which the labyrinth worker ignores, does not split a build', () => {
+        const other = inputs();
+        other.playerDTO.scrollBuffs = [{ hrid: '/items/wisdom_scroll' }];
+        expect(
+            replayCandidates([...cohort(1), ...cohort(2, { replayInputs: other })], null).candidates[0].group.fights
+        ).toBe(3);
+    });
     test('a supported saved-input schema survives a global fingerprint migration', () => {
         expect(replayCandidates(cohort(3, { fingerprintVersion: 1 }), 'new').candidates).toHaveLength(1);
         expect(

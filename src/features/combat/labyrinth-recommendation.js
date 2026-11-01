@@ -192,7 +192,9 @@ export const recommendationMethods = {
         const found = await findHighestLevelWithinSeconds({
             evaluate: (delta) => evaluateRoom(Math.floor(effectiveLevel + delta)),
             // A room below level 1 does not exist; the threshold window is ±RANGE
-            minDelta: Math.max(-SKIP_THRESHOLD_RANGE - 1, 1 - Math.floor(effectiveLevel)),
+            // Threshold t is room effective + t - 1, so the game's lowest threshold, -999, is a delta of
+            // -SKIP_THRESHOLD_RANGE
+            minDelta: Math.max(-SKIP_THRESHOLD_RANGE, 1 - Math.floor(effectiveLevel)),
             maxDelta: SKIP_THRESHOLD_RANGE - 1,
             targetSeconds,
             ...tuning,
@@ -838,8 +840,36 @@ export const recommendationMethods = {
             lines.push(
                 `  a room is skipped once it's ≥${rec.threshold} above you (≥${effLevel + rec.threshold}), so ${room} is the top`
             );
-            const result = room > 0 ? this.computeSkillingClear(roomHrid, room) : null;
-            if (result) {
+            const isEnhancing = roomHrid === '/skills/enhancing';
+            const result =
+                room > 0
+                    ? isEnhancing
+                        ? this.computeEnhancingClear(room)
+                        : this.computeSkillingClear(roomHrid, room)
+                    : null;
+            if (result && isEnhancing) {
+                // An enhancing room is a run of attempts that must reach a target level, not a
+                // progress bar: the ordinary skilling success formula would quote the wrong chance
+                const bonus = Number(result.effectiveLevel) - Number(result.baseLevel);
+                lines.push(
+                    `Effective level ${result.effectiveLevel} = base ${result.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`
+                );
+                // The model's own terms: 0.8 × (1 + level bonus + gear bonus), held to 5%–100%
+                const lb = Number(result.levelBonus) || 0;
+                const sb = Number(result.successBonus) || 0;
+                const raw = 0.8 * (1 + lb + sb);
+                const limited = Math.abs(raw - (result.successChance || 0)) > 1e-9;
+                lines.push(
+                    `Success = 0.8 × (1 ${lb >= 0 ? '+' : '−'} ${Math.abs(lb * 100).toFixed(1)}%` +
+                        `${sb ? ` + ${(sb * 100).toFixed(1)}% gear` : ''}) = ${((result.successChance || 0) * 100).toFixed(1)}%` +
+                        `${limited ? ' (limited to 5%–100%)' : ''}`
+                );
+                lines.push(
+                    `${result.attempts} attempts to reach +${result.targetLevel} in the room` +
+                        `${result.doubleChance ? ` (${(result.doubleChance * 100).toFixed(1)}% double)` : ''}`
+                );
+                lines.push(`Clear ${((result.clearChance || 0) * 100).toFixed(1)}% at that room`);
+            } else if (result) {
                 const bonus = Number(result.skillLevelBonus) || 0;
                 lines.push(
                     `Effective level ${result.effectiveLevel} = base ${result.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`

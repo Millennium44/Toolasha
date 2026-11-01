@@ -11,6 +11,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The Check box uses your real offline cap instead of an assumed 16 hours, and no longer says the game hides it.
 - The Queue helper can plan cycles longer than 30 days, keeps the unit you chose when the panel reopens, and offers 1 day, 1 week, 2 weeks and 30 days.
 
+### October 31 audit fixes: Labyrinth
+
+- The beacon planner's minimum counts revealed islands that already link two beacons, so it no longer asks for one more than needed.
+- A started beacon plan keeps its centers on a second unchanged recalculation, and raising the count after spending some draws only the remaining ones.
+- Path results from an old floor or a cancelled run are no longer drawn on the new floor or counted as unsimulated fights.
+- Find Max recommends a negative skip when the cleared room is below your combat level, and a skip you saved as 0 now counts as set.
+- A Find Max search that clears nothing, or an edit to the build, drops the old "Sim max" level; its XP/hr uses the crates selected in the panel.
+- When every upgrade already wins a room, the room-level shortlist ranks them by XP/hr instead of showing nothing.
+- The fight-length accuracy row appears, a dropped progress update no longer counts as a double, and damage that arrives after a long stall still counts in your totals but no longer inflates damage taken per second.
+- Replay check no longer splits fights into separate groups because a combat scroll changed.
+- The enhancing room's hover uses the enhancing clear chance, matching its badge.
+- Room logs and live clear odds recognize a Labyrinth fight from the running action rather than English header text, and the Labyrinth trackers and death recap ignore messages from a stale connection.
+- Replay recordings exported before this update still import, and the enhancing room's hover prints the formula it actually uses.
+
 ### October 31 audit fixes: Combat Sim
 
 - Verify, the trigger search, Party search and the food search now read every price once before simulating, so one refresh can't tilt a close comparison.

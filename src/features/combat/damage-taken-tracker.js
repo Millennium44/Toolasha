@@ -62,6 +62,13 @@ let tally = {};
 /** Monster name → damage, hits, range, and the same per player */
 let enemyTally = {};
 
+/**
+ * Player index → what arrived in frames after a stall inside one fight. It is part of `tally`
+ * (the run's totals keep it) but happened over a stretch that cannot be timed, so the per-second
+ * rate takes it out of the numerator as the stall's seconds are out of the denominator.
+ */
+let gapTally = {};
+
 /** Wave name → encounters, damage, range */
 let waves = {};
 
@@ -113,6 +120,8 @@ let announced = false;
 let encounters = 0;
 let startedAt = 0;
 let lastTickAt = 0;
+/** A `new_battle` arrived since the last tick, so the gap to the next one is not inside one fight */
+let battleStartedSinceTick = false;
 let seconds = 0;
 let battleId = null;
 
@@ -170,11 +179,13 @@ function beginRun() {
     sessionKey = null;
     tally = {};
     enemyTally = {};
+    gapTally = {};
     waves = {};
     battleTaken = { enemies: {}, seconds: 0 };
     encounters = 0;
     seconds = 0;
     lastTickAt = 0;
+    battleStartedSinceTick = false;
     startedAt = Date.now();
     battleSeeded = false;
     restoredFrom = null;
@@ -213,7 +224,8 @@ export function battleTakenBreakdown() {
 
     const enemies = {};
     for (const [index, damage] of Object.entries(battleTaken.enemies)) {
-        enemies[index] = { damage, dps: measurable ? damage / battleTaken.seconds : null };
+        const timed = damage - (battleTaken.untimed?.[index] || 0);
+        enemies[index] = { damage, dps: measurable ? timed / battleTaken.seconds : null };
     }
 
     return { seconds: battleTaken.seconds, enemies };
@@ -254,8 +266,8 @@ export function takenBreakdown() {
             regen: entry.regen,
             hits: entry.hits,
             misses: entry.misses,
-            dps: measurable ? entry.damage / seconds : null,
-            hps: measurable ? entry.regen / seconds : null,
+            dps: measurable ? (entry.damage - (gapTally[index]?.damage || 0)) / seconds : null,
+            hps: measurable ? (entry.regen - (gapTally[index]?.regen || 0)) / seconds : null,
         }))
         .sort((a, b) => Number(a.index) - Number(b.index));
 
@@ -347,6 +359,7 @@ function serializeTakenSession() {
         seconds,
         encounters,
         tally,
+        gapTally,
         enemyTally,
         waves,
     };
@@ -374,6 +387,7 @@ function adoptPendingRestore(now = Date.now()) {
     if (!isRestorable(saved, { kind: LIVE_KIND, characterId, now })) return false;
 
     mergeCounts(tally, saved.tally);
+    mergeCounts(gapTally, saved.gapTally);
     mergeCounts(enemyTally, saved.enemyTally);
     mergeCounts(waves, saved.waves);
     encounters += Number(saved.encounters) || 0;
@@ -474,6 +488,7 @@ export default {
                 // `seedTakenState` for why leaving either in place loses hits.
                 seedTakenState(state, data);
                 battleSeeded = true;
+                battleStartedSinceTick = true;
 
                 // The fight on screen is a new one, and last fight's slots
                 // were different monsters
@@ -497,7 +512,9 @@ export default {
 
                 // A new battle is a new set of units, so the counters belong to
                 // somebody else and diffing against them invents huge hits
+                let battleChanged = false;
                 if (data?.battleId !== battleId) {
+                    battleChanged = true;
                     battleId = data?.battleId;
                     // Cleared only when `new_battle` did not just seed it for
                     // exactly this battle — wiping the seed here would put the
@@ -519,7 +536,16 @@ export default {
                 if (!announced) recoverNames(data?.mMap);
 
                 const events = attributeIncoming(data, state);
+                // A stall inside one fight (a throttled tab, a stalled socket): the damage that
+                // arrived in this frame happened over a stretch that cannot be timed. It is real
+                // damage, so the totals, tallies and wave stats keep it, with its deaths, revives
+                // and misses; only the per-second rate leaves it out, along with its seconds —
+                // counting the damage with no seconds would inflate the rate.
+                const untimed =
+                    !!lastTickAt && !battleChanged && !battleStartedSinceTick && now - lastTickAt >= MAX_TICK_GAP_MS;
+                battleStartedSinceTick = false;
                 foldTaken(tally, events);
+                if (untimed) foldTaken(gapTally, events);
                 foldTakenByEnemy(enemyTally, events, (index) => monsters[index] || null);
 
                 // The same hits again, by slot and for this fight only —
@@ -532,6 +558,10 @@ export default {
 
                     const slot = event.monsters[0];
                     battleTaken.enemies[slot] = (battleTaken.enemies[slot] || 0) + event.damage;
+                    if (untimed) {
+                        battleTaken.untimed ||= {};
+                        battleTaken.untimed[slot] = (battleTaken.untimed[slot] || 0) + event.damage;
+                    }
                 }
 
                 const wave = currentWave ? waves[currentWave] : null;
