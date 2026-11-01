@@ -333,11 +333,15 @@ export class GuildTrialSim {
             if (id && incoming !== undefined) lastSkillingTrial[id] = incoming || '';
             const movedSkilling =
                 incoming !== undefined && previous !== undefined && (incoming || '') !== (previous || '');
-            const level = Number(data?.skillingTrialLevel);
+            // The game stores `trialSignupLevels` as the member's whole entry; a top-level
+            // `skillingTrialLevel` is read only as a fallback
+            const entry =
+                data?.trialSignupLevels && typeof data.trialSignupLevels === 'object' ? data.trialSignupLevels : null;
+            const level = Number(entry?.skillingTrialLevel ?? data?.skillingTrialLevel);
             const carriesLevel = Number.isFinite(level) && level > 0;
             if (id && (carriesLevel || (held && Object.hasOwn(held, id) && movedSkilling))) {
                 const next = { ...(held || {}) };
-                if (carriesLevel) next[id] = { ...next[id], skillingTrialLevel: level };
+                if (carriesLevel) next[id] = { ...next[id], ...entry, skillingTrialLevel: level };
                 else delete next[id];
                 this.assign.signupLevelMap = next;
                 notifyInputs();
@@ -347,11 +351,17 @@ export class GuildTrialSim {
         };
         webSocketHook.on('guild_trial_signup_updated', signupChanged);
         this.handlers.push(() => webSocketHook.off('guild_trial_signup_updated', signupChanged));
-        for (const type of [
-            ...(offTracker ? [] : ['guild_characters_updated']),
-            ...(offSkills ? [] : ['profile_shared']),
-            'action_completed',
-        ]) {
+        // The game takes the sign-up level map from this message (not from guild_updated) and replaces
+        // its whole copy, an absent map meaning none
+        const charactersChanged = (data, context) => {
+            if (dataManager.isFromActiveSocket?.(context) === false) return;
+            const map = data?.guildTrialSignupLevelMap;
+            this.assign.signupLevelMap = map && typeof map === 'object' ? map : {};
+            notifyInputs();
+        };
+        webSocketHook.on('guild_characters_updated', charactersChanged);
+        this.handlers.push(() => webSocketHook.off('guild_characters_updated', charactersChanged));
+        for (const type of [...(offSkills ? [] : ['profile_shared']), 'action_completed']) {
             webSocketHook.on(type, relayed);
             this.handlers.push(() => webSocketHook.off(type, relayed));
         }
