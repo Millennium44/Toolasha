@@ -185,7 +185,7 @@ class PFormancePanel {
         // The panel itself is still created on demand by show(); all that
         // starts here is the palette entry that calls it
         registerCommand({
-            name: 'PFormance',
+            name: 'Performance',
             hint: "What the script's own timers say",
             run: () => this.toggle(),
         });
@@ -229,7 +229,7 @@ class PFormancePanel {
     }
 
     disable() {
-        unregisterCommand('PFormance');
+        unregisterCommand('Performance');
         this._removePanel();
         this.leaveTabCensus();
     }
@@ -302,7 +302,7 @@ class PFormancePanel {
         this.headerEl = header;
 
         const title = document.createElement('span');
-        title.textContent = 'PFormance';
+        title.textContent = 'Performance';
         title.style.fontWeight = 'bold';
         title.style.color = COLORS.accent;
 

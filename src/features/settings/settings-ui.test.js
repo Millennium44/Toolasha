@@ -1032,7 +1032,7 @@ describe('the buttons that open a panel', () => {
     });
 
     test('PFormance does too', () => {
-        utilityButton('PFormance').click();
+        utilityButton('Performance').click();
 
         expect(mocks.toggled).toEqual(['pformance']);
     });

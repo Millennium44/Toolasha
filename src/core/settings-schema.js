@@ -182,11 +182,11 @@ export const settingsGroups = {
             // so without this the button's choice was silently dropped.
             pformanceAttribution: {
                 id: 'pformanceAttribution',
-                label: 'PFormance attribution extras',
+                label: 'Performance attribution extras',
                 type: 'checkbox',
                 default: false,
                 hidden: true,
-                help: 'Extra diagnostics in the PFormance panel: stall attribution, leak canary, heap trend, Tampermonkey traffic and the all-tabs list.',
+                help: 'Extra diagnostics in the Performance panel: stall attribution, leak canary, heap trend, Tampermonkey traffic and the all-tabs list.',
             },
         },
     },

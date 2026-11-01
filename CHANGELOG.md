@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The PFormance panel is now called Performance
+
+- Its button, title, command palette entry and setting label say Performance, so typing "performance" in the command palette finds it; saved settings are unaffected.
+
 ### Budget plan pins are remembered
 
 - Pinned and excluded picks in the Combat Sim's upgrade budget plan are now saved per character, survive a fresh analysis (a pick that left the results is marked rather than dropped), and the plan shows what the constraints cost against the unconstrained plan.
