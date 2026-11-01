@@ -43,7 +43,10 @@ vi.mock('../../api/marketplace.js', () => ({
     },
 }));
 vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => true }));
-vi.mock('../../utils/action-context.js', () => ({ resolveActionContext: () => ({ equipment: {}, drinks: [] }) }));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = { resolveActionContext: () => ({ equipment: {}, drinks: [] }) };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../../features/settings/custom-price-overrides.js', () => ({
     getCustomPrice: () => null,
     getCustomPriceVersion: () => 0,

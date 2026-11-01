@@ -45,9 +45,12 @@ vi.mock('./house-cost-calculator.js', () => ({
     calculateHouseBuildCost: (hrid, level) => costs.cumulative(hrid, level),
 }));
 
-vi.mock('./action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: new Map(), drinks: [{ itemHrid: '/items/wisdom_tea' }] }),
-}));
+vi.mock('./action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: new Map(), drinks: [{ itemHrid: '/items/wisdom_tea' }] }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 
 vi.mock('./tea-optimizer.js', () => ({
     findXpFloorChoice: () => ({ status: 'none' }),

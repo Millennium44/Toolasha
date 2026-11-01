@@ -22,9 +22,12 @@ vi.mock('../core/data-manager.js', () => ({
     },
 }));
 
-vi.mock('./action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: character.equipment, drinks: [] }),
-}));
+vi.mock('./action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: character.equipment, drinks: [] }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 
 vi.mock('./community-buffs.js', () => ({
     getCommunityGatheringQuantity: () => 0,

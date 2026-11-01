@@ -47,9 +47,12 @@ vi.mock('./tea-parser.js', () => ({
     getDrinkConcentration: () => parsers.concentration,
 }));
 
-vi.mock('./action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: [], drinks: [] }),
-}));
+vi.mock('./action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: [], drinks: [] }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 
 vi.mock('./action-calculator.js', () => ({
     calculateActionStats: () => parsers.stats,
