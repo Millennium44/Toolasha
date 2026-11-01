@@ -121,7 +121,7 @@ vi.mock('../../utils/combat-zone-open.js', () => ({
     },
 }));
 
-const plannerContext = vi.hoisted(() => ({ value: null, builds: 0, onBuild: null }));
+const plannerContext = vi.hoisted(() => ({ value: null, builds: 0, onBuild: null, coins: undefined }));
 vi.mock('./goal-planner-context.js', () => ({
     buildPlannerContext: async () => {
         plannerContext.builds += 1;
@@ -129,7 +129,7 @@ vi.mock('./goal-planner-context.js', () => ({
         return plannerContext.value;
     },
     withHouseCosts: async (context) => context,
-    coinsHeld: () => 50_000_000,
+    coinsHeld: () => plannerContext.coins ?? 50_000_000,
 }));
 
 const { goalPlannerPanel } = await import('./goal-planner-ui.js');
@@ -1086,5 +1086,231 @@ describe('when the saved plans were priced', () => {
 
         expect(store.data.goalPlannerSnapshot_char1.pricedAt).toBe(2_000);
         expect(goalPlannerPanel.pricedAt).toBe(2_000);
+    });
+});
+
+describe('the leveling route', () => {
+    const COOKING = '/skills/cooking';
+    // Shaped as measureXpRates returns them; Roast opens at 5 and is twice as quick
+    const cookingRate = (name, extra = {}) => ({
+        actionHrid: `/actions/cooking/${name.toLowerCase()}`,
+        label: name,
+        requiredLevel: 1,
+        teaSkillLevelBonus: 0,
+        actionLevelBonus: 0,
+        xpPerHour: 3600,
+        xpPerAction: 10,
+        actionTime: 10,
+        totalEfficiency: 0,
+        actionsPerHour: 360,
+        goldPerHour: -3600,
+        drinkCostPerHour: 0,
+        upfrontCost: 0,
+        goldKnown: true,
+        measuredAtLevel: 1,
+        ...extra,
+    });
+    const route = { calls: 0, gate: null, rates: null };
+
+    const buttonNamed = (label) =>
+        [...document.querySelectorAll('#toolasha-goal-planner-panel button')].find((b) => b.textContent === label);
+    const until = async (condition) => {
+        for (let i = 0; i < 200 && !condition(); i += 1) await settled();
+    };
+
+    beforeEach(() => {
+        route.calls = 0;
+        route.gate = null;
+        route.rates = [cookingRate('Stew'), cookingRate('Roast', { requiredLevel: 5, actionTime: 5, xpPerHour: 7200 })];
+        plannerContext.coins = undefined;
+        store.data.goalPlannerGoals_char1 = [{ id: 'g-cook', type: 'skill', skillHrid: COOKING, targetLevel: 10 }];
+        const value = fixtureContext();
+        value.skill = () => ({ level: 1, experience: 1000 });
+        value.skillName = () => 'Cooking';
+        value.xpRates = () => [route.rates[0]];
+        value.pricedAt = 1_000;
+        value.routeRates = async () => {
+            route.calls += 1;
+            if (route.gate) await route.gate;
+            return route.rates;
+        };
+        plannerContext.value = value;
+    });
+
+    const open = async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+    };
+
+    test('never runs on open, refresh or replan; runs on the button and draws its stages', async () => {
+        await open();
+        await goalPlannerPanel.replan();
+        expect(route.calls).toBe(0);
+        expect(buttonNamed('Optimize route')).toBeTruthy();
+
+        buttonNamed('Optimize route').click();
+        await until(() => text().includes('Route total'));
+
+        expect(route.calls).toBe(1);
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Stew: 1 → 5');
+        expect(text()).toContain('Roast: 5 → 10');
+        expect(text()).toContain('unlocks at 5');
+        expect(text()).toContain('Quick estimate (Stew the whole way)');
+        for (const label of ['Fastest', 'Cheapest', 'Within budget']) expect(buttonNamed(label)).toBeTruthy();
+    });
+
+    test('an identical second press reuses the search; a refresh marks the route out of date', async () => {
+        await open();
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).not.toContain('reused its answer');
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).toContain('reused its answer');
+
+        plannerContext.value = { ...plannerContext.value, pricedAt: 2_000 };
+        await goalPlannerPanel.refresh();
+        expect(text()).toContain('Out of date: prices were refreshed since');
+    });
+
+    test('a refresh during the search still marks the finished route out of date', async () => {
+        await open();
+        let release;
+        route.gate = new Promise((resolve) => (release = resolve));
+        const pending = goalPlannerPanel.optimizeRoute('g-cook');
+        await settled();
+        plannerContext.value = { ...plannerContext.value, pricedAt: 2_000 };
+        await goalPlannerPanel.refresh();
+        release();
+        await pending;
+        expect(text()).toContain('Route total');
+        expect(text()).toContain('Out of date: prices were refreshed since');
+    });
+
+    test('a change in coins in hand marks the route out of date', async () => {
+        await open();
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).not.toContain('Out of date');
+        plannerContext.coins = 1_000;
+        goalPlannerPanel._render();
+        expect(text()).toContain('Out of date: your coins have changed since');
+    });
+
+    test('pressed while the first pricing is under way, it waits for it rather than asking for Refresh', async () => {
+        let release;
+        const gate = new Promise((resolve) => (release = resolve));
+        const value = plannerContext.value;
+        plannerContext.onBuild = async () => {
+            await gate;
+            return value;
+        };
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        const refreshing = goalPlannerPanel.refresh();
+        const optimizing = goalPlannerPanel.optimizeRoute('g-cook');
+        await settled();
+        release();
+        await refreshing;
+        await optimizing;
+        expect(text()).not.toContain('Prices are not loaded');
+        expect(text()).toContain('Route total');
+        expect(plannerContext.builds).toBe(1);
+    });
+
+    test('a changed input searches again', async () => {
+        await open();
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        route.rates = [cookingRate('Stew', { goldPerHour: -7200 }), route.rates[1]];
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).not.toContain('reused its answer');
+    });
+
+    test('Stop while pricing draws no route', async () => {
+        await open();
+        let release;
+        route.gate = new Promise((resolve) => (release = resolve));
+        const pending = goalPlannerPanel.optimizeRoute('g-cook');
+        await settled();
+        expect(text()).toContain('Pricing every action of this skill');
+        buttonNamed('Stop').click();
+        release();
+        await pending;
+        expect(text()).toContain('Stopped — no route was drawn.');
+        expect(text()).not.toContain('Route total');
+    });
+
+    test('closing the panel stops a search, and reopening says so', async () => {
+        await open();
+        let release;
+        route.gate = new Promise((resolve) => (release = resolve));
+        const pending = goalPlannerPanel.optimizeRoute('g-cook');
+        await settled();
+        goalPlannerPanel.hide();
+        release();
+        await pending;
+        goalPlannerPanel.show();
+        expect(text()).toContain('Stopped — no route was drawn.');
+    });
+
+    test('a newer press wins over a slower older one', async () => {
+        await open();
+        let release;
+        route.gate = new Promise((resolve) => (release = resolve));
+        const older = goalPlannerPanel.optimizeRoute('g-cook');
+        await settled();
+        route.gate = null;
+        const olderRates = route.rates;
+        route.rates = [cookingRate('Bake')];
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).toContain('Bake: 1 → 10');
+        route.rates = olderRates;
+        release();
+        await older;
+        expect(text()).toContain('Bake: 1 → 10');
+        expect(text()).not.toContain('Roast');
+    });
+
+    test('a character switch mid-pricing leaves nothing for the arriving character', async () => {
+        await open();
+        let release;
+        route.gate = new Promise((resolve) => (release = resolve));
+        const pending = goalPlannerPanel.optimizeRoute('g-cook');
+        await settled();
+        character.id = 'char2';
+        goalPlannerPanel.disable();
+        release();
+        await pending;
+        expect(goalPlannerPanel.routes.size).toBe(0);
+        expect(goalPlannerPanel.routeCache.size).toBe(0);
+    });
+
+    test('no action that can be started says so', async () => {
+        route.rates = [cookingRate('Roast', { requiredLevel: 5 })];
+        await open();
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).toContain('None of the actions can be started at level 1.');
+    });
+
+    test('an unaffordable route shows why under Within budget', async () => {
+        route.rates = [cookingRate('Stew', { goldPerHour: -1e12 })];
+        await open();
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        buttonNamed('Within budget').click();
+        expect(text()).toContain('No priced route keeps your coins above zero');
+    });
+
+    test('an unpriced action keeps the route cost unknown', async () => {
+        route.rates = [cookingRate('Stew', { goldPerHour: null, goldKnown: false })];
+        await open();
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).toContain('its cost is unknown');
+        buttonNamed('Cheapest').click();
+        expect(text()).toContain('No route could be fully priced');
+    });
+
+    test('a goal already reached offers no route', async () => {
+        plannerContext.value.skill = () => ({ level: 10, experience: 10_000 });
+        await open();
+        expect(buttonNamed('Optimize route')).toBeUndefined();
     });
 });

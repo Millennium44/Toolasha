@@ -1097,3 +1097,86 @@ describe('a run from a held copy that the optimiser did not protect', () => {
         expect(run.materialBill.some((entry) => entry.kind === 'protection')).toBe(false);
     });
 });
+
+describe('route rates — every action of a skill, locked ones included', () => {
+    const lockStew = () => {
+        game.actionDetailMap['/actions/cooking/stew'].levelRequirement = { skillHrid: '/skills/cooking', level: 70 };
+    };
+
+    test('a locked action has no margin in the quick estimate but a priced one for a route', async () => {
+        lockStew();
+        rates.production = {
+            '/actions/cooking/stew': { profitPerHour: -9_000, totalMaterialCost: 25, totalTeaCostPerHour: 1_200 },
+        };
+        const context = await buildPlannerContext();
+        const [quick] = context.xpRates('/skills/cooking');
+        expect(quick.goldKnown).toBe(false);
+
+        const [route] = await context.routeRates('/skills/cooking');
+        expect(route.actionHrid).toBe('/actions/cooking/stew');
+        expect(route.goldPerHour).toBe(-9_000);
+        expect(route.goldKnown).toBe(true);
+        expect(route.drinkCostPerHour).toBe(1_200);
+        expect(route.upfrontCost).toBe(25);
+        expect(route.requiredLevel).toBe(70);
+        // The level the efficiency inside the rate belongs to
+        expect(route.measuredAtLevel).toBe(50);
+    });
+
+    test('an unpriced input stays unknown on a route, as in the quick estimate', async () => {
+        lockStew();
+        rates.production = {
+            '/actions/cooking/stew': { profitPerHour: 5_000, materialCosts: [{ missingPrice: true }] },
+        };
+        const context = await buildPlannerContext();
+        const [route] = await context.routeRates('/skills/cooking');
+        expect(route.goldPerHour).toBeNull();
+        expect(route.goldKnown).toBe(false);
+    });
+
+    test('an unlocked action reads the same margin both ways', async () => {
+        rates.production = {
+            '/actions/cooking/stew': { profitPerHour: -4_000, totalMaterialCost: 10, totalTeaCostPerHour: 300 },
+        };
+        const context = await buildPlannerContext();
+        const [quick] = context.xpRates('/skills/cooking');
+        const [route] = await context.routeRates('/skills/cooking');
+        for (const field of ['goldPerHour', 'goldKnown', 'drinkCostPerHour', 'upfrontCost', 'xpPerHour']) {
+            expect(route[field]).toEqual(quick[field]);
+        }
+    });
+
+    test('an action type with no calculator (alchemy) is unknown on a route, free as before in the quick estimate', async () => {
+        const context = await buildPlannerContext();
+        const [quick] = context.xpRates('/skills/alchemy');
+        expect(quick.goldPerHour).toBe(0);
+        expect(quick.goldKnown).toBe(true);
+        const [route] = await context.routeRates('/skills/alchemy');
+        expect(route.actionHrid).toBe('/actions/alchemy/transmute');
+        expect(route.goldPerHour).toBeNull();
+        expect(route.goldKnown).toBe(false);
+    });
+
+    test('is measured once per pricing, and again after a new pricing', async () => {
+        let calls = 0;
+        rates.production = new Proxy(
+            {},
+            {
+                get: (_target, hrid) => {
+                    if (hrid !== '/actions/cooking/stew') return undefined;
+                    calls += 1;
+                    return { profitPerHour: 1 };
+                },
+            }
+        );
+        const context = await buildPlannerContext();
+        const before = calls;
+        await context.routeRates('/skills/cooking');
+        await context.routeRates('/skills/cooking');
+        expect(calls - before).toBe(1);
+        const repriced = await buildPlannerContext();
+        const afterReprice = calls;
+        await repriced.routeRates('/skills/cooking');
+        expect(calls - afterReprice).toBe(1);
+    });
+});

@@ -1177,10 +1177,186 @@ export function peakFunds(steps) {
  * @param {number} skillLevel - The skill level the climb starts from
  * @returns {number} Levels owed before level efficiency starts (0 or more)
  */
-function levelEfficiencyDeficit(rate, skillLevel) {
+export function levelEfficiencyDeficit(rate, skillLevel) {
     const effectiveRequirement = num(rate.requiredLevel, 1) + num(rate.actionLevelBonus);
     const effectiveLevel = skillLevel + num(rate.teaSkillLevelBonus);
     return Math.max(0, effectiveRequirement - effectiveLevel);
+}
+
+/**
+ * The level efficiency a rate earns at a skill level: the other side of {@link levelEfficiencyDeficit}.
+ * @param {Object} rate - A measured rate
+ * @param {number} skillLevel - A skill level
+ * @returns {number} Efficiency points from level alone (0 or more)
+ */
+export function levelEfficiencyAt(rate, skillLevel) {
+    const effectiveRequirement = num(rate.requiredLevel, 1) + num(rate.actionLevelBonus);
+    return Math.max(0, skillLevel + num(rate.teaSkillLevelBonus) - effectiveRequirement);
+}
+
+/**
+ * Whether the character can start a rate's action at a skill level, with the drinks it was measured under:
+ * the game's own start rule (a skill-level tea lifts the level, an Action Level tea raises the requirement).
+ *
+ * @param {Object} rate - A measured rate
+ * @param {number} skillLevel - The skill level to test
+ * @returns {boolean} Whether the action can be started
+ */
+export function rateStartsAt(rate, skillLevel) {
+    return canStartAction({
+        requiredLevel: num(rate.requiredLevel, 1),
+        skillLevel,
+        teaSkillLevelBonus: num(rate.teaSkillLevelBonus),
+        actionLevelBonus: num(rate.actionLevelBonus),
+    });
+}
+
+/**
+ * How long, and how many completions, one action takes from a level and XP to a target level.
+ *
+ * The quick estimate's own climb: enhancing (`flatRate`) divides the experience out, because it gains no
+ * efficiency repeats as it levels; everything else is walked level by level by `calculateMultiLevelProgress`,
+ * whose efficiency rises a point per level once the effective requirement is cleared.
+ *
+ * A rate's `totalEfficiency` was measured at one level and has that level's level efficiency inside it. A
+ * climb starting somewhere else (a later stage of a route) swaps it for the starting level's, so the same
+ * rate gives the same efficiency at the same level whichever stage reaches it.
+ *
+ * @param {Object} rate - A measured rate
+ * @param {number} fromLevel - Level the climb starts at
+ * @param {number} fromXp - Experience the climb starts with
+ * @param {number} toLevel - Level the climb ends at
+ * @param {Array<number>} table - The game's level experience table
+ * @param {number} [measuredAtLevel] - The level the rate was measured at (defaults to `fromLevel`)
+ * @returns {{timeHours: number|null, actionsNeeded: number|null, endXp: number}} Raw figures: an
+ *   unusable rate can give `Infinity` or null, and the caller decides what that means
+ */
+export function climbWith(rate, fromLevel, fromXp, toLevel, table, measuredAtLevel = fromLevel) {
+    if (rate.flatRate) {
+        const remaining = Math.max(0, num(table[toLevel]) - fromXp);
+        return {
+            timeHours: num(rate.xpPerHour) > 0 ? remaining / num(rate.xpPerHour) : null,
+            actionsNeeded: num(rate.xpPerAction) > 0 ? remaining / num(rate.xpPerAction) : null,
+            endXp: fromXp + remaining,
+        };
+    }
+    // Same level, same figure: the swap below only runs for a climb starting where it was not measured,
+    // so the quick estimate's own numbers are untouched to the last bit
+    const efficiency =
+        measuredAtLevel === fromLevel
+            ? num(rate.totalEfficiency)
+            : num(rate.totalEfficiency) - levelEfficiencyAt(rate, measuredAtLevel) + levelEfficiencyAt(rate, fromLevel);
+    const progress = calculateMultiLevelProgress(
+        fromLevel,
+        fromXp,
+        toLevel,
+        efficiency,
+        num(rate.actionTime),
+        num(rate.xpPerAction),
+        table,
+        levelEfficiencyDeficit(rate, fromLevel)
+    );
+    const actionsNeeded = progress.actionsNeeded;
+    return {
+        timeHours: progress.timeNeeded / 3600,
+        actionsNeeded,
+        endXp: fromXp + (Number.isFinite(actionsNeeded) ? actionsNeeded * num(rate.xpPerAction) : 0),
+    };
+}
+
+/**
+ * What a climb with one action costs or pays, in coins.
+ *
+ * Training is usually not free and occasionally pays; either way it is the same number, a signed delta. A
+ * rate that could not be read is unknown, not free (`rateKnown` false, delta 0).
+ *
+ * The margin is per hour at the measured level, but efficiency rises as the climb goes and shortens later
+ * cycles; the completions (and what each consumes) do not shrink. So a multi-level climb is costed per
+ * completion, not by the shrinking duration. The hourly margin has a per-hour drink bill folded in. Drinks
+ * are charged by the clock, so they follow the (shorter) duration; everything else follows the completions.
+ * The market's absorption cap is charged against the real elapsed time the same way.
+ *
+ * @param {Object} rate - A measured rate
+ * @param {number|null} actionsNeeded - Completions in the climb
+ * @param {number|null} timeHours - Hours the climb takes
+ * @returns {{goldDelta: number, rateKnown: boolean, drinkCost: number, unsoldProceeds: number}}
+ *   `drinkCost` is the clock-charged part already inside the delta, `unsoldProceeds` the sale proceeds
+ *   the market cap took back out of it
+ */
+export function climbGold(rate, actionsNeeded, timeHours) {
+    const rateKnown = !rate || (rate.goldKnown !== false && Number.isFinite(rate.goldPerHour));
+    const drinkPerHour = rate ? Math.max(0, num(rate.drinkCostPerHour)) : 0;
+    // goldPerHour already has the market's absorption cap taken out at the starting pace. A climb that
+    // speeds up completes more actions per hour, but the market does not absorb more per hour. So the
+    // per-completion margin is rebuilt uncapped, and the cap is charged against the real elapsed time.
+    const saleCap = Math.max(0, num(rate?.saleProceedsPerHour) - num(rate?.saleCapPerHour));
+    const perCompletion =
+        rate && !rate.flatRate && num(rate.actionsPerHour) > 0 && Number.isFinite(actionsNeeded) && timeHours !== null
+            ? (num(rate.goldPerHour) + saleCap + drinkPerHour) / num(rate.actionsPerHour)
+            : null;
+    let goldDelta = 0;
+    let drinkCost = 0;
+    let unsoldProceeds = 0;
+    if (rate && rateKnown) {
+        if (perCompletion !== null) {
+            drinkCost = drinkPerHour * timeHours;
+            goldDelta = perCompletion * num(actionsNeeded) - drinkCost;
+            if (saleCap > 0) {
+                // proceeds credited = min(per-completion proceeds x completions, cap per hour x hours)
+                const proceeds = (num(rate.saleProceedsPerHour) / num(rate.actionsPerHour)) * num(actionsNeeded);
+                unsoldProceeds = Math.max(0, proceeds - num(rate.saleCapPerHour) * timeHours);
+                goldDelta -= unsoldProceeds;
+            }
+        } else if (timeHours !== null) {
+            goldDelta = num(rate.goldPerHour) * timeHours;
+            drinkCost = drinkPerHour * timeHours;
+        }
+    }
+    return { goldDelta, rateKnown, drinkCost, unsoldProceeds };
+}
+
+/**
+ * The recurring teas (enhancing) a climb drinks, and how much of them is already in the bag.
+ *
+ * The hourly figure prices every tea drunk at market, but tea already in the bag is not bought again. Held
+ * tea is reserved like any other material and only the shortfall beyond it is outlay; the economic cost
+ * stays on the step. A shortfall of an unpriced tea is unknown.
+ *
+ * @param {Object} rate - A measured rate, with `teaBill` when it drinks by the clock
+ * @param {number} timeHours - Hours the climb takes
+ * @param {(itemHrid: string) => number} heldOf - How many of a tea are available to this climb
+ * @returns {{teaNeeds: Array<Object>, teaHeldCredit: number, teaUnknown: boolean}}
+ */
+export function climbTeas(rate, timeHours, heldOf) {
+    const teaNeeds = [];
+    let teaUnknown = false;
+    let teaHeldCredit = 0;
+    if (!Array.isArray(rate?.teaBill)) return { teaNeeds, teaHeldCredit, teaUnknown };
+    for (const tea of rate.teaBill) {
+        const count = Math.ceil(num(tea.perHour) * timeHours - 1e-9);
+        if (!tea.itemHrid || !(count > 0)) continue;
+        const held = Math.min(count, Math.max(0, num(heldOf(tea.itemHrid))));
+        teaNeeds.push({ itemHrid: tea.itemHrid, count, held, missing: count - held });
+        // Credit at most the tea cost the hourly figure charged (fractional consumption), never the
+        // rounded-up reservation count: a short climb must not turn a held tea into a profit
+        if (tea.unitPrice > 0) teaHeldCredit += Math.min(held, num(tea.perHour) * timeHours) * tea.unitPrice;
+        else if (count > held) teaUnknown = true;
+    }
+    return { teaNeeds, teaHeldCredit, teaUnknown };
+}
+
+/**
+ * The actions a skill goal can use at a level, best experience per hour first — the quick estimate's choice.
+ * @param {Array<Object>} rates - Measured rates for the skill
+ * @param {number} level - The skill level
+ * @returns {Array<Object>} Usable rates, best first
+ */
+export function startableRates(rates, level) {
+    const usable = (Array.isArray(rates) ? rates : []).filter(
+        (rate) => rate && num(rate.xpPerHour) > 0 && rateStartsAt(rate, level)
+    );
+    usable.sort((a, b) => num(b.xpPerHour) - num(a.xpPerHour));
+    return usable;
 }
 
 /**
@@ -1222,18 +1398,7 @@ function planSkillGoal(goal, context, stepId = 'train') {
         };
     }
 
-    const rates = (ask(context, 'xpRates', [skillHrid], []) || []).filter(
-        (rate) =>
-            rate &&
-            num(rate.xpPerHour) > 0 &&
-            canStartAction({
-                requiredLevel: num(rate.requiredLevel, 1),
-                skillLevel: level,
-                teaSkillLevelBonus: num(rate.teaSkillLevelBonus),
-                actionLevelBonus: num(rate.actionLevelBonus),
-            })
-    );
-    rates.sort((a, b) => num(b.xpPerHour) - num(a.xpPerHour));
+    const rates = startableRates(ask(context, 'xpRates', [skillHrid], []) || [], level);
     const best = rates[0] || null;
 
     const table = Array.isArray(context?.levelExperienceTable) ? context.levelExperienceTable : null;
@@ -1243,77 +1408,33 @@ function planSkillGoal(goal, context, stepId = 'train') {
     let timeHours = null;
     let actionsNeeded = null;
     if (best && table) {
+        const climb = climbWith(best, level, experience, target, table);
         if (best.flatRate) {
             // Enhancing gains no efficiency repeats as it levels, so the
-            // level-by-level climb below would quietly shorten the grind
-            const remaining = Math.max(0, num(table[target]) - experience);
-            timeHours = num(best.xpPerHour) > 0 ? remaining / num(best.xpPerHour) : null;
-            actionsNeeded = num(best.xpPerAction) > 0 ? remaining / num(best.xpPerAction) : null;
+            // level-by-level climb would quietly shorten the grind
+            timeHours = climb.timeHours;
+            actionsNeeded = climb.actionsNeeded;
         } else {
-            const progress = calculateMultiLevelProgress(
-                level,
-                experience,
-                target,
-                num(best.totalEfficiency),
-                num(best.actionTime),
-                num(best.xpPerAction),
-                table,
-                levelEfficiencyDeficit(best, level)
-            );
-            timeHours = num(progress.timeNeeded) / 3600;
-            actionsNeeded = num(progress.actionsNeeded);
+            timeHours = num(climb.timeHours);
+            actionsNeeded = num(climb.actionsNeeded);
         }
     }
 
-    // Training is usually not free and occasionally pays; either way it is the
-    // same number, so it rides on the step as a signed delta rather than being
-    // dropped because production skills would make it negative.
     // A rate that could not be read is unknown, not free: it adds nothing to the
     // total but says so (costKnown false), rather than passing as a costless grind.
-    const rateKnown = !best || (best.goldKnown !== false && Number.isFinite(best.goldPerHour));
-    // The margin is per hour at the starting level, but efficiency rises as the climb goes
-    // and shortens later cycles; the completions (and what each consumes) do not shrink.
-    // So a multi-level climb is costed per completion, not by the shrinking duration.
-    // The hourly margin has a per-hour drink bill folded in. Drinks are charged by the clock, so
-    // they follow the (shorter) duration; everything else follows the completions.
-    const drinkPerHour = best ? Math.max(0, num(best.drinkCostPerHour)) : 0;
-    // goldPerHour already has the market's absorption cap taken out at the starting pace. A climb that
-    // speeds up completes more actions per hour, but the market does not absorb more per hour. So the
-    // per-completion margin is rebuilt uncapped, and the cap is charged against the real elapsed time.
-    const saleCap = Math.max(0, num(best?.saleProceedsPerHour) - num(best?.saleCapPerHour));
-    const perCompletion =
-        best && !best.flatRate && num(best.actionsPerHour) > 0 && Number.isFinite(actionsNeeded) && timeHours !== null
-            ? (num(best.goldPerHour) + saleCap + drinkPerHour) / num(best.actionsPerHour)
-            : null;
-    let goldDelta = 0;
-    if (best && rateKnown) {
-        if (perCompletion !== null) {
-            goldDelta = perCompletion * num(actionsNeeded) - drinkPerHour * timeHours;
-            if (saleCap > 0) {
-                // proceeds credited = min(per-completion proceeds x completions, cap per hour x hours)
-                const proceeds = (num(best.saleProceedsPerHour) / num(best.actionsPerHour)) * num(actionsNeeded);
-                goldDelta -= Math.max(0, proceeds - num(best.saleCapPerHour) * timeHours);
-            }
-        } else if (timeHours !== null) goldDelta = num(best.goldPerHour) * timeHours;
-    }
+    const { goldDelta: climbDelta, rateKnown } = best
+        ? climbGold(best, actionsNeeded, timeHours)
+        : { goldDelta: 0, rateKnown: true };
+    let goldDelta = climbDelta;
 
-    // Recurring teas (enhancing): the hourly figure above prices every tea drunk at market, but tea already
-    // in the bag is not bought again. Held tea is reserved like any other material and only the shortfall
-    // beyond it is outlay; the economic cost stays on the step. A shortfall of an unpriced tea is unknown.
     const teaNeeds = [];
     let teaUnknown = false;
     let teaHeldCredit = 0;
     if (best && rateKnown && timeHours !== null && Array.isArray(best.teaBill)) {
-        for (const tea of best.teaBill) {
-            const count = Math.ceil(num(tea.perHour) * timeHours - 1e-9);
-            if (!tea.itemHrid || !(count > 0)) continue;
-            const held = Math.min(count, Math.max(0, num(ask(context, 'owned', [tea.itemHrid, goal.id], 0))));
-            teaNeeds.push({ itemHrid: tea.itemHrid, count, held, missing: count - held });
-            // Credit at most the tea cost the hourly figure charged (fractional consumption), never the
-            // rounded-up reservation count: a short climb must not turn a held tea into a profit
-            if (tea.unitPrice > 0) teaHeldCredit += Math.min(held, num(tea.perHour) * timeHours) * tea.unitPrice;
-            else if (count > held) teaUnknown = true;
-        }
+        const teas = climbTeas(best, timeHours, (itemHrid) => ask(context, 'owned', [itemHrid, goal.id], 0));
+        teaNeeds.push(...teas.teaNeeds);
+        teaUnknown = teas.teaUnknown;
+        teaHeldCredit = teas.teaHeldCredit;
         goldDelta += teaHeldCredit;
         if (teaUnknown) {
             warnings.push(
