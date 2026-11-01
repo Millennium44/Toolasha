@@ -1514,7 +1514,7 @@ describe('tokens and nested containers found inside a chest', () => {
         prices['/items/lab_reward'] = 5000;
         prices['/items/tradable'] = 777;
         for (const hrid of [TOKEN, LAB, TASK, CHEST, GIFT, '/items/cape']) prices[hrid] = 0;
-        bridge.ev = { isInitialized: true, resolveContainerValue: (hrid) => ({ value: hrid === CHEST ? 4200 : 0 }) };
+        bridge.ev = { isInitialized: true, calculateGrossContainerValue: (hrid) => (hrid === CHEST ? 4200 : 0) };
         bridge.taskBest = { perToken: 650 };
         treasureTracker.settings.capeValue = 'token';
         treasureTracker.settings.scrollValue = 'token';
@@ -1572,18 +1572,18 @@ describe('tokens and nested containers found inside a chest', () => {
     });
 
     test('a nested chest is unpriced, never 0, when the calculator is not ready or has nothing', () => {
-        bridge.ev = { isInitialized: false, resolveContainerValue: () => ({ value: 4200 }) };
+        bridge.ev = { isInitialized: false, calculateGrossContainerValue: () => 4200 };
         expect(priceOf(CHEST)).toBeNull();
         bridge.ev = null;
         expect(priceOf(CHEST)).toBeNull();
-        bridge.ev = { isInitialized: true, resolveContainerValue: () => null };
+        bridge.ev = { isInitialized: true, calculateGrossContainerValue: () => null };
         expect(priceOf(CHEST)).toBeNull();
-        bridge.ev = { isInitialized: true, resolveContainerValue: () => ({ value: 0 }) };
+        bridge.ev = { isInitialized: true, calculateGrossContainerValue: () => 0 };
         expect(priceOf(GIFT)).toBeNull();
     });
 
     test("Purple's Gift is valued like any other container", () => {
-        bridge.ev = { isInitialized: true, resolveContainerValue: (hrid) => ({ value: hrid === GIFT ? 123 : 0 }) };
+        bridge.ev = { isInitialized: true, calculateGrossContainerValue: (hrid) => (hrid === GIFT ? 123 : 0) };
         expect(priceOf(GIFT)).toBe(123);
     });
 

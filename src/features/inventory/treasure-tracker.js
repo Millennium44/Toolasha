@@ -1088,7 +1088,8 @@ class TreasureTracker {
      * keeps its own pricing side and tax convention — none is added here:
      * dungeon tokens through their shop (`calculateDungeonTokenValue`), the
      * labyrinth token through the labyrinth shop, a task token through the task
-     * shop, and a chest, cache, crate or gift through its expected contents. The
+     * shop, and a chest, cache, crate or gift through its expected contents —
+     * untaxed, like every tradable drop this panel prices directly. The
      * expected-value calculator is read through the bundle bridge (the one copy
      * that ran `initialize()`); it values its own contents and never calls back
      * into this tracker, so a container cannot loop here.
@@ -1121,7 +1122,7 @@ class TreasureTracker {
         if (Array.isArray(dropTable) && dropTable.length > 0) {
             const calculator = expectedValueCalculator();
             if (!calculator?.isInitialized) return null;
-            return positive(calculator.resolveContainerValue(itemHrid)?.value);
+            return positive(calculator.calculateGrossContainerValue(itemHrid));
         }
 
         return undefined;
