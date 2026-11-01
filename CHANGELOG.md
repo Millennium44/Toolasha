@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Offline XP, sale refusals and scroll buffs from the game's own data
+
+- The Welcome Back economics block reads offline experience from the login data instead of the popup's text, so it works in any language.
+- Bulk sell stops waiting when the server refuses a sale (a locked item, too many listings, a rejected order) and lets you press again, instead of timing out.
+- Treasure lists the buffs scrolls granted this session (e.g. "+60% Rare Find for 1h"), outside the chest totals.
+
 ### More tests read real game messages
 
 - Combat (`new_battle`, `battle_updated`, consumable casts), inventory and market listing and order-book tests now use payloads captured from the game on the test server.
