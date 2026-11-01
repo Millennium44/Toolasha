@@ -4,6 +4,10 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runningAction } from '../utils/combat-actions.js';
+import { buildActionCompleted } from '../__fixtures__/wire/action-completed.js';
+import { buildCharacterAction } from '../__fixtures__/wire/character-actions.js';
+import { buildCollectionsUpdated } from '../__fixtures__/wire/collections-updated.js';
+import { buildQuest, buildQuestDiscarded } from '../__fixtures__/wire/quests-updated.js';
 
 let webSocketHandlers = new Map();
 
@@ -749,14 +753,16 @@ describe('inventory index', () => {
         dataManager.characterActions = [];
 
         const handler = webSocketHandlers.get('action_completed');
-        handler({
-            endCharacterAction: { id: 99, isDone: true },
-            endCharacterItems: [
-                { id: 'a', count: 9, itemLocationHrid: '/item_locations/inventory' },
-                { id: 'z', count: 4, itemLocationHrid: '/item_locations/inventory' },
-                { id: 'ignored', count: 4, itemLocationHrid: '/item_locations/bank' },
-            ],
-        });
+        handler(
+            buildActionCompleted({
+                endCharacterAction: buildCharacterAction({ id: 99, isDone: true }),
+                endCharacterItems: [
+                    { id: 'a', count: 9, itemLocationHrid: '/item_locations/inventory' },
+                    { id: 'z', count: 4, itemLocationHrid: '/item_locations/inventory' },
+                    { id: 'ignored', count: 4, itemLocationHrid: '/item_locations/bank' },
+                ],
+            })
+        );
 
         expect(dataManager.characterItems.map((i) => [i.id, i.count])).toEqual([
             ['a', 9],
@@ -1690,22 +1696,15 @@ describe('socket ownership across a character switch', () => {
         await loginOn({ id: 'char-1', name: 'One' }, socketA);
 
         // The exact message the test server sent when task 1469689 was discarded
-        const live = { id: 2, status: '/quest_status/in_progress', actionHrid: '/actions/milking/cow' };
-        dataManager.characterQuests = [
-            { id: 1469689, status: '/quest_status/in_progress', actionHrid: '/actions/milking/crimson_cow' },
-            live,
-            { id: 3, status: '/quest_status/in_progress', actionHrid: '/actions/milking/cow' },
+        const live = buildQuest({ id: 2 });
+        const discarded = buildQuest({ id: 1469689, actionHrid: '/actions/milking/crimson_cow' });
+        dataManager.characterQuests = [discarded, live, buildQuest({ id: 3 })];
+        const message = buildQuestDiscarded();
+        message.endCharacterQuests = [
+            { ...discarded, status: '/quest_status/discarded' },
+            buildQuest({ id: 3, status: '/quest_status/claimed' }),
         ];
-        webSocketHandlers.get('quests_updated')(
-            {
-                type: 'quests_updated',
-                endCharacterQuests: [
-                    { id: 1469689, status: '/quest_status/discarded', actionHrid: '/actions/milking/crimson_cow' },
-                    { id: 3, status: '/quest_status/claimed', actionHrid: '/actions/milking/cow' },
-                ],
-            },
-            { socket: socketA }
-        );
+        webSocketHandlers.get('quests_updated')(message, { socket: socketA });
 
         expect(dataManager.characterQuests).toEqual([live]);
     });
@@ -2155,10 +2154,7 @@ describe('the party roster', () => {
  * absent. It belongs to the character that fetched it.
  */
 describe('collections_updated', () => {
-    const payload = {
-        type: 'collections_updated',
-        collections: [{ characterID: 1, itemHrid: '/items/umbral_hood', count: 331, enhancementData: '{}' }],
-    };
+    const payload = buildCollectionsUpdated();
 
     test('is stored, timestamped and re-emitted', async () => {
         const { default: dataManager } = await import('./data-manager.js');

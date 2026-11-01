@@ -12,6 +12,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { buildGuildMember } from '../../__fixtures__/wire/guild-members.js';
 
 const disk = vi.hoisted(() => ({ store: {}, failNextRead: false, failKeys: new Set(), writes: [], reads: 0 }));
 const server = vi.hoisted(() => ({ test: false }));
@@ -897,27 +898,27 @@ describe('observedCoverage', () => {
 describe('signupParticipation', () => {
     test('every member’s two sign-ups become a per-trial roster', () => {
         const members = [
-            {
+            buildGuildMember({
                 characterID: 1,
                 name: 'Alice',
                 signupWeekStartAt: 'W',
                 signedUpSkillingTrialHrid: '/guild_trials/milking',
                 signedUpCombatTrialHrid: '/guild_trials/badger',
-            },
-            {
+            }),
+            buildGuildMember({
                 characterID: 2,
                 name: 'Carol',
                 signupWeekStartAt: 'W',
                 signedUpSkillingTrialHrid: '/guild_trials/milking',
                 signedUpCombatTrialHrid: '/guild_trials/hedgehog',
-            },
+            }),
             // Last week's sign-up, which says nothing about this week
-            {
+            buildGuildMember({
                 characterID: 3,
                 name: 'Stale',
                 signupWeekStartAt: 'V',
                 signedUpCombatTrialHrid: '/guild_trials/badger',
-            },
+            }),
         ];
 
         const participation = signupParticipation(members, { currentWeek: 'W', at: 5 });

@@ -12,6 +12,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { buildCharacterAction } from '../../__fixtures__/wire/character-actions.js';
 
 vi.mock('../../core/dom-observer.js', () => ({
     default: { onClass: () => () => {} },
@@ -96,31 +97,26 @@ const COMBAT_ID = 41704;
 const TANK_ID = 41705;
 
 function combatAction(id, { maxCount = 580, currentCount = 80, tier = 3, loadoutId = COMBAT_ID, hrid = GOBO } = {}) {
-    return {
+    return buildCharacterAction({
         id,
         ordinal: id,
         actionHrid: hrid,
         difficultyTier: tier,
         characterLoadoutID: loadoutId,
-        primaryItemHash: '',
         hasMaxCount: maxCount > 0,
         maxCount,
         currentCount,
-    };
+    });
 }
 
 function coinifyAction(id, remaining = 3) {
-    return {
+    return buildCharacterAction({
         id,
         ordinal: id,
         actionHrid: COINIFY,
-        difficultyTier: 0,
-        characterLoadoutID: 0,
-        primaryItemHash: '',
         hasMaxCount: true,
         maxCount: remaining,
-        currentCount: 0,
-    };
+    });
 }
 
 /** An all-zones run: 500 waves an hour at Gobo Planet T3, in the named loadout. */
