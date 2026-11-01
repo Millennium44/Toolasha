@@ -357,11 +357,22 @@ export function deriveObserved(attempts) {
                 // nothing and quietly leave the mixed figure in the pool under
                 // a like-for-like label. `monsterDamage` can exceed the
                 // tick-summed total when the endpoints reconcile higher, so
-                // the residual the ticks missed stays in the numerator; it is
-                // unattributed, not attributed to DoT.
+                // the residual the ticks missed is unattributed, not DoT, and it
+                // has no swing behind it either: the denominator counts only the
+                // swings the ticks showed. So where the endpoint reconciliation
+                // was recorded (`unattributedDealt` present), the numerator is the
+                // stored tick-summed `monsterDamage` — the recorder files the
+                // observed sum there, the reconciled figure is `exchange`'s — and
+                // the residual stays out. Older recordings approximate the start
+                // with the monster's maximum, so their residual is not measured
+                // and they keep the reconciled figure.
                 if (Number.isFinite(attempt.playerDotDamage)) {
                     const dotDamage = Math.max(0, Number(attempt.playerDotDamage));
-                    const swingDealt = Math.max(0, monsterDamage - dotDamage);
+                    const swingBase =
+                        Number.isFinite(attempt.unattributedDealt) && Number.isFinite(attempt.monsterDamage)
+                            ? Math.min(monsterDamage, attempt.monsterDamage)
+                            : monsterDamage;
+                    const swingDealt = Math.max(0, swingBase - dotDamage);
                     group.totalSwingDealt += swingDealt;
                     group.totalSwingHits += hits;
                     group.swingDamageFights += 1;
