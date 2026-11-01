@@ -333,6 +333,11 @@ const TRIGGER_CHOICE_IDS = {
     // A checkbox: read and restored through `checked`, not `value`
     conditions: 'mwi-csim-trigger-conditions',
 };
+/**
+ * Storage key for the Upgrade-tab budget plan's pins and exclusions, per character:
+ * `{pins: [[candidateKey, name], ...], excludes: [[candidateKey, name], ...]}`
+ */
+const BUDGET_CONSTRAINTS_KEY = 'combatSimBudgetConstraints';
 /** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
 const UPGRADE_RESULTS_KEY = 'combatSimUpgradeResults';
 
@@ -3879,6 +3884,7 @@ class CombatSimUI {
             await this._refreshCachedTriggerResult();
         })();
         this._restoreSwapAuraOnly();
+        this._restoreBudgetConstraints();
         this._restoreShrineCapToGuild();
         this._loadUpgradeColumnPrefs();
         this._loadMaxTierFoodPref();
@@ -9870,6 +9876,8 @@ class CombatSimUI {
         // `_budgetPlanKey`); a departing character's basket has nothing to say
         // about the arriving one's
         this._budgetConfirm = null;
+        // In memory only: the departing character's stored pins stay under its own key, and the arriving
+        // character's are read when its panel is built
         this._clearBudgetConstraints();
         this._simHistory = [];
         this._comparisonIndex = null;
@@ -10576,7 +10584,13 @@ class CombatSimUI {
     async _adoptPulledSettings(written) {
         if (!this.panel) return;
         try {
-            const scoped = new Set(['upgradeModes', 'triggerChoices', 'swapAuraOnly', 'shrineCapToGuild']);
+            const scoped = new Set([
+                'upgradeModes',
+                'triggerChoices',
+                'swapAuraOnly',
+                'shrineCapToGuild',
+                'budgetConstraints',
+            ]);
             const settings = pulledNames(written, 'settings', {
                 ...Object.fromEntries(
                     Object.entries(COMBAT_SIM_KEYS).map(([name, base]) => [
@@ -10600,6 +10614,7 @@ class CombatSimUI {
                 );
             }
             if (has('swapAuraOnly')) work.push(this._restoreSwapAuraOnly());
+            if (has('budgetConstraints')) work.push(this._restoreBudgetConstraints());
             if (has('shrineCapToGuild')) work.push(this._restoreShrineCapToGuild());
             if (has('allZonesMaxTierFood')) work.push(this._loadMaxTierFoodPref());
             if (has('allZonesScoreScale')) {
@@ -10794,8 +10809,8 @@ class CombatSimUI {
         if (this._upgradeResultsData) delete this._upgradeResultsData.verifyVerdicts;
         // So does its basket confirmation, and a confirming run still in flight lands on nothing
         this._budgetConfirm = null;
-        // Pins and exclusions are choices about this analysis' rows; a fresh one starts without them
-        this._clearBudgetConstraints();
+        // Pins and exclusions are remembered per character and filed under the candidate's own id, so a fresh
+        // analysis keeps them: one whose row is gone shows up as "not in the current results"
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
 
@@ -12846,7 +12861,19 @@ class CombatSimUI {
                 required: [...pins.keys()],
                 excluded: [...excludes.keys()],
             });
-            const constraintsHtml = this._renderBudgetConstraints(plan, pins, excludes);
+            // The plan with no pins or exclusions, so the constraints can say what they cost
+            const constrained = pins.size > 0 || excludes.size > 0;
+            const free = constrained ? planUpgradeBudget(rows, budget, { baseline, metricKey }) : null;
+            // A pin or exclusion can decide whether an ability order rides along, and the shown total
+            // includes it, so both sides of the comparison count their own compatible order
+            const orderGainOf = (p) => (p && !p.blocked ? this._planAbilityOrder(p, orderRows, baseline).gain : 0);
+            const constraintsHtml = this._renderBudgetConstraints(plan, pins, excludes, {
+                known: new Set(rows.map((row) => candidateKey(row))),
+                free,
+                orderGain: free ? orderGainOf(plan) : 0,
+                freeOrderGain: free ? orderGainOf(free) : 0,
+                saveFailed: Boolean(this._budgetConstraintsSaveFailed),
+            });
             // A plan from a stopped run is missing whatever the run never reached, pinned or not
             const partialNote = stopped
                 ? `<div data-budget-partial style="margin-top:4px; color:#e8a87c; font-size:10px;">
@@ -12858,8 +12885,12 @@ class CombatSimUI {
                 this._lastBudgetPlan = null;
                 body = this._renderBudgetBlocked(plan, pins) + partialNote + constraintsHtml;
             } else if (!plan.picks.length) {
+                // Told apart from a budget that buys nothing at all: here the exclusions are what emptied it
+                const emptiedByExcludes = Boolean(free?.picks?.length) && excludes.size > 0;
                 body = `<div style="color:#888; font-size:11px;">Nothing in the list both fits ${money(budget)}
-                    and improves ${plan.metric.label}.</div>${this._planAbilityOrder(plan, orderRows, baseline).html}${constraintsHtml}`;
+                    and improves ${plan.metric.label}${
+                        emptiedByExcludes ? ', once your exclusions are left out' : ''
+                    }.</div>${this._planAbilityOrder(plan, orderRows, baseline).html}${constraintsHtml}`;
             } else {
                 const orderPlan = this._planAbilityOrder(plan, orderRows, baseline);
                 // What `_wireBudgetConfirm` reads to run the confirming
@@ -13066,10 +13097,81 @@ class CombatSimUI {
         return { pins: this._upgradePins, excludes: this._upgradeExcludes };
     }
 
-    /** @private */
+    /** Empties both lists in memory (stored copies are untouched: see `_saveBudgetConstraints`). @private */
     _clearBudgetConstraints() {
         this._upgradePins = new Map();
         this._upgradeExcludes = new Map();
+        // A read still in flight was started before this and must not put its answer back
+        this._budgetConstraintsEpoch = (this._budgetConstraintsEpoch || 0) + 1;
+        this._budgetConstraintsSaveFailed = false;
+    }
+
+    /**
+     * Write the pins and exclusions to this character's key. The key is resolved now, before any await, so a
+     * character switch between the click and the write cannot file them under the next character.
+     * A failed write is kept in memory and said so on the plan.
+     * @private
+     */
+    async _saveBudgetConstraints() {
+        const { pins, excludes } = this._budgetConstraints();
+        const payload = { pins: [...pins], excludes: [...excludes] };
+        const epoch = this._budgetConstraintsEpoch;
+        let failed = false;
+        try {
+            // storage.set resolves false (no IndexedDB, quota) rather than rejecting
+            if ((await writeScoped(BUDGET_CONSTRAINTS_KEY, payload, 'settings')) === false) {
+                console.error('[CombatSimUI] Failed to save the budget pins and exclusions: storage refused the write');
+                failed = true;
+            }
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the budget pins and exclusions:', error);
+            failed = true;
+        }
+        // Only the panel that is still showing these constraints hears about it
+        if (epoch !== this._budgetConstraintsEpoch) return;
+        if (failed !== Boolean(this._budgetConstraintsSaveFailed)) {
+            this._budgetConstraintsSaveFailed = failed;
+            if (this._upgradeResultsData) this._renderUpgradeResults(this._upgradeResultsData);
+        }
+    }
+
+    /**
+     * Read this character's pins and exclusions back. Nothing happens if the player changed them, or the
+     * character changed, while the read was out.
+     * @private
+     */
+    async _restoreBudgetConstraints() {
+        const epoch = this._budgetConstraintsEpoch || 0;
+        const characterId = dataManager.getCurrentCharacterId?.();
+        try {
+            const saved = await readScoped(BUDGET_CONSTRAINTS_KEY, 'settings', null);
+            if (epoch !== (this._budgetConstraintsEpoch || 0)) return;
+            if (characterId !== dataManager.getCurrentCharacterId?.()) return;
+            const pairs = (list) =>
+                Array.isArray(list)
+                    ? list.filter((p) => Array.isArray(p) && typeof p[0] === 'string' && p[0] !== '')
+                    : [];
+            const next = {
+                pins: new Map(pairs(saved?.pins).map(([id, label]) => [id, String(label ?? id)])),
+                excludes: new Map(pairs(saved?.excludes).map(([id, label]) => [id, String(label ?? id)])),
+            };
+            // One id is one thing: a stored pin and exclusion for the same id keeps the pin
+            for (const id of next.pins.keys()) next.excludes.delete(id);
+            const { pins, excludes } = this._budgetConstraints();
+            if (
+                pins.size === next.pins.size &&
+                excludes.size === next.excludes.size &&
+                [...next.pins].every(([id, label]) => pins.get(id) === label) &&
+                [...next.excludes].every(([id, label]) => excludes.get(id) === label)
+            ) {
+                return;
+            }
+            this._upgradePins = next.pins;
+            this._upgradeExcludes = next.excludes;
+            if (this._upgradeResultsData) this._renderUpgradeResults(this._upgradeResultsData);
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to restore the budget pins and exclusions:', error);
+        }
     }
 
     /**
@@ -13108,24 +13210,54 @@ class CombatSimUI {
      * @param {Object} plan - From `planUpgradeBudget`
      * @param {Map<string, string>} pins
      * @param {Map<string, string>} excludes
+     * @param {{known?: Set<string>, free?: Object|null, saveFailed?: boolean}} [context] - The ids in the results
+     *   on screen, the plan with no constraints (for the cost line), and whether the last save failed
      * @returns {string} HTML ('' when there is none)
      * @private
      */
-    _renderBudgetConstraints(plan, pins, excludes) {
-        if (!pins.size && !excludes.size) return '';
+    _renderBudgetConstraints(
+        plan,
+        pins,
+        excludes,
+        { known = null, free = null, orderGain = 0, freeOrderGain = 0, saveFailed = false } = {}
+    ) {
+        if (!pins.size && !excludes.size) {
+            // Removing the last one can fail to save too, and the stored ones would then come back on reload
+            return saveFailed
+                ? `<div data-budget-save-failed style="margin-top:6px; color:#ff9800; font-size:10px;">Removing your
+                    pins and exclusions could not be saved; they may come back after a reload.</div>`
+                : '';
+        }
         const style =
             'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:0 5px; ' +
             'font-size:10px; cursor:pointer; font-family:inherit; margin-left:4px;';
         const line = (kind, id, label, act, undo) =>
             `<div style="color:#aaa; font-size:10px; padding:1px 0;" data-budget-constraint="${kind}">${kind}: ` +
             `<span style="color:#e0e0e0;">${escapeAttribute(label)}</span>` +
+            (known && !known.has(id)
+                ? `<span data-budget-missing style="color:#e8a87c;"> (not in the current results)</span>`
+                : '') +
             `<button data-budget-act="${act}" data-budget-id="${escapeAttribute(id)}" ` +
             `data-budget-label="${escapeAttribute(label)}" style="${style}">${undo}</button></div>`;
         const lines = [
             ...[...pins].map(([id, label]) => line('Pinned', id, label, 'unpin', 'Unpin')),
             ...[...excludes].map(([id, label]) => line('Excluded', id, label, 'include', 'Include')),
         ].join('');
-        return `<div style="margin-top:6px; padding-top:4px; border-top:1px dashed #222;">${lines}
+        // What the constraints cost against the plan without them, when the plan is one
+        let costLine = '';
+        if (free && !plan.blocked) {
+            const gain = plan.gainTotal + orderGain - (free.gainTotal + freeOrderGain);
+            const spend = plan.totalCost - free.totalCost;
+            const money = (value) => formatKMB(Math.round(Math.abs(value)));
+            costLine = `<div data-budget-vs-free style="color:#aaa; font-size:10px; padding:1px 0;">Against the plan with
+                no pins or exclusions: <span style="color:${budgetGainColor(gain)};">${plan.metric.format(gain)}</span>,
+                ${spend === 0 ? 'same cost' : `${money(spend)} ${spend > 0 ? 'more' : 'less'} spent`}.</div>`;
+        }
+        const failNote = saveFailed
+            ? `<div data-budget-save-failed style="color:#ff9800; font-size:10px;">These could not be saved; they
+                last until the page reloads.</div>`
+            : '';
+        return `<div style="margin-top:6px; padding-top:4px; border-top:1px dashed #222;">${lines}${costLine}${failNote}
             <button data-budget-clear-all style="${style} margin-left:0;">Clear all pins and exclusions</button></div>`;
     }
 
@@ -13363,11 +13495,15 @@ class CombatSimUI {
                 } else if (act === 'include') {
                     excludes.delete(id);
                 }
+                // A read still out when the player chose must not undo the choice
+                this._budgetConstraintsEpoch = (this._budgetConstraintsEpoch || 0) + 1;
+                this._saveBudgetConstraints();
                 this._renderUpgradeResults(this._upgradeResultsData);
             });
         });
         container.querySelector('[data-budget-clear-all]')?.addEventListener('click', () => {
             this._clearBudgetConstraints();
+            this._saveBudgetConstraints();
             this._renderUpgradeResults(this._upgradeResultsData);
         });
         container.querySelector('#mwi-csim-budget-plan')?.addEventListener('click', replan);
@@ -14171,7 +14307,6 @@ class CombatSimUI {
         // A redraw of the same analysis (a sort, an opened row, a replan) passes the same object and keeps it
         if (results !== this._upgradeResultsData) {
             this._budgetConfirm = null;
-            this._clearBudgetConstraints();
         }
         this._upgradeResultsData = results;
         // The analysis scores with the defaults; re-rank here so a saved score

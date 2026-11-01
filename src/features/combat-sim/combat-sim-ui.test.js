@@ -17,6 +17,7 @@ vi.mock('../profile/build-score-row.js', () => ({
 }));
 vi.mock('../profile/score-calculator.js', () => ({ calculateCombatScore: async () => null }));
 import { readScoped } from '../../utils/character-key.js';
+import storage from '../../core/storage.js';
 
 const mocks = vi.hoisted(() => ({
     /** What the scroll table reads as the best gold/token; null means the shop prices nothing */
@@ -13544,7 +13545,7 @@ describe('pinning and excluding picks in the budget plan (#545)', () => {
         expect(container().textContent).not.toContain('summed');
     });
 
-    test('a fresh analysis clears pins and exclusions, a redraw of the same one keeps them', () => {
+    test('a fresh analysis keeps the pins and exclusions, which are filed under the candidate', () => {
         ui._upgradeBudget = 500;
         const same = analysis();
         ui._renderUpgradeResults(same);
@@ -13556,9 +13557,10 @@ describe('pinning and excluding picks in the budget plan (#545)', () => {
         expect(ui._budgetConstraints().excludes.size).toBe(1);
 
         ui._renderUpgradeResults(analysis());
-        expect(ui._budgetConstraints().pins.size).toBe(0);
-        expect(ui._budgetConstraints().excludes.size).toBe(0);
-        expect(planText()).not.toContain('Pinned');
+        expect(ui._budgetConstraints().pins.size).toBe(1);
+        expect(ui._budgetConstraints().excludes.size).toBe(1);
+        expect(planText()).toContain('Pinned');
+        expect(ui._lastBudgetPlan.picks.map((p) => p.candidate.description)).toContain('Cape');
     });
 
     test('the stopped-run note still shows on a pinned plan and on a blocked one', () => {
@@ -13595,6 +13597,242 @@ describe('pinning and excluding picks in the budget plan (#545)', () => {
 
         expect(planText()).toContain('Nothing in the list both fits');
         expect(container().querySelectorAll('[data-budget-constraint="Excluded"]')).toHaveLength(3);
+    });
+});
+
+describe('pins and exclusions are remembered per character (#545)', () => {
+    const KEY = (id) => `settings:combatSimBudgetConstraints_${id}`;
+    const analysis = () => ({
+        baseline: BASELINE,
+        results: [
+            row('Ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+            row('Amulet', { slot: '/equipment_types/amulet', cost: 200, profitGain: 30 }),
+            row('Cape', { slot: '/equipment_types/back', cost: 400, profitGain: 5 }),
+        ],
+        food: null,
+        context: null,
+    });
+    const container = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const planText = () => container().querySelector('#mwi-csim-upgrade-budget').textContent;
+    const idOf = (description) => candidateKey(analysis().results.find((r) => r.candidate.description === description));
+    const click = (act, description) =>
+        [...container().querySelectorAll(`[data-budget-act="${act}"]`)]
+            .find((b) => b.getAttribute('data-budget-label') === description)
+            .click();
+    const settle = async () => {
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+    };
+
+    beforeEach(() => {
+        mocks.characterId = 'char1';
+        ui.buildPanel();
+        ui._upgradePlanMetric = 'profit';
+        ui._upgradeBudget = 500;
+    });
+
+    afterEach(() => {
+        ui._upgradeBudget = 0;
+        mocks.characterId = 'char1';
+        vi.restoreAllMocks();
+        ui.destroy();
+    });
+
+    test('a pin and an exclusion are written under this character and read back by the next panel', async () => {
+        ui._renderUpgradeResults(analysis());
+        click('pin', 'Cape');
+        click('exclude', 'Ring');
+        await settle();
+
+        expect(mocks.store.get(KEY('char1'))).toEqual({
+            pins: [[idOf('Cape'), 'Cape']],
+            excludes: [[idOf('Ring'), 'Ring']],
+        });
+        expect(mocks.store.has(KEY('char2'))).toBe(false);
+
+        ui.destroy();
+        ui.buildPanel();
+        ui._upgradePlanMetric = 'profit';
+        ui._upgradeBudget = 500;
+        await settle();
+        ui._renderUpgradeResults(analysis());
+
+        expect(ui._lastBudgetPlan.picks[0].candidate.description).toBe('Cape');
+        expect(ui._lastBudgetPlan.picks.map((p) => p.candidate.description)).not.toContain('Ring');
+    });
+
+    test('stored constraints arriving after the table is drawn redraw it', async () => {
+        ui._renderUpgradeResults(analysis());
+        expect(planText()).not.toContain('Pinned');
+        mocks.store.set(KEY('char1'), { pins: [[idOf('Cape'), 'Cape']], excludes: [] });
+
+        await ui._restoreBudgetConstraints();
+
+        expect(planText()).toContain('Pinned');
+        expect(ui._lastBudgetPlan.picks[0].candidate.description).toBe('Cape');
+    });
+
+    test("another character's constraints are never read, and a switch empties this one's", async () => {
+        mocks.store.set(KEY('char2'), { pins: [[idOf('Cape'), 'Cape']], excludes: [] });
+        await ui._restoreBudgetConstraints();
+        expect(ui._budgetConstraints().pins.size).toBe(0);
+
+        ui._renderUpgradeResults(analysis());
+        click('exclude', 'Ring');
+        await settle();
+        ui._clearBudgetConstraints();
+        mocks.characterId = 'char2';
+        await ui._restoreBudgetConstraints();
+
+        expect([...ui._budgetConstraints().pins.keys()]).toEqual([idOf('Cape')]);
+        expect(ui._budgetConstraints().excludes.size).toBe(0);
+        // char1 keeps its own
+        expect(mocks.store.get(KEY('char1')).excludes).toEqual([[idOf('Ring'), 'Ring']]);
+    });
+
+    test('a read that was out when the character changed does not land on the new one', async () => {
+        mocks.store.set(KEY('char1'), { pins: [[idOf('Cape'), 'Cape']], excludes: [] });
+        const pending = ui._restoreBudgetConstraints();
+        mocks.characterId = 'char2';
+        ui._clearBudgetConstraints();
+        await pending;
+
+        expect(ui._budgetConstraints().pins.size).toBe(0);
+    });
+
+    test('a read that was out when the player chose does not undo the choice', async () => {
+        ui._renderUpgradeResults(analysis());
+        mocks.store.set(KEY('char1'), { pins: [], excludes: [[idOf('Amulet'), 'Amulet']] });
+        const pending = ui._restoreBudgetConstraints();
+        click('pin', 'Cape');
+        await pending;
+        await settle();
+
+        expect([...ui._budgetConstraints().pins.keys()]).toEqual([idOf('Cape')]);
+        expect(ui._budgetConstraints().excludes.size).toBe(0);
+    });
+
+    test('damaged stored data is ignored entry by entry', async () => {
+        mocks.store.set(KEY('char1'), {
+            pins: [[idOf('Cape'), 'Cape'], 'junk', [7, 'x'], ['', 'blank']],
+            excludes: [[idOf('Cape'), 'Cape'], [idOf('Ring')]],
+        });
+        await ui._restoreBudgetConstraints();
+
+        const { pins, excludes } = ui._budgetConstraints();
+        expect([...pins.keys()]).toEqual([idOf('Cape')]);
+        // the pin wins the id both lists named; a label-less entry is named by its id
+        expect([...excludes.keys()]).toEqual([idOf('Ring')]);
+        expect(excludes.get(idOf('Ring'))).toBe(idOf('Ring'));
+    });
+
+    test('a stored pin whose pick is gone is shown as missing, not dropped', async () => {
+        mocks.store.set(KEY('char1'), {
+            pins: [['tier|x|/items/gone||Vanished boots', 'Vanished boots']],
+            excludes: [['tier|x|/items/gone2||Old ring', 'Old ring']],
+        });
+        await ui._restoreBudgetConstraints();
+        ui._renderUpgradeResults(analysis());
+
+        expect(planText()).toContain('No plan');
+        expect(planText()).toContain('Vanished boots');
+        expect(container().querySelectorAll('[data-budget-missing]')).toHaveLength(2);
+        expect(ui._budgetConstraints().pins.size).toBe(1);
+    });
+
+    test('a failed save keeps the choice, says so, and clears the note when a save works', async () => {
+        ui._renderUpgradeResults(analysis());
+        vi.spyOn(storage, 'set').mockRejectedValueOnce(new Error('disk full'));
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        click('pin', 'Cape');
+        await settle();
+
+        expect(ui._budgetConstraints().pins.size).toBe(1);
+        expect(container().querySelector('[data-budget-save-failed]')).toBeTruthy();
+
+        click('exclude', 'Ring');
+        await settle();
+        expect(container().querySelector('[data-budget-save-failed]')).toBeNull();
+    });
+
+    test('the cost line counts an ability order the constraints let ride along', () => {
+        const metric = { format: (v) => `${v > 0 ? '+' : ''}${v}`, label: 'x' };
+        const pins = new Map([['a', 'A']]);
+        // Purchases alone are 10 worse, but a +100 order now fits that the free plan's swap had blocked
+        const html = ui._renderBudgetConstraints(
+            { blocked: null, gainTotal: 40, totalCost: 100, metric },
+            pins,
+            new Map(),
+            { free: { gainTotal: 50, totalCost: 100 }, orderGain: 100, freeOrderGain: 0 }
+        );
+        expect(html).toContain('+90');
+        expect(html).not.toContain('-10');
+    });
+
+    test('a failed save when the last constraint is cleared still says so', async () => {
+        ui._renderUpgradeResults(analysis());
+        click('pin', 'Cape');
+        await settle();
+        vi.spyOn(storage, 'set').mockResolvedValueOnce(false);
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        container().querySelector('[data-budget-clear-all]').click();
+        await settle();
+
+        expect(ui._budgetConstraints().pins.size).toBe(0);
+        expect(container().querySelector('[data-budget-save-failed]')).toBeTruthy();
+    });
+
+    test('a save that resolves false (no IndexedDB, quota) counts as failed', async () => {
+        ui._renderUpgradeResults(analysis());
+        vi.spyOn(storage, 'set').mockResolvedValueOnce(false);
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        click('pin', 'Cape');
+        await settle();
+
+        expect(ui._budgetConstraints().pins.size).toBe(1);
+        expect(container().querySelector('[data-budget-save-failed]')).toBeTruthy();
+    });
+
+    test('the constraints say what they cost against the plan without them', () => {
+        ui._renderUpgradeResults(analysis());
+        expect(container().querySelector('[data-budget-vs-free]')).toBeNull();
+
+        click('pin', 'Cape');
+
+        const line = container().querySelector('[data-budget-vs-free]');
+        expect(line).toBeTruthy();
+        // Ring + Amulet (300, +80) become Cape + Ring (500, +55): 25 less gain, 200 more spent
+        expect(line.textContent).toContain('200 more spent');
+        expect(line.textContent).not.toContain('+25');
+    });
+
+    test('excluding everything the budget would buy says the exclusions emptied it', () => {
+        ui._renderUpgradeResults(analysis());
+        click('exclude', 'Ring');
+        click('exclude', 'Amulet');
+        click('exclude', 'Cape');
+
+        expect(planText()).toContain('once your exclusions are left out');
+    });
+
+    test('two enhancement levels of one item are two ids, and pinning one leaves the other out', () => {
+        const ring = (level, cost, profitGain) => {
+            const r = row(`Ring +${level}`, { slot: '/equipment_types/ring', cost, profitGain });
+            r.candidate.upgradeHrid = '/items/ring';
+            r.candidate.upgradeLevel = level;
+            return r;
+        };
+        const data = { baseline: BASELINE, results: [ring(5, 100, 50), ring(10, 300, 20)], food: null, context: null };
+        ui._renderUpgradeResults(data);
+        expect(ui._lastBudgetPlan.picks.map((p) => p.candidate.description)).toEqual(['Ring +5']);
+
+        click('pin', 'Ring +10');
+
+        expect(ui._lastBudgetPlan.picks.map((p) => p.candidate.description)).toEqual(['Ring +10']);
+        expect([...ui._budgetConstraints().pins.keys()]).toHaveLength(1);
+        expect(candidateKey(data.results[0])).not.toBe(candidateKey(data.results[1]));
     });
 });
 
