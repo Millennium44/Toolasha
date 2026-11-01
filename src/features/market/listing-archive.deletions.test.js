@@ -553,3 +553,49 @@ describe('deleting a listing through the log’s owner', () => {
         expect(storageMock.storeFor(STORE).get(`marketListingTimestamps_${CHAR}`)).toHaveLength(1);
     });
 });
+
+describe('two tabs deleting at once', () => {
+    test('both deletions land: the record is folded into what is stored when it is written', async () => {
+        const tabB = new ListingArchive();
+        const rows = rowsOf(4);
+        await listingArchive.add(CHAR, rows);
+
+        // Hold tab A's write of the record until tab B has read, merged and written its own
+        let release;
+        const gate = new Promise((resolve) => (release = resolve));
+        let held = false;
+        storageMock.set.mockImplementation(async (key, ...rest) => {
+            if (key === goneKey(CHAR) && !held) {
+                held = true;
+                await gate;
+            }
+            return storageMock.defaults.set(key, ...rest);
+        });
+
+        vi.setSystemTime(T0 + DAY);
+        const first = listingArchive.remove(CHAR, [rows[0].id]);
+        await vi.waitFor(() => expect(held).toBe(true));
+        expect(await tabB.remove(CHAR, [rows[1].id])).toBe(true);
+        release();
+        expect(await first).toBe(true);
+
+        const gone = storageMock.storeFor(STORE).get(goneKey(CHAR));
+        expect(Object.keys(gone.removed).sort()).toEqual([String(rows[0].id), String(rows[1].id)].sort());
+    });
+});
+
+describe('a re-imported row keeps its import stamp through later updates', () => {
+    test('a status update from the game does not strip importedAt from the log row', () => {
+        const [row] = rowsOf(1);
+        const importedAt = T0 - DAY;
+        estimatedListingAge.knownListings = [{ ...row, status: 'active', importedAt }];
+
+        estimatedListingAge.recordListings([
+            { ...row, status: '/market_listing_status/filled', _toolashaStatus: 'filled' },
+        ]);
+
+        const entry = estimatedListingAge.knownListings.find((listing) => listing.id === row.id);
+        expect(entry.status).toBe('filled');
+        expect(entry.importedAt).toBe(importedAt);
+    });
+});

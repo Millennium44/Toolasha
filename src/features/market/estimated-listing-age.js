@@ -1965,6 +1965,9 @@ class EstimatedListingAge {
                 isSell: listing.isSell,
                 status: status,
             };
+            // A re-imported row's stamp is what lets it outlive an earlier deletion once it is archived
+            const importedAt = existingIndex !== -1 ? this.knownListings[existingIndex].importedAt : undefined;
+            if (importedAt !== undefined) entry.importedAt = importedAt;
 
             if (existingIndex !== -1) {
                 // Update existing entry (in case it had incomplete data)

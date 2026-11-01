@@ -278,7 +278,10 @@ class ListingArchive {
         }
         const next = mergeArchiveGone(current, fresh);
         try {
-            return (await storage.set(goneKey(charId), next, ARCHIVE_STORE, true)) === true;
+            // Folded into what is stored when the write lands: another tab can write the record between this
+            // read and this write, and a plain set would drop that tab's deletions
+            const fold = (stored) => mergeArchiveGone(stored, next);
+            return (await storage.set(goneKey(charId), next, ARCHIVE_STORE, true, { fold })) === true;
         } catch (error) {
             console.error('[ListingArchive] Failed to write the deletion record:', error);
             return false;
