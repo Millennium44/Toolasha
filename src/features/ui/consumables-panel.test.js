@@ -730,6 +730,33 @@ describe('a restock shows at once', () => {
         expect(consumablesPanel.bodyEl.textContent).toContain('Ask: — (1 unpriced) / Bid: — (1 unpriced)');
     });
 
+    test('an ask filled in from the market value with no sellers still buys by order at the bid', async () => {
+        game.latest = { durationSeconds: 3600, players: [{ name: 'Me', isCurrentPlayer: true }] };
+        // No sell listings: reconcileBook stands the market value in for the ask and flags it
+        game.prices['/items/swiftness_coffee'] = { ask: 5080, bid: 5080, askEstimated: true, bidEstimated: false };
+        game.statsByName = {
+            Me: {
+                consumableBreakdown: [
+                    {
+                        itemHrid: '/items/swiftness_coffee',
+                        itemName: 'Swiftness Coffee',
+                        inventoryAmount: 0,
+                        consumptionRate: 320 / 86400,
+                        // A per-item price from another source must not hide that nobody is selling
+                        pricePerItem: 5080,
+                    },
+                ],
+            },
+        };
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._render();
+
+        const titles = [...consumablesPanel.bodyEl.querySelectorAll('[title]')].map((el) => el.title);
+        expect(titles.some((t) => t.includes('\nPlace an order'))).toBe(true);
+        expect(titles.some((t) => t.includes('\nBuy now'))).toBe(false);
+    });
+
     test('known purchase totals identify slots whose consumption rates are unknown', async () => {
         game.items['/items/spaceberry_cake'] = { name: 'Spaceberry Cake', consumableDetail: {} };
         game.items['/items/blackberry_cake'] = { name: 'Blackberry Cake', consumableDetail: {} };

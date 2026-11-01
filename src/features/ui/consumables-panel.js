@@ -3331,11 +3331,14 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         }
 
         if (need.count) {
+            // No sell listing at all (empty, or only the game's market value standing in for one) is told
+            // apart from a priced one, so a bid-only book is bought by order
+            const realBid = entry.costPerDaySides.bid && !entry.bidEstimated ? entry.costPerDaySides.bid : null;
+            const noAsk = !entry.costPerDaySides.ask || entry.askEstimated;
             const strategy = buyStrategy({
                 count: need.count,
-                // No sell listing at all is told apart from a priced one, so a bid-only book is bought by order
-                ask: !entry.costPerDaySides.ask && entry.costPerDaySides.bid ? null : entry.price,
-                bid: entry.costPerDaySides.bid && entry.perDay ? entry.costPerDaySides.bid / entry.perDay : null,
+                ask: noAsk && realBid ? null : entry.price,
+                bid: realBid && entry.perDay ? realBid / entry.perDay : null,
                 secondsLeft: entry.secondsLeft,
                 fillSeconds: this._fillSeconds(entry.itemHrid, need.count),
                 // The bulk sell assistant's rules, mirrored for buying and read

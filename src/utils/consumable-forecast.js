@@ -73,6 +73,9 @@ export function forecast(entry, prices = null) {
         price,
         costPerDay: !rateKnown || price === null ? null : perDay * price,
         costPerDaySides: { ask: side(prices?.ask), bid: side(prices?.bid) },
+        // A side filled from the game's market value is not a listing anyone can trade against
+        askEstimated: Boolean(prices?.askEstimated),
+        bidEstimated: Boolean(prices?.bidEstimated),
     };
 }
 
