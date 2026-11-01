@@ -62,20 +62,19 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
+const { default: labyrinthRunLedger, foldSighting } = await import('./labyrinth-run-ledger.js');
 const {
-    default: labyrinthRunLedger,
     gridSize,
     roomsFullClear,
     roomsRush,
     torchesForPlan,
     rushFloorTable,
-    foldSighting,
     observedUse,
     preserveChance,
     burnSummary,
     torchesPerFloor,
     sparkText,
-} = await import('./labyrinth-run-ledger.js');
+} = await import('./labyrinth-run-ledger-math.js');
 
 describe('the grid arithmetic, straight from the game guide', () => {
     test('floor 1 is 4×4, one wider per floor, capped at 8×8 from floor 5', () => {
