@@ -198,4 +198,51 @@ describe.skipIf(!BENCH)('route search timings', () => {
         }
         report(lines);
     });
+
+    test('runRouteSearch with held enhancing teas (the pooled frontier)', async () => {
+        // 25 enhancing candidates (the most measureEnhancingRates returns), all open from level 1, sharing
+        // two teas, one held deep enough to last part of the climb
+        const teaBill = [
+            { itemHrid: '/items/enhancing_tea', perHour: 12, unitPrice: 1_000 },
+            { itemHrid: '/items/wisdom_tea', perHour: 12, unitPrice: 3_000 },
+        ];
+        const candidates = Array.from({ length: 25 }, (_, index) => ({
+            actionHrid: '/actions/enhancing/enhance',
+            label: `Item ${index}`,
+            requiredLevel: 1,
+            flatRate: true,
+            xpPerHour: 20_000 + index * 4_000,
+            xpPerAction: 50 + index,
+            actionTime: 12,
+            totalEfficiency: 0,
+            goldPerHour: -(48_000 + index * index * 900),
+            drinkCostPerHour: 48_000,
+            goldKnown: true,
+            teaBill,
+        }));
+        const lines = [];
+        for (const [level, target] of [
+            [50, 60],
+            [1, 200],
+        ]) {
+            const input = prepareRouteInput({
+                skillHrid: '/skills/enhancing',
+                targetLevel: target,
+                level,
+                experience: LEVEL_TABLE[level],
+                rates: candidates,
+                table: LEVEL_TABLE,
+                gold: 50_000_000,
+                heldOf: (itemHrid) => (itemHrid === '/items/enhancing_tea' ? 5_000 : 200),
+            });
+            const t0 = performance.now();
+            const result = await runRouteSearch(input, CAP);
+            lines.push(
+                `route search | enhancing ${level}→${target}, 25 items, held teas | ` +
+                    `${(performance.now() - t0).toFixed(1)} ms | segments ${result.stats.segments} | ` +
+                    `bounded ${result.bounded}`
+            );
+        }
+        report(lines);
+    });
 });

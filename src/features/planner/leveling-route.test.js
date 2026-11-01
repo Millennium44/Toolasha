@@ -356,6 +356,59 @@ describe('an unpriced recurring tea', () => {
     });
 });
 
+describe('held teas inside the search', () => {
+    // 2,000 XP to climb; both items drink 12 teas an hour at 1,000 each, inside their hourly figure
+    const tea = [{ itemHrid: '/items/enhancing_tea', perHour: 12, unitPrice: 1_000 }];
+    const item = (name, xpPerHour, goldPerHour) => ({
+        ...rate(name, { flatRate: true, xpPerHour, xpPerAction: 10 }),
+        goldPerHour,
+        drinkCostPerHour: 12_000,
+        teaBill: tea,
+    });
+    const A = item('Quick', 2_000, -22_000);
+    const B = item('Slow', 1_000, -14_000);
+
+    test('24 held teas make the slow item the cheapest, and the one 6,000 coins can afford', async () => {
+        const result = await run({ rates: [A, B], target: 3, gold: 6_000, heldOf: () => 24 });
+        // Quick: 1 h, 22,000 less 12 held teas = 10,000. Slow: 2 h, 28,000 less 24 held = 4,000
+        expect(labels(result.routes.fastest)).toEqual(['Quick 1-3']);
+        expect(result.routes.fastest.totals.goldDelta).toBeCloseTo(-10_000, 6);
+        expect(labels(result.routes.cheapest)).toEqual(['Slow 1-3']);
+        expect(result.routes.cheapest.totals.goldDelta).toBeCloseTo(-4_000, 6);
+        expect(labels(result.routes.budget)).toEqual(['Slow 1-3']);
+        expect(result.routes.budget.totals.budgetSafe).toBe(true);
+    });
+
+    test('the search and exhaustive search agree once the pool is in the labels', async () => {
+        // 4,000 XP, 30 teas held: all-Quick nets 20,000, all-Slow 26,000, mixes fall between
+        const routeInput = input({ rates: [A, B], target: 5, gold: 25_000, heldOf: () => 30 });
+        for (const objective of ['fastest', 'cheapest', 'budget']) {
+            const exhaustive = exhaustiveBest(routeInput, objective);
+            const searched = await searchBest(routeInput, objective);
+            expect(exhaustive).not.toBeNull();
+            expect(searched).not.toBeNull();
+            const key = objective === 'cheapest' ? 'spent' : 'hours';
+            expect(searched[key]).toBeCloseTo(exhaustive[key], 6);
+        }
+    });
+
+    test('rates that drink differently are compared tea by tea, and still agree with exhaustive search', async () => {
+        // A third item drinks no tea: the pool no longer follows hours, so the general comparison runs
+        const plain = {
+            ...rate('Plain', { flatRate: true, xpPerHour: 1_500, xpPerAction: 10 }),
+            goldPerHour: -9_000,
+        };
+        const routeInput = input({ rates: [A, B, plain], target: 6, gold: 40_000, heldOf: () => 30 });
+        for (const objective of ['fastest', 'cheapest', 'budget']) {
+            const exhaustive = exhaustiveBest(routeInput, objective);
+            const searched = await searchBest(routeInput, objective);
+            expect(exhaustive).not.toBeNull();
+            const key = objective === 'cheapest' ? 'spent' : 'hours';
+            expect(searched[key]).toBeCloseTo(exhaustive[key], 6);
+        }
+    });
+});
+
 describe('the search against exhaustive search', () => {
     const cases = [
         {

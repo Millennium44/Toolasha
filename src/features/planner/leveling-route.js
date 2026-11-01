@@ -26,6 +26,14 @@
  *
  * - **Fastest** keeps the quickest label per level (any cost, unknown included);
  * - **Cheapest** keeps the cheapest fully priced label per level;
+ * - with held recurring teas (enhancing) in play, each label carries what is
+ *   left of the bag and is credited for what each level drinks from it, so
+ *   Cheapest and Within budget keep every label no other beats on its axes
+ *   *and* on tea left (Fastest ignores the bag: it does not change time).
+ *   When every rate drinks the same teas at the same rate — enhancing always
+ *   does — tea left is a function of hours, so that is the same comparison as
+ *   cheaper-and-quicker. Otherwise teas are compared one by one, capped at 48
+ *   labels a level because that comparison is quadratic;
  * - **Within budget** keeps every label no other is both quicker and cheaper
  *   than, among the fully priced ones whose cash never went below zero — capped
  *   at {@link DEFAULT_FRONTIER_CAP} per level, which the result says when it bites.
@@ -63,6 +71,12 @@ export const ROUTE_OBJECTIVES = Object.freeze({
 
 /** Labels kept per level by the within-budget search before it trims and says so */
 export const DEFAULT_FRONTIER_CAP = 512;
+
+/** Labels kept per level when held teas must be compared tea by tea (see poolMode) */
+const GENERAL_POOL_CAP = 48;
+
+/** The tea pool of a route that holds no recurring teas */
+const EMPTY_POOL = Object.freeze({});
 
 /** How long one slice of search runs before it yields to the browser, in ms */
 const DEFAULT_SLICE_MS = 12;
@@ -264,20 +278,40 @@ function coinsPerXp(rate) {
  * @param {number} xp - Experience it starts with
  * @returns {Object|null} `{hours, goldDelta, known, endXp, endLevel, need}`, or null when unusable
  */
-function segment(input, rate, level, xp) {
+function segment(input, rate, level, xp, pool = EMPTY_POOL) {
     const climb = climbWith(rate, level, xp, level + 1, input.table, rate.measuredAtLevel);
     if (!Number.isFinite(climb.timeHours) || !Number.isFinite(climb.actionsNeeded)) return null;
     const gold = climbGold(rate, climb.actionsNeeded, climb.timeHours);
-    const known = gold.rateKnown && ratePriced(rate);
+    let known = gold.rateKnown;
+    let goldDelta = gold.goldDelta;
+    let nextPool = pool;
+    if (known && Array.isArray(rate.teaBill)) {
+        // Tea already in the bag is not bought: credit what this level drinks from what the route has left
+        // (the hourly figure priced all of it), and spend it from the label's own pool so a later level
+        // cannot draw it again. Fractional here; the exact re-cost reserves whole teas per stage.
+        for (const tea of rate.teaBill) {
+            const needed = num(tea.perHour) * climb.timeHours;
+            if (!tea.itemHrid || !(needed > 0)) continue;
+            const have = nextPool[tea.itemHrid] || 0;
+            const used = Math.min(have, needed);
+            if (tea.unitPrice > 0) goldDelta += used * tea.unitPrice;
+            else if (needed > have + 1e-9) known = false;
+            if (used > 0) {
+                if (nextPool === pool) nextPool = { ...pool };
+                nextPool[tea.itemHrid] = have - used;
+            }
+        }
+    }
     const upfront = known ? Math.max(0, num(rate.upfrontCost)) : 0;
     return {
         hours: climb.timeHours,
-        goldDelta: known ? gold.goldDelta : 0,
+        goldDelta: known ? goldDelta : 0,
         known,
+        pool: nextPool,
         endXp: climb.endXp,
         endLevel: levelFor(input.table, level + 1, climb.endXp, input.target),
         // The planner's per-step rule: working capital for one completion plus the loss
-        need: upfront + Math.max(0, -gold.goldDelta),
+        need: upfront + Math.max(0, -goldDelta),
     };
 }
 
@@ -463,11 +497,113 @@ function choicesOf(label) {
  * @returns {Object} Search state
  */
 function createObjectiveSearch(input, objective, cap) {
-    const start = { level: input.level, xp: input.experience, hours: 0, spent: 0, known: true, prev: null };
+    const start = {
+        level: input.level,
+        xp: input.experience,
+        hours: 0,
+        spent: 0,
+        known: true,
+        pool: { ...input.heldTeas },
+        prev: null,
+    };
     const startLevel = levelFor(input.table, input.level, input.experience, input.target);
     start.level = startLevel;
     const nodes = new Map([[startLevel, [start]]]);
-    return { objective, cap, nodes, bounded: false, segments: 0 };
+    const teaItems = Object.keys(input.heldTeas).filter((itemHrid) => input.heldTeas[itemHrid] > 0);
+    return { objective, cap, nodes, bounded: false, segments: 0, teaItems, poolMode: poolMode(input, teaItems) };
+}
+
+/**
+ * How the held-tea pool has to be compared between labels.
+ *
+ * - `none`: nothing held, nothing to compare.
+ * - `hours`: every rate drinks the same teas at the same rate (enhancing: measureEnhancingRates gives every
+ *   candidate one shared bill), so what is left of the bag is `held − perHour × hours` — a falling function of
+ *   hours alone. Fewer hours means at least as much tea left, and the pool needs no axis of its own.
+ * - `general`: rates drink differently, so the pool is compared tea by tea, at a smaller cap
+ *   ({@link GENERAL_POOL_CAP}), because that check is quadratic in the frontier.
+ *
+ * @param {Object} input - Route input
+ * @param {Array<string>} teaItems - Teas with something held
+ * @returns {'none'|'hours'|'general'} The mode
+ */
+function poolMode(input, teaItems) {
+    if (!teaItems.length) return 'none';
+    const signature = (rate) =>
+        JSON.stringify(
+            (Array.isArray(rate.teaBill) ? rate.teaBill : [])
+                .filter((tea) => teaItems.includes(tea.itemHrid))
+                .map((tea) => [tea.itemHrid, num(tea.perHour)])
+                .sort()
+        );
+    const first = signature(input.rates[0] || {});
+    return input.rates.every((rate) => signature(rate) === first) ? 'hours' : 'general';
+}
+
+/**
+ * Whether label `a` has at least as much of every held tea left as `b`.
+ * @param {Object} search - Search state
+ * @param {Object} a - A label
+ * @param {Object} b - Another
+ * @returns {boolean} Whether a's pool covers b's
+ */
+function poolCovers(search, a, b) {
+    for (const itemHrid of search.teaItems) {
+        if ((a.pool[itemHrid] || 0) < (b.pool[itemHrid] || 0) - 1e-9) return false;
+    }
+    return true;
+}
+
+/**
+ * Labels no other beats on every compared axis and on the held-tea pool: a label that spent less but drank
+ * more of the bag has not beaten one that still holds the teas a later level would be credited for.
+ * @param {Object} search - Search state
+ * @param {Array<Object>} sorted - Labels, best first on the primary axis
+ * @param {(a: Object, b: Object) => boolean} beats - Whether a is no worse than b on the compared axes
+ * @returns {Array<Object>} The frontier, in the same order
+ */
+function poolFrontier(search, sorted, beats) {
+    const frontier = [];
+    for (const label of sorted) {
+        if (!frontier.some((kept) => beats(kept, label) && poolCovers(search, kept, label))) frontier.push(label);
+    }
+    return frontier;
+}
+
+/**
+ * Trim a frontier to the cap, evenly spaced along it with both ends kept, and record that it bit.
+ * @param {Object} search - Search state
+ * @param {Array<Object>} frontier - Sorted frontier
+ * @returns {Array<Object>} At most `cap` labels
+ */
+function trim(search, frontier, cap = search.cap) {
+    if (frontier.length <= cap) return frontier;
+    search.bounded = true;
+    const kept = [];
+    for (let i = 0; i < cap; i += 1) {
+        kept.push(frontier[Math.round((i * (frontier.length - 1)) / (cap - 1))]);
+    }
+    return [...new Set(kept)];
+}
+
+/**
+ * The cheaper-and-quicker frontier, by a sweep: labels sorted by `first`, kept while `second` keeps falling.
+ * @param {Array<Object>} labels - Labels
+ * @param {string} first - Primary axis
+ * @param {string} second - Secondary axis
+ * @returns {Array<Object>} The frontier, sorted by `first`
+ */
+function sweep(labels, first, second) {
+    const sorted = [...labels].sort((a, b) => a[first] - b[first] || a[second] - b[second]);
+    const frontier = [];
+    let best = Infinity;
+    for (const label of sorted) {
+        if (label[second] < best) {
+            frontier.push(label);
+            best = label[second];
+        }
+    }
+    return frontier;
 }
 
 /**
@@ -485,31 +621,36 @@ function prune(search, labels) {
         }
         return [best];
     }
+    // Held recurring teas make the bag part of the state, compared alongside the objective's own axes
+    const mode = search.poolMode;
     if (search.objective === 'cheapest') {
+        // Tea left falls with hours alone: cheaper and quicker is the whole comparison
+        if (mode === 'hours') return trim(search, sweep(labels, 'spent', 'hours'));
+        if (mode === 'general') {
+            const sorted = [...labels].sort((a, b) => a.spent - b.spent || a.hours - b.hours);
+            return trim(
+                search,
+                poolFrontier(search, sorted, (a, b) => a.spent <= b.spent),
+                Math.min(search.cap, GENERAL_POOL_CAP)
+            );
+        }
         let best = labels[0];
         for (const label of labels) {
             if (label.spent < best.spent || (label.spent === best.spent && label.hours < best.hours)) best = label;
         }
         return [best];
     }
-    // Within budget: the quicker-and-cheaper frontier
-    const sorted = [...labels].sort((a, b) => a.hours - b.hours || a.spent - b.spent);
-    const frontier = [];
-    let cheapest = Infinity;
-    for (const label of sorted) {
-        if (label.spent < cheapest) {
-            frontier.push(label);
-            cheapest = label.spent;
-        }
+    // Within budget: the quicker-and-cheaper frontier (in `hours` mode quicker already means more tea left)
+    if (mode === 'general') {
+        const sorted = [...labels].sort((a, b) => a.hours - b.hours || a.spent - b.spent);
+        return trim(
+            search,
+            poolFrontier(search, sorted, (a, b) => a.hours <= b.hours && a.spent <= b.spent),
+            Math.min(search.cap, GENERAL_POOL_CAP)
+        );
     }
-    if (frontier.length <= search.cap) return frontier;
     // Evenly spaced along the frontier, both ends kept: the quickest and the cheapest survive any trim
-    search.bounded = true;
-    const kept = [];
-    for (let i = 0; i < search.cap; i += 1) {
-        kept.push(frontier[Math.round((i * (frontier.length - 1)) / (search.cap - 1))]);
-    }
-    return [...new Set(kept)];
+    return trim(search, sweep(labels, 'hours', 'spent'));
 }
 
 /**
@@ -527,7 +668,7 @@ function extendLevel(input, search, level, eligible) {
     const priced = search.objective !== 'fastest';
     for (const label of labels) {
         for (const rate of eligible) {
-            const seg = segment(input, rate, level, label.xp);
+            const seg = segment(input, rate, level, label.xp, label.pool);
             search.segments += 1;
             if (!seg) continue;
             if (priced && !seg.known) continue;
@@ -538,6 +679,7 @@ function extendLevel(input, search, level, eligible) {
                 hours: label.hours + seg.hours,
                 spent: label.spent - seg.goldDelta,
                 known: label.known && seg.known,
+                pool: seg.pool,
                 rate,
                 prev: label,
             };
@@ -742,7 +884,7 @@ export async function runRouteSearch(input, options = {}) {
 export function exhaustiveBest(input, objective) {
     const startLevel = levelFor(input.table, input.level, input.experience, input.target);
     let best = null;
-    const walk = (level, xp, hours, spent, known) => {
+    const walk = (level, xp, hours, spent, known, pool) => {
         if (level >= input.target) {
             if (objective !== 'fastest' && !known) return;
             const candidate = { hours, spent };
@@ -756,14 +898,14 @@ export function exhaustiveBest(input, objective) {
         }
         for (const rate of input.rates) {
             if (!rateStartsAt(rate, level)) continue;
-            const seg = segment(input, rate, level, xp);
+            const seg = segment(input, rate, level, xp, pool);
             if (!seg) continue;
             if (objective !== 'fastest' && !seg.known) continue;
             if (objective === 'budget' && input.gold - spent < seg.need) continue;
-            walk(seg.endLevel, seg.endXp, hours + seg.hours, spent - seg.goldDelta, known && seg.known);
+            walk(seg.endLevel, seg.endXp, hours + seg.hours, spent - seg.goldDelta, known && seg.known, seg.pool);
         }
     };
-    walk(startLevel, input.experience, 0, 0, true);
+    walk(startLevel, input.experience, 0, 0, true, { ...input.heldTeas });
     return best;
 }
 
@@ -778,11 +920,13 @@ export function searchModelCost(input, rates) {
     let xp = input.experience;
     let hours = 0;
     let spent = 0;
+    let pool = { ...input.heldTeas };
     for (const rate of rates) {
         if (level >= input.target) break;
-        const seg = segment(input, rate, level, xp);
+        const seg = segment(input, rate, level, xp, pool);
         hours += seg.hours;
         spent -= seg.goldDelta;
+        pool = seg.pool;
         xp = seg.endXp;
         level = seg.endLevel;
     }
