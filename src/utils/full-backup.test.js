@@ -588,6 +588,51 @@ describe('importEverything reports what did not land', () => {
             delete storageMock.tryGet;
         });
 
+        test('a tombstone map that cannot be read is left as it is, not overwritten with an empty one', async () => {
+            storageMock.tryGet = vi.fn(async () => null);
+            db.set('marketListings', new Map([[TOMBS, { 12: stone }]]));
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)] };
+
+            await importEverything(payload);
+
+            // The restore wrote the chunk and nothing under the tombstone key
+            expect(db.get('marketListings').get(TOMBS)).toEqual({ 12: stone });
+            expect(db.get('marketListings').has(CHUNK)).toBe(true);
+            delete storageMock.tryGet;
+        });
+
+        test('restoring archived months leaves this device permanent deletion record standing', async () => {
+            withTryGet();
+            const GONE = 'marketListingArchiveGone_abc';
+            const record = { clearedAt: 5000, removed: { 77: 6000 } };
+            db.set('marketListings', new Map([[GONE, record]]));
+            const payload = await exportEverything();
+            // A backup older than the clear: it carries the months and no record
+            payload.stores.marketListings = { [CHUNK]: [row(11)] };
+
+            await importEverything(payload);
+
+            // The restore is a rollback of what the backup carries; the record is not part of it, so the rows
+            // the clear hid stay hidden until they are imported again
+            expect(db.get('marketListings').get(GONE)).toEqual(record);
+            expect(db.get('marketListings').has(CHUNK)).toBe(true);
+            delete storageMock.tryGet;
+        });
+
+        test('a backup that carries the record restores it with the months', async () => {
+            withTryGet();
+            const GONE = 'marketListingArchiveGone_abc';
+            db.set('marketListings', new Map([[GONE, { clearedAt: 9000, removed: {} }]]));
+            const payload = await exportEverything();
+            payload.stores.marketListings = { [CHUNK]: [row(11)], [GONE]: { clearedAt: 100, removed: {} } };
+
+            await importEverything(payload);
+
+            expect(db.get('marketListings').get(GONE)).toEqual({ clearedAt: 100, removed: {} });
+            delete storageMock.tryGet;
+        });
+
         test('chunks and their map go out and come back unchanged', async () => {
             db.set(
                 'marketListings',

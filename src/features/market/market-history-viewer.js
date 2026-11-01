@@ -33,7 +33,10 @@ const KNOWN_STATUSES = new Set(['active', 'filled', 'canceled', 'expired', 'unkn
  * @returns {string} The status when it is one the log records, else 'unknown'
  */
 function normalizeImportedStatus(status) {
-    const text = typeof status === 'string' ? status.trim().toLowerCase() : '';
+    let text = typeof status === 'string' ? status.trim().toLowerCase() : '';
+    // The game's own spelling: `/market_listing_status/cancelled`
+    text = text.replace(/^\/market_listing_status\//, '');
+    if (text === 'cancelled') text = 'canceled';
     return KNOWN_STATUSES.has(text) ? text : 'unknown';
 }
 
@@ -52,7 +55,7 @@ export function importSummary({ imported, skipped, placed, total }) {
     return (
         'Import complete!\n\n' +
         `Added to recent history: ${placed.toLog}\n` +
-        `Added to archive (older than 90 days): ${placed.toArchive}\n` +
+        `Added to archive (older listings): ${placed.toArchive}\n` +
         `Skipped: ${skipped + uncounted} duplicates or invalid rows\n` +
         `Total: ${total} listings`
     );
@@ -64,6 +67,8 @@ class MarketHistoryViewer {
         this.modal = null;
         this.unsubscribeMarkers = null;
         this.listings = [];
+        /** The archive of older listings could not be read, so `listings` is the log alone */
+        this.archiveUnreadable = false;
         this.filteredListings = [];
         this.currentPage = 1;
         this.rowsPerPage = 50;
@@ -307,7 +312,10 @@ class MarketHistoryViewer {
      */
     async loadListings() {
         try {
-            const stored = await estimatedListingAge.allPersonalListings();
+            const { listings: stored, archiveReadable } = await estimatedListingAge.allPersonalListingsDetailed();
+            // Said beside the table, and in the export and the Clear count: an archive that could not be read is
+            // not an empty one
+            this.archiveUnreadable = archiveReadable === false;
             // Belt and braces: anchors are split off before this point, but a
             // row with no item is not a row this table can draw
             this.listings = stored.filter((listing) => listing && listing.itemHrid);
@@ -328,6 +336,7 @@ class MarketHistoryViewer {
             console.error('[MarketHistoryViewer] Failed to load listings:', error);
             this.listings = [];
             this.filteredListings = [];
+            this.archiveUnreadable = false;
         }
     }
 
@@ -1249,6 +1258,20 @@ class MarketHistoryViewer {
             tableContainer.removeChild(tableContainer.firstChild);
         }
 
+        if (this.archiveUnreadable) {
+            const note = document.createElement('div');
+            note.className = 'mwi-market-history-archive-note';
+            note.textContent = 'Older (archived) listings could not be read';
+            note.style.cssText = `
+                padding: 6px 10px;
+                margin-bottom: 6px;
+                color: #f0b429;
+                background: rgba(240, 180, 41, 0.12);
+                border-radius: 4px;
+            `;
+            tableContainer.appendChild(note);
+        }
+
         const table = document.createElement('table');
         table.style.cssText = `
             width: 100%;
@@ -1707,6 +1730,11 @@ class MarketHistoryViewer {
      * Export listings to CSV
      */
     exportCSV() {
+        // An export that leaves the archive out without saying so is a backup missing most of the history
+        if (this.archiveUnreadable) {
+            alert('Older (archived) listings could not be read, so the export would be incomplete. Try again later.');
+            return;
+        }
         const headers = ['Date', 'Item', 'Enhancement', 'Type', 'Status', 'Price', 'Quantity', 'Filled', 'Total', 'ID'];
         const rows = this.filteredListings.map((listing) => [
             new Date(listing.createdTimestamp || listing.timestamp).toISOString(),
@@ -1896,9 +1924,7 @@ class MarketHistoryViewer {
 
             // Save to storage
             const placed = await estimatedListingAge.importListingsDetailed(importedListings);
-            if (!placed.ok) {
-                throw new Error('the listing log could not be read or written, so the listings were not imported');
-            }
+            if (!placed.ok) await this.failedImport(placed);
             await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message
@@ -1916,6 +1942,26 @@ class MarketHistoryViewer {
             console.error('[MarketHistoryViewer] CSV import error:', error);
             throw error;
         }
+    }
+
+    /**
+     * Report an import whose log write failed. Older rows may already be in the archive by then, and the
+     * message says so instead of a flat failure.
+     * @param {{toArchive: number}} placed - From `importListingsDetailed`
+     * @throws {Error} Always, for the caller's error path
+     */
+    async failedImport(placed) {
+        if (placed.toArchive > 0) {
+            // The archive took rows, so the table has changed
+            await this.loadListings();
+            this.renderTable();
+            throw new Error(
+                `${placed.toArchive} older listings were archived, but the recent ones were not imported ` +
+                    'because the listing log could not be read or written. Import the file again to add them; ' +
+                    'the archived ones will count as duplicates.'
+            );
+        }
+        throw new Error('the listing log could not be read or written, so the listings were not imported');
     }
 
     /**
@@ -2085,9 +2131,7 @@ class MarketHistoryViewer {
 
             // Save to storage
             const placed = await estimatedListingAge.importListingsDetailed(importedListings);
-            if (!placed.ok) {
-                throw new Error('the listing log could not be read or written, so the listings were not imported');
-            }
+            if (!placed.ok) await this.failedImport(placed);
             await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message
@@ -2112,10 +2156,14 @@ class MarketHistoryViewer {
      * @param {number} listingId
      */
     async deleteListing(listingId) {
-        this.listings = this.listings.filter((l) => l.id !== listingId);
         // Persist via estimatedListingAge (single writer for the shared storage key);
-        // it also drops the entry from its in-memory copy so the deletion sticks
-        await estimatedListingAge.deleteListing(listingId);
+        // it also drops the entry from its in-memory copy so the deletion sticks. The row leaves the table only
+        // once the deletion is recorded: an unrecorded one would come back on the next sync
+        if ((await estimatedListingAge.deleteListing(listingId)) === false) {
+            alert('The listing could not be deleted: the deletion could not be saved. Try again.');
+            return;
+        }
+        this.listings = this.listings.filter((l) => l.id !== listingId);
         this.applyFilters();
         this.renderTable();
     }
@@ -2128,6 +2176,9 @@ class MarketHistoryViewer {
         const confirmed = confirm(
             `⚠️ WARNING: This will permanently delete ALL market history data!\n` +
                 `You are about to delete ${this.listings.length} listings.\n` +
+                (this.archiveUnreadable
+                    ? `Older (archived) listings could not be read and are not counted, but they will be deleted too.\n`
+                    : '') +
                 `RECOMMENDATION: Export to CSV first using the "Export CSV" button.\n` +
                 `Anonymous age anchors are kept so age estimates stay accurate.\n` +
                 `This action CANNOT be undone!\n` +

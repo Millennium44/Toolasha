@@ -135,6 +135,13 @@ const LATCH_COMPANIONS = {
  * tombstone for it stood hid the restored row again on the next read. Restoring records therefore drops this
  * device's tombstones for the ids they hold, as {@link reconcileRestoredTombstones} does for the per-key pairs.
  * Literal names, duplicated for the same reason as {@link TOMBSTONE_COMPANIONS}.
+ *
+ * The archive's permanent deletion record (`marketListingArchiveGone_<charId>`) is deliberately NOT reconciled
+ * here. Restoring writes the keys the backup carries and leaves the rest alone, so: a backup that carries the
+ * record restores it with the months (a rollback to that point, which the next sync's union of the gist's
+ * newer record hides again), and a backup without one (made before the key existed, or before any deletion)
+ * leaves this device's record standing, so rows it deleted or cleared are not resurrected by an older backup.
+ * To bring such rows back on purpose, import them again: an import stamps them after the deletion.
  */
 const CHUNKED_TOMBSTONES = {
     marketListings: [{ records: 'marketListingArchiveRec_', tombstones: 'marketListingArchiveRecTomb_' }],
@@ -241,8 +248,10 @@ async function reconcileChunkedTombstones(storeName, entries) {
                 stones = entries[tombKey];
             } else {
                 const probed = typeof storage.tryGet === 'function' ? await storage.tryGet(tombKey, storeName) : null;
-                if (probed && !probed.found) continue;
-                stones = probed?.value;
+                // A read that failed (null) says nothing about what is stored: keep it, rather than write {} over
+                // tombstones this device may hold
+                if (probed === null || !probed.found) continue;
+                stones = probed.value;
             }
             const kept = {};
             if (stones && typeof stones === 'object' && !Array.isArray(stones)) {

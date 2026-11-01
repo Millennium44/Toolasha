@@ -18,7 +18,7 @@ import { showsOrderBookAge, formatListingTimestamp } from './listing-age-display
 import { readScoped } from '../../utils/character-key.js';
 import { GAME } from '../../utils/selectors.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
-import listingArchive, { listingTime } from './listing-archive.js';
+import listingArchive, { listingTime, listingRevision } from './listing-archive.js';
 
 /** Store both halves of the old shared key live in */
 const LISTINGS_STORE = 'marketListings';
@@ -590,6 +590,38 @@ function mergeListingLogsForSync(local, incoming, context) {
     return mergeListingLogs(forUpload ? retainedSide(local) : local, retainedSide(incoming));
 }
 
+/**
+ * The fold a sync PULL applies to the log: the incoming side alone is trimmed, this device's log is never.
+ *
+ * Registered as the log's own `pull`, because the default (`merge`) is turned round by the sync when only
+ * this device moved since the last exchange, which made {@link retainedSide} judge THIS device's rows and
+ * drop them with no archive write behind it, including rows a failed archive write left in the log on
+ * purpose. A pull never removes a local row; the owner moves the ones outside the window on its next load.
+ *
+ * An id both sides hold keeps the copy that is further along (a settled status over an open one, then more
+ * filled), and the incoming copy on a tie, which is what the union always did when the gist had moved. The
+ * further-along rule is what keeps this correct in the orientation where only this device moved: its copy
+ * is the newer one there, and a plain "incoming wins" would hand it the gist's older status back.
+ * @param {Array<Object>} local - This device's log
+ * @param {Array<Object>} incoming - The log coming down
+ * @returns {Array<Object>} Merged, sorted by id
+ */
+function mergeListingLogsForPull(local, incoming) {
+    if (!Array.isArray(local)) return incoming;
+    if (!Array.isArray(incoming)) return local;
+    const offered = retainedSide(incoming);
+    const heldById = new Map();
+    for (const entry of local) {
+        if (entry && typeof entry.id === 'number') heldById.set(entry.id, entry);
+    }
+    const winners = offered.filter((entry) => {
+        if (!entry || typeof entry.id !== 'number') return true;
+        const held = heldById.get(entry.id);
+        return !held || listingRevision(held) <= listingRevision(entry);
+    });
+    return mergeListingLogs(local, winners);
+}
+
 class EstimatedListingAge {
     constructor() {
         this.knownListings = []; // Array of {id, timestamp, createdTimestamp, enhancementLevel, ...} sorted by id
@@ -1045,7 +1077,11 @@ class EstimatedListingAge {
         const { ok } = await listingArchive.add(owner.charId, dropped);
         if (!ok || !this._ownsMemory(owner)) return listings;
         const moved = new Set(dropped);
-        return mergeListingLogs(listings, this.knownListings).filter((listing) => !moved.has(listing));
+        // Marking a listing active mutates the row in place, so a row marked while the archive was written is
+        // still the object that was archived. It is open again, and retention never lets go of an open row
+        return mergeListingLogs(listings, this.knownListings).filter(
+            (listing) => listing.status === 'active' || !moved.has(listing)
+        );
     }
 
     /**
@@ -1172,12 +1208,26 @@ class EstimatedListingAge {
      * @returns {Promise<Array>} Copies, sorted by id
      */
     async allPersonalListings() {
+        return (await this.allPersonalListingsDetailed()).listings;
+    }
+
+    /**
+     * {@link allPersonalListings}, saying whether the archive could be read.
+     *
+     * A failed archive read is not an empty archive: the viewer says so beside the log's rows, and the export
+     * and the Clear History count do not silently leave the archive out.
+     * @returns {Promise<{listings: Array, archiveReadable: boolean}>} `listings` is empty when a character
+     *   switch landed while the log and archive were being read, rather than a mix of two characters
+     */
+    async allPersonalListingsDetailed() {
         const owner = this._owner();
         const log = await this.personalListings();
+        if (!this._ownsMemory(owner)) return { listings: [], archiveReadable: true };
         const archived = await listingArchive.read(owner.charId);
-        const byId = new Map(archived.map((listing) => [listing.id, listing]));
+        if (!this._ownsMemory(owner)) return { listings: [], archiveReadable: true };
+        const byId = new Map((archived || []).map((listing) => [listing.id, listing]));
         for (const listing of log) byId.set(listing.id, listing);
-        return [...byId.values()].sort((a, b) => a.id - b.id);
+        return { listings: [...byId.values()].sort((a, b) => a.id - b.id), archiveReadable: archived !== null };
     }
 
     /**
@@ -1369,6 +1419,8 @@ class EstimatedListingAge {
      * storage key — writing the key from a divergent copy resurrects deleted entries.
      * Re-syncs from storage first so a stale in-memory copy can't clobber other rows.
      * @param {number} listingId - Listing ID to delete
+     * @returns {Promise<boolean>} False when the deletion could not be recorded permanently (nothing was
+     *   deleted then); true otherwise, including when a character switch made this a no-op
      */
     async deleteListing(listingId) {
         // The re-sync is several storage hops, and the write that follows is a
@@ -1377,18 +1429,23 @@ class EstimatedListingAge {
         // writing it under their key, wiping their whole listing history
         const owner = this._owner();
         await this.loadHistoricalData();
-        if (!this._ownsMemory(owner)) return;
+        if (!this._ownsMemory(owner)) return true;
+        // First, and whether or not this device's archive holds the row: the permanent record is what keeps
+        // a peer's archived copy, or a stale log row this device retires later, from coming back. A failure
+        // changes nothing else, so the caller can say so and leave the row where it is
+        if (!(await listingArchive.remove(owner.charId, [listingId]))) {
+            console.error('[EstimatedListingAge] The deletion could not be recorded in the archive');
+            return false;
+        }
+        if (!this._ownsMemory(owner)) return true;
         this.knownListings = this.knownListings.filter((l) => l.id !== listingId);
         this.rebuildEstimationPoints();
         // Before the write, so a pull landing between the two still finds the
         // tombstone rather than only the shortened log
         await this._recordGraves([listingId], owner);
-        if (!this._ownsMemory(owner)) return;
+        if (!this._ownsMemory(owner)) return true;
         await this.saveHistoricalData({ overwrite: true, owner });
-        // A listing the log had already retired lives in the archive, which keeps its own deletions
-        if (!(await listingArchive.remove(owner.charId, [listingId]))) {
-            console.error('[EstimatedListingAge] The deleted listing could not be removed from the archive');
-        }
+        return true;
     }
 
     /**
@@ -1437,15 +1494,19 @@ class EstimatedListingAge {
             if (!taken) return false;
             if (!this._ownsMemory(owner)) return false;
             before = this.knownListings;
-            const merged = this._mergeListings(this.knownListings, listings);
+            // Stamped, so the archive can tell these rows from stale copies of something deleted or cleared
+            // before the import when it retires them months from now
+            const importedAt = Date.now();
+            const stamped = (Array.isArray(listings) ? listings : []).map((listing) =>
+                listing && typeof listing === 'object' ? { ...listing, importedAt } : listing
+            );
+            const merged = this._mergeListings(this.knownListings, stamped);
             const { kept, dropped } = splitListingRetention(merged);
             if (dropped.length > 0) {
                 const fromLog = dropped.filter((listing) => !importedIds.has(listing.id));
                 const fromFile = dropped.filter((listing) => importedIds.has(listing.id));
                 const moved = await listingArchive.add(owner.charId, fromLog);
-                const imported = moved.ok
-                    ? await listingArchive.add(owner.charId, fromFile, { importedAt: Date.now() })
-                    : moved;
+                const imported = moved.ok ? await listingArchive.add(owner.charId, fromFile, { importedAt }) : moved;
                 if (!imported.ok) {
                     await this._undoRestoreGraves(taken, owner);
                     return false;
@@ -1460,7 +1521,7 @@ class EstimatedListingAge {
             return true;
         };
         this._saveChain = (this._saveChain || Promise.resolve()).then(run, run);
-        if (!(await this._saveChain)) return { ok: false, toLog: 0, toArchive: 0 };
+        if (!(await this._saveChain)) return { ok: false, toLog: 0, toArchive };
         // The rollback runs inside the write's own chain step (`onFail`), not as a step queued after it: a
         // save a listing event queued while the write was out would otherwise run first and persist the
         // imported rows from memory before they were taken back
@@ -1480,7 +1541,9 @@ class EstimatedListingAge {
             await this._undoRestoreGraves(taken, owner);
         };
         const written = (await this.saveHistoricalData({ owner, onFail: rollBack })) === true;
-        return written ? { ok: true, toLog, toArchive } : { ok: false, toLog: 0, toArchive: 0 };
+        // `toArchive` stays on a failure: rows the archive took before the log write failed are archived, and the
+        // caller says so rather than reporting a flat failure
+        return written ? { ok: true, toLog, toArchive } : { ok: false, toLog: 0, toArchive };
     }
 
     /**
@@ -2785,6 +2848,9 @@ registerSyncMerge({
     store: LISTINGS_STORE,
     base: LISTINGS_BASE,
     merge: mergeListingLogsForSync,
+    // Its own pull fold: see mergeListingLogsForPull. Without it a pull in the orientation where only this
+    // device moved would trim this device's log by retention, with no archive write
+    pull: mergeListingLogsForPull,
     label: 'Market listing log',
 });
 
@@ -2829,6 +2895,7 @@ export {
     ORDER_BOOK_REPAINT_MS,
     mergeListingLogs,
     mergeListingLogsForSync,
+    mergeListingLogsForPull,
     mergeListingGraves,
     applyListingGraves,
     gravesOf,

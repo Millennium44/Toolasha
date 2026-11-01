@@ -2262,6 +2262,16 @@ class ChunkedHistory {
     }
 
     /**
+     * Whether the last read of this character's history could not be made, so that the (empty) answer
+     * `load()` gave says nothing about what is stored.
+     * @param {string} charId - Whose history
+     * @returns {boolean}
+     */
+    wasUnreadable(charId) {
+        return this._unreadableFor === charId && !(this._loaded && this._charId === charId);
+    }
+
+    /**
      * Drop the in-memory copy, so the next read comes from storage.
      *
      * What a character switch needs: the departing character's entries must not

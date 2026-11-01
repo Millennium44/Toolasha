@@ -76,6 +76,11 @@ const dataManagerMock = vi.hoisted(() => ({
 const estimatedListingAgeMock = vi.hoisted(() => ({
     personalListings: vi.fn(async () => []),
     allPersonalListings: vi.fn(async () => []),
+    // The viewer's own read; it follows `allPersonalListings` unless a test says the archive was unreadable
+    allPersonalListingsDetailed: vi.fn(async () => ({
+        listings: await estimatedListingAgeMock.allPersonalListings(),
+        archiveReadable: true,
+    })),
     addAnchors: vi.fn(async () => {}),
     loadHistoricalData: vi.fn(async () => {}),
     markActiveListings: vi.fn(async () => {}),
@@ -462,7 +467,7 @@ describe('the archive behind the 90-day log', () => {
         expect(alertText()).toBe(
             'Import complete!\n\n' +
                 'Added to recent history: 1\n' +
-                'Added to archive (older than 90 days): 2\n' +
+                'Added to archive (older listings): 2\n' +
                 'Skipped: 1 duplicates or invalid rows\n' +
                 'Total: 4 listings'
         );
@@ -540,5 +545,157 @@ describe('the date column sorts by the date it shows', () => {
         marketHistoryViewer.applyFilters();
 
         expect(marketHistoryViewer.filteredListings.map((listing) => listing.id)).toEqual([2, 3, 1]);
+    });
+});
+
+describe('an archive of older listings that could not be read', () => {
+    const proto = Object.getPrototypeOf(marketHistoryViewer);
+    const alertText = () => globalThis.alert.mock.calls.at(-1)[0];
+
+    beforeEach(() => {
+        marketHistoryViewer.archiveUnreadable = false;
+        estimatedListingAgeMock.allPersonalListingsDetailed.mockImplementation(async () => ({
+            listings: [{ id: 3, itemHrid: '/items/a', timestamp: 3000, createdTimestamp: '2026-10-29T00:00:00.000Z' }],
+            archiveReadable: false,
+        }));
+    });
+
+    afterEach(() => {
+        estimatedListingAgeMock.allPersonalListingsDetailed.mockImplementation(async () => ({
+            listings: await estimatedListingAgeMock.allPersonalListings(),
+            archiveReadable: true,
+        }));
+        marketHistoryViewer.archiveUnreadable = false;
+        marketHistoryViewer.modal = null;
+    });
+
+    test('the table shows the log and says the older listings could not be read', async () => {
+        await proto.loadListings.call(marketHistoryViewer);
+        expect(marketHistoryViewer.archiveUnreadable).toBe(true);
+        expect(marketHistoryViewer.listings).toHaveLength(1);
+
+        marketHistoryViewer.modal = document.createElement('div');
+        const container = document.createElement('div');
+        container.className = 'mwi-market-history-table-container';
+        marketHistoryViewer.modal.appendChild(container);
+        marketHistoryViewer.renderControls = vi.fn();
+        marketHistoryViewer.renderPagination = vi.fn();
+        // The note is what is under test, not the rows
+        marketHistoryViewer.filteredListings = [];
+        proto.renderTable.call(marketHistoryViewer);
+
+        expect(container.querySelector('.mwi-market-history-archive-note')?.textContent).toBe(
+            'Older (archived) listings could not be read'
+        );
+    });
+
+    test('a readable archive shows no note', async () => {
+        estimatedListingAgeMock.allPersonalListingsDetailed.mockImplementation(async () => ({
+            listings: [],
+            archiveReadable: true,
+        }));
+        await proto.loadListings.call(marketHistoryViewer);
+        expect(marketHistoryViewer.archiveUnreadable).toBe(false);
+    });
+
+    test('Export CSV refuses rather than write a file that silently leaves the archive out', async () => {
+        await proto.loadListings.call(marketHistoryViewer);
+        const written = [];
+        vi.stubGlobal(
+            'Blob',
+            class {
+                constructor(parts) {
+                    written.push(...parts);
+                }
+            }
+        );
+
+        marketHistoryViewer.exportCSV();
+
+        expect(written).toEqual([]);
+        expect(alertText()).toMatch(/could not be read, so the export would be incomplete/);
+        vi.unstubAllGlobals();
+    });
+
+    test('the Clear History confirmation says the count leaves the archive out', async () => {
+        await proto.loadListings.call(marketHistoryViewer);
+
+        await marketHistoryViewer.clearHistory();
+
+        expect(confirmMock).toHaveBeenCalledWith(expect.stringMatching(/archived\) listings could not be read/));
+    });
+});
+
+describe('deleting a row from the table', () => {
+    const proto = Object.getPrototypeOf(marketHistoryViewer);
+    const alertText = () => globalThis.alert.mock.calls.at(-1)[0];
+
+    test('a deletion that could not be recorded leaves the row where it is and tells the player', async () => {
+        marketHistoryViewer.listings = [{ id: 7, itemHrid: '/items/a' }];
+        marketHistoryViewer.applyFilters = vi.fn();
+        estimatedListingAgeMock.deleteListing.mockResolvedValueOnce(false);
+
+        await proto.deleteListing.call(marketHistoryViewer, 7);
+
+        expect(marketHistoryViewer.listings.map((l) => l.id)).toEqual([7]);
+        expect(marketHistoryViewer.applyFilters).not.toHaveBeenCalled();
+        expect(alertText()).toMatch(/could not be deleted/);
+    });
+
+    test('a recorded deletion takes the row out of the table', async () => {
+        marketHistoryViewer.listings = [
+            { id: 7, itemHrid: '/items/a' },
+            { id: 8, itemHrid: '/items/a' },
+        ];
+        marketHistoryViewer.applyFilters = vi.fn();
+
+        await proto.deleteListing.call(marketHistoryViewer, 7);
+
+        expect(marketHistoryViewer.listings.map((l) => l.id)).toEqual([8]);
+        expect(marketHistoryViewer.applyFilters).toHaveBeenCalled();
+    });
+});
+
+describe('the status an imported row is stored with', () => {
+    const withWidget = () => {
+        dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
+    };
+    const statusOf = async (statusText) => {
+        withWidget();
+        const csv = [
+            'Date,Item,Enhancement,Type,Status,Price,Quantity,Filled,Total,ID',
+            `2026-01-01T00:00:00.000Z,Widget,0,Sell,${statusText},100,1,1,100,901`,
+        ].join('\n');
+        await marketHistoryViewer.importCSV(csv);
+        return estimatedListingAgeMock.importListingsDetailed.mock.calls.at(-1)[0][0].status;
+    };
+
+    test.each([
+        ['/market_listing_status/filled', 'filled'],
+        ['/market_listing_status/cancelled', 'canceled'],
+        ['cancelled', 'canceled'],
+        ['Canceled', 'canceled'],
+        ['/market_listing_status/active', 'active'],
+        ['mystery', 'unknown'],
+    ])('%s is stored as %s', async (text, expected) => {
+        expect(await statusOf(text)).toBe(expected);
+    });
+});
+
+describe('an import whose log write fails after older rows were archived', () => {
+    test('the message says the older rows were archived and the recent ones were not', async () => {
+        dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
+        estimatedListingAgeMock.importListingsDetailed.mockResolvedValueOnce({ ok: false, toLog: 0, toArchive: 2 });
+        marketHistoryViewer.loadListings = vi.fn(async () => {});
+        const csv = [
+            'Date,Item,Enhancement,Type,Status,Price,Quantity,Filled,Total,ID',
+            '2026-01-01T00:00:00.000Z,Widget,0,Sell,filled,100,1,1,100,556',
+        ].join('\n');
+
+        await expect(marketHistoryViewer.importCSV(csv)).rejects.toThrow(
+            /2 older listings were archived, but the recent ones were not imported/
+        );
+        // The table is refreshed: the archive did take rows
+        expect(marketHistoryViewer.loadListings).toHaveBeenCalled();
     });
 });

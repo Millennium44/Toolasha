@@ -175,6 +175,12 @@ const corpus = [
     // are spelled apart from the log's and graves' scoped bases, so no base matcher reaches across
     { store: 'marketListings', key: `marketListingArchiveRec_${CHAR}_2026-03`, label: 'ListingArchive records' },
     { store: 'marketListings', key: `marketListingArchiveRecTomb_${CHAR}`, label: 'ListingArchive deletions' },
+    // The archive's permanent deletion record: a union, never aged out, apart from every key above
+    {
+        store: 'marketListings',
+        key: `marketListingArchiveGone_${CHAR}`,
+        label: 'ListingArchive permanent deletions',
+    },
 
     // combat-stats/combat-session-history.js
     { store: 'combatStats', key: 'combatSessionHistory', label: 'Combat sessions' },
