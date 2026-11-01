@@ -1427,6 +1427,16 @@ function planSkillGoal(goal, context, stepId = 'train') {
         : { goldDelta: 0, rateKnown: true };
     let goldDelta = climbDelta;
 
+    // The market's volume for what this sells could not be read (the history pool was refusing requests),
+    // so the sales above are counted at full price. Said out loud: the same action measured again, once the
+    // pool answers, can come out far lower (a route search does exactly that)
+    if (best && rateKnown && best.saleUnmeasured) {
+        warnings.push(
+            `${label}: market volume for ${best.saleUnmeasured} could not be checked, so its sales are counted ` +
+                'at full price. If the market cannot absorb them the real cost is higher; Refresh to check again.'
+        );
+    }
+
     const teaNeeds = [];
     let teaUnknown = false;
     let teaHeldCredit = 0;
