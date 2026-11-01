@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial results are recorded without opening the Trials tab
+
+- Each trial's banked tier is now recorded from the guild data the server sends (including at login), so results land and Past weeks can show them (points derived from the tier, marked ~) even if the Trials tab was never open.
+- A trial damage board closed by hand now stays closed for the rest of that trial, across reloads; for new players it no longer opens by itself (existing players keep their setting).
+
 ### More tests read real game messages
 
 - Combat (`new_battle`, `battle_updated`, consumable casts), inventory and market listing and order-book tests now use payloads captured from the game on the test server.
