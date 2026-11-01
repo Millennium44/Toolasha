@@ -2401,7 +2401,7 @@ describe('party_updated', () => {
         const listener = vi.fn();
         dataManager.on('party_roster_updated', listener);
 
-        webSocketHandlers.get('party_updated')(party('idle', ['me', 'a']));
+        webSocketHandlers.get('party_updated')(party('recruiting', ['me', 'a']));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(dataManager.getPartyMembers()).toMatchObject({ source: 'party' });
@@ -2417,7 +2417,7 @@ describe('party_updated', () => {
         });
         expect(dataManager.getPartyMembers().members).toHaveLength(2);
 
-        webSocketHandlers.get('party_updated')(party('idle', ['me']));
+        webSocketHandlers.get('party_updated')(party('recruiting', ['me']));
 
         expect(dataManager.getPartyMembers().members.map((m) => m.characterID)).toEqual(['me']);
     });
@@ -2438,10 +2438,10 @@ describe('party_updated', () => {
         const listener = vi.fn();
         dataManager.on('party_status_changed', listener);
 
-        webSocketHandlers.get('party_updated')(party('idle', ['me', 'a']));
+        webSocketHandlers.get('party_updated')(party('recruiting', ['me', 'a']));
         webSocketHandlers.get('party_updated')(party('battling', ['me', 'a']));
         webSocketHandlers.get('party_updated')(party('battling', ['me', 'a']));
-        webSocketHandlers.get('party_updated')(party('idle', ['me', 'a']));
+        webSocketHandlers.get('party_updated')(party('recruiting', ['me', 'a']));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(listener.mock.calls.map(([e]) => [e.started, e.stopped])).toEqual([
@@ -2451,10 +2451,52 @@ describe('party_updated', () => {
         dataManager.off('party_status_changed', listener);
     });
 
+    test('names come from sharableCharacterMap, then the last fight roster, never the bare slot entry', async () => {
+        const dataManager = await loggedIn();
+        webSocketHandlers.get('new_battle')({
+            players: [{ character: { id: 'me', name: 'Me' } }, { character: { id: 'b', name: 'FromFight' } }],
+        });
+        const message = buildPartyUpdated({
+            status: 'battling',
+            members: [{ id: 'me', name: 'Me' }, { id: 'a', name: 'FromMap' }, { id: 'b' }],
+        });
+        delete message.partyInfo.sharableCharacterMap.b;
+        webSocketHandlers.get('party_updated')(message);
+
+        const names = Object.fromEntries(
+            dataManager.getPartyMembers().members.map((m) => [m.characterID, m.characterName])
+        );
+        expect(names).toEqual({ me: 'Me', a: 'FromMap', b: 'FromFight' });
+    });
+
+    test('a disbanded party, a null partyInfo and an omitted one all leave an empty roster', async () => {
+        for (const message of [
+            party('disbanded', ['me', 'a']),
+            { type: 'party_updated', partyInfo: null },
+            { type: 'party_updated' },
+        ]) {
+            const dataManager = await loggedIn();
+            webSocketHandlers.get('party_updated')(party('recruiting', ['me', 'a']));
+            expect(dataManager.getPartyMembers().members).toHaveLength(2);
+            webSocketHandlers.get('party_updated')(message);
+            expect(dataManager.getPartyMembers().members).toEqual([]);
+        }
+    });
+
+    test('is not written into a character that is being switched away from', async () => {
+        const dataManager = await loggedIn();
+        dataManager.isCharacterSwitching = true;
+        webSocketHandlers.get('party_updated')(party('recruiting', ['me', 'a']));
+        webSocketHandlers.get('character_stats_updated')(buildCharacterStatsUpdated());
+        dataManager.isCharacterSwitching = false;
+        expect(dataManager.getPartyMembers().members).toHaveLength(1);
+        expect(dataManager.characterData.combatUnit).toBeUndefined();
+    });
+
     test('ignores a message from a stale socket', async () => {
         const dataManager = await loggedIn();
         dataManager.activeSocket = {};
-        webSocketHandlers.get('party_updated')(party('idle', ['me', 'a']), { socket: {} });
+        webSocketHandlers.get('party_updated')(party('recruiting', ['me', 'a']), { socket: {} });
         expect(dataManager.getPartyMembers().members).toHaveLength(1);
         dataManager.activeSocket = null;
     });

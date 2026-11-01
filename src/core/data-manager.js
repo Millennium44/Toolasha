@@ -2183,7 +2183,9 @@ class DataManager {
      * @returns {boolean} True when applied
      */
     applyPartyUpdate(data) {
-        if (!this.characterData || !data || typeof data !== 'object' || !('partyInfo' in data)) return false;
+        // The data of a character being switched away from must not be written into; a message
+        // that omits partyInfo (or sends null) is the game's own replacement with nothing.
+        if (this.isCharacterSwitching || !this.characterData || !data || typeof data !== 'object') return false;
 
         const keyOf = (party) =>
             party.members
@@ -2193,11 +2195,13 @@ class DataManager {
         const before = keyOf(this.getPartyMembers());
         const previousStatus = this.characterData.partyInfo?.party?.status ?? null;
 
-        this.characterData.partyInfo = data.partyInfo;
-        this.partyInfoReceivedAt = Date.now();
+        this.characterData.partyInfo = data.partyInfo ?? null;
+        // Strictly after the fight roster it may share a millisecond with: a tie would go to the older source.
+        this.partyInfoReceivedAt = Math.max(Date.now(), (this.battlePartyRoster?.updatedAt ?? 0) + 1);
         this.partyInfoSource = 'party';
 
         const status = data.partyInfo?.party?.status ?? null;
+        // The game's PartyStatus values: creating, recruiting, battling, disbanded.
         if (status !== 'battling') this.battlePartyRoster = null;
 
         const roster = this.getPartyMembers();
@@ -2227,7 +2231,14 @@ class DataManager {
      * @returns {boolean} True when applied
      */
     applyCharacterStats(data) {
-        if (!this.characterData || !data?.combatUnit || typeof data.combatUnit !== 'object') return false;
+        if (
+            this.isCharacterSwitching ||
+            !this.characterData ||
+            !data?.combatUnit ||
+            typeof data.combatUnit !== 'object'
+        ) {
+            return false;
+        }
 
         const stored = this.characterData.combatUnit?.combatAbilities;
         const next = { ...data.combatUnit };
@@ -2914,22 +2925,37 @@ class DataManager {
      * Who this character is grouped with, and how fresh that reading is.
      *
      * Two sources, and the newer one wins: the roster the last fight named, and
-     * the slot map the last `init_character_data` carried. Nothing else updates
-     * either — no party message is handled — so a party changed while idle is
-     * seen only once a fight starts or the login payload is re-sent. A slot map
+     * the slot map `init_character_data` carried, kept current by `party_updated`
+     * (a client that missed one still lags until a fight starts or the login
+     * payload is re-sent). A slot map
      * naming nobody is not a reading: the game empties it for the whole of a
      * dungeon run, so the fight's roster stands. `source` is what a caller shows
      * the user — `'battle'` can lag a party changed while idle, `'login'` lags
-     * every change since that payload arrived, and neither is worth hiding.
+     * every change since that payload arrived, `'party'` is as live as the last message.
      *
      * @returns {{members: Array<{characterID: string, characterName: string}>, source: string, updatedAt: number|null}}
      */
     getPartyMembers() {
-        const slots = this.characterData?.partyInfo?.partySlotMap;
+        const partyInfo = this.characterData?.partyInfo;
+        // A disbanded party names nobody, whatever its slot map still holds.
+        const slots = partyInfo?.party?.status === 'disbanded' ? null : partyInfo?.partySlotMap;
+        // Slot entries carry ids only (characterID, characterLoadoutID, isLeader); the game reads names
+        // from sharableCharacterMap, and the last fight's roster is the second source.
+        const sharable = partyInfo?.sharableCharacterMap || {};
+        const fightNames = new Map(
+            (this.battlePartyRoster?.members || []).map((m) => [String(m.characterID), m.characterName])
+        );
         const members = slots
             ? Object.values(slots)
                   .filter((member) => member?.characterID)
-                  .map((member) => ({ characterID: member.characterID, characterName: member.characterName || '' }))
+                  .map((member) => ({
+                      characterID: member.characterID,
+                      characterName:
+                          member.characterName ||
+                          sharable[member.characterID]?.name ||
+                          fightNames.get(String(member.characterID)) ||
+                          '',
+                  }))
             : [];
         const loginAt = Number.isFinite(this.partyInfoReceivedAt) ? this.partyInfoReceivedAt : null;
 
