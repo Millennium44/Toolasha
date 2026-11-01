@@ -230,6 +230,30 @@ export function duplicateSingletonFailures({ singletons, order, readBundle, allo
 }
 
 /**
+ * Every owned singleton must actually be published where the build's stand-ins and externals look for it.
+ * A mistyped global in `singletonOwnership` (rollup.config.js) or a missing export in the owner's
+ * src/libraries file would leave every other bundle reading `undefined` for the whole release.
+ * @param {Object} root - `window.Toolasha`
+ * @param {Map<string, {global: string, named?: string[]}>} ownership - rollup.config.js's `singletonOwnership`
+ * @returns {string[]} Failures
+ */
+export function ownershipFailures(root, ownership) {
+    const failures = [];
+    for (const [modulePath, { global, named = [] }] of ownership) {
+        const [, library, key] = global.split('.');
+        const published = root?.[library]?.[key];
+        if (published === undefined || published === null) {
+            failures.push(`${global} is not published, but ${modulePath} is routed to it`);
+            continue;
+        }
+        for (const name of named) {
+            if (typeof published[name] !== 'function') failures.push(`${global}.${name} is not a function`);
+        }
+    }
+    return failures;
+}
+
+/**
  * The bridge as the utils bundle ships it, run against the live namespace, must hand back the exact
  * instances the owners published — the property #671 lost for the one module it imported instead.
  * @param {Object} root - `window.Toolasha`
@@ -301,11 +325,13 @@ async function main() {
     }
 
     process.env.BUILD_MODE = 'production';
-    const configs = (await import(pathToFileURL(join(projectRoot, 'rollup.config.js')).href)).default;
+    const rollupConfig = await import(pathToFileURL(join(projectRoot, 'rollup.config.js')).href);
+    if (errors.length === 0) failures.push(...ownershipFailures(window.Toolasha, rollupConfig.singletonOwnership));
+    const configs = rollupConfig.default;
     const { ownedSingletons, FOREIGN_COPY_ALLOWLIST } = await import('./check-bundle-sharing.mjs');
     failures.push(
         ...duplicateSingletonFailures({
-            singletons: ownedSingletons(configs),
+            singletons: ownedSingletons(configs, rollupConfig.singletonOwnership),
             order,
             readBundle: (name) => readFileSync(bundlePath(name), 'utf8'),
             allowlist: FOREIGN_COPY_ALLOWLIST,

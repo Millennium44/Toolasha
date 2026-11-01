@@ -32,8 +32,9 @@ import combatUnitBuffBars from '../features/combat/combat-unit-buff-bars.js';
 import combatConsumableRunway from '../features/combat/combat-consumable-runway.js';
 import combatDpsPanel from '../features/combat/combat-dps-panel.js';
 import partyProfileButton from '../features/combat/party-profile-button.js';
-// Side-effect import: registers the Build Score overlay row
-import '../features/profile/build-score-row.js';
+// Registers the Build Score overlay row; the namespace is published so the sim bundle's party template tuner
+// reaches this one score cache (see singletonOwnership in rollup.config.js)
+import * as buildScoreRow from '../features/profile/build-score-row.js';
 // Registers the Sim Accuracy overlay row and its panel; the instance is read
 // by the zone uptime harness for the sim result the check retained
 import replayCheck, { dungeonWaveTiming } from '../features/combat/combat-replay-check.js';
@@ -151,6 +152,7 @@ toolashaRoot.Combat = {
     combatBattleCounter,
     combatBossEta,
     spawnCensus,
+    buildScoreRow,
     combatDropLuck,
     partyLuckPanel,
     combatDPS,

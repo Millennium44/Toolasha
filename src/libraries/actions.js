@@ -21,6 +21,9 @@ import budgetCalculator from '../features/actions/budget-calculator.js';
 import costSummary from '../features/actions/cost-summary.js';
 import actionPanelLayout from '../features/actions/action-panel-layout.js';
 import craftingPlan from '../features/crafting-plan/index.js';
+// The step walker is a stateful singleton the ui bundle's Iron Cow queue walk also drives; exporting it here
+// (see singletonOwnership in rollup.config.js) is what keeps that bundle from carrying a second walker.
+import craftingPlanWalk from '../features/crafting-plan/crafting-plan-walk.js';
 // The task board's merged crafting walk. Its own registry feature, but it rides
 // in this bundle rather than the ui one: it is built out of the crafting-plan
 // calculator and the walk singleton, and importing it from src/libraries/ui.js
@@ -91,6 +94,7 @@ toolashaRoot.Actions = {
     costSummary,
     actionPanelLayout,
     craftingPlan,
+    craftingPlanWalk,
     taskCraftingTrain,
     productionArbitrageBoard,
     // Reached by Equipment Watch, which lives in the market bundle: importing

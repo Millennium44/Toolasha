@@ -3,7 +3,9 @@ import { join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
     FOREIGN_COPY_ALLOWLIST,
+    UNOWNED_SINGLETON_ALLOWLIST,
     findForeignSingletonCopies,
+    findUnownedSingletonCopies,
     moduleOwners,
     singletonClassName,
 } from './check-bundle-sharing.mjs';
@@ -80,6 +82,54 @@ describe('moduleOwners', () => {
         const owners = moduleOwners(configs);
         expect([...(owners.get(abs('src/a.js')) || [])]).toEqual(['market']);
         expect(owners.has(abs('src/b.js'))).toBe(false);
+    });
+});
+
+describe('moduleOwners with routed ownership', () => {
+    test('an owned singleton no bundle names in its globals still has an owner', () => {
+        const configs = [
+            { input: 'src/libraries/combat.js', output: {} },
+            { input: 'src/libraries/actions.js', output: {} },
+        ];
+        const scroll = abs('src/features/combat/scroll-simulator.js');
+        const ownership = new Map([[scroll, { global: 'Toolasha.Combat.scrollSimulator' }]]);
+        expect([...(moduleOwners(configs, ownership).get(scroll) || [])]).toEqual(['combat']);
+        expect(moduleOwners(configs).has(scroll)).toBe(false);
+    });
+});
+
+describe('findUnownedSingletonCopies', () => {
+    const tracker = abs('src/features/tasks/task-completion-tracker.js');
+    const classNameOf = () => 'TaskCompletionTracker';
+
+    test('flags a stateful singleton with no owner that two bundles carry', () => {
+        const inline = new Map([[tracker, new Set(['ui', 'market'])]]);
+        expect(findUnownedSingletonCopies(inline, new Map(), classNameOf, new Map())).toEqual([
+            {
+                modulePath: 'src/features/tasks/task-completion-tracker.js',
+                className: 'TaskCompletionTracker',
+                bundles: ['market', 'ui'],
+            },
+        ]);
+    });
+
+    test('passes one carrier, an owned module, a non-singleton and an allowlisted module', () => {
+        const two = new Map([[tracker, new Set(['ui', 'market'])]]);
+        expect(
+            findUnownedSingletonCopies(new Map([[tracker, new Set(['ui'])]]), new Map(), classNameOf, new Map())
+        ).toEqual([]);
+        expect(findUnownedSingletonCopies(two, new Map([[tracker, new Set(['ui'])]]), classNameOf, new Map())).toEqual(
+            []
+        );
+        expect(findUnownedSingletonCopies(two, new Map(), () => null, new Map())).toEqual([]);
+        const allowed = new Map([['src/features/tasks/task-completion-tracker.js', 'why']]);
+        expect(findUnownedSingletonCopies(two, new Map(), classNameOf, allowed)).toEqual([]);
+    });
+});
+
+describe('UNOWNED_SINGLETON_ALLOWLIST', () => {
+    test('every entry states a reason', () => {
+        for (const reason of UNOWNED_SINGLETON_ALLOWLIST.values()) expect(reason.length).toBeGreaterThan(20);
     });
 });
 

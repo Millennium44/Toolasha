@@ -8,6 +8,7 @@ import {
     isModuleNotRecord,
     libraryLoadOrder,
     loadBundles,
+    ownershipFailures,
     wiringFailures,
 } from './check-bundle-smoke.mjs';
 
@@ -140,5 +141,25 @@ describe('duplicateSingletonFailures', () => {
         const both = () => 'class ProfitCalculator{}';
         const allowlist = new Map([['src/features/market/profit-calculator.js', new Map([['utils', 'why']])]]);
         expect(duplicateSingletonFailures({ singletons, order, readBundle: both, allowlist })).toEqual([]);
+    });
+});
+
+describe('ownershipFailures', () => {
+    const ownership = new Map([
+        ['src/a.js', { global: 'Toolasha.Combat.loadoutSnapshot' }],
+        ['src/b.js', { global: 'Toolasha.Combat.buildScoreRow', named: ['ensureOwnScore'] }],
+    ]);
+
+    test('passes when every routed global is published', () => {
+        const root = { Combat: { loadoutSnapshot: {}, buildScoreRow: { ensureOwnScore() {} } } };
+        expect(ownershipFailures(root, ownership)).toEqual([]);
+    });
+
+    test('names a global nobody published, and a named export that is not a function', () => {
+        const root = { Combat: { buildScoreRow: { ensureOwnScore: 1 } } };
+        expect(ownershipFailures(root, ownership)).toEqual([
+            'Toolasha.Combat.loadoutSnapshot is not published, but src/a.js is routed to it',
+            'Toolasha.Combat.buildScoreRow.ensureOwnScore is not a function',
+        ]);
     });
 });
