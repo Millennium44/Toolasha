@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Task reroll walk bar tidied
 
-- The reroll walk bar sits in the Task Board toolbar beside "Rerolls" instead of floating over the task cards, shows only on the Task Board, and shrinks to a "Walk again" button with its summary on hover once a walk is done.
+- The reroll walk bar sits in the Task Board toolbar as ordinary toolbar buttons with a short label (details on hover) instead of floating over the task cards, shows only on the Task Board, and shrinks to a "Walk again" button once a walk is done; a new "Reroll walk bar position" setting keeps it floating if you prefer.
 
 ### Philo Gamba: untradable capes no longer cost 0
 
