@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial sign-up levels stay current
+
+- The Guild Trial Sim's assignment planner keeps a member's skilling sign-up level when they switch trials, and picks up the guild's sign-up levels when the roster updates, instead of keeping the login copy.
+
 ### Game message audit script
 
 - A developer script (`npm run audit:handlers`) compares the fields Toolasha reads from each game message with the fields the game's own client reads, to catch features reading a field the game never sends.
