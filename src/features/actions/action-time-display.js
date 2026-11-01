@@ -4792,9 +4792,17 @@ class ActionTimeDisplay {
     }
 
     /**
-     * Match an action from cache by reading its name from a queue div
+     * Match a queue row to its queued action.
+     *
+     * The row's "#N" label is its position in the queue sorted by ordinal (#1 is the running
+     * action), so `sortedByOrdinal[N - 1]` is the row's action in any game language and with
+     * any number of identical rows. The row's text is only a cross-check: it can show that the
+     * label points at a stale queue (the row names some other action and not the one the label
+     * picked), in which case the row is left unmapped rather than guessed. A row with no label,
+     * or one past the end of the queue, falls back to matching by its text alone.
      * @param {HTMLElement} actionDiv - The queue action div element
      * @param {Array} cachedActions - Array of actions from dataManager
+     * @param {Set} [usedActionIds] - Actions already given to earlier rows
      * @returns {Object|null} Matched action object or null
      */
     matchActionFromDiv(actionDiv, cachedActions, usedActionIds = new Set()) {
@@ -4820,27 +4828,46 @@ class ActionTimeDisplay {
         // Remove position number: "#3Coinify: Foraging Essence" → "Coinify: Foraging Essence"
         // Note: No space after the number in the actual text
         const actionNameText = fullText.replace(/^#\d+/, '').trim();
+        const position = Number(/^#(\d+)/.exec(fullText)?.[1]);
 
+        const sorted = [...cachedActions].sort(compareActionQueueOrder);
+        const rowTextNames = this.queueRowTextMatcher(actionNameText, isEnhancingAction);
+        const byText = () => sorted.find((a) => !usedActionIds.has(a.id) && rowTextNames(a)) ?? null;
+
+        const labeled = position >= 1 ? sorted[position - 1] : undefined;
+        if (labeled && !usedActionIds.has(labeled.id)) {
+            if (rowTextNames(labeled)) return labeled;
+            // The label and the text disagree. If the text positively names a different action
+            // the queue has moved under the open menu; otherwise the text is simply not
+            // readable (another game language) and the label stands.
+            const other = byText();
+            return other && other.id !== labeled.id ? null : labeled;
+        }
+        return byText();
+    }
+
+    /**
+     * Build the predicate that says whether a queued action is the one a row's text names.
+     * @param {string} actionNameText - The row's text with its "#N" removed
+     * @param {boolean} isEnhancingAction - Whether the row carries the enhancing icon
+     * @returns {function(Object): boolean}
+     */
+    queueRowTextMatcher(actionNameText, isEnhancingAction) {
         // Handle enhancing actions specially
         if (isEnhancingAction) {
             // For enhancing, the text is just the item name (e.g., "Cheese Sword")
             const itemName = actionNameText.replace(/\s*\+\d+$/, '');
             const itemHrid = '/items/' + itemName.toLowerCase().replace(/\s+/g, '_');
 
-            // Find enhancing action matching this item (excluding already-used actions)
-            return [...cachedActions].sort(compareActionQueueOrder).find((a) => {
-                if (usedActionIds.has(a.id)) {
-                    return false; // Skip already-matched actions
-                }
-
+            return (a) => {
                 const actionDetails = dataManager.getActionDetails(a.actionHrid);
                 if (!actionDetails || actionDetails.type !== '/action_types/enhancing') {
                     return false;
                 }
 
                 // Match on primaryItemHash (the item being enhanced)
-                return a.primaryItemHash && a.primaryItemHash.includes(itemHrid);
-            });
+                return !!a.primaryItemHash && a.primaryItemHash.includes(itemHrid);
+            };
         }
 
         // Parse action name (same logic as main display)
@@ -4854,12 +4881,8 @@ class ActionTimeDisplay {
             itemNameFromDiv = null;
         }
 
-        // Match action from cache (same logic as main display, excluding already-used actions)
-        return [...cachedActions].sort(compareActionQueueOrder).find((a) => {
-            if (usedActionIds.has(a.id)) {
-                return false; // Skip already-matched actions
-            }
-
+        // Match action from cache (same logic as main display)
+        return (a) => {
             const actionDetails = dataManager.getActionDetails(a.actionHrid);
             if (!actionDetails) {
                 return false;
@@ -4891,7 +4914,7 @@ class ActionTimeDisplay {
             }
 
             return true;
-        });
+        };
     }
 
     /**
