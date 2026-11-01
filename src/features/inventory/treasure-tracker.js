@@ -1114,18 +1114,53 @@ class TreasureTracker {
         if (itemHrid === TASK_TOKEN_HRID) {
             // The task shop prices an openable line through the calculator, so before it is
             // ready the best line (and the token) would be undervalued
-            if (!expectedValueCalculator()?.isInitialized) return null;
-            return positive(findBestTaskShopValue()?.perToken);
+            if (!this._evReady()) return null;
+            // A best line whose contents could not all be priced is a floor, and Treasure has no
+            // partial-price notion to carry that: leave the token unpriced rather than low
+            const best = findBestTaskShopValue();
+            return best?.partialDrops > 0 ? null : positive(best?.perToken);
         }
 
         const dropTable = dataManager.getInitClientData()?.openableLootDropMap?.[itemHrid];
         if (Array.isArray(dropTable) && dropTable.length > 0) {
-            const calculator = expectedValueCalculator();
-            if (!calculator?.isInitialized) return null;
-            return positive(calculator.calculateGrossContainerValue(itemHrid));
+            if (!this._evReady()) return null;
+            // Untaxed, like Treasure's tradable prices. A container with any drop nobody can
+            // price is a lower bound; there is no partial-price notion to carry that, so unpriced
+            const result = expectedValueCalculator().calculateContainerValue(itemHrid, null, {
+                path: new Set([itemHrid]),
+                truncated: false,
+                gross: true,
+            });
+            return result?.missingCount > 0 ? null : positive(result?.expectedValue);
         }
 
         return undefined;
+    }
+
+    /**
+     * Whether the shared expected-value calculator is ready, asking it to start when it is not.
+     *
+     * Its registry entry is gated by the item tooltip setting, so with that off nothing else
+     * ever initializes it. Treasure asks the one shared copy (through the bridge) to start,
+     * once at a time, and redraws when it lands. The tooltip setting is not touched.
+     * @returns {boolean} True when the calculator can answer now
+     */
+    _evReady() {
+        const calculator = expectedValueCalculator();
+        if (!calculator) return false;
+        if (calculator.isInitialized) return true;
+        if (!this._evInitPending && typeof calculator.initialize === 'function') {
+            this._evInitPending = true;
+            Promise.resolve(calculator.initialize())
+                .catch((error) => console.error('[TreasureTracker] Expected-value init failed:', error))
+                .finally(() => {
+                    this._evInitPending = false;
+                    if (!this.isInitialized || !calculator.isInitialized) return;
+                    priceFeed++;
+                    if (this.panel) this._render();
+                });
+        }
+        return false;
     }
 
     /**
