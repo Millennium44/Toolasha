@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### History imports recognize your own character
+
+- Alchemy history and dungeon run imports no longer warn that a file is from a different character when it names your own character's id written as text.
+
 ### Goal Planner can optimize a leveling route
 
 - A skill goal's new "Optimize route" button searches for the action sequence to its target, switching actions as better ones unlock, and offers the fastest, cheapest and fastest-within-your-coins routes with each stage's time, materials, drinks and net cost; it runs only when pressed and can be stopped.

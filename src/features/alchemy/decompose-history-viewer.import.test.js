@@ -169,6 +169,21 @@ describe('importBackupText refusals — nothing is written', () => {
         expect(trackerState.stored).toEqual([session({ id: 'existing' })]);
     });
 
+    test('a file naming the current character as a string is not a wrong-character file', async () => {
+        // The game hands out numeric ids; a file written elsewhere can carry the same id as text
+        game.characterId = 603281;
+        trackerState.stored = [];
+        window.confirm.mockReturnValue(true);
+        const text = JSON.stringify(
+            buildAlchemyBackupEnvelope({ kind: 'decompose', characterId: '603281', sessions: [session()] })
+        );
+
+        await decomposeHistoryViewer.importBackupText(text);
+
+        expect(window.confirm).not.toHaveBeenCalledWith(expect.stringContaining('different character'));
+        expect(trackerState.stored).toEqual([session()]);
+    });
+
     test('import is refused while a session is actively recording', async () => {
         trackerState.stored = [session({ id: 'existing' })];
         trackerState.activeSession = { id: 'live', inputItemHrid: INPUT_HRID };
