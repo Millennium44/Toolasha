@@ -23,6 +23,7 @@ import { formatPercentage, timeReadable, formatWithSeparator, formatKMB } from '
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { affordableActions } from '../../utils/material-calculator.js';
+import { readUpgradeSlot } from '../../utils/upgrade-slot.js';
 import {
     calculateExpPerHour,
     calculateMultiLevelProgress,
@@ -1334,16 +1335,26 @@ class QuickInputButtons {
             // stock, which let the less-restrictive of the two hide the real per-action cost.
             // Only +0 copies in the bag are spendable: the character item list also carries
             // equipped gear, and an enhanced copy is never drawn as an input or upgrade.
-            const spendableCount = (itemHrid) =>
+            const spendableCount = (itemHrid, level = 0) =>
                 inventory.reduce(
                     (total, item) =>
                         item.itemHrid === itemHrid &&
                         item.itemLocationHrid === '/item_locations/inventory' &&
-                        !(Number(item.enhancementLevel) > 0)
+                        (Number(item.enhancementLevel) || 0) === level
                             ? total + (item.count || 0)
                             : total,
                     0
                 );
+
+            // The upgrade slot draws from the stack it shows: one item at one enhancement level.
+            // An empty slot affords nothing, as in the game; one the panel does not show (or
+            // names some other item) leaves the +0 stack, which is what an unread slot means.
+            let upgradeLevel = 0;
+            if (actionDetails.upgradeItemHrid) {
+                const slot = readUpgradeSlot(panel);
+                if (slot.present && slot.itemHrid === null) return 0;
+                if (slot.present && slot.itemHrid === actionDetails.upgradeItemHrid) upgradeLevel = slot.level;
+            }
 
             let upgradeAccountedFor = false;
             if (actionDetails.inputItems && actionDetails.inputItems.length > 0) {
@@ -1354,7 +1365,7 @@ class QuickInputButtons {
                     // Every completion, efficiency repeats included, consumes a full set of
                     // inputs, and the Max field counts completions
                     let materialsPerAction = baseRequirement * (1 - artisanBonus);
-                    if (actionDetails.upgradeItemHrid === input.itemHrid) {
+                    if (actionDetails.upgradeItemHrid === input.itemHrid && upgradeLevel === 0) {
                         materialsPerAction += 1;
                         upgradeAccountedFor = true;
                     }
@@ -1371,8 +1382,8 @@ class QuickInputButtons {
             // Check upgrade item (e.g., Crimson Staff → Azure Staff) — skipped when it was
             // already folded into an input's per-action cost above.
             if (actionDetails.upgradeItemHrid && !upgradeAccountedFor) {
-                // The +0 stack; upgrade items are NOT affected by Artisan Tea
-                const availableAmount = spendableCount(actionDetails.upgradeItemHrid);
+                // The stack the slot shows; upgrade items are NOT affected by Artisan Tea
+                const availableAmount = spendableCount(actionDetails.upgradeItemHrid, upgradeLevel);
                 const possibleActions = affordableActions(availableAmount, 1);
                 maxActions = Math.min(maxActions, possibleActions);
             }
