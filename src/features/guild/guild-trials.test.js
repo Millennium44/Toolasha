@@ -327,7 +327,7 @@ const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial-tier-timing.js');
 const { badgeText } = await import('./guild-trial-tier-badge.js');
 const { parseCurrentTrialsData, tierPoolWork, trialWeekStart } = await import('./guild-trials-math.js');
-const { saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
+const { emptyRecord, saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
 const { TRIAL_GAME_DATA } = await import('../combat-sim/engine/guild-trial-game-data.fixture.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
@@ -1895,6 +1895,156 @@ describe('the panel, end to end', () => {
         expect(guildTrials.currentTrials?.source).toBe('init');
         expect(guildTrials.currentTrials.skilling.trials['/guild_skilling/alchemy'].highestTier).toBe(18);
         game.characterId = null;
+    });
+
+    describe('the guild payload is recorded with the Trials tab shut', () => {
+        const KEY = 'guildTrials_Milky Way';
+        /**
+         * The test server's `currentTrialsData` (four skilling parties, as sent), moved onto this test's clock:
+         * every party banked a few seconds before `at`, the hour began twenty minutes before it.
+         * @param {number} at - When the message arrives, client ms
+         * @param {Object} [edit] - `(payload) => void`, to change it
+         * @returns {Object} A `guild_updated` payload
+         */
+        const message = (at, edit = null) => {
+            const payload = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+            for (const party of Object.values(payload.skilling.parties)) {
+                party.tierStartedAtMs = at - 2_000;
+                party.highestTierReachedAtMs = at - 2_000;
+                party.budgetRemainingMs = 40 * 60_000;
+            }
+            edit?.(payload);
+            return { guild: { name: 'Milky Way', currentTrialsData: JSON.stringify(payload) } };
+        };
+        const hear = (data) => game.wsHandlers.guild_updated(data);
+
+        beforeEach(async () => {
+            // Awaited: its `initialized = false` lands after the trace flush
+            await trialsFeature.cleanup();
+            game.guildName = 'Milky Way';
+            game.characterId = null;
+            game.testServer = false;
+            document.body.innerHTML = '';
+            resetTrialsSingleton();
+            await trialsFeature.initialize();
+        });
+
+        afterEach(() => {
+            game.testServer = false;
+        });
+
+        test('every party’s banked tier is filed and saved, with no trial tab on screen', async () => {
+            hear(message(now));
+            await vi.advanceTimersByTimeAsync(10);
+
+            const tiles = guildTrials.record.tiles;
+            expect(Object.keys(tiles).sort()).toEqual([
+                'skilling::alchemy',
+                'skilling::brewing',
+                'skilling::cooking',
+                'skilling::milking',
+            ]);
+            expect(tiles['skilling::alchemy']).toMatchObject({ name: 'Alchemy', kind: 'skilling', serverTier: 6 });
+            expect(tiles['skilling::milking'].serverTier).toBe(7);
+            // Nothing a card states is invented
+            expect(tiles['skilling::alchemy'].tier).toBeUndefined();
+            expect(tiles['skilling::alchemy'].points).toBeUndefined();
+            expect(game.store[KEY].tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+        });
+
+        test('a card read afterwards joins the same tile; a lower server tier never replaces its own', async () => {
+            hear(message(now));
+            vi.setSystemTime(now + 5_000);
+            buildTrialsTabFor('Alchemy', 170, 1260);
+            fire();
+            const tile = guildTrials.record.tiles['skilling::alchemy'];
+            expect(Object.keys(guildTrials.record.tiles).filter((key) => key.includes('alchemy'))).toEqual([
+                'skilling::alchemy',
+            ]);
+            expect(tile).toMatchObject({ tier: 8, points: 1260, serverTier: 6 });
+        });
+
+        test('a payload older than a trial’s hour files nothing', async () => {
+            const { INIT_CHARACTER_DATA } = await import('./guild-trial-tier-clears.fixture.js');
+            game.characterId = 30404;
+            guildTrials.characterId = 30404;
+            // Read back three hours after it was sent
+            vi.setSystemTime(Date.parse(INIT_CHARACTER_DATA.currentTimestamp) + 3 * 60 * 60_000);
+            guildTrials.record = emptyRecord(trialWeekStart(Date.now()), { guildName: 'Milky Way' });
+            guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
+            expect(guildTrials.record.tiles).toEqual({});
+            game.characterId = null;
+        });
+
+        test('a login snapshot taken after the cycle ended files nothing', () => {
+            hear(message(now, (payload) => (payload.skilling.status = 'completed')));
+            expect(guildTrials.record.tiles).toEqual({});
+        });
+
+        test('a record that belongs to another guild is not written into', () => {
+            guildTrials.record = { ...emptyRecord(trialWeekStart(now), { guildName: 'Other Guild' }) };
+            hear(message(now));
+            expect(guildTrials.record.tiles).toEqual({});
+        });
+
+        test('mid character switch nothing is filed until the arriving character’s record is in hand', async () => {
+            guildTrials._forgetCharacter(999);
+            hear(message(now));
+            expect(guildTrials.record).toBeNull();
+            await vi.advanceTimersByTimeAsync(10);
+            // The arriving character's own record, read back; the ids have not agreed yet
+            expect(guildTrials.awaitingCharacter).toBe(true);
+            expect(guildTrials.record.tiles).toEqual({});
+        });
+
+        test('the message that names the guild is filed once the record has moved onto the guild key', async () => {
+            // Started before anything had said which guild: the record is on the fallback key
+            await trialsFeature.cleanup();
+            game.guildName = null;
+            resetTrialsSingleton();
+            await trialsFeature.initialize();
+            expect(guildTrials.guildName).toBeNull();
+
+            // The first guild message names it, and starts the adoption before it is noted
+            hear(message(now));
+            expect(guildTrials.adopting).toBe(true);
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(guildTrials.guildName).toBe('Milky Way');
+            expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+            expect(game.store[KEY].tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+        });
+
+        test('on the test server, an earlier cycle is put away and keeps its server tier, tab shut', async () => {
+            game.testServer = true;
+            const earlier = now - 3 * 60 * 60_000;
+            guildTrials.record = {
+                ...emptyRecord(trialWeekStart(now), { guildName: 'Milky Way' }),
+                tiles: {
+                    'skilling::milking': {
+                        name: 'Milking',
+                        kind: 'skilling',
+                        samples: [],
+                        tiers: [],
+                        pointsByTier: {},
+                        tierSeenAt: { 9: earlier },
+                        serverTier: 9,
+                        serverTierAt: earlier,
+                        serverDone: true,
+                    },
+                },
+            };
+            hear(message(now));
+            await vi.advanceTimersByTimeAsync(10);
+
+            const [archived] = guildTrials.record.history;
+            expect(archived.reason).toBe('an earlier cycle of this week');
+            expect(archived.tiles['skilling::milking']).toMatchObject({ serverTier: 9 });
+            // The new cycle's statement is on the live tile, not in the archive
+            expect(guildTrials.record.tiles['skilling::milking']).toMatchObject({ serverTier: 7 });
+            const [summary] = guildTrials._pastWeekSummaries(now);
+            expect(summary.skillingTier).toBe(9);
+        });
     });
 
     test('draws a block on each card and a payout block above them', () => {
@@ -7727,7 +7877,8 @@ describe('a mates’ trial timed from the guild payload', () => {
         expect(once.tiles[key]).toMatchObject({ serverTier: 7, serverTierAt: stamp });
         expect(once.tiles[key].serverTierAt).toBe(once.tiles[key].tierSeenAt[7]);
 
-        // Alchemy banks again; Milking's statement is unchanged and nothing is rewritten
+        // Alchemy banks again; Milking's statement is unchanged and its tile is not rewritten
+        // (Alchemy's own tile, started off the payload, is)
         const alchemy = base.skilling.parties['/guild_skilling/alchemy'];
         const payload = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
         payload.skilling.parties['/guild_skilling/alchemy'] = {
@@ -7737,7 +7888,11 @@ describe('a mates’ trial timed from the guild payload', () => {
             highestTierReachedAtMs: newestStamp + 60_000,
         };
         hear({ guild: { currentTrialsData: JSON.stringify(payload) } }, newestStamp + 60_000);
-        expect(guildTrials._recordServerTiers(once, now + 60_000)).toBe(once);
+        const twice = guildTrials._recordServerTiers(once, now + 60_000);
+        expect(twice.tiles[key]).toBe(once.tiles[key]);
+        expect(twice.tiles['skilling::alchemy']).toMatchObject({ serverTier: 7 });
+        // …and a third pass with nothing new writes nothing at all
+        expect(guildTrials._recordServerTiers(twice, now + 61_000)).toBe(twice);
     });
 
     test('without the payload the same card is still measuring', () => {
@@ -7824,7 +7979,7 @@ describe('a mates’ trial timed from the guild payload', () => {
         expect(trial.projected).toBeGreaterThan(9);
     });
 
-    test('a combat party the card cannot be matched to writes nothing', () => {
+    test('a combat party the card cannot be matched to writes nothing on it, and gets a tile of its own', () => {
         // Keyed `/guild_combat/<boss>` on the wire, as the skilling parties are
         // keyed by skill: another boss's party is not this card's
         vi.setSystemTime(newestStamp + SKEW);
@@ -7841,8 +7996,16 @@ describe('a mates’ trial timed from the guild payload', () => {
                 }),
             },
         });
-        const record = { weekStart: 0, tiles: { 'combat::trial badger': { name: 'Trial Badger', kind: 'combat' } } };
-        expect(guildTrials._recordServerTiers(record, newestStamp + SKEW)).toBe(record);
+        const badger = { name: 'Trial Badger', kind: 'combat' };
+        const record = { weekStart: 0, tiles: { 'combat::trial badger': badger } };
+        const next = guildTrials._recordServerTiers(record, newestStamp + SKEW);
+        expect(next.tiles['combat::trial badger']).toBe(badger);
+        expect(next.tiles['combat::trial chameleon']).toMatchObject({
+            name: 'Trial Chameleon',
+            kind: 'combat',
+            serverTier: 4,
+            samples: [],
+        });
     });
 
     test('a combat party is written onto its card through the boss key', () => {

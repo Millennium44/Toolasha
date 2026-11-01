@@ -296,3 +296,106 @@ describe('an untouched zero states nothing', () => {
         expect(pastCycles([empty, real], now)[0]).toBe(real);
     });
 });
+
+describe('a tier only the guild payload stated', () => {
+    const bonuses = { now, buildersHallBonus: 0.4, treasuryBonus: 0.1 };
+    // A tile filed off `guild_updated.currentTrialsData` alone: no card was read,
+    // so it carries the server's banked count and nothing a card would state
+    const serverOnly = (kind, serverTier, extra = {}) => ({
+        name: kind === 'combat' ? 'Trial Badger' : 'Alchemy',
+        kind,
+        samples: [],
+        tiers: [],
+        pointsByTier: {},
+        tierSeenAt: {},
+        serverTier,
+        serverTierAt: lastWeek + 1000,
+        serverDone: false,
+        ...extra,
+    });
+
+    test('Past weeks shows the server tier, and prices it off the ladder as derived', () => {
+        const c = cycle({
+            tiles: {
+                'combat::trial badger': serverOnly('combat', 5),
+                'skilling::alchemy': serverOnly('skilling', 6),
+            },
+        });
+        const summary = summariseArchivedCycle(c, bonuses);
+        expect(summary.combatTier).toBe(5);
+        expect(summary.skillingTier).toBe(6);
+        // Combat T5 = 400 + 4 × 200 = 1,200 base; skilling T6 = 200 + 5 × 100 = 700 base; ×1.4 at
+        // Builder's Hall Lv.20 — the 980 the test server's own payload `points` map stated for Alchemy at T6
+        expect(summary.points).toBeCloseTo((1200 + 700) * 1.4, 6);
+        expect(summary.pointsDerived).toBe(true);
+        expect(pastWeekLine(summary)).toContain('combat T5 · skilling T6 · ~2,660 pts');
+    });
+
+    test('a card tier wins over a lower server tier, and its stated points stand', () => {
+        const c = cycle({
+            tiles: {
+                'skilling::alchemy': serverOnly('skilling', 4, { tier: 6, points: 980, pointsByTier: { 6: 980 } }),
+            },
+        });
+        const summary = summariseArchivedCycle(c, bonuses);
+        expect(summary.skillingTier).toBe(6);
+        expect(summary.points).toBe(980);
+        expect(summary.pointsDerived).toBe(false);
+    });
+
+    test('a higher server tier wins over a card read before the last clear, and its points are the ladder’s', () => {
+        const c = cycle({
+            tiles: {
+                'skilling::alchemy': serverOnly('skilling', 8, { tier: 6, points: 980, pointsByTier: { 6: 980 } }),
+            },
+        });
+        const summary = summariseArchivedCycle(c, bonuses);
+        expect(summary.skillingTier).toBe(8);
+        expect(summary.points).toBeCloseTo(900 * 1.4, 6);
+        expect(summary.pointsDerived).toBe(true);
+    });
+
+    test('with no Builder’s Hall bonus known the total is unknown, never a sum missing a trial', () => {
+        const c = cycle({
+            tiles: {
+                'combat::trial chameleon': { name: 'Trial Chameleon', kind: 'combat', tier: 5, points: 1440 },
+                'skilling::alchemy': serverOnly('skilling', 6),
+            },
+        });
+        const summary = summariseArchivedCycle(c, { now, buildersHallBonus: null, treasuryBonus: null });
+        expect(summary.skillingTier).toBe(6);
+        expect(summary.points).toBeNull();
+        expect(pastWeekLine(summary)).toContain('skilling T6 · — pts');
+    });
+
+    test('another guild’s cycle is never priced with this guild’s buildings', () => {
+        const c = cycle({ reason: FOREIGN_CYCLE_REASON, tiles: { 'skilling::alchemy': serverOnly('skilling', 6) } });
+        const summary = summariseArchivedCycle(c, bonuses);
+        expect(summary.skillingTier).toBe(6);
+        expect(summary.points).toBeNull();
+    });
+
+    test('a server zero is a real zero, and an untouched card beside it still states nothing', () => {
+        const c = cycle({
+            cycleFrom: lastWeek + 1000,
+            reason: 'an earlier cycle of this week',
+            tiles: {
+                'combat::trial badger': serverOnly('combat', 0, { serverDone: true }),
+                'skilling::b': { kind: 'skilling', points: 0, completed: false, samples: [], pointsByTier: {} },
+            },
+        });
+        const summary = summariseArchivedCycle(c, bonuses);
+        expect(summary.combatTier).toBe(0);
+        expect(summary.skillingTier).toBeNull();
+        expect(summary.points).toBe(0);
+    });
+
+    test('a cycle whose tiles only the server stated outranks a copy of zeroed cards', () => {
+        const empty = cycle({
+            tiles: { 'skilling::alchemy': { kind: 'skilling', points: 0, samples: [], pointsByTier: {} } },
+        });
+        const stated = cycle({ tiles: { 'skilling::alchemy': serverOnly('skilling', 6) } });
+        expect(pastCycles([stated, empty], now)[0]).toBe(stated);
+        expect(pastCycles([empty, stated], now)[0]).toBe(stated);
+    });
+});

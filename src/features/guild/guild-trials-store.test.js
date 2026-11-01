@@ -1609,6 +1609,99 @@ describe('recordServerTiers — the guild payload’s tier clears on a tile', ()
         expect(mergeTrialRecords(finished, running).tiles['skilling::milking'].serverDone).toBe(true);
         expect(mergeTrialRecords(running, finished).tiles['skilling::milking'].serverDone).toBe(true);
     });
+
+    describe('a trial no card was read for', () => {
+        const create = { name: 'Brewing', kind: 'skilling' };
+
+        test('the tile is started with the statement and nothing a card would state', () => {
+            const held = record();
+            const next = recordServerTiers(held, 'skilling::brewing', {
+                bankedTier: 4,
+                clears: { 4: t0 },
+                at: t0,
+                create,
+            });
+            const tile = next.tiles['skilling::brewing'];
+            expect(tile).toMatchObject({ name: 'Brewing', kind: 'skilling', serverTier: 4, serverTierAt: t0 });
+            expect(tile.tierSeenAt).toEqual({ 4: t0 });
+            for (const field of ['tier', 'points', 'completed', 'level']) expect(tile[field]).toBeUndefined();
+            // The other tile is untouched, and the record keeps everything else on it
+            expect(next.tiles['skilling::milking']).toBe(held.tiles['skilling::milking']);
+            expect(next.weekStart).toBe(held.weekStart);
+        });
+
+        test('a record with no tiles yet takes one; with no tier stated none is started', () => {
+            const bare = { weekStart: 0 };
+            expect(recordServerTiers(bare, 'skilling::brewing', { bankedTier: null, at: t0, create })).toBe(bare);
+            expect(
+                recordServerTiers(bare, 'skilling::brewing', { bankedTier: 2, at: t0, create }).tiles
+            ).toHaveProperty('skilling::brewing');
+        });
+
+        test('a card scrape later lands on the same tile, and the card’s own figures stand beside the server’s', () => {
+            const filed = recordServerTiers({ weekStart: 0, tiles: {} }, tileKey(create), {
+                bankedTier: 4,
+                at: t0,
+                create,
+            });
+            const scraped = recordTileSample(
+                filed,
+                { name: 'Brewing', kind: 'skilling', level: 140, tier: 3, points: 700, readings: [] },
+                t0 + 5_000
+            );
+            expect(Object.keys(scraped.tiles)).toEqual(['skilling::brewing']);
+            expect(scraped.tiles['skilling::brewing']).toMatchObject({ tier: 3, points: 700, serverTier: 4 });
+        });
+
+        test('an archive of an earlier copy does not drop a tier the server stated since it was taken', () => {
+            const archivedAt = t0 - 10 * 60_000;
+            const stale = {
+                name: 'Brewing',
+                kind: 'skilling',
+                tier: 5,
+                samples: [{ t: archivedAt - 60_000, readings: [{ current: 1, max: 9 }] }],
+                tiers: [],
+            };
+            const withArchive = {
+                weekStart: thisWeek,
+                tiles: {},
+                history: [
+                    {
+                        archivedAt,
+                        reason: 'a new cycle is scheduled',
+                        weekStart: thisWeek,
+                        tiles: { 'skilling::brewing': stale },
+                    },
+                ],
+            };
+            // The same copy a stale tab still holds, plus a statement it heard since
+            const heard = recordServerTiers(
+                { weekStart: thisWeek, tiles: { 'skilling::brewing': stale } },
+                'skilling::brewing',
+                {
+                    bankedTier: 2,
+                    at: t0,
+                }
+            );
+            const merged = mergeTrialRecords(withArchive, heard);
+            const tile = merged.tiles['skilling::brewing'];
+            expect(tile).toMatchObject({ serverTier: 2, serverTierAt: t0 });
+            // …and none of the archived readings or badge come back with it
+            expect(tile.samples).toEqual([]);
+            expect(tile.tier).toBeUndefined();
+
+            // A copy with no statement since the archive is still dropped, as before
+            const old = recordServerTiers(
+                { weekStart: thisWeek, tiles: { 'skilling::brewing': stale } },
+                'skilling::brewing',
+                {
+                    bankedTier: 5,
+                    at: archivedAt - 30_000,
+                }
+            );
+            expect(mergeTrialRecords(withArchive, old).tiles['skilling::brewing']).toBeUndefined();
+        });
+    });
 });
 
 describe('archiveEarlierCycles — a week with more than one cycle in it', () => {

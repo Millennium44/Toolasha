@@ -134,6 +134,7 @@ import {
     tierFromWorkTarget,
     tierMarginalPoints,
     trialBankedBasePoints,
+    trialFromHrid,
     trialWeekStart,
 } from './guild-trials-math.js';
 import guildTrialDamage, { attributionCoverage, encounterOf, encounterOfMonster } from './guild-trial-damage.js';
@@ -2995,6 +2996,9 @@ class GuildTrials {
             // using the old scope before the history's storage read completes.
             this._adoptGuildName().catch(() => {});
             this._noteCurrentTrials(data);
+            // Recorded with the guild panel shut as well; the render below only
+            // runs with a trial tab on screen
+            this._fileServerTrials();
             this._render(findTrialsRoot());
         };
         for (const type of ['guild_updated', 'guild_characters_updated', 'guild_trial_signup_updated']) {
@@ -3077,6 +3081,8 @@ class GuildTrials {
 
         if (this.characterId !== characterId) return;
         this._adoptStored(stored);
+        // The login payload was noted before the record was in hand
+        this._fileServerTrials();
         this._publishTrialNames();
         // Redraw with the stored record merged in: the early pass above had
         // only this session's readings. A cleanup that landed in the reads
@@ -3418,6 +3424,8 @@ class GuildTrials {
         // (the departing one's is not theirs) and is folded in by the next save
         this.record = stored ?? emptyRecord(trialWeekStart(Date.now()), { guildId: this._guildId() });
         this.recordUnread = stored === null;
+        // The arriving character's login payload may have landed during the read
+        this._fileServerTrials();
         this._publishTrialNames();
     }
 
@@ -3577,6 +3585,7 @@ class GuildTrials {
                 source: 'init',
                 serverNow: Number.isFinite(serverNow) ? serverNow : null,
             });
+            this._fileServerTrials();
         } catch (error) {
             console.error('[GuildTrials] Reading the login payload’s trial status failed:', error);
         }
@@ -3632,15 +3641,18 @@ class GuildTrials {
     }
 
     /**
-     * Write each record tile's party from the guild payload onto it.
+     * Write each party of the guild payload onto its record tile.
      *
-     * The one writer of the record stays `_render`: this runs from it, off what
-     * `_noteCurrentTrials` has held since the last pass. A kind the payload
-     * does not have `in_progress`, or a payload older than a trial's hour, says
-     * nothing about this cycle and writes nothing. Parties are keyed by trial
-     * hrid (`/guild_skilling/<skill>`, `/guild_combat/<boss>`); one the card's
-     * name cannot be matched to is skipped, which leaves that card on its
-     * watched badges.
+     * Runs from `_render` and from {@link _fileServerTrials}, off what
+     * `_noteCurrentTrials` has held since: the payload arrives with the guild
+     * panel shut, and a trial that ran its whole hour with the Trials tab closed
+     * has no card to file anything else under. A kind the payload does not have
+     * `in_progress`, or a payload older than a trial's hour, says nothing about
+     * this cycle and writes nothing. Parties are keyed by trial hrid
+     * (`/guild_skilling/<skill>`, `/guild_combat/<boss>`): a tile whose card
+     * name joins to the hrid takes it, and with none the tile is started under
+     * the name a card is filed by ({@link trialFromHrid}), so the next scrape
+     * of that card lands on the same tile. A completed card is left as it is.
      *
      * @param {Object} record - The week's record
      * @param {number} now - Clock
@@ -3649,45 +3661,120 @@ class GuildTrials {
     _recordServerTiers(record, now) {
         try {
             const held = this.currentTrials;
-            if (!record?.tiles || !held || !Number.isFinite(held.at) || now - held.at > TRIAL_ACTIVE_MS) {
+            if (!record || !held || !Number.isFinite(held.at) || now - held.at > TRIAL_ACTIVE_MS) {
                 return record;
             }
             const offset = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : null;
 
             let next = record;
-            for (const [key, tile] of Object.entries(record.tiles)) {
-                const kind = tile?.kind === 'combat' ? 'combat' : 'skilling';
+            for (const kind of ['skilling', 'combat']) {
                 const entry = held[kind];
-                if (!entry?.inProgress || tile?.completed) continue;
-                const partyKey = matchTrialHrid(tile?.name, Object.keys(entry.trials || {}));
-                const party = partyKey ? entry.trials[partyKey] : null;
-                if (!party) continue;
-
-                // No offset means no stamp was ever readable, and then there
-                // are no clears to place either
-                const clears = {};
-                if (offset !== null) {
-                    for (const [tier, serverAt] of Object.entries(this.serverTierClears?.[kind]?.[partyKey] || {})) {
-                        clears[tier] = serverAt + offset;
+                if (!entry?.inProgress) continue;
+                for (const [partyKey, party] of Object.entries(entry.trials || {})) {
+                    if (!party) continue;
+                    const joined = Object.entries(next.tiles || {}).find(
+                        ([, tile]) =>
+                            (tile?.kind === 'combat' ? 'combat' : 'skilling') === kind &&
+                            matchTrialHrid(tile?.name, [partyKey]) === partyKey
+                    );
+                    let key = joined?.[0] ?? null;
+                    let create = null;
+                    if (!joined) {
+                        const trial = trialFromHrid(partyKey);
+                        if (!trial || trial.kind !== kind) continue;
+                        key = tileKey(trial);
+                        create = { name: trial.name, kind: trial.kind };
+                    } else if (joined[1]?.completed) {
+                        continue;
                     }
+
+                    // No offset means no stamp was ever readable, and then there
+                    // are no clears to place either
+                    const clears = {};
+                    if (offset !== null) {
+                        for (const [tier, serverAt] of Object.entries(
+                            this.serverTierClears?.[kind]?.[partyKey] || {}
+                        )) {
+                            clears[tier] = serverAt + offset;
+                        }
+                    }
+                    // The party's own bank time, as its `tierSeenAt` stamp is: a
+                    // message arrives whenever *any* party banks, so its receipt is
+                    // another party's clear as often as this one's
+                    const partyAt = Number.isFinite(party.highestTierReachedAtMs)
+                        ? party.highestTierReachedAtMs
+                        : party.tierStartedAtMs;
+                    next = recordServerTiers(next, key, {
+                        bankedTier: party.highestTier,
+                        done: party.done,
+                        clears,
+                        at: offset !== null && Number.isFinite(partyAt) ? partyAt + offset : held.at,
+                        create,
+                    });
                 }
-                // The party's own bank time, as its `tierSeenAt` stamp is: a
-                // message arrives whenever *any* party banks, so its receipt is
-                // another party's clear as often as this one's
-                const partyAt = Number.isFinite(party.highestTierReachedAtMs)
-                    ? party.highestTierReachedAtMs
-                    : party.tierStartedAtMs;
-                next = recordServerTiers(next, key, {
-                    bankedTier: party.highestTier,
-                    done: party.done,
-                    clears,
-                    at: offset !== null && Number.isFinite(partyAt) ? partyAt + offset : held.at,
-                });
             }
             return next;
         } catch (error) {
             console.error('[GuildTrials] Recording the guild payload’s tier clears failed:', error);
             return record;
+        }
+    }
+
+    /**
+     * File the guild payload's trials into the record, whatever tab is open.
+     *
+     * Every other record write is `_render`'s, which returns early unless a
+     * trial tab is on screen — so a player who never opened the Trials tab
+     * recorded nothing, and a test-server week's earlier cycles were archived
+     * as untouched cards. This is the same two steps `_render` takes around its
+     * sampling, in the same order (an earlier cycle is put away before the new
+     * cycle's tiers are filed, or they would go into the archive with it), run
+     * off the payload alone.
+     *
+     * Nothing is written without a record of this character's own in hand: none
+     * is read yet at startup or mid character or guild switch, and the record's
+     * guild stamp would then be the departing one's. Those paths call this again once
+     * the record is adopted. A record naming another guild is left to
+     * `_healStaleRecord`, which archives it. Saved only when something changed;
+     * the save re-checks the character and guild after its own await.
+     *
+     * @param {number} [now=Date.now()] - Clock
+     * @returns {boolean} Whether the record changed
+     */
+    _fileServerTrials(now = Date.now()) {
+        try {
+            if (!this.initialized || this.awaitingCharacter || !this.record || !this.currentTrials) return false;
+            // Mid guild adoption the record in hand may be the guild just left
+            // while the payload is the one joined; the next message files it
+            if (this.adopting) return false;
+            if (!config.getSetting('guildTrialsInfo', true)) return false;
+            const current = dataManager.getCurrentCharacterId?.() ?? null;
+            if (current !== null && this.characterId !== null && String(current) !== String(this.characterId)) {
+                return false;
+            }
+            const provenance = recordProvenance(this.record, { guildId: this._guildId(), guildName: this.guildName });
+            if (provenance === 'foreign') return false;
+
+            const weekStart = trialWeekStart(now);
+            if (this.record.weekStart !== weekStart) {
+                // The week rolled over with the tab shut: `_render` starts the
+                // new week's record the same way
+                this.record = emptyRecord(weekStart, { guildId: this._guildId(), guildName: this.guildName });
+            }
+
+            const before = this.record;
+            // Saves on its own when it archives
+            this._archiveEarlierCycles(now);
+            const archived = this.record !== before;
+            const filed = this._recordServerTiers(this.record, now);
+            if (filed === this.record) return archived;
+            this.record = filed;
+            this._publishTrialNames();
+            this._persistRecord();
+            return true;
+        } catch (error) {
+            console.error('[GuildTrials] Filing the guild payload’s trials failed:', error);
+            return false;
         }
     }
 
@@ -3747,6 +3834,7 @@ class GuildTrials {
 
         this.adopting = true;
         const exportToken = guildTrialRecorder.beginGuildAdoption?.();
+        let adopted = false;
         try {
             const changing = this.guildName !== null;
             const characterId = this.characterId;
@@ -3782,6 +3870,7 @@ class GuildTrials {
             guildTrialDamage.setGuildName?.(name, characterId);
             guildMemberSkills.setGuildName(name).catch(() => {});
             guildLoadoutCapture.setGuildName?.(name)?.catch?.(() => {});
+            adopted = true;
             await this._persistRecord();
         } catch (error) {
             console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
@@ -3789,6 +3878,10 @@ class GuildTrials {
             guildTrialRecorder.endGuildAdoption?.(exportToken);
             this.adopting = false;
         }
+        // A guild message that arrived during the adoption was not filed (see
+        // `_fileServerTrials`); the record is now the guild's own, so it is
+        // filed here rather than waiting on the next message
+        if (adopted) this._fileServerTrials();
     }
 
     /**
@@ -4489,7 +4582,8 @@ class GuildTrials {
         const cardsStateNothing =
             tiles.length > 0 && tiles.every((tile) => !tile.readings.length && !(tile.points > 0));
         const recordClaimsProgress = held.some(
-            (tile) => tile.samples?.length || tile.tier || Object.keys(tile.pointsByTier || {}).length
+            (tile) =>
+                tile.samples?.length || tile.tier || tile.serverTier || Object.keys(tile.pointsByTier || {}).length
         );
         // …except that "Scheduled" is also what the header says for the rest of
         // the trial week once this week's cycle has finished: the week runs from

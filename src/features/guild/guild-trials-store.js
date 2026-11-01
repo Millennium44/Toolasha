@@ -888,8 +888,14 @@ export function recordTileSample(record, tile, at, characterId = null) {
  * for the analysis to read as a tier rung on any tab: the card that carries the
  * badge need not be on screen.
  *
- * Only a tile already on the record is written; the payload's keys are trial
- * hrids and the record is keyed by what the cards are called.
+ * A tile already on the record is written as it stands; the payload's keys are
+ * trial hrids and the record is keyed by what the cards are called, so the
+ * caller joins the two. With `create` the tile is started when the record has
+ * none — a trial whose card was never read, because nobody had the Trials tab
+ * open — under the same name and kind a card scrape files it by, so a later
+ * scrape lands on the same tile. Only `server*` fields and `tierSeenAt` are
+ * written either way: the card's own `tier`, `points` and `completed` stay the
+ * card's, and the readers that report a result take the higher of the two tiers.
  *
  * @param {Object} record - The week's record
  * @param {string} key - The tile's key on it
@@ -899,11 +905,24 @@ export function recordTileSample(record, tile, at, characterId = null) {
  * @param {Object} [stated.clears] - `{[tier]: clientMs}`, each tier's bank time on this client's clock
  * @param {number} stated.at - When the banked tier banked, on this client's clock; the payload's
  *   arrival only where no server stamp can be placed
+ * @param {{name: string, kind: string}|null} [stated.create] - Start the tile when the record has none
  * @returns {Object} The record, unchanged when there was nothing to write
  */
-export function recordServerTiers(record, key, { bankedTier = null, done = false, clears = {}, at } = {}) {
-    const existing = record?.tiles?.[key];
-    if (!existing || !Number.isFinite(at)) return record;
+export function recordServerTiers(
+    record,
+    key,
+    { bankedTier = null, done = false, clears = {}, at, create = null } = {}
+) {
+    if (!record || !Number.isFinite(at)) return record;
+    const tierStated = Number.isFinite(bankedTier) && bankedTier >= 0;
+    let existing = record.tiles?.[key];
+    if (!existing) {
+        // Started only with a tier to put on it: a tile holding nothing is a
+        // card nobody saw a result on, which is what the archive must not fill with
+        if (!create?.name || !create?.kind || !tierStated) return record;
+        // The shape a card scrape starts a tile with, so `recordTileSample` can fold into it
+        existing = { name: create.name, kind: create.kind, samples: [], tiers: [], pointsByTier: {}, tierSeenAt: {} };
+    }
 
     const tierSeenAt = { ...(existing.tierSeenAt || {}) };
     let changed = false;
@@ -912,8 +931,8 @@ export function recordServerTiers(record, key, { bankedTier = null, done = false
         tierSeenAt[tier] = when;
         changed = true;
     }
-    const tierStated = Number.isFinite(bankedTier) && bankedTier >= 0;
     if (
+        record.tiles?.[key] &&
         !changed &&
         (!tierStated ||
             (existing.serverTier === bankedTier &&
@@ -926,7 +945,7 @@ export function recordServerTiers(record, key, { bankedTier = null, done = false
     return {
         ...record,
         tiles: {
-            ...record.tiles,
+            ...(record.tiles || {}),
             [key]: {
                 ...existing,
                 tierSeenAt,
@@ -1196,12 +1215,24 @@ export function mergeTrialRecords(base, incoming) {
     // statement and no bar sample. Against any other archive only bar samples
     // count, as live has always had it: after a scheduled-phase archive the
     // zeroed cards are read again, and a badge read of one must not carry a
-    // stale copy's tile back past its archive.
+    // stale copy's tile back past its archive. A server statement of a tier
+    // banked after the archive was taken is the one exception: it is the party's
+    // own clear stamp, and a trial filed off the guild payload alone has no bar
+    // sample to be kept by. Only what is stamped since the archive stays, so a
+    // stale copy that heard the statement keeps none of its archived readings.
     const newestSample = (tile) => tile?.samples?.[tile.samples.length - 1]?.t ?? 0;
     for (const cycle of provenance.history) {
         const newestOf = Number.isFinite(cycle?.cycleFrom) ? newestTileStamp : newestSample;
         for (const [key, archived] of Object.entries(cycle?.tiles || {})) {
-            if (tiles[key] && newestOf(tiles[key]) <= newestOf(archived)) delete tiles[key];
+            if (!tiles[key] || newestOf(tiles[key]) > newestOf(archived)) continue;
+            const statedSince =
+                !Number.isFinite(cycle?.cycleFrom) &&
+                Number.isFinite(cycle?.archivedAt) &&
+                Number.isFinite(tiles[key].serverTierAt) &&
+                tiles[key].serverTierAt > cycle.archivedAt;
+            const since = statedSince ? currentCyclePart(tiles[key], cycle.archivedAt) : null;
+            if (since) tiles[key] = since;
+            else delete tiles[key];
         }
     }
 
