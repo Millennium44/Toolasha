@@ -898,7 +898,7 @@ class PhiloCalculator {
             // A craft whose base is an untradable cape leaves the cape itself out of the bill: a missing
             // term, not a free one. Add it at the cape setting's value, or ask for a price.
             if (source === 'craft' && resolved.baseNote === 'untradable') {
-                const baseValue = getCapeBaseValue();
+                const baseValue = this.capeBaseValue();
                 this._craftBaseNotes = this._craftBaseNotes || {};
                 if (!(baseValue > 0)) {
                     this._craftBaseNotes[itemHrid] = 'needsPrice';
@@ -929,13 +929,25 @@ class PhiloCalculator {
     untradableCostBasis(itemHrid, itemDetails) {
         const details = itemDetails ?? dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
         if (!details || details.isTradable === true) return null;
+        // Only an unrefined cape is worth the base value; an unresolved refined one is missing its
+        // materials too, so it stays a needs-price row
         if (isUntradableCape(itemHrid)) {
-            const baseValue = getCapeBaseValue();
+            const baseValue = this.capeBaseValue();
             if (baseValue > 0) {
                 return { itemCost: baseValue, selfReturnUnitValue: baseValue, source: 'capeSetting', fallbackLevel: 0 };
             }
         }
         return this.needsPriceBasis();
+    }
+
+    /**
+     * The Untradable capes setting's value, read on this table's buy side: its explicit mode when it
+     * has one, the global pricing (and patient tick) only while it follows Global.
+     * @returns {number} Value, or 0 when the setting yields none
+     */
+    capeBaseValue() {
+        const mode = this.pricingMode === GLOBAL_PRICING_MODE ? undefined : this.getPriceType('buy');
+        return getCapeBaseValue({ context: 'profit', mode });
     }
 
     /** @returns {Object} The cost basis of a row that waits for the player's price */

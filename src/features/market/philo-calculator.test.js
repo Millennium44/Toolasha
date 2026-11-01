@@ -1053,6 +1053,19 @@ describe('untradable items with no price', () => {
         expect(calc._craftBaseNotes[REFINED]).toBe('capeSetting');
     });
 
+    test('the cape stand-in is priced on the table own buy side, not the global one', () => {
+        mocks.capeMode = 'mirror';
+        mocks.globalPricingMode = 'optimistic'; // global buys at bid
+        mocks.prices[`${MIRROR_HRID}+0`] = { ask: 9000, bid: 6000 };
+        calc.pricingMode = 'conservative'; // this table buys at ask
+        const ask = calc.calculateRow(CAPE_HRID, cape()).cost;
+        calc.pricingMode = 'optimistic';
+        const bid = calc.calculateRow(CAPE_HRID, cape()).cost;
+        expect(ask).toBeGreaterThan(bid);
+        calc.pricingMode = 'global';
+        expect(calc.calculateRow(CAPE_HRID, cape()).cost).toBe(bid);
+    });
+
     test('a typed cost prices it, and clearing it brings the blank back', () => {
         calc.itemCostOverrides[CAPE_HRID] = 5000;
         const row = calc.calculateRow(CAPE_HRID, cape());
