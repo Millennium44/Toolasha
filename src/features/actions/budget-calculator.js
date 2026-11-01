@@ -377,7 +377,11 @@ function showBreakdownModal(budget, result) {
             Promise.resolve(
                 reserve(
                     RESERVATION_OWNER,
-                    result.materials.map((mat) => ({ itemHrid: mat.itemHrid, count: mat.required })),
+                    result.materials.map((mat) => ({
+                        itemHrid: mat.itemHrid,
+                        count: mat.required,
+                        ...(mat.enhancementLevel > 0 ? { enhancementLevel: mat.enhancementLevel } : {}),
+                    })),
                     { label: 'Budget calculator' }
                 )
             ).catch((error) => {

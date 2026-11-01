@@ -518,6 +518,27 @@ describe('the budget calculator and the reservation ledger', () => {
         expect(new Set(world.ownerIds)).toEqual(new Set(['budgetCalculator']));
     });
 
+    test('a budget costed on a +3 upgrade stack claims the +3 copy, not the +0 one', () => {
+        world.materials = [
+            { itemHrid: '/items/egg', itemName: 'Egg', perUnit: 1, have: 0, isTradeable: true },
+            {
+                itemHrid: '/items/staff',
+                itemName: 'Staff',
+                perUnit: 1,
+                have: 0,
+                isTradeable: true,
+                isUpgradeItem: true,
+                enhancementLevel: 3,
+            },
+        ];
+        world.prices['/items/staff'] = { ask: 10 };
+        world.gameData.itemDetailMap['/items/staff'] = { isTradable: true };
+        calculate(1000);
+        const lines = ledger.reserved.at(-1).lines;
+        expect(lines.find((l) => l.itemHrid === '/items/egg')).not.toHaveProperty('enhancementLevel');
+        expect(lines.find((l) => l.itemHrid === '/items/staff')).toMatchObject({ enhancementLevel: 3 });
+    });
+
     test('the open breakdown claims the required totals', () => {
         calculate(1000);
         expect(ledger.reserved.at(-1)).toEqual({

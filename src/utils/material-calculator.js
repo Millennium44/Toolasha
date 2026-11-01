@@ -8,6 +8,7 @@ import { parseArtisanBonus, getDrinkConcentration } from './tea-parser.js';
 import { getEnhancingParams } from './enhancement-config.js';
 import { calculateEnhancement } from './enhancement-calculator.js';
 import { resolveActionContext } from './action-context.js';
+import { parseItemHash } from './item-hash.js';
 import { effectiveInventory, INVENTORY_LOCATION, reservedElsewhere, shortfallNote } from './inventory-reservations.js';
 import { artisanInputTotal as calculateTotalRequired, getArtisanMaterialMode } from './artisan-material-mode.js';
 
@@ -61,7 +62,8 @@ export function affordableActions(available, perAction) {
 /**
  * Calculate materials reserved by queued actions
  * @param {string} actionHrid - Action HRID to check queue for (optional - if null, calculates for ALL queued actions)
- * @returns {Map<string, number>} Map of itemHrid -> queued quantity
+ * @returns {Map<string, number>} Map of itemHrid -> queued quantity (an upgrade item queued at an
+ *   enhancement level above 0 is keyed `itemHrid@level`)
  */
 export function calculateQueuedMaterialsForAction(actionHrid = null) {
     const queuedMaterials = new Map();
@@ -127,11 +129,16 @@ export function calculateQueuedMaterialsForAction(actionHrid = null) {
 
         // Process upgrade item (if exists)
         if (actionDetails.upgradeItemHrid) {
-            // Upgrade items always need exactly 1 per action, no artisan reduction
+            // Upgrade items always need exactly 1 per action, no artisan reduction. A craft that
+            // consumes an enhanced copy (its primaryItemHash names the stack) spends that level's
+            // stock, not the +0 one, so it is tallied under `hrid@level`
             const totalForAction = actionCount;
+            const { itemHrid: stackHrid, level: stackLevel } = parseItemHash(queuedAction.primaryItemHash);
+            const level = stackHrid === actionDetails.upgradeItemHrid && stackLevel > 0 ? stackLevel : 0;
+            const key = level > 0 ? `${actionDetails.upgradeItemHrid}@${level}` : actionDetails.upgradeItemHrid;
 
-            const currentQueued = queuedMaterials.get(actionDetails.upgradeItemHrid) || 0;
-            queuedMaterials.set(actionDetails.upgradeItemHrid, currentQueued + totalForAction);
+            const currentQueued = queuedMaterials.get(key) || 0;
+            queuedMaterials.set(key, currentQueued + totalForAction);
         }
     }
 
@@ -236,7 +243,7 @@ function buildMaterialLine(
     if (!itemDetails) return null;
 
     // The upgrade line draws from the stack the panel's slot shows. `null` is an empty slot, which
-    // affords nothing; a level above 0 is its own stock, so it keeps its own claim, carries no
+    // affords nothing; a level above 0 is its own stock, so it keeps its own claim, own
     // queue figure (queue accounting counted +0 copies) and reads reservations at that level
     const slotEmpty = isUpgradeItem && upgradeItemLevel === null;
     const level = isUpgradeItem && upgradeItemLevel > 0 ? upgradeItemLevel : 0;
@@ -244,7 +251,7 @@ function buildMaterialLine(
     const have = slotEmpty
         ? 0
         : (level > 0 ? 0 : unclaimedBoughtCount(itemHrid)) + heldInBag(inventory, itemHrid, level);
-    const queued = level > 0 || slotEmpty ? 0 : queuedMaterialsMap.get(itemHrid) || 0;
+    const queued = slotEmpty ? 0 : queuedMaterialsMap.get(claimKey) || 0;
     const reserved = ownerId ? reservedElsewhere(itemHrid, level, { excludeOwner: ownerId }) : 0;
     const claimed = claimedByItem.get(claimKey) || 0;
     const available = Math.max(0, have - queued - reserved - claimed);
@@ -262,6 +269,8 @@ function buildMaterialLine(
         missing: missingAmount,
         isTradeable: itemDetails.isTradable === true, // British spelling
         isUpgradeItem,
+        // Only a levelled line names its stack, so every +0 line keeps the shape it always had
+        ...(level > 0 ? { enhancementLevel: level } : {}),
         ...reservationFields(missingAmount, itemHrid, totalRequired, have, queued, reserved, ownerId, claimed),
     };
 }

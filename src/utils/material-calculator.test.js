@@ -251,6 +251,29 @@ describe('calculateMaterialRequirements', () => {
             }).find((m) => m.isUpgradeItem);
             expect(line.queued).toBe(0);
         });
+
+        test('queued upgrade crafts are deducted at the level their hash names', () => {
+            state.gameData.actionDetailMap['/actions/crafting/table'].upgradeItemHrid = '/items/table';
+            state.inventory = stacks();
+            const queued = (extra) => ({
+                actionHrid: '/actions/crafting/table',
+                hasMaxCount: true,
+                maxCount: 3,
+                currentCount: 0,
+                ...extra,
+            });
+            state.currentActions = [
+                queued({ primaryItemHash: 'c::/item_locations/inventory::/items/table::3' }),
+                queued({}),
+            ];
+            const at = (level) =>
+                calculateMaterialRequirements('/actions/crafting/table', 1, true, { upgradeItemLevel: level }).find(
+                    (m) => m.isUpgradeItem
+                );
+            expect(at(3)).toMatchObject({ queued: 3, available: 2, enhancementLevel: 3 });
+            expect(at(0)).toMatchObject({ queued: 3, available: 0 });
+            expect(at(0)).not.toHaveProperty('enhancementLevel');
+        });
     });
 
     test('excludes enhanced copies from the "have" count', () => {
