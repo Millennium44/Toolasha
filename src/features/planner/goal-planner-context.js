@@ -792,10 +792,15 @@ async function measureRouteRates(skillHrid) {
     await boundTrainingMargins(sales, margin, saleCap);
     // Read after the awaits, beside the experience rates: the efficiency inside them is this level's
     const measuredAtLevel = skillState(skillHrid).level;
-    return measureXpRates(skillHrid, margin, drinkCost, upfront, saleCap).map((rate) => ({
-        ...rate,
-        measuredAtLevel,
-    }));
+    return measureXpRates(skillHrid, margin, drinkCost, upfront, saleCap).map((rate) => {
+        const type = gameData.actionDetailMap[rate.actionHrid]?.type;
+        const costed = GATHERING_TYPES.includes(type) || PRODUCTION_TYPES.includes(type);
+        // A type with no calculator (alchemy) reaches measureXpRates as a free 0. The quick estimate keeps
+        // that; a route would rank it the cheapest and call it budget-safe, so here it is unknown, not free
+        return costed
+            ? { ...rate, measuredAtLevel }
+            : { ...rate, goldPerHour: null, goldKnown: false, measuredAtLevel };
+    });
 }
 
 /**

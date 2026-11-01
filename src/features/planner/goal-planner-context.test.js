@@ -1146,6 +1146,17 @@ describe('route rates — every action of a skill, locked ones included', () => 
         }
     });
 
+    test('an action type with no calculator (alchemy) is unknown on a route, free as before in the quick estimate', async () => {
+        const context = await buildPlannerContext();
+        const [quick] = context.xpRates('/skills/alchemy');
+        expect(quick.goldPerHour).toBe(0);
+        expect(quick.goldKnown).toBe(true);
+        const [route] = await context.routeRates('/skills/alchemy');
+        expect(route.actionHrid).toBe('/actions/alchemy/transmute');
+        expect(route.goldPerHour).toBeNull();
+        expect(route.goldKnown).toBe(false);
+    });
+
     test('is measured once per pricing, and again after a new pricing', async () => {
         let calls = 0;
         rates.production = new Proxy(

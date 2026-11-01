@@ -323,6 +323,39 @@ describe('totals reconcile with the stages', () => {
     });
 });
 
+describe('an unpriced recurring tea', () => {
+    // Enhancing: one level of 1,000 XP at 1,000 XP/hr drinks 12 teas, and the tea has no price
+    const enhance = (extra = {}) => ({
+        ...rate('Enhance', { flatRate: true, xpPerHour: 1000, xpPerAction: 10 }),
+        goldPerHour: -5_000,
+        drinkCostPerHour: 0,
+        teaBill: [{ itemHrid: '/items/enhancing_tea', perHour: 12, unitPrice: null }],
+        ...extra,
+    });
+
+    test('held for the whole climb, it is covered and the route is priced', async () => {
+        // The quick estimate's pick is a faster, dearer item with a priced tea; the cheap one drinks the
+        // unpriced tea the bag holds enough of, so only covering it lets Cheapest find it
+        const dear = {
+            ...rate('Dear', { flatRate: true, xpPerHour: 2000, xpPerAction: 10 }),
+            goldPerHour: -50_000,
+            teaBill: [{ itemHrid: '/items/wisdom_tea', perHour: 12, unitPrice: 100 }],
+        };
+        const result = await run({ rates: [dear, enhance()], target: 2, heldOf: () => 12 });
+        expect(labels(result.routes.fastest)).toEqual(['Dear 1-2']);
+        expect(labels(result.routes.cheapest)).toEqual(['Enhance 1-2']);
+        expect(result.routes.cheapest.totals.costKnown).toBe(true);
+        expect(result.routes.budget.totals.budgetSafe).toBe(true);
+    });
+
+    test('short of the whole climb, it is unknown and only Fastest offers the route', async () => {
+        const result = await run({ rates: [enhance()], target: 2, heldOf: () => 11 });
+        expect(result.routes.fastest.totals.costKnown).toBe(false);
+        expect(result.routes.cheapest).toBeNull();
+        expect(result.routes.budget).toBeNull();
+    });
+});
+
 describe('the search against exhaustive search', () => {
     const cases = [
         {

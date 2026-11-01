@@ -33,8 +33,11 @@
  * Experience carried past a level boundary (less than one action's worth) is
  * carried exactly but not compared, and an action's repeat capacity does not
  * carry over a level boundary in the search. Both are second-order — about one
- * action per level — and the chosen routes are re-costed exactly, stage by
- * stage, before they are shown. The quick estimate's own choice is always a
+ * action per level. The market's absorption cap (`max(0, proceeds − cap × hours)`)
+ * is also applied level by level in the search, which can only charge more than
+ * the same cap applied once per stage: the search is pessimistic about capped
+ * sales (and so about whether a capped route fits the budget), never optimistic.
+ * The chosen routes are re-costed exactly, stage by stage, before they are shown. The quick estimate's own choice is always a
  * candidate too, so the Fastest route is never slower than the quick estimate.
  *
  * ## Coins
@@ -95,9 +98,12 @@ function levelFor(table, level, xp, cap) {
  */
 function ratePriced(rate) {
     if (rate.goldKnown === false || !Number.isFinite(rate.goldPerHour)) return false;
-    // An unpriced recurring tea is unknown unless the bag covers it; the search cannot see the pool, so it
-    // treats it as unknown and the exact re-cost decides
-    if (Array.isArray(rate.teaBill) && rate.teaBill.some((tea) => !(tea.unitPrice > 0))) return false;
+    // An unpriced recurring tea is unknown unless the bag covers it. The search cannot see the shared pool,
+    // so it counts a rate priced when the bag covers that rate's whole climb on its own (`teaCovered`, set
+    // by prepareRouteInput); the exact re-cost draws from the pool and drops a route the pool cannot cover
+    if (!rate.teaCovered && Array.isArray(rate.teaBill) && rate.teaBill.some((tea) => !(tea.unitPrice > 0))) {
+        return false;
+    }
     return true;
 }
 
@@ -157,9 +163,20 @@ export function prepareRouteInput({
         }
     }
 
+    const target = Math.floor(num(targetLevel));
+    const climbXp = Array.isArray(table) ? Math.max(0, num(table[target]) - num(experience)) : 0;
+    for (const rate of usable) {
+        if (!rate.flatRate || !Array.isArray(rate.teaBill)) continue;
+        // Enhancing's climb is the experience divided by its rate, so its whole-climb tea need is exact
+        const hours = climbXp / num(rate.xpPerHour);
+        rate.teaCovered = rate.teaBill.every(
+            (tea) => tea.unitPrice > 0 || (heldTeas[tea.itemHrid] || 0) >= Math.ceil(num(tea.perHour) * hours - 1e-9)
+        );
+    }
+
     return {
         skillHrid,
-        target: Math.floor(num(targetLevel)),
+        target,
         level: startLevel,
         experience: num(experience),
         gold: Math.max(0, num(gold)),
@@ -210,6 +227,7 @@ export function routeCacheKey(input) {
             rate.flatRate,
             rate.measuredAtLevel,
             rate.teaBill,
+            rate.teaCovered,
         ]),
     ]);
 }

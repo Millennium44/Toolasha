@@ -454,6 +454,8 @@ class GoalPlannerPanel {
         unregisterCommand('Goal Planner');
         this._remove();
         this.busy = false;
+        // A route waiting on a pricing that disable abandoned wakes, sees the switch, and draws nothing
+        this._settleIdle();
         this.pendingReplan = false;
         this.pendingReprice = false;
         this.loaded = null;
@@ -532,6 +534,7 @@ class GoalPlannerPanel {
             return;
         }
         this.busy = true;
+        this.idle = new Promise((resolve) => (this.resolveIdle = resolve));
         this.notice = null;
         this._status(reprice ? 'Pricing…' : 'Planning…');
         // Who this plan is for, fixed before the pricing. `buildPlannerContext()`
@@ -577,6 +580,7 @@ class GoalPlannerPanel {
         } finally {
             if (current()) {
                 this.busy = false;
+                this._settleIdle();
                 this._render();
                 if (this.pendingReplan) {
                     // A queued pass after a failed pricing retries the pricing:
@@ -1452,6 +1456,22 @@ class GoalPlannerPanel {
     // -------------------------------------------------------------------------
 
     /**
+     * Resolves when the replan running now finishes (at once when none is).
+     * @returns {Promise<void>}
+     */
+    _whenIdle() {
+        return this.busy && this.idle ? this.idle : Promise.resolve();
+    }
+
+    /** Wake whoever is waiting on {@link _whenIdle} */
+    _settleIdle() {
+        const resolve = this.resolveIdle;
+        this.idle = null;
+        this.resolveIdle = null;
+        resolve?.();
+    }
+
+    /**
      * Search for a leveling route for one skill goal. Runs only from the Optimize route button.
      *
      * Two awaits can outlive the press: pricing every action of the skill, and the search, which yields
@@ -1484,6 +1504,11 @@ class GoalPlannerPanel {
         this._render();
 
         try {
+            // A pricing already under way is waited for, not reported as missing prices
+            while (this.busy) {
+                await this._whenIdle();
+                if (!live()) return;
+            }
             if (!this.context) {
                 await this.replan({ reprice: true });
                 if (!live()) return;
@@ -1692,6 +1717,8 @@ class GoalPlannerPanel {
         if (skill && (skill.level !== basis.level || skill.experience !== basis.experience)) {
             return 'you have gained experience since';
         }
+        // Within budget is an answer about the coins in hand, so a different purse is a different answer
+        if (Math.round(coinsHeld()) !== Math.round(basis.gold)) return 'your coins have changed since';
         return null;
     }
 

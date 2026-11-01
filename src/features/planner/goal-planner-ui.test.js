@@ -121,7 +121,7 @@ vi.mock('../../utils/combat-zone-open.js', () => ({
     },
 }));
 
-const plannerContext = vi.hoisted(() => ({ value: null, builds: 0, onBuild: null }));
+const plannerContext = vi.hoisted(() => ({ value: null, builds: 0, onBuild: null, coins: undefined }));
 vi.mock('./goal-planner-context.js', () => ({
     buildPlannerContext: async () => {
         plannerContext.builds += 1;
@@ -129,7 +129,7 @@ vi.mock('./goal-planner-context.js', () => ({
         return plannerContext.value;
     },
     withHouseCosts: async (context) => context,
-    coinsHeld: () => 50_000_000,
+    coinsHeld: () => plannerContext.coins ?? 50_000_000,
 }));
 
 const { goalPlannerPanel } = await import('./goal-planner-ui.js');
@@ -1122,6 +1122,7 @@ describe('the leveling route', () => {
         route.calls = 0;
         route.gate = null;
         route.rates = [cookingRate('Stew'), cookingRate('Roast', { requiredLevel: 5, actionTime: 5, xpPerHour: 7200 })];
+        plannerContext.coins = undefined;
         store.data.goalPlannerGoals_char1 = [{ id: 'g-cook', type: 'skill', skillHrid: COOKING, targetLevel: 10 }];
         const value = fixtureContext();
         value.skill = () => ({ level: 1, experience: 1000 });
@@ -1184,6 +1185,36 @@ describe('the leveling route', () => {
         await pending;
         expect(text()).toContain('Route total');
         expect(text()).toContain('Out of date: prices were refreshed since');
+    });
+
+    test('a change in coins in hand marks the route out of date', async () => {
+        await open();
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).not.toContain('Out of date');
+        plannerContext.coins = 1_000;
+        goalPlannerPanel._render();
+        expect(text()).toContain('Out of date: your coins have changed since');
+    });
+
+    test('pressed while the first pricing is under way, it waits for it rather than asking for Refresh', async () => {
+        let release;
+        const gate = new Promise((resolve) => (release = resolve));
+        const value = plannerContext.value;
+        plannerContext.onBuild = async () => {
+            await gate;
+            return value;
+        };
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        const refreshing = goalPlannerPanel.refresh();
+        const optimizing = goalPlannerPanel.optimizeRoute('g-cook');
+        await settled();
+        release();
+        await refreshing;
+        await optimizing;
+        expect(text()).not.toContain('Prices are not loaded');
+        expect(text()).toContain('Route total');
+        expect(plannerContext.builds).toBe(1);
     });
 
     test('a changed input searches again', async () => {
