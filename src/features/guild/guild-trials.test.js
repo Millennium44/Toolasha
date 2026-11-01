@@ -4948,6 +4948,32 @@ describe('the panel, end to end', () => {
                 game.breakdown = watchedFight({ pool: { ...watchedFight().pool, at: now + 30_000 } });
                 fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
                 expect(game.scoreboardOpens).toBe(1);
+
+                // …and a reload where the clock offset is known only on one side keys the same cycle too
+                await trialsFeature.cleanup();
+                resetTrialsSingleton();
+                guildTrials.cycleStartMs = now - 70 * 60_000;
+                vi.setSystemTime(now + 60_000);
+                await trialsFeature.initialize();
+                guildTrials.currentTrials = combatHour();
+                guildTrials.serverClockOffsetMs = null;
+                game.breakdown = watchedFight({ pool: { ...watchedFight().pool, at: now + 60_000 } });
+                fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+                expect(game.scoreboardOpens).toBe(1);
+            } finally {
+                game.testServer = false;
+                guildTrials.cycleStartMs = null;
+            }
+        });
+
+        test('on the test server nothing auto-opens until the guild payload states the combat hour', () => {
+            game.testServer = true;
+            try {
+                guildTrials.currentTrials = null;
+                guildTrials.cycleStartMs = now - 70 * 60_000;
+                game.breakdown = watchedFight();
+                fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+                expect(game.scoreboardOpens).toBe(0);
             } finally {
                 game.testServer = false;
                 guildTrials.cycleStartMs = null;

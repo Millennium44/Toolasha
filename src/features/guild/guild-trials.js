@@ -5707,10 +5707,13 @@ class GuildTrials {
         if (breakdown.guildBattleId === null || breakdown.guildBattleId === undefined) return;
 
         const now = Date.now();
+        const cycleStart = isTestServer() ? this._cycleStartFor(now) : null;
+        // The test server keys each cycle apart; without the cycle stated, wait for it
+        if (isTestServer() && cycleStart === null) return;
         const key = autoOpenTrialKey({
             encounter: watched.encounter ?? breakdown.encounter ?? null,
             weekStart: Number.isFinite(this.record?.weekStart) ? this.record.weekStart : trialWeekStart(now),
-            cycleStart: isTestServer() ? this._cycleStartFor(now) : null,
+            cycleStart,
         });
         // Not known yet: the next tick has it, and a key without it would be one key for every trial
         if (key === null) return;
@@ -5727,21 +5730,23 @@ class GuildTrials {
     /**
      * The running cycle's start on the test server, from the guild payload.
      *
-     * The combat hour's own start first: every guild message of the combat
-     * hour states it, the login payload after a reload included, which is when
-     * the board opens. Only without one the skilling hour's start once seen
-     * (`cycleStartMs`, or the record's copy of it) stands in.
+     * The combat hour's own start, and only that: every guild message of the
+     * combat hour states it, the login payload after a reload included, which
+     * is when the board opens. Placed on the server's clock until the clock
+     * offset is known (seconds out, against a ten-minute bucket and an hour
+     * that opens on the hour), so the bucket does not move when the offset
+     * arrives. A second source — the skilling start once seen — would key one
+     * cycle two ways between a session and a reload, so with no combat hour
+     * stated this answers null and nothing auto-opens until one is.
      * @param {number} now - Clock
      * @returns {number|null} Client ms, or null when nothing says
      */
     _cycleStartFor(now) {
         const held = this.currentTrials;
-        if (held && Number.isFinite(held.at) && now - held.at <= TRIAL_ACTIVE_MS) {
-            const combatStart = trialHourStartedAt(held.combat, this.serverClockOffsetMs);
-            if (Number.isFinite(combatStart)) return combatStart;
-        }
-        if (Number.isFinite(this.cycleStartMs)) return this.cycleStartMs;
-        return Number.isFinite(this.record?.cycleStart) ? this.record.cycleStart : null;
+        if (!held || !Number.isFinite(held.at) || now - held.at > TRIAL_ACTIVE_MS) return null;
+        const offset = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
+        const combatStart = trialHourStartedAt(held.combat, offset);
+        return Number.isFinite(combatStart) ? combatStart : null;
     }
 
     /**
