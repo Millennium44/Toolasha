@@ -379,9 +379,11 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
                 if (tokens) {
                     inputPrice = tokens.price;
                     if (tokens.partial) partial = true;
-                } else {
-                    volatile = true;
                 }
+                // Never cached either way: the token value moves with the profit pricing mode and the
+                // chests' expected values, none of which the cache's versions track, so a cached badge
+                // would keep its old cost while the crystal beside it was repriced
+                volatile = true;
             }
             if (!(inputPrice > 0) && input.count > 0) partial = true;
             totalPrice += inputPrice * input.count * (1 - artisanBonus);

@@ -198,6 +198,13 @@ describe('an unlisted task badge costs what its crafting chain costs', () => {
         expect(priceGuarded(EXPERT)).toMatchObject({ price: 21 * CRYSTAL_PRICE, partial: true });
     });
 
+    test('a change in the token value reprices a badge already priced, with no market version change', () => {
+        expect(priceGuarded(EXPERT).price).toBe(21 * CRYSTAL_PRICE);
+        // What a pricing-mode switch does: the chest a token buys is revalued, nothing the cache tracks moves
+        state.ev[CHEST] = { expectedValue: 2_400_000, missingCount: 0, isPartial: false };
+        expect(priceGuarded(EXPERT).price).toBe(42 * CRYSTAL_PRICE);
+    });
+
     test('a listed badge keeps its market price', () => {
         prices[EXPERT] = { ask: 5_000_000, bid: 4_800_000 };
         state.version++;
