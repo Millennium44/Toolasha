@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Philo Gamba: untradable capes no longer cost 0
+
+- An untradable base item in the Philo Gamba calculator is valued with your "Untradable capes: base value" setting instead of 0; with that set to nothing the row shows "Set price" and blank profit figures until you click to enter a cost (from upstream).
+- Untradable cape enhancement values are remembered between recalculations instead of re-simulated each time (from upstream).
+
 ### Guild trial info boxes appear sooner
 
 - Guild Trials now starts first at login and draws its info boxes from what is already on screen, instead of several seconds later once the other features and its first sample had run.

@@ -29,6 +29,7 @@ import { registerCommand, unregisterCommand } from '../../utils/command-registry
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
 import { PHILO_HRID } from '../alchemy/philosophers-stone-hrid.js';
+import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/untradable-cape.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -105,6 +106,9 @@ const TABLE_COLUMNS = [
     { key: 'costPerHour', label: 'Cost/Hr' },
 ];
 
+/** Shown where an unpriced row has no figure */
+const BLANK = '\u2014';
+
 /**
  * Plain-text value for one column of a row, formatted the same way the table
  * cell itself is (minus color/click behaviour, which text can't carry).
@@ -114,9 +118,9 @@ const TABLE_COLUMNS = [
  */
 export function formatRowValue(key, row) {
     const value = row[key];
+    if (key === 'name') return value;
+    if ((key === 'profitPerPhiloInstant' ? row.profitPerPhiloInstant : value) == null) return BLANK;
     switch (key) {
-        case 'name':
-            return value;
         case 'profitPerPhiloInstant':
             return (
                 `${formatLargeNumber(Math.round(row.profitPerPhiloInstant))} | ` +
@@ -835,10 +839,18 @@ class PhiloCalculator {
      * the same way — it is just as sellable as the input itself. That falls
      * back to the normal costing only when the item has no sell-side quote at
      * all, so an owned row is never dropped for want of a bid.
+     *
+     * An untradable item (the capes) has no listing to find. Its value comes from
+     * the "Untradable capes: base value" setting when that yields a figure;
+     * otherwise the row needs a price from the player (`needsPrice`, `itemCost`
+     * null) rather than being costed at 0. A tradable item with no price is
+     * still dropped.
      * @param {string} itemHrid - Item HRID
-     * @returns {{itemCost: number, selfReturnUnitValue: number, source: string, fallbackLevel: number}|null}
+     * @param {Object} [itemDetails] - The item's game data; read from the item map when omitted
+     * @returns {{itemCost: number|null, selfReturnUnitValue: number, source: string, fallbackLevel: number,
+     *   needsPrice?: boolean}|null}
      */
-    resolveItemCost(itemHrid) {
+    resolveItemCost(itemHrid, itemDetails) {
         const override = this.itemCostOverrides[itemHrid];
         if (typeof override === 'number' && override > 0) {
             return { itemCost: override, selfReturnUnitValue: override, source: 'override', fallbackLevel: 0 };
@@ -873,7 +885,7 @@ class PhiloCalculator {
                     return basis ? this.patientQuote(rawValue, 'sell', basis, base, hrid) : 0;
                 },
             });
-            if (!resolved) return null;
+            if (!resolved) return this.untradableCostBasis(itemHrid, itemDetails);
             // The craft breakdown the tooltip reads is a side effect of pricing
             // the craft path, and is recorded whether or not that path won
             if (resolved.craft) {
@@ -883,12 +895,64 @@ class PhiloCalculator {
                 this._craftBreakdowns[itemHrid] = resolved.breakdown;
             }
             const { itemCost, selfReturnUnitValue, source, fallbackLevel } = resolved;
+            // A craft whose base is an untradable cape leaves the cape itself out of the bill: a missing
+            // term, not a free one. Add it at the cape setting's value, or ask for a price.
+            if (source === 'craft' && resolved.baseNote === 'untradable') {
+                const baseValue = this.capeBaseValue();
+                this._craftBaseNotes = this._craftBaseNotes || {};
+                if (!(baseValue > 0)) {
+                    this._craftBaseNotes[itemHrid] = 'needsPrice';
+                    return this.needsPriceBasis();
+                }
+                this._craftBaseNotes[itemHrid] = 'capeSetting';
+                this._craftBaseValues = this._craftBaseValues || {};
+                this._craftBaseValues[itemHrid] = baseValue;
+                const market = quoteAt(0);
+                const total = market > 0 ? Math.min(market, itemCost + baseValue) : itemCost + baseValue;
+                return { itemCost: total, selfReturnUnitValue: total, source, fallbackLevel };
+            }
             return { itemCost, selfReturnUnitValue, source, fallbackLevel };
         }
 
         const itemCost = quoteAt(0);
-        if (itemCost === null || itemCost === undefined) return null;
+        if (itemCost === null || itemCost === undefined) return this.untradableCostBasis(itemHrid, itemDetails);
         return { itemCost, selfReturnUnitValue: itemCost, source: 'market', fallbackLevel: 0 };
+    }
+
+    /**
+     * The cost basis of an item nothing priced: dropped when it is tradable (or unknown), a
+     * `needsPrice` row when it is untradable. An untradable cape takes the cape setting's value first.
+     * @param {string} itemHrid - Item HRID
+     * @param {Object} [itemDetails] - The item's game data
+     * @returns {Object|null} Cost basis, or null when the row should not be shown
+     */
+    untradableCostBasis(itemHrid, itemDetails) {
+        const details = itemDetails ?? dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
+        if (!details || details.isTradable === true) return null;
+        // Only an unrefined cape is worth the base value; an unresolved refined one is missing its
+        // materials too, so it stays a needs-price row
+        if (isUntradableCape(itemHrid) && !isRefinedCape(itemHrid)) {
+            const baseValue = this.capeBaseValue();
+            if (baseValue > 0) {
+                return { itemCost: baseValue, selfReturnUnitValue: baseValue, source: 'capeSetting', fallbackLevel: 0 };
+            }
+        }
+        return this.needsPriceBasis();
+    }
+
+    /**
+     * The Untradable capes setting's value, read on this table's buy side: its explicit mode when it
+     * has one, the global pricing (and patient tick) only while it follows Global.
+     * @returns {number} Value, or 0 when the setting yields none
+     */
+    capeBaseValue() {
+        const mode = this.pricingMode === GLOBAL_PRICING_MODE ? undefined : this.getPriceType('buy');
+        return getCapeBaseValue({ context: 'profit', mode });
+    }
+
+    /** @returns {Object} The cost basis of a row that waits for the player's price */
+    needsPriceBasis() {
+        return { itemCost: null, selfReturnUnitValue: 0, source: 'needsPrice', fallbackLevel: 0, needsPrice: true };
     }
 
     /**
@@ -935,9 +999,14 @@ class PhiloCalculator {
         const philosPerAction = successRate * philoDropRate * avgPhiloCount * bulkMultiplier;
         if (!(philosPerAction > 0)) return null;
 
-        const costBasis = this.resolveItemCost(itemHrid);
+        const costBasis = this.resolveItemCost(itemHrid, itemDetails);
         if (!costBasis) return null;
-        const { itemCost, selfReturnUnitValue, source: costSource, fallbackLevel } = costBasis;
+        const { selfReturnUnitValue, source: costSource, fallbackLevel } = costBasis;
+        // Without a price the arithmetic runs on 0 so it stays finite, but nothing derived from that 0
+        // is shown: it would read as a free item
+        const needsPrice = costBasis.needsPrice === true;
+        const itemCost = needsPrice ? 0 : costBasis.itemCost;
+        const costDerived = (value) => (needsPrice ? null : value);
 
         // Catalyst cost per action (consumed only on success)
         const catalystCostPerAction = this.useCatalyst ? successRate * this.catalystPrice : 0;
@@ -1024,10 +1093,14 @@ class PhiloCalculator {
         const revenuePerHour = evPerAction * actionsPerHour;
         const costPerHour = totalCostPerAction * actionsPerHour;
 
+        // Revenue includes the self-return, valued at the item's cost: blank only when it has one
+        const selfValued = (value) => (needsPrice && selfDropRate > 0 ? null : value);
+
         return {
             itemHrid,
             name: this.getItemName(itemHrid),
-            cost: itemCost,
+            cost: costDerived(itemCost),
+            needsPrice,
             costSource,
             costFallbackLevel: fallbackLevel,
             // Displayed as the game shows them: conditional on a successful transmute
@@ -1036,27 +1109,27 @@ class PhiloCalculator {
             transmuteChance: baseTransmuteRate,
             effectiveTransmuteChance: successRate,
             levelPenalty,
-            transmuteCost: totalCostPerAction,
+            transmuteCost: costDerived(totalCostPerAction),
             teaCostPerAction,
             bonusRevenuePerAction,
-            ev: evPerAction,
-            evInstant,
-            evPatient,
+            ev: selfValued(evPerAction),
+            evInstant: selfValued(evInstant),
+            evPatient: selfValued(evPatient),
             itemsPerAction,
             actionsPerPhilo,
             itemsPerPhilo,
-            profitPerPhilo,
-            profitPerPhiloInstant,
-            profitPerPhiloPatient,
-            profitMargin,
+            profitPerPhilo: costDerived(profitPerPhilo),
+            profitPerPhiloInstant: costDerived(profitPerPhiloInstant),
+            profitPerPhiloPatient: costDerived(profitPerPhiloPatient),
+            profitMargin: costDerived(profitMargin),
             actionTime,
             efficiency,
             actionTimeEstimated: estimated,
             actionsPerHour,
             timePerPhiloSeconds,
-            profitPerHour,
-            revenuePerHour,
-            costPerHour,
+            profitPerHour: costDerived(profitPerHour),
+            revenuePerHour: selfValued(revenuePerHour),
+            costPerHour: costDerived(costPerHour),
             pricingMode: this.resolvePricingMode(),
         };
     }
@@ -1092,6 +1165,8 @@ class PhiloCalculator {
             const aVal = a[col];
             const bVal = b[col];
 
+            // Blank (unpriced) values sort after priced ones in either direction
+            if (aVal == null || bVal == null) return (aVal == null) - (bVal == null);
             if (typeof aVal === 'string') {
                 return dir * aVal.localeCompare(bVal);
             }
@@ -1631,7 +1706,13 @@ class PhiloCalculator {
                     const parts = ['Refinement craft estimate, not a listing:'];
                     for (const line of philoCalculator._craftBreakdowns?.[r.itemHrid] || []) parts.push(line);
                     const note = philoCalculator._craftBaseNotes?.[r.itemHrid];
-                    if (note === 'untradable') {
+                    if (note === 'capeSetting') {
+                        const value = philoCalculator._craftBaseValues?.[r.itemHrid] ?? 0;
+                        parts.push(
+                            `Base item: untradable — valued at ${formatLargeNumber(Math.round(value))} ` +
+                                '(Untradable capes setting), included above.'
+                        );
+                    } else if (note === 'untradable') {
                         parts.push('Base item: untradable — you bring your own, no market cost.');
                     } else if (note === 'unpriced') {
                         parts.push('Base item: tradable but unlisted — the real cost is HIGHER than shown.');
@@ -1649,6 +1730,12 @@ class PhiloCalculator {
                     'than a +0 item and is not a price this transmute can actually be run at. Self-returns are ' +
                     'credited at the base item price, so this row is a lower bound at best. Click to override.',
             },
+            capeSetting: {
+                glyph: ' *',
+                title:
+                    'Untradable, so valued from the Untradable capes setting rather than a listing. ' +
+                    'Click to override this cost basis.',
+            },
             override: { glyph: ' ✎', title: 'Manual cost override. Click to change, clear the field to remove.' },
             owned: {
                 glyph: ' 📦',
@@ -1657,6 +1744,17 @@ class PhiloCalculator {
                     'Click to override this cost basis.',
             },
         };
+
+        if (row.needsPrice) {
+            td.textContent = 'Set price';
+            td.title =
+                'Untradable, and the Untradable capes setting gives it no value, so there is no cost to show. ' +
+                'Click to enter your own cost.';
+            td.style.cursor = 'pointer';
+            td.style.color = config.COLOR_WARNING;
+            td.addEventListener('click', () => this.editCostOverride(td, row));
+            return;
+        }
 
         const marker = markers[row.costSource];
         td.textContent = formatLargeNumber(Math.round(row.cost)) + (marker?.glyph || '');
@@ -1681,7 +1779,7 @@ class PhiloCalculator {
 
         const input = document.createElement('input');
         input.type = 'text';
-        input.value = String(this.itemCostOverrides[row.itemHrid] ?? Math.round(row.cost));
+        input.value = String(this.itemCostOverrides[row.itemHrid] ?? (row.needsPrice ? '' : Math.round(row.cost)));
         input.style.cssText = `
             width: 90px;
             padding: 2px 4px;
@@ -1765,7 +1863,8 @@ class PhiloCalculator {
         let rows = filterLower ? this.rows.filter((row) => row.name.toLowerCase().includes(filterLower)) : this.rows;
 
         if (this.hideNegativeProfitItems) {
-            rows = rows.filter((row) => row.profitPerPhilo >= 0);
+            // Unpriced rows stay visible so they can be priced
+            rows = rows.filter((row) => row.needsPrice || row.profitPerPhilo >= 0);
         }
 
         return rows;
@@ -1853,6 +1952,13 @@ class PhiloCalculator {
                 `;
 
                 const value = row[col.key];
+
+                // Cost-derived figures are blank until an unpriced item gets a price
+                if (col.key !== 'name' && col.key !== 'cost' && formatRowValue(col.key, row) === BLANK) {
+                    td.textContent = BLANK;
+                    tr.appendChild(td);
+                    continue;
+                }
 
                 // Format based on column type
                 switch (col.key) {
