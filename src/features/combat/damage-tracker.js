@@ -476,7 +476,7 @@ export function runClasses(
  */
 function noteSheets(players) {
     for (const [index, player] of Object.entries(players || {})) {
-        const abilities = player?.combatDetails?.combatAbilities;
+        const abilities = player?.combatAbilities;
         const kit = Array.isArray(abilities)
             ? abilities.filter((entry) => entry?.abilityHrid).map((entry) => ({ hrid: entry.abilityHrid }))
             : null;

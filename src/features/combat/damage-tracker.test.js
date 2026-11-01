@@ -480,8 +480,8 @@ describe('the class read off a run', () => {
             players: {
                 0: {
                     name: 'Alice',
+                    combatAbilities: [],
                     combatDetails: {
-                        combatAbilities: [],
                         combatStats: {
                             combatStyleHrids: ['/combat_styles/ranged'],
                             damageType: '/damage_types/physical',
@@ -490,8 +490,8 @@ describe('the class read off a run', () => {
                 },
                 1: {
                     name: 'Bob',
+                    combatAbilities: [{ abilityHrid: '/abilities/heal' }],
                     combatDetails: {
-                        combatAbilities: [{ abilityHrid: '/abilities/heal' }],
                         combatStats: { combatStyleHrids: ['/combat_styles/magic'], damageType: '/damage_types/nature' },
                     },
                 },
@@ -503,6 +503,20 @@ describe('the class read off a run', () => {
         const classes = runClasses();
         expect(classes['0']?.key).toBe('ranged');
         expect(classes['1']?.key).toBe('healer');
+    });
+
+    test('the kit a new_battle states on the player names a healer before any cast', () => {
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: {
+                0: { name: 'Alice' },
+                1: { name: 'Bob', combatAbilities: [{ abilityHrid: '/abilities/heal' }] },
+            },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
+        });
+        tick({ 0: { isAutoAtk: true }, 1: { isAutoAtk: true } });
+
+        expect(runClasses()['1']?.key).toBe('healer');
     });
 
     test('a fetched Battle Info sheet names the weapon, and its passive outranks the abilities', () => {
@@ -566,10 +580,10 @@ describe('the class read off a run', () => {
         listeners.new_battle({
             combatStartTime: '2026-08-03T01:00:00Z',
             players: {
-                0: { name: 'Alice', combatDetails: { combatAbilities: [], combatStats: { threat: 100 } } },
-                1: { name: 'Bob', combatDetails: { combatAbilities: [], combatStats: { threat: 105 } } },
-                2: { name: 'Carol', combatDetails: { combatAbilities: [], combatStats: { threat: 110 } } },
-                3: { name: 'Dave', combatDetails: { combatAbilities: [], combatStats: { threat: 400 } } },
+                0: { name: 'Alice', combatAbilities: [], combatDetails: { combatStats: { threat: 100 } } },
+                1: { name: 'Bob', combatAbilities: [], combatDetails: { combatStats: { threat: 105 } } },
+                2: { name: 'Carol', combatAbilities: [], combatDetails: { combatStats: { threat: 110 } } },
+                3: { name: 'Dave', combatAbilities: [], combatDetails: { combatStats: { threat: 400 } } },
             },
             monsters: { 0: { name: 'Eye' } },
         });
