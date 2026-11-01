@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upgrade slots and queued rows use what is selected
+
+- The Required and Missing Materials lines, Cost Summary and Budget now count the upgrade item at the level chosen in the action's upgrade slot instead of only the +0 copy.
+- Queued enhancing times, queued alchemy success rates and queue-row profits now use the queued action's saved loadout, as the other queue figures already did.
+
 ### Budget plan pins are remembered
 
 - Pinned and excluded picks in the Combat Sim's upgrade budget plan are now saved per character, survive a fresh analysis (a pick that left the results is marked rather than dropped), and the plan shows what the constraints cost against the unconstrained plan.
