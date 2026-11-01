@@ -170,13 +170,15 @@ export function canStartAction({ requiredLevel, skillLevel, teaSkillLevelBonus =
  * @param {Object} [options.gameData=null] - Pre-fetched gameData (required for gathering path).
  * @param {number} [options.communityEfficiency=0] - Community buff efficiency (production only).
  *   Caller computes this via their own method (e.g. calculateCommunityBuffBonus) and passes it in.
+ * @param {{equipment: Map, drinks: Array}|null} [options.actionContext=null] - Gear and drinks to
+ *   cost the action with (a queued row's own loadout); the per-skill default when omitted
  * @returns {Object} Efficiency context with all computed values
  */
 export function getActionEfficiencyContext(actionDetails, options = {}) {
-    const { isProduction = false, gameData = null, communityEfficiency = 0 } = options;
+    const { isProduction = false, gameData = null, communityEfficiency = 0, actionContext = null } = options;
 
     const skills = dataManager.getSkills();
-    const { equipment, drinks: drinkSlots } = resolveActionContext(actionDetails.type);
+    const { equipment, drinks: drinkSlots } = actionContext ?? resolveActionContext(actionDetails.type);
     const itemDetailMap = gameData?.itemDetailMap ?? dataManager.getInitClientData()?.itemDetailMap ?? {};
 
     // Drink concentration

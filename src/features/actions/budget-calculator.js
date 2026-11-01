@@ -14,6 +14,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { onDetailPanel, resolveDetailPanel } from '../../utils/action-panel-helper.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { release, reserve } from '../../utils/inventory-reservations.js';
+import { upgradeLevelForPanel } from '../../utils/upgrade-slot.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const PRODUCTION_TYPES = [
@@ -63,9 +64,10 @@ function findActionInput(panel) {
  * Binary search for maximum actions producible within budget.
  * @param {string} actionHrid
  * @param {number} budget
+ * @param {number|null} [upgradeItemLevel=0] - Level of the stack the panel's upgrade slot shows (null: empty slot)
  * @returns {{n: number, materials: Array, unresolvedMaterials: Array<string>}|null} null if game data is unavailable
  */
-function findMaxActions(actionHrid, budget) {
+function findMaxActions(actionHrid, budget, upgradeItemLevel = 0) {
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData?.actionDetailMap[actionHrid];
     if (!actionDetail) return null;
@@ -88,7 +90,10 @@ function findMaxActions(actionHrid, budget) {
      */
     const costForN = (n) => {
         if (n <= 0) return 0;
-        const mats = calculateMaterialRequirements(actionHrid, n, false, { ownerId: RESERVATION_OWNER });
+        const mats = calculateMaterialRequirements(actionHrid, n, false, {
+            ownerId: RESERVATION_OWNER,
+            upgradeItemLevel,
+        });
         let total = 0;
         for (const mat of mats) {
             if (mat.itemHrid === COIN_HRID) {
@@ -110,7 +115,10 @@ function findMaxActions(actionHrid, budget) {
      * @returns {Array<string>}
      */
     const unresolvedForN = (n) => {
-        const mats = calculateMaterialRequirements(actionHrid, n, false, { ownerId: RESERVATION_OWNER });
+        const mats = calculateMaterialRequirements(actionHrid, n, false, {
+            ownerId: RESERVATION_OWNER,
+            upgradeItemLevel,
+        });
         return [
             ...new Set(
                 mats
@@ -149,7 +157,10 @@ function findMaxActions(actionHrid, budget) {
         maxInRange(ARTISAN_ROUNDING_THRESHOLD, MAX_AFFORDABLE_ACTIONS)
     );
 
-    const materials = calculateMaterialRequirements(actionHrid, n, false, { ownerId: RESERVATION_OWNER });
+    const materials = calculateMaterialRequirements(actionHrid, n, false, {
+        ownerId: RESERVATION_OWNER,
+        upgradeItemLevel,
+    });
     return { n, materials, unresolvedMaterials: unresolvedForN(n + 1) };
 }
 
@@ -541,7 +552,11 @@ class BudgetCalculator {
             const actionHrid = getActionHridFromPanel(panel);
             if (!actionHrid) return;
 
-            const result = findMaxActions(actionHrid, budget);
+            const result = findMaxActions(
+                actionHrid,
+                budget,
+                upgradeLevelForPanel(panel, resolveDetailPanel(panel).actionDetails?.upgradeItemHrid)
+            );
             if (!result) {
                 calcBtn.textContent = 'No data';
                 this.timerRegistry.scheduleTimeout(() => {

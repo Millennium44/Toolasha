@@ -187,6 +187,72 @@ describe('calculateMaterialRequirements', () => {
         expect(plank).toMatchObject({ required: 8, have: 4, missing: 4 });
     });
 
+    describe('the upgrade line counts the stack the panel slot shows', () => {
+        const IN = '/item_locations/inventory';
+        const upgrade = (opts) => {
+            state.gameData.actionDetailMap['/actions/crafting/table'].upgradeItemHrid = '/items/table';
+            return calculateMaterialRequirements('/actions/crafting/table', 2, false, opts).find(
+                (m) => m.isUpgradeItem
+            );
+        };
+        // +0 and +3 of the same item, plus a worn +3 that no craft can spend
+        const stacks = () => [
+            { itemHrid: '/items/table', count: 1, enhancementLevel: 0, itemLocationHrid: IN },
+            { itemHrid: '/items/table', count: 5, enhancementLevel: 3, itemLocationHrid: IN },
+            { itemHrid: '/items/table', count: 9, enhancementLevel: 3, itemLocationHrid: '/item_locations/main_hand' },
+        ];
+
+        test('a slot at +3 is stock at +3, not at +0', () => {
+            state.inventory = stacks();
+            expect(upgrade({ upgradeItemLevel: 3 })).toMatchObject({ required: 2, have: 5, missing: 0 });
+        });
+
+        test('no level (or +0) keeps counting the +0 stack', () => {
+            state.inventory = stacks();
+            expect(upgrade({})).toMatchObject({ have: 1, missing: 1 });
+            expect(upgrade({ upgradeItemLevel: 0 })).toMatchObject({ have: 1, missing: 1 });
+        });
+
+        test('held only at another level reads as missing', () => {
+            state.inventory = [{ itemHrid: '/items/table', count: 5, enhancementLevel: 3, itemLocationHrid: IN }];
+            expect(upgrade({ upgradeItemLevel: 0 })).toMatchObject({ have: 0, missing: 2 });
+            expect(upgrade({ upgradeItemLevel: 4 })).toMatchObject({ have: 0, missing: 2 });
+        });
+
+        test('an empty slot (null) holds nothing even when the +0 stack is full', () => {
+            state.inventory = stacks();
+            expect(upgrade({ upgradeItemLevel: null })).toMatchObject({ have: 0, missing: 2 });
+        });
+
+        test('an item that is also a regular input: the +3 slot does not eat the +0 input stock', () => {
+            state.gameData.actionDetailMap['/actions/crafting/table'].upgradeItemHrid = '/items/table';
+            state.gameData.actionDetailMap['/actions/crafting/table'].inputItems = [
+                { itemHrid: '/items/table', count: 3 },
+            ];
+            state.inventory = stacks();
+            const result = calculateMaterialRequirements('/actions/crafting/table', 1, false, { upgradeItemLevel: 3 });
+            expect(result.find((m) => !m.isUpgradeItem)).toMatchObject({ required: 3, have: 1, missing: 2 });
+            expect(result.find((m) => m.isUpgradeItem)).toMatchObject({ required: 1, have: 5, missing: 0 });
+        });
+
+        test('a levelled line carries no +0 queue figure and reads reservations at its level', () => {
+            state.gameData.actionDetailMap['/actions/crafting/table'].upgradeItemHrid = '/items/table';
+            state.inventory = stacks();
+            state.currentActions = [
+                {
+                    actionHrid: '/actions/crafting/table',
+                    hasMaxCount: true,
+                    maxCount: 4,
+                    currentCount: 0,
+                },
+            ];
+            const line = calculateMaterialRequirements('/actions/crafting/table', 2, true, {
+                upgradeItemLevel: 3,
+            }).find((m) => m.isUpgradeItem);
+            expect(line.queued).toBe(0);
+        });
+    });
+
     test('excludes enhanced copies from the "have" count', () => {
         state.inventory = [{ itemHrid: '/items/plank', count: 5, enhancementLevel: 3 }];
         const result = calculateMaterialRequirements('/actions/crafting/table', 1);

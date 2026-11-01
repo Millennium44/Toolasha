@@ -71,9 +71,11 @@ function buildProcessingConversionCache(gameData) {
  * @param {boolean} [options.keepSellTax=false] - Ignore the personal-use sell-tax exclusion
  *   (`profitCalc_excludeSellTax`) and always deduct the market tax. Pass it from any consumer
  *   that values output as a sale (planners, optimizers, rankings, calibration).
+ * @param {{equipment: Map, drinks: Array}|null} [options.actionContext=null] - Gear and drinks to cost
+ *   the action with (a queued row's own loadout); the per-skill default when omitted
  * @returns {Object|null} Profit data or null if not applicable
  */
-export async function calculateGatheringProfit(actionHrid, { keepSellTax = false } = {}) {
+export async function calculateGatheringProfit(actionHrid, { keepSellTax = false, actionContext = null } = {}) {
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData.actionDetailMap[actionHrid];
 
@@ -100,7 +102,7 @@ export async function calculateGatheringProfit(actionHrid, { keepSellTax = false
     // Note: Market API is pre-loaded by caller (max-produceable.js)
     // No need to check or fetch here
 
-    const effCtx = getActionEfficiencyContext(actionDetail, { isProduction: false, gameData });
+    const effCtx = getActionEfficiencyContext(actionDetail, { isProduction: false, gameData, actionContext });
 
     const {
         equipment,

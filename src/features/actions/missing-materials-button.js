@@ -22,6 +22,7 @@ import {
     calculateQueuedMaterialsForAction,
     unclaimedBoughtCount,
 } from '../../utils/material-calculator.js';
+import { upgradeLevelForPanel } from '../../utils/upgrade-slot.js';
 import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -113,7 +114,7 @@ const ADJUST_MAX = 9999;
 /** A plain bill of materials opened from elsewhere (a house level), kept for live updates */
 let storedMaterialList = null;
 /** The level the open bill's upgrade item is wanted at, kept so live updates do not lose it */
-let storedUpgradeItemLevel = 0;
+let storedUpgradeItemLevel = 0; // null: the panel's upgrade slot was empty
 /**
  * The Alchemy panel's bill, kept for live updates and the Return tab:
  * `{itemHrid, actionType, numActions}`.
@@ -384,6 +385,9 @@ function updateButtonForPanel(panel, value) {
     // Determine disabled state: no quantity entered (∞ parses to 0)
     let missingMaterials = [];
     let disabled = false;
+    // The stack the panel's upgrade slot shows (null: empty slot), so the bill and the opened
+    // marketplace bill count the piece the craft would really spend
+    const slotLevel = upgradeLevelForPanel(panel, actionDetail.upgradeItemHrid);
 
     if (numActions <= 0) {
         disabled = true;
@@ -394,6 +398,7 @@ function updateButtonForPanel(panel, value) {
         const accountForQueue = !ignoreQueue; // Invert: ignoreQueue=false means accountForQueue=true
         missingMaterials = calculateMaterialRequirements(actionHrid, numActions, accountForQueue, {
             ownerId: RESERVATION_OWNER,
+            upgradeItemLevel: slotLevel,
         });
         if (missingMaterials.length === 0) {
             disabled = true;
@@ -401,7 +406,9 @@ function updateButtonForPanel(panel, value) {
     }
 
     // Create and insert button with actionHrid and numActions for live updates
-    const button = createMissingMaterialsButton(missingMaterials, actionHrid, numActions, disabled);
+    const button = createMissingMaterialsButton(missingMaterials, actionHrid, numActions, disabled, () =>
+        handleMissingMaterialsClick(actionHrid, numActions, slotLevel)
+    );
 
     // Find insertion point (beneath item requirements field)
     const itemRequirements = panel.querySelector('.SkillActionDetail_itemRequirements__3SPnA');
@@ -1233,7 +1240,8 @@ async function handleMissingMaterialsClick(actionHrid, numActions, upgradeItemLe
     storedEnhancementContext = null;
     storedMaterialList = null;
     storedAlchemyContext = null;
-    storedUpgradeItemLevel = Math.max(0, Math.floor(Number(upgradeItemLevel) || 0));
+    // null is an empty upgrade slot: it holds nothing, which is not the same as +0
+    storedUpgradeItemLevel = upgradeItemLevel === null ? null : Math.max(0, Math.floor(Number(upgradeItemLevel) || 0));
 
     // Recalculate materials fresh (inventory may have changed since button was rendered)
     const ignoreQueue = config.getSetting('actions_missingMaterialsButton_ignoreQueue') || false;
@@ -1241,6 +1249,7 @@ async function handleMissingMaterialsClick(actionHrid, numActions, upgradeItemLe
     const freshMaterials = atUpgradeItemLevel(
         calculateMaterialRequirements(actionHrid, numActions, accountForQueue, {
             ownerId: RESERVATION_OWNER,
+            upgradeItemLevel: storedUpgradeItemLevel,
         }),
         storedUpgradeItemLevel
     );
@@ -2066,6 +2075,7 @@ function updateTabsOnInventoryChange() {
         updatedMaterials = atUpgradeItemLevel(
             calculateMaterialRequirements(storedActionHrid, storedNumActions, accountForQueue, {
                 ownerId: RESERVATION_OWNER,
+                upgradeItemLevel: storedUpgradeItemLevel,
             }),
             storedUpgradeItemLevel
         );

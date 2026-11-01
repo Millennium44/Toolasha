@@ -22,14 +22,16 @@ export { ARTISAN_MATERIAL_MODE } from './artisan-material-mode.js';
  *
  * @param {Array<Object>} inventory - Rows from `getInventory()`
  * @param {string} itemHrid - Item
+ * @param {number} [level=0] - Enhancement level of the stack to count (an upgrade slot can
+ *   point at an enhanced copy)
  * @returns {number} Units held
  */
-function heldInBag(inventory, itemHrid) {
+function heldInBag(inventory, itemHrid, level = 0) {
     return inventory
         .filter(
             (i) =>
                 i.itemHrid === itemHrid &&
-                !i.enhancementLevel &&
+                (Number(i.enhancementLevel) || 0) === level &&
                 (!i.itemLocationHrid || i.itemLocationHrid === INVENTORY_LOCATION)
         )
         .reduce((sum, i) => sum + (i.count || 0), 0);
@@ -146,6 +148,8 @@ export function calculateQueuedMaterialsForAction(actionHrid = null) {
  *   is how every caller that predates the ledger calls this, and it must go on meaning
  *   "the ledger is not part of this figure" — so no claim is deducted without one, and
  *   none is deducted with one either while the ledger is switched off
+ * @param {number|null} [options.upgradeItemLevel=0] - Enhancement level of the stack the panel's
+ *   upgrade slot shows; 0 (the default) is the +0 stack, `null` an empty slot (nothing held)
  * @returns {Array<Object>} Array of material requirement objects (includes upgrade items)
  */
 /**
@@ -225,20 +229,28 @@ function reservationFields(missing, itemHrid, required, have, queued, reserved, 
 function buildMaterialLine(
     itemHrid,
     totalRequired,
-    { inventory, queuedMaterialsMap, ownerId, isUpgradeItem, claimedByItem }
+    { inventory, queuedMaterialsMap, ownerId, isUpgradeItem, claimedByItem, upgradeItemLevel = 0 }
 ) {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
     if (!itemDetails) return null;
 
-    const have = unclaimedBoughtCount(itemHrid) + heldInBag(inventory, itemHrid);
-    const queued = queuedMaterialsMap.get(itemHrid) || 0;
-    const reserved = ownerId ? reservedElsewhere(itemHrid, 0, { excludeOwner: ownerId }) : 0;
-    const claimed = claimedByItem.get(itemHrid) || 0;
+    // The upgrade line draws from the stack the panel's slot shows. `null` is an empty slot, which
+    // affords nothing; a level above 0 is its own stock, so it keeps its own claim, carries no
+    // queue figure (queue accounting counted +0 copies) and reads reservations at that level
+    const slotEmpty = isUpgradeItem && upgradeItemLevel === null;
+    const level = isUpgradeItem && upgradeItemLevel > 0 ? upgradeItemLevel : 0;
+    const claimKey = level > 0 ? `${itemHrid}@${level}` : itemHrid;
+    const have = slotEmpty
+        ? 0
+        : (level > 0 ? 0 : unclaimedBoughtCount(itemHrid)) + heldInBag(inventory, itemHrid, level);
+    const queued = level > 0 || slotEmpty ? 0 : queuedMaterialsMap.get(itemHrid) || 0;
+    const reserved = ownerId ? reservedElsewhere(itemHrid, level, { excludeOwner: ownerId }) : 0;
+    const claimed = claimedByItem.get(claimKey) || 0;
     const available = Math.max(0, have - queued - reserved - claimed);
     const missingAmount = Math.max(0, totalRequired - available);
 
-    claimedByItem.set(itemHrid, claimed + totalRequired);
+    claimedByItem.set(claimKey, claimed + totalRequired);
 
     return {
         itemHrid,
@@ -258,7 +270,7 @@ export function calculateMaterialRequirements(
     actionHrid,
     numActions,
     accountForQueue = false,
-    { ownerId = null } = {}
+    { ownerId = null, upgradeItemLevel = 0 } = {}
 ) {
     const actionDetails = dataManager.getActionDetails(actionHrid);
     const inventory = dataManager.getInventory() || [];
@@ -316,6 +328,7 @@ export function calculateMaterialRequirements(
             ownerId,
             isUpgradeItem: true,
             claimedByItem,
+            upgradeItemLevel,
         });
         if (line) materials.push(line);
     }
