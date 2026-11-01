@@ -191,8 +191,9 @@ export function summarizeCycle(walked, { coins, loopItems, bellPrice = null, off
         net,
         netBells,
         netBags: netBells === null ? null : Math.floor(netBells / COWBELLS_PER_BAG + 1e-9),
-        // Coinify pays out on successes, so its proceeds are an expectation
-        estimated: earned > 0,
+        // Coinify pays out on successes, so its proceeds are an expectation; a catalyst-limited leg's
+        // fees are one too (catalysts go only on a success), whether or not anything earns
+        estimated: earned > 0 || stages.some((stage) => stage.estimated),
         shortfall: findShortfall(stages, coins, loopItems),
         // An endless cycle outlasts any cap; an untimed one cannot be said to
         outlastsCap: capHours !== null && (endless ? true : timed ? seconds > capHours * 3600 : false),

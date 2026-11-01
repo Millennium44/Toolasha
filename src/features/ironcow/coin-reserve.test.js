@@ -523,3 +523,35 @@ describe('the whole queued cycle, walked through the real engine', () => {
         expect(cycle.otherActions).toBeGreaterThan(0);
     });
 });
+
+describe('the cycle summary says when its figures are estimates', () => {
+    const loop = { forageActionHrid: FORAGE, starfruitHrid: STAR_FRUIT, essenceHrid: ESSENCE };
+
+    test('a catalyst-limited decompose with no coinify still marks the cycle estimated', () => {
+        const walked = {
+            stages: [
+                {
+                    actionHrid: DECOMPOSE,
+                    itemHrid: STAR_FRUIT,
+                    count: 10,
+                    coinDelta: -9000,
+                    earned: 0,
+                    seconds: 600,
+                    estimated: true,
+                },
+            ],
+            stoppedAt: null,
+        };
+        const cycle = summarizeCycle(walked, { coins: 1_000_000, loopItems: loop });
+        expect(cycle.earned).toBe(0);
+        expect(cycle.estimated).toBe(true);
+    });
+
+    test('exact fees and no earnings stay exact', () => {
+        const walked = {
+            stages: [{ actionHrid: DECOMPOSE, itemHrid: STAR_FRUIT, count: 10, coinDelta: -9000, seconds: 600 }],
+            stoppedAt: null,
+        };
+        expect(summarizeCycle(walked, { coins: 1_000_000, loopItems: loop }).estimated).toBe(false);
+    });
+});
