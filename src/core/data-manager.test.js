@@ -6,7 +6,8 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runningAction } from '../utils/combat-actions.js';
 import { buildActionCompleted } from '../__fixtures__/wire/action-completed.js';
 import { buildCharacterAction } from '../__fixtures__/wire/character-actions.js';
-import { buildCollectionsUpdated } from '../__fixtures__/wire/collections-updated.js';
+import { buildCollectionRow, buildCollectionsUpdated } from '../__fixtures__/wire/collections-updated.js';
+import { buildSkillRow, buildSkillsUpdated } from '../__fixtures__/wire/skills-updated.js';
 import { buildQuest, buildQuestDiscarded } from '../__fixtures__/wire/quests-updated.js';
 
 let webSocketHandlers = new Map();
@@ -824,7 +825,9 @@ describe('saveSimulatorSnapshot', () => {
             },
         };
 
-        webSocketHandlers.get('skills_updated')({ characterSkills: [{ skillHrid: '/skills/attack', level: 91 }] });
+        webSocketHandlers.get('skills_updated')(
+            buildSkillsUpdated({ endCharacterSkills: [buildSkillRow('/skills/attack', 91, 0)] })
+        );
         webSocketHandlers.get('action_type_consumable_slots_updated')({
             actionTypeFoodSlotsMap: { '/action_types/combat': [{ itemHrid: '/items/star_fruit_yogurt' }] },
             actionTypeDrinkSlotsMap: { '/action_types/combat': [{ itemHrid: '/items/super_power_coffee' }] },
@@ -838,7 +841,7 @@ describe('saveSimulatorSnapshot', () => {
         expect(dataManager.saveSimulatorSnapshot()).toBe(true);
 
         const [snapshot] = webSocketHook.saveCombatSimSnapshot.mock.calls[0];
-        expect(snapshot.characterSkills).toEqual([{ skillHrid: '/skills/attack', level: 91 }]);
+        expect(snapshot.characterSkills).toEqual([{ skillHrid: '/skills/attack', level: 91, experience: 0 }]);
         expect(snapshot.actionTypeFoodSlotsMap['/action_types/combat']).toEqual([
             { itemHrid: '/items/star_fruit_yogurt' },
         ]);
@@ -1638,7 +1641,7 @@ describe('socket ownership across a character switch', () => {
         // Skills: char-1's levels would otherwise overwrite char-2's wholesale
         dataManager.characterSkills = [{ skillHrid: '/skills/milking', level: 10 }];
         webSocketHandlers.get('skills_updated')(
-            { characterSkills: [{ skillHrid: '/skills/milking', level: 99 }] },
+            buildSkillsUpdated({ endCharacterSkills: [buildSkillRow('/skills/milking', 99, 0)] }),
             stale
         );
         expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 10 }]);
@@ -1682,11 +1685,11 @@ describe('socket ownership across a character switch', () => {
 
         dataManager.characterSkills = [{ skillHrid: '/skills/milking', level: 10 }];
         webSocketHandlers.get('skills_updated')(
-            { characterSkills: [{ skillHrid: '/skills/milking', level: 11 }] },
+            buildSkillsUpdated({ endCharacterSkills: [buildSkillRow('/skills/milking', 11, 0)] }),
             { socket: socketB }
         );
 
-        expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 11 }]);
+        expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 11, experience: 0 }]);
     });
 
     test('a discarded quest leaves characterQuests like a claimed one, and a live one stays', async () => {
@@ -1731,7 +1734,7 @@ describe('socket ownership across a character switch', () => {
 
         dataManager.characterSkills = [{ skillHrid: '/skills/milking', level: 10 }];
         webSocketHandlers.get('skills_updated')(
-            { characterSkills: [{ skillHrid: '/skills/milking', level: 99 }] },
+            buildSkillsUpdated({ endCharacterSkills: [buildSkillRow('/skills/milking', 99, 0)] }),
             { socket: socketA }
         );
         expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 10 }]);
@@ -1768,9 +1771,11 @@ describe('socket ownership across a character switch', () => {
         expect(dataManager.activeSocket).toBeNull();
 
         dataManager.characterSkills = [{ skillHrid: '/skills/milking', level: 10 }];
-        webSocketHandlers.get('skills_updated')({ characterSkills: [{ skillHrid: '/skills/milking', level: 11 }] });
+        webSocketHandlers.get('skills_updated')(
+            buildSkillsUpdated({ endCharacterSkills: [buildSkillRow('/skills/milking', 11, 0)] })
+        );
 
-        expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 11 }]);
+        expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 11, experience: 0 }]);
     });
 
     test('global data is exempt: order books and community buffs come from any socket', async () => {
@@ -2326,6 +2331,24 @@ describe('skills_updated and collections_updated are deltas', () => {
         expect(dataManager.characterSkills.find((s) => s.skillHrid === '/skills/attack').level).toBe(50);
         expect(dataManager.characterSkills).toHaveLength(3);
         expect(dataManager.characterData.characterSkills).toBe(dataManager.characterSkills);
+    });
+
+    test('two collections_updated deltas merge by itemHrid, updating a repeated item', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterCollections = null;
+        webSocketHandlers.get('collections_updated')(
+            buildCollectionsUpdated([buildCollectionRow(), buildCollectionRow({ itemHrid: '/items/cheese', count: 5 })])
+        );
+        webSocketHandlers.get('collections_updated')(
+            buildCollectionsUpdated([
+                buildCollectionRow({ itemHrid: '/items/cheese', count: 6 }),
+                buildCollectionRow({ itemHrid: '/items/milk', count: 1 }),
+            ])
+        );
+        const rows = dataManager.getCharacterCollections();
+        expect(rows.map((r) => r.itemHrid).sort()).toEqual(['/items/cheese', '/items/milk', '/items/umbral_hood']);
+        expect(rows.find((r) => r.itemHrid === '/items/cheese').count).toBe(6);
+        expect(rows.find((r) => r.itemHrid === '/items/umbral_hood').count).toBe(331);
     });
 
     test('endCharacterAbilities in skills_updated reaches the ability store', async () => {
