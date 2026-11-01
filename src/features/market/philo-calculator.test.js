@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => ({
     inventory: [],
     // Raw drink slots for the refine action type, read the same way.
     drinkSlots: [],
+    // Untradable capes setting ('zero' | 'mirror') and extra item data for getItemDetails
+    capeMode: 'zero',
+    itemDetails: {},
 }));
 
 const storageMock = vi.hoisted(() => {
@@ -105,7 +108,8 @@ vi.mock('../../core/data-manager.js', () => ({
         // ironcow-valuation.js's own item read — separate from getInitClientData
         // above, which the calculator reads itself. Only sellPrice matters here.
         getItemDetails: (itemHrid) =>
-            itemHrid in mocks.vendorPrices ? { sellPrice: mocks.vendorPrices[itemHrid] } : null,
+            mocks.itemDetails[itemHrid] ??
+            (itemHrid in mocks.vendorPrices ? { sellPrice: mocks.vendorPrices[itemHrid] } : null),
         getSkills: () => mocks.skills,
         getEquipment: () => new Map(),
         getActionDrinkSlots: () => mocks.drinkSlots,
@@ -121,6 +125,7 @@ vi.mock('../../core/config.js', () => ({
             if (key === 'profitCalc_patientTickBuy') return mocks.patientTickBuy;
             if (key === 'profitCalc_patientTickSell') return mocks.patientTickSell;
             if (key === 'profitCalc_ironCowValuation') return mocks.ironCowValuation;
+            if (key === 'untradableCapeBaseValue') return mocks.capeMode;
             return fallback;
         },
         COLOR_PROFIT: '#0f0',
@@ -165,6 +170,7 @@ const { nextPriceUp, nextPriceDown } = await import('../../utils/market-values.j
 function widget(overrides = {}) {
     return {
         name: 'Test Widget',
+        isTradable: true,
         itemLevel: 50,
         sellPrice: 100,
         alchemyDetail: {
@@ -202,6 +208,8 @@ beforeEach(() => {
     mocks.vendorPrices = {};
     mocks.inventory = [];
     mocks.drinkSlots = [];
+    mocks.capeMode = 'zero';
+    mocks.itemDetails = {};
 
     calc = new PhiloCalculator();
     calc.useCatalyst = false;
@@ -952,5 +960,112 @@ describe('the table opens on the column it is read for', () => {
         // what earns most per hour, and the Profit/Hr column is the last one.
         expect(calc.sortColumn).toBe('profitPerHour');
         expect(calc.sortDirection).toBe('desc');
+    });
+});
+
+describe('untradable items with no price', () => {
+    const CAPE_HRID = '/items/test_cape';
+    const MIRROR_HRID = '/items/mirror_of_protection';
+
+    /** An untradable back piece that transmutes like the widget but returns itself */
+    function cape(hrid = CAPE_HRID, tradable = false) {
+        const details = widget();
+        details.alchemyDetail.transmuteDropTable[1] = { itemHrid: hrid, dropRate: 0.5, minCount: 1, maxCount: 1 };
+        if (tradable) details.isTradable = true;
+        else delete details.isTradable;
+        return details;
+    }
+
+    beforeEach(() => {
+        mocks.itemDetails[CAPE_HRID] = { equipmentDetail: { type: '/equipment_types/back' } };
+    });
+
+    test('needs a price: cost-derived figures are unknown, not computed from 0', () => {
+        const row = calc.calculateRow(CAPE_HRID, cape());
+        expect(row.needsPrice).toBe(true);
+        expect(row.costSource).toBe('needsPrice');
+        for (const key of [
+            'cost',
+            'transmuteCost',
+            'profitPerPhilo',
+            'profitPerPhiloInstant',
+            'profitPerPhiloPatient',
+            'profitMargin',
+            'profitPerHour',
+            'costPerHour',
+            'ev',
+            'revenuePerHour',
+        ]) {
+            expect(row[key]).toBeNull();
+        }
+        // What does not depend on the cost is still there
+        expect(row.actionsPerPhilo).toBeGreaterThan(0);
+        expect(formatRowValue('cost', row)).toBe('—');
+        expect(formatRowValue('profitPerPhiloInstant', row)).toBe('—');
+    });
+
+    test('sorts after priced rows in either direction and survives hide-negative', () => {
+        const priced = calc.calculateRow(WIDGET_HRID, widget());
+        const unpriced = calc.calculateRow(CAPE_HRID, cape());
+        for (const dir of ['asc', 'desc']) {
+            calc.sortColumn = 'profitPerHour';
+            calc.sortDirection = dir;
+            calc.rows = [unpriced, priced];
+            calc.sortRows();
+            expect(calc.rows.map((r) => r.itemHrid)).toEqual([WIDGET_HRID, CAPE_HRID]);
+        }
+        calc.hideNegativeProfitItems = true;
+        calc.rows = [unpriced];
+        expect(calc.getVisibleRows()).toHaveLength(1);
+    });
+
+    test('the cape setting values an unrefined cape; nothing means needs a price', () => {
+        mocks.capeMode = 'mirror';
+        mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
+        const row = calc.calculateRow(CAPE_HRID, cape());
+        expect(row.needsPrice).toBe(false);
+        expect(row.costSource).toBe('capeSetting');
+        expect(row.cost).toBeGreaterThan(0);
+
+        mocks.capeMode = 'zero';
+        expect(calc.calculateRow(CAPE_HRID, cape()).needsPrice).toBe(true);
+    });
+
+    test('a refined cape craft counts the base at the setting, or needs a price', () => {
+        const REFINED = '/items/test_cape_refined';
+        mocks.refineActions['/actions/refine_cape'] = {
+            outputItems: [{ itemHrid: REFINED }],
+            inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
+            upgradeItemHrid: CAPE_HRID,
+        };
+        calc.pricingMode = 'conservative';
+        const details = cape(REFINED);
+
+        const blank = calc.calculateRow(REFINED, details);
+        expect(blank.needsPrice).toBe(true);
+        expect(blank.profitPerHour).toBeNull();
+
+        mocks.capeMode = 'mirror';
+        mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
+        const valued = calc.calculateRow(REFINED, details);
+        expect(valued.needsPrice).toBe(false);
+        expect(valued.cost).toBeGreaterThan(10 * 200);
+        expect(calc._craftBaseNotes[REFINED]).toBe('capeSetting');
+    });
+
+    test('a typed cost prices it, and clearing it brings the blank back', () => {
+        calc.itemCostOverrides[CAPE_HRID] = 5000;
+        const row = calc.calculateRow(CAPE_HRID, cape());
+        expect(row.needsPrice).toBe(false);
+        expect(row.costSource).toBe('override');
+        expect(row.cost).toBe(5000);
+        expect(row.profitPerHour).not.toBeNull();
+
+        delete calc.itemCostOverrides[CAPE_HRID];
+        expect(calc.calculateRow(CAPE_HRID, cape()).needsPrice).toBe(true);
+    });
+
+    test('a tradable item with no price is still dropped', () => {
+        expect(calc.calculateRow(CAPE_HRID, cape(CAPE_HRID, true))).toBeNull();
     });
 });
