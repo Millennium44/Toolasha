@@ -141,4 +141,18 @@ describe('a pull in the orientation where only this device moved', () => {
         expect(mergeListingLogsForPull([theirs], [{ ...theirs, price: 5 }])[0].price).toBe(5);
         expect(mergeListingLogsForPull([same], [{ ...same, price: 7 }])[0].price).toBe(7);
     });
+
+    test('the later import stamp survives whichever copy wins', () => {
+        const stamped = row(300, NEWEST, { importedAt: NEWEST + DAY });
+        const peer = row(300, NEWEST);
+
+        // Equal revision: the incoming unstamped copy wins the fields, the stamp is kept
+        expect(mergeListingLogsForPull([stamped], [peer])[0].importedAt).toBe(NEWEST + DAY);
+        // This device's copy further along wins, the incoming later stamp is kept on it
+        const ahead = row(300, NEWEST, { status: 'filled', filledQuantity: 5 });
+        const behind = row(300, NEWEST, { status: 'active', filledQuantity: 0, importedAt: NEWEST + 2 * DAY });
+        const merged = mergeListingLogsForPull([ahead], [behind])[0];
+        expect(merged.status).toBe('filled');
+        expect(merged.importedAt).toBe(NEWEST + 2 * DAY);
+    });
 });

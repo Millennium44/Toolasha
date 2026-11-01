@@ -438,6 +438,37 @@ describe('retention moves rows into the archive instead of dropping them', () =>
         expect(ids(estimatedListingAge.knownListings)).toEqual([SAMPLE[1].id, RECENT.id]);
         expect(estimatedListingAge.knownListings[0].status).toBe('canceled');
     });
+
+    test('a listing recorded while a failing archive write is out is kept', async () => {
+        store().set(LOG_KEY, copies([SAMPLE[0], RECENT]));
+        estimatedListingAge.knownListings = copies([SAMPLE[0], RECENT]);
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const original = storageMock.set.getMockImplementation();
+        storageMock.set.mockClear();
+        storageMock.set.mockImplementation(async (key, ...rest) => {
+            if (!key.startsWith(`${ARCHIVE_PREFIX}_`)) return original(key, ...rest);
+            await gate;
+            return false;
+        });
+
+        const save = estimatedListingAge.saveHistoricalData();
+        await vi.waitFor(() =>
+            expect(storageMock.set.mock.calls.some(([key]) => key.startsWith(ARCHIVE_PREFIX))).toBe(true)
+        );
+        const arrived = recentRow(190000009, 1);
+        estimatedListingAge.knownListings = [...estimatedListingAge.knownListings, { ...arrived }].sort(
+            (a, b) => a.id - b.id
+        );
+        release();
+        await save;
+
+        // The failed move keeps the old row, and the listing that arrived meanwhile is not lost with it
+        expect(ids(estimatedListingAge.knownListings)).toEqual([SAMPLE[0].id, RECENT.id, arrived.id]);
+        expect(ids(store().get(LOG_KEY))).toEqual([SAMPLE[0].id, RECENT.id, arrived.id]);
+    });
 });
 
 describe('importing into the archive', () => {

@@ -614,12 +614,24 @@ function mergeListingLogsForPull(local, incoming) {
     for (const entry of local) {
         if (entry && typeof entry.id === 'number') heldById.set(entry.id, entry);
     }
+    const offeredById = new Map();
     const winners = offered.filter((entry) => {
         if (!entry || typeof entry.id !== 'number') return true;
+        offeredById.set(entry.id, entry);
         const held = heldById.get(entry.id);
         return !held || listingRevision(held) <= listingRevision(entry);
     });
-    return mergeListingLogs(local, winners);
+    // The later import stamp stands whichever copy won: it is what lets a re-imported row outlive an
+    // earlier deletion once it is archived
+    return mergeListingLogs(local, winners).map((entry) => {
+        if (!entry || typeof entry.id !== 'number') return entry;
+        const stamps = [heldById.get(entry.id)?.importedAt, offeredById.get(entry.id)?.importedAt].filter(
+            Number.isFinite
+        );
+        if (stamps.length === 0) return entry;
+        const importedAt = Math.max(...stamps);
+        return entry.importedAt === importedAt ? entry : { ...entry, importedAt };
+    });
 }
 
 class EstimatedListingAge {
@@ -1075,7 +1087,9 @@ class EstimatedListingAge {
         const { dropped } = splitListingRetention(listings);
         if (dropped.length === 0) return listings;
         const { ok } = await listingArchive.add(owner.charId, dropped);
-        if (!ok || !this._ownsMemory(owner)) return listings;
+        if (!this._ownsMemory(owner)) return listings;
+        // A failed move keeps every row, and the rows recorded while it was out with them
+        if (!ok) return mergeListingLogs(listings, this.knownListings);
         const moved = new Set(dropped);
         // Marking a listing active mutates the row in place, so a row marked while the archive was written is
         // still the object that was archived. It is open again, and retention never lets go of an open row
