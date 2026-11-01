@@ -62,7 +62,9 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: { calculate:
 vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
 
 const { default: engine } = await import('../actions/action-time-display.js');
-const { walkQueueCoins, coinReserve, bellsAffordable, COWBELLS_PER_BAG } = await import('./coin-reserve.js');
+const { walkQueueCoins, coinReserve, bellsAffordable, bellBudget, COWBELLS_PER_BAG } =
+    await import('./coin-reserve.js');
+const { summarizeCycle, keptNote } = await import('./ironbell-cycle.js');
 
 const STAR_FRUIT = '/items/star_fruit';
 const ESSENCE = '/items/foraging_essence';
@@ -409,5 +411,147 @@ describe('bells the spare coins buy', () => {
 
     test('says nothing without a bell price', () => {
         expect(bellsAffordable(1_000_000, 0, { price: null, source: null })).toBeNull();
+    });
+});
+
+describe('the whole queued cycle, walked through the real engine', () => {
+    // Every action is 10 s with no efficiency (the mocked calculator)
+    const LOOP = { forageActionHrid: FORAGE, starfruitHrid: STAR_FRUIT, essenceHrid: ESSENCE };
+    const fullLoop = () => [
+        queued(1, FORAGE, { maxCount: 100 }),
+        queued(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 500 }),
+        queued(3, COINIFY, { item: ESSENCE }),
+    ];
+
+    test('every leg is timed and counted, and the cycle sums them', () => {
+        game.currentActions = fullLoop();
+        const walked = walkQueueCoins(engine);
+        expect(walked.stages.map((stage) => stage.seconds)).toEqual([1000, 5000, 6000]);
+        expect(walked.stages.map((stage) => stage.itemHrid)).toEqual([null, STAR_FRUIT, ESSENCE]);
+
+        const cycle = summarizeCycle(walked, {
+            coins: 1_000_000,
+            loopItems: LOOP,
+            bellPrice: 1000,
+            offlineCapHours: 4,
+        });
+        expect(cycle.legs).toEqual({ forage: 100, decompose: 500, coinify: 600 });
+        expect(cycle.seconds).toBe(12_000);
+        expect(cycle.fees).toBeCloseTo(450_000, 3);
+        expect(cycle.earned).toBeCloseTo(600 * COINS_PER_COINIFY, 3);
+        expect(cycle.net).toBeCloseTo(600_000, 3);
+        expect(cycle.netBells).toBeCloseTo(600, 6);
+        expect(cycle.netBags).toBe(60);
+        expect(cycle.estimated).toBe(true);
+        // 1M covers the 450K of fees; 12,000 s is under the 4 h cap
+        expect(cycle.shortfall).toBeNull();
+        expect(cycle.outlastsCap).toBe(false);
+    });
+
+    test('the panel and the strip share one bells-now answer off the same walk', () => {
+        game.currentActions = fullLoop();
+        const walked = walkQueueCoins(engine);
+        const budget = bellBudget(walked, 4_000_000, { price: 1000, quoted: true });
+        // 4M less 450K of fees and the 3M buffer leaves 550K spare = 55 bags
+        expect(budget).toMatchObject({
+            status: 'ok',
+            reserve: 3_450_000,
+            fees: 450_000,
+            buffer: 3_000_000,
+            can: { bags: 55, bells: 550 },
+        });
+        expect(budget.spenders).toEqual(['Decompose: Star Fruit']);
+    });
+
+    test('with no gold-spending leg the reserve is exactly the buffer, and the note calls it a safety buffer', () => {
+        game.currentActions = [queued(1, FORAGE, { maxCount: 100 })];
+        const budget = bellBudget(walkQueueCoins(engine), 4_000_000, { price: 1000, quoted: true });
+        expect(budget).toMatchObject({ status: 'ok', reserve: 3_000_000, fees: 0, buffer: 3_000_000 });
+        expect(keptNote(budget.reserve, budget.spenders, (n) => `${n}`, budget.buffer)).toBe(
+            'Nothing queued spends gold; 3000000 is kept back as a safety buffer.'
+        );
+    });
+
+    test('short of the fees: names the leg that stalls and how far into the queue', () => {
+        game.currentActions = fullLoop();
+        const cycle = summarizeCycle(walkQueueCoins(engine), { coins: 200_000, loopItems: LOOP, offlineCapHours: 3 });
+        // 200K pays 222 of the 900-coin decomposes: 1,000 s of forage, then 222 × 10 s
+        expect(cycle.shortfall).toMatchObject({ label: 'Decompose: Star Fruit', leg: 'decompose', atSeconds: 3220 });
+        expect(cycle.shortfall.short).toBeCloseTo(250_000, 3);
+        // 12,000 s outlasts a 3 h cap; no bell price, no bells
+        expect(cycle.outlastsCap).toBe(true);
+        expect(cycle.netBells).toBeNull();
+    });
+
+    test('zero gold stalls the first fee at once', () => {
+        game.currentActions = fullLoop().slice(1);
+        const cycle = summarizeCycle(walkQueueCoins(engine), { coins: 0, loopItems: LOOP });
+        expect(cycle.shortfall).toMatchObject({ leg: 'decompose', atSeconds: 0 });
+        expect(cycle.shortfall.short).toBeCloseTo(450_000, 3);
+        expect(bellBudget(walkQueueCoins(engine), 0, { price: 1000, quoted: true }).can).toMatchObject({ bells: 0 });
+    });
+
+    test('an infinite forage leg ends the walk: the cycle has no end and outlasts any cap', () => {
+        game.currentActions = [queued(1, FORAGE), queued(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 500 })];
+        const walked = walkQueueCoins(engine);
+        const cycle = summarizeCycle(walked, { coins: 1_000_000, loopItems: LOOP, offlineCapHours: 20 });
+        expect(cycle.endless).toBe('Star Fruit');
+        expect(cycle.seconds).toBeNull();
+        expect(cycle.legs).toEqual({ forage: 0, decompose: 0, coinify: 0 });
+        expect(cycle.outlastsCap).toBe(true);
+        expect(cycle.shortfall).toBeNull();
+    });
+
+    test('an unreadable queue has no cycle and no bells-now answer', () => {
+        expect(summarizeCycle(null, { coins: 1, loopItems: LOOP })).toBeNull();
+        expect(bellBudget(null, 1, { price: 1000, quoted: true }).status).toBe('unreadable');
+        expect(bellBudget(null, 1, { price: 1000, quoted: false }).status).toBe('unquoted');
+        expect(bellBudget(null, 1, { price: null }).status).toBe('noPrice');
+    });
+
+    test('a stack of three same-leg rows and a non-loop row are counted apart', () => {
+        game.inventory = [stack(COIN, 1_000_000), stack(STAR_FRUIT, 3000)];
+        game.currentActions = [
+            queued(1, DECOMPOSE, { item: STAR_FRUIT, maxCount: 100 }),
+            queued(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 100 }),
+            queued(3, DECOMPOSE, { item: STAR_FRUIT, maxCount: 100 }),
+            // A decompose of something else is not a loop leg
+            queued(4, DECOMPOSE, { item: ESSENCE, maxCount: 5 }),
+        ];
+        const cycle = summarizeCycle(walkQueueCoins(engine), { coins: 1_000_000, loopItems: LOOP });
+        expect(cycle.legs.decompose).toBe(300);
+        expect(cycle.otherActions).toBeGreaterThan(0);
+    });
+});
+
+describe('the cycle summary says when its figures are estimates', () => {
+    const loop = { forageActionHrid: FORAGE, starfruitHrid: STAR_FRUIT, essenceHrid: ESSENCE };
+
+    test('a catalyst-limited decompose with no coinify still marks the cycle estimated', () => {
+        const walked = {
+            stages: [
+                {
+                    actionHrid: DECOMPOSE,
+                    itemHrid: STAR_FRUIT,
+                    count: 10,
+                    coinDelta: -9000,
+                    earned: 0,
+                    seconds: 600,
+                    estimated: true,
+                },
+            ],
+            stoppedAt: null,
+        };
+        const cycle = summarizeCycle(walked, { coins: 1_000_000, loopItems: loop });
+        expect(cycle.earned).toBe(0);
+        expect(cycle.estimated).toBe(true);
+    });
+
+    test('exact fees and no earnings stay exact', () => {
+        const walked = {
+            stages: [{ actionHrid: DECOMPOSE, itemHrid: STAR_FRUIT, count: 10, coinDelta: -9000, seconds: 600 }],
+            stoppedAt: null,
+        };
+        expect(summarizeCycle(walked, { coins: 1_000_000, loopItems: loop }).estimated).toBe(false);
     });
 });

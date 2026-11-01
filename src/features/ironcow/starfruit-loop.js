@@ -52,10 +52,11 @@ import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { getItemPriceInfo, getPricingMode } from '../../utils/market-data.js';
 import { HOURS_PER_DAY } from '../../utils/profit-constants.js';
+import { LOW_GOLD_BUFFER } from './coin-reserve.js';
 import { resolveLoopItems } from './loop-items.js';
 
 /** Alchemy is paid for in gold, and a loop that runs dry stops. */
-export const LOW_GOLD_BUFFER = 3_000_000;
+export { LOW_GOLD_BUFFER };
 
 /** Decompose, coinify, forage — the loop does not close with fewer. */
 export const LOOP_QUEUE_SLOTS = 3;

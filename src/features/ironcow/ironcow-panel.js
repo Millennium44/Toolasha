@@ -52,7 +52,9 @@ import {
     offlineWindow,
 } from './starfruit-loop.js';
 import { buildQueueSteps, startQueueWalk } from './ironcow-queue-walk.js';
-import { bellsAffordable, coinReserve, walkQueueCoins } from './coin-reserve.js';
+import { bellBudget, walkQueueCoins } from './coin-reserve.js';
+import { ESTIMATE_NOTE, LIVE_EVENTS, UNQUOTED_NOTE, UNREADABLE_NOTE, keptNote, stoppedNote } from './ironbell-cycle.js';
+import ironBellStrip from './ironcow-action-strip.js';
 import {
     loadOverrides,
     loadPlanCollapsed,
@@ -78,26 +80,6 @@ const GEOMETRY_KEY = 'ironCowFarmPanel';
 const DEFAULT_PANEL = { width: 520, height: 620 };
 /** How long a burst of coin or queue updates settles before the bells-you-can-buy lines redraw */
 const LIVE_REDRAW_MS = 300;
-/**
- * Data-manager events that can change what the queue spends: coins and materials, the queue itself,
- * and everything that moves a success rate, an efficiency or a level penalty — skills, equipment,
- * house rooms, consumables and every buff source
- */
-const LIVE_EVENTS = [
-    'items_updated',
-    'actions_updated',
-    'skills_updated',
-    'buffs_updated',
-    'equipment_buffs_updated',
-    'house_rooms_updated',
-    'consumables_updated',
-    'consumable_buffs_updated',
-    'personal_buffs_updated',
-    'community_buffs_updated',
-    'guild_buffs_updated',
-    'moo_pass_buffs_updated',
-    'achievement_buffs_updated',
-];
 
 const COLORS = {
     background: 'rgba(10, 12, 20, 0.97)',
@@ -370,6 +352,8 @@ class IronCowFarmPanel {
 
     /** Feature-registry entry point: read the state back and reopen if left open */
     async initialize() {
+        // The action-bar strip lives and dies with this feature: on here, off in disable()
+        ironBellStrip.start();
         await this.load();
         reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
 
@@ -383,6 +367,7 @@ class IronCowFarmPanel {
     /** Feature-registry teardown */
     disable() {
         unregisterCommand('Iron Bell Farming');
+        ironBellStrip.stop();
         // End this lifetime: whatever read or costing is still in flight must not publish into the
         // next character's state, and the next open must read afresh rather than reuse a stale promise
         this._lifeGen++;
@@ -1058,47 +1043,24 @@ class IronCowFarmPanel {
     _affordableLines(state) {
         if (!state) return [];
         const pricing = cowbellPricing({ buyNow: true });
-        if (!pricing.price) return [];
         const label = 'Bells you can buy now';
-        if (!pricing.quoted) {
-            return [
-                line(
-                    label,
-                    '—',
-                    COLORS.textDim,
-                    'No bag of ten cowbells is listed for sale right now; the price above is only an estimate.'
-                ),
-            ];
-        }
-        const walked = walkQueueCoins(actionTimeDisplay());
-        if (!walked) {
-            return [
-                line(
-                    label,
-                    '—',
-                    COLORS.textDim,
-                    'The action queue could not be read in full (an unknown action, or a row that may run on ' +
-                        'loot from a fight ahead of it), so the gold it still needs is unknown.'
-                ),
-            ];
-        }
+        // One answer for the panel and the action-bar strip: see `bellBudget`
+        const budget = bellBudget(
+            pricing.price && pricing.quoted ? walkQueueCoins(actionTimeDisplay()) : null,
+            state.coins,
+            pricing
+        );
+        if (budget.status === 'noPrice') return [];
+        if (budget.status === 'unquoted') return [line(label, '—', COLORS.textDim, UNQUOTED_NOTE)];
+        if (budget.status === 'unreadable') return [line(label, '—', COLORS.textDim, UNREADABLE_NOTE)];
 
-        const { reserve, spenders, estimated } = coinReserve(walked.stages);
+        const { reserve, buffer, spenders, estimated, can } = budget;
         const approx = estimated ? '~' : '';
-        const estimateNote = estimated
-            ? ' Part of this is a prediction (enhancing attempts, or a row limited by materials it only' +
-              ' expects to have), so it is an estimate: bad luck can spend more.'
-            : '';
-        const can = bellsAffordable(state.coins, reserve, pricing);
-        if (!can) return [];
+        const estimateNote = estimated ? ESTIMATE_NOTE : '';
 
         const value = `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'})`;
-        const kept =
-            reserve > 0
-                ? `Keeps ${coins(reserve)} back: what ${spenders.join(', ')} spends. Coinify earnings ` +
-                  'are not counted on, since its rolls can fail.'
-                : 'Nothing queued spends gold, so nothing is held back.';
-        const stopped = walked.stoppedAt ? ` The queue is followed up to ${walked.stoppedAt}, which never ends.` : '';
+        const kept = keptNote(reserve, spenders, coins, buffer);
+        const stopped = stoppedNote(budget.stoppedAt);
         // The price feed carries no depth: every bag is priced at the cheapest listing, so this is a
         // ceiling once that listing runs out, and the tooltip says so
         const route =
@@ -1112,7 +1074,9 @@ class IronCowFarmPanel {
                 'Kept for the queue',
                 reserve > 0 ? `${approx}${coins(reserve)}` : '0',
                 COLORS.textDim,
-                reserve > 0 ? `For ${spenders.join(', ')}.${estimateNote}` : kept
+                reserve > buffer
+                    ? `For ${spenders.join(', ')}, plus a ${coins(buffer)} safety buffer.${estimateNote}`
+                    : kept
             ),
         ];
     }

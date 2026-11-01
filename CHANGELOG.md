@@ -18,6 +18,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - When an item has buy listings but no sell listings, the Consumables panel now recommends a buy order (opening + New Buy Listing, priced by your buy auto-fill setting) instead of an instant buy that could not happen, and it says so if the market form fails to open.
 
+### Iron Bell cycle on the running action
+
+- While a Star Fruit loop leg runs, Iron Cow farmers now see under the action bar how many Iron Bells they can buy right now (keeping back the queue's fees plus a 3M buffer, as the Iron Cow panel now does too), what is left of the whole queued cycle (actions, end time, net gold and bells by its end), when the offline cap falls short of it, and which leg will run out of gold for its fees and when.
+- The action bar's gathering tea and Gourmet bonuses now use the running action's saved loadout drinks, like the rest of its figures.
+
 ### Guild trial sign-up levels stay current
 
 - The Guild Trial Sim's assignment planner keeps a member's skilling sign-up level when they switch trials, and picks up the guild's sign-up levels when the roster updates, instead of keeping the login copy.

@@ -85,8 +85,10 @@ function itemFromHash(hash) {
  * @param {Object|null} engine - The action-time engine (see `bundle-bridge.actionTimeDisplay`)
  * @param {Array<Object>} [actions] - The queue; defaults to `dataManager.getCurrentActions()`
  * @param {Array<Object>} [inventory] - Defaults to `dataManager.getInventory()`
- * @returns {{stages: Array<{actionHrid: string, label: string, count: number, coinDelta: number,
- *   earned: number}>, stoppedAt: string|null}|null} Rows in run order; `stoppedAt` names the
+ * @returns {{stages: Array<{actionHrid: string, itemHrid: string|null, label: string, count: number,
+ *   coinDelta: number, earned: number, seconds: number}>, stoppedAt: string|null}|null} Rows in run
+ *   order; `seconds` is the engine's own time for the row (the running one less what it has
+ *   already done), Infinity for a fight it cannot time; `stoppedAt` names the
  *   unbounded row that ended the walk. Null when the engine is unavailable, a row's action is
  *   unknown, or a gold-paying row sits behind a counted fight or an unrefine whose output it could
  *   run on — no
@@ -124,7 +126,15 @@ export function walkQueueCoins(engine, actions, inventory) {
         // The engine calls every fight infinite; a counted one ends and hands on, paying no gold
         if (timing?.isTrulyInfinite && action.hasMaxCount && action.actionHrid?.includes('/combat/')) {
             const count = Math.max(0, (action.maxCount || 0) - (action.currentCount || 0));
-            stages.push({ actionHrid: action.actionHrid, label, count, coinDelta: 0, earned: 0 });
+            stages.push({
+                actionHrid: action.actionHrid,
+                itemHrid,
+                label,
+                count,
+                coinDelta: 0,
+                earned: 0,
+                seconds: timing?.totalTime ?? Infinity,
+            });
             afterUncredited = true;
             continue;
         }
@@ -153,10 +163,12 @@ export function walkQueueCoins(engine, actions, inventory) {
         }
         stages.push({
             actionHrid: action.actionHrid,
+            itemHrid,
             label,
             count,
             coinDelta: Math.min(0, delta),
             earned: Math.max(0, delta),
+            seconds: Number.isFinite(timing?.totalTime) ? timing.totalTime : Infinity,
             // A predicted spend: enhancing pays per attempt and the attempts are a prediction, and a row
             // the engine limits by materials it only expects (a self-returning transmute, a drop from
             // an earlier row) can run longer on good rolls
@@ -235,4 +247,40 @@ export function bellsAffordable(coins, reserve, pricing) {
     const spare = Math.max(0, (Number.isFinite(coins) ? coins : 0) - (Number.isFinite(reserve) ? reserve : 0));
     const bags = wholeUnits(spare, price * COWBELLS_PER_BAG);
     return { spare, bells: bags * COWBELLS_PER_BAG, bags };
+}
+
+/**
+ * The bells-you-can-buy answer, in one place: the Iron Bell panel and the action-bar strip both
+ * read this, so the two can never show different numbers for the same coins and queue.
+ *
+ * @param {Object|null} walked - From {@link walkQueueCoins}
+ * @param {number} coins - Coins on hand
+ * @param {{price: number|null, quoted?: boolean}|null} pricing - From `cowbellPricing({ buyNow: true })`
+ * @returns {{status: 'noPrice'|'unquoted'|'unreadable'|'ok', reserve?: number, spenders?: Array<string>,
+ *   estimated?: boolean, stoppedAt?: string|null, can?: {spare: number, bells: number, bags: number}}}
+ *   `noPrice` with no bag price at all, `unquoted` when the price is only an estimate for an empty
+ *   book, `unreadable` when the queue could not be walked (no reserve is better than a low one)
+ */
+/** Alchemy is paid for in gold, and a loop that runs dry stops: this much is never spent on bells. */
+export const LOW_GOLD_BUFFER = 3_000_000;
+
+export function bellBudget(walked, coins, pricing) {
+    if (!Number.isFinite(pricing?.price) || pricing.price <= 0) return { status: 'noPrice' };
+    if (!pricing.quoted) return { status: 'unquoted' };
+    if (!walked) return { status: 'unreadable' };
+    const { reserve: fees, spenders, estimated } = coinReserve(walked.stages);
+    // The fees alone leave nothing for a price move or a low fee estimate, so the loop's buffer stays too
+    const reserve = fees + LOW_GOLD_BUFFER;
+    const can = bellsAffordable(coins, reserve, pricing);
+    if (!can) return { status: 'noPrice' };
+    return {
+        status: 'ok',
+        reserve,
+        fees,
+        buffer: LOW_GOLD_BUFFER,
+        spenders,
+        estimated,
+        stoppedAt: walked.stoppedAt ?? null,
+        can,
+    };
 }

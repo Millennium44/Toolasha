@@ -2934,8 +2934,12 @@ class ActionTimeDisplay {
 
         this.applyActionBarWidth(actionNameElement, false);
 
-        // Get character data
-        const equipment = dataManager.getEquipment();
+        // Get character data. The running action's gear and drinks come from the loadout it was
+        // queued under, as every queue row's do; an action with no loadout id keeps worn gear and
+        // the per-skill drinks. One context feeds speed, efficiency, the tea and Gourmet bonuses.
+        const runningContext = this.queuedActionContext(actionDetails, action);
+        const equipment = runningContext?.equipment ?? dataManager.getEquipment();
+        const runningDrinks = runningContext?.drinks ?? resolveActionContext(actionDetails.type).drinks;
         const skills = dataManager.getSkills();
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
 
@@ -2959,6 +2963,7 @@ class ActionTimeDisplay {
             actionHrid: action.actionHrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: false,
+            actionContext: { equipment, drinks: runningDrinks },
             levelRequirementOverride,
         });
 
@@ -3004,9 +3009,8 @@ class ActionTimeDisplay {
             const baseAvgAmount = (mainDrop.minCount + mainDrop.maxCount) / 2;
 
             // Calculate gathering quantity bonus (same as gathering-profit.js)
-            const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
             const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-            const gatheringTea = parseGatheringBonus(activeDrinks, itemDetailMap, drinkConcentration);
+            const gatheringTea = parseGatheringBonus(runningDrinks, itemDetailMap, drinkConcentration);
 
             // Community buff — strength and which skills it covers both come from game data
             const communityGathering = getCommunityGatheringQuantity(actionDetails.type);
@@ -3040,9 +3044,8 @@ class ActionTimeDisplay {
 
             // Apply Gourmet bonus for brewing/cooking (extra items chance)
             if (PRODUCTION_TYPES.includes(actionDetails.type)) {
-                const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
                 const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-                const gourmetBonus = parseGourmetBonus(activeDrinks, itemDetailMap, drinkConcentration);
+                const gourmetBonus = parseGourmetBonus(runningDrinks, itemDetailMap, drinkConcentration);
 
                 // Gourmet gives a chance for extra items (e.g., 0.1344 = 13.44% more items)
                 const gourmetBonusItems = itemsPerHour * gourmetBonus;
