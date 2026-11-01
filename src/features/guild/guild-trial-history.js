@@ -100,6 +100,24 @@ function clearedTier(tile) {
 }
 
 /**
+ * Whether a tile's stored `points` is a stated figure.
+ *
+ * Positive points always are. A zero is a result only when the tile otherwise
+ * states one — a cleared tier (which already reads a completed card with no
+ * points as a real zero), samples — and an untouched zero (no tier, not
+ * completed, no samples, no quoted points) is a card nobody saw a result on.
+ *
+ * @param {Object} tile - An archived tile
+ * @returns {boolean}
+ */
+function statesPoints(tile) {
+    if (!Number.isFinite(tile?.points)) return false;
+    if (tile.points > 0) return true;
+    if (clearedTier(tile) !== null) return true;
+    return Array.isArray(tile.samples) && tile.samples.length > 0;
+}
+
+/**
  * How much an archived cycle states, for choosing between two archives of one week.
  *
  * Stated points first, then how many tiles stated a tier, then how many samples
@@ -214,7 +232,7 @@ export function summariseArchivedCycle(
 
     let points = null;
     for (const tile of tiles) {
-        if (Number.isFinite(tile?.points)) points = (points ?? 0) + tile.points;
+        if (statesPoints(tile)) points = (points ?? 0) + tile.points;
     }
 
     let tokens = null;

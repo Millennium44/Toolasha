@@ -240,3 +240,59 @@ describe('pastWeekLine', () => {
         expect(line.startsWith('2 weeks ago')).toBe(true);
     });
 });
+
+describe('an untouched zero states nothing', () => {
+    const bonuses = { now, buildersHallBonus: 0.2, treasuryBonus: 0.1 };
+    const untouched = (kind) => ({
+        kind,
+        tier: undefined,
+        points: 0,
+        completed: false,
+        samples: [],
+        pointsByTier: {},
+    });
+
+    test('a cycle of only untouched cards prints dashes, not zeros', () => {
+        const c = cycle({
+            cycleFrom: lastWeek + 1000,
+            reason: 'an earlier cycle of this week',
+            tiles: { 'combat::a': untouched('combat'), 'skilling::b': untouched('skilling') },
+        });
+        const summary = summariseArchivedCycle(c, bonuses);
+        expect(summary.points).toBeNull();
+        expect(summary.tokens).toBeNull();
+        expect(pastWeekLine(summary)).toContain('combat — · skilling — · — pts · — tokens each');
+    });
+
+    test('a completed card with no points is still a real zero at T0', () => {
+        const c = cycle({
+            tiles: { 'combat::a': { ...untouched('combat'), completed: true }, 'skilling::b': untouched('skilling') },
+        });
+        const summary = summariseArchivedCycle(c, bonuses);
+        expect(summary.combatTier).toBe(0);
+        expect(summary.points).toBe(0);
+        expect(pastWeekLine(summary)).toContain('combat T0 · skilling — · 0 pts · ~0 tokens each');
+    });
+
+    test('a mixed cycle sums only the tile that stated a result', () => {
+        const c = cycle({
+            tiles: {
+                'combat::a': { ...untouched('combat'), tier: 4, points: 500, pointsByTier: { 4: 500 } },
+                'skilling::b': untouched('skilling'),
+            },
+        });
+        expect(summariseArchivedCycle(c, bonuses).points).toBe(500);
+    });
+
+    test('positive points count even with no tier or completion', () => {
+        const c = cycle({ tiles: { 'combat::a': { ...untouched('combat'), points: 300 } } });
+        expect(summariseArchivedCycle(c, bonuses).points).toBe(300);
+    });
+
+    test('an untouched-zero archive never outranks one that states results', () => {
+        const empty = cycle({ tiles: { 'combat::a': untouched('combat') } });
+        const real = cycle();
+        expect(pastCycles([real, empty], now)[0]).toBe(real);
+        expect(pastCycles([empty, real], now)[0]).toBe(real);
+    });
+});
