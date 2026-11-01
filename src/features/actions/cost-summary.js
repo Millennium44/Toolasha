@@ -144,7 +144,11 @@ export function computeDirectCosts(materials) {
             continue;
         }
         if (!mat.isTradeable) continue;
-        const unitPrice = getItemPrice(mat.itemHrid, { context: 'profit', side: 'buy' });
+        const unitPrice = getItemPrice(mat.itemHrid, {
+            context: 'profit',
+            side: 'buy',
+            enhancementLevel: mat.enhancementLevel || 0,
+        });
         if (unitPrice === null) {
             if (mat.required > 0) directComplete = false;
             if (mat.missing > 0) missingComplete = false;

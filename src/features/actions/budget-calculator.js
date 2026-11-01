@@ -101,7 +101,7 @@ function findMaxActions(actionHrid, budget, upgradeItemLevel = 0) {
                 continue;
             }
             if (!mat.isTradeable || mat.missing <= 0) continue;
-            const price = marketAPI.getPrice(mat.itemHrid);
+            const price = marketAPI.getPrice(mat.itemHrid, mat.enhancementLevel || 0);
             if (!(price?.ask > 0)) return Infinity;
             total += mat.missing * price.ask;
         }
@@ -126,7 +126,7 @@ function findMaxActions(actionHrid, budget, upgradeItemLevel = 0) {
                         // The coin fee is priced by the budget, never "cannot buy"
                         if (mat.itemHrid === COIN_HRID || mat.missing <= 0) return false;
                         if (!mat.isTradeable) return true;
-                        return !(marketAPI.getPrice(mat.itemHrid)?.ask > 0);
+                        return !(marketAPI.getPrice(mat.itemHrid, mat.enhancementLevel || 0)?.ask > 0);
                     })
                     .map((mat) => mat.itemName)
             ),
@@ -238,7 +238,8 @@ function showBreakdownModal(budget, result) {
     const rows = result.materials
         .map((mat) => {
             const isCoin = mat.itemHrid === COIN_HRID;
-            const price = mat.isTradeable && !isCoin ? marketAPI.getPrice(mat.itemHrid) : null;
+            const price =
+                mat.isTradeable && !isCoin ? marketAPI.getPrice(mat.itemHrid, mat.enhancementLevel || 0) : null;
             const ask = isCoin ? 1 : price?.ask > 0 ? price.ask : null;
             // The coin fee is spent in full out of the budget, as the search counted it
             const lineCost = isCoin ? mat.required : ask && mat.missing > 0 ? mat.missing * ask : 0;

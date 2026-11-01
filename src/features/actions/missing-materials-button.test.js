@@ -775,6 +775,38 @@ describe('the marketplace clear-all control', () => {
         expect(handleGoToMarketplace).toHaveBeenCalledWith('/items/furious_spear', 12);
     });
 
+    test('a worn copy at the level is not stock the bill can count', async () => {
+        const { container } = buildMarketplaceDom();
+        state.items = { '/items/furious_spear': { name: 'Furious Spear', isTradable: true } };
+        state.inventory = [
+            {
+                itemHrid: '/items/furious_spear',
+                enhancementLevel: 12,
+                count: 1,
+                itemLocationHrid: '/item_locations/main_hand',
+            },
+        ];
+        state.actionMaterials = [
+            {
+                itemHrid: '/items/furious_spear',
+                itemName: 'Furious Spear',
+                missing: 1,
+                required: 1,
+                have: 0,
+                queued: 0,
+                available: 0,
+                isTradeable: true,
+                isUpgradeItem: true,
+            },
+        ];
+
+        await openMissingMaterials('/actions/refine', 1, { upgradeItemLevel: 12 });
+
+        expect(
+            container.querySelector('[data-item-hrid="/items/furious_spear"]').getAttribute('data-missing-quantity')
+        ).toBe('1');
+    });
+
     test('a copy already at the level is stock, and the consumables are untouched by it', async () => {
         const { container } = buildMarketplaceDom();
         state.items = {

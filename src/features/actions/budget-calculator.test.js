@@ -35,7 +35,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getInitClientData: () => world.gameData },
 }));
 vi.mock('../../api/marketplace.js', () => ({
-    default: { getPrice: (hrid) => world.prices[hrid] ?? null },
+    default: { getPrice: (hrid, level = 0) => world.prices[level > 0 ? `${hrid}@${level}` : hrid] ?? null },
 }));
 vi.mock('../../utils/material-calculator.js', () => ({
     calculateMaterialRequirements: (_hrid, n, _queue, options) => {
@@ -532,11 +532,41 @@ describe('the budget calculator and the reservation ledger', () => {
             },
         ];
         world.prices['/items/staff'] = { ask: 10 };
+        world.prices['/items/staff@3'] = { ask: 10 };
         world.gameData.itemDetailMap['/items/staff'] = { isTradable: true };
         calculate(1000);
         const lines = ledger.reserved.at(-1).lines;
         expect(lines.find((l) => l.itemHrid === '/items/egg')).not.toHaveProperty('enhancementLevel');
         expect(lines.find((l) => l.itemHrid === '/items/staff')).toMatchObject({ enhancementLevel: 3 });
+    });
+
+    test('shortfall copies of a +3 upgrade are priced at +3, not at the +0 quote', () => {
+        const staff = (extra) => ({
+            itemHrid: '/items/staff',
+            itemName: 'Staff',
+            perUnit: 1,
+            have: 0,
+            isTradeable: true,
+            isUpgradeItem: true,
+            enhancementLevel: 3,
+            ...extra,
+        });
+        world.materials = [
+            { itemHrid: '/items/egg', itemName: 'Egg', perUnit: 1, have: 0, isTradeable: true },
+            staff(),
+        ];
+        world.gameData.itemDetailMap['/items/staff'] = { isTradable: true };
+        // +0 quote of 10 would allow 50 actions on a budget of 1000; the +3 copy costs 500
+        world.prices['/items/staff'] = { ask: 10 };
+        world.prices['/items/staff@3'] = { ask: 500 };
+        calculate(1000);
+        expect(world.actionCounts).toEqual([1]);
+
+        // and a +3 with no quote at all is not bought off the +0 book
+        world.actionCounts = [];
+        delete world.prices['/items/staff@3'];
+        calculate(1000);
+        expect(world.actionCounts).toEqual([]);
     });
 
     test('the open breakdown claims the required totals', () => {

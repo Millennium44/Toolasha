@@ -1292,7 +1292,13 @@ function atUpgradeItemLevel(materials, level) {
         // Exact match: a +13 is not spendable as a +12 either, since the craft
         // would carry the wrong level through to the output
         const have = inventory
-            .filter((item) => item.itemHrid === material.itemHrid && (item.enhancementLevel || 0) === level)
+            .filter(
+                (item) =>
+                    item.itemHrid === material.itemHrid &&
+                    (item.enhancementLevel || 0) === level &&
+                    // A worn or listed copy is not stock a craft can spend
+                    (!item.itemLocationHrid || item.itemLocationHrid === INVENTORY_LOCATION)
+            )
             .reduce((sum, item) => sum + (item.count || 0), 0);
         const reserved = reservedElsewhere(material.itemHrid, level, { excludeOwner: RESERVATION_OWNER });
         const available = Math.max(0, have - reserved);
