@@ -224,8 +224,9 @@ class DataManager {
 
         // Who this character last fought alongside, from `new_battle`'s `players`.
         //
-        // `characterData.partyInfo` is only ever what `init_character_data` carried,
-        // so a party joined or left after the page loaded is invisible to it until a
+        // `characterData.partyInfo` is what `init_character_data` carried, replaced by each
+        // `party_updated` message since. Before that message exists (and for a client that
+        // missed one) it is login's only, so a party joined or left after the page loaded is invisible to it until a
         // reload — and during a dungeon the game empties `partySlotMap` outright.
         // The battle payload names every member with their id, which is the same
         // pair the slot map carries, so it can stand in for it. Its limit is that it
@@ -239,6 +240,10 @@ class DataManager {
         // last fight, and is the one reading of a party changed while idle that
         // reaches the client.
         this.partyInfoReceivedAt = null;
+
+        // Where `characterData.partyInfo` came from: 'login' (init_character_data) or 'party'
+        // (a `party_updated` message, which the game replaces its own partyInfo with).
+        this.partyInfoSource = 'login';
 
         // When the front action's currently in-progress base action unit started:
         // { actionId, currentCount, unitStartTime }. Callers that model "time remaining"
@@ -1241,6 +1246,7 @@ class DataManager {
         // Process new character data normally
         this.characterData = data;
         this.partyInfoReceivedAt = arrivedAt;
+        this.partyInfoSource = 'login';
         // A mark update from this same character's socket that arrived while the
         // switch above was still clearing/replacing characterData — see the
         // item_marks_updated handler — is applied now that characterData is this
@@ -1515,6 +1521,20 @@ class DataManager {
             if (this.applyAbilityUpdates(data.endCharacterAbilities)) {
                 this.emit('abilities_updated', data);
             }
+        });
+
+        // party_updated: the game replaces its partyInfo wholesale on every change (join, leave,
+        // leader, status), so the stored copy is replaced the same way.
+        this.webSocketHook.on('party_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+            this.applyPartyUpdate(data);
+        });
+
+        // character_stats_updated: fires on gear, house, buff and level changes with the whole
+        // recomputed combatUnit and noncombatStats.
+        this.webSocketHook.on('character_stats_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+            this.applyCharacterStats(data);
         });
 
         // The Bestiary, as the Achievements tab fetches it (`get_monsters`):
@@ -2145,6 +2165,83 @@ class DataManager {
             }
         }
         if (this.characterData) this.characterData.characterSkills = this.characterSkills;
+    }
+
+    /**
+     * Replace `characterData.partyInfo` with a `party_updated` message's, as the game does.
+     *
+     * A message that moves the party out of 'battling' also drops the roster the last fight named:
+     * that roster is older than this message, and without the drop a party disbanded while idle
+     * would be read as still standing. While 'battling' the slot map can be empty (the game does
+     * that for a whole dungeon), so the fight's roster is kept.
+     *
+     * Emits `party_roster_updated` ({members, source}) when who is in the party moved, and
+     * `party_status_changed` ({status, previousStatus, started, stopped}) when the party entered or
+     * left 'battling'. Neither raises any alert.
+     *
+     * @param {Object} data - `party_updated` message data
+     * @returns {boolean} True when applied
+     */
+    applyPartyUpdate(data) {
+        if (!this.characterData || !data || typeof data !== 'object' || !('partyInfo' in data)) return false;
+
+        const keyOf = (party) =>
+            party.members
+                .map((member) => member.characterID)
+                .sort()
+                .join(',');
+        const before = keyOf(this.getPartyMembers());
+        const previousStatus = this.characterData.partyInfo?.party?.status ?? null;
+
+        this.characterData.partyInfo = data.partyInfo;
+        this.partyInfoReceivedAt = Date.now();
+        this.partyInfoSource = 'party';
+
+        const status = data.partyInfo?.party?.status ?? null;
+        if (status !== 'battling') this.battlePartyRoster = null;
+
+        const roster = this.getPartyMembers();
+        if (keyOf(roster) !== before) {
+            this.emit('party_roster_updated', {
+                members: roster.members.map((member) => ({ ...member })),
+                source: roster.source,
+            });
+        }
+
+        const started = previousStatus !== 'battling' && status === 'battling';
+        const stopped = previousStatus === 'battling' && status !== 'battling';
+        if (started || stopped) {
+            this.emit('party_status_changed', { status, previousStatus, started, stopped });
+        }
+        return true;
+    }
+
+    /**
+     * Take a `character_stats_updated` message's recomputed `combatUnit` and `noncombatStats`.
+     *
+     * The unit is replaced whole (the game does the same), except `combatAbilities`: the equipped
+     * kit is kept current by the ability messages and the stored one stays authoritative when there
+     * is one; the message's is used only when nothing is stored.
+     *
+     * @param {Object} data - `character_stats_updated` message data
+     * @returns {boolean} True when applied
+     */
+    applyCharacterStats(data) {
+        if (!this.characterData || !data?.combatUnit || typeof data.combatUnit !== 'object') return false;
+
+        const stored = this.characterData.combatUnit?.combatAbilities;
+        const next = { ...data.combatUnit };
+        if (Array.isArray(stored)) next.combatAbilities = stored;
+        this.characterData.combatUnit = next;
+        if (data.noncombatStats && typeof data.noncombatStats === 'object') {
+            this.characterData.noncombatStats = data.noncombatStats;
+        }
+
+        this.emit('character_stats_updated', {
+            combatDetails: next.combatDetails || null,
+            noncombatStats: this.characterData.noncombatStats || null,
+        });
+        return true;
     }
 
     /**
@@ -2846,7 +2943,11 @@ class DataManager {
             };
         }
 
-        return { members, source: members.length ? 'login' : 'none', updatedAt: members.length ? loginAt : null };
+        return {
+            members,
+            source: members.length ? this.partyInfoSource || 'login' : 'none',
+            updatedAt: members.length ? loginAt : null,
+        };
     }
 
     /**

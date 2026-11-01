@@ -10,6 +10,8 @@ import { buildCharacterAction } from '../__fixtures__/wire/character-actions.js'
 import { buildCollectionRow, buildCollectionsUpdated } from '../__fixtures__/wire/collections-updated.js';
 import { buildSkillRow, buildSkillsUpdated } from '../__fixtures__/wire/skills-updated.js';
 import { buildQuest, buildQuestDiscarded } from '../__fixtures__/wire/quests-updated.js';
+import { buildCharacterStatsUpdated } from '../__fixtures__/wire/character-stats-updated.js';
+import { buildPartyUpdated } from '../__fixtures__/wire/party-updated.js';
 
 let webSocketHandlers = new Map();
 
@@ -2377,5 +2379,124 @@ describe('skills_updated and collections_updated are deltas', () => {
         dataManager.characterCollections = [];
         webSocketHandlers.get('collections_updated')({ collections: [{ itemHrid: '/items/z', count: 1 }] });
         expect(dataManager.getCharacterCollections()).toEqual([{ itemHrid: '/items/z', count: 1 }]);
+    });
+});
+
+describe('party_updated', () => {
+    const slot = (characterID) => ({ characterID, characterLoadoutID: 0, isLeader: false });
+    const party = (status, ids) => buildPartyUpdated({ status, members: ids.map((id) => ({ id })) });
+
+    async function loggedIn() {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.battlePartyRoster = null;
+        dataManager.partyInfoReceivedAt = null;
+        dataManager.partyInfoSource = 'login';
+        dataManager.currentCharacterId = 'me';
+        dataManager.characterData = { character: { id: 'me' }, partyInfo: { partySlotMap: { 1: slot('me') } } };
+        return dataManager;
+    }
+
+    test('replaces partyInfo and a party formed while idle is seen at once', async () => {
+        const dataManager = await loggedIn();
+        const listener = vi.fn();
+        dataManager.on('party_roster_updated', listener);
+
+        webSocketHandlers.get('party_updated')(party('idle', ['me', 'a']));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(dataManager.getPartyMembers()).toMatchObject({ source: 'party' });
+        expect(dataManager.getPartyMembers().members.map((m) => m.characterID)).toEqual(['me', 'a']);
+        expect(listener).toHaveBeenCalledTimes(1);
+        dataManager.off('party_roster_updated', listener);
+    });
+
+    test('a party disbanded while idle is not kept alive by the last fight roster', async () => {
+        const dataManager = await loggedIn();
+        webSocketHandlers.get('new_battle')({
+            players: [{ character: { id: 'me', name: 'Me' } }, { character: { id: 'a', name: 'A' } }],
+        });
+        expect(dataManager.getPartyMembers().members).toHaveLength(2);
+
+        webSocketHandlers.get('party_updated')(party('idle', ['me']));
+
+        expect(dataManager.getPartyMembers().members.map((m) => m.characterID)).toEqual(['me']);
+    });
+
+    test('an emptied slot map while battling leaves the fight roster standing', async () => {
+        const dataManager = await loggedIn();
+        webSocketHandlers.get('new_battle')({
+            players: [{ character: { id: 'me', name: 'Me' } }, { character: { id: 'a', name: 'A' } }],
+        });
+
+        webSocketHandlers.get('party_updated')(party('battling', []));
+
+        expect(dataManager.getPartyMembers().members).toHaveLength(2);
+    });
+
+    test('emits party_status_changed on entering and leaving battling only', async () => {
+        const dataManager = await loggedIn();
+        const listener = vi.fn();
+        dataManager.on('party_status_changed', listener);
+
+        webSocketHandlers.get('party_updated')(party('idle', ['me', 'a']));
+        webSocketHandlers.get('party_updated')(party('battling', ['me', 'a']));
+        webSocketHandlers.get('party_updated')(party('battling', ['me', 'a']));
+        webSocketHandlers.get('party_updated')(party('idle', ['me', 'a']));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(listener.mock.calls.map(([e]) => [e.started, e.stopped])).toEqual([
+            [true, false],
+            [false, true],
+        ]);
+        dataManager.off('party_status_changed', listener);
+    });
+
+    test('ignores a message from a stale socket', async () => {
+        const dataManager = await loggedIn();
+        dataManager.activeSocket = {};
+        webSocketHandlers.get('party_updated')(party('idle', ['me', 'a']), { socket: {} });
+        expect(dataManager.getPartyMembers().members).toHaveLength(1);
+        dataManager.activeSocket = null;
+    });
+});
+
+describe('character_stats_updated', () => {
+    async function loggedIn(combatUnit) {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.characterData = {
+            character: { id: 'me' },
+            combatUnit,
+            noncombatStats: { taskSpeed: 0 },
+        };
+        return dataManager;
+    }
+
+    test('refreshes combatDetails and noncombatStats', async () => {
+        const dataManager = await loggedIn({ combatDetails: { combatLevel: 100 }, combatAbilities: [] });
+        const listener = vi.fn();
+        dataManager.on('character_stats_updated', listener);
+
+        webSocketHandlers.get('character_stats_updated')(buildCharacterStatsUpdated());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const { combatDetails } = dataManager.characterData.combatUnit;
+        expect(combatDetails.combatLevel).toBe(153.8);
+        expect(combatDetails.combatStats.combatStyleHrids).toEqual(['/combat_styles/magic']);
+        expect(dataManager.characterData.noncombatStats.taskSpeed).toBe(0.9);
+        expect(listener).toHaveBeenCalledTimes(1);
+        dataManager.off('character_stats_updated', listener);
+    });
+
+    test('keeps the live-patched equipped kit, and takes the message kit when none is stored', async () => {
+        const kit = [{ abilityHrid: '/abilities/live', slotNumber: 1, level: 3 }];
+        const dataManager = await loggedIn({ combatDetails: {}, combatAbilities: kit });
+        webSocketHandlers.get('character_stats_updated')(buildCharacterStatsUpdated());
+        expect(dataManager.characterData.combatUnit.combatAbilities).toBe(kit);
+
+        dataManager.characterData.combatUnit = undefined;
+        webSocketHandlers.get('character_stats_updated')(buildCharacterStatsUpdated());
+        expect(dataManager.characterData.combatUnit.combatAbilities).toHaveLength(5);
     });
 });

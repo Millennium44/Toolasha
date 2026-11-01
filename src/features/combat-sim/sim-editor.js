@@ -1158,6 +1158,8 @@ export class SimEditor {
             </div>`;
         }
         if (count < 2) return '';
+        // A party_updated message keeps the map live; there is no lag to warn about.
+        if (source === 'party') return '';
 
         const from = source === 'battle' ? 'your last fight' : 'when the page loaded';
         const why =
