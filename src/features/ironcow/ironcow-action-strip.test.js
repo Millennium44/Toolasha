@@ -121,7 +121,7 @@ const page = () => document.querySelector('[data-mwi-ironbell-strip]')?.textCont
 
 beforeEach(() => {
     document.body.innerHTML = '<div><div class="Header_actionName_x1">Star Fruit</div></div>';
-    game.state = { coins: 1_000_000, gameMode: 'ironcow' };
+    game.state = { coins: 4_000_000, gameMode: 'ironcow' };
     game.actions = [action(1, FORAGE), action(2, DECOMPOSE, STAR_FRUIT), action(3, COINIFY, ESSENCE)];
     game.walked = loopWalk();
     game.engine = {};
@@ -177,8 +177,8 @@ describe('when the strip draws', () => {
 describe('what it says', () => {
     test('a whole loop: spendable now, the cycle left, its end and what it earns', () => {
         const [spend, cycle, ...rest] = text();
-        // 1M − 450K kept = 550K = 55 bags at 10K a bag
-        expect(spend).toBe('Iron Bell: spend now 550 bells (55 bags) · keeps 450.0K for the queue');
+        // 4M less 450K of fees and the 3M buffer leaves 550K = 55 bags at 10K a bag
+        expect(spend).toBe('Iron Bell: spend now 550 bells (55 bags) · keeps 3.5M for the queue');
         expect(cycle).toContain('100 forage · 500 decompose · 600 coinify left');
         expect(cycle).toContain('(in 3h 20m 00s)');
         // Net 1.05M − 450K, at 1,000 a bell
@@ -199,6 +199,15 @@ describe('what it says', () => {
         expect(warning).toContain('Gold runs out on Decompose: Star Fruit at');
         expect(warning).toContain('(in 0h 53m 40s)');
         expect(warning).toContain('250.0K short');
+    });
+
+    test('coins between the fees and the fees plus the buffer: no bells, and no shortfall warning', () => {
+        // 450K of fees are covered; the 3M buffer is not, so nothing is spendable but no leg stalls
+        game.state.coins = 1_000_000;
+        const lines = text();
+        expect(lines[0]).toContain('spend now 0 bells (0 bags)');
+        expect(lines[0]).toContain('keeps 3.5M for the queue');
+        expect(lines.some((line) => line.startsWith('⚠'))).toBe(false);
     });
 
     test('zero gold: nothing to spend, and the first fee stalls now', () => {
@@ -238,7 +247,7 @@ describe('what it says', () => {
 
     test('hover text says what the reserve holds back, in the panel’s words', () => {
         const [spend] = stripLines();
-        expect(spend.title).toContain('Keeps 450.0K back: what Decompose: Star Fruit spends.');
+        expect(spend.title).toContain('Keeps 3.5M back: what Decompose: Star Fruit spends plus a 3.0M safety buffer.');
     });
 });
 
@@ -248,7 +257,7 @@ describe('lifetime', () => {
         strip.start();
         expect(page()).toContain('spend now 550 bells');
 
-        game.state.coins = 2_000_000;
+        game.state.coins = 5_000_000;
         for (const fn of game.listeners.get('actions_updated')) fn();
         vi.advanceTimersByTime(400);
         expect(page()).toContain('spend now 1,550 bells');

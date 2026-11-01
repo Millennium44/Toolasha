@@ -359,7 +359,7 @@ describe('what it says', () => {
     });
 
     test('says how many bells the coins buy now, keeping back what the queue dips to', async () => {
-        plan.state = character({ coins: 30_000_000 });
+        plan.state = character({ coins: 33_000_000 });
         coinWalk.walked = {
             stages: [
                 { label: 'Decompose: Star Fruit', coinDelta: -4_000_000 },
@@ -370,7 +370,7 @@ describe('what it says', () => {
         ironCowFarmPanel.show();
         await ironCowFarmPanel.refresh();
 
-        // 26M spare at 9.5M a bag of ten is two whole bags
+        // 33M less 4M of fees and the 3M buffer leaves 26M spare, at 9.5M a bag of ten is two whole bags
         expect(text()).toContain('Bells you can buy now');
         expect(text()).toContain('20 (2 bags)');
         expect(text()).toContain('Kept for the queue');
@@ -384,7 +384,7 @@ describe('what it says', () => {
     });
 
     test('spending coins redraws the bell count while the panel stays open, and closing unsubscribes', async () => {
-        plan.state = character({ coins: 30_000_000 });
+        plan.state = character({ coins: 33_000_000 });
         coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
         // Other modules listen to the market too; only the panel's own listener is under test
         const othersListening = marketListeners.size;
@@ -392,8 +392,8 @@ describe('what it says', () => {
         await ironCowFarmPanel.refresh();
         expect(text()).toContain('20 (2 bags)');
 
-        // 20M spent on the market: 6M spare is no whole bag
-        plan.state = character({ coins: 10_000_000 });
+        // 20M spent on the market: 6M spare after fees and buffer is no whole bag
+        plan.state = character({ coins: 13_000_000 });
         emit('items_updated');
         await new Promise((resolve) => setTimeout(resolve, 350));
         expect(text()).toContain('0 (0 bags)');
@@ -401,7 +401,7 @@ describe('what it says', () => {
 
         // A cheaper bag listed, coins and queue unchanged: 26M spare now buys three bags
         loop.pricing = { ...loop.pricing, price: 800_000, bag: 800_000 };
-        plan.state = character({ coins: 30_000_000 });
+        plan.state = character({ coins: 33_000_000 });
         for (const fn of marketListeners) fn();
         await new Promise((resolve) => setTimeout(resolve, 350));
         expect(text()).toContain('30 (3 bags)');
@@ -415,7 +415,7 @@ describe('what it says', () => {
     });
 
     test('flipping the enhance-protection setting redraws the reserve, and closing unsubscribes', async () => {
-        plan.state = character({ coins: 30_000_000 });
+        plan.state = character({ coins: 33_000_000 });
         coinWalk.walked = { stages: [{ label: 'Enhance: Cape', coinDelta: -4_000_000 }], stoppedAt: null };
         ironCowFarmPanel.show();
         await ironCowFarmPanel.refresh();
@@ -434,7 +434,7 @@ describe('what it says', () => {
     test.each(['buffs_updated', 'skills_updated', 'equipment_buffs_updated', 'house_rooms_updated'])(
         '%s redraws the bell count too',
         async (event) => {
-            plan.state = character({ coins: 30_000_000 });
+            plan.state = character({ coins: 33_000_000 });
             coinWalk.walked = {
                 stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }],
                 stoppedAt: null,
@@ -454,7 +454,7 @@ describe('what it says', () => {
     );
 
     test('a buff ending redraws the bell count too', async () => {
-        plan.state = character({ coins: 30_000_000 });
+        plan.state = character({ coins: 33_000_000 });
         coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
         ironCowFarmPanel.show();
         await ironCowFarmPanel.refresh();
@@ -468,7 +468,7 @@ describe('what it says', () => {
     });
 
     test('a snapshot costed with no bell price still gets a live buy-now count once a bag is listed', async () => {
-        plan.state = character({ coins: 30_000_000 });
+        plan.state = character({ coins: 33_000_000 });
         coinWalk.walked = { stages: [], stoppedAt: null };
         store.snapshot = costedLoop({ bellPrice: null, bellPricing: { price: null }, bells: null });
         loop.pricing = { price: null };
@@ -484,7 +484,7 @@ describe('what it says', () => {
     });
 
     test('with no bag listed for sale, no bell count is offered', async () => {
-        plan.state = character({ coins: 30_000_000 });
+        plan.state = character({ coins: 33_000_000 });
         coinWalk.walked = { stages: [], stoppedAt: null };
         loop.pricing = { ...loop.pricing, quoted: false };
         ironCowFarmPanel.show();

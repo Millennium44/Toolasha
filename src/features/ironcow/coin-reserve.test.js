@@ -64,7 +64,7 @@ vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredict
 const { default: engine } = await import('../actions/action-time-display.js');
 const { walkQueueCoins, coinReserve, bellsAffordable, bellBudget, COWBELLS_PER_BAG } =
     await import('./coin-reserve.js');
-const { summarizeCycle } = await import('./ironbell-cycle.js');
+const { summarizeCycle, keptNote } = await import('./ironbell-cycle.js');
 
 const STAR_FRUIT = '/items/star_fruit';
 const ESSENCE = '/items/foraging_essence';
@@ -451,10 +451,25 @@ describe('the whole queued cycle, walked through the real engine', () => {
     test('the panel and the strip share one bells-now answer off the same walk', () => {
         game.currentActions = fullLoop();
         const walked = walkQueueCoins(engine);
-        const budget = bellBudget(walked, 1_000_000, { price: 1000, quoted: true });
-        // 1M − 450K kept = 550K spare = 55 bags
-        expect(budget).toMatchObject({ status: 'ok', reserve: 450_000, can: { bags: 55, bells: 550 } });
+        const budget = bellBudget(walked, 4_000_000, { price: 1000, quoted: true });
+        // 4M less 450K of fees and the 3M buffer leaves 550K spare = 55 bags
+        expect(budget).toMatchObject({
+            status: 'ok',
+            reserve: 3_450_000,
+            fees: 450_000,
+            buffer: 3_000_000,
+            can: { bags: 55, bells: 550 },
+        });
         expect(budget.spenders).toEqual(['Decompose: Star Fruit']);
+    });
+
+    test('with no gold-spending leg the reserve is exactly the buffer, and the note calls it a safety buffer', () => {
+        game.currentActions = [queued(1, FORAGE, { maxCount: 100 })];
+        const budget = bellBudget(walkQueueCoins(engine), 4_000_000, { price: 1000, quoted: true });
+        expect(budget).toMatchObject({ status: 'ok', reserve: 3_000_000, fees: 0, buffer: 3_000_000 });
+        expect(keptNote(budget.reserve, budget.spenders, (n) => `${n}`, budget.buffer)).toBe(
+            'Nothing queued spends gold; 3000000 is kept back as a safety buffer.'
+        );
     });
 
     test('short of the fees: names the leg that stalls and how far into the queue', () => {
