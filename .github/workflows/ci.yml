@@ -49,6 +49,12 @@ jobs:
               # inlining its own copy of a singleton another one owns (PR #671).
               run: npm run check:bundle-smoke
 
+            - name: Production-vs-dev value parity
+              # Feeds the same fixture world to the production libraries and the dev bundle and
+              # compares golden values (container EV, Task Crystal price, enhancement bill). The
+              # smoke test proves the bundles are wired; this proves they compute the same numbers.
+              run: npm run check:bundle-parity
+
             - name: Verify bundle sizes
               # 2 MiB is a real delivery limit, not a style preference: every
               # library ships to users through an `@require` URL, and the

@@ -7,6 +7,7 @@
         "build": "node scripts/check-bundle-sharing.mjs && BUILD_MODE=production rollup -c && node scripts/check-bundle-load-order.mjs",
         "check:sharing": "node scripts/check-bundle-sharing.mjs",
         "check:bundle-smoke": "node scripts/check-bundle-smoke.mjs --require-build",
+        "check:bundle-parity": "node scripts/check-bundle-parity.mjs --require-build",
         "build:dev": "BUILD_TARGET=dev-standalone rollup -c",
         "build:enhancement": "rollup -c rollup.config.enhancement.js",
         "build:all": "npm run build && npm run build:enhancement",

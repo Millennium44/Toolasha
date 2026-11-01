@@ -117,10 +117,11 @@ export function isModuleNotRecord(value) {
  * Run the built bundles in order inside one fresh window and report what they published.
  * @param {string[]} order - Library names in load order
  * @param {(name: string) => string} readBundle - Returns a bundle's source
- * @param {Object} deps - { Window } happy-dom's Window constructor
+ * @param {Object} deps - { Window } happy-dom's Window constructor; optional { setup(window) } to add page
+ *   surface a bundle needs at load before it runs
  * @returns {{window: Object, errors: Array<{library: string, error: string}>}} The shared window and per-bundle load errors
  */
-export function loadBundles(order, readBundle, { Window }) {
+export function loadBundles(order, readBundle, { Window, setup }) {
     const window = new Window({ url: 'https://test.milkywayidle.com/game', width: 1280, height: 800 });
     const store = new Map();
     const quiet = { log() {}, info() {}, debug() {}, warn() {}, error() {} };
@@ -139,6 +140,7 @@ export function loadBundles(order, readBundle, { Window }) {
         unsafeWindow: window,
     };
     Object.assign(window, grants);
+    if (setup) setup(window);
 
     const context = vm.createContext(window);
     const errors = [];
