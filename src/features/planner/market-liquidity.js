@@ -58,9 +58,29 @@
  *   way to zero if the pool watched the item for a month and saw nothing.
  */
 
-import marketHistoryAPI from '../market/mooket/market-history-api.js';
+import { marketHistoryAPI as liveMarketHistoryAPI } from '../../utils/bundle-bridge.js';
 import { buildHistorySeries } from '../market/mooket/market-history-data.js';
 import { runPool } from '../../utils/async-pool.js';
+
+/**
+ * Stands in while the market bundle has not published its history API: a source with no volume,
+ * which this module reads as "nothing is known" rather than a measured zero.
+ */
+const NO_HISTORY = {
+    enabled: false,
+    currentSource: () => ({ key: 'none', hasVolume: false }),
+    fetchHistory: async () => null,
+};
+
+/**
+ * The market history API that holds the fetch cache and the source setting. Read through the bridge at
+ * call time: this module is also carried inline by the utils bundle (the liquidity cap's fallback), and
+ * importing the API directly would carry a second, never-initialized history cache with it.
+ * @returns {Object} The live API, or a no-volume stand-in before the market bundle has loaded
+ */
+function marketHistoryAPI() {
+    return liveMarketHistoryAPI() || NO_HISTORY;
+}
 
 /** How much history to average over. Long enough that a quiet week is not a verdict. */
 export const LIQUIDITY_WINDOW_DAYS = 30;
@@ -126,7 +146,7 @@ async function measureDailyVolume(itemHrid, enhancementLevel, key, source) {
 
     let answer = unknown;
     try {
-        const rows = await marketHistoryAPI.fetchHistory(itemHrid, enhancementLevel, LIQUIDITY_WINDOW_DAYS);
+        const rows = await marketHistoryAPI().fetchHistory(itemHrid, enhancementLevel, LIQUIDITY_WINDOW_DAYS);
         if (Array.isArray(rows) && rows.length) {
             const series = buildHistorySeries(rows, LIQUIDITY_WINDOW_DAYS);
             const traded = series.reduce((sum, point) => sum + (Number(point.volume) || 0), 0);
@@ -171,7 +191,7 @@ async function measureDailyVolume(itemHrid, enhancementLevel, key, source) {
  *   which is not the same as a measured zero, and must not be read as one.
  */
 export function cachedDailyVolume(itemHrid, enhancementLevel = 0) {
-    return cache.get(volumeKey(marketHistoryAPI.currentSource(), itemHrid, enhancementLevel)) || null;
+    return cache.get(volumeKey(marketHistoryAPI().currentSource(), itemHrid, enhancementLevel)) || null;
 }
 
 /**
@@ -184,13 +204,13 @@ export function cachedDailyVolume(itemHrid, enhancementLevel = 0) {
  * measured with history off — the "nothing is known" case the module doc
  * describes never actually holding once one real measurement had landed.
  *
- * @param {{key: string}} source - `marketHistoryAPI.currentSource()`
+ * @param {{key: string}} source - `marketHistoryAPI().currentSource()`
  * @param {string} itemHrid - The item
  * @param {number} enhancementLevel - Which variant
  * @returns {string}
  */
 function volumeKey(source, itemHrid, enhancementLevel) {
-    return `${source.key}:${marketHistoryAPI.enabled}:${itemHrid}:${enhancementLevel}`;
+    return `${source.key}:${marketHistoryAPI().enabled}:${itemHrid}:${enhancementLevel}`;
 }
 
 /**
@@ -206,7 +226,7 @@ export async function dailyVolume(itemHrid, enhancementLevel = 0) {
     // The same item is a different measurement in each history pool. One pool
     // has no volume at all, so reusing the other pool's answer on a source
     // switch silently leaves a stale cap in the planner.
-    const source = marketHistoryAPI.currentSource();
+    const source = marketHistoryAPI().currentSource();
     const key = volumeKey(source, itemHrid, enhancementLevel);
     const cached = cache.get(key);
     if (cached) return cached;
@@ -531,7 +551,7 @@ export async function applyLiquidityLimits(rates) {
     }
 
     bounded.sort((a, b) => (Number(b.goldPerHour) || 0) - (Number(a.goldPerHour) || 0));
-    const sourcePrefix = `${marketHistoryAPI.currentSource().key}:${marketHistoryAPI.enabled}:`;
+    const sourcePrefix = `${marketHistoryAPI().currentSource().key}:${marketHistoryAPI().enabled}:`;
     const measured = [...cache.entries()].some(([key, entry]) => key.startsWith(sourcePrefix) && entry.known);
 
     // Some volume figures landed and this rate's own output has none: it was left unbounded, which

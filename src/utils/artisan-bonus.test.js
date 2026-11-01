@@ -3,12 +3,15 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 const state = vi.hoisted(() => ({ drinks: [], bonus: 0, throws: false }));
 
 vi.mock('../core/data-manager.js', () => ({ default: { getInitClientData: () => ({ itemDetailMap: {} }) } }));
-vi.mock('./action-context.js', () => ({
-    resolveActionContext: () => {
-        if (state.throws) throw new Error('no data');
-        return { equipment: new Map(), drinks: state.drinks };
-    },
-}));
+vi.mock('./action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => {
+            if (state.throws) throw new Error('no data');
+            return { equipment: new Map(), drinks: state.drinks };
+        },
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('./tea-parser.js', () => ({
     getDrinkConcentration: () => 0,
     parseArtisanBonus: (drinks) => (drinks.length ? state.bonus : 0),

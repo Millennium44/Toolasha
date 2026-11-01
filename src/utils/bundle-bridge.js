@@ -202,6 +202,24 @@ export function expectedValueCalculator() {
 }
 
 /**
+ * The alchemy profit calculator — the market bundle's copy, the one whose caches the price
+ * listeners keep current.
+ * @returns {Object|null} The calculator, or null when the market bundle is absent
+ */
+export function alchemyProfitCalculator() {
+    return toolashaRoot()?.Market?.alchemyProfitCalculator || null;
+}
+
+/**
+ * The market history API (history source plus its fetch cache) — the market bundle's instance, so
+ * every bundle shares one history cache and one source setting.
+ * @returns {Object|null} The API, or null when the market bundle is absent
+ */
+export function marketHistoryAPI() {
+    return toolashaRoot()?.Market?.marketHistoryAPI || null;
+}
+
+/**
  * The Philo Gamba calculator, for its `openModal()`.
  * @returns {Object|null} The calculator, or null when the market bundle is absent
  */

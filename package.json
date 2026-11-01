@@ -27,7 +27,8 @@
         "version:sync": "node scripts/sync-version.js",
         "changelog:stamp": "node scripts/stamp-changelog-version.js",
         "prepare": "husky",
-        "check:requires": "node scripts/check-require-urls.mjs"
+        "check:requires": "node scripts/check-require-urls.mjs",
+        "audit:handlers": "node scripts/audit-game-handlers.mjs"
     },
     "keywords": [
         "userscript",

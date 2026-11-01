@@ -4,7 +4,7 @@
  * Shared by both gathering and production profit calculators
  */
 
-import expectedValueCalculator from '../features/market/expected-value-calculator.js';
+import { expectedValueCalculator } from './bundle-bridge.js';
 import dataManager from '../core/data-manager.js';
 import { parseEssenceFindBonus, parseRareFindBonus, parseRareFindBreakdown } from './equipment-parser.js';
 import { calculateHouseRareFind } from './house-efficiency.js';
@@ -119,9 +119,9 @@ export function calculateBonusRevenue(
             if (itemDetails.isOpenable) {
                 // Use expected value for openable containers (with on-demand fallback)
                 itemPrice = grossContainers
-                    ? expectedValueCalculator.calculateGrossContainerValue(drop.itemHrid) || 0
-                    : expectedValueCalculator.getCachedValue(drop.itemHrid) ||
-                      expectedValueCalculator.calculateSingleContainer(drop.itemHrid) ||
+                    ? expectedValueCalculator()?.calculateGrossContainerValue(drop.itemHrid) || 0
+                    : expectedValueCalculator()?.getCachedValue(drop.itemHrid) ||
+                      expectedValueCalculator()?.calculateSingleContainer(drop.itemHrid) ||
                       0;
                 if (itemPrice === 0) {
                     console.warn(`[BonusRevenue] EV lookup returned 0 for openable container: ${drop.itemHrid}`);
@@ -183,9 +183,9 @@ export function calculateBonusRevenue(
             if (itemDetails.isOpenable) {
                 // Use expected value for openable containers (with on-demand fallback)
                 itemPrice = grossContainers
-                    ? expectedValueCalculator.calculateGrossContainerValue(drop.itemHrid) || 0
-                    : expectedValueCalculator.getCachedValue(drop.itemHrid) ||
-                      expectedValueCalculator.calculateSingleContainer(drop.itemHrid) ||
+                    ? expectedValueCalculator()?.calculateGrossContainerValue(drop.itemHrid) || 0
+                    : expectedValueCalculator()?.getCachedValue(drop.itemHrid) ||
+                      expectedValueCalculator()?.calculateSingleContainer(drop.itemHrid) ||
                       0;
                 if (itemPrice === 0) {
                     console.warn(`[BonusRevenue] EV lookup returned 0 for openable container: ${drop.itemHrid}`);

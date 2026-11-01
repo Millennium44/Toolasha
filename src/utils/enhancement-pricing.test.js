@@ -46,12 +46,15 @@ vi.mock('../core/data-manager.js', () => ({
 // This module's own concern is the production-cost formula, not the in-stock
 // filtering resolveActionContext itself does (that is action-context.test.js's
 // job) — bypass straight to whatever the test set up, defaulting to `drinks`.
-vi.mock('./action-context.js', () => ({
-    resolveActionContext: () => ({
-        equipment: new Map(game.equipment),
-        drinks: game.resolvedDrinks !== undefined ? game.resolvedDrinks : game.drinks,
-    }),
-}));
+vi.mock('./action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({
+            equipment: new Map(game.equipment),
+            drinks: game.resolvedDrinks !== undefined ? game.resolvedDrinks : game.drinks,
+        }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../api/marketplace.js', () => ({
     default: {
         on: () => {},

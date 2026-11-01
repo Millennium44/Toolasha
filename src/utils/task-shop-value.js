@@ -7,22 +7,11 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import bundledExpectedValueCalculator from '../features/market/expected-value-calculator.js';
-import { expectedValueCalculator as bridgedExpectedValueCalculator } from './bundle-bridge.js';
+import { expectedValueCalculator } from './bundle-bridge.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
 import { getItemPrice } from './market-data.js';
 
 export const TASK_TOKEN_HRID = '/items/task_token';
-
-/**
- * The expected-value calculator that ran initialize(). In the split production build this file lives
- * in the utils bundle, whose inlined copy is never initialized; the market bundle's copy is the live
- * one, reached at call time through the bridge. The direct import is the single-bundle fallback.
- * @returns {Object} The calculator
- */
-function liveExpectedValueCalculator() {
-    return bridgedExpectedValueCalculator() || bundledExpectedValueCalculator;
-}
 
 /**
  * Value one Task Shop line is worth per task token.
@@ -43,7 +32,7 @@ function valueOfShopItem(itemHrid, itemDetailMap) {
     let partialDrops = 0;
 
     if (itemDetailMap?.[itemHrid]?.isOpenable) {
-        const evData = liveExpectedValueCalculator().calculateExpectedValue(itemHrid);
+        const evData = expectedValueCalculator()?.calculateExpectedValue(itemHrid);
         const expectedValue = evData?.expectedValue || 0;
         if (expectedValue > value) {
             value = expectedValue;
@@ -129,7 +118,7 @@ export function findBestTaskShopValue() {
  * @returns {{price: number, partial: boolean, tokenCost: number}|null} Coins per unit bought
  */
 export function taskShopTokenPrice(itemHrid) {
-    if (!itemHrid || !liveExpectedValueCalculator().isInitialized) return null;
+    if (!itemHrid || !expectedValueCalculator()?.isInitialized) return null;
     const shopMap = dataManager.getInitClientData()?.taskShopItemDetailMap;
     if (!shopMap) return null;
 

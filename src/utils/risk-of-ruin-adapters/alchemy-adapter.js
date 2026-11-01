@@ -31,7 +31,7 @@
  * charged on every attempt. Leaving it out would bank the tea's bonus without paying for it.
  */
 
-import alchemyProfitCalculator from '../../features/market/alchemy-profit-calculator.js';
+import { alchemyProfitCalculator } from '../bundle-bridge.js';
 import { drawFromDistribution } from '../risk-of-ruin-engine.js';
 
 /**
@@ -137,7 +137,7 @@ function buildOutcomeDistribution(profit, attemptCost, catalystCostOnSuccess) {
  * }|null} null if the item isn't transmutable or has no usable market/success-rate data.
  */
 export function buildAlchemyTransmuteModel(itemHrid, { useLiveSetup = false, catalystChoice = null } = {}) {
-    const profit = alchemyProfitCalculator.calculateTransmuteProfit(itemHrid, useLiveSetup, null, catalystChoice);
+    const profit = alchemyProfitCalculator()?.calculateTransmuteProfit(itemHrid, useLiveSetup, null, catalystChoice);
     if (!profit || !(profit.successRate > 0)) return null;
 
     const coinCost = profit.requirementCosts.find((r) => r.itemHrid === '/items/coin')?.costPerAction ?? 0;

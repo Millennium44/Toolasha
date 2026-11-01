@@ -21,7 +21,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import { getKeyUnitCost } from '../key-cost.js';
-import expectedValueCalculator from '../../features/market/expected-value-calculator.js';
+import { expectedValueCalculator } from '../bundle-bridge.js';
 import { calculatePriceAfterTax } from '../profit-helpers.js';
 import { createSeededRng, drawFromDistribution } from '../risk-of-ruin-engine.js';
 import {
@@ -112,7 +112,7 @@ export function getChestCostBreakdown(containerHrid) {
 function priceRealizedDrop(itemHrid, count) {
     if (count <= 0) return 0;
 
-    const resolved = expectedValueCalculator.resolveSellSideValue(itemHrid);
+    const resolved = expectedValueCalculator()?.resolveSellSideValue(itemHrid) ?? null;
     if (resolved === null) return null;
 
     if (itemHrid === COIN_HRID) return count * resolved.value;

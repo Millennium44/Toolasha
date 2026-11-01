@@ -8,6 +8,16 @@ import { calculateBonusRevenue } from './bonus-revenue-calculator.js';
 
 const settings = vi.hoisted(() => ({ values: {} }));
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('./bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedexpectedValueCalculator = await import('../features/market/expected-value-calculator.js');
+    return {
+        ...original,
+        expectedValueCalculator: () => original.expectedValueCalculator() || mockedexpectedValueCalculator.default,
+    };
+});
+
 vi.mock('../api/marketplace.js', () => ({
     default: {
         getPrice: vi.fn(),
@@ -180,5 +190,40 @@ describe('calculateBonusRevenue', () => {
 
         expect(taxed.totalBonusRevenue).toBe(1000); // 100 × 0.05 × 200 (cached taxed EV)
         expect(gross.totalBonusRevenue).toBe(1250); // 100 × 0.05 × 250 (gross EV)
+    });
+
+    describe('in the split production build', () => {
+        // The utils bundle carries a never-initialized copy of the calculator; the market bundle's
+        // live instance, published on the namespace, is the one whose cache is current.
+        test('prices an openable drop from the live market-bundle calculator, not the inlined copy', () => {
+            const hadWindow = 'window' in globalThis;
+            const previousWindow = globalThis.window;
+            globalThis.window = {
+                ...(previousWindow || {}),
+                Toolasha: {
+                    Market: {
+                        expectedValueCalculator: {
+                            getCachedValue: () => 777,
+                            calculateSingleContainer: () => 0,
+                            calculateGrossContainerValue: () => 0,
+                        },
+                    },
+                },
+            };
+            try {
+                const actionDetails = {
+                    type: '/action_types/gathering',
+                    rareDropTable: [{ itemHrid: '/items/cache', minCount: 1, maxCount: 1, dropRate: 1 }],
+                };
+                const itemDetailMap = { '/items/cache': { name: 'Cache', isOpenable: true } };
+
+                const result = calculateBonusRevenue(actionDetails, 10, new Map(), itemDetailMap);
+
+                expect(result.bonusDrops[0].priceEach).toBe(777); // the inlined copy's mock says 200
+            } finally {
+                if (hadWindow) globalThis.window = previousWindow;
+                else delete globalThis.window;
+            }
+        });
     });
 });

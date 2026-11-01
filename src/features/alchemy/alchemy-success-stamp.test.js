@@ -48,9 +48,12 @@ vi.mock('../../utils/market-data.js', () => ({
 // getUnderLevelPenalty resolves this itself when called with no teaContext (as this file's
 // predictedSuccessStamp path does); mirror the empty slots/equipment above rather than pull in
 // the real loadout-snapshot chain.
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../../utils/buff-parser.js', () => ({
     getAlchemySuccessBonus: () => game.teaBonus,
     getBuffValue: () => 0,

@@ -16,6 +16,16 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const settings = vi.hoisted(() => ({ map: {} }));
 
+// The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
+vi.mock('./bundle-bridge.js', async (importOriginal) => {
+    const original = await importOriginal();
+    const mockedmarketHistoryAPI = await import('../features/market/mooket/market-history-api.js');
+    return {
+        ...original,
+        marketHistoryAPI: () => original.marketHistoryAPI() || mockedmarketHistoryAPI.default,
+    };
+});
+
 vi.mock('../core/config.js', () => ({
     default: {
         getSetting: (key, defaultValue = false) =>

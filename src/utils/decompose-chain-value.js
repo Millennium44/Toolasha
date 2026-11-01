@@ -26,8 +26,7 @@
 
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
-import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
-import expectedValueCalculator from '../features/market/expected-value-calculator.js';
+import { alchemyProfitCalculator, expectedValueCalculator } from './bundle-bridge.js';
 import { withProfitPricingMode, getItemPriceInfo, getItemPrices, isPriceEstimated } from './market-data.js';
 import { calculatePriceAfterTax } from './profit-helpers.js';
 import {
@@ -237,7 +236,7 @@ export function decomposeChain(itemHrid) {
                     const value = calculateLabyrinthTokenValueDetail('profitCalc_pricingMode', false)?.value;
                     return value > 0 ? calculatePriceAfterTax(value) : null;
                 }
-                const resolved = expectedValueCalculator.resolveSellSideValue?.(hrid);
+                const resolved = expectedValueCalculator()?.resolveSellSideValue?.(hrid);
                 if (hrid === COWBELL_HRID) {
                     // Not counting Cowbells values them at zero. Otherwise the Cowbell Bag's raw order-book bid
                     // decides, whatever the resolver made of a custom price or estimate
@@ -290,9 +289,9 @@ export function decomposeChain(itemHrid) {
                 if (!decomposeCandidateCache.has(hrid)) {
                     let list = [];
                     try {
-                        list = alchemyProfitCalculator.calculateCandidateResults?.('decompose', hrid) ?? [];
+                        list = alchemyProfitCalculator()?.calculateCandidateResults?.('decompose', hrid) ?? [];
                         if (list.length === 0) {
-                            list = [alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0)].filter(Boolean);
+                            list = [alchemyProfitCalculator()?.calculateDecomposeProfit(hrid, 0)].filter(Boolean);
                         }
                     } catch {
                         list = [];

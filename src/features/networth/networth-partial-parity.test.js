@@ -67,9 +67,12 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { on: () => {}, getPrice: () => null } }));
-vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
-}));
+vi.mock('../../utils/action-context.js', () => {
+    const mod = {
+        resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+    };
+    return { ...mod, resolveLoadoutContext: (actionTypeHrid) => mod.resolveActionContext(actionTypeHrid) };
+});
 vi.mock('../../utils/tea-parser.js', () => ({ parseArtisanBonus: () => 0, getDrinkConcentration: () => 0 }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ isIronCowCharacter: () => false }));
 vi.mock('../settings/custom-price-overrides.js', () => ({

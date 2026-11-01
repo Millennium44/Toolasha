@@ -41,7 +41,7 @@ import {
     parseGourmetBonus,
 } from '../../utils/tea-parser.js';
 import { getItemPrices, getRawMarketAskPrice } from '../../utils/market-data.js';
-import { resolveActionContext } from '../../utils/action-context.js';
+import { resolveActionContext, resolveLoadoutContext } from '../../utils/action-context.js';
 import { upgradeOutputLevels } from '../../utils/upgrade-enhancement.js';
 import { affordableActions } from '../../utils/material-calculator.js';
 import { capProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
@@ -2451,7 +2451,11 @@ class ActionTimeDisplay {
             const { actionTime, totalEfficiency } = timeData;
 
             if (isInfinite) {
-                const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+                const artisanBonus = this.getArtisanBonusForAction(
+                    actionDetails,
+                    actionObj,
+                    options.actionContext ?? null
+                );
 
                 const limitResult = this.calculateMaterialLimit(
                     actionDetails,
@@ -3056,7 +3060,7 @@ class ActionTimeDisplay {
             // Get inventory and calculate Artisan bonus
             const inventory = dataManager.getInventory();
             const inventoryLookup = this.buildInventoryLookup(inventory);
-            const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+            const artisanBonus = this.getArtisanBonusForAction(actionDetails, action);
 
             // Calculate max actions based on materials and costs
             const limitResult = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, action, {
@@ -3854,8 +3858,12 @@ class ActionTimeDisplay {
      */
     calculateActionTime(actionDetails, actionHrid = null, actionObj = null, actionContext = null) {
         const skills = dataManager.getSkills();
-        const equipment = actionContext?.equipment ?? dataManager.getEquipment();
+        // A queued action runs with the loadout it was queued under, not the per-skill default
+        // loadout and not necessarily what is worn now; an explicit context still wins
+        const context = actionContext ?? this.queuedActionContext(actionDetails, actionObj);
+        const equipment = context?.equipment ?? dataManager.getEquipment();
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+        actionContext = context;
 
         // Use shared calculator with same parameters as main display
         return calculateActionStats(actionDetails, {
@@ -3868,6 +3876,19 @@ class ActionTimeDisplay {
             actionContext,
             levelRequirementOverride: this.alchemyLevelRequirement(actionDetails, actionObj, itemDetailMap),
         });
+    }
+
+    /**
+     * The gear and drinks a queued action runs with: its own characterLoadoutID (a saved
+     * loadout, or 0 for the gear worn now). Null for an action that carries no loadout id, so
+     * callers keep the per-skill resolution they always had.
+     * @param {Object} actionDetails - Action details
+     * @param {Object|null} actionObj - The queued action
+     * @returns {{equipment: Map, drinks: Array}|null}
+     */
+    queuedActionContext(actionDetails, actionObj) {
+        if (!actionDetails?.type || typeof actionObj?.characterLoadoutID !== 'number') return null;
+        return resolveLoadoutContext(actionDetails.type, actionObj.characterLoadoutID);
     }
 
     /**
@@ -4376,14 +4397,19 @@ class ActionTimeDisplay {
     /**
      * Artisan material reduction currently in effect for an action type.
      * @param {Object} actionDetails - Action detail object
+     * @param {Object|null} [actionObj] - The queued action, whose loadout supplies the drinks
+     * @param {{equipment?: Map, drinks?: Array}|null} [actionContext] - An explicit context
      * @returns {number} Reduction as a 0-1 decimal
      */
-    getArtisanBonusForAction(actionDetails) {
+    getArtisanBonusForAction(actionDetails, actionObj = null, actionContext = null) {
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
         // resolveActionContext drops a drink that is slotted but out of stock and no
         // longer buffed — a raw equipment/slot read would keep crediting the
         // discount after the tea is gone, contradicting the Missing Materials panel.
-        const { equipment, drinks: activeDrinks } = resolveActionContext(actionDetails.type);
+        const { equipment, drinks: activeDrinks } =
+            actionContext ??
+            this.queuedActionContext(actionDetails, actionObj) ??
+            resolveActionContext(actionDetails.type);
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
         return parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
     }
@@ -4417,7 +4443,7 @@ class ActionTimeDisplay {
         const unlimited = { count, limitType: null, isEstimated: false };
         if (!inventoryLookup || !actionDetails) return unlimited;
 
-        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+        const artisanBonus = this.getArtisanBonusForAction(actionDetails, actionObj);
         const limitResult = this.calculateMaterialLimit(
             actionDetails,
             inventoryLookup,
@@ -4637,7 +4663,7 @@ class ActionTimeDisplay {
         // no finite quantity describes what it consumes.
         if (timing.isTrulyInfinite) return 0;
 
-        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+        const artisanBonus = this.getArtisanBonusForAction(actionDetails, actionObj);
 
         // What the row performs, not what it asked for: a request for 500 backed by materials
         // for 40 consumes 40. The queue walks now cap a counted row's displayed count the same
@@ -4766,9 +4792,17 @@ class ActionTimeDisplay {
     }
 
     /**
-     * Match an action from cache by reading its name from a queue div
+     * Match a queue row to its queued action.
+     *
+     * The row's "#N" label is its position in the queue sorted by ordinal (#1 is the running
+     * action), so `sortedByOrdinal[N - 1]` is the row's action in any game language and with
+     * any number of identical rows. The row's text is only a cross-check: it can show that the
+     * label points at a stale queue (the row names some other action and not the one the label
+     * picked), in which case the row is left unmapped rather than guessed. A row with no label,
+     * or one past the end of the queue, falls back to matching by its text alone.
      * @param {HTMLElement} actionDiv - The queue action div element
      * @param {Array} cachedActions - Array of actions from dataManager
+     * @param {Set} [usedActionIds] - Actions already given to earlier rows
      * @returns {Object|null} Matched action object or null
      */
     matchActionFromDiv(actionDiv, cachedActions, usedActionIds = new Set()) {
@@ -4794,27 +4828,46 @@ class ActionTimeDisplay {
         // Remove position number: "#3Coinify: Foraging Essence" → "Coinify: Foraging Essence"
         // Note: No space after the number in the actual text
         const actionNameText = fullText.replace(/^#\d+/, '').trim();
+        const position = Number(/^#(\d+)/.exec(fullText)?.[1]);
 
+        const sorted = [...cachedActions].sort(compareActionQueueOrder);
+        const rowTextNames = this.queueRowTextMatcher(actionNameText, isEnhancingAction);
+        const byText = () => sorted.find((a) => !usedActionIds.has(a.id) && rowTextNames(a)) ?? null;
+
+        const labeled = position >= 1 ? sorted[position - 1] : undefined;
+        if (labeled && !usedActionIds.has(labeled.id)) {
+            if (rowTextNames(labeled)) return labeled;
+            // The label and the text disagree. If the text positively names a different action
+            // the queue has moved under the open menu; otherwise the text is simply not
+            // readable (another game language) and the label stands.
+            const other = byText();
+            return other && other.id !== labeled.id ? null : labeled;
+        }
+        return byText();
+    }
+
+    /**
+     * Build the predicate that says whether a queued action is the one a row's text names.
+     * @param {string} actionNameText - The row's text with its "#N" removed
+     * @param {boolean} isEnhancingAction - Whether the row carries the enhancing icon
+     * @returns {function(Object): boolean}
+     */
+    queueRowTextMatcher(actionNameText, isEnhancingAction) {
         // Handle enhancing actions specially
         if (isEnhancingAction) {
             // For enhancing, the text is just the item name (e.g., "Cheese Sword")
             const itemName = actionNameText.replace(/\s*\+\d+$/, '');
             const itemHrid = '/items/' + itemName.toLowerCase().replace(/\s+/g, '_');
 
-            // Find enhancing action matching this item (excluding already-used actions)
-            return [...cachedActions].sort(compareActionQueueOrder).find((a) => {
-                if (usedActionIds.has(a.id)) {
-                    return false; // Skip already-matched actions
-                }
-
+            return (a) => {
                 const actionDetails = dataManager.getActionDetails(a.actionHrid);
                 if (!actionDetails || actionDetails.type !== '/action_types/enhancing') {
                     return false;
                 }
 
                 // Match on primaryItemHash (the item being enhanced)
-                return a.primaryItemHash && a.primaryItemHash.includes(itemHrid);
-            });
+                return !!a.primaryItemHash && a.primaryItemHash.includes(itemHrid);
+            };
         }
 
         // Parse action name (same logic as main display)
@@ -4828,12 +4881,8 @@ class ActionTimeDisplay {
             itemNameFromDiv = null;
         }
 
-        // Match action from cache (same logic as main display, excluding already-used actions)
-        return [...cachedActions].sort(compareActionQueueOrder).find((a) => {
-            if (usedActionIds.has(a.id)) {
-                return false; // Skip already-matched actions
-            }
-
+        // Match action from cache (same logic as main display)
+        return (a) => {
             const actionDetails = dataManager.getActionDetails(a.actionHrid);
             if (!actionDetails) {
                 return false;
@@ -4865,7 +4914,7 @@ class ActionTimeDisplay {
             }
 
             return true;
-        });
+        };
     }
 
     /**
@@ -5007,7 +5056,7 @@ class ActionTimeDisplay {
                         }
                     } else if (isInfinite) {
                         // Check for material limit on infinite actions
-                        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+                        const artisanBonus = this.getArtisanBonusForAction(actionDetails, currentAction);
 
                         // Calculate action stats to get efficiency
                         const timeData = this.calculateActionTime(
@@ -5278,7 +5327,7 @@ class ActionTimeDisplay {
 
                     // Calculate material limit for infinite actions
                     if (isInfinite) {
-                        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+                        const artisanBonus = this.getArtisanBonusForAction(actionDetails, actionObj);
 
                         const limitResult = this.calculateMaterialLimit(
                             actionDetails,
