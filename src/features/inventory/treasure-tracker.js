@@ -2327,21 +2327,23 @@ class TreasureTracker {
         Object.assign(band.style, { fontSize: '9px', color: COLORS.textDim, opacity: '0.8', padding: '0 0 2px' });
         band.dataset.role = 'column-labels';
 
-        const grid = (template, labels) => {
+        // Each label takes its column's alignment: the counts beside the icon and the
+        // per-chest count are left-aligned, everything else is right-aligned
+        const grid = (template, labels, leftAligned) => {
             const cell = document.createElement('div');
             Object.assign(cell.style, { display: 'grid', gridTemplateColumns: template, gap: '4px' });
-            for (const label of labels) {
+            labels.forEach((label, index) => {
                 const span = this._span(label);
-                span.style.textAlign = 'right';
+                span.style.textAlign = leftAligned.includes(index) ? 'left' : 'right';
                 cell.appendChild(span);
-            }
+            });
             return cell;
         };
         const actual = ['', 'Qty', 'Value', 'vs exp.'];
         band.append(
-            grid(ACTUAL_GRID, actual),
-            grid(ACTUAL_GRID, actual),
-            grid(EXPECTED_GRID, ['Qty', 'Value', '', 'Qty', 'Value'])
+            grid(ACTUAL_GRID, actual, [1]),
+            grid(ACTUAL_GRID, actual, [1]),
+            grid(EXPECTED_GRID, ['Qty', 'Value', '', 'Qty', 'Value'], [0])
         );
         return band;
     }
