@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### More tests read real game messages
+
+- Combat (`new_battle`, `battle_updated`, consumable casts), inventory and market listing and order-book tests now use payloads captured from the game on the test server.
+
 ### Past weeks no longer shows 0 pts for trials it never saw
 
 - A guild trial cycle whose cards were saved before showing any result now reads "— pts · — tokens each" in Past weeks instead of a false 0; a party that really wiped before tier 1 still shows T0 and 0 pts.
