@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task reroll walk bar tidied
+
+- The reroll walk bar sits in the Task Board toolbar as ordinary toolbar buttons with a short label (details on hover) instead of floating over the task cards, shows only on the Task Board, and shrinks to a "Walk again" button once a walk is done; a new "Reroll walk bar position" setting keeps it floating if you prefer.
+
 ### Philo Gamba: untradable capes no longer cost 0
 
 - An untradable base item in the Philo Gamba calculator is valued with your "Untradable capes: base value" setting instead of 0; with that set to nothing the row shows "Set price" and blank profit figures until you click to enter a cost (from upstream).

@@ -32,6 +32,7 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: () => true,
         getSettingValue: (_key, fallback) => fallback,
+        onSettingChange: () => () => {},
         COLOR_ACCENT: '#8ecfff',
     },
 }));

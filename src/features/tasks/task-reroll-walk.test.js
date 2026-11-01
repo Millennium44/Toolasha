@@ -18,7 +18,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const settings = vi.hoisted(() => ({ values: {} }));
+const settings = vi.hoisted(() => ({ values: {}, callbacks: {} }));
 const stored = vi.hoisted(() => ({ values: {}, transactions: [] }));
 const market = vi.hoisted(() => ({ cowbellValue: 8000 }));
 
@@ -26,6 +26,10 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => settings.values[key] ?? false,
         getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
+        onSettingChange: (key, callback) => {
+            (settings.callbacks[key] ||= []).push(callback);
+            return () => {};
+        },
         setSetting: (key, value) => {
             settings.values[key] = value;
         },
@@ -139,6 +143,10 @@ function board(specs) {
 
     const panel = document.createElement('div');
     panel.className = 'TasksPanel_tasksPanel__abc';
+    // The Task Board's toolbar row, where the walk docks
+    const toolbar = document.createElement('div');
+    toolbar.className = 'TasksPanel_taskSlotCount__fixture';
+    panel.appendChild(toolbar);
     const list = document.createElement('div');
     list.className = 'TasksPanel_taskList__xyz';
     panel.appendChild(list);
@@ -234,6 +242,8 @@ const flush = async () => {
 
 /** What the widget currently offers */
 const chipText = () => document.querySelector('.mwi-task-reroll-walk-advance')?.textContent || '';
+/** The chip's hover title, which carries a finished walk's summary */
+const chipTitle = () => document.querySelector('.mwi-task-reroll-walk-advance')?.title || '';
 
 /**
  * The player presses a game button the walk asked for.
@@ -294,6 +304,8 @@ beforeEach(() => {
     vi.useFakeTimers();
     settings.values = {
         tasks_rerollWalk: true,
+        // The full-label suites below read the floating panel; the toolbar mode has its own describe
+        tasks_rerollWalkBarPosition: 'floating',
         tasks_rerollWalkCurrency: 'auto',
         tasks_rerollWalkTrashAtLimit: true,
     };
@@ -540,7 +552,8 @@ describe('planning a walk down the board', () => {
 
         await walk.start();
 
-        expect(chipText()).toBe('↕ Sort · ✓ Done — 2 kept, 0 rerolled, 0 trashed');
+        expect(chipText()).toBe('↻ Walk again');
+        expect(chipTitle()).toContain('✓ Done — 2 kept, 0 rerolled, 0 trashed.');
         expect(clicks).toEqual([]);
     });
 
@@ -613,7 +626,7 @@ describe('planning a walk down the board', () => {
 
         await walk.start();
 
-        expect(chipText()).toContain('1 kept');
+        expect(chipTitle()).toContain('1 kept');
     });
 
     test('a task blocked in one currency still rerolls with the other', async () => {
@@ -838,7 +851,7 @@ describe('the unread notice is read first', () => {
         expect(clicks).toEqual(['Notice:Read']);
         notice.remove();
         vi.advanceTimersByTime(3000);
-        expect(chipText()).toContain('✓ Done');
+        expect(chipTitle()).toContain('✓ Done');
     });
 
     test('reading respects the auto-sort setting: sort runs after the press, before the next plan', async () => {
@@ -1221,7 +1234,8 @@ describe('a discarded slot is done with, not walked again', () => {
 
         expect(clicks.filter((click) => click.endsWith(':10,000'))).toHaveLength(1);
         expect(walk.tally.goldSpent).toBe(10000);
-        expect(chipText()).toBe('↕ Sort · ✓ Done — 0 kept, 1 rerolled, 1 trashed · spent 10.0K🪙');
+        expect(chipText()).toBe('↻ Walk again');
+        expect(chipTitle()).toContain('✓ Done — 0 kept, 1 rerolled, 1 trashed · spent 10.0K🪙.');
     });
 
     test('a board that got shorter instead still judges the card that moved up', async () => {
@@ -1437,18 +1451,20 @@ describe('what the walk spent', () => {
 
         expect(walk.tally.rerolled).toBe(1);
         expect(walk.tally.goldSpent).toBe(0);
-        expect(chipText()).toBe('↕ Sort · ✓ Done — 1 kept, 1 rerolled, 0 trashed');
+        expect(chipText()).toBe('↻ Walk again');
+        expect(chipTitle()).toContain('✓ Done — 1 kept, 1 rerolled, 0 trashed.');
     });
 
     test('the Done summary says what the walk spent as well as what it did', async () => {
         await payOnce(['Back', '10,000']);
 
-        expect(chipText()).toBe('↕ Sort · ✓ Done — 1 kept, 1 rerolled, 0 trashed · spent 10.0K🪙');
+        expect(chipText()).toBe('↻ Walk again');
+        expect(chipTitle()).toContain('✓ Done — 1 kept, 1 rerolled, 0 trashed · spent 10.0K🪙.');
     });
 
     test('hiding the widget no longer destroys the summary of the walk that just ended', async () => {
         await payOnce(['Back', '10,000']);
-        const done = chipText();
+        const done = chipTitle();
 
         document.querySelector('.mwi-task-reroll-walk-stop').click();
         expect(document.getElementById('mwi-task-reroll-walk-chip')).toBe(null);
@@ -1486,7 +1502,7 @@ describe('what the walk spent', () => {
         vi.advanceTimersByTime(3000);
         walk.advance();
 
-        expect(chipText()).toContain('spent 10.0K🪙');
+        expect(chipTitle()).toContain('spent 10.0K🪙');
         expect(walk.summary).toContain('spent 10.0K🪙');
     });
 });
@@ -1828,7 +1844,7 @@ describe('the protected list the walk obeys is the list as it stands now', () =>
         taskRerollProtection.protection.protectedHrids.add(MILKING);
         walk._replan();
 
-        expect(chipText()).toContain('✓ Done — 1 kept');
+        expect(chipTitle()).toContain('✓ Done — 1 kept');
         expect(clicks).toEqual([]);
     });
 
@@ -1847,7 +1863,7 @@ describe('the protected list the walk obeys is the list as it stands now', () =>
 
         expect(walk.advance()).toBe(false);
         expect(clicks).toEqual([]);
-        expect(chipText()).toContain('✓ Done — 1 kept');
+        expect(chipTitle()).toContain('✓ Done — 1 kept');
     });
 });
 
@@ -1940,14 +1956,14 @@ describe('the widget sorts on demand', () => {
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         await walk.start();
 
-        expect(chipText()).toContain('✓ Done');
+        expect(chipTitle()).toContain('✓ Done');
         expect(sortButton()).toBeTruthy();
         sortButton().click();
         expect(sorter.sortTasks).toHaveBeenCalledWith(true);
     });
 });
 
-describe('a finished walk offers Sort, then Walk again', () => {
+describe('a finished walk collapses to a Walk again chip', () => {
     const mainButton = () => document.querySelector('.mwi-task-reroll-walk-advance');
     const finishedBoard = async () => {
         sorter.sortTasks.mockReset();
@@ -1956,81 +1972,44 @@ describe('a finished walk offers Sort, then Walk again', () => {
         await walk.start();
     };
 
-    test('done reads Sort with the summary kept, and one press runs the board sort only', async () => {
+    test('done is a Walk again chip with the summary in its title, and no Sort or settings', async () => {
         await finishedBoard();
 
-        expect(chipText()).toBe('↕ Sort · ✓ Done — 1 kept, 0 rerolled, 0 trashed');
+        expect(chipText()).toBe('↻ Walk again');
+        expect(chipTitle()).toContain('1 kept, 0 rerolled, 0 trashed');
         expect(mainButton().disabled).toBe(false);
-
-        mainButton().click();
-
-        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
-        expect(sorter.sortTasks).toHaveBeenCalledWith(true);
-        expect(clicks).toEqual([]);
-        // The walk did not restart: still the finished board, summary intact
-        expect(walk.state).toBe('done');
-        expect(chipText()).toBe('↻ Walk again · ✓ Done — 1 kept, 0 rerolled, 0 trashed');
+        expect(document.querySelector('.mwi-task-reroll-walk-sort').parentElement.style.display).toBe('none');
+        expect(document.querySelector('.mwi-task-reroll-walk-chip-gear, [class$="-gear"]').style.display).toBe('none');
+        expect(document.querySelector('.mwi-task-reroll-walk-stop')).toBeTruthy();
     });
 
-    test('done -> Sort -> Walk again -> done again, with Sort offered afresh', async () => {
+    test('one press walks again straight away, without sorting', async () => {
         await finishedBoard();
 
-        mainButton().click(); // Sort
-        expect(chipText()).toContain('↻ Walk again');
-        mainButton().click(); // Walk again
+        mainButton().click();
         await flush();
 
-        // The sort was not repeated by walking again, and the new walk ended
-        // the same way, so the main button offers Sort once more
-        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(sorter.sortTasks).not.toHaveBeenCalled();
         expect(walk.state).toBe('done');
-        expect(chipText()).toBe('↕ Sort · ✓ Done — 1 kept, 0 rerolled, 0 trashed');
-
-        mainButton().click();
-        expect(sorter.sortTasks).toHaveBeenCalledTimes(2);
+        expect(chipText()).toBe('↻ Walk again');
     });
 
-    test('the small Sort control counts as the sort too', async () => {
-        await finishedBoard();
-
-        document.querySelector('.mwi-task-reroll-walk-sort').click();
-
-        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
-        expect(chipText()).toContain('↻ Walk again');
-    });
-
-    test('a sort that fails leaves Sort on offer', async () => {
-        await finishedBoard();
-        const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
-        sorter.sortTasks.mockImplementationOnce(() => {
-            throw new Error('board gone');
-        });
-
-        mainButton().click();
-
-        expect(chipText()).toContain('↕ Sort');
-        quiet.mockRestore();
-    });
-
-    test('sorting mid-walk does not turn anything into Walk again', async () => {
+    test('Sort is back as soon as a walk is running', async () => {
         sorter.sortTasks.mockReset();
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         await walk.start();
         expect(walk.state).toBe('ready');
 
+        expect(document.querySelector('.mwi-task-reroll-walk-sort').parentElement.style.display).toBe('');
         document.querySelector('.mwi-task-reroll-walk-sort').click();
-
-        expect(walk.sortedAfterDone).toBe(false);
+        expect(sorter.sortTasks).toHaveBeenCalledWith(true);
         expect(chipText()).toContain('Reroll #1');
     });
 
-    test('a stop or a character switch leaves nothing sorted behind', async () => {
+    test('the x dismisses the chip', async () => {
         await finishedBoard();
-        mainButton().click();
-        expect(walk.sortedAfterDone).toBe(true);
-
-        walk.cleanup();
-        expect(walk.sortedAfterDone).toBe(false);
+        document.querySelector('.mwi-task-reroll-walk-stop').click();
+        expect(document.getElementById('mwi-task-reroll-walk-chip')).toBe(null);
     });
 });
 
@@ -2119,7 +2098,7 @@ describe('finished tasks are claimed before anything is rerolled', () => {
         removeCard(list, 2);
         vi.advanceTimersByTime(3000);
 
-        expect(chipText()).toContain('✓ Done — 1 claimed, 1 kept, 0 rerolled, 0 trashed');
+        expect(chipTitle()).toContain('✓ Done — 1 claimed, 1 kept, 0 rerolled, 0 trashed');
     });
 
     test('a claim the game ignores is handed to the player, and counted only when it lands', async () => {
@@ -2141,7 +2120,7 @@ describe('finished tasks are claimed before anything is rerolled', () => {
         removeCard(list, 1);
         vi.advanceTimersByTime(3000);
         expect(walk.tally.claimed).toBe(1);
-        expect(chipText()).toContain('1 claimed');
+        expect(chipTitle()).toContain('1 claimed');
     });
 
     test('an unanswered claim is waited on even after a sort moves another finished card ahead of it', async () => {
@@ -2270,130 +2249,179 @@ describe('what start-up costs the settings store', () => {
     });
 });
 
-describe('narrow board widget placement', () => {
-    test('replacing a docked task board releases the old observer and resize listener', () => {
-        const observers = [];
-        vi.stubGlobal(
-            'ResizeObserver',
-            class {
-                disconnect = vi.fn();
-                observe() {}
-                constructor() {
-                    observers.push(this);
-                }
-            }
-        );
-        const addListener = vi.spyOn(window, 'addEventListener');
-        const removeListener = vi.spyOn(window, 'removeEventListener');
-        const createPanel = () => {
-            const panel = document.createElement('div');
-            panel.className = 'GamePage_gamePanel__fixture';
-            panel.innerHTML = '<div class="TasksPanel_taskList__fixture"></div>';
-            vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 350 });
-            document.body.appendChild(panel);
-            return panel;
-        };
-        try {
-            const oldPanel = createPanel();
-            const oldWidget = walk._ensureWidget();
-            const oldResize = addListener.mock.calls.find(([type]) => type === 'resize')[1];
-            oldPanel.remove();
-            const newPanel = createPanel();
-            const newWidget = walk._ensureWidget();
-            expect(newWidget).not.toBe(oldWidget);
-            expect(newWidget.element.parentElement).toBe(newPanel);
-            expect(observers[0].disconnect).toHaveBeenCalledOnce();
-            expect(removeListener).toHaveBeenCalledWith('resize', oldResize);
-            expect(observers[1].disconnect).not.toHaveBeenCalled();
-            expect(oldWidget.element.isConnected).toBe(false);
-            expect([...document.body.childNodes].filter((node) => node.nodeType === 8)).toHaveLength(1);
-            walk._removeWidget();
-            expect(observers[1].disconnect).toHaveBeenCalledOnce();
-        } finally {
-            walk._removeWidget();
-            vi.unstubAllGlobals();
-            vi.restoreAllMocks();
+describe('toolbar docking', () => {
+    const toolbarOf = () => document.querySelector('[class*="TasksPanel_taskSlotCount"]');
+    const chipEl = () => document.getElementById('mwi-task-reroll-walk-chip');
+    const mainBtn = () => document.querySelector('.mwi-task-reroll-walk-advance');
+    const oneCard = () => board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+
+    beforeEach(() => {
+        settings.values.tasks_rerollWalkBarPosition = 'toolbar';
+    });
+
+    test('the widget sits in the Task Board toolbar row, not on the body', async () => {
+        oneCard();
+        await walk.start();
+
+        expect(chipEl().parentElement).toBe(toolbarOf());
+        expect(chipEl().style.position).not.toBe('fixed');
+        expect(chipEl().dataset.toolashaDocked).toBe('true');
+    });
+
+    test('toolbar mode has no panel box and wears the toolbar button classes', async () => {
+        oneCard();
+        await walk.start();
+
+        const el = chipEl();
+        expect(el.style.border).toBe('0px');
+        expect(el.style.background).toBe('transparent');
+        expect(el.style.padding).toBe('0px');
+        expect(el.style.boxShadow).toBe('none');
+        for (const button of [mainBtn(), el.querySelector('.mwi-task-reroll-walk-sort')]) {
+            expect(button.className).toContain('Button_button__1Fe9z Button_small__3fqC7');
         }
     });
 
-    test('docks below the page tabs without changing one-press action handling or saved desktop position', () => {
-        const panel = document.createElement('div');
-        panel.className = 'GamePage_gamePanel__fixture';
-        const tabs = document.createElement('nav');
-        const list = document.createElement('div');
-        list.className = 'TasksPanel_taskList__fixture';
-        panel.append(tabs, list);
-        document.body.appendChild(panel);
-        const rect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 350 });
-        const beforeClicks = [...clicks];
-        walk.panelPosition = { left: 20, top: 120 };
-        const widget = walk._ensureWidget();
-        expect(widget.element.parentElement).toBe(panel);
-        expect(widget.element.previousElementSibling).toBe(tabs);
-        expect(widget.element.nextElementSibling).toBe(list);
-        expect(widget.element.style.position).toBe('relative');
-        expect(widget.main.style.whiteSpace).toBe('normal');
-        rect.mockReturnValue({ width: 1000 });
-        window.dispatchEvent(new Event('resize'));
-        expect(widget.element.parentElement).toBe(document.body);
-        expect(widget.element.style.left).toBe('20px');
-        expect(widget.element.style.top).toBe('120px');
-        expect(clicks).toEqual(beforeClicks);
-        walk._removeWidget();
-        rect.mockRestore();
+    test('the label is the action and its cost; the rest lives in the title', async () => {
+        oneCard();
+        await walk.start();
+        walk.tally = { claimed: 0, kept: 0, rerolled: 0, trashed: 0, goldSpent: 310000, cowbellsSpent: 31 };
+        walk._render();
+        const long = walk._fullLabel();
+
+        expect(long).toContain('spent');
+        expect(mainBtn().textContent).toMatch(/^[▶👉] Reroll #1 — /);
+        expect(mainBtn().textContent).not.toContain('(');
+        expect(mainBtn().textContent).not.toContain('open the menu');
+        expect(mainBtn().textContent).not.toContain('spent');
+        expect(mainBtn().title).toContain(long);
+        // One line, with an ellipsis rather than wrapping as the narrow-pane safety
+        expect(mainBtn().style.whiteSpace).toBe('nowrap');
+        expect(mainBtn().style.minWidth).toBe('0');
+        expect(mainBtn().style.textOverflow).toBe('ellipsis');
     });
 
-    test('returning to wide restores the inline values captured at narrow time, not hardcoded ones', () => {
-        const panel = document.createElement('div');
-        panel.className = 'GamePage_gamePanel__fixture';
-        const list = document.createElement('div');
-        list.className = 'TasksPanel_taskList__fixture';
-        panel.append(list);
-        document.body.appendChild(panel);
-        const rect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 1000 });
-        const widget = walk._ensureWidget();
-        expect(widget.element.parentElement).toBe(document.body);
-        const wide = (node) => ({
-            ws: node.main.style.whiteSpace,
-            mmin: node.main.style.minWidth,
-            mmax: node.main.style.maxWidth,
-            wrap: node.main.style.overflowWrap,
-            smin: node.status.style.minWidth,
-            smax: node.status.style.maxWidth,
-        });
-        // Distinctive values a hardcoded restore could never reproduce
-        widget.main.style.minWidth = '11px';
-        widget.main.style.maxWidth = '222px';
-        widget.main.style.overflowWrap = 'break-word';
-        widget.status.style.maxWidth = '333px';
-        const before = wide(widget);
-        rect.mockReturnValue({ width: 350 });
-        window.dispatchEvent(new Event('resize'));
-        expect(widget.element.parentElement).toBe(panel);
-        expect(widget.main.style.overflowWrap).toBe('anywhere');
-        rect.mockReturnValue({ width: 1000 });
-        window.dispatchEvent(new Event('resize'));
-        expect(widget.element.parentElement).toBe(document.body);
-        expect(wide(widget)).toEqual(before);
-        walk._removeWidget();
-        rect.mockRestore();
+    test('a very long label stays a short one-line button', async () => {
+        oneCard();
+        await walk.start();
+        walk.step = {
+            ...walk.step,
+            label: 'Reroll #1 — 10.0K🪙 (cheaper than 1🔔 ≈131.5K), open the menu',
+        };
+        walk.tally.goldSpent = 310000;
+        walk.tally.cowbellsSpent = 31;
+        walk._render();
+
+        expect(mainBtn().textContent).toBe('▶ Reroll #1 — 10.0K🪙');
+        expect(mainBtn().title).toContain('cheaper than 1🔔');
+        expect(mainBtn().title).toContain('spent');
     });
 
-    test('a wide position lost to a re-render falls back to the body', () => {
-        const panel = document.createElement('div');
-        panel.className = 'GamePage_gamePanel__fixture';
-        const list = document.createElement('div');
-        list.className = 'TasksPanel_taskList__fixture';
-        panel.append(list);
-        document.body.appendChild(panel);
-        const rect = vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 350 });
-        const widget = walk._ensureWidget();
-        expect(widget.element.parentElement).toBe(panel);
-        [...document.body.childNodes].filter((node) => node.nodeType === 8).forEach((node) => node.remove());
-        rect.mockReturnValue({ width: 1000 });
-        window.dispatchEvent(new Event('resize'));
-        expect(widget.element.parentElement).toBe(document.body);
+    test('waiting reads Walking… and done reads Walk again with the summary in the title', async () => {
+        oneCard();
+        await walk.start();
+        walk.state = 'waiting';
+        walk._render();
+        expect(mainBtn().textContent).toBe('⏳ Walking…');
+
+        walk.state = 'done';
+        walk._render();
+        expect(mainBtn().textContent).toBe('↻ Walk again');
+        expect(mainBtn().title).toContain('✓ Done');
+    });
+
+    test('a toolbar re-render rebuilds one widget in the new toolbar, never two', async () => {
+        oneCard();
+        await walk.start();
+        const fresh = document.createElement('div');
+        fresh.className = 'TasksPanel_taskSlotCount__fixture';
+        toolbarOf().replaceWith(fresh);
+
+        walk._syncWidget();
+        walk._syncWidget();
+
+        expect(document.querySelectorAll('#mwi-task-reroll-walk-chip')).toHaveLength(1);
+        expect(fresh.querySelector('#mwi-task-reroll-walk-chip')).toBeTruthy();
+        expect(chipText()).toContain('Reroll #1');
+    });
+
+    test('it lives inside the Task Board tab panel, so the game hides it with the board', async () => {
+        oneCard();
+        const panel = document.querySelector('.TasksPanel_tasksPanel__abc');
+        panel.className += ' TabPanel_hidden__fixture';
+        await walk.start();
+
+        expect(panel.contains(chipEl())).toBe(true);
+    });
+
+    test('without a toolbar there is no widget', () => {
+        document.body.replaceChildren();
+        expect(walk._ensureWidget()).toBe(null);
+    });
+
+    test('disabling takes the widget out of the toolbar', async () => {
+        oneCard();
+        await walk.start();
+        walk.cleanup();
+        expect(chipEl()).toBe(null);
+    });
+});
+
+describe('floating mode', () => {
+    const chipEl = () => document.getElementById('mwi-task-reroll-walk-chip');
+    const oneCard = () => board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+
+    beforeEach(() => {
+        settings.values.tasks_rerollWalkBarPosition = 'floating';
+    });
+
+    test('mounts outside the toolbar, draggable, with the full label', async () => {
+        oneCard();
+        await walk.start();
+
+        expect(chipEl().parentElement.matches('[class*="TasksPanel_taskSlotCount"]')).toBe(false);
+        expect(chipEl().dataset.toolashaDocked).toBeUndefined();
+        expect(chipEl().style.border).not.toBe('0px');
+        expect(chipText()).toContain('open the menu');
+    });
+
+    test('is hidden while the Task Board tab panel is hidden, and returns with it', async () => {
+        oneCard();
+        await walk.start();
+        const panel = document.querySelector('.TasksPanel_tasksPanel__abc');
+
+        panel.className += ' TabPanel_hidden__fixture';
+        walk._syncWidget();
+        expect(chipEl()).toBe(null);
+
+        panel.className = 'TasksPanel_tasksPanel__abc';
+        walk._syncWidget();
+        expect(chipEl()).toBeTruthy();
+    });
+
+    test('still collapses to the Walk again chip when done', async () => {
+        walk.protectedHrids = new Set([MILKING]);
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+
+        expect(chipText()).toBe('↻ Walk again');
+        expect(chipTitle()).toContain('✓ Done');
+    });
+
+    test('switching the setting re-mounts the bar live, in both directions', async () => {
+        oneCard();
+        await walk.start();
+        expect(chipEl().dataset.toolashaDocked).toBeUndefined();
+
+        settings.values.tasks_rerollWalkBarPosition = 'toolbar';
         walk._removeWidget();
-        rect.mockRestore();
+        walk._syncWidget();
+        expect(chipEl().dataset.toolashaDocked).toBe('true');
+
+        settings.values.tasks_rerollWalkBarPosition = 'floating';
+        walk._syncWidget();
+        // A changed mode is noticed even without the setting callback
+        expect(document.querySelectorAll('#mwi-task-reroll-walk-chip')).toHaveLength(1);
+        expect(chipEl().dataset.toolashaDocked).toBeUndefined();
     });
 });

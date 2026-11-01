@@ -69,7 +69,6 @@
  */
 
 import config from '../../core/config.js';
-import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
@@ -78,6 +77,7 @@ import { GAME } from '../../utils/selectors.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import taskSorter from './task-sorter.js';
+import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { characterKey, readScopedFrom } from '../../utils/character-key.js';
@@ -100,6 +100,8 @@ const CHIP_ID = 'mwi-task-reroll-walk-chip';
 const BUTTON_CLASS = 'mwi-task-reroll-walk-btn';
 const PROTECTED_KEY_PREFIX = 'taskProtectedHrids';
 const PANEL_POSITION_KEY = 'taskRerollWalkPanelPosition';
+/** The game's own small toolbar button, as the Merged crafting walk button wears it */
+const TOOLBAR_BUTTON_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
 
 // The chip sits below the game's own modal layer (its modals run z 200-1000)
 // so opening a profile or any dialog over it wins — the shared floating-panel
@@ -430,11 +432,6 @@ class TaskRerollWalk {
          */
         this.pendingClaim = null;
         this.claimWaits = 0;
-        /**
-         * Whether the board has been sorted since this walk finished. A finished
-         * walk offers Sort first and Walk again after it.
-         */
-        this.sortedAfterDone = false;
         /** The last finished walk's summary, kept after its widget goes away */
         this.summary = '';
         /** Bumped by every start and every stop, so an in-flight start can tell it was abandoned */
@@ -444,6 +441,8 @@ class TaskRerollWalk {
         /** The shield popup's cap-block switch — the thresholds mean nothing without it */
         this.capProtectionEnabled = false;
         this.widget = null;
+        /** Which mount the live widget was built for, 'toolbar' or 'floating' */
+        this.widgetMode = null;
         this.panelPosition = null;
         /** The ✕ puts the widget away until the header 🎲 asks for it back */
         this.hidden = false;
@@ -502,9 +501,17 @@ class TaskRerollWalk {
                 if (own && mutations.every((m) => own.contains(m.target))) return;
                 this._syncWidget();
             },
-            { childList: true, subtree: true }
+            // class changes too: the game hides an inactive tab panel by class
+            { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] }
         );
         this.unregisterHandlers.push(() => this.boardWatcher?.());
+        // Switching the bar's position re-mounts it live, without a reload
+        this.unregisterHandlers.push(
+            config.onSettingChange('tasks_rerollWalkBarPosition', () => {
+                this._removeWidget();
+                this._syncWidget();
+            })
+        );
         this._syncWidget();
 
         // The only listener the walk has, and it does not click anything: it
@@ -1373,7 +1380,6 @@ class TaskRerollWalk {
         this.tally = { claimed: 0, kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
         this.pendingClaim = null;
         this.claimWaits = 0;
-        this.sortedAfterDone = false;
         // A new walk is what finally replaces the last one's summary
         this.summary = '';
         this.message = '';
@@ -1415,7 +1421,6 @@ class TaskRerollWalk {
         this.pendingBill = null;
         this.pendingClaim = null;
         this.claimWaits = 0;
-        this.sortedAfterDone = false;
         this.awaitingReadSort = false;
         this.timerRegistry.clearAll();
         this.sortTimerRegistry.clearAll();
@@ -1451,7 +1456,6 @@ class TaskRerollWalk {
             this._replanSoon(UI_SETTLE_MS);
         } else {
             this.state = this.message ? 'stopped' : 'done';
-            this.sortedAfterDone = false;
             this.summary = this._summaryText();
         }
         this._render();
@@ -1770,6 +1774,37 @@ class TaskRerollWalk {
      * @returns {string}
      */
     chipLabel() {
+        return this._barMode() === 'toolbar' ? this._shortLabel() : this._fullLabel();
+    }
+
+    /**
+     * The compact label the toolbar mode shows: the action and its cost, with
+     * every note (the cheaper-than comparison, the open-the-menu hint, the
+     * running spend, the summary) left to the button's hover title.
+     * @returns {string}
+     * @private
+     */
+    _shortLabel() {
+        if (this.state === 'ready' && this.step) {
+            const action = String(this.step.label)
+                .replace(/\s*\([^)]*\)/g, '')
+                .replace(/,\s*open the menu.*$/, '')
+                .trim();
+            return `${this.step.manual ? '👉' : '▶'} ${action}`;
+        }
+        if (this.state === 'waiting') return '⏳ Walking…';
+        if (this.state === 'stopped') return '⚠ Walk stopped';
+        if (this.state === 'idle') return '▶ Reroll walk';
+        return '↻ Walk again';
+    }
+
+    /**
+     * The full one-line account of the walk: what a floating panel shows, and
+     * what the toolbar button keeps in its hover title.
+     * @returns {string}
+     * @private
+     */
+    _fullLabel() {
         const spent = this.spendLabel();
         // The running total rides along with the next action, so a walk that has
         // been paying for a while says so before the next payment, not after
@@ -1784,10 +1819,9 @@ class TaskRerollWalk {
         // that ends a walk is also the press that destroys its only account of
         // what it spent
         if (this.state === 'idle') return this.summary ? `▶ Reroll walk — last: ${this.summary}` : '▶ Reroll walk';
-        // A finished walk offers the board's Sort first, with the summary kept
-        // beside it, and Walk again once that has been pressed
-        const action = this.sortedAfterDone ? '↻ Walk again' : '↕ Sort';
-        return `${action} · ✓ Done — ${this._summaryText()}`;
+        // A finished walk collapses to a Walk again chip; its summary is the
+        // chip's hover title
+        return '↻ Walk again';
     }
 
     /**
@@ -1849,11 +1883,27 @@ class TaskRerollWalk {
             this._removeWidget();
             return null;
         }
-        if (this.widget && document.body.contains(this.widget.element)) return this.widget;
-        // A replaced task board can take its docked widget out of the DOM.
-        // Dispose its observer/listeners before losing the old widget handle.
+        const mode = this._barMode();
+        // Both modes live on the Task Board only: inside its tab panel the
+        // game hides the widget with the board; the floating one, which sits
+        // outside the panel's flow, is checked against the panel's hidden class.
+        const header = mode === 'toolbar' ? document.querySelector(GAME.TASK_PANEL) : null;
+        if (mode === 'toolbar' ? !header : this._boardTabHidden()) {
+            this._removeWidget();
+            return null;
+        }
+        if (this.widget && this.widgetMode === mode) {
+            const home = mode === 'toolbar' ? header : document.body;
+            if (mode === 'toolbar' ? home.contains(this.widget.element) : document.body.contains(this.widget.element)) {
+                return this.widget;
+            }
+        }
+        // A replaced toolbar or board can take its widget out of the DOM, and a
+        // changed position setting needs the other kind. Dispose the old
+        // observer/listeners before losing the old widget handle.
         this._removeWidget();
 
+        const docked = mode === 'toolbar';
         const widget = createFloatingWidget({
             id: CHIP_ID,
             top: '110px',
@@ -1873,6 +1923,101 @@ class TaskRerollWalk {
         // the shield popup's thresholds say the moment it is opened
         widget.gear.addEventListener('click', () => this._renderSettings());
 
+        if (docked) this._styleDocked(widget, header);
+        else this._mountFloating(widget);
+        this.widget = widget;
+        this.widgetMode = mode;
+        this._renderSettings();
+        return widget;
+    }
+
+    /**
+     * Where the bar is mounted: the Task Board toolbar (default) or the older
+     * movable floating panel.
+     * @returns {'toolbar'|'floating'}
+     * @private
+     */
+    _barMode() {
+        return config.getSettingValue('tasks_rerollWalkBarPosition', 'toolbar') === 'floating' ? 'floating' : 'toolbar';
+    }
+
+    /**
+     * Whether the Task Board's tab panel is the game's hidden one (Task Shop or
+     * Statistics is showing).
+     * @returns {boolean}
+     * @private
+     */
+    _boardTabHidden() {
+        const list = document.querySelector(GAME.TASK_LIST);
+        return Boolean(list?.closest('[class*="TabPanel_hidden"]'));
+    }
+
+    /**
+     * Put the bar in the Task Board toolbar row and make it look like part of
+     * it: no box, and the game's own small buttons.
+     * @param {Object} widget - The floating-widget parts
+     * @param {HTMLElement} header - The toolbar row
+     * @private
+     */
+    _styleDocked(widget, header) {
+        const style = widget.element.style;
+        style.position = 'relative';
+        style.top = '';
+        style.right = '';
+        style.zIndex = '';
+        style.display = 'inline-flex';
+        style.flexDirection = 'column';
+        style.verticalAlign = 'middle';
+        style.marginLeft = '8px';
+        style.padding = '0';
+        style.border = '0';
+        style.background = 'transparent';
+        style.borderRadius = '0';
+        style.boxShadow = 'none';
+        style.cursor = 'default';
+        style.touchAction = 'auto';
+        style.maxWidth = '100%';
+        style.minWidth = '0';
+        style.flex = '0 1 auto';
+        widget.element.dataset.toolashaDocked = 'true';
+        widget.row.style.flexWrap = 'nowrap';
+        widget.row.style.gap = '4px';
+        widget.status.style.display = 'none';
+
+        // The toolbar's own button look, as "Merged crafting walk" uses it
+        const sort = widget.extras.querySelector('.mwi-task-reroll-walk-sort');
+        for (const button of [widget.main, widget.gear, widget.close, sort]) {
+            if (!button) continue;
+            button.className = `${button.className} ${TOOLBAR_BUTTON_CLASS}`.trim();
+            button.style.cssText = '';
+        }
+        // One line, shortened by the label rules; ellipsis is the narrow-pane safety
+        widget.main.style.whiteSpace = 'nowrap';
+        widget.main.style.minWidth = '0';
+        widget.main.style.maxWidth = '100%';
+        widget.main.style.overflow = 'hidden';
+        widget.main.style.textOverflow = 'ellipsis';
+
+        const drawer = widget.settings.style;
+        drawer.position = 'absolute';
+        drawer.top = '100%';
+        drawer.left = '0';
+        drawer.zIndex = String(CHIP_Z_INDEX);
+        drawer.background = 'rgba(12,16,30,0.97)';
+        drawer.border = '1px solid rgba(74,158,255,0.45)';
+        drawer.borderRadius = '7px';
+        drawer.padding = '6px 9px';
+        drawer.marginTop = '4px';
+        header.appendChild(widget.element);
+    }
+
+    /**
+     * Mount the movable floating panel, restoring its saved position and
+     * docking it into the board's flow on a narrow pane.
+     * @param {Object} widget - The floating-widget parts
+     * @private
+     */
+    _mountFloating(widget) {
         document.body.appendChild(widget.element);
         // Restore before the responsive dock captures desktop geometry. The
         // shared shell normally defers this until layout, which is too late
@@ -1884,48 +2029,44 @@ class TaskRerollWalk {
             widget.element.style.right = 'auto';
         }
         const list = document.querySelector(GAME.TASK_LIST);
-        if (list?.parentElement) {
-            // Keep the walk below the tabs and in the board's scroll flow, not
-            // fixed over the page heading. Desktop keeps its saved position.
-            let wideInline = null;
-            const detach = dockWhenNarrow(widget.element, {
-                host: list.parentElement,
-                before: list,
-                measure: list.closest(GAME.GAME_PANEL) || list.parentElement,
-                // Nothing re-injects the walk, so a lost wide position falls back to the body it opened in
-                onHomeLost: (element) => document.body.appendChild(element),
-                onChange: (narrow) => {
-                    widget.element.style.touchAction = narrow ? 'auto' : 'none';
-                    widget.element.style.cursor = narrow ? 'default' : 'move';
-                    const touched = [
-                        [widget.main, 'whiteSpace', 'normal'],
-                        [widget.main, 'minWidth', '0'],
-                        [widget.main, 'maxWidth', '100%'],
-                        [widget.main, 'overflowWrap', 'anywhere'],
-                        [widget.status, 'minWidth', '0'],
-                        [widget.status, 'maxWidth', '100%'],
-                    ];
-                    if (narrow) {
-                        // What the wide layout had, so leaving the narrow one puts back exactly that
-                        wideInline = touched.map(([node, property]) => node.style[property]);
-                        for (const [node, property, value] of touched) node.style[property] = value;
-                    } else if (wideInline) {
-                        touched.forEach(([node, property], index) => {
-                            node.style[property] = wideInline[index];
-                        });
-                        wideInline = null;
-                    }
-                },
-            });
-            const remove = widget.remove;
-            widget.remove = () => {
-                detach();
-                remove();
-            };
-        }
-        this.widget = widget;
-        this._renderSettings();
-        return widget;
+        if (!list?.parentElement) return;
+        // Keep the walk below the tabs and in the board's scroll flow, not
+        // fixed over the page heading. Desktop keeps its saved position.
+        let wideInline = null;
+        const detach = dockWhenNarrow(widget.element, {
+            host: list.parentElement,
+            before: list,
+            measure: list.closest(GAME.GAME_PANEL) || list.parentElement,
+            // Nothing re-injects the walk, so a lost wide position falls back to the body it opened in
+            onHomeLost: (element) => document.body.appendChild(element),
+            onChange: (narrow) => {
+                widget.element.style.touchAction = narrow ? 'auto' : 'none';
+                widget.element.style.cursor = narrow ? 'default' : 'move';
+                const touched = [
+                    [widget.main, 'whiteSpace', 'normal'],
+                    [widget.main, 'minWidth', '0'],
+                    [widget.main, 'maxWidth', '100%'],
+                    [widget.main, 'overflowWrap', 'anywhere'],
+                    [widget.status, 'minWidth', '0'],
+                    [widget.status, 'maxWidth', '100%'],
+                ];
+                if (narrow) {
+                    // What the wide layout had, so leaving the narrow one puts back exactly that
+                    wideInline = touched.map(([node, property]) => node.style[property]);
+                    for (const [node, property, value] of touched) node.style[property] = value;
+                } else if (wideInline) {
+                    touched.forEach(([node, property], index) => {
+                        node.style[property] = wideInline[index];
+                    });
+                    wideInline = null;
+                }
+            },
+        });
+        const remove = widget.remove;
+        widget.remove = () => {
+            detach();
+            remove();
+        };
     }
 
     /**
@@ -1967,10 +2108,8 @@ class TaskRerollWalk {
      * @private
      */
     _sortBoard() {
-        let sorted = false;
         try {
             taskSorter.sortTasks(true);
-            sorted = true;
         } catch (error) {
             console.error('[TaskRerollWalk] Sorting from the widget failed:', error);
         }
@@ -1979,11 +2118,6 @@ class TaskRerollWalk {
         // that is actually there, rather than leaving the next press to
         // abort with "Slot N is not the card it was".
         if (this.state === 'ready') this._replan();
-        // A sorted finished board is what turns the main button into Walk again
-        if (sorted && this.state === 'done' && !this.sortedAfterDone) {
-            this.sortedAfterDone = true;
-            this._render();
-        }
     }
 
     /** @private */
@@ -1993,11 +2127,6 @@ class TaskRerollWalk {
             return;
         }
         if (this.state === 'waiting') return;
-        // A finished walk offers the sort first; the press after it walks again
-        if (this.state === 'done' && !this.sortedAfterDone) {
-            this._sortBoard();
-            return;
-        }
         // A click handler cannot await; the walk's own state is what the press
         // after this one reads, and a failed read leaves the thresholds as they
         // were rather than stopping the walk
@@ -2077,24 +2206,38 @@ class TaskRerollWalk {
         if (widget.main.disabled !== disabled) widget.main.disabled = disabled;
         const color =
             this.state === 'waiting' ? '#999' : this.state === 'stopped' ? '#ffb74d' : config.COLOR_ACCENT || '#8ecfff';
-        if (widget.main.style.color !== color) widget.main.style.color = color;
-        const title =
+        if (this.widgetMode !== 'toolbar' && widget.main.style.color !== color) widget.main.style.color = color;
+        const docked = this.widgetMode === 'toolbar';
+        const detail = docked
+            ? `${this._fullLabel()}
+`
+            : '';
+        const guidance =
             this.state === 'ready'
                 ? this.step?.manual
                     ? 'The game only accepts this press straight from you — press the highlighted button on the card. This chip scrolls it into view.'
                     : 'One press, one game action. Nothing else happens until you press again.'
                 : this.state === 'idle'
                   ? 'Start at the top of the board. Every press does one thing, then says what the next would do.'
-                  : this.state === 'done' && !this.sortedAfterDone
-                    ? 'Sort the board, the same way the Sort Tasks button does. The press after it walks the board again from the top.'
-                    : 'Press to walk the board again from the top.';
+                  : this.state === 'done'
+                    ? `✓ Done — ${this._summaryText()}. Press to walk the board again from the top.`
+                    : '';
+        const title = (this.state === 'done' ? guidance : `${detail}${guidance}`).trim();
         if (widget.main.title !== title) widget.main.title = title;
+        // Done is a small chip: just Walk again and the ✕. Sort and the
+        // settings drawer have nothing to say about a finished walk.
+        const done = this.state === 'done';
+        const collapsed = done ? 'none' : '';
+        if (widget.extras.style.display !== collapsed) widget.extras.style.display = collapsed;
+        if (widget.gear.style.display !== collapsed) widget.gear.style.display = collapsed;
+        if (done && widget.settingsOpen) widget.setSettingsOpen(false);
     }
 
     /** @private */
     _removeWidget() {
         this.widget?.remove();
         this.widget = null;
+        this.widgetMode = null;
         document.getElementById(CHIP_ID)?.remove();
     }
 
@@ -2121,7 +2264,6 @@ class TaskRerollWalk {
         this.summary = '';
         this.pendingClaim = null;
         this.claimWaits = 0;
-        this.sortedAfterDone = false;
         this.isInitialized = false;
     }
 

@@ -3798,6 +3798,17 @@ export const settingsGroups = {
                 ],
                 help: 'Cheapest values a cowbell through the Bag of 10 Cowbells and picks whichever of the two rerolls costs less in coins. Either preference falls back to the other currency when its own is blocked. A free reroll is always taken first.',
             },
+            tasks_rerollWalkBarPosition: {
+                id: 'tasks_rerollWalkBarPosition',
+                label: 'Reroll walk bar position',
+                type: 'select',
+                default: 'toolbar',
+                options: [
+                    { value: 'toolbar', label: 'In the toolbar' },
+                    { value: 'floating', label: 'Floating' },
+                ],
+                help: 'In the toolbar docks a compact walk button beside Sort Tasks on the Task Board tab, so it never covers a task card. Floating is the movable panel. Either way it shows only on the Task Board tab.',
+            },
             tasks_mergedCraftingWalk: {
                 id: 'tasks_mergedCraftingWalk',
                 label: 'Tasks: walk several tasks that share a crafting chain as one',
