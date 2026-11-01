@@ -41,7 +41,7 @@ import {
     parseGourmetBonus,
 } from '../../utils/tea-parser.js';
 import { getItemPrices, getRawMarketAskPrice } from '../../utils/market-data.js';
-import { resolveActionContext } from '../../utils/action-context.js';
+import { resolveActionContext, resolveLoadoutContext } from '../../utils/action-context.js';
 import { upgradeOutputLevels } from '../../utils/upgrade-enhancement.js';
 import { affordableActions } from '../../utils/material-calculator.js';
 import { capProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
@@ -2451,7 +2451,11 @@ class ActionTimeDisplay {
             const { actionTime, totalEfficiency } = timeData;
 
             if (isInfinite) {
-                const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+                const artisanBonus = this.getArtisanBonusForAction(
+                    actionDetails,
+                    actionObj,
+                    options.actionContext ?? null
+                );
 
                 const limitResult = this.calculateMaterialLimit(
                     actionDetails,
@@ -3056,7 +3060,7 @@ class ActionTimeDisplay {
             // Get inventory and calculate Artisan bonus
             const inventory = dataManager.getInventory();
             const inventoryLookup = this.buildInventoryLookup(inventory);
-            const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+            const artisanBonus = this.getArtisanBonusForAction(actionDetails, action);
 
             // Calculate max actions based on materials and costs
             const limitResult = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, action, {
@@ -3854,8 +3858,12 @@ class ActionTimeDisplay {
      */
     calculateActionTime(actionDetails, actionHrid = null, actionObj = null, actionContext = null) {
         const skills = dataManager.getSkills();
-        const equipment = actionContext?.equipment ?? dataManager.getEquipment();
+        // A queued action runs with the loadout it was queued under, not the per-skill default
+        // loadout and not necessarily what is worn now; an explicit context still wins
+        const context = actionContext ?? this.queuedActionContext(actionDetails, actionObj);
+        const equipment = context?.equipment ?? dataManager.getEquipment();
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+        actionContext = context;
 
         // Use shared calculator with same parameters as main display
         return calculateActionStats(actionDetails, {
@@ -3868,6 +3876,19 @@ class ActionTimeDisplay {
             actionContext,
             levelRequirementOverride: this.alchemyLevelRequirement(actionDetails, actionObj, itemDetailMap),
         });
+    }
+
+    /**
+     * The gear and drinks a queued action runs with: its own characterLoadoutID (a saved
+     * loadout, or 0 for the gear worn now). Null for an action that carries no loadout id, so
+     * callers keep the per-skill resolution they always had.
+     * @param {Object} actionDetails - Action details
+     * @param {Object|null} actionObj - The queued action
+     * @returns {{equipment: Map, drinks: Array}|null}
+     */
+    queuedActionContext(actionDetails, actionObj) {
+        if (!actionDetails?.type || typeof actionObj?.characterLoadoutID !== 'number') return null;
+        return resolveLoadoutContext(actionDetails.type, actionObj.characterLoadoutID);
     }
 
     /**
@@ -4376,14 +4397,19 @@ class ActionTimeDisplay {
     /**
      * Artisan material reduction currently in effect for an action type.
      * @param {Object} actionDetails - Action detail object
+     * @param {Object|null} [actionObj] - The queued action, whose loadout supplies the drinks
+     * @param {{equipment?: Map, drinks?: Array}|null} [actionContext] - An explicit context
      * @returns {number} Reduction as a 0-1 decimal
      */
-    getArtisanBonusForAction(actionDetails) {
+    getArtisanBonusForAction(actionDetails, actionObj = null, actionContext = null) {
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
         // resolveActionContext drops a drink that is slotted but out of stock and no
         // longer buffed — a raw equipment/slot read would keep crediting the
         // discount after the tea is gone, contradicting the Missing Materials panel.
-        const { equipment, drinks: activeDrinks } = resolveActionContext(actionDetails.type);
+        const { equipment, drinks: activeDrinks } =
+            actionContext ??
+            this.queuedActionContext(actionDetails, actionObj) ??
+            resolveActionContext(actionDetails.type);
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
         return parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
     }
@@ -4417,7 +4443,7 @@ class ActionTimeDisplay {
         const unlimited = { count, limitType: null, isEstimated: false };
         if (!inventoryLookup || !actionDetails) return unlimited;
 
-        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+        const artisanBonus = this.getArtisanBonusForAction(actionDetails, actionObj);
         const limitResult = this.calculateMaterialLimit(
             actionDetails,
             inventoryLookup,
@@ -4637,7 +4663,7 @@ class ActionTimeDisplay {
         // no finite quantity describes what it consumes.
         if (timing.isTrulyInfinite) return 0;
 
-        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+        const artisanBonus = this.getArtisanBonusForAction(actionDetails, actionObj);
 
         // What the row performs, not what it asked for: a request for 500 backed by materials
         // for 40 consumes 40. The queue walks now cap a counted row's displayed count the same
@@ -5007,7 +5033,7 @@ class ActionTimeDisplay {
                         }
                     } else if (isInfinite) {
                         // Check for material limit on infinite actions
-                        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+                        const artisanBonus = this.getArtisanBonusForAction(actionDetails, currentAction);
 
                         // Calculate action stats to get efficiency
                         const timeData = this.calculateActionTime(
@@ -5278,7 +5304,7 @@ class ActionTimeDisplay {
 
                     // Calculate material limit for infinite actions
                     if (isInfinite) {
-                        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
+                        const artisanBonus = this.getArtisanBonusForAction(actionDetails, actionObj);
 
                         const limitResult = this.calculateMaterialLimit(
                             actionDetails,

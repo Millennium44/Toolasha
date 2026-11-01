@@ -64,6 +64,7 @@ vi.mock('../../utils/action-calculator.js', () => ({
 const actionContext = vi.hoisted(() => ({ equipment: new Map(), drinks: [] }));
 vi.mock('../../utils/action-context.js', () => ({
     resolveActionContext: () => actionContext,
+    resolveLoadoutContext: () => actionContext,
     default: { resolveActionContext: () => actionContext },
 }));
 

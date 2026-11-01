@@ -382,6 +382,17 @@ class LoadoutSnapshot {
     }
 
     /**
+     * The saved loadout with this server id, or null (feature off, unknown id).
+     * @param {number} loadoutId - A characterLoadoutID
+     * @returns {Object|null} snapshot entry
+     */
+    getSnapshotById(loadoutId) {
+        this._ensureSubscribed();
+        if (!config.getSetting('loadoutSnapshot')) return null;
+        return this.snapshots[loadoutId] ?? null;
+    }
+
+    /**
      * Get the drink slots array for the best loadout snapshot matching the given
      * action type. Returns null if no snapshot exists or the feature is disabled.
      * The returned array has the same format as dataManager.getActionDrinkSlots().
