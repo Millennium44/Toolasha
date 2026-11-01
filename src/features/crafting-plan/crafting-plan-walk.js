@@ -232,9 +232,16 @@ function stepLabel(step) {
     return `${verb} ${formatWithSeparator(step.count)} ${step.itemName}`;
 }
 
+/** The starter name Crafting Plan's own surfaces (the plan's Walk button, the task board's walk) use */
+export const CRAFTING_PLAN_STARTER = 'crafting-plan';
+
 class CraftingPlanWalk {
     constructor() {
         this.isInitialized = false;
+        /** Who started the running walk (see {@link CraftingPlanWalk#start}), null when none */
+        this.starter = null;
+        /** Crafting Plan was turned off while another surface's walk was running; finish the teardown when it ends */
+        this._disablePending = false;
         this.unregisterHandlers = [];
         this.timerRegistry = createTimerRegistry();
         /** @type {Array<Object>} */
@@ -295,6 +302,8 @@ class CraftingPlanWalk {
 
     /** Subscribe to the two messages the walk advances on, and to the switch that ends it. */
     initialize() {
+        // A re-enable while an Iron Cow walk was keeping the listeners alive: they stay
+        this._disablePending = false;
         if (this.isInitialized) return;
         // Two surfaces drive this one walk: the action panel's plan and the task
         // board's merged walk. Either setting on is a reason to be listening.
@@ -334,10 +343,14 @@ class CraftingPlanWalk {
     /**
      * Begin walking a set of steps.
      * @param {Array<Object>} steps - From {@link buildWalkSteps}
+     * @param {string} [starter] - Who started it. Crafting Plan's own surfaces take the default; the Iron Cow
+     *   queue walk passes its own name, so turning Crafting Plan off does not end its walk
      * @returns {boolean} Whether a walk started
      */
-    start(steps) {
+    start(steps, starter = CRAFTING_PLAN_STARTER) {
         if (!Array.isArray(steps) || steps.length === 0) return false;
+        // Someone wants this walk running: a deferred disable no longer applies
+        this._disablePending = false;
         this._listen();
         // Captured across the reset below, and only when this walk's own caller
         // installed it: `stop()` drops the hook, and a caller that installs one
@@ -346,6 +359,7 @@ class CraftingPlanWalk {
         this.stop('');
         this._stepHook = hook;
         this._stepHookFresh = false;
+        this.starter = starter;
         this.steps = steps;
         this.index = 0;
         this.active = true;
@@ -366,6 +380,7 @@ class CraftingPlanWalk {
      */
     stop(message = '') {
         this.active = false;
+        this.starter = null;
         this.steps = [];
         this.index = 0;
         this.buyTarget = 0;
@@ -378,6 +393,8 @@ class CraftingPlanWalk {
         this._clearHighlight();
         if (message) this._render();
         else this._removeStrip();
+        // A disable that was held back for another surface's walk completes when that walk ends
+        if (this._disablePending) this._teardown();
     }
 
     /** The step the walk is currently standing on, or null. @returns {Object|null} */
@@ -659,9 +676,26 @@ class CraftingPlanWalk {
         }
     }
 
-    /** Stop listening and take the strip off the page. */
-    disable() {
+    /**
+     * Stop listening and take the strip off the page.
+     *
+     * The walk is shared by Crafting Plan, the task board's merged walk and the Iron Cow queue walk, but only
+     * Crafting Plan's setting reaches this. A walk another surface started is not Crafting Plan's to end: it keeps
+     * running (and listening) until it finishes, and the teardown then completes.
+     * @param {string} [owner] - Who is disabling; with a walk running that this owner did not start, nothing is torn down
+     */
+    disable(owner = null) {
+        if (owner && this.active && this.starter && this.starter !== owner) {
+            this._disablePending = true;
+            return;
+        }
         this.stop('');
+        this._teardown();
+    }
+
+    /** Drop the listeners; the walk itself is already ended or deliberately left alone. @private */
+    _teardown() {
+        this._disablePending = false;
         for (const unregister of this.unregisterHandlers) {
             try {
                 unregister();

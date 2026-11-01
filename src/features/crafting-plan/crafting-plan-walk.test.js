@@ -62,7 +62,12 @@ vi.mock('../../utils/action-panel-helper.js', () => ({
     resolveDetailPanel: () => ({ actionHrid: mocks.panelActionHrid }),
 }));
 
-const { default: craftingPlanWalk, buildWalkSteps, WALK_KEY_ATTRIBUTE } = await import('./crafting-plan-walk.js');
+const {
+    default: craftingPlanWalk,
+    buildWalkSteps,
+    WALK_KEY_ATTRIBUTE,
+    CRAFTING_PLAN_STARTER,
+} = await import('./crafting-plan-walk.js');
 
 /** A craft node, sized for the whole run. */
 function craft(itemHrid, itemName, quantity, actionHrid, actionsNeeded, children = []) {
@@ -590,5 +595,59 @@ describe('walking a plan', () => {
         vi.advanceTimersByTime(3000);
 
         expect(mocks.filled).toEqual([]);
+    });
+});
+
+describe('turning Crafting Plan off while another surface walks', () => {
+    const steps = () => [
+        { key: 'craft:/a', kind: 'craft', itemHrid: '/items/x', itemName: 'X', actionHrid: '/a', count: 1, actions: 1 },
+    ];
+
+    test('an Iron Cow walk survives Crafting Plan disabling, listeners and all', () => {
+        craftingPlanWalk.start(steps(), 'ironcow-queue');
+        craftingPlanWalk.disable(CRAFTING_PLAN_STARTER);
+
+        expect(craftingPlanWalk.active).toBe(true);
+        expect(craftingPlanWalk.steps).toHaveLength(1);
+        // Still advancing: the actions and items listeners were not removed
+        expect(mocks.wsHandlers.has('actions_updated')).toBe(true);
+        expect(mocks.dmHandlers.has('items_updated')).toBe(true);
+    });
+
+    test('the deferred disable completes when that walk ends', () => {
+        craftingPlanWalk.start(steps(), 'ironcow-queue');
+        craftingPlanWalk.disable(CRAFTING_PLAN_STARTER);
+        craftingPlanWalk.stop('Walk complete.');
+
+        expect(mocks.wsHandlers.has('actions_updated')).toBe(false);
+        expect(craftingPlanWalk.isInitialized).toBe(false);
+    });
+
+    test('a re-enable while the walk runs keeps the listeners after it ends', () => {
+        craftingPlanWalk.start(steps(), 'ironcow-queue');
+        craftingPlanWalk.disable(CRAFTING_PLAN_STARTER);
+        craftingPlanWalk.initialize();
+        craftingPlanWalk.stop('');
+
+        expect(mocks.wsHandlers.has('actions_updated')).toBe(true);
+    });
+
+    test("Crafting Plan's own walk is ended by its disable, and a bare disable always tears down", () => {
+        craftingPlanWalk.start(steps());
+        craftingPlanWalk.disable(CRAFTING_PLAN_STARTER);
+        expect(craftingPlanWalk.active).toBe(false);
+        expect(mocks.wsHandlers.has('actions_updated')).toBe(false);
+
+        craftingPlanWalk.initialize();
+        craftingPlanWalk.start(steps(), 'ironcow-queue');
+        craftingPlanWalk.disable();
+        expect(craftingPlanWalk.active).toBe(false);
+    });
+
+    test('starting a new walk replaces the running one', () => {
+        craftingPlanWalk.start(steps(), 'ironcow-queue');
+        craftingPlanWalk.start(steps());
+        expect(craftingPlanWalk.starter).toBe(CRAFTING_PLAN_STARTER);
+        expect(craftingPlanWalk.steps).toHaveLength(1);
     });
 });
