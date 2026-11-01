@@ -2240,6 +2240,8 @@ class TreasureTracker {
             // every chest in the game, not only the ones you have opened
             empty.textContent = 'Waiting for the game to send its chest data…';
             this.contentEl.appendChild(empty);
+            const earlyScrolls = this._scrollSection();
+            if (earlyScrolls) this.contentEl.appendChild(earlyScrolls);
 
             // And look again shortly. A panel reopened at start-up is drawn
             // before the game has sent anything, and nothing else redraws it —

@@ -391,6 +391,7 @@ class BulkSellAssistant {
         this._confirmedStep = null;
         /** Unsubscribe for the server-refusal watch of the step just pressed */
         this._refusalUnsub = null;
+        this._refusalTimer = null;
         /**
          * Whether an order book has been opened since the player's last click
          * on the strip. That navigation is the click's one game action, so a
@@ -1753,22 +1754,28 @@ class BulkSellAssistant {
     _watchForRefusal() {
         this._stopWatchingRefusal();
         const stepKey = this._confirmedStep;
-        const pressedAt = Date.now();
         this._refusalUnsub = onServerNotice((notice) => {
-            if (notice.level !== 'error' || !SALE_REFUSAL_KEYS.includes(notice.key)) return;
-            if (Date.now() - pressedAt > REFUSAL_WINDOW_MS) return;
             if (this.state !== 'awaiting_confirm' || this._confirmedStep !== stepKey || this._stepKey() !== stepKey) {
+                // The sale went through or the step moved on: nothing left to listen for
+                this._stopWatchingRefusal();
                 return;
             }
+            if (notice.level !== 'error' || !SALE_REFUSAL_KEYS.includes(notice.key)) return;
             this._stopWatchingRefusal();
             this._releaseSaleGuard();
             this._confirmedStep = null;
             this.confirmNote = `the game refused the sale (${notice.key.replace('errorNotification.', '')})`;
             this._render();
         });
+        // Past this window an error is no longer taken as the answer to this press
+        this._refusalTimer = setTimeout(() => this._stopWatchingRefusal(), REFUSAL_WINDOW_MS);
     }
 
     _stopWatchingRefusal() {
+        if (this._refusalTimer) {
+            clearTimeout(this._refusalTimer);
+            this._refusalTimer = null;
+        }
         if (!this._refusalUnsub) return;
         this._refusalUnsub();
         this._refusalUnsub = null;
@@ -2621,6 +2628,7 @@ class BulkSellAssistant {
                 // its own Next press, so every server action has a click of
                 // its own.
                 this.state = 'awaiting_next';
+                this._stopWatchingRefusal();
                 if (market) this._noteRemainder(peak);
                 this._render();
             }
@@ -2688,6 +2696,7 @@ class BulkSellAssistant {
         // unbroken run of such items can never walk the queue on its own.
         if (this._navigatedSinceClick) {
             this.state = 'awaiting_next';
+            this._stopWatchingRefusal();
             this._render();
             return;
         }

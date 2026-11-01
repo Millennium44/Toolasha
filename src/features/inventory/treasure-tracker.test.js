@@ -293,6 +293,23 @@ describe('scrolls are not treasure', () => {
         treasureTracker.scrollGrants = {};
     });
 
+    test('the scroll buffs draw even while the panel has no chest rows to list', () => {
+        treasureTracker.scrollGrants = {};
+        treasureTracker.contentEl = document.createElement('div');
+        treasureTracker._summary = () => ({ rows: [], totals: {} });
+        treasureTracker._waitForChestData = () => {};
+        treasureTracker._refreshToggles = () => {};
+        treasureTracker._recordScrollGrant('/items/seal_of_critical_rate', SCROLL_OPEN);
+        treasureTracker.panel = null;
+        treasureTracker._render();
+        expect(treasureTracker.contentEl.textContent).toContain('+60% Rare Find');
+        delete treasureTracker._summary;
+        delete treasureTracker._waitForChestData;
+        delete treasureTracker._refreshToggles;
+        treasureTracker.contentEl = null;
+        treasureTracker.scrollGrants = {};
+    });
+
     test('a scroll opening with no grantedBuffs adds nothing and the section stays absent', () => {
         treasureTracker.scrollGrants = {};
         treasureTracker._onLootOpened({ openedItem: SCROLL_OPEN.openedItem }, null);

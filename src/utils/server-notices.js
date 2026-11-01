@@ -59,7 +59,8 @@ export function normalizeServerNotice(data) {
  */
 export function onServerNotice(handler) {
     const listen = (data, context) => {
-        if (!dataManager.isFromActiveSocket(context)) return;
+        // Optional-call: Core is a separate bundle in the split build, so "not yet loaded" is permissive
+        if (dataManager.isFromActiveSocket?.(context) === false) return;
         const notice = normalizeServerNotice(data);
         if (!notice) return;
         try {

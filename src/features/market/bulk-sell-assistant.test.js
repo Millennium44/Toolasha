@@ -2147,6 +2147,29 @@ describe('confirming from the strip', () => {
             expect(notices.handler).toBeNull();
         });
 
+        test('the refusal listener is gone once the window ends, so a later error is not read as the answer', async () => {
+            openMenu();
+            vendorRun();
+            await pressAndSettle();
+            expect(notices.handler).not.toBeNull();
+
+            await vi.advanceTimersByTimeAsync(10500);
+
+            expect(notices.handler).toBeNull();
+            bulkSell._releaseSaleGuard();
+        });
+
+        test('the listener is disposed when the step moves on', async () => {
+            openMenu();
+            vendorRun();
+            await pressAndSettle();
+            expect(notices.handler).not.toBeNull();
+
+            bulkSell._clearTransient();
+
+            expect(notices.handler).toBeNull();
+        });
+
         test('an unrelated key, an info notice or a late refusal leaves the pressed step alone', async () => {
             openMenu();
             vendorRun();
@@ -2157,7 +2180,7 @@ describe('confirming from the strip', () => {
             expect(bulkSell._confirmSent()).toBe(true);
 
             await vi.advanceTimersByTimeAsync(11000);
-            notices.handler({ level: 'error', key: 'errorNotification.itemIsLocked', variables: {}, at: 0 });
+            expect(notices.handler).toBeNull();
             expect(bulkSell._confirmSent()).toBe(true);
             bulkSell._releaseSaleGuard();
         });
