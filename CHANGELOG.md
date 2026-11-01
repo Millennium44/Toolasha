@@ -16,6 +16,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - In the released build, Crafting Plan now sees live order-book depth for thin buy legs, as the single-file build already did, so some plans change.
 - Turning Crafting Plan off no longer stops an Iron Cow queue walk in progress.
 
+### Tests use captured game messages
+
+- Tests for skill, collection, quest, queued-action and guild sign-up handling now read payloads captured from the game on the test server, so they can no longer agree with a message shape the game never sends.
+
 ### Game message audit script
 
 - A developer script (`npm run audit:handlers`) compares the fields Toolasha reads from each game message with the fields the game's own client reads, to catch features reading a field the game never sends.
