@@ -62,6 +62,7 @@ import { watchlistEntries } from '../inventory/watchlist.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { clickThroughReact } from '../../utils/react-click.js';
+import { onServerNotice, SALE_REFUSAL_KEYS } from '../../utils/server-notices.js';
 
 /**
  * Whether the game has disabled a button. The vendor press goes through the React handler, which does not
@@ -127,6 +128,8 @@ const VENDOR_ARM_POLL_MS = 50;
  * 2026-10-02: pressed 60 ms after arming, nothing sold; ~300 ms after, it sold every time)
  */
 const VENDOR_CONFIRM_SETTLE_MS = 400;
+/** How long after our confirm press a server refusal is still taken to be the answer to it */
+const REFUSAL_WINDOW_MS = 10000;
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
@@ -386,6 +389,8 @@ class BulkSellAssistant {
          * re-arms the button without anything having to reset this.
          */
         this._confirmedStep = null;
+        /** Unsubscribe for the server-refusal watch of the step just pressed */
+        this._refusalUnsub = null;
         /**
          * Whether an order book has been opened since the player's last click
          * on the strip. That navigation is the click's one game action, so a
@@ -1725,6 +1730,7 @@ class BulkSellAssistant {
         }
         this.confirmNote = '';
         this._confirmedStep = this._stepKey();
+        this._watchForRefusal();
         this._render();
         // Read before the click: the label is what says this is the vendor sale
         const vendorSale = !!this.decision?.vendor && !!vendorLabel(button);
@@ -1736,6 +1742,36 @@ class BulkSellAssistant {
         else button.click();
         // Both routes (already armed, or armed by us) end here, so one place guards them
         if (vendorSale) this._guardSale(button);
+    }
+
+    /**
+     * Listen for the server refusing the sale just pressed (locked item, order not fulfilled,
+     * listing cap, spam protection). Without it a refused press looks like a slow server: the step
+     * stays "confirm sent" with Confirm disabled until the player skips it. Live only for the step
+     * pressed and a short window after the press; one refusal ends it.
+     */
+    _watchForRefusal() {
+        this._stopWatchingRefusal();
+        const stepKey = this._confirmedStep;
+        const pressedAt = Date.now();
+        this._refusalUnsub = onServerNotice((notice) => {
+            if (notice.level !== 'error' || !SALE_REFUSAL_KEYS.includes(notice.key)) return;
+            if (Date.now() - pressedAt > REFUSAL_WINDOW_MS) return;
+            if (this.state !== 'awaiting_confirm' || this._confirmedStep !== stepKey || this._stepKey() !== stepKey) {
+                return;
+            }
+            this._stopWatchingRefusal();
+            this._releaseSaleGuard();
+            this._confirmedStep = null;
+            this.confirmNote = `the game refused the sale (${notice.key.replace('errorNotification.', '')})`;
+            this._render();
+        });
+    }
+
+    _stopWatchingRefusal() {
+        if (!this._refusalUnsub) return;
+        this._refusalUnsub();
+        this._refusalUnsub = null;
     }
 
     /**
@@ -2675,6 +2711,7 @@ class BulkSellAssistant {
 
     _clearTransient() {
         this._opSeq++;
+        this._stopWatchingRefusal();
         this._cancelVendorWait();
         this._releaseSaleGuard();
         this._stopTrackingVendorArming();
