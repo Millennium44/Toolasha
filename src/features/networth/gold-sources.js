@@ -99,6 +99,7 @@
 /** Milliseconds in a day */
 import { getMirrorUsage, getProtectionUsage } from '../enhancement/enhancement-session.js';
 import { localDayKey, localDayStart } from './networth-calendar.js';
+import { stepBetween } from './networth-markers.js';
 import { ownPlayer } from '../../utils/combat-players.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 
@@ -2022,12 +2023,18 @@ export function attributeGoldSources(input) {
         const previous = previousSnapshot?.total ?? null;
         const delta = Number.isFinite(close) && Number.isFinite(previous) ? close - previous : null;
 
+        // A setting change (turning on a token switch) moves net worth without anyone earning anything: the day
+        // delta stays the real one, and the step is named in its own line instead of sitting in the residual
+        const settingChange =
+            delta === null ? 0 : stepBetween(series, previousSnapshot?.t ?? -Infinity, closeSnapshot?.t ?? -Infinity);
+
         rows.push({
             day,
             sources,
             explained,
             delta,
-            residual: delta === null ? null : delta - explained,
+            settingChange,
+            residual: delta === null ? null : delta - explained - settingChange,
             // What the day's change was made of, by asset category — null on a
             // day with only one close, because there is no pair to difference
             categories: delta === null ? null : categoryBreakdown(previousSnapshot, closeSnapshot),
@@ -2054,6 +2061,10 @@ export function attributeGoldSources(input) {
     const openingClose = openingSnapshot?.total ?? null;
     const lastClose = closingSnapshot?.total ?? null;
     const windowDelta = Number.isFinite(lastClose) && Number.isFinite(openingClose) ? lastClose - openingClose : null;
+    const windowSettingChange =
+        windowDelta === null
+            ? 0
+            : stepBetween(series, openingSnapshot?.t ?? -Infinity, closingSnapshot?.t ?? -Infinity);
 
     return {
         from,
@@ -2063,7 +2074,8 @@ export function attributeGoldSources(input) {
             sources: totalsSources,
             explained: totalExplained,
             delta: windowDelta,
-            residual: windowDelta === null ? null : windowDelta - totalExplained,
+            settingChange: windowSettingChange,
+            residual: windowDelta === null ? null : windowDelta - totalExplained - windowSettingChange,
             categories: windowDelta === null ? null : categoryBreakdown(openingSnapshot, closingSnapshot),
         },
         // Price drift on stock held through the detail snapshots' own window,

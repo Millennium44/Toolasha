@@ -264,6 +264,7 @@ export function reachProbabilities(forecast, target) {
  * @param {number|null} [options.target] - Net worth target for the reach probabilities
  * @param {number|null} [options.seed] - RNG seed; omit for an unseeded sample
  * @param {string} [options.field] - Snapshot field to project
+ * @param {number|null} [options.current] - Level the paths start from, when it is not the series' own last value
  * @returns {Object} `{status: 'insufficient', required, returns}` or the full projection
  */
 export function forecastNetworth(history, options = {}) {
@@ -274,6 +275,7 @@ export function forecastNetworth(history, options = {}) {
         target = null,
         seed = null,
         field = 'total',
+        current: startingLevel = null,
     } = options;
 
     const samples = dailySamples(history, field);
@@ -288,7 +290,8 @@ export function forecastNetworth(history, options = {}) {
     // The last positive total, the same readings the changes were measured from: a
     // zero or negative close (prices not loaded yet) would start every path at or
     // below zero, turning the fan upside down and the pace into 0/0
-    const current = source.filter((sample) => sample.value > 0).at(-1).value;
+    // A caller that read the changes from a series with setting-change steps taken out passes the real level
+    const current = startingLevel > 0 ? startingLevel : source.filter((sample) => sample.value > 0).at(-1).value;
 
     const drift = recencyDrift(changes);
     const shocks = dayShocks(changes);

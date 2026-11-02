@@ -12,6 +12,8 @@ import { networthFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createForecastSection } from './networth-forecast-section.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { openMoversPanel } from './networth-movers-panel.js';
+import { stepsAfter, growthNote, describeChanges } from './networth-markers.js';
 
 const RANGE_MS = {
     '24h': 24 * 60 * 60 * 1000,
@@ -82,6 +84,7 @@ class NetworthHistoryChart {
         this._deletePopup = null;
         this._deletePopupOutsideHandler = null;
         this._deletePopupOutsideTimer = null;
+        this._moversPanel = null;
         this._outsideClickTimer = null;
         this.forecastSection = null;
     }
@@ -580,7 +583,9 @@ class NetworthHistoryChart {
         // costs thousands of Monte Carlo paths, so nothing runs until it is opened
         if (config.getSetting('networth_forecast')) {
             this.forecastSection = createForecastSection({
-                getHistory: () => networthHistory.history,
+                getHistory: () => networthHistory.getForecastHistory?.() ?? networthHistory.history,
+                // The forecast starts from where net worth really is; its drift reads the rebased growth series
+                getCurrent: () => networthHistory.history.filter((point) => point.total > 0).at(-1)?.total ?? null,
             });
             modal.appendChild(this.forecastSection.element);
         }
@@ -605,6 +610,7 @@ class NetworthHistoryChart {
             if (
                 !modal.contains(e.target) &&
                 !this._deletePopup?.contains(e.target) &&
+                !this._moversPanel?.element?.contains(e.target) &&
                 !breakdownPopout?.contains(e.target) &&
                 !e.target?.closest?.(`#${CHART_BUTTON_ID}`)
             ) {
@@ -796,8 +802,11 @@ class NetworthHistoryChart {
                 borderColor: config.COLOR_ACCENT || '#22c55e',
                 backgroundColor: 'rgba(34, 197, 94, 0.1)',
                 borderWidth: 2,
-                pointRadius: filtered.length > 200 ? 0 : 2,
-                pointHoverRadius: 5,
+                pointRadius: (ctx) => (ctx.raw?._raw?.marker ? 6 : filtered.length > 200 ? 0 : 2),
+                pointStyle: (ctx) => (ctx.raw?._raw?.marker ? 'rectRot' : 'circle'),
+                pointBackgroundColor: (ctx) => (ctx.raw?._raw?.marker ? '#f59e0b' : undefined),
+                pointBorderColor: (ctx) => (ctx.raw?._raw?.marker ? '#fff' : undefined),
+                pointHoverRadius: 6,
                 tension: 0.1,
                 fill: true,
                 spanGaps: this.connectGaps,
@@ -999,10 +1008,22 @@ class NetworthHistoryChart {
                 ? Math.round(liveData.totalNetworth + (liveData.excluded?.total ?? 0))
                 : last.total;
 
-            const rangeChange = currentTotal - first.total;
+            // Steps that setting changes caused after the first point are left out of growth; the line and the
+            // All-Time High stay as recorded
+            const steps = stepsAfter(networthHistory.getHistory(), first.t, last.t);
+            const rangeChange = currentTotal - first.total - steps.step;
             const rangePercent = first.total > 0 ? (rangeChange / first.total) * 100 : 0;
 
-            const ratePerHour = hoursElapsed > 0 ? (currentTotal - first.total) / hoursElapsed : 0;
+            const ratePerHour = hoursElapsed > 0 ? (currentTotal - first.total - steps.step) / hoursElapsed : 0;
+            const pending = networthHistory.pendingChanges?.() || [];
+            const noteText = [
+                growthNote(steps, networthFormatter),
+                pending.length > 0
+                    ? `${pending.length} setting change${pending.length === 1 ? '' : 's'} since the last reading not yet marked`
+                    : '',
+            ]
+                .filter(Boolean)
+                .join('; ');
 
             parts.push(
                 `<span>Current: <strong style="color: ${config.COLOR_ACCENT};">${networthFormatter(Math.round(currentTotal))}</strong></span>`
@@ -1028,6 +1049,10 @@ class NetworthHistoryChart {
                 );
             }
 
+            if (noteText) {
+                parts.push(`<span id="mwi-nw-steps-note" style="font-size: 11px; color: #aaa;">(${noteText})</span>`);
+            }
+
             // All-time high, off the whole recorded history rather than the
             // range currently plotted — see computeAllTimeExtremes
             const { high } = computeAllTimeExtremes(networthHistory.getHistory());
@@ -1046,12 +1071,13 @@ class NetworthHistoryChart {
         if (this.categoryVisibility.showNonExcluded && hasNonExclStats) {
             const currentNE = this.networthFeature?.currentData?.totalNetworth ?? last.nonExcluded ?? last.total;
             const firstNE = first.nonExcluded ?? first.total;
-            const neRate = hoursElapsed > 0 ? (currentNE - firstNE) / hoursElapsed : 0;
+            const neSteps = stepsAfter(networthHistory.getHistory(), first.t, last.t).stepCounted;
+            const neRate = hoursElapsed > 0 ? (currentNE - firstNE - neSteps) / hoursElapsed : 0;
 
             let neStatHtml = `<span style="color: #a78bfa;">Non-Excl</span>: <strong style="color: #a78bfa;">${networthFormatter(Math.round(currentNE))}</strong>`;
 
             if (filtered.length >= 2) {
-                const neChange = currentNE - firstNE;
+                const neChange = currentNE - firstNE - neSteps;
                 const neChangeColor = neChange >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
                 const neChangeSign = neChange >= 0 ? '+' : '';
                 neStatHtml += ` <span style="font-size: 11px; color: #aaa;">(${neChangeSign}<span style="color: ${neChangeColor};">${networthFormatter(Math.round(neChange))}</span> ${rangeLabel})</span>`;
@@ -1075,7 +1101,9 @@ class NetworthHistoryChart {
                 firstVal -= first.gold ?? 0;
                 lastVal -= last.gold ?? 0;
             }
-            const catChange = lastVal - firstVal;
+            const catStep =
+                cat.key === 'inventory' ? stepsAfter(networthHistory.getHistory(), first.t, last.t).stepCounted : 0;
+            const catChange = lastVal - firstVal - catStep;
             const rate = hoursElapsed > 0 ? catChange / hoursElapsed : 0;
             const rateColor = rate >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
             const rateSign = rate >= 0 ? '+' : '';
@@ -1438,7 +1466,18 @@ class NetworthHistoryChart {
                 }
             }
             const currentTotal = Math.round(currentData.totalNetworth + (currentData.excluded?.total ?? 0));
-            const last24hChange = currentTotal - oldHourly.total;
+            // The headline above leaves out the steps setting changes caused; the item rows below hold them
+            // (a token now valued is a holding that gained value), so one row takes them back out
+            const steps = stepsAfter(history, oldHourly.t);
+            if (steps.step !== 0) {
+                otherTotal -= steps.step;
+                otherItems.push({
+                    name: 'Setting change (left out of the headline)',
+                    key: '_setting',
+                    value: -steps.step,
+                });
+            }
+            const last24hChange = currentTotal - oldHourly.total - steps.step;
             const residual = last24hChange - activityTotal - marketTotal - otherTotal;
             if (Math.abs(residual) > 0) {
                 otherTotal += residual;
@@ -1495,6 +1534,37 @@ class NetworthHistoryChart {
         const color = diff > 0 ? '#4ade80' : '#f87171';
         const sign = diff > 0 ? '+' : '';
         return `<span style="color:${color}; margin-left:6px;">${sign}${networthFormatter(diff)}</span>`;
+    }
+
+    /**
+     * The tooltip lines for a setting-change marker: what changed and how big the step was.
+     * @param {Object} marker - The point's marker
+     * @returns {string} HTML
+     */
+    _markerTooltipHtml(marker) {
+        const esc = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        let html = `<div style="color:#f59e0b; margin-top:6px;">&#9670; Setting change: ${esc(describeChanges(marker))}</div>`;
+        if (Number.isFinite(marker.step)) {
+            const sign = marker.step >= 0 ? '+' : '-';
+            html +=
+                marker.step === 0
+                    ? '<div style="padding-left:12px;">No effect on the total</div>'
+                    : `<div style="padding-left:12px;">Step: ${sign}${networthFormatter(Math.abs(marker.step))} (left out of growth figures)</div>`;
+        }
+        if ((marker.floor || []).length > 0) {
+            html +=
+                '<div style="padding-left:12px;">At least this much: some of what the setting adds had no price or was hidden by an exclusion</div>';
+        }
+        if (marker.small === true) {
+            const raw = Number.isFinite(marker.raw) ? ` (${networthFormatter(marker.raw)})` : '';
+            html += `<div style="padding-left:12px;">The reading moved within ordinary variation${esc(raw)}</div>`;
+        } else if ((marker.unseparated || []).length > 0) {
+            const raw = Number.isFinite(marker.raw)
+                ? ` The reading moved ${networthFormatter(marker.raw)} in all.`
+                : '';
+            html += `<div style="padding-left:12px;">Part of the move could not be separated from the market.${esc(raw)}</div>`;
+        }
+        return html;
     }
 
     /**
@@ -1585,6 +1655,10 @@ class NetworthHistoryChart {
             html += `<div style="color:#ccc; padding-left:12px;">${cat.label}: ${networthFormatter(cat.value)}${delta}</div>`;
         }
 
+        if (raw.marker) {
+            html += this._markerTooltipHtml(raw.marker);
+        }
+
         tooltipEl.innerHTML = html;
         tooltipEl.style.opacity = '1';
 
@@ -1663,6 +1737,7 @@ class NetworthHistoryChart {
         popup.innerHTML = `
             <div style="margin-bottom:4px;font-weight:500;color:#fff;">${date}</div>
             <div style="margin-bottom:10px;color:${config.COLOR_ACCENT};">${networthFormatter(snapshot.total)}</div>
+            <button id="mwi-nw-movers-btn" style="background:#3b4a8f;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin:0 6px 6px 0;">What moved</button>
             <button id="mwi-nw-delete-confirm" style="background:#ef4444;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin-right:6px;">Delete point</button>
             <button id="mwi-nw-delete-cancel" style="background:#2a2a2a;color:#999;border:1px solid #444;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;">Cancel</button>
         `;
@@ -1679,6 +1754,20 @@ class NetworthHistoryChart {
 
         popup.querySelector('#mwi-nw-delete-cancel').addEventListener('click', () => {
             this._dismissDeletePopup();
+        });
+
+        // Opens the items-that-moved panel where the popup was, then retires the popup
+        popup.querySelector('#mwi-nw-movers-btn').addEventListener('click', () => {
+            const at = { x: left, y: top };
+            this._dismissDeletePopup();
+            this._closeMoversPanel();
+            this._moversPanel = openMoversPanel({
+                snapshot,
+                at,
+                onClose: () => {
+                    this._moversPanel = null;
+                },
+            });
         });
 
         // Dismiss on outside click (defer to avoid catching the current click)
@@ -1712,8 +1801,18 @@ class NetworthHistoryChart {
         }
     }
 
+    /**
+     * Close the items-that-moved panel if one is open.
+     */
+    _closeMoversPanel() {
+        const panel = this._moversPanel;
+        this._moversPanel = null;
+        panel?.close();
+    }
+
     closeModal() {
         this._dismissDeletePopup();
+        this._closeMoversPanel();
 
         // Dropped with the modal it lived in; a stale reference would keep the
         // detached fan and its listeners alive across the next open

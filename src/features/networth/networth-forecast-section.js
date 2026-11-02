@@ -394,11 +394,12 @@ export function parseForecastTarget(text) {
  *
  * @param {Object} options - Section options
  * @param {Function} options.getHistory - Returns the snapshot series to project
+ * @param {Function} [options.getCurrent] - Returns the real current net worth the paths start from, when the series is shifted
  * @param {number} [options.seed] - RNG seed; one is drawn per section so a
  *   re-render of the same inputs redraws the same fan
  * @returns {{element: HTMLElement, refresh: Function}} The section
  */
-export function createForecastSection({ getHistory, seed = randomSeed() }) {
+export function createForecastSection({ getHistory, getCurrent = null, seed = randomSeed() }) {
     const element = document.createElement('div');
     element.className = 'mwi-nw-forecast-section';
     element.style.cssText = 'margin-top: 10px; border-top: 1px solid #333; padding-top: 8px;';
@@ -490,7 +491,12 @@ export function createForecastSection({ getHistory, seed = randomSeed() }) {
         targetFigures = [];
         shown = null;
 
-        const forecast = forecastNetworth(getHistory() || [], { days: Number(horizonSelect.value), seed });
+        const current = getCurrent?.();
+        const forecast = forecastNetworth(getHistory() || [], {
+            days: Number(horizonSelect.value),
+            seed,
+            ...(current > 0 ? { current } : {}),
+        });
 
         if (forecast.status !== 'complete') {
             const message = document.createElement('div');

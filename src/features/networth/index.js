@@ -29,7 +29,7 @@ import goldSourcesPanel from './gold-sources-panel.js';
 import { initExclusions } from './networth-exclusions.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
 import { terminateItemValueWorkerPool } from '../../utils/networth-worker-manager.js';
-import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { VALUATION_SETTINGS } from './networth-markers.js';
 import { GUILD_TOKEN_EXCHANGE_EVENT } from '../guild/guild-token-exchange-capture.js';
 
 /**
@@ -37,28 +37,8 @@ import { GUILD_TOKEN_EXCHANGE_EVENT } from '../guild/guild-token-exchange-captur
  * lot. The Iron Cow valuation replaces the market price outright on an Iron Cow
  * character, so it belongs here as much as the pricing mode does.
  */
-const NETWORTH_RECALC_SETTINGS = [
-    'networth_pricingMode',
-    'networth_valueSource',
-    'networth_highEnhancementUseCost',
-    'networth_highEnhancementMinLevel',
-    'networth_includeCowbells',
-    'networth_includeTaskTokens',
-    'networth_includeLabyrinthTokens',
-    'networth_includeGuildTokens',
-    'networth_includeGuildCredits',
-    'networth_abilityBooksAsInventory',
-    // The guild token exchange rate stand-in prices held guild tokens
-    'guildTokenCreditRate',
-    // Labyrinth tokens are priced through the profit calculator's pricing settings
-    'profitCalc_pricingMode',
-    'profitCalc_patientTickSell',
-    // A base item can be priced at its craft cost, which moves every enhanced piece valued by cost
-    'enhanceSim_baseItemCraftingCost',
-    IRONCOW_VALUATION_SETTING,
-    // What an unrefined untradable cape is assumed to be worth
-    'untradableCapeBaseValue',
-];
+// Every setting the calculation reads; the history marks a change in any of them (networth-markers.js)
+const NETWORTH_RECALC_SETTINGS = VALUATION_SETTINGS;
 
 class NetworthFeature {
     constructor() {

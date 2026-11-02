@@ -267,3 +267,65 @@ describe('All-Time High stat', () => {
         expect(statsRow.innerHTML).toContain('(now)');
     });
 });
+
+describe('growth figures and setting-change markers', () => {
+    const now = Date.now();
+    const marked = (step, extra = {}) => ({
+        changes: [{ id: 'networth_includeLabyrinthTokens', from: false, to: true }],
+        step,
+        unseparated: [],
+        raw: step,
+        ...extra,
+    });
+
+    test('Last range and Rate leave a marked step out and say so; All-Time High stays raw', async () => {
+        getHistory.mockReturnValue([
+            { t: now - 3 * 3_600_000, total: 10_000_000_000, nonExcluded: 10_000_000_000 },
+            {
+                t: now - 2 * 3_600_000,
+                total: 10_363_000_000,
+                nonExcluded: 10_363_000_000,
+                marker: marked(363_000_000),
+            },
+            { t: now - 3_600_000, total: 10_400_000_000, nonExcluded: 10_400_000_000 },
+        ]);
+
+        await networthHistoryChart.openModal();
+        const text = document.getElementById('mwi-nw-chart-stats').textContent;
+        // Without markers the change would read +400M; the 363M step is taken out of it
+        expect(text).toContain('+37.00M');
+        expect(text).toContain('excludes 1 setting change: +363.00M');
+        expect(text).toContain('All-Time High');
+        expect(text).toContain('10.40B');
+    });
+
+    test('a marker that could not be separated is left in and flagged, not subtracted', async () => {
+        getHistory.mockReturnValue([
+            { t: now - 3 * 3_600_000, total: 1_000_000_000, nonExcluded: 1_000_000_000 },
+            {
+                t: now - 3_600_000,
+                total: 1_200_000_000,
+                nonExcluded: 1_200_000_000,
+                marker: marked(null, { unseparated: ['networth_pricingMode'], raw: 200_000_000 }),
+            },
+        ]);
+
+        await networthHistoryChart.openModal();
+        const text = document.getElementById('mwi-nw-chart-stats').textContent;
+        expect(text).toContain('+200.00M');
+        expect(text).toContain('could not be separated from market movement');
+        expect(text).not.toContain('excludes');
+    });
+
+    test('a marker older than the first plotted point is already in the baseline and is not mentioned', async () => {
+        getHistory.mockReturnValue([
+            { t: now - 9 * 3_600_000, total: 1_000_000_000, nonExcluded: 1_000_000_000, marker: marked(500_000_000) },
+            { t: now - 3 * 3_600_000, total: 1_500_000_000, nonExcluded: 1_500_000_000 },
+            { t: now - 3_600_000, total: 1_600_000_000, nonExcluded: 1_600_000_000 },
+        ]);
+
+        await networthHistoryChart.openModal();
+        const text = document.getElementById('mwi-nw-chart-stats').textContent;
+        expect(text).not.toContain('setting change');
+    });
+});

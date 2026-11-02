@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Net Worth History marks a setting change on the chart and leaves its step out of the gain and rate figures.
+- Net Worth History has a What moved button on chart points: the top 10 items behind a change, and whether quantity or price caused it. Kept for recent readings and big jumps.
 - The Dungeon Tracker opened with no dungeon running now shows your real run history with Export and Import, and has a close button that stays closed for that dungeon action.
 - The labyrinth clear badge stays inside its tile on desktop: long readings such as 100% and 102s use the compact 100|102s form, with the full reading on hover.
 - A death in the labyrinth no longer raises the death notification or recap chip, with a setting to bring them back. The Death recap chip can now be dismissed, clears when viewed or closed, and no longer covers the sidebar.
