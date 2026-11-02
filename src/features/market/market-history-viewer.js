@@ -23,6 +23,7 @@ import listingMarkers, { markerStateFor } from './listing-markers.js';
 const HISTORY_SURFACE = { surface: 'history' };
 import estimatedListingAge from './estimated-listing-age.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { styleGameButton, BUTTON_LOOK, GAME_COLORS } from '../../utils/game-look.js';
 
 /** Statuses a listing is recorded with; anything else in an imported file reads as unknown */
 const KNOWN_STATUSES = new Set(['active', 'filled', 'canceled', 'expired', 'unknown']);
@@ -688,15 +689,15 @@ class MarketHistoryViewer {
         const content = document.createElement('div');
         content.className = 'mwi-market-history-content';
         content.style.cssText = `
-            background: rgba(10, 10, 20, 0.97);
-            border: 1px solid rgba(74, 158, 255, 0.5);
-            border-radius: 8px;
+            background: ${GAME_COLORS.background};
+            border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 20px;
             max-width: 95%;
             max-height: 90%;
             overflow: auto;
-            color: #e8ecf5;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            color: ${GAME_COLORS.text};
+            box-shadow: ${GAME_COLORS.frameGlow};
         `;
 
         // Header
@@ -707,14 +708,14 @@ class MarketHistoryViewer {
             align-items: center;
             margin-bottom: 20px;
             padding-bottom: 12px;
-            border-bottom: 1px solid rgba(74, 158, 255, 0.3);
+            border-bottom: 1px solid ${GAME_COLORS.border};
         `;
 
         const title = document.createElement('h2');
         title.textContent = 'Market History';
         title.style.cssText = `
             margin: 0;
-            color: #8fb4ff;
+            color: ${GAME_COLORS.text};
         `;
 
         const closeBtn = document.createElement('button');
@@ -722,7 +723,7 @@ class MarketHistoryViewer {
         closeBtn.style.cssText = `
             background: none;
             border: none;
-            color: #e8ecf5;
+            color: ${GAME_COLORS.text};
             font-size: 24px;
             cursor: pointer;
             padding: 0;
@@ -809,10 +810,10 @@ class MarketHistoryViewer {
         searchBox.className = 'mwi-search-box';
         searchBox.style.cssText = `
             padding: 6px 12px;
-            border: 1px solid #555;
+            border: 1px solid ${GAME_COLORS.border};
             border-radius: 4px;
             background: #1a1a1a;
-            color: #fff;
+            color: ${GAME_COLORS.text};
             min-width: 200px;
             max-width: 100%;
             box-sizing: border-box;
@@ -828,10 +829,10 @@ class MarketHistoryViewer {
         typeFilter.classList.add('toolasha-select');
         typeFilter.style.cssText = `
             padding: 6px 12px;
-            border: 1px solid #555;
+            border: 1px solid ${GAME_COLORS.border};
             border-radius: 4px;
             background: #1a1a1a;
-            color: #fff;
+            color: ${GAME_COLORS.text};
             max-width: 100%;
         `;
         const typeOptions = [
@@ -859,10 +860,10 @@ class MarketHistoryViewer {
         statusFilter.classList.add('toolasha-select');
         statusFilter.style.cssText = `
             padding: 6px 12px;
-            border: 1px solid #555;
+            border: 1px solid ${GAME_COLORS.border};
             border-radius: 4px;
             background: #1a1a1a;
-            color: #fff;
+            color: ${GAME_COLORS.text};
             max-width: 100%;
         `;
         const statusOptions = [
@@ -917,27 +918,13 @@ class MarketHistoryViewer {
         // Export button
         const exportBtn = document.createElement('button');
         exportBtn.textContent = 'Export CSV';
-        exportBtn.style.cssText = `
-            padding: 6px 12px;
-            background: #4a90e2;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        `;
+        styleGameButton(exportBtn, 'primary');
         exportBtn.addEventListener('click', () => this.exportCSV());
 
         // Import button
         const importBtn = document.createElement('button');
         importBtn.textContent = 'Import Market Data';
-        importBtn.style.cssText = `
-            padding: 6px 12px;
-            background: #9b59b6;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        `;
+        styleGameButton(importBtn, 'quiet');
         importBtn.addEventListener('click', () => this.showImportDialog());
 
         // Clear History button (destructive action - red)
@@ -946,9 +933,9 @@ class MarketHistoryViewer {
         clearBtn.style.cssText = `
             padding: 6px 12px;
             background: #dc2626;
-            color: white;
+            color: ${GAME_COLORS.text};
             border: none;
-            border-radius: 4px;
+            border-radius: var(--radius-sm, 0.25rem);
             cursor: pointer;
         `;
         clearBtn.addEventListener('mouseenter', () => {
@@ -993,7 +980,7 @@ class MarketHistoryViewer {
         kmbLabel.textContent = 'K/M/B Format';
         kmbLabel.style.cssText = `
             cursor: pointer;
-            color: #aaa;
+            color: ${GAME_COLORS.textDim};
             font-size: 14px;
             display: flex;
             align-items: center;
@@ -1005,7 +992,7 @@ class MarketHistoryViewer {
         const stats = document.createElement('div');
         stats.className = 'mwi-market-history-stats';
         stats.style.cssText = `
-            color: #aaa;
+            color: ${GAME_COLORS.textDim};
             font-size: 14px;
             white-space: nowrap;
         `;
@@ -1152,10 +1139,10 @@ class MarketHistoryViewer {
                 align-items: center;
                 gap: 6px;
                 padding: 4px 8px;
-                background: #3a3a3a;
-                border: 1px solid #555;
+                background: rgba(255, 255, 255, 0.06);
+                border: 1px solid ${GAME_COLORS.border};
                 border-radius: 4px;
-                color: #aaa;
+                color: ${GAME_COLORS.textDim};
                 font-size: 13px;
             `;
 
@@ -1185,17 +1172,17 @@ class MarketHistoryViewer {
             removeBtn.style.cssText = `
                 background: none;
                 border: none;
-                color: #aaa;
+                color: ${GAME_COLORS.textDim};
                 cursor: pointer;
                 padding: 0;
                 font-size: 14px;
                 line-height: 1;
             `;
             removeBtn.addEventListener('mouseenter', () => {
-                removeBtn.style.color = '#fff';
+                removeBtn.style.color = GAME_COLORS.text;
             });
             removeBtn.addEventListener('mouseleave', () => {
-                removeBtn.style.color = '#aaa';
+                removeBtn.style.color = GAME_COLORS.textDim;
             });
             removeBtn.addEventListener('click', badge.onRemove);
 
@@ -1226,21 +1213,8 @@ class MarketHistoryViewer {
             const clearFiltersBtn = document.createElement('button');
             clearFiltersBtn.className = 'mwi-clear-filters-button';
             clearFiltersBtn.textContent = 'Clear All Filters';
-            clearFiltersBtn.style.cssText = `
-                padding: 6px 12px;
-                background: #e67e22;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                white-space: nowrap;
-            `;
-            clearFiltersBtn.addEventListener('mouseenter', () => {
-                clearFiltersBtn.style.background = '#d35400';
-            });
-            clearFiltersBtn.addEventListener('mouseleave', () => {
-                clearFiltersBtn.style.background = '#e67e22';
-            });
+            styleGameButton(clearFiltersBtn, 'quiet');
+            clearFiltersBtn.style.whiteSpace = 'nowrap';
             clearFiltersBtn.addEventListener('click', () => this.clearAllFilters());
 
             // Insert into right group (before K/M/B checkbox)
@@ -1285,14 +1259,14 @@ class MarketHistoryViewer {
         table.style.cssText = `
             width: 100%;
             border-collapse: collapse;
-            color: #fff;
+            color: ${GAME_COLORS.text};
         `;
 
         // Header
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
         headerRow.style.cssText = `
-            background: #1a1a1a;
+            background: transparent;
         `;
 
         const columns = [
@@ -1314,7 +1288,7 @@ class MarketHistoryViewer {
             th.style.cssText = `
                 padding: 10px;
                 text-align: left;
-                border-bottom: 2px solid #555;
+                border-bottom: 2px solid ${GAME_COLORS.border};
                 user-select: none;
                 position: relative;
             `;
@@ -1364,7 +1338,7 @@ class MarketHistoryViewer {
                 filterBtn.style.cssText = `
                     background: none;
                     border: none;
-                    color: #aaa;
+                    color: ${GAME_COLORS.textDim};
                     cursor: pointer;
                     font-size: 16px;
                     padding: 2px 4px;
@@ -1374,7 +1348,7 @@ class MarketHistoryViewer {
                 // Check if filter is active
                 const hasActiveFilter = this.hasActiveFilter(col.key);
                 if (hasActiveFilter) {
-                    filterBtn.style.color = '#4a90e2';
+                    filterBtn.style.color = BUTTON_LOOK.primary.hover;
                     filterBtn.textContent = '⋮';
                 }
 
@@ -1413,8 +1387,8 @@ class MarketHistoryViewer {
             paginatedListings.forEach((listing, index) => {
                 const row = document.createElement('tr');
                 row.style.cssText = `
-                    border-bottom: 1px solid #333;
-                    background: ${index % 2 === 0 ? '#2a2a2a' : '#252525'};
+                    border-bottom: 1px solid ${GAME_COLORS.border};
+                    background: ${index % 2 === 0 ? 'rgba(255, 255, 255, 0.04)' : 'transparent'};
                 `;
 
                 // Date
@@ -1619,7 +1593,7 @@ class MarketHistoryViewer {
             display: flex;
             gap: 8px;
             align-items: center;
-            color: #aaa;
+            color: ${GAME_COLORS.textDim};
         `;
 
         const label = document.createElement('span');
@@ -1633,10 +1607,10 @@ class MarketHistoryViewer {
         rowsInput.style.cssText = `
             width: 60px;
             padding: 4px 8px;
-            border: 1px solid #555;
+            border: 1px solid ${GAME_COLORS.border};
             border-radius: 4px;
             background: ${this.showAll ? '#333' : '#1a1a1a'};
-            color: ${this.showAll ? '#666' : '#fff'};
+            color: ${this.showAll ? '#666' : GAME_COLORS.text};
         `;
         rowsInput.addEventListener('change', (e) => {
             this.rowsPerPage = Math.max(1, parseInt(e.target.value) || 50);
@@ -1654,7 +1628,7 @@ class MarketHistoryViewer {
             this.showAll = e.target.checked;
             rowsInput.disabled = this.showAll;
             rowsInput.style.background = this.showAll ? '#333' : '#1a1a1a';
-            rowsInput.style.color = this.showAll ? '#666' : '#fff';
+            rowsInput.style.color = this.showAll ? '#666' : GAME_COLORS.text;
             this.currentPage = 1;
             this.renderTable();
         });
@@ -1663,7 +1637,7 @@ class MarketHistoryViewer {
         showAllLabel.textContent = 'Show All';
         showAllLabel.style.cssText = `
             cursor: pointer;
-            color: #aaa;
+            color: ${GAME_COLORS.textDim};
         `;
         showAllLabel.prepend(showAllCheckbox);
 
@@ -1677,7 +1651,7 @@ class MarketHistoryViewer {
             display: flex;
             gap: 8px;
             align-items: center;
-            color: #aaa;
+            color: ${GAME_COLORS.textDim};
         `;
 
         if (!this.showAll) {
@@ -1688,8 +1662,8 @@ class MarketHistoryViewer {
             prevBtn.disabled = this.currentPage === 1;
             prevBtn.style.cssText = `
                 padding: 4px 12px;
-                background: ${this.currentPage === 1 ? '#333' : '#4a90e2'};
-                color: ${this.currentPage === 1 ? '#666' : 'white'};
+                background: ${this.currentPage === 1 ? '#333' : BUTTON_LOOK.primary.rest};
+                color: ${this.currentPage === 1 ? '#666' : GAME_COLORS.text};
                 border: none;
                 border-radius: 4px;
                 cursor: ${this.currentPage === 1 ? 'default' : 'pointer'};
@@ -1709,8 +1683,8 @@ class MarketHistoryViewer {
             nextBtn.disabled = this.currentPage === totalPages;
             nextBtn.style.cssText = `
                 padding: 4px 12px;
-                background: ${this.currentPage === totalPages ? '#333' : '#4a90e2'};
-                color: ${this.currentPage === totalPages ? '#666' : 'white'};
+                background: ${this.currentPage === totalPages ? '#333' : BUTTON_LOOK.primary.rest};
+                color: ${this.currentPage === totalPages ? '#666' : GAME_COLORS.text};
                 border: none;
                 border-radius: 4px;
                 cursor: ${this.currentPage === totalPages ? 'default' : 'pointer'};
@@ -1793,13 +1767,13 @@ class MarketHistoryViewer {
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                background: rgba(10, 10, 20, 0.97);
-                border: 1px solid rgba(74, 158, 255, 0.5);
+                background: ${GAME_COLORS.background};
+                border: 1px solid ${GAME_COLORS.frame};
                 padding: 20px;
                 border-radius: 8px;
-                color: #e8ecf5;
+                color: ${GAME_COLORS.text};
                 z-index: ${config.Z_MODAL + 1};
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+                box-shadow: ${GAME_COLORS.frameGlow};
             `;
             // In a span: a text node on the root cannot take the text zoom, which scales the root's children
             const progressText = document.createElement('span');
@@ -2069,13 +2043,13 @@ class MarketHistoryViewer {
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                background: rgba(10, 10, 20, 0.97);
-                border: 1px solid rgba(74, 158, 255, 0.5);
+                background: ${GAME_COLORS.background};
+                border: 1px solid ${GAME_COLORS.frame};
                 padding: 20px;
                 border-radius: 8px;
-                color: #e8ecf5;
+                color: ${GAME_COLORS.text};
                 z-index: ${config.Z_MODAL + 1};
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+                box-shadow: ${GAME_COLORS.frameGlow};
             `;
             // In a span: a text node on the root cannot take the text zoom, which scales the root's children
             const progressText = document.createElement('span');
@@ -2435,19 +2409,19 @@ class MarketHistoryViewer {
     createDateFilterPopup() {
         const popup = document.createElement('div');
         popup.style.cssText = `
-            background: #2a2a2a;
-            border: 1px solid #555;
-            border-radius: 4px;
+            background: ${GAME_COLORS.background};
+            border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 12px;
             min-width: 250px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            box-shadow: ${GAME_COLORS.frameGlow};
         `;
 
         // Title
         const title = document.createElement('div');
         title.textContent = 'Filter by Date';
         title.style.cssText = `
-            color: #fff;
+            color: ${GAME_COLORS.text};
             font-weight: bold;
             margin-bottom: 10px;
         `;
@@ -2476,7 +2450,7 @@ class MarketHistoryViewer {
             // Show available date range
             const rangeInfo = document.createElement('div');
             rangeInfo.style.cssText = `
-                color: #aaa;
+                color: ${GAME_COLORS.textDim};
                 font-size: 11px;
                 margin-bottom: 10px;
                 padding: 6px;
@@ -2492,7 +2466,7 @@ class MarketHistoryViewer {
         fromLabel.textContent = 'From:';
         fromLabel.style.cssText = `
             display: block;
-            color: #aaa;
+            color: ${GAME_COLORS.textDim};
             margin-bottom: 4px;
             font-size: 12px;
         `;
@@ -2506,9 +2480,9 @@ class MarketHistoryViewer {
             width: 100%;
             padding: 6px;
             background: #1a1a1a;
-            border: 1px solid #555;
+            border: 1px solid ${GAME_COLORS.border};
             border-radius: 3px;
-            color: #fff;
+            color: ${GAME_COLORS.text};
             margin-bottom: 10px;
         `;
 
@@ -2517,7 +2491,7 @@ class MarketHistoryViewer {
         toLabel.textContent = 'To:';
         toLabel.style.cssText = `
             display: block;
-            color: #aaa;
+            color: ${GAME_COLORS.textDim};
             margin-bottom: 4px;
             font-size: 12px;
         `;
@@ -2531,9 +2505,9 @@ class MarketHistoryViewer {
             width: 100%;
             padding: 6px;
             background: #1a1a1a;
-            border: 1px solid #555;
+            border: 1px solid ${GAME_COLORS.border};
             border-radius: 3px;
-            color: #fff;
+            color: ${GAME_COLORS.text};
             margin-bottom: 10px;
         `;
 
@@ -2547,15 +2521,8 @@ class MarketHistoryViewer {
 
         const applyBtn = document.createElement('button');
         applyBtn.textContent = 'Apply';
-        applyBtn.style.cssText = `
-            flex: 1;
-            padding: 6px;
-            background: #4a90e2;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        `;
+        styleGameButton(applyBtn, 'primary');
+        applyBtn.style.flex = '1';
         applyBtn.addEventListener('click', () => {
             // Parse as local dates so setHours(23,59,59,999) covers the selected local day
             this.filters.dateFrom = fromInput.value ? this.parseLocalDate(fromInput.value) : null;
@@ -2570,15 +2537,8 @@ class MarketHistoryViewer {
 
         const clearBtn = document.createElement('button');
         clearBtn.textContent = 'Clear';
-        clearBtn.style.cssText = `
-            flex: 1;
-            padding: 6px;
-            background: #666;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        `;
+        styleGameButton(clearBtn, 'quiet');
+        clearBtn.style.flex = '1';
         clearBtn.addEventListener('click', () => {
             this.filters.dateFrom = null;
             this.filters.dateTo = null;
@@ -2609,22 +2569,22 @@ class MarketHistoryViewer {
     createItemFilterPopup() {
         const popup = document.createElement('div');
         popup.style.cssText = `
-            background: #2a2a2a;
-            border: 1px solid #555;
-            border-radius: 4px;
+            background: ${GAME_COLORS.background};
+            border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 12px;
             min-width: 300px;
             max-height: 400px;
             display: flex;
             flex-direction: column;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            box-shadow: ${GAME_COLORS.frameGlow};
         `;
 
         // Title
         const title = document.createElement('div');
         title.textContent = 'Filter by Item';
         title.style.cssText = `
-            color: #fff;
+            color: ${GAME_COLORS.text};
             font-weight: bold;
             margin-bottom: 10px;
         `;
@@ -2638,9 +2598,9 @@ class MarketHistoryViewer {
             width: 100%;
             padding: 6px;
             background: #1a1a1a;
-            border: 1px solid #555;
+            border: 1px solid ${GAME_COLORS.border};
             border-radius: 3px;
-            color: #fff;
+            color: ${GAME_COLORS.text};
             margin-bottom: 8px;
         `;
 
@@ -2678,7 +2638,7 @@ class MarketHistoryViewer {
                 const label = document.createElement('label');
                 label.style.cssText = `
                     display: block;
-                    color: #fff;
+                    color: ${GAME_COLORS.text};
                     padding: 4px;
                     cursor: pointer;
                 `;
@@ -2721,15 +2681,8 @@ class MarketHistoryViewer {
 
         const applyBtn = document.createElement('button');
         applyBtn.textContent = 'Apply';
-        applyBtn.style.cssText = `
-            flex: 1;
-            padding: 6px;
-            background: #4a90e2;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        `;
+        styleGameButton(applyBtn, 'primary');
+        applyBtn.style.flex = '1';
         applyBtn.addEventListener('click', () => {
             this.saveFilters();
             this.applyFilters();
@@ -2741,15 +2694,8 @@ class MarketHistoryViewer {
 
         const clearBtn = document.createElement('button');
         clearBtn.textContent = 'Clear';
-        clearBtn.style.cssText = `
-            flex: 1;
-            padding: 6px;
-            background: #666;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        `;
+        styleGameButton(clearBtn, 'quiet');
+        clearBtn.style.flex = '1';
         clearBtn.addEventListener('click', () => {
             this.filters.selectedItems = [];
             this.saveFilters();
@@ -2774,19 +2720,19 @@ class MarketHistoryViewer {
     createEnhancementFilterPopup() {
         const popup = document.createElement('div');
         popup.style.cssText = `
-            background: #2a2a2a;
-            border: 1px solid #555;
-            border-radius: 4px;
+            background: ${GAME_COLORS.background};
+            border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 12px;
             min-width: 200px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            box-shadow: ${GAME_COLORS.frameGlow};
         `;
 
         // Title
         const title = document.createElement('div');
         title.textContent = 'Filter by Enhancement Level';
         title.style.cssText = `
-            color: #fff;
+            color: ${GAME_COLORS.text};
             font-weight: bold;
             margin-bottom: 10px;
         `;
@@ -2809,7 +2755,7 @@ class MarketHistoryViewer {
             const label = document.createElement('label');
             label.style.cssText = `
                 display: block;
-                color: #fff;
+                color: ${GAME_COLORS.text};
                 padding: 4px;
                 cursor: pointer;
             `;
@@ -2850,15 +2796,8 @@ class MarketHistoryViewer {
 
         const applyBtn = document.createElement('button');
         applyBtn.textContent = 'Apply';
-        applyBtn.style.cssText = `
-            flex: 1;
-            padding: 6px;
-            background: #4a90e2;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        `;
+        styleGameButton(applyBtn, 'primary');
+        applyBtn.style.flex = '1';
         applyBtn.addEventListener('click', () => {
             this.saveFilters();
             this.applyFilters();
@@ -2870,15 +2809,8 @@ class MarketHistoryViewer {
 
         const clearBtn = document.createElement('button');
         clearBtn.textContent = 'Clear';
-        clearBtn.style.cssText = `
-            flex: 1;
-            padding: 6px;
-            background: #666;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        `;
+        styleGameButton(clearBtn, 'quiet');
+        clearBtn.style.flex = '1';
         clearBtn.addEventListener('click', () => {
             this.filters.selectedEnhLevels = [];
             this.saveFilters();
@@ -2903,19 +2835,19 @@ class MarketHistoryViewer {
     createTypeFilterPopup() {
         const popup = document.createElement('div');
         popup.style.cssText = `
-            background: #2a2a2a;
-            border: 1px solid #555;
-            border-radius: 4px;
+            background: ${GAME_COLORS.background};
+            border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 12px;
             min-width: 150px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            box-shadow: ${GAME_COLORS.frameGlow};
         `;
 
         // Title
         const title = document.createElement('div');
         title.textContent = 'Filter by Type';
         title.style.cssText = `
-            color: #fff;
+            color: ${GAME_COLORS.text};
             font-weight: bold;
             margin-bottom: 10px;
         `;
@@ -2931,7 +2863,7 @@ class MarketHistoryViewer {
             const buyLabel = document.createElement('label');
             buyLabel.style.cssText = `
                 display: block;
-                color: #fff;
+                color: ${GAME_COLORS.text};
                 padding: 4px;
                 cursor: pointer;
                 margin-bottom: 6px;
@@ -2965,7 +2897,7 @@ class MarketHistoryViewer {
             const sellLabel = document.createElement('label');
             sellLabel.style.cssText = `
                 display: block;
-                color: #fff;
+                color: ${GAME_COLORS.text};
                 padding: 4px;
                 cursor: pointer;
             `;
@@ -3003,15 +2935,8 @@ class MarketHistoryViewer {
 
         const applyBtn = document.createElement('button');
         applyBtn.textContent = 'Apply';
-        applyBtn.style.cssText = `
-            flex: 1;
-            padding: 6px;
-            background: #4a90e2;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        `;
+        styleGameButton(applyBtn, 'primary');
+        applyBtn.style.flex = '1';
         applyBtn.addEventListener('click', () => {
             this.saveFilters();
             this.applyFilters();
@@ -3023,15 +2948,8 @@ class MarketHistoryViewer {
 
         const clearBtn = document.createElement('button');
         clearBtn.textContent = 'Clear';
-        clearBtn.style.cssText = `
-            flex: 1;
-            padding: 6px;
-            background: #666;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-        `;
+        styleGameButton(clearBtn, 'quiet');
+        clearBtn.style.flex = '1';
         clearBtn.addEventListener('click', () => {
             this.filters.selectedTypes = [];
             this.saveFilters();

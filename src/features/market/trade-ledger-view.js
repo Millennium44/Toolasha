@@ -24,6 +24,7 @@ import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { styleGameButton, GAME_COLORS } from '../../utils/game-look.js';
 
 /** How many weekly summary lines the modal shows. */
 const WEEKS_SHOWN = 8;
@@ -372,16 +373,16 @@ class TradeLedgerView {
         const content = document.createElement('div');
         content.className = 'mwi-trade-ledger-content';
         content.style.cssText = `
-            background: rgba(10, 10, 20, 0.97);
-            border: 1px solid rgba(74, 158, 255, 0.5);
-            border-radius: 8px;
+            background: ${GAME_COLORS.background};
+            border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 20px;
             max-width: ${CONTENT_MAX_WIDTH};
             max-height: 90%;
             min-width: ${CONTENT_MIN_WIDTH};
             overflow: auto;
-            color: #e8ecf5;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            color: ${GAME_COLORS.text};
+            box-shadow: ${GAME_COLORS.frameGlow};
         `;
 
         const header = document.createElement('div');
@@ -395,7 +396,7 @@ class TradeLedgerView {
             align-items: center;
             margin-bottom: 15px;
             padding-bottom: 12px;
-            border-bottom: 1px solid rgba(74, 158, 255, 0.3);
+            border-bottom: 1px solid ${GAME_COLORS.border};
         `;
 
         const title = document.createElement('h2');
@@ -403,7 +404,7 @@ class TradeLedgerView {
         title.title = BASIS_TOOLTIP;
         title.style.cssText = `
             margin: 0;
-            color: #8fb4ff;
+            color: ${GAME_COLORS.text};
         `;
 
         const headerRight = document.createElement('div');
@@ -415,14 +416,7 @@ class TradeLedgerView {
 
         const exportBtn = document.createElement('button');
         exportBtn.textContent = 'Export CSV';
-        exportBtn.style.cssText = `
-            padding: 6px 12px;
-            background: #4a90e2;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        `;
+        styleGameButton(exportBtn, 'primary');
         exportBtn.addEventListener('click', () => this.exportCSV());
 
         const closeBtn = document.createElement('button');
@@ -430,7 +424,7 @@ class TradeLedgerView {
         closeBtn.style.cssText = `
             background: none;
             border: none;
-            color: #e8ecf5;
+            color: ${GAME_COLORS.text};
             font-size: 24px;
             cursor: pointer;
             padding: 0;
@@ -449,7 +443,7 @@ class TradeLedgerView {
         weeksContainer.style.cssText = `
             margin-bottom: 15px;
             font-size: 13px;
-            color: #aaa;
+            color: ${GAME_COLORS.textDim};
             line-height: 1.6;
         `;
 
@@ -469,9 +463,9 @@ class TradeLedgerView {
             box-sizing: border-box;
             padding: 6px 10px;
             background: #1a1a1a;
-            border: 1px solid #4a4a4a;
+            border: 1px solid ${GAME_COLORS.border};
             border-radius: 4px;
-            color: #e8ecf5;
+            color: ${GAME_COLORS.text};
             font-size: 13px;
         `;
         filterInput.addEventListener('input', () => {
@@ -539,7 +533,7 @@ class TradeLedgerView {
         const heading = document.createElement('div');
         heading.textContent = 'Time to fill vs undercut depth';
         heading.title = FILL_TIME_TOOLTIP;
-        heading.style.cssText = 'font-size: 13px; color: #8fb4ff; margin-bottom: 6px;';
+        heading.style.cssText = `font-size: 13px; color: ${GAME_COLORS.text}; margin-bottom: 6px;`;
         container.appendChild(heading);
 
         if (!this.fillTimes) {
@@ -601,16 +595,16 @@ class TradeLedgerView {
         block.style.cssText = 'margin-bottom: 8px;';
 
         const table = document.createElement('table');
-        table.style.cssText = 'width: 100%; border-collapse: collapse; color: #e8ecf5; font-size: 12px;';
+        table.style.cssText = `width: 100%; border-collapse: collapse; color: ${GAME_COLORS.text}; font-size: 12px;`;
 
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        headerRow.style.cssText = 'background: #1a1a1a;';
+        headerRow.style.cssText = 'background: transparent;';
         for (const label of [sideLabel, 'Median time to full fill', 'Listings']) {
             const th = document.createElement('th');
             th.textContent = label;
             th.title = FILL_TIME_TOOLTIP;
-            th.style.cssText = 'padding: 4px 10px; text-align: left; border-bottom: 1px solid #555;';
+            th.style.cssText = `padding: 4px 10px; text-align: left; border-bottom: 1px solid ${GAME_COLORS.border};`;
             headerRow.appendChild(th);
         }
         thead.appendChild(headerRow);
@@ -619,7 +613,7 @@ class TradeLedgerView {
         const tbody = document.createElement('tbody');
         analysis.rows.forEach((row, index) => {
             const tr = document.createElement('tr');
-            tr.style.cssText = `background: ${index % 2 === 0 ? '#2a2a2a' : '#252525'};`;
+            tr.style.cssText = `background: ${index % 2 === 0 ? 'rgba(255, 255, 255, 0.04)' : 'transparent'};`;
 
             const depthCell = document.createElement('td');
             depthCell.textContent = row.label;
@@ -639,7 +633,7 @@ class TradeLedgerView {
 
             const countCell = document.createElement('td');
             countCell.textContent = String(row.count);
-            countCell.style.cssText = 'padding: 3px 10px; color: #aaa;';
+            countCell.style.cssText = `padding: 3px 10px; color: ${GAME_COLORS.textDim};`;
             tr.appendChild(countCell);
 
             tbody.appendChild(tr);
@@ -728,11 +722,11 @@ class TradeLedgerView {
         line.style.cssText = `
             padding: 6px 10px;
             margin-bottom: 8px;
-            background: rgba(74, 158, 255, 0.08);
-            border: 1px solid rgba(74, 158, 255, 0.3);
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid ${GAME_COLORS.border};
             border-radius: 4px;
             font-size: 12px;
-            color: #cbd5e1;
+            color: ${GAME_COLORS.text};
         `;
 
         const parts = [
@@ -793,12 +787,12 @@ class TradeLedgerView {
         table.style.cssText = `
             width: 100%;
             border-collapse: collapse;
-            color: #fff;
+            color: ${GAME_COLORS.text};
         `;
 
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        headerRow.style.cssText = 'background: #1a1a1a;';
+        headerRow.style.cssText = 'background: transparent;';
 
         const headers = [
             { label: 'Item' },
@@ -815,7 +809,7 @@ class TradeLedgerView {
             th.style.cssText = `
                 padding: 8px 10px;
                 text-align: left;
-                border-bottom: 2px solid #555;
+                border-bottom: 2px solid ${GAME_COLORS.border};
                 user-select: none;
             `;
             headerRow.appendChild(th);
@@ -827,8 +821,8 @@ class TradeLedgerView {
         items.forEach((item, index) => {
             const row = document.createElement('tr');
             row.style.cssText = `
-                border-bottom: 1px solid #333;
-                background: ${index % 2 === 0 ? '#2a2a2a' : '#252525'};
+                border-bottom: 1px solid ${GAME_COLORS.border};
+                background: ${index % 2 === 0 ? 'rgba(255, 255, 255, 0.04)' : 'transparent'};
             `;
 
             const itemCell = document.createElement('td');
@@ -884,7 +878,7 @@ class TradeLedgerView {
 
             const activityCell = document.createElement('td');
             activityCell.textContent = formatDateTime(new Date(item.lastActivity));
-            activityCell.style.cssText = 'padding: 4px 10px; color: #aaa;';
+            activityCell.style.cssText = `padding: 4px 10px; color: ${GAME_COLORS.textDim};`;
             row.appendChild(activityCell);
 
             tbody.appendChild(row);
