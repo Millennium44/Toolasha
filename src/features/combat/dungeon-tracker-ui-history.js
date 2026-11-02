@@ -312,11 +312,16 @@ class DungeonTrackerUIHistory {
             // narrowed list, so the choices offered are choices that have runs.
             // Failed and canceled attempts are listed too while they are being
             // recorded; every figure built from the list keeps to clears.
-            const allRuns = filterRunsForCharacter(
-                await dungeonTrackerStorage.getAllRuns({ includeAttempts: recordingAttempts() }),
-                this.state.filterCharacter,
-                character
-            );
+            const storedRuns = await dungeonTrackerStorage.getAllRunsOrNull({ includeAttempts: recordingAttempts() });
+            if (storedRuns === null) {
+                // A failed read is not an empty history: say so, and offer
+                // neither Export nor Import (an import is refused on a failed
+                // read anyway) over a list that was never seen.
+                runList.innerHTML =
+                    '<div style="color: #ff6b6b; text-align: center; padding: 8px;">Run history could not be read</div>';
+                return;
+            }
+            const allRuns = filterRunsForCharacter(storedRuns, this.state.filterCharacter, character);
 
             // Dropdown options and an auto-scoped selection are both built from
             // the whole (character-narrowed) list, before the dungeon/tier/team

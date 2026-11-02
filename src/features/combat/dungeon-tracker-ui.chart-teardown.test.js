@@ -74,6 +74,10 @@ vi.mock('./dungeon-roi-board-ui.js', stubModule);
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
+        // The real store has both; this one answers the OrNull read from the same mock
+        getAllRunsOrNull(...args) {
+            return this.getAllRuns(...args);
+        },
         getAllRuns: vi.fn(async () => {
             // One-shot: the gate parks the next read only, so a later render
             // for the arriving character is not held behind the departing one

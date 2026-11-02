@@ -20,6 +20,10 @@ vi.mock('./dungeon-run-attempt-setting.js', () => ({ recordingAttempts: () => wo
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
+        // The real store has both; this one answers the OrNull read from the same mock
+        getAllRunsOrNull(...args) {
+            return this.getAllRuns(...args);
+        },
         getAllRuns: vi.fn(async () => []),
         getRunsForCharacterOrNull: vi.fn(async () => []),
         importRuns: vi.fn(async () => ({ added: 0, alreadyPresent: 0, ok: true })),
