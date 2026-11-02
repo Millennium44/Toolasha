@@ -12,6 +12,13 @@ import { buildListingPlaced, buildListingCancelled, buildOrderBooksUpdated } fro
 import { buildCharacterAction } from './character-actions.js';
 import { buildGuildMember } from './guild-members.js';
 import {
+    buildLabyrinthUpdated,
+    buildLabyrinthRoomProgress,
+    buildLabyrinthNewBattle,
+    buildInfoNotices,
+    LABYRINTH_UPDATED_NAMES,
+} from './labyrinth.js';
+import {
     buildCharacterInfo,
     buildLabyrinthSkipSettings,
     ABILITY_SLOTS_LEVEL_REQUIREMENT_LIST,
@@ -178,5 +185,56 @@ describe('wire fixtures keep the captured field names', () => {
         });
         expect(ABILITY_SLOTS_LEVEL_REQUIREMENT_LIST).toEqual([0, 1, 1, 20, 50, 90]);
         expect(LABYRINTH_ACTION).toEqual({ hrid: '/actions/labyrinth/explore', typeHrid: '/action_types/labyrinth' });
+    });
+
+    test('labyrinth_updated keeps supplies as flat Item/Count pairs and strings for path and loot', () => {
+        for (const name of LABYRINTH_UPDATED_NAMES) {
+            const l = buildLabyrinthUpdated(name).labyrinth;
+            expect(l.beaconItemHrid).toBe('/items/expert_beacon');
+            expect(typeof l.beaconCount).toBe('number');
+            expect(typeof l.torchCount).toBe('number');
+            expect(typeof l.shroudCount).toBe('number');
+            expect(typeof l.pathData).toBe('string');
+            expect(typeof l.lootedItemsData).toBe('string');
+            expect(l).not.toHaveProperty('supplies');
+        }
+    });
+
+    test('labyrinth_updated rooms: null until revealed, a cleared room loses its type, the exit has no grid', () => {
+        const { roomData } = buildLabyrinthUpdated('beaconReveal').labyrinth;
+        const cells = roomData.flat();
+        expect(cells).toContain(null);
+        expect(cells.find((c) => c?.isCleared)).toEqual({ roomType: '', recommendedLevel: 0, isCleared: true });
+        expect(cells.find((c) => c?.monsterHrid)).toHaveProperty('roomType', '/labyrinth_room_types/combat');
+        const exit = buildLabyrinthUpdated('exit').labyrinth;
+        expect(exit.isActive).toBe(false);
+        expect(exit.roomData).toEqual([]);
+        expect(exit.beaconCount).toBe(0);
+    });
+
+    test('a room clear can reveal rooms without spending a beacon; a beacon spends one', () => {
+        const shown = (name) =>
+            buildLabyrinthUpdated(name)
+                .labyrinth.roomData.flat()
+                .filter((c) => c).length;
+        const entry = buildLabyrinthUpdated('entry').labyrinth;
+        const clear = buildLabyrinthUpdated('roomClearReveal').labyrinth;
+        expect(shown('roomClearReveal') - shown('entry')).toBeGreaterThanOrEqual(2);
+        expect(clear.beaconCount).toBe(entry.beaconCount);
+        expect(buildLabyrinthUpdated('beaconReveal').labyrinth.beaconCount).toBe(
+            buildLabyrinthUpdated('torchSpent').labyrinth.beaconCount - 1
+        );
+    });
+
+    test('labyrinth_room_progress is a flat progress record, a labyrinth new_battle is battle 1 wave 1', () => {
+        const p = buildLabyrinthRoomProgress('last');
+        expect(Object.keys(p)).toEqual(
+            expect.arrayContaining(['currentProgress', 'successRate', 'progressPerAction', 'actionCounter'])
+        );
+        const b = buildLabyrinthNewBattle();
+        expect([b.battleId, b.wave, b.monsters.length, b.monsters[0].isBoss]).toEqual([1, 1, 1, true]);
+        for (const n of buildInfoNotices()) {
+            expect(n).toEqual({ type: 'info', message: expect.stringMatching(/^infoNotification\./), variables: null });
+        }
     });
 });
