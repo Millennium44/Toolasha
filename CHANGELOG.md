@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Contributor checklist covers today's review themes
+
+- AGENTS.md's pre-PR questions now also ask about partial totals, caches built from another module's output, threading a new dimension through every reader, merges that drop a newer field, and code a fix wakes up.
+
 ### Combat readers use the ability bar the game sends
 
 - The damage tracker's class detection, the rotation tracker and party lint now read each fighter's ability bar from where a new fight actually carries it; before, they never found it and fell back to casts or the equipped kit.
