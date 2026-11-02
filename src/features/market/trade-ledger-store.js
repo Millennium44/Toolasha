@@ -38,7 +38,8 @@ import storage from '../../core/storage.js';
 import { registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
 import { readScoped } from '../../utils/character-key.js';
 import { timeChunkId, recordKeysFor, registerCharacterScopedPrefix } from '../../utils/chunked-history.js';
-import { detectFills, trimLedger, LEDGER_RECORD_CAP } from '../../utils/trade-ledger.js';
+import { detectFills, trimLedger, repairOverRecorded, LEDGER_RECORD_CAP } from '../../utils/trade-ledger.js';
+import listingArchive from './listing-archive.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 /** Same store the other market trackers live in. */
@@ -60,6 +61,15 @@ const RECORD_PREFIX = 'tradeLedgerRec';
  * chosen. Registration runs at import, long before any budget report.
  */
 registerCharacterScopedPrefix(LEDGER_STORE, RECORD_PREFIX);
+
+/**
+ * The personal listing log's key base (`marketListingTimestamps_<charId>`), written by `estimated-listing-age.js`
+ * and read here, never written, to learn how much a finished listing really filled.
+ */
+const LISTING_LOG_BASE = 'marketListingTimestamps';
+
+/** Log statuses that mean the listing has ended, so its `filledQuantity` is final */
+const ENDED_LOG_STATUSES = new Set(['filled', 'expired']);
 
 /**
  * Per-character cap floor, `tradeLedgerRecFloor_<charId>_<YYYY-MM-DD>`: the oldest day record the cap still
@@ -155,18 +165,47 @@ export function mergeRecords(base, fresh) {
 }
 
 /**
- * Two baseline maps folded into one by listing id, the second winning.
+ * One listing's baseline from two copies of it.
  *
- * Baselines only the stored side knows (another tab's, or written before a
- * failed read) are kept: a baseline this tab never loaded is still the only
- * thing that can turn that listing's next update into a fill.
+ * A listing only ever moves forward: its fill count grows and its end is final. So the copy that is further
+ * along is the right one, and a stale copy (another device's older baseline, a pull of an old gist) must never
+ * win by being the later argument. That is how a finished `{done}` tombstone, or a baseline already counted,
+ * was replaced by a zero baseline and the same fill recorded again on the next snapshot.
+ * @param {*} a - One copy
+ * @param {*} b - The other
+ * @returns {*} The copy further along; `{done: true}` when either is finished
+ */
+function furtherAlong(a, b) {
+    const valid = (entry) => entry && typeof entry === 'object' && !Array.isArray(entry);
+    if (!valid(a)) return b;
+    if (!valid(b)) return a;
+    if (a.done || b.done) return { done: true };
+    const filledA = Number(a.filledQuantity) || 0;
+    const filledB = Number(b.filledQuantity) || 0;
+    if (filledA !== filledB) return filledA > filledB ? a : b;
+    // Same progress: the copies describe one listing, so they agree; the tie is broken by content, not by
+    // argument order, so the fold is the same whichever side it meets first
+    return JSON.stringify(b) > JSON.stringify(a) ? b : a;
+}
+
+/**
+ * Two baseline maps folded into one by listing id, the copy further along winning.
+ *
+ * Commutative and idempotent. Baselines only one side knows (another tab's, or written before a failed read)
+ * are kept: a baseline this tab never loaded is still the only thing that can turn that listing's next update
+ * into a fill. A finished listing (`{done}`) beats every unfinished copy; otherwise the higher
+ * `filledQuantity` wins.
  * @param {Object<string, Object>} base - Baselines, typically as stored
  * @param {Object<string, Object>} fresh - Baselines, typically in memory
  * @returns {Object<string, Object>} Merged map
  */
 export function mergeStates(base, fresh) {
     const safe = (map) => (map && typeof map === 'object' && !Array.isArray(map) ? map : {});
-    return { ...safe(base), ...safe(fresh) };
+    const merged = { ...safe(base) };
+    for (const [id, entry] of Object.entries(safe(fresh))) {
+        merged[id] = id in merged ? furtherAlong(merged[id], entry) : entry;
+    }
+    return merged;
 }
 
 /**
@@ -527,6 +566,104 @@ class TradeLedgerStore {
         // load too: day records a pull wrote back before the floor was recorded
         // would otherwise wait for this character's next fill to go
         if (!this._legacy && this.records.length >= LEDGER_RECORD_CAP) this.saveRecords(new Set());
+        this._repairOverRecorded();
+    }
+
+    /**
+     * The final fill count of every ended listing the log or the archive knows, by listing id.
+     *
+     * Only an ended listing (`filled`, or `expired`; a cancel after a partial fill is stamped `filled` by the
+     * log) with a positive count is named: a still-open listing's log row lags its fills, and a count of zero
+     * is the absence of a figure, not evidence that nothing filled. A log that cannot be read, or holds no
+     * array, names nothing: that is "not loaded", which is not "empty of fills".
+     * @param {string} charId - Whose listings
+     * @returns {Promise<Map<number, number>>} Listing id → final filled quantity
+     * @private
+     */
+    async _endedFills(charId) {
+        const caps = new Map();
+        const note = (row) => {
+            const id = Number(row?.id);
+            const filled = Number(row?.filledQuantity);
+            if (!Number.isFinite(id) || !ENDED_LOG_STATUSES.has(row?.status) || !(filled > 0)) return;
+            if (!(caps.get(id) >= filled)) caps.set(id, filled);
+        };
+        const probe = await storage.tryGet(charKey(LISTING_LOG_BASE, charId), LEDGER_STORE);
+        if (probe?.found && Array.isArray(probe.value)) probe.value.forEach(note);
+        const archived = await listingArchive.read(charId);
+        if (Array.isArray(archived)) archived.forEach(note);
+        return caps;
+    }
+
+    /**
+     * Cut the recorded fills of any ended listing back to what the listing's own log row says it filled.
+     *
+     * Repairs what a stale baseline recorded twice (see {@link mergeStates}). Idempotent and safe to run on
+     * every load: it only ever shrinks a listing that is over its final count, never touches one the log
+     * does not know as ended, and a listing already at or under its count is left byte for byte as it was.
+     * Nothing is stored beyond the day records themselves, so there is no tombstone to sync: the cut is a pure
+     * function of the rows and the log, and a pull that brings an old device's rows back is cut again by the
+     * next load. The rewrite replaces the repaired listings' rows inside the write's own transaction (so the
+     * removed rows do not come back through the union that the other writes use) and leaves every other row
+     * of the day alone.
+     *
+     * Serialized with the record saves. Standing down on a character switch, and on a store that is still the
+     * single key, which this repair does not handle (the next load that has split it will).
+     * @returns {Promise<number>} How many listings were cut
+     * @private
+     */
+    _repairOverRecorded() {
+        const run = async () => {
+            const charId = ledgerCharId();
+            const started = this._generation;
+            const current = () => this._generation === started && ledgerCharId() === charId;
+            try {
+                if (this._legacy || !this.isLoaded) return 0;
+                const caps = await this._endedFills(charId);
+                if (!current() || caps.size === 0) return 0;
+
+                const { records, repairedIds } = repairOverRecorded(this.records, caps);
+                if (repairedIds.size === 0) return 0;
+                const days = new Set();
+                for (const record of this.records) if (repairedIds.has(record.listingId)) days.add(bucketOf(record));
+                this.records = records;
+
+                const mine = (record) => record && repairedIds.has(record.listingId);
+                const belongs = (record, day) => mine(record) && bucketOf(record) === day;
+                for (const day of days) {
+                    const key = recordKey(charId, day);
+                    const probe = await storage.tryGet(key, LEDGER_STORE);
+                    // A day that cannot be read is repaired by the next load; memory is already right
+                    if (probe === null || !current()) continue;
+                    const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
+                    const next = [
+                        ...stored.filter((record) => !mine(record)),
+                        ...records.filter((r) => belongs(r, day)),
+                    ];
+                    if (next.length === 0) {
+                        if (probe.found) await storage.delete(key, LEDGER_STORE);
+                        continue;
+                    }
+                    // Immediate and awaited: a debounced write still pending when the next save reads would let that
+                    // save fold the removed rows straight back in
+                    await storage.set(key, next, LEDGER_STORE, true, {
+                        fold: (now, held) =>
+                            Array.isArray(now) && Array.isArray(held)
+                                ? mergeRecords(
+                                      now.filter((record) => !mine(record)),
+                                      held
+                                  )
+                                : held,
+                    });
+                }
+                return repairedIds.size;
+            } catch (error) {
+                console.error('[TradeLedger] Failed to repair over-recorded fills:', error);
+                return 0;
+            }
+        };
+        this._recordsChain = (this._recordsChain || Promise.resolve()).then(run, run);
+        return this._recordsChain;
     }
 
     /**

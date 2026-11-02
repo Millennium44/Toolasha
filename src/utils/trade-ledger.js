@@ -207,6 +207,77 @@ export function trimLedger(records, cap = LEDGER_RECORD_CAP) {
 }
 
 /**
+ * Cut the fills recorded for a listing down to what the listing actually filled.
+ *
+ * A listing cannot fill more than its log row says it did, yet a stale baseline (see `mergeStates` in the
+ * store) made the same fill be recorded again, at a later time, two to four times over. `caps` names, for
+ * listings that have ended, the final `filledQuantity`; a listing whose recorded quantity exceeds it keeps its
+ * earliest fills up to the cap and loses the rest. The fill the cap falls inside is trimmed, its coins in
+ * proportion, so a price never changes. Fills of the same listing at the same millisecond cannot both be real
+ * (one wire object per listing per event), so those collapse first, to the smaller one: that is what a trimmed
+ * row looks like when the untrimmed copy comes back from another device.
+ *
+ * Pure, idempotent, and only ever shrinks: a listing at or under its cap, or not named in `caps`, is returned
+ * untouched, and the same input folded in again gives the same answer.
+ * @param {Array<Object>} records - Fill records
+ * @param {Map<number, number>} caps - Listing id → final filled quantity (positive) of an ended listing
+ * @returns {{records: Array<Object>, repairedIds: Set<number>}} The repaired ledger (input order kept for
+ *   untouched listings) and the listings that were cut
+ */
+export function repairOverRecorded(records, caps) {
+    const list = Array.isArray(records) ? records : [];
+    const repairedIds = new Set();
+    if (!(caps instanceof Map) || caps.size === 0) return { records: list, repairedIds };
+
+    const byListing = new Map();
+    for (const record of list) {
+        if (!record || !caps.has(record.listingId)) continue;
+        const rows = byListing.get(record.listingId);
+        if (rows) rows.push(record);
+        else byListing.set(record.listingId, [record]);
+    }
+
+    const replaced = new Map(); // listing id → its repaired rows
+    for (const [id, rows] of byListing) {
+        const cap = caps.get(id);
+        const total = rows.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
+        if (!(cap > 0) || total <= cap) continue;
+
+        const byTime = new Map();
+        for (const row of rows) {
+            const kept = byTime.get(row.t);
+            if (!kept || (Number(row.quantity) || 0) < (Number(kept.quantity) || 0)) byTime.set(row.t, row);
+        }
+        const kept = [];
+        let remaining = cap;
+        for (const row of [...byTime.values()].sort((a, b) => a.t - b.t)) {
+            if (remaining <= 0) break;
+            const quantity = Number(row.quantity) || 0;
+            if (quantity <= 0) continue;
+            if (quantity <= remaining) {
+                kept.push(row);
+                remaining -= quantity;
+            } else {
+                kept.push({
+                    ...row,
+                    quantity: remaining,
+                    coins: Math.round(((row.coins || 0) * remaining) / quantity),
+                });
+                remaining = 0;
+            }
+        }
+        replaced.set(id, kept);
+        repairedIds.add(id);
+    }
+    if (repairedIds.size === 0) return { records: list, repairedIds };
+
+    const out = list.filter((record) => !(record && repairedIds.has(record.listingId)));
+    for (const kept of replaced.values()) out.push(...kept);
+    out.sort((a, b) => a.t - b.t);
+    return { records: out, repairedIds };
+}
+
+/**
  * Start of the local week (Monday 00:00) containing `t`.
  * @param {number} t - Timestamp in milliseconds
  * @returns {number} Timestamp of that week's Monday midnight, local time

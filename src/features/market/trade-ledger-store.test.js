@@ -112,6 +112,8 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'market123',
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
+const archiveMock = vi.hoisted(() => ({ rows: [] }));
+vi.mock('./listing-archive.js', () => ({ default: { read: async () => archiveMock.rows } }));
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
 vi.mock('../../core/config.js', () => ({
@@ -240,6 +242,7 @@ beforeEach(() => {
     tradeLedgerStore._recordsChain = null;
     tradeLedgerStore._statesChain = null;
     tradeLedgerStore._writtenDays = new Map();
+    archiveMock.rows = [];
     for (const fn of [
         storageMock.get,
         storageMock.set,
@@ -747,6 +750,7 @@ describe('a fill another writer wrote over comes back on the next fill', () => {
     test('the day write folds into what is stored when it lands', async () => {
         seedSplit([fill(1, DAY1)]);
         await tradeLedgerStore.load();
+        await awaitSaves();
         tradeLedgerStore.states = baseline3();
         // Another tab's fill lands between this save's read and its write
         storageMock.tryGet.mockImplementationOnce(async (key, store) => {
@@ -909,5 +913,239 @@ describe('the day records are counted per character', () => {
         ];
 
         expect(maxRecordsPerCharacter('marketListings', keys)).toBe(3);
+    });
+});
+
+describe('the baselines fold to the copy further along, whichever side meets first', () => {
+    const open = (filledQuantity) => ({ filledQuantity, itemHrid: '/items/a', enhancementLevel: 0, price: 100 });
+
+    test('a finished listing beats a stale baseline, both ways round', () => {
+        const done = { 7: { done: true } };
+        const stale = { 7: open(0) };
+        expect(mergeStates(done, stale)).toEqual(done);
+        expect(mergeStates(stale, done)).toEqual(done);
+    });
+
+    test('the higher fill count wins, both ways round, and a repeat changes nothing', () => {
+        const a = { 7: open(3), 8: open(1) };
+        const b = { 7: open(9), 9: open(2) };
+        const merged = mergeStates(a, b);
+        expect(merged).toEqual({ 7: open(9), 8: open(1), 9: open(2) });
+        expect(mergeStates(b, a)).toEqual(merged);
+        expect(mergeStates(merged, b)).toEqual(merged);
+        expect(mergeStates(merged, merged)).toEqual(merged);
+    });
+
+    test('equal counts with differing content settle the same way on either side', () => {
+        const a = { 7: { ...open(3), price: 100 } };
+        const b = { 7: { ...open(3), price: 200 } };
+        expect(mergeStates(a, b)).toEqual(mergeStates(b, a));
+    });
+});
+
+describe('fills recorded past what a finished listing filled are cut back', () => {
+    const LOG_KEY = 'marketListingTimestamps_market123';
+    const T1 = DAY1 + 3600e3;
+    const T2 = DAY2 + 3600e3;
+    const T3 = DAY3 + 3600e3;
+    const logRow = (id, filledQuantity, status = 'filled', extra = {}) => ({
+        id,
+        timestamp: T1,
+        itemHrid: '/items/a',
+        enhancementLevel: 0,
+        price: 100,
+        orderQuantity: filledQuantity,
+        filledQuantity,
+        isSell: true,
+        status,
+        ...extra,
+    });
+    const quantities = (id) =>
+        tradeLedgerStore
+            .getRecords()
+            .filter((r) => r.listingId === id)
+            .map((r) => r.quantity);
+    const stored = () => [...LEDGER().entries()].filter(([k]) => k.startsWith('tradeLedgerRec_market123'));
+    const storedQuantity = (id) =>
+        stored()
+            .flatMap(([, rows]) => rows)
+            .filter((r) => r.listingId === id)
+            .reduce((sum, r) => sum + r.quantity, 0);
+    const loadAndRepair = async () => {
+        await tradeLedgerStore.load();
+        await tradeLedgerStore._recordsChain;
+    };
+
+    test('over-recorded: the earliest fills stay, the excess goes from memory and from storage', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(6, T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+
+        await loadAndRepair();
+
+        expect(quantities(5)).toEqual([5, 5]);
+        expect(storedQuantity(5)).toBe(10);
+        // The neighbouring listing, in the same day record as a removed row, is untouched
+        expect(storedQuantity(6)).toBe(5);
+        expect(quantities(6)).toEqual([5]);
+    });
+
+    test('a day left with nothing is deleted', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+
+        await loadAndRepair();
+
+        expect(LEDGER().has(REC(T3))).toBe(false);
+        expect(LEDGER().has(REC(T2))).toBe(true);
+    });
+
+    test('the fill the cap falls inside is trimmed, coins in proportion, price unchanged', async () => {
+        const row = (t) => fill(5, t, { quantity: 4, price: 100, coins: 380 });
+        seedSplit([row(T1), row(T2), row(T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+
+        await loadAndRepair();
+
+        const rows = tradeLedgerStore.getRecords().filter((r) => r.listingId === 5);
+        expect(rows.map((r) => [r.quantity, r.coins, r.price])).toEqual([
+            [4, 380, 100],
+            [4, 380, 100],
+            [2, 190, 100],
+        ]);
+        expect(storedQuantity(5)).toBe(10);
+    });
+
+    test('exact and under-recorded listings are left alone and nothing is written', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(6, T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10), logRow(6, 50)]);
+        storageMock.set.mockClear();
+
+        await loadAndRepair();
+
+        expect(quantities(5)).toEqual([5, 5]);
+        expect(quantities(6)).toEqual([5]);
+        expect(storageMock.set.mock.calls.filter(([k]) => k.startsWith('tradeLedgerRec_'))).toEqual([]);
+    });
+
+    test('a listing with no log row, or a log that is not an array, is not touched', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
+        await loadAndRepair();
+        expect(quantities(5)).toEqual([5, 5, 5]);
+
+        LEDGER().set(LOG_KEY, [logRow(99, 1)]);
+        await tradeLedgerStore._repairOverRecorded();
+        expect(quantities(5)).toEqual([5, 5, 5]);
+
+        LEDGER().set(LOG_KEY, { not: 'an array' });
+        await tradeLedgerStore._repairOverRecorded();
+        expect(quantities(5)).toEqual([5, 5, 5]);
+    });
+
+    test('a listing the log still has open, or with no recorded count, is not touched', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(6, T1), fill(6, T2)]);
+        LEDGER().set(LOG_KEY, [
+            logRow(5, 1, 'unknown', { orderQuantity: 100 }),
+            logRow(6, 0, 'canceled', { orderQuantity: 100 }),
+        ]);
+
+        await loadAndRepair();
+
+        expect(quantities(5)).toEqual([5, 5]);
+        expect(quantities(6)).toEqual([5, 5]);
+    });
+
+    test('a cancel after a partial fill is capped at what it filled, not at what was ordered', async () => {
+        seedSplit([fill(5, T1, { quantity: 3, coins: 285 }), fill(5, T2, { quantity: 3, coins: 285 })]);
+        LEDGER().set(LOG_KEY, [logRow(5, 3, 'filled', { orderQuantity: 3 })]);
+
+        await loadAndRepair();
+
+        expect(quantities(5)).toEqual([3]);
+    });
+
+    test('a listing only the archive remembers is capped by the archive', async () => {
+        seedSplit([fill(5, T1), fill(5, T2)]);
+        archiveMock.rows = [logRow(5, 5, 'expired')];
+
+        await loadAndRepair();
+
+        expect(quantities(5)).toEqual([5]);
+    });
+
+    test('running it again changes nothing, and writes nothing', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+        await loadAndRepair();
+        const after = JSON.stringify(stored());
+        storageMock.set.mockClear();
+
+        expect(await tradeLedgerStore._repairOverRecorded()).toBe(0);
+
+        expect(JSON.stringify(stored())).toBe(after);
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('rows that return from another device are cut again, and the trimmed row is not doubled', async () => {
+        const row = (t) => fill(5, t, { quantity: 4, coins: 380 });
+        seedSplit([row(T1), row(T2), row(T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+
+        // A pull of the old device's day records: the untrimmed rows are back beside the trimmed one
+        LEDGER().set(REC(T3), [row(T3)]);
+        LEDGER().set(REC(T2), [...LEDGER().get(REC(T2)), row(T2)]);
+        tradeLedgerStore.records = mergeRecords(tradeLedgerStore.records, [row(T2), row(T3)]);
+        await tradeLedgerStore._repairOverRecorded();
+
+        expect(quantities(5)).toEqual([4, 4, 2]);
+        expect(storedQuantity(5)).toBe(10);
+    });
+
+    test("another character's rows and log are not read or written", async () => {
+        seedSplit([fill(5, T1), fill(5, T2)]);
+        LEDGER().set('tradeLedgerRec_other77_2026-01-01', [fill(5, T1), fill(5, T2)]);
+        LEDGER().set('marketListingTimestamps_other77', [logRow(5, 5)]);
+
+        await loadAndRepair();
+
+        expect(quantities(5)).toEqual([5, 5]);
+        expect(LEDGER().get('tradeLedgerRec_other77_2026-01-01')).toHaveLength(2);
+    });
+
+    test('a character switch while the log is being read applies nothing', async () => {
+        seedSplit([fill(5, T1), fill(5, T2)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+        await loadAndRepair();
+        const rowsBefore = storedQuantity(5);
+        tradeLedgerStore.records = [fill(5, T1), fill(5, T2)];
+        const pending = tradeLedgerStore._repairOverRecorded();
+        tradeLedgerStore._generation += 1;
+        tradeLedgerStore.records = [fill(77, T3)];
+        await pending;
+
+        expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([77]);
+        expect(storedQuantity(5)).toBe(rowsBefore);
+    });
+
+    test('a day record that cannot be read is left for the next load, memory is already right', async () => {
+        seedSplit([fill(5, T1), fill(5, T2)]);
+        await loadAndRepair();
+        LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+        const real = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet.mockImplementation(async (key, store) =>
+            key.startsWith('tradeLedgerRec_market123') ? null : real(key, store)
+        );
+        try {
+            await tradeLedgerStore._repairOverRecorded();
+        } finally {
+            storageMock.tryGet.mockImplementation(real);
+        }
+
+        expect(quantities(5)).toEqual([5]);
+        // Storage still holds the over-recorded rows; the next load cuts them
+        expect(storedQuantity(5)).toBe(10);
+        tradeLedgerStore.records = [];
+        await loadAndRepair();
+        expect(storedQuantity(5)).toBe(5);
     });
 });

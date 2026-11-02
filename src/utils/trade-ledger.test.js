@@ -3,7 +3,15 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { detectFills, trimLedger, aggregateLedger, weekStartOf, fillCoins, LEDGER_RECORD_CAP } from './trade-ledger.js';
+import {
+    detectFills,
+    trimLedger,
+    repairOverRecorded,
+    aggregateLedger,
+    weekStartOf,
+    fillCoins,
+    LEDGER_RECORD_CAP,
+} from './trade-ledger.js';
 import { MARKET_TAX, COWBELL_BAG_TAX } from './profit-constants.js';
 
 const ACTIVE = '/market_listing_status/active';
@@ -367,5 +375,66 @@ describe('aggregateLedger', () => {
         expect(aggregateLedger([]).items).toEqual([]);
         expect(aggregateLedger(null).items).toEqual([]);
         expect(aggregateLedger([null, {}]).items).toEqual([]);
+    });
+});
+
+describe('repairOverRecorded', () => {
+    const row = (listingId, t, quantity, coins = quantity * 95) => ({
+        t,
+        itemHrid: '/items/a',
+        enhancementLevel: 0,
+        side: 'sell',
+        quantity,
+        price: 100,
+        coins,
+        listingId,
+    });
+    const caps = (entries) => new Map(entries);
+
+    test('nothing to do: no caps, an empty ledger, or non-array input', () => {
+        const rows = [row(1, 1, 5)];
+        expect(repairOverRecorded(rows, new Map()).records).toBe(rows);
+        expect(repairOverRecorded([], caps([[1, 5]])).repairedIds.size).toBe(0);
+        expect(repairOverRecorded(null, caps([[1, 5]])).records).toEqual([]);
+    });
+
+    test('exact and under-recorded listings come back as the same rows', () => {
+        const rows = [row(1, 1, 5), row(1, 2, 5), row(2, 3, 4)];
+        const result = repairOverRecorded(
+            rows,
+            caps([
+                [1, 10],
+                [2, 9],
+            ])
+        );
+        expect(result.records).toBe(rows);
+        expect(result.repairedIds.size).toBe(0);
+    });
+
+    test('keeps the earliest fills and trims the one the cap falls inside', () => {
+        const result = repairOverRecorded(
+            [row(1, 30, 4, 380), row(1, 10, 4, 380), row(1, 20, 4, 380), row(2, 15, 9, 855)],
+            caps([[1, 10]])
+        );
+        expect([...result.repairedIds]).toEqual([1]);
+        expect(result.records.map((r) => [r.listingId, r.t, r.quantity, r.coins])).toEqual([
+            [1, 10, 4, 380],
+            [2, 15, 9, 855],
+            [1, 20, 4, 380],
+            [1, 30, 2, 190],
+        ]);
+    });
+
+    test('fills at the same millisecond collapse to the smaller, so a returning untrimmed row loses', () => {
+        const once = repairOverRecorded([row(1, 1, 4), row(1, 2, 4), row(1, 3, 4)], caps([[1, 10]])).records;
+        const back = repairOverRecorded([...once, row(1, 3, 4)], caps([[1, 10]])).records;
+        expect(back.map((r) => r.quantity)).toEqual([4, 4, 2]);
+        expect(repairOverRecorded(back, caps([[1, 10]])).repairedIds.size).toBe(0);
+    });
+
+    test('is idempotent', () => {
+        const c = caps([[1, 7]]);
+        const first = repairOverRecorded([row(1, 1, 5), row(1, 2, 5), row(1, 3, 5)], c).records;
+        expect(repairOverRecorded(first, c).records).toBe(first);
     });
 });
