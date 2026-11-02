@@ -312,8 +312,14 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
             : cycle
     );
 
+    // Read before the dedupe below, which keeps one copy of a cycle whole by its
+    // total: a copy it drops can hold the only statement of another trial, or a
+    // newer tier of the same one. Results are per trial, so every copy is folded
+    const cyclesToFold = [...history];
+
     if (Object.keys(tiles).length) {
         const entry = { archivedAt: at, reason, weekStart: record?.weekStart ?? null, tiles };
+        cyclesToFold.push(entry);
         // Additive: written only when there is something to write, so an entry
         // with no `accuracy` key is an archive from before this existed rather
         // than a cycle that attributed nothing. `archivedAccuracyTrend` keeps
@@ -341,12 +347,12 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
         weekStart: record?.weekStart ?? trialWeekStart(at),
         tiles: {},
         history: capHistory(history),
-        // Read off the whole archive before the cap, so a cycle the cap drops
-        // has its results kept here first (see guild-trial-results.js). A
+        // Read off the whole archive before the dedupe and the cap, so a copy
+        // either drops has its results kept here first (see guild-trial-results.js). A
         // record put away as another guild's takes its results with it: they
         // were folded off that guild's weeks, and kept they would draw and save
         // as this guild's
-        trialResults: foreign ? [] : mergeResults(record?.trialResults, resultsFromHistory(history)),
+        trialResults: foreign ? [] : mergeResults(record?.trialResults, resultsFromHistory(cyclesToFold)),
     };
 }
 

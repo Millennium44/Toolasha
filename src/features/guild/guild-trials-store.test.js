@@ -1916,6 +1916,32 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         history: [],
     });
 
+    test('a tile archived later under the same cycle keeps its result when the first copy stands', () => {
+        const first = archiveEarlierCycles(record(), read(), { offset, at: CLEARS.CAPTURED_AT });
+        const late = {
+            'skilling::alchemy': {
+                name: 'Alchemy',
+                kind: 'skilling',
+                serverTier: 7,
+                serverTierAt: lastCycle,
+                serverDone: true,
+                samples: [],
+                tiers: [],
+            },
+        };
+        const second = archiveEarlierCycles({ ...first, tiles: { ...first.tiles, ...late } }, read(), {
+            offset,
+            at: CLEARS.CAPTURED_AT + 1000,
+        });
+
+        // One cycle's archive, still the first copy…
+        expect(second.history).toHaveLength(1);
+        expect(second.history[0].tiles['skilling::alchemy']).toBeUndefined();
+        // …and Alchemy's result, read before that dedupe
+        expect(second.trialResults.find((result) => result.trial === 'alchemy')).toMatchObject({ serverTier: 7 });
+        expect(second.trialResults.some((result) => result.trial === 'badger')).toBe(true);
+    });
+
     test('the last cycle is archived and this one’s clears stay', () => {
         const held = record();
         const next = archiveEarlierCycles(held, read(), { offset, at: CLEARS.CAPTURED_AT });
@@ -2465,6 +2491,107 @@ describe('trial results — each trial’s tier kept after its week leaves the a
         expect(stored.guildId).toBe('g1');
         expect(trialResultsOf(stored).map((r) => r.weekStart)).not.toContain(weekOf(2));
         expect(trialResultsOf(stored).filter((r) => r.trial === 'badger')).toMatchObject([{ cardTier: 6 }]);
+    });
+
+    describe('a re-archive of one cycle the whole-cycle dedupe drops', () => {
+        const CYCLE = 'an earlier cycle of this week';
+        const cycleFrom = thisWeek + 3600_000;
+        const cardBadger = (extra = {}) => ({
+            name: 'Trial Badger',
+            kind: 'combat',
+            tier: 5,
+            points: 2000,
+            pointsByTier: { 5: 2000 },
+            completed: true,
+            samples: [],
+            tiers: [],
+            ...extra,
+        });
+        const serverOnly = (name, kind, tier, at) => ({
+            name,
+            kind,
+            samples: [],
+            tiers: [],
+            pointsByTier: {},
+            tierSeenAt: {},
+            serverTier: tier,
+            serverTierAt: at,
+            serverDone: true,
+        });
+        const archive = (record, tiles, at) => archiveCycle({ ...record, tiles }, CYCLE, at, { cycleFrom });
+        const start = () => ({ weekStart: thisWeek, guildId: 'g1', guildName: 'Milky Way', tiles: {}, history: [] });
+
+        test('another trial’s statement keeps its result', () => {
+            const first = archive(start(), { 'combat::trial badger': cardBadger() }, now);
+            const second = archive(
+                first,
+                { 'skilling::alchemy': serverOnly('Alchemy', 'skilling', 7, now + 1000) },
+                now + 1000
+            );
+
+            // The archive keeps the copy worth more whole…
+            expect(Object.keys(second.history[0].tiles)).toEqual(['combat::trial badger']);
+            // …and each trial's result stands
+            const byTrial = Object.fromEntries(second.trialResults.map((result) => [result.trial, result]));
+            expect(byTrial.badger).toMatchObject({ cardTier: 5, points: 2000 });
+            expect(byTrial.alchemy).toMatchObject({ serverTier: 7, cardTier: null, cycleFrom });
+        });
+
+        test('a newer statement of the same trial raises its result', () => {
+            const first = archive(
+                start(),
+                { 'combat::trial badger': cardBadger({ serverTier: 5, serverTierAt: now }) },
+                now
+            );
+            const second = archive(
+                first,
+                { 'combat::trial badger': serverOnly('Trial Badger', 'combat', 7, now + 1000) },
+                now + 1000
+            );
+
+            expect(second.trialResults).toHaveLength(1);
+            expect(second.trialResults[0]).toMatchObject({
+                cardTier: 5,
+                points: 2000,
+                serverTier: 7,
+                serverTierAt: now + 1000,
+            });
+        });
+
+        test('a copy the re-archive replaces keeps its results, on a record not folded before', () => {
+            const held = archive(start(), { 'skilling::alchemy': serverOnly('Alchemy', 'skilling', 7, now) }, now);
+            const legacy = { ...held };
+            delete legacy.trialResults;
+            const next = archive(legacy, { 'combat::trial badger': cardBadger() }, now + 1000);
+
+            expect(Object.keys(next.history[0].tiles)).toEqual(['combat::trial badger']);
+            expect(next.trialResults.map((result) => result.trial).sort()).toEqual(['alchemy', 'badger']);
+        });
+
+        test('the results survive the save and load that follow', async () => {
+            const first = archive(start(), { 'combat::trial badger': cardBadger() }, now);
+            const second = archive(
+                first,
+                { 'skilling::alchemy': serverOnly('Alchemy', 'skilling', 7, now + 1000) },
+                now + 1000
+            );
+            await saveTrialRecord('Milky Way', second, null, { guildId: 'g1', overwrite: true });
+
+            const loaded = await loadTrialRecord('Milky Way', now + 2000, null, { guildId: 'g1' });
+            expect(loaded.trialResults.map((result) => result.trial).sort()).toEqual(['alchemy', 'badger']);
+        });
+
+        test('a foreign archive folds neither the new tiles nor what was kept', () => {
+            const first = archive(start(), { 'combat::trial badger': cardBadger() }, now);
+            const foreign = archiveCycle(
+                { ...first, tiles: { 'skilling::alchemy': serverOnly('Alchemy', 'skilling', 7, now + 1000) } },
+                'belongs to another guild',
+                now + 1000
+            );
+
+            expect(foreign.trialResults).toEqual([]);
+            expect(trialResultsOf(foreign)).toEqual([]);
+        });
     });
 
     test('a cycle archived off another guild’s record files no results', () => {
