@@ -2322,6 +2322,7 @@ class TaskRerollWalk {
             const open = !widget.infoOpen;
             if (open && widget.settingsOpen) widget.setSettingsOpen(false);
             setOpen(open);
+            if (open) this._placeInfo(widget);
             this._renderInfo();
         });
         // The info text and the settings drawer share one spot; opening one puts the other away
@@ -2332,6 +2333,39 @@ class TaskRerollWalk {
         widget.element.appendChild(panel);
         widget.info = { button, panel, setOpen };
         widget.infoOpen = false;
+    }
+
+    /**
+     * Size and place the info panel from the viewport. Docked, it would take the toolbar row's width (a
+     * narrow column) and run down under the game's chat, so it is fixed under its button instead: as wide as
+     * the screen allows up to 340px, kept on screen from the left, and no taller than 40% of the viewport
+     * (and the space below it), scrolling inside that. Floating, it stays in the widget's flow and only gets
+     * the same height cap.
+     * @param {Object} widget - The floating-widget parts
+     * @private
+     */
+    _placeInfo(widget) {
+        const { button, panel } = widget.info;
+        const style = panel.style;
+        style.boxSizing = 'border-box';
+        style.overflowY = 'auto';
+        const viewportHeight = window.innerHeight || 0;
+        const cap = Math.round(viewportHeight * 0.4);
+        if (widget.element.dataset.toolashaDocked !== 'true') {
+            style.maxHeight = cap ? `${cap}px` : '';
+            return;
+        }
+        const margin = 8;
+        const rect = button.getBoundingClientRect();
+        const width = Math.max(120, Math.min(340, (window.innerWidth || 340) - margin * 2));
+        const left = Math.max(margin, Math.min(rect.left, (window.innerWidth || width) - width - margin));
+        const top = rect.bottom + 4;
+        style.position = 'fixed';
+        style.left = `${left}px`;
+        style.top = `${top}px`;
+        style.width = `${width}px`;
+        style.marginTop = '0';
+        style.maxHeight = viewportHeight ? `${Math.max(80, Math.min(cap, viewportHeight - top - margin))}px` : '';
     }
 
     /**

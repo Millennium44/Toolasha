@@ -2565,3 +2565,46 @@ describe('the walk buttons on a touch screen', () => {
         });
     }
 });
+
+describe('the info panel is sized from the viewport', () => {
+    const noHover = (query) => query === '(hover: none)';
+    const panel = () => document.querySelector('.mwi-task-reroll-walk-info-panel');
+    let size;
+
+    beforeEach(() => {
+        size = [window.innerWidth, window.innerHeight];
+        window.innerWidth = 412;
+        window.innerHeight = 924;
+        vi.stubGlobal('matchMedia', (query) => ({ matches: noHover(query), media: query }));
+    });
+
+    afterEach(() => {
+        [window.innerWidth, window.innerHeight] = size;
+        vi.unstubAllGlobals();
+    });
+
+    test('docked, it is fixed, wide, on screen and capped so it scrolls above the chat', async () => {
+        settings.values.tasks_rerollWalkBarPosition = 'toolbar';
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+        document.querySelector('.mwi-task-reroll-walk-info').click();
+
+        const style = panel().style;
+        expect(style.position).toBe('fixed');
+        expect(style.width).toBe('340px');
+        expect(parseFloat(style.left)).toBeGreaterThanOrEqual(8);
+        expect(parseFloat(style.left) + 340).toBeLessThanOrEqual(412 - 8);
+        expect(style.overflowY).toBe('auto');
+        expect(style.maxHeight).toBe('370px');
+    });
+
+    test('floating, it stays in the widget flow with the same height cap', async () => {
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+        document.querySelector('.mwi-task-reroll-walk-info').click();
+
+        expect(panel().style.position).not.toBe('fixed');
+        expect(panel().style.overflowY).toBe('auto');
+        expect(panel().style.maxHeight).toBe('370px');
+    });
+});
