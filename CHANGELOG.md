@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat readers use the ability bar the game sends
+
+- The damage tracker's class detection, the rotation tracker and party lint now read each fighter's ability bar from where a new fight actually carries it; before, they never found it and fell back to casts or the equipped kit.
+- Guild trial unit sheets and consumable events no longer leak into your own party's combat stats or the monster stat check, and a late older leaderboard no longer overwrites a newer reading.
+
 ### More tests read real game messages
 
 - Combat (`new_battle`, `battle_updated`, consumable casts), inventory and market listing and order-book tests now use payloads captured from the game on the test server.

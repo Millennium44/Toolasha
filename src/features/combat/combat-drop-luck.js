@@ -578,6 +578,9 @@ class CombatDropLuck {
      * @param {Object} message - `battle_unit_fetched` message
      */
     _onCombatEnded(message) {
+        // A guild trial's sheet is flagged `isGuildBattle`; even one naming the
+        // player's own character is not their combat session
+        if (message?.isGuildBattle) return;
         const lootMap = message?.unit?.totalLootMap;
         if (!lootMap || !this.context) return;
         // Another player's sheet (their profile's Battle Info, which a trial

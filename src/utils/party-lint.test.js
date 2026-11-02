@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect } from 'vitest';
+import { buildNewBattle } from '../__fixtures__/wire/new-battle.js';
 
 import {
     isSkillingGearItem,
@@ -174,11 +175,22 @@ describe('linting a party', () => {
     });
 });
 
+describe('mapping a captured new_battle to lint inputs', () => {
+    test('abilities come off the player, where the game puts them', () => {
+        const captured = buildNewBattle();
+        const { playerDTOs } = battleLintInputs(captured);
+        expect(playerDTOs[0].abilities.map((a) => a.hrid)).toEqual(
+            captured.players[0].combatAbilities.map((a) => a.abilityHrid)
+        );
+        expect(playerDTOs[0].abilities.length).toBeGreaterThan(0);
+    });
+});
+
 describe('mapping a live battle to lint inputs', () => {
     /** A `new_battle` player: named, with the whole equipped kit. */
     const battlePlayer = (id, name, abilities) => ({
         character: { id, name },
-        combatDetails: { combatAbilities: abilities },
+        combatAbilities: abilities,
     });
 
     const battle = {

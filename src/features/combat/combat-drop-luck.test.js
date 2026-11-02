@@ -619,4 +619,21 @@ describe("another player's sheet arriving as battle_unit_fetched", () => {
         combatDropLuck.context = null;
         combatDropLuck.isInitialized = false;
     });
+
+    test('a guild trial sheet naming the player’s own character is refused too', () => {
+        combatDropLuck.context = { actionHrid: '/actions/combat/somewhere' };
+        combatDropLuck.isInitialized = true;
+        const hunt = vi.spyOn(combatDropLuck, '_findPanel').mockImplementation(() => {});
+
+        combatDropLuck._onCombatEnded({
+            isGuildBattle: true,
+            unit: { character: { id: game.characterId }, totalLootMap: { '/items/coin': 500 } },
+        });
+        const calls = hunt.mock.calls.length;
+
+        hunt.mockRestore();
+        combatDropLuck.context = null;
+        combatDropLuck.isInitialized = false;
+        expect(calls).toBe(0);
+    });
 });

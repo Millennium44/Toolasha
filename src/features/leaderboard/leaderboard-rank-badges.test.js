@@ -202,6 +202,25 @@ describe('leaderboard rank badges', () => {
         expect(badges()).toHaveLength(0);
     });
 
+    test('a board older than the revision already seen for the same view is ignored', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const el = nameEl('Alice');
+        const board = (rank, leaderboardRevision) => ({
+            leaderboardCategory: 'milking',
+            gameModeFilter: 'standard',
+            leaderboardRevision,
+            leaderboard: { rows: [{ name: 'Alice', rank }] },
+        });
+        game.wsHandlers.leaderboard_updated(board(7, 5));
+        await flush();
+        await vi.advanceTimersByTimeAsync(60_000);
+        game.wsHandlers.leaderboard_updated(board(99, 4));
+        await flush();
+        expect(el.nextElementSibling.textContent).toContain('7');
+        expect(el.nextElementSibling.textContent).not.toContain('99');
+    });
+
     test('Local only draws a badge from a board the player opens, and never fetches', async () => {
         game.mode = 'local';
         await leaderboardRankBadges.initialize();

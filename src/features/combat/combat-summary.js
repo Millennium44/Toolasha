@@ -41,6 +41,9 @@ import { valueOfLoot } from '../combat-stats/combat-stats-calculator.js';
 export function isSessionSummary(message, selfId = null) {
     const unit = message?.unit;
     if (!unit) return false;
+    // A guild trial's sheet is flagged `isGuildBattle` and kept apart by the
+    // game; it can name the player's own character and so pass the owner check
+    if (message.isGuildBattle) return false;
     if (!unit.totalLootMap && !unit.totalSkillExperienceMap) return false;
     const owner = unit.character?.id;
     if (owner != null && selfId != null && String(owner) !== String(selfId)) return false;

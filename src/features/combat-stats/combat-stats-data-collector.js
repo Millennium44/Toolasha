@@ -977,6 +977,11 @@ class CombatStatsDataCollector {
      */
     async onConsumableUsed(data) {
         try {
+            // A guild trial's consumable events ride this same message flagged
+            // `isGuildBattle`; the game keeps them in its guild battle state, so
+            // they are never the player's own consumption.
+            if (data?.isGuildBattle) return;
+
             // Skip ability consumptions
             const itemHrid = data.consumable?.itemHrid;
             if (!itemHrid || itemHrid.includes('/ability/')) {

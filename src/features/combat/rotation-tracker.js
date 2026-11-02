@@ -31,7 +31,7 @@
  * would put somebody else's mana bar on your panel. It is re-resolved at every
  * battle, because a slot is a seat in this fight and the party re-deals.
  *
- * Only `new_battle` carries `combatDetails.combatAbilities`, which is the whole
+ * Only `new_battle` carries `combatAbilities`, which is the whole
  * reason an ability that never fires can appear as a row at all: it is read from
  * the stated bar rather than inferred from casts, and a starved ability produces
  * no casts to infer from.
@@ -224,7 +224,7 @@ export function startRotationTracker() {
 
             // The bar this battle states for our seat; the character's equipped
             // kit when the message does not carry one
-            const stated = ownIndex !== null ? players[ownIndex]?.combatDetails?.combatAbilities : null;
+            const stated = ownIndex !== null ? players[ownIndex]?.combatAbilities : null;
             seedKit(Array.isArray(stated) && stated.length ? stated : equippedKit());
         } catch (error) {
             console.error('[RotationTracker] Reading a new battle failed:', error);

@@ -957,7 +957,7 @@ describe('the live party lint on the Damage panel', () => {
     /** A `new_battle` player with the whole equipped kit, as the payload has it */
     const battlePlayer = (id, name, abilityHrids) => ({
         character: { id, name },
-        combatDetails: { combatAbilities: abilityHrids.map((hrid) => ({ abilityHrid: hrid, level: 40 })) },
+        combatAbilities: abilityHrids.map((hrid) => ({ abilityHrid: hrid, level: 40 })),
     });
 
     beforeEach(() => {

@@ -183,7 +183,7 @@ export function findOwnBattlePlayer(battle, { characterId, characterName } = {})
  */
 export function equippedAbilitiesFromBattle(battle, identity = {}) {
     const me = findOwnBattlePlayer(battle, identity);
-    const abilities = me?.combatDetails?.combatAbilities;
+    const abilities = me?.combatAbilities;
     if (!Array.isArray(abilities)) return null;
 
     return abilities.filter((entry) => entry?.abilityHrid).map((entry) => ({ ...entry }));

@@ -912,6 +912,19 @@ describe('the session starts when combat does', () => {
         expect(sessionText()).toContain('Exp:0');
     });
 
+    test('a guild trial unit sheet does not end the fight', () => {
+        fire('new_battle');
+        grant('melee', 100_000);
+
+        vi.setSystemTime(new Date('2026-08-02T12:20:00Z'));
+        fire('battle_unit_fetched', { isGuildBattle: true });
+        vi.setSystemTime(new Date('2026-08-02T12:25:00Z'));
+        fire('new_battle');
+
+        combatLevelPanel.show();
+        expect(sessionText()).toContain('0h 25m 00s');
+    });
+
     test('Reset starts the clock again, and the run does not restart it', () => {
         fire('new_battle');
         grant('melee', 100_000);

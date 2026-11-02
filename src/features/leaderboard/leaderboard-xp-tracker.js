@@ -42,6 +42,7 @@ import storage from '../../core/storage.js';
 import { createPersistedRecord, mergeSeriesMaps } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { createRevisionGate } from '../../utils/leaderboard-revision.js';
 
 const STORE_NAME = 'leaderboardHistory';
 
@@ -327,6 +328,8 @@ class LeaderboardXPTracker {
         /** The trial the last message showed; the readers' default for the trial board */
         this.lastTrialFilter = null;
         this.unregisterHandlers = [];
+        /** The game drops a board older than the revision it holds; so does the recorder */
+        this.revisionGate = createRevisionGate();
     }
 
     /** @returns {Object} `${category}_${playerName}` → [{t, xp}] — the live in-memory record */
@@ -470,6 +473,10 @@ class LeaderboardXPTracker {
      * @param {Object} data - leaderboard_updated message
      */
     _onLeaderboardUpdated(data) {
+        // A board older than the last one seen for the same view is dropped by
+        // the game; recording it would write stale XP and ranks as a new reading
+        if (this.revisionGate.isStale(data)) return;
+
         // Every board is recorded, the guild Level board included — it used to
         // be skipped for having "its own tracker", but that one follows only
         // the player's guild, and the rate columns on the Guilds tab need every
@@ -622,6 +629,7 @@ class LeaderboardXPTracker {
         }
         this.unregisterHandlers = [];
         this.history.reset();
+        this.revisionGate.reset();
         this.lastLeaderboardCategory = null;
         this.lastFilterKey = 'all';
         this.lastTrialFilter = null;

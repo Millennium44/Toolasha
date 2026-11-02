@@ -69,7 +69,7 @@ const emitCharacter = (event, data) => (game.handlers.get(event) || []).forEach(
 function battle() {
     emit('new_battle', {
         players: {
-            1: { name: 'Me', combatDetails: { combatAbilities: [{ abilityHrid: CHEAP }] } },
+            1: { name: 'Me', combatAbilities: [{ abilityHrid: CHEAP }] },
             2: { name: 'Ally' },
         },
     });
@@ -116,6 +116,16 @@ describe('whose slot is being watched', () => {
         expect(rotationAudit().tracking).toBe(false);
         battle();
         expect(rotationAudit().tracking).toBe(true);
+    });
+});
+
+describe('the bar a new_battle states', () => {
+    test('is read off the player, and lists the ability before it is ever cast', () => {
+        // No equipped kit on the character: only the message states the bar
+        game.characterData = null;
+        battle();
+
+        expect(rotationAudit().fight.abilities.map((row) => row.hrid)).toEqual([CHEAP]);
     });
 });
 
@@ -182,7 +192,7 @@ describe('leaving a party (B13)', () => {
         // as five long after only one player was left.
         emit('new_battle', {
             players: {
-                1: { name: 'Me', combatDetails: { combatAbilities: [{ abilityHrid: CHEAP }] } },
+                1: { name: 'Me', combatAbilities: [{ abilityHrid: CHEAP }] },
                 2: { name: 'A' },
                 3: { name: 'B' },
                 4: { name: 'C' },
@@ -194,7 +204,7 @@ describe('leaving a party (B13)', () => {
                 1: {
                     name: 'Me',
                     preparingAbilityHrid: CHEAP,
-                    combatDetails: { combatAbilities: [{ abilityHrid: CHEAP }] },
+                    combatAbilities: [{ abilityHrid: CHEAP }],
                 },
             },
             monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
@@ -227,7 +237,7 @@ describe('the first hit of a wave', () => {
                 1: {
                     name: 'Me',
                     preparingAbilityHrid: CHEAP,
-                    combatDetails: { combatAbilities: [{ abilityHrid: CHEAP }] },
+                    combatAbilities: [{ abilityHrid: CHEAP }],
                 },
             },
             monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
@@ -356,7 +366,7 @@ describe('a reflect on your own bar', () => {
                     name: 'Me',
                     currentHitpoints: 1000,
                     isPreparingAutoAttack: true,
-                    combatDetails: { combatAbilities: [{ abilityHrid: SPIKE }] },
+                    combatAbilities: [{ abilityHrid: SPIKE }],
                 },
                 2: { name: 'Ally', currentHitpoints: 1000 },
             },
