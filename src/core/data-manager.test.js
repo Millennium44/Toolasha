@@ -11,6 +11,7 @@ import { buildCollectionRow, buildCollectionsUpdated } from '../__fixtures__/wir
 import { buildSkillRow, buildSkillsUpdated } from '../__fixtures__/wire/skills-updated.js';
 import { buildQuest, buildQuestDiscarded } from '../__fixtures__/wire/quests-updated.js';
 import { buildCharacterStatsUpdated } from '../__fixtures__/wire/character-stats-updated.js';
+import { buildNewBattle } from '../__fixtures__/wire/new-battle.js';
 import { buildPartyUpdated } from '../__fixtures__/wire/party-updated.js';
 
 let webSocketHandlers = new Map();
@@ -440,6 +441,48 @@ describe('equipped abilities through a labyrinth run', () => {
             '/abilities/aura',
             '/abilities/smack',
         ]);
+    });
+
+    describe('a captured battle, whose kit rows carry no slotNumber', () => {
+        /** The captured message, made to be about the logged-in character */
+        function capturedBattle() {
+            const battle = buildNewBattle();
+            battle.players[0].character = { id: 'char-1', name: 'Tester' };
+            return battle;
+        }
+
+        test('the slots survive, so a later equip displaces the occupant of its slot', async () => {
+            const { default: dataManager } = await import('./data-manager.js');
+            const battle = capturedBattle();
+            const kit = battle.players[0].combatAbilities;
+            expect(kit.every((a) => a.slotNumber === undefined)).toBe(true);
+            await login(
+                dataManager,
+                kit.map((a, i) => ({ abilityHrid: a.abilityHrid, slotNumber: i + 1, level: a.level }))
+            );
+
+            webSocketHandlers.get('new_battle')(battle);
+            // Slot 2 is taken by a new ability; the one that sat there must leave
+            webSocketHandlers.get('abilities_updated')({
+                endCharacterAbilities: [{ abilityHrid: '/abilities/fireball', slotNumber: 2, level: 5 }],
+            });
+
+            const equipped = dataManager.getEquippedAbilities().map((a) => a.abilityHrid);
+            expect(equipped).toHaveLength(kit.length);
+            expect(equipped).toContain('/abilities/fireball');
+            expect(equipped).not.toContain(kit[1].abilityHrid);
+        });
+
+        test('with no slot known anywhere, the server order numbers them', async () => {
+            const { default: dataManager } = await import('./data-manager.js');
+            const battle = capturedBattle();
+            const kit = battle.players[0].combatAbilities;
+            await login(dataManager, [{ abilityHrid: '/abilities/stale', level: 1 }]);
+
+            webSocketHandlers.get('new_battle')(battle);
+
+            expect(dataManager.getEquippedAbilities().map((a) => a.slotNumber)).toEqual(kit.map((_, i) => i + 1));
+        });
     });
 
     test('experience ticks raise a level without disturbing the kit', async () => {

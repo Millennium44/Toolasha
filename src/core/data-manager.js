@@ -15,6 +15,7 @@ import {
     reconcileEquippedAbilities,
     applyAbilityProgress,
     equippedAbilitiesFromBattle,
+    slotBattleKit,
     abilityKitsDiffer,
 } from './character-abilities.js';
 import {
@@ -1902,12 +1903,15 @@ class DataManager {
             // The only message that carries the equipped kit whole rather than
             // as a delta, so it is the backstop: whatever the labyrinth did to
             // the loadout, the first battle after it settles the question.
-            const fromBattle = equippedAbilitiesFromBattle(data, {
+            const battleKit = equippedAbilitiesFromBattle(data, {
                 characterId: this.currentCharacterId,
                 characterName: this.currentCharacterName,
             });
+            const previous = this.characterData?.combatUnit?.combatAbilities;
+            const fromBattle = battleKit
+                ? slotBattleKit(battleKit, previous, this.characterData?.characterAbilities)
+                : null;
             if (fromBattle && fromBattle.length > 0) {
-                const previous = this.characterData?.combatUnit?.combatAbilities;
                 if (this.setEquippedAbilities(fromBattle) && abilityKitsDiffer(previous, fromBattle)) {
                     this.emit('abilities_updated', {
                         endCharacterAbilities: fromBattle,
