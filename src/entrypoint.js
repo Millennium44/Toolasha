@@ -64,7 +64,7 @@ function showLoadErrorBanner(html) {
                 // libraries load and cannot import it), with the error hue on the edge only
                 'max-width:min(92vw,520px); padding:12px 16px; border-radius:0.25rem; background:rgb(19, 20, 25); ' +
                 'border:1px solid rgba(255, 82, 82, 0.8); color:#e7e7e7; font:13px/1.5 system-ui,sans-serif; ' +
-                'box-shadow:rgba(208, 208, 208, 0.282) 0 0 4px 4px;';
+                'box-shadow:0 4px 12px rgba(0, 0, 0, 0.4);';
             (document.body || document.documentElement).appendChild(el);
         }
         el.innerHTML = html;

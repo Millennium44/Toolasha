@@ -298,8 +298,8 @@ export function showModeNotice({ mode, onDownload, env }) {
     el.style.cssText =
         'position:fixed; bottom:12px; left:12px; z-index:2147483647; max-width:min(92vw,360px); padding:10px 14px; ' +
         // The game's plain frame (values from utils/game-look.js; core cannot import utils)
-        'border-radius:0.25rem; background:rgb(19, 20, 25); border:1px solid rgb(208, 208, 208); color:#e7e7e7; ' +
-        'font:13px/1.5 system-ui,sans-serif; box-shadow:rgba(208, 208, 208, 0.282) 0 0 4px 4px;';
+        'border-radius:0.25rem; background:rgb(19, 20, 25); border:1px solid #323450; color:#e7e7e7; ' +
+        'font:13px/1.5 system-ui,sans-serif; box-shadow:0 4px 12px rgba(0, 0, 0, 0.4);';
     const text = doc.createElement('div');
     text.textContent =
         mode === MODES.SAFE
