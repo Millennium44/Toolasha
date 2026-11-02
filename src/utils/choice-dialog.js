@@ -13,16 +13,12 @@
  * reads as a decision rather than as a continuation.
  */
 
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from './game-look.js';
 import { PANEL_Z_CAP } from './panel-z-index.js';
 import { markToolashaSurface } from './surface-marker.js';
 
-const COLORS = {
-    background: 'rgba(12, 15, 26, 0.98)',
-    border: 'rgba(120, 160, 255, 0.35)',
-    text: '#e8ecf5',
-    textDim: 'rgba(232, 236, 245, 0.65)',
-    accent: '#9ec4ff',
-};
+/** The game's own warning colors, for the choice that cannot be undone */
+const DANGER = { rest: 'var(--color-warning, #db3333)', hover: 'var(--color-warning-hover, #e65c5c)' };
 
 /**
  * Ask a question and wait for an answer.
@@ -59,25 +55,22 @@ export function askChoice({ title, message = '', choices = [] }) {
         Object.assign(dialog.style, {
             minWidth: '320px',
             maxWidth: '460px',
-            background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 12px 48px rgba(0, 0, 0, 0.7)',
-            color: COLORS.text,
+            ...GAME_FRAME,
+            color: GAME_COLORS.text,
             fontSize: '13px',
             padding: '14px 16px 12px',
         });
 
         const heading = document.createElement('div');
         heading.textContent = title;
-        Object.assign(heading.style, { fontWeight: 'bold', color: COLORS.accent, marginBottom: '6px' });
+        Object.assign(heading.style, { fontWeight: 'bold', color: GAME_COLORS.text, marginBottom: '6px' });
         dialog.appendChild(heading);
 
         if (message) {
             const body = document.createElement('div');
             body.textContent = message;
             Object.assign(body.style, {
-                color: COLORS.textDim,
+                color: GAME_COLORS.textDim,
                 marginBottom: '12px',
                 lineHeight: '1.45',
                 whiteSpace: 'pre-wrap',
@@ -111,16 +104,21 @@ export function askChoice({ title, message = '', choices = [] }) {
             button.textContent = choice.label;
             if (choice.hint) button.title = choice.hint;
 
-            const tone = choice.tone === 'danger' ? '#ff8080' : choice.tone === 'primary' ? COLORS.accent : COLORS.text;
+            styleGameButton(button, choice.tone === 'primary' ? 'primary' : 'quiet');
             Object.assign(button.style, {
-                background: choice.tone === 'primary' ? 'rgba(158, 196, 255, 0.18)' : 'rgba(255, 255, 255, 0.07)',
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: '4px',
-                color: tone,
-                cursor: 'pointer',
                 fontSize: '13px',
                 padding: '5px 14px',
+                height: 'auto',
+                minHeight: '1.875rem',
             });
+            if (choice.tone === 'danger') {
+                // Filled in the game's warning color so it still reads as the dangerous one; the listeners
+                // added here run after the blue hover ones styleGameButton added, so they win
+                button._restBg = DANGER.rest;
+                button.style.background = DANGER.rest;
+                button.addEventListener('mouseover', () => (button.style.background = DANGER.hover));
+                button.addEventListener('mouseout', () => (button.style.background = DANGER.rest));
+            }
             button.addEventListener('click', () => finish(choice.value));
             buttons.appendChild(button);
         }
