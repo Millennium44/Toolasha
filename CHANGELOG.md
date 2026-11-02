@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reroll walk help on a touch screen
+
+- On a device with no hover, a new ⓘ button next to the walk's settings shows what each control does, without pressing anything.
+
 ### Scroll Planner fits a phone
 
 - On a narrow screen each scroll's name, owned count and number box share one line, with its skills on a second, so entering a count no longer needs a side-scroll.

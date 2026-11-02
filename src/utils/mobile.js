@@ -25,6 +25,16 @@ export function hasCoarsePointer() {
 }
 
 /**
+ * Whether there is no hover at all: a hover `title` can never be seen, so help that lives only
+ * there needs another way in.
+ *
+ * @returns {boolean}
+ */
+export function lacksHover() {
+    return typeof matchMedia === 'function' && matchMedia('(hover: none)').matches;
+}
+
+/**
  * Whether features should adjust for a phone-sized, touch-driven screen.
  *
  * @returns {boolean}

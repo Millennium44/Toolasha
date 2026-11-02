@@ -2425,3 +2425,112 @@ describe('floating mode', () => {
         expect(chipEl().dataset.toolashaDocked).toBeUndefined();
     });
 });
+
+describe('the walk help without a hover', () => {
+    const infoButton = () => document.querySelector('.mwi-task-reroll-walk-info');
+    const infoPanel = () => document.querySelector('.mwi-task-reroll-walk-info-panel');
+    const oneCard = () => board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+    /** Stub the media queries the way a phone answers them */
+    const stubMedia = (matches) =>
+        vi.stubGlobal('matchMedia', (query) => ({ matches: matches(query), media: query, addEventListener() {} }));
+    const noHover = (query) => query === '(hover: none)';
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    test('with a hover there is no info control and the titles are all there is', async () => {
+        stubMedia(() => false);
+        oneCard();
+        await walk.start();
+
+        expect(infoButton()).toBeNull();
+        expect(infoPanel()).toBeNull();
+        expect(document.querySelector('.mwi-task-reroll-walk-sort').title).toContain('Sort the board now');
+    });
+
+    test('without a hover an info press shows the help and presses nothing else', async () => {
+        stubMedia(noHover);
+        sorter.sortTasks.mockClear();
+        oneCard();
+        await walk.start();
+        const state = walk.state;
+        const step = walk.step;
+
+        expect(infoPanel().style.display).toBe('none');
+        infoButton().click();
+
+        expect(infoPanel().style.display).toBe('flex');
+        expect(infoButton().getAttribute('aria-expanded')).toBe('true');
+        const text = infoPanel().textContent;
+        expect(text).toContain('Sort the board now');
+        expect(text).toContain('Hide the walk');
+        expect(text).toContain('Reroll walk: show or hide');
+        expect(text).toContain('Cheapest compares');
+        expect(text).toContain('red trash can');
+        expect(text).toContain('A reroll costing this much or more is blocked');
+        expect(text).toContain('One press, one game action');
+        // No walk action, sort or game button was pressed, and the walk did not move
+        expect(clicks).toEqual([]);
+        expect(sorter.sortTasks).not.toHaveBeenCalled();
+        expect(walk.state).toBe(state);
+        expect(walk.step).toBe(step);
+
+        infoButton().click();
+        expect(infoPanel().style.display).toBe('none');
+    });
+
+    test('a tap on Sort still sorts with the info control present', async () => {
+        stubMedia(noHover);
+        sorter.sortTasks.mockClear();
+        oneCard();
+        await walk.start();
+
+        infoButton().click();
+        document.querySelector('.mwi-task-reroll-walk-sort').click();
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(infoPanel().style.display).toBe('flex');
+    });
+
+    test('the info text and the settings drawer take turns', async () => {
+        stubMedia(noHover);
+        oneCard();
+        await walk.start();
+
+        infoButton().click();
+        document.querySelector('.mwi-task-reroll-walk-chip-gear').click();
+        expect(infoPanel().style.display).toBe('none');
+        infoButton().click();
+        expect(infoPanel().style.display).toBe('flex');
+        expect(walk.widget.settingsOpen).toBe(false);
+    });
+
+    test('hiding the walk removes the control, and the next one starts closed', async () => {
+        stubMedia(noHover);
+        oneCard();
+        await walk.start();
+        infoButton().click();
+
+        walk.stop();
+        expect(infoButton()).toBeNull();
+        expect(infoPanel()).toBeNull();
+        expect(walk.widget).toBeNull();
+
+        walk.hidden = false;
+        walk._render();
+        expect(infoButton()).not.toBeNull();
+        expect(infoPanel().style.display).toBe('none');
+    });
+
+    test('docked in the toolbar the panel hangs under it like the settings drawer', async () => {
+        stubMedia(noHover);
+        settings.values.tasks_rerollWalkBarPosition = 'toolbar';
+        oneCard();
+        await walk.start();
+
+        expect(infoPanel().style.position).toBe('absolute');
+        expect(infoButton().className).toContain('Button_small__3fqC7');
+        infoButton().click();
+        expect(infoPanel().textContent).toContain('Sort the board now');
+    });
+});

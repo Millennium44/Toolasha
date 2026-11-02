@@ -77,6 +77,7 @@ import { GAME } from '../../utils/selectors.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import taskSorter from './task-sorter.js';
+import { lacksHover } from '../../utils/mobile.js';
 import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -102,6 +103,23 @@ const PROTECTED_KEY_PREFIX = 'taskProtectedHrids';
 const PANEL_POSITION_KEY = 'taskRerollWalkPanelPosition';
 /** The game's own small toolbar button, as the Merged crafting walk button wears it */
 const TOOLBAR_BUTTON_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
+
+/**
+ * The walk's hover help, kept as text so a device with no hover can read it too: the info control
+ * (shown only there) lists these, and the buttons' `title`s still carry the same words.
+ */
+const TOGGLE_HELP =
+    'Reroll walk: show or hide the walk panel. The walk steps down the board one click at a time, ' +
+    'leaves protected tasks alone, and stops rerolling a task once the shield popup would block the ' +
+    'next reroll.';
+const SORT_HELP =
+    'Sort the board now, the same way the Sort Tasks button does. One press, one sort — nothing is ' +
+    'automated and the walk is not disturbed.';
+const CLOSE_HELP = 'Hide the walk. A run in progress stops here, and the board is left exactly as it is.';
+const PAY_HELP =
+    'Cheapest compares the two prices in coins, valuing a cowbell through the Bag of 10 Cowbells. ' +
+    'A free reroll is always taken first.';
+const TRASH_HELP = 'Offer the red trash can rather than leaving the task on the board. Off: the walk moves past it.';
 
 // The chip sits below the game's own modal layer (its modals run z 200-1000)
 // so opening a profile or any dialog over it wins — the shared floating-panel
@@ -659,10 +677,7 @@ class TaskRerollWalk {
         const button = document.createElement('span');
         button.className = BUTTON_CLASS;
         button.textContent = '\u{1F3B2}';
-        button.title =
-            'Reroll walk: show or hide the walk panel. The walk steps down the board one click at a time, ' +
-            'leaves protected tasks alone, and stops rerolling a task once the shield popup would block the ' +
-            'next reroll.';
+        button.title = TOGGLE_HELP;
         button.style.cssText = 'cursor:pointer; font-size:16px; margin-left:6px; opacity:0.7; transition:opacity 0.1s;';
         button.addEventListener('mouseover', () => {
             button.style.opacity = '1';
@@ -1917,12 +1932,13 @@ class TaskRerollWalk {
         });
         widget.main.addEventListener('click', () => this._onMainClick());
         widget.extras.appendChild(this._buildSortButton());
-        widget.close.title = 'Hide the walk. A run in progress stops here, and the board is left exactly as it is.';
+        widget.close.title = CLOSE_HELP;
         widget.close.addEventListener('click', () => this.stop());
         // After the shell's own toggle, so the drawer is rebuilt with whatever
         // the shield popup's thresholds say the moment it is opened
         widget.gear.addEventListener('click', () => this._renderSettings());
 
+        this._addInfoControl(widget);
         if (docked) this._styleDocked(widget, header);
         else this._mountFloating(widget);
         this.widget = widget;
@@ -1986,7 +2002,7 @@ class TaskRerollWalk {
 
         // The toolbar's own button look, as "Merged crafting walk" uses it
         const sort = widget.extras.querySelector('.mwi-task-reroll-walk-sort');
-        for (const button of [widget.main, widget.gear, widget.close, sort]) {
+        for (const button of [widget.main, widget.gear, widget.close, sort, widget.info?.button]) {
             if (!button) continue;
             button.className = `${button.className} ${TOOLBAR_BUTTON_CLASS}`.trim();
             button.style.cssText = '';
@@ -1998,16 +2014,19 @@ class TaskRerollWalk {
         widget.main.style.overflow = 'hidden';
         widget.main.style.textOverflow = 'ellipsis';
 
-        const drawer = widget.settings.style;
-        drawer.position = 'absolute';
-        drawer.top = '100%';
-        drawer.left = '0';
-        drawer.zIndex = String(CHIP_Z_INDEX);
-        drawer.background = 'rgba(12,16,30,0.97)';
-        drawer.border = '1px solid rgba(74,158,255,0.45)';
-        drawer.borderRadius = '7px';
-        drawer.padding = '6px 9px';
-        drawer.marginTop = '4px';
+        for (const node of [widget.settings, widget.info?.panel]) {
+            if (!node) continue;
+            const drawer = node.style;
+            drawer.position = 'absolute';
+            drawer.top = '100%';
+            drawer.left = '0';
+            drawer.zIndex = String(CHIP_Z_INDEX);
+            drawer.background = 'rgba(12,16,30,0.97)';
+            drawer.border = '1px solid rgba(74,158,255,0.45)';
+            drawer.borderRadius = '7px';
+            drawer.padding = '6px 9px';
+            drawer.marginTop = '4px';
+        }
         header.appendChild(widget.element);
     }
 
@@ -2090,9 +2109,7 @@ class TaskRerollWalk {
         const button = document.createElement('button');
         button.className = 'mwi-task-reroll-walk-sort';
         button.textContent = '↕ Sort';
-        button.title =
-            'Sort the board now, the same way the Sort Tasks button does. One press, one sort — nothing is ' +
-            'automated and the walk is not disturbed.';
+        button.title = SORT_HELP;
         button.style.cssText =
             'border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:#e0e0e0; font-size:11px; ' +
             'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit; white-space:nowrap;';
@@ -2152,11 +2169,7 @@ class TaskRerollWalk {
                     ? `${coinLabel(cap.coin)} / ${cowbellLabel(cap.cowbell)}`
                     : 'off — nothing is blocked on price',
                 hint: 'Edited in the 🛡 task-protection popup, not here.',
-                title: cap.enabled
-                    ? 'A reroll costing this much or more is blocked, exactly as the shield popup blocks it.'
-                    : 'Cap protection is switched off in the shield popup, so the walk blocks nothing on ' +
-                      `price either. Its numbers, for when it is switched back on: ${coinLabel(cap.coin)} / ` +
-                      `${cowbellLabel(cap.cowbell)}.`,
+                title: this._capHelp(cap),
             }),
             widgetSelectRow({
                 key: 'tasks_rerollWalkCurrency',
@@ -2167,9 +2180,7 @@ class TaskRerollWalk {
                     { value: 'cowbell', label: 'cowbells' },
                     { value: 'coin', label: 'coins' },
                 ],
-                title:
-                    'Cheapest compares the two prices in coins, valuing a cowbell through the Bag of 10 Cowbells. ' +
-                    'A free reroll is always taken first.',
+                title: PAY_HELP,
                 onChange: () => {
                     if (this.state === 'ready') this._replan();
                 },
@@ -2177,7 +2188,7 @@ class TaskRerollWalk {
             widgetCheckboxRow({
                 key: 'tasks_rerollWalkTrashAtLimit',
                 label: 'Discard a task once both reroll options are blocked',
-                title: 'Offer the red trash can rather than leaving the task on the board. Off: the walk moves past it.',
+                title: TRASH_HELP,
                 onChange: () => {
                     if (this.state === 'ready') this._replan();
                 },
@@ -2207,6 +2218,25 @@ class TaskRerollWalk {
         const color =
             this.state === 'waiting' ? '#999' : this.state === 'stopped' ? '#ffb74d' : config.COLOR_ACCENT || '#8ecfff';
         if (this.widgetMode !== 'toolbar' && widget.main.style.color !== color) widget.main.style.color = color;
+        const title = this._mainHelp();
+        if (widget.main.title !== title) widget.main.title = title;
+        // Done is a small chip: just Walk again and the ✕. Sort and the
+        // settings drawer have nothing to say about a finished walk.
+        const done = this.state === 'done';
+        const collapsed = done ? 'none' : '';
+        if (widget.extras.style.display !== collapsed) widget.extras.style.display = collapsed;
+        if (widget.gear.style.display !== collapsed) widget.gear.style.display = collapsed;
+        if (done && widget.settingsOpen) widget.setSettingsOpen(false);
+        this._renderInfo();
+    }
+
+    /**
+     * What the main button's hover title says now: the full label in the toolbar, then what the
+     * next press does.
+     * @returns {string}
+     * @private
+     */
+    _mainHelp() {
         const docked = this.widgetMode === 'toolbar';
         const detail = docked
             ? `${this._fullLabel()}
@@ -2222,15 +2252,101 @@ class TaskRerollWalk {
                   : this.state === 'done'
                     ? `✓ Done — ${this._summaryText()}. Press to walk the board again from the top.`
                     : '';
-        const title = (this.state === 'done' ? guidance : `${detail}${guidance}`).trim();
-        if (widget.main.title !== title) widget.main.title = title;
-        // Done is a small chip: just Walk again and the ✕. Sort and the
-        // settings drawer have nothing to say about a finished walk.
+        return (this.state === 'done' ? guidance : `${detail}${guidance}`).trim();
+    }
+
+    /**
+     * The shield-cap row's help.
+     * @param {{enabled: boolean, coin: number, cowbell: number}} cap
+     * @returns {string}
+     * @private
+     */
+    _capHelp(cap) {
+        return cap.enabled
+            ? 'A reroll costing this much or more is blocked, exactly as the shield popup blocks it.'
+            : 'Cap protection is switched off in the shield popup, so the walk blocks nothing on ' +
+                  `price either. Its numbers, for when it is switched back on: ${coinLabel(cap.coin)} / ` +
+                  `${cowbellLabel(cap.cowbell)}.`;
+    }
+
+    /**
+     * On a device with no hover, add an info control that lists the help the buttons keep in their
+     * titles. It is its own button: pressing it only shows or hides text, and no walk, sort or spend
+     * button is pressed or re-labelled by it. Everything it adds sits inside the widget, so removing
+     * the widget removes it and its listeners.
+     * @param {Object} widget - The floating-widget parts
+     * @private
+     */
+    _addInfoControl(widget) {
+        if (!lacksHover()) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mwi-task-reroll-walk-info';
+        button.textContent = 'ⓘ';
+        button.setAttribute('aria-label', 'What these buttons do');
+        button.setAttribute('aria-expanded', 'false');
+        button.style.cssText =
+            'border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:#e0e0e0; font-size:12px; ' +
+            'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit;';
+        const panel = document.createElement('div');
+        panel.className = 'mwi-task-reroll-walk-info-panel';
+        panel.style.cssText =
+            'display:none; flex-direction:column; gap:5px; padding-top:6px; font-size:11px; color:#c8d0e0; ' +
+            'max-width:340px; white-space:normal; user-select:text;';
+        const setOpen = (open) => {
+            widget.infoOpen = open;
+            panel.style.display = open ? 'flex' : 'none';
+            button.setAttribute('aria-expanded', String(open));
+        };
+        button.addEventListener('mousedown', (event) => event.stopPropagation());
+        button.addEventListener('pointerdown', (event) => event.stopPropagation());
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const open = !widget.infoOpen;
+            if (open && widget.settingsOpen) widget.setSettingsOpen(false);
+            setOpen(open);
+            this._renderInfo();
+        });
+        // The info text and the settings drawer share one spot; opening one puts the other away
+        widget.gear.addEventListener('click', () => {
+            if (widget.settingsOpen) setOpen(false);
+        });
+        widget.row.insertBefore(button, widget.gear);
+        widget.element.appendChild(panel);
+        widget.info = { button, panel, setOpen };
+        widget.infoOpen = false;
+    }
+
+    /**
+     * Fill the info panel. Idempotent, like the rest of `_render`: it only writes when the text changed.
+     * @private
+     */
+    _renderInfo() {
+        const info = this.widget?.info;
+        if (!info) return;
         const done = this.state === 'done';
-        const collapsed = done ? 'none' : '';
-        if (widget.extras.style.display !== collapsed) widget.extras.style.display = collapsed;
-        if (widget.gear.style.display !== collapsed) widget.gear.style.display = collapsed;
-        if (done && widget.settingsOpen) widget.setSettingsOpen(false);
+        const lines = [[null, this._mainHelp()]];
+        if (!done) lines.push(['↕ Sort', SORT_HELP]);
+        lines.push(['✕', CLOSE_HELP], ['🎲', TOGGLE_HELP]);
+        if (!done) {
+            lines.push(
+                ['Block rerolls at', this._capHelp(this._liveCapBlock())],
+                ['Pay with', PAY_HELP],
+                ['Discard a task', TRASH_HELP]
+            );
+        }
+        const signature = JSON.stringify(lines);
+        if (info.panel.dataset.signature === signature) return;
+        info.panel.dataset.signature = signature;
+        info.panel.replaceChildren(
+            ...lines
+                .filter(([, text]) => text)
+                .map(([label, text]) => {
+                    const line = document.createElement('div');
+                    line.textContent = label ? `${label}: ${text}` : text;
+                    return line;
+                })
+        );
     }
 
     /** @private */
