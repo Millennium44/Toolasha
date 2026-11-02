@@ -8,12 +8,18 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { decomposeHistoryTracker } from './decompose-history-tracker.js';
-import { getUntradableCapeValue } from '../enhancement/untradable-cape-value.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
-import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
-import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
+import { formatInputCostLine } from '../../utils/refined-item-cost.js';
+import { priceInputNow, priceCatalystNow } from './alchemy-session-cost.js';
+import {
+    resolveInputCost,
+    resolveCatalystCost,
+    TODAYS_PRICE_MARK,
+    todaysPriceNote,
+    joinTitles,
+} from './alchemy-cost-record.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import {
@@ -91,6 +97,7 @@ const DECOMPOSE_TOTALS_COLUMNS = [
 /** Footnote markers under the decompose totals table. @type {Array<string>} */
 const DECOMPOSE_TOTALS_LEGEND = [
     '* input unpriced — total is incomplete',
+    "≈ priced at today's market on some sessions — no price was saved when they ran, so it moves with the market",
     '† catalyst on some sessions could not be priced — excluded, not zero',
     '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
     '¶ output unpriced — total is incomplete, not zero-earning; Net and Break-even Input carry the same mark',
@@ -130,6 +137,10 @@ function finalizeDecomposeGroup(group) {
 function formatDecomposeCatalystTotal(group) {
     let text = formatKMB(group.catalystCost, 1);
     const notes = [];
+    if (group.catalystTodaysPriceSessions > 0) {
+        text += TODAYS_PRICE_MARK;
+        notes.push(todaysPriceNote(group.catalystTodaysPriceSessions).replace('their input', 'their catalysts'));
+    }
     if (group.catalystUnpricedSessions > 0) {
         text += '†';
         notes.push(
@@ -488,28 +499,16 @@ class DecomposeHistoryViewer {
         }
 
         const netConsumed = attempts * bulkMultiplier;
-        // Honours profitCalc_pricingMode the same way transmute does, rather than
-        // a hardcoded ask-then-bid that ignored the setting.
-        const inputPriceInfo = getItemPriceInfo(session.inputItemHrid, {
-            enhancementLevel: session.enhancementLevel || 0,
-            context: 'profit',
-            side: 'buy',
-        });
-        const marketPrice = inputPriceInfo.price > 0 ? inputPriceInfo.price : 0;
-        // A refined (★) cape is untradable, so the market prices it at nothing;
-        // charging the session 0 for it made a destroyed cape free. See
-        // utils/refined-item-cost.js.
-        const { price: inputPrice, basis: inputBasis } = priceInputWithRefinementFallback(
-            session.inputItemHrid,
-            marketPrice,
-            {
-                enhancementLevel: session.enhancementLevel || 0,
-                marketSource: inputPriceInfo.source,
-                capeValue: getUntradableCapeValue,
-            }
+        // What this session's input cost: the price saved with each message where there is one, today's
+        // market for whatever was not saved (a session from before costs were kept, or its unsaved part).
+        // Honours profitCalc_pricingMode and the refined-cape rule through the one shared pricing path.
+        const enhancementLevel = session.enhancementLevel || 0;
+        const inputResolved = resolveInputCost(session, netConsumed, () =>
+            priceInputNow(session.inputItemHrid, enhancementLevel)
         );
-        const inputCost = netConsumed * inputPrice;
-        const inputUnpriced = inputBasis === null && netConsumed > 0;
+        const inputCost = inputResolved.cost;
+        const inputBasis = inputResolved.basis;
+        const inputUnpriced = inputResolved.unpriced;
 
         // A catalyst the market cannot price used to be silently costed at zero, which
         // reads as "this catalyst was free" rather than "we do not know what it cost".
@@ -521,12 +520,15 @@ class DecomposeHistoryViewer {
         ].filter((entry) => entry.count > 0);
         let catalystCost = 0;
         let catalystUnpriced = false;
+        let catalystAtTodaysPrice = false;
         const catalystHrids = [];
         for (const entry of catalystUse) {
-            const price = getItemPrice(entry.hrid, { context: 'profit', side: 'buy' });
+            // Saved with each message where there is a record; today's market for whatever is not covered
+            const resolved = resolveCatalystCost(session, entry.hrid, entry.count, priceCatalystNow);
             catalystHrids.push(entry.hrid);
-            if (price > 0) catalystCost += price * entry.count;
-            else catalystUnpriced = true;
+            catalystCost += resolved.cost;
+            if (resolved.unpriced) catalystUnpriced = true;
+            if (resolved.pricedToday) catalystAtTodaysPrice = true;
         }
         // Sessions saved before catalyst counts were persisted carry neither field.
         // That is "unknown", not "none", and the totals table marks it ‡.
@@ -550,12 +552,16 @@ class DecomposeHistoryViewer {
             inputCost,
             catalystCost,
             catalystUnpriced,
+            catalystAtTodaysPrice,
             catalystUnrecorded,
             catalystHrids,
             coinCost,
             netConsumed,
             inputBasis,
             inputUnpriced,
+            inputSavedUnits: inputResolved.savedUnits,
+            inputTodayUnits: inputResolved.todayUnits,
+            inputAtTodaysPrice: inputResolved.pricedToday,
         };
     }
 
@@ -791,6 +797,7 @@ class DecomposeHistoryViewer {
                 profitCell.textContent =
                     formatKMB(profitDetail.profit, 1) +
                     (profitDetail.inputUnpriced ? '*' : '') +
+                    (profitDetail.inputAtTodaysPrice || profitDetail.catalystAtTodaysPrice ? TODAYS_PRICE_MARK : '') +
                     (profitDetail.catalystUnpriced ? '†' : '') +
                     (profitDetail.catalystUnrecorded ? '‡' : '') +
                     (profitDetail.revenueUnpriced ? '¶' : '') +
@@ -929,6 +936,8 @@ class DecomposeHistoryViewer {
                 revenueShopValued: false,
                 inputCost: 0,
                 inputUnpriced: false,
+                todaysPriceSessions: 0,
+                catalystTodaysPriceSessions: 0,
                 catalystCost: 0,
                 catalystUnpricedSessions: 0,
                 catalystUnrecordedSessions: 0,
@@ -945,6 +954,8 @@ class DecomposeHistoryViewer {
                 if (detail.revenueShopValued) group.revenueShopValued = true;
                 group.inputCost += detail.inputCost;
                 if (detail.inputUnpriced) group.inputUnpriced = true;
+                if (detail.inputAtTodaysPrice) group.todaysPriceSessions++;
+                if (detail.catalystAtTodaysPrice) group.catalystTodaysPriceSessions++;
                 group.catalystCost += detail.catalystCost;
                 if (detail.catalystUnpriced) group.catalystUnpricedSessions++;
                 if (detail.catalystUnrecorded) group.catalystUnrecordedSessions++;
@@ -1013,6 +1024,8 @@ class DecomposeHistoryViewer {
             revenueShopValued: false,
             inputCost: 0,
             inputUnpriced: false,
+            todaysPriceSessions: 0,
+            catalystTodaysPriceSessions: 0,
             catalystCost: 0,
             catalystUnpricedSessions: 0,
             catalystUnrecordedSessions: 0,
@@ -1032,6 +1045,8 @@ class DecomposeHistoryViewer {
             pooled.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
             pooled.coinCost += group.coinCost;
             pooled.inputUnpriced = pooled.inputUnpriced || group.inputUnpriced;
+            pooled.todaysPriceSessions += group.todaysPriceSessions;
+            pooled.catalystTodaysPriceSessions += group.catalystTodaysPriceSessions;
             pooled.revenueUnpriced = pooled.revenueUnpriced || group.revenueUnpriced;
             pooled.revenueShopValued = pooled.revenueShopValued || group.revenueShopValued;
             for (const hrid of group.catalystHrids || []) pooled.catalystHrids.add(hrid);
@@ -1148,11 +1163,19 @@ class DecomposeHistoryViewer {
             )
         );
         row.appendChild(
-            createTotalsCell(formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''), {
-                title: group.inputUnpriced
-                    ? 'At least one session in this group has an unpriced input — this total is incomplete, not fully costed.'
-                    : undefined,
-            })
+            createTotalsCell(
+                formatKMB(group.inputCost, 1) +
+                    (group.inputUnpriced ? '*' : '') +
+                    (group.todaysPriceSessions > 0 ? TODAYS_PRICE_MARK : ''),
+                {
+                    title: joinTitles(
+                        group.inputUnpriced
+                            ? 'At least one session in this group has an unpriced input — this total is incomplete, not fully costed.'
+                            : undefined,
+                        todaysPriceNote(group.todaysPriceSessions)
+                    ),
+                }
+            )
         );
 
         const [catalystText, catalystTitle] = formatDecomposeCatalystTotal(group);
@@ -1241,6 +1264,8 @@ class DecomposeHistoryViewer {
                 acc.catalystCost += group.catalystCost;
                 acc.coinCost += group.coinCost;
                 acc.inputUnpriced = acc.inputUnpriced || group.inputUnpriced;
+                acc.todaysPriceSessions += group.todaysPriceSessions;
+                acc.catalystTodaysPriceSessions += group.catalystTodaysPriceSessions;
                 acc.catalystUnpricedSessions += group.catalystUnpricedSessions;
                 acc.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
                 return acc;
@@ -1257,6 +1282,8 @@ class DecomposeHistoryViewer {
                 catalystCost: 0,
                 coinCost: 0,
                 inputUnpriced: false,
+                todaysPriceSessions: 0,
+                catalystTodaysPriceSessions: 0,
                 catalystUnpricedSessions: 0,
                 catalystUnrecordedSessions: 0,
             }
@@ -1298,7 +1325,12 @@ class DecomposeHistoryViewer {
             )
         );
         row.appendChild(
-            createTotalsCell(formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''), { bold: true })
+            createTotalsCell(
+                formatKMB(overall.inputCost, 1) +
+                    (overall.inputUnpriced ? '*' : '') +
+                    (overall.todaysPriceSessions > 0 ? TODAYS_PRICE_MARK : ''),
+                { bold: true, title: todaysPriceNote(overall.todaysPriceSessions) }
+            )
         );
 
         const [catalystText, catalystTitle] = formatDecomposeCatalystTotal(overall);
@@ -2074,6 +2106,8 @@ class DecomposeHistoryViewer {
     buildDataNote(detail, session = null) {
         const notes = [];
         if (detail.inputUnpriced) notes.push('input unpriced — total is incomplete');
+        if (detail.inputAtTodaysPrice) notes.push("input priced at today's market (no price was saved for it)");
+        if (detail.catalystAtTodaysPrice) notes.push("catalyst priced at today's market (no price was saved for it)");
         if (detail.catalystUnpriced) notes.push('catalyst could not be priced — excluded, not zero');
         if (detail.catalystUnrecorded) notes.push('catalyst not recorded (predates tracking) — excluded, not zero');
         if (detail.revenueUnpriced) notes.push('output unpriced — revenue is incomplete, not zero-earning');

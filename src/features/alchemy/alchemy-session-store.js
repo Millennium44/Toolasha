@@ -19,6 +19,7 @@
  */
 
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
+import { pickCosts } from './alchemy-cost-record.js';
 
 const STORAGE_STORE = 'alchemyHistory';
 
@@ -89,6 +90,22 @@ export function createAlchemySessionStore(baseKey, label) {
  * @returns {Object} The copy to keep
  */
 export function mergeSessionCopies(a, b) {
+    const kept = keepOneCopy(a, b);
+    if (!a || !b) return kept;
+    // The copy kept whole may be the one recorded on a build that saves no costs, or the one that has seen
+    // fewer of them; the copy covering more of the run supplies the field, and a reader prices whatever it
+    // still leaves uncovered at today's market
+    const costs = pickCosts(a.costs, b.costs);
+    if (costs && costs !== kept.costs) return { ...kept, costs };
+    return kept;
+}
+
+/**
+ * @param {Object} a - One copy
+ * @param {Object} b - The other
+ * @returns {Object} The copy to keep whole
+ */
+function keepOneCopy(a, b) {
     if (!a) return b;
     if (!b) return a;
     const editedA = finite(a.editedAt);

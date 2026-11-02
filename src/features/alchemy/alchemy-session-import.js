@@ -38,10 +38,15 @@
  *     `predictedRate` / `predictedAt` / `predictedCatalystHrid` (the model's
  *     forecast for this run, taken at session start — edit only if you are
  *     correcting what was actually predicted, not the outcome).
- *   - DERIVED, never stored on the session (recomputed on every read from
- *     current market prices, so there is nothing to edit): `profit`,
- *     `revenue`, `inputCost`, `coinCost`, `netConsumed`, and every other
- *     field `computeSessionProfit` returns. `mergedFrom` is likewise never
+ *   - AUTHORITATIVE: `costs` (what the consumed input and catalysts cost when
+ *     they were spent, saved per message — see `alchemy-session-cost.js`).
+ *     Optional: a session without it, or with it covering fewer units than the
+ *     session consumed, is costed at today's market for the uncovered part and
+ *     marked so. Edit `totalAttempts` and the cost is scaled to match.
+ *   - DERIVED, never stored on the session (recomputed on every read, so
+ *     there is nothing to edit): `profit`, `revenue`, `inputCost`,
+ *     `coinCost`, `netConsumed`, and every other field `computeSessionProfit`
+ *     returns. `mergedFrom` is likewise never
  *     stored — it only exists on the reload-merged view a viewer builds at
  *     read time (`alchemy-session-merge.js`), so it never appears in an
  *     exported (stored, unmerged) session either.
@@ -84,6 +89,7 @@
  */
 
 import { stableStringify } from '../../utils/stable-stringify.js';
+import { validateCosts } from './alchemy-cost-record.js';
 
 /** Marks a file as one of these backups, distinct from the CSV export. */
 export const ALCHEMY_BACKUP_FORMAT = 'toolasha-alchemy-history';
@@ -294,6 +300,11 @@ export function validateAlchemySession(kind, session) {
                 return { ok: false, error: `Session ${label} has a bad catalystsUsed count for "${hrid}".` };
             }
         }
+    }
+
+    if (session.costs !== undefined) {
+        const problem = validateCosts(session.costs);
+        if (problem) return { ok: false, error: `Session ${label} ${problem}.` };
     }
 
     if (kind === 'transmute' || kind === 'decompose') {

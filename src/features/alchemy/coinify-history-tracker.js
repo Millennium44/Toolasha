@@ -25,6 +25,7 @@ import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './alchemy-item-deltas.js';
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
+import { recordInputCost, recordCatalystCost } from './alchemy-session-cost.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
 import { captureResumePoint, findResumableSession, gapRows } from './alchemy-session-resume.js';
@@ -406,13 +407,22 @@ class CoinifyHistoryTracker {
         // from its own stack where the message gives a baseline to measure
         // against. The two known catalysts keep their dedicated fields.
         const catalystHrid = this.extractItemHrid(action.secondaryItemHash);
-        recordCatalystUse(session, {
+        const consumed = recordCatalystUse(session, {
             catalystHrid,
             noted,
             successCount,
             attemptCount,
             legacyFields: LEGACY_CATALYST_FIELDS,
             stackKnown: this.seededHrids.has(catalystHrid),
+        });
+        recordCatalystCost(session, catalystHrid, consumed);
+
+        // What this message's input cost NOW, saved on the session rather than priced when somebody looks.
+        // No await between here and the save, so the character cannot change underneath it.
+        recordInputCost(session, {
+            inputItemHrid: session.inputItemHrid,
+            enhancementLevel: session.enhancementLevel || 0,
+            units: attemptCount * (session.bulkMultiplier ?? 1),
         });
 
         // Where the next message — or the gap a reload leaves — is measured from

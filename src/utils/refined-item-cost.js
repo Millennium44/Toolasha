@@ -355,7 +355,8 @@ export function priceInputWithRefinementFallback(itemHrid, marketPrice, options 
  * the figure came from — a 79M craft cost appearing where the market says 0 is
  * otherwise inexplicable — and says outright when the input could not be priced,
  * so an incomplete profit never reads as a costless one.
- * @param {{netConsumed: number, inputCost: number, inputBasis: string|null, inputUnpriced: boolean}} detail
+ * @param {{netConsumed: number, inputCost: number, inputBasis: string|null, inputUnpriced: boolean,
+ *   inputSavedUnits?: number, inputTodayUnits?: number}} detail
  *   A `computeSessionProfit` result
  * @returns {string} One tooltip line
  */
@@ -363,7 +364,25 @@ export function formatInputCostLine(detail) {
     if (detail.inputUnpriced) {
         return `Inputs (${detail.netConsumed}): unpriced — not counted, so this profit is incomplete`;
     }
-    return `Inputs (${detail.netConsumed} @ ${detail.inputBasis}): −${formatKMB(detail.inputCost, 1)}`;
+    const cost = formatKMB(detail.inputCost, 1);
+    const today = detail.inputTodayUnits || 0;
+    const saved = detail.inputSavedUnits || 0;
+    // Priced when it was spent: the figure stands whatever the market does now
+    if (today <= 0 && saved > 0) {
+        return `Inputs (${detail.netConsumed} @ ${detail.inputBasis}, price saved at the time): −${cost}`;
+    }
+    // Part saved, part not (a run begun before costs were kept, or merged from such a run)
+    if (today > 0 && saved > 0) {
+        return (
+            `Inputs (${detail.netConsumed}: ${Math.round(saved)} at the price saved at the time, ` +
+            `${Math.round(today)} at today's price): −${cost}`
+        );
+    }
+    // Nothing saved: today's market, which moves — said where the figure is read
+    if (today > 0) {
+        return `Inputs (${detail.netConsumed} @ ${detail.inputBasis}, at today's price — none was saved): −${cost}`;
+    }
+    return `Inputs (${detail.netConsumed} @ ${detail.inputBasis}): −${cost}`;
 }
 
 export default {

@@ -51,7 +51,9 @@ vi.mock('../../utils/market-data.js', () => ({
 
 const { coinifyHistoryViewer } = await import('./coinify-history-viewer.js');
 
-const session = () => ({
+const SAVED_CATALYSTS = { [CATALYST_HRID]: { cost: 2000, count: 2, unpricedCount: 0 } };
+
+const session = (overrides = {}) => ({
     id: 's1',
     trackerVersion: 2,
     inputItemHrid: INPUT_HRID,
@@ -61,6 +63,12 @@ const session = () => ({
     totalCoinsEarned: 5000,
     catalystOfCoinificationUsed: 2,
     primeCatalystUsed: 0,
+    // Priced when it ran, as a session recorded now is
+    costs: {
+        input: { cost: 5000, units: 10, unpricedUnits: 0, bases: { 'current buy': 10 } },
+        catalysts: SAVED_CATALYSTS,
+    },
+    ...overrides,
 });
 
 beforeEach(() => {
@@ -77,7 +85,8 @@ describe('buildDataNote', () => {
 
     test('an unpriced input says the total is incomplete', () => {
         state.inputPriced = false;
-        const detail = coinifyHistoryViewer.computeSessionProfit(session());
+        // No input price was saved either: the read finds none, and says so
+        const detail = coinifyHistoryViewer.computeSessionProfit(session({ costs: { catalysts: SAVED_CATALYSTS } }));
         expect(detail.inputUnpriced).toBe(true);
         expect(coinifyHistoryViewer.buildDataNote(detail)).toBe('input unpriced — total is incomplete');
     });
@@ -113,8 +122,11 @@ describe('exportHistory', () => {
     });
 
     test('a qualified row carries the readable note in the CSV', () => {
-        state.inputPriced = false;
-        coinifyHistoryViewer.sessions = [session()];
+        coinifyHistoryViewer.sessions = [
+            session({
+                costs: { input: { cost: 0, units: 0, unpricedUnits: 10, bases: {} }, catalysts: SAVED_CATALYSTS },
+            }),
+        ];
         const csv = captureCsv();
         expect(csv.split('\n')[1]).toContain('input unpriced — total is incomplete');
     });

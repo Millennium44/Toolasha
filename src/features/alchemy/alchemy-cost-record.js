@@ -1,0 +1,280 @@
+/**
+ * The pure half of the saved-cost record: coverage arithmetic, merging and
+ * validation, with no market or game imports so the session store, the merge
+ * and the import can use it freely. See `alchemy-session-cost.js` for what the
+ * record is and why it exists.
+ */
+
+/** Distinct input bases kept per session; further ones fold into {@link MIXED_BASIS} */
+const MAX_BASES = 6;
+
+/** The bucket a session's basis labels overflow into */
+export const MIXED_BASIS = 'mixed';
+
+/**
+ * @param {*} value
+ * @returns {number} The value, or 0 when it is not a finite number
+ */
+export function num(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * @param {Object} bases - `{ basis: units }`, mutated
+ * @param {string} basis - The label to add
+ * @param {number} units - Units costed under it
+ * @returns {void}
+ */
+export function addBasis(bases, basis, units) {
+    const key = Object.hasOwn(bases, basis) || Object.keys(bases).length < MAX_BASES ? basis : MIXED_BASIS;
+    bases[key] = num(bases[key]) + units;
+}
+
+/**
+ * How a session's saved input cost relates to what it consumed.
+ *
+ * @param {Object} session
+ * @param {number} netConsumed - Units the session consumed, as the reader counts them
+ * @param {Function} priceToday - `() => {price, basis, unpriced}`, called only when something is uncovered
+ * @returns {{cost: number, basis: string|null, unpriced: boolean, savedUnits: number, todayUnits: number,
+ *   hasSaved: boolean, pricedToday: boolean}} `cost` covers every priced unit; `basis` names what the
+ *   cost was computed under, or null when nothing could be priced
+ */
+export function resolveInputCost(session, netConsumed, priceToday) {
+    const saved = session?.costs?.input;
+    const needed = Math.max(0, num(netConsumed));
+
+    if (!saved) {
+        // Nothing was saved: the whole of it is read at today's market
+        const today = priceToday();
+        return {
+            cost: needed * today.price,
+            basis: today.basis,
+            unpriced: today.basis === null && needed > 0,
+            savedUnits: 0,
+            todayUnits: needed,
+            hasSaved: false,
+            pricedToday: needed > 0 && today.basis !== null,
+        };
+    }
+
+    const pricedUnits = Math.max(0, num(saved.units));
+    const unpricedUnits = Math.max(0, num(saved.unpricedUnits));
+    const covered = pricedUnits + unpricedUnits;
+
+    // A saved record covering more than the session now says it consumed (a hand-corrected import) is
+    // scaled down to it, so a lowered count lowers the cost with it
+    const scale = covered > needed && covered > 0 ? needed / covered : 1;
+    let cost = num(saved.cost) * scale;
+    const savedUnpriced = unpricedUnits * scale > 0;
+    const savedUnits = covered * scale;
+
+    const bases = Object.keys(saved.bases || {});
+    let basis = bases.length === 1 ? bases[0] : bases.length > 1 ? MIXED_BASIS : null;
+
+    const remainder = Math.max(0, needed - covered);
+    let unpriced = savedUnpriced;
+    let remainderUnpriced = false;
+    if (remainder > 0) {
+        const today = priceToday();
+        if (today.basis === null) {
+            unpriced = true;
+            remainderUnpriced = true;
+        } else {
+            cost += remainder * today.price;
+            basis = basis === null || basis === today.basis ? today.basis : MIXED_BASIS;
+        }
+    }
+
+    return {
+        cost,
+        basis,
+        unpriced,
+        savedUnits,
+        todayUnits: remainder,
+        hasSaved: true,
+        pricedToday: remainder > 0 && !remainderUnpriced,
+    };
+}
+
+/**
+ * How a session's saved cost for one catalyst relates to what it consumed.
+ *
+ * @param {Object} session
+ * @param {string} catalystHrid
+ * @param {number} count - How many the session consumed
+ * @param {Function} priceToday - `(hrid) => number|null`, called only when something is uncovered
+ * @returns {{cost: number, unpriced: boolean, pricedToday: boolean}} `cost` covers every priced unit
+ */
+export function resolveCatalystCost(session, catalystHrid, count, priceToday) {
+    const saved = session?.costs?.catalysts?.[catalystHrid];
+    const needed = Math.max(0, num(count));
+    if (!saved) {
+        const price = priceToday(catalystHrid);
+        return price === null
+            ? { cost: 0, unpriced: needed > 0, pricedToday: false }
+            : { cost: needed * price, unpriced: false, pricedToday: needed > 0 };
+    }
+
+    const pricedCount = Math.max(0, num(saved.count));
+    const unpricedCount = Math.max(0, num(saved.unpricedCount));
+    const covered = pricedCount + unpricedCount;
+    const scale = covered > needed && covered > 0 ? needed / covered : 1;
+
+    let cost = num(saved.cost) * scale;
+    let unpriced = unpricedCount * scale > 0;
+    let pricedToday = false;
+    const remainder = Math.max(0, needed - covered);
+    if (remainder > 0) {
+        const price = priceToday(catalystHrid);
+        if (price === null) {
+            unpriced = true;
+        } else {
+            cost += remainder * price;
+            pricedToday = true;
+        }
+    }
+    return { cost, unpriced, pricedToday };
+}
+
+/**
+ * Combine two sessions' saved costs into the record of the session they make together.
+ * Sums everything, so coverage adds exactly as the counts it describes do.
+ *
+ * @param {Object|undefined} a
+ * @param {Object|undefined} b
+ * @returns {Object|undefined} The combined record, or undefined when neither had one
+ */
+export function mergeCosts(a, b) {
+    if (!a && !b) return undefined;
+    const out = {};
+
+    if (a?.input || b?.input) {
+        const bases = {};
+        for (const source of [a?.input, b?.input]) {
+            for (const [basis, units] of Object.entries(source?.bases || {})) addBasis(bases, basis, num(units));
+        }
+        out.input = {
+            cost: num(a?.input?.cost) + num(b?.input?.cost),
+            units: num(a?.input?.units) + num(b?.input?.units),
+            unpricedUnits: num(a?.input?.unpricedUnits) + num(b?.input?.unpricedUnits),
+            bases,
+        };
+    }
+
+    if (a?.catalysts || b?.catalysts) {
+        out.catalysts = {};
+        for (const source of [a?.catalysts, b?.catalysts]) {
+            for (const [hrid, entry] of Object.entries(source || {})) {
+                const current = (out.catalysts[hrid] ||= { cost: 0, count: 0, unpricedCount: 0 });
+                current.cost += num(entry?.cost);
+                current.count += num(entry?.count);
+                current.unpricedCount += num(entry?.unpricedCount);
+            }
+        }
+    }
+
+    return out;
+}
+
+/**
+ * How much of a session its saved costs cover, for choosing between two copies.
+ * @param {Object|undefined} costs
+ * @returns {number} Covered input units plus covered catalysts
+ */
+function coverageOf(costs) {
+    if (!costs) return 0;
+    let total = num(costs.input?.units) + num(costs.input?.unpricedUnits);
+    for (const entry of Object.values(costs.catalysts || {})) total += num(entry?.count) + num(entry?.unpricedCount);
+    return total;
+}
+
+/**
+ * The saved costs to keep when two copies of one session meet (a sync).
+ *
+ * The copies are an older and a newer version of the same run, so the one
+ * covering more is the one that has seen more of it. The copy kept whole may be
+ * the one that lacks them (recorded on a build that does not save costs), and
+ * dropping the other's would turn a recorded cost back into today's price.
+ *
+ * @param {Object|undefined} a
+ * @param {Object|undefined} b
+ * @returns {Object|undefined} The record covering more, or undefined when neither has one
+ */
+export function pickCosts(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    return coverageOf(b) > coverageOf(a) ? b : a;
+}
+
+/**
+ * Check a `costs` record from a file, in the lenient style of the rest of the import.
+ * @param {*} costs
+ * @returns {string|null} What is wrong with it, or null
+ */
+export function validateCosts(costs) {
+    const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+    const bad = (v) => typeof v !== 'number' || !Number.isFinite(v) || v < 0;
+    if (!isObject(costs)) return 'has a non-object costs';
+    if (costs.input !== undefined) {
+        const input = costs.input;
+        if (!isObject(input)) return 'has a non-object costs.input';
+        for (const field of ['cost', 'units', 'unpricedUnits']) {
+            if (bad(input[field])) return `has a bad costs.input.${field}`;
+        }
+        if (input.bases !== undefined) {
+            if (!isObject(input.bases)) return 'has a non-object costs.input.bases';
+            for (const [basis, units] of Object.entries(input.bases)) {
+                if (bad(units)) return `has a bad costs.input.bases count for "${basis}"`;
+            }
+        }
+    }
+    if (costs.catalysts !== undefined) {
+        if (!isObject(costs.catalysts)) return 'has a non-object costs.catalysts';
+        for (const [hrid, entry] of Object.entries(costs.catalysts)) {
+            if (!isObject(entry)) return `has a non-object costs.catalysts entry for "${hrid}"`;
+            for (const field of ['cost', 'count', 'unpricedCount']) {
+                if (bad(entry[field])) return `has a bad costs.catalysts.${field} for "${hrid}"`;
+            }
+        }
+    }
+    return null;
+}
+
+/** Marks a figure that was priced at today's market because no price was saved with it */
+export const TODAYS_PRICE_MARK = '≈';
+
+/**
+ * The hover line for a group or total holding sessions priced at today's market.
+ * @param {number} sessions - How many of its sessions were
+ * @returns {string|undefined} The sentence, or undefined when none were
+ */
+export function todaysPriceNote(sessions) {
+    if (!(sessions > 0)) return undefined;
+    return (
+        `${sessions} session(s) were priced at today's market, not at the price when they ran — no price was ` +
+        'saved for (all of) their input. This total moves with the market.'
+    );
+}
+
+/**
+ * @param {...(string|undefined)} parts
+ * @returns {string|undefined} The parts joined, or undefined when there are none
+ */
+export function joinTitles(...parts) {
+    return parts.filter(Boolean).join(' ') || undefined;
+}
+
+export default {
+    TODAYS_PRICE_MARK,
+    todaysPriceNote,
+    joinTitles,
+    resolveInputCost,
+    resolveCatalystCost,
+    mergeCosts,
+    pickCosts,
+    validateCosts,
+    addBasis,
+    MIXED_BASIS,
+};
