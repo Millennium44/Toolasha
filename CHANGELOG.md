@@ -11,6 +11,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Each trial's banked tier is now recorded from the guild data the server sends (including at login), so results land and Past weeks can show them (points derived from the tier, marked ~) even if the Trials tab was never open.
 - A trial damage board closed by hand now stays closed for the rest of that trial, across reloads; for new players it no longer opens by itself (existing players keep their setting).
 
+### Live party and stat sheet
+
+- Toolasha now follows party changes as they happen (not only at login or the next fight) and the server's own stat sheet after gear, level or buff changes, so Combat Sim exports, the party roster and the Labyrinth planner's combat level stay current without a reload.
+- The new-fight check that refreshes your equipped abilities now reads where the game actually sends them; it never matched before.
+
 ### Contributor checklist covers today's review themes
 
 - AGENTS.md's pre-PR questions now also ask about partial totals, caches built from another module's output, threading a new dimension through every reader, merges that drop a newer field, and code a fix wakes up.

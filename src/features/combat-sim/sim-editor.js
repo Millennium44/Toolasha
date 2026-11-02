@@ -871,8 +871,8 @@ export class SimEditor {
      * The party as the game states it now: who, how many, and where that came from.
      *
      * `dataManager.getPartyMembers()` prefers the roster the last battle named over
-     * the one `init_character_data` carried, which is the whole reason a party
-     * joined after the page loaded ever reaches this panel.
+     * the one `init_character_data` carried, and a `party_updated` message over
+     * both, which is how a party joined after the page loaded reaches this panel.
      *
      * @private
      * @returns {{key: string, count: number, source: string}}
@@ -1158,6 +1158,8 @@ export class SimEditor {
             </div>`;
         }
         if (count < 2) return '';
+        // A party_updated message keeps the map live; there is no lag to warn about.
+        if (source === 'party') return '';
 
         const from = source === 'battle' ? 'your last fight' : 'when the page loaded';
         const why =
