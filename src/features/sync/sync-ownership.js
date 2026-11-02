@@ -236,6 +236,8 @@ export const OWNED_KEY_PREFIXES = [
     'waveGapTally',
     'tickPeriodTally',
     'bestiaryPointsTarget',
+    // The tier last run in each combat zone (`utils/zone-tier-memory.js`); later change wins per zone
+    'combatZoneTiers',
     'combatProfitView',
     'combatIncomeNetSalesTax',
     'combatLevelSelection',

@@ -51,6 +51,7 @@ import shopTokenValues from '../features/shop/shop-token-values.js';
 
 // Task features
 import taskProfitDisplay from '../features/tasks/task-profit-display.js';
+import zoneTierRecorder from '../features/tasks/zone-tier-recorder.js';
 import taskRerollTracker from '../features/tasks/task-reroll-tracker.js';
 import taskSorter from '../features/tasks/task-sorter.js';
 import taskIcons from '../features/tasks/task-icons.js';
@@ -236,6 +237,7 @@ toolashaRoot.UI = {
     shopMaxBuyButton,
     shopTokenValues,
     taskProfitDisplay,
+    zoneTierRecorder,
     taskRerollTracker,
     taskSorter,
     taskIcons,

@@ -2217,6 +2217,16 @@ function registerFeatures() {
             customCheck: () => UI.taskProfitDisplay.shouldEnable(),
         },
         {
+            key: 'zoneTierRecorder',
+            name: 'Zone Tier Recorder',
+            category: 'Tasks',
+            module: UI.zoneTierRecorder,
+            async: false,
+            // Records whatever the task estimate setting says: a player who switches the estimate on
+            // later expects it to know the tiers they have been running
+            customCheck: () => true,
+        },
+        {
             key: 'taskRerollTracker',
             name: 'Task Reroll Tracker',
             category: 'Tasks',

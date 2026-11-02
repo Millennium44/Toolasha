@@ -58,7 +58,8 @@ import {
 // with a fallback to the static import for dev single-bundle builds.
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
-import { runningAction, lastUsedTierForZone } from '../../utils/combat-actions.js';
+import { runningAction } from '../../utils/combat-actions.js';
+import { resolveZoneTier, describeZoneTier, ZONE_TIER_MEMORY_EVENT } from '../../utils/zone-tier-memory.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 function getLoadoutSnapshot() {
@@ -772,6 +773,12 @@ class TaskProfitDisplay {
             if (this._actionsTimer) clearTimeout(this._actionsTimer);
             this._actionsTimer = null;
         });
+
+        // The remembered tiers arrived, or a zone's tier changed: an open estimate that used T0 while they
+        // loaded (or an older tier) redoes itself at the tier it should have had
+        const tierMemoryHandler = () => this._retierOpenCombatEstimates();
+        dataManager.on(ZONE_TIER_MEMORY_EVENT, tierMemoryHandler);
+        this.unregisterHandlers.push(() => dataManager.off(ZONE_TIER_MEMORY_EVENT, tierMemoryHandler));
 
         // Refresh materials badges when inventory changes. Inventory updates
         // arrive several to the second while crafting; one pass per burst.
@@ -1662,17 +1669,18 @@ class TaskProfitDisplay {
      * there is no persisted history of tiers once a zone leaves the queue,
      * and nothing here invents one.
      *
-     * When the zone is nowhere in the queue, `known` is false and `tier`
-     * falls back to {@link GO_ESTIMATE_TIER} (T0) — today's behavior,
-     * unchanged, with the card saying so rather than presenting a guess as
-     * fact.
+     * Order: the zone in the queue, then the tier the character last RAN it
+     * at (`utils/zone-tier-memory.js`), then {@link GO_ESTIMATE_TIER} (T0)
+     * with `known` false and the card saying so rather than presenting a
+     * guess as fact. `pending` is true for that T0 while the remembered
+     * tiers are still loading.
      * @param {string} zoneHrid
-     * @returns {{tier: number, known: boolean}}
+     * @returns {{tier: number, known: boolean, source: string, pending: boolean}}
      * @private
      */
     _resolveEstimateTier(zoneHrid) {
-        const tier = lastUsedTierForZone(dataManager.getCurrentActions?.() || [], zoneHrid);
-        return tier === null ? { tier: GO_ESTIMATE_TIER, known: false } : { tier, known: true };
+        const { tier, known, source, pending } = resolveZoneTier(zoneHrid);
+        return { tier, known, source, pending };
     }
 
     /** Give combat estimate controls a separate row on a narrow task card. */
@@ -1812,7 +1820,8 @@ class TaskProfitDisplay {
         // The tier this estimate simulates at, and the tier Go later opens the
         // zone at — see `_resolveEstimateTier`. Resolved once, up front, and
         // carried on the estimate record rather than re-read at Go time.
-        const { tier: estimateTier, known: estimateTierKnown } = this._resolveEstimateTier(zoneHrid);
+        const resolvedTier = this._resolveEstimateTier(zoneHrid);
+        const { tier: estimateTier, known: estimateTierKnown } = resolvedTier;
 
         container.innerHTML = '<span style="color:#888; font-size:11px;">⏳ Simulating…</span>';
 
@@ -1976,6 +1985,9 @@ class TaskProfitDisplay {
                 zoneHrid,
                 estimateTier,
                 estimateTierKnown,
+                estimateTierSource: resolvedTier.source,
+                estimateTierPending: resolvedTier.pending,
+                estimateTierNote: describeZoneTier(estimateTier, resolvedTier),
                 unpriced: { drops: unpricedDrops || [], consumables: unpricedConsumables || [] },
             };
             this._drawCachedCombatEstimate(container, cached, liveTaskData, figures);
@@ -2102,7 +2114,8 @@ class TaskProfitDisplay {
             cached.estimateTier,
             cached.estimateTierKnown,
             cached.unpriced,
-            cached.simHours
+            cached.simHours,
+            cached.estimateTierNote
         );
         container._mwiCombatEstimate = cached;
         container.classList.add(COMBAT_ESTIMATE_RESULT_CLASS);
@@ -2141,6 +2154,41 @@ class TaskProfitDisplay {
             if (td) board.push(`${td.description}|${td.quantity}|${td.currentProgress}`);
         }
         return `${own}#${board.join(';')}`;
+    }
+
+    /**
+     * Bring every open combat estimate to the tier it should now use (see `resolveZoneTier`). A different
+     * tier is a different fight, so that estimate is simulated again with the loadout and mode it had; a
+     * change only in where the same tier came from just redraws the note.
+     * @private
+     */
+    _retierOpenCombatEstimates() {
+        if (!this.isInitialized) return;
+        for (const container of document.querySelectorAll(`.${COMBAT_ESTIMATE_RESULT_CLASS}`)) {
+            const cached = container._mwiCombatEstimate;
+            if (!cached?.zoneHrid) continue;
+            const taskNode = container.closest(GAME.TASK_INFO);
+            if (!taskNode || shouldSkipConfirmingCard(taskNode, 'profit')) continue;
+            const taskData = this.parseTaskData(taskNode);
+            if (!taskData || taskData.description !== cached.description) continue;
+
+            const now = this._resolveEstimateTier(cached.zoneHrid);
+            if (now.tier !== cached.estimateTier) {
+                this._runCombatSimEstimate(container, taskData, cached.loadoutName, cached.mode).catch((error) => {
+                    console.error('[TaskProfit] Re-running an estimate at the remembered tier failed:', error);
+                });
+            } else if (now.source !== cached.estimateTierSource || now.pending !== cached.estimateTierPending) {
+                container._mwiCombatEstimate = {
+                    ...cached,
+                    estimateTierKnown: now.known,
+                    estimateTierSource: now.source,
+                    estimateTierPending: now.pending,
+                    estimateTierNote: describeZoneTier(now.tier, now),
+                };
+                delete container.dataset.progressSignature;
+                this._refreshOpenCombatEstimates();
+            }
+        }
     }
 
     /**
@@ -2213,6 +2261,7 @@ class TaskProfitDisplay {
      *   queue (`_resolveEstimateTier`) rather than the no-recorded-tier T0 fallback
      * @param {{drops: Array, consumables: Array}} [unpriced] - Drops/consumables the market could not price
      * @param {number} [simHours] - Hours the sim covered
+     * @param {string|null} [tierNote] - The tier and where it came from ("T3 (the tier you last ran here)")
      * @private
      */
     _renderCombatEstimateResult(
@@ -2233,7 +2282,8 @@ class TaskProfitDisplay {
         estimateTier,
         estimateTierKnown,
         unpriced = { drops: [], consumables: [] },
-        simHours = ZONE_SIM_HOURS
+        simHours = ZONE_SIM_HOURS,
+        tierNote = null
     ) {
         container.innerHTML = '';
         // An unpriced consumable was charged at zero, so the profit is overstated by an unknown
@@ -2284,7 +2334,8 @@ class TaskProfitDisplay {
         // queue when the estimate ran, so this is the T0 fallback rather than
         // a tier the player actually chose, and the card says exactly that
         // instead of presenting T0 as if it were read off the player's play.
-        const tierSuffix = estimateTierKnown ? `T${estimateTier}` : `T${estimateTier}, no recorded tier for this zone`;
+        const tierSuffix =
+            tierNote ?? (estimateTierKnown ? `T${estimateTier}` : `T${estimateTier}, no recorded tier for this zone`);
         const lines = [];
         lines.push('<div style="font-weight: bold; margin-bottom: 4px;">Task Profit Breakdown</div>');
         lines.push('<div style="border-bottom: 1px solid #555; margin-bottom: 4px;"></div>');
@@ -2456,9 +2507,7 @@ class TaskProfitDisplay {
                     limiting.taskCount > 1 ? `${limiting.name} ×${limiting.taskCount}` : limiting.name;
                 summary.textContent = `${zoneName}: ~${formatKMB(estimate.fightsNeeded)} fights${formatPercentSuffix(estimate.percent)} | ${timeReadable(Math.round(estimate.hoursNeeded * 3600))} (bottleneck: ${limitingLabel})`;
                 // The figure is for one tier; Go opens the zone at that tier and fills this count
-                summary.title = estimateTierKnown
-                    ? `Simulated at T${estimateTier}. Go opens the zone at that tier and fills this fight count.`
-                    : `Simulated at T${estimateTier} (no recorded tier for this zone). Go opens the zone at that tier and fills this fight count.`;
+                summary.title = `Simulated at ${tierNote ?? (estimateTierKnown ? `T${estimateTier}` : `T${estimateTier}, no recorded tier for this zone`)}. Go opens the zone at that tier and fills this fight count.`;
                 const medianHint = createMedianHint(estimate);
                 if (medianHint) summary.appendChild(medianHint);
             } else {

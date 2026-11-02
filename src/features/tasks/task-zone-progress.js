@@ -15,7 +15,7 @@ import dataManager from '../../core/data-manager.js';
 import { buildAllPlayerDTOs, buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import { TASK_DAMAGE_PER_MONSTER } from '../combat-sim/engine/task-damage-mode.js';
-import { lastUsedTierForZone } from '../../utils/combat-actions.js';
+import { resolveZoneTier } from '../../utils/zone-tier-memory.js';
 import { characterIdentityChanged } from '../../utils/combat-zone-open.js';
 import { computeZoneBottleneck, fightsPerHour, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
 import { getZoneEstimatePercent, zoneBottleneckEstimate } from './task-zone-estimate-percentile.js';
@@ -126,7 +126,7 @@ export async function computeAllZoneProgress({
     }
 
     for (const [zoneHrid, monsters] of byZone) {
-        const tier = lastUsedTierForZone(dataManager.getCurrentActions?.() || [], zoneHrid) ?? 0;
+        const tier = resolveZoneTier(zoneHrid).tier;
 
         let simResult;
         try {
