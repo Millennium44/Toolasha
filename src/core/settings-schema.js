@@ -3121,6 +3121,14 @@ export const settingsGroups = {
                 default: true,
                 help: 'Keeps your own last ~15 seconds of HP, MP, incoming hits and casts in memory (about 30 small samples, nothing saved) and freezes a compact recap when you die. Open it from the death alert or the small Death recap button; the last five are kept until you reload. A zero-HP reading is shown as unconfirmed until the server’s death count agrees, attribution of hits to monsters is approximate, and a recap says so when recording began too late to cover the whole window.',
             },
+            combatDeathRecapLabyrinth: {
+                id: 'combatDeathRecapLabyrinth',
+                label: 'Death Recap: Show Death recap in the labyrinth',
+                type: 'checkbox',
+                default: false,
+                help: 'A death inside the labyrinth is routine, so the death alert carries no "View death recap" link there unless this is on. A labyrinth death with this off also raises no Death recap chip or count. Needs the Death Recap setting above.',
+                dependencies: ['combatDeathRecap'],
+            },
             combatDropLuck: {
                 id: 'combatDropLuck',
                 label: 'Combat Drop Luck: Show how lucky a session was on return',

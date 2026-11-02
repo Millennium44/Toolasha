@@ -42,7 +42,8 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
 import { newDeaths } from './notification-predicates.js';
-import { openRecap, SETTING as RECAP_SETTING } from './death-recap.js';
+import { openRecap, labyrinthDeathQuiet, SETTING as RECAP_SETTING } from './death-recap.js';
+import { isLabyrinthFightActive } from '../combat/labyrinth-activity.js';
 import { seatFromBattle, seatFromTick, guessContradicted, rosterHp } from './own-seat.js';
 
 /** Master switch; nothing below it is consulted while this is off */
@@ -150,7 +151,7 @@ class CombatDeathAlerts {
         const total = this.lastCount === null ? 0 : this.lastCount + this.tickDeaths;
         const message =
             total > 0 ? `You died in combat — ${this.totalText(total)} so far this session.` : 'You died in combat.';
-        this.announce(message);
+        this.announce(message, isLabyrinthFightActive());
     }
 
     /**
@@ -164,15 +165,17 @@ class CombatDeathAlerts {
     /**
      * Say it, with the recap one click away.
      * @param {string} message - Body text
+     * @param {boolean} [liveLabyrinth] - Whether the caller, on a tick, sees a labyrinth fight right now
      */
-    announce(message) {
+    announce(message, liveLabyrinth = false) {
+        // Checked as the alert is about to be shown: a labyrinth death is routine, so it carries no recap link
+        // unless the player asked for one there. The recap is still recorded and the button still opens it
+        const offerRecap = config.getSetting(RECAP_SETTING) && !labyrinthDeathQuiet(liveLabyrinth);
         notificationService.notify(EVENT_KEY, message, {
             title: 'You died',
             // Only while the recap feature is on: with it off there is never a recap to open. Opened on
             // click, by which time the recap module has frozen or confirmed this death's recap
-            ...(config.getSetting(RECAP_SETTING)
-                ? { action: { label: 'View death recap', onClick: () => openRecap() } }
-                : {}),
+            ...(offerRecap ? { action: { label: 'View death recap', onClick: () => openRecap() } } : {}),
         });
     }
 

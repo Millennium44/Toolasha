@@ -43,13 +43,16 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { isFromActiveSocket } from '../combat/labyrinth-activity.js';
+import { isFromActiveSocket, isLabyrinthFightActive } from '../combat/labyrinth-activity.js';
 import webSocketHook from '../../core/websocket.js';
 import { seatFromBattle, seatFromTick, guessContradicted, rosterHp } from './own-seat.js';
 import { attributeIncoming, newTakenState, seedTakenState, resolveName } from '../../utils/damage-taken.js';
 
 /** Setting that gates the whole module */
 export const SETTING = 'combatDeathRecap';
+
+/** Setting that lets a death inside the labyrinth announce itself; the recap is kept either way */
+export const LABYRINTH_SETTING = 'combatDeathRecapLabyrinth';
 
 /** How much history a recap carries */
 export const WINDOW_MS = 15000;
@@ -88,6 +91,10 @@ let lastAbility = null;
 let lastPrepared = null;
 let lastAtk = null;
 let dead = false;
+/** Recaps up to this id have been looked at or dismissed; the chip counts only newer ones */
+let seenUpTo = 0;
+/** Whether the fight the latest tick belonged to was a labyrinth one; sticky within a battle, null before any tick */
+let fightInLabyrinth = null;
 let lastCount = null;
 /** Recaps frozen by a tick in the current fight that no death count has matched yet */
 let pending = [];
@@ -165,6 +172,9 @@ function buildRecap(samples, castList, meta) {
     return {
         id: nextId++,
         at: Date.now(),
+        labyrinth: meta.labyrinth === true,
+        // A labyrinth death with the labyrinth setting off is kept but raises no chip and no count
+        quiet: meta.labyrinth === true && !config.getSetting(LABYRINTH_SETTING),
         characterId: ownCharacterId,
         source: meta.source,
         confirmed: meta.confirmed,
@@ -204,7 +214,11 @@ function keep(recap) {
 export function detectDeath(signal, info = {}) {
     if (signal === 'hp') {
         if (!ring.length) return null;
-        const recap = buildRecap(ring.slice(), casts.slice(), { source: 'hp', confirmed: false });
+        const recap = buildRecap(ring.slice(), casts.slice(), {
+            source: 'hp',
+            confirmed: false,
+            labyrinth: fightInLabyrinth === true,
+        });
         pending.push(recap);
         // The display cap is not the accounting: an evicted reference is still an observed, unconfirmed death
         if (pending.length > MAX_RECAPS) {
@@ -240,6 +254,7 @@ export function detectDeath(signal, info = {}) {
                 source: 'count',
                 confirmed: true,
                 deaths: unseen,
+                labyrinth: fightInLabyrinth === true,
             });
             keep(created);
         }
@@ -343,6 +358,7 @@ function onBattleUpdated(data, context) {
     try {
         if (data?.battleId !== battleId) {
             battleId = data?.battleId;
+            fightInLabyrinth = null;
             if (!seeded) takenState = newTakenState();
             seeded = false;
         }
@@ -362,6 +378,10 @@ function onBattleUpdated(data, context) {
         }
         const player = data?.pMap?.[ownIndex];
         if (!player) return;
+
+        // Decided before the death is frozen: the run may end the moment you die, and a fight that was a labyrinth
+        // one stays one for the rest of its battle
+        fightInLabyrinth = fightInLabyrinth === true || isLabyrinthFightActive();
 
         const now = Date.now();
         const events = attributeIncoming(carryOmitted(data, ownIndex), takenState).filter(
@@ -424,6 +444,17 @@ function onBattleUpdated(data, context) {
     }
 }
 
+/**
+ * Whether a death announcement should stay quiet: the death was in the labyrinth and the player has not asked
+ * for the recap there. The recap is still recorded and reachable from the button.
+ * @param {boolean} [liveLabyrinth] - What the caller sees at this instant, when it is on a tick
+ * @returns {boolean}
+ */
+export function labyrinthDeathQuiet(liveLabyrinth = false) {
+    if (config.getSetting(LABYRINTH_SETTING)) return false;
+    return liveLabyrinth === true || fightInLabyrinth === true;
+}
+
 /** @returns {Array<Object>} Frozen recaps, newest first (read-only view) */
 export function recapHistory() {
     return recaps;
@@ -431,36 +462,83 @@ export function recapHistory() {
 
 // --- UI ---
 
-/** Show or hide the small button according to whether anything is kept */
+/**
+ * Recaps the chip counts: not yet looked at, and not a quiet labyrinth death
+ * @returns {number}
+ */
+function unseenCount() {
+    return recaps.filter((r) => r.id > seenUpTo && !r.quiet).length;
+}
+
+/** Mark everything kept so far as looked at; the chip goes until a new death arrives */
+function markSeen() {
+    seenUpTo = nextId - 1;
+    refreshButton();
+}
+
+/**
+ * Show or hide the small chip. It counts deaths not yet looked at and has its own dismiss cross. It sits at the
+ * bottom centre: the left edge is the game's sidebar (its last rows reach the bottom) and the right is the toast stack.
+ */
 function refreshButton() {
     if (typeof document === 'undefined' || !document.body) return;
-    if (!recaps.length) {
+    const count = unseenCount();
+    if (!count) {
         uiNodes.button?.remove();
         uiNodes.button = null;
         return;
     }
     if (!uiNodes.button) {
-        const button = document.createElement('button');
-        button.id = BUTTON_ID;
-        button.type = 'button';
-        Object.assign(button.style, {
+        const chip = document.createElement('div');
+        chip.id = BUTTON_ID;
+        Object.assign(chip.style, {
             position: 'fixed',
-            left: '12px',
-            bottom: '12px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            bottom: '8px',
+            maxWidth: '92vw',
             zIndex: '1190',
+            display: 'flex',
+            alignItems: 'stretch',
             background: 'rgba(36, 14, 14, 0.95)',
-            color: '#ff9e9e',
             border: '1px solid rgba(255, 82, 82, 0.8)',
             borderRadius: '6px',
-            padding: '4px 8px',
             fontSize: '12px',
+        });
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.dataset.role = 'recap-open';
+        Object.assign(open.style, {
+            background: 'none',
+            border: 'none',
+            color: '#ff9e9e',
+            padding: '4px 8px',
+            minHeight: '36px',
             cursor: 'pointer',
         });
-        button.addEventListener('click', () => openRecap());
-        document.body.appendChild(button);
-        uiNodes.button = button;
+        open.addEventListener('click', () => openRecap());
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.dataset.role = 'recap-dismiss';
+        dismiss.textContent = '\u00d7';
+        dismiss.title = 'Dismiss';
+        dismiss.setAttribute('aria-label', 'Dismiss death recap');
+        Object.assign(dismiss.style, {
+            background: 'none',
+            border: 'none',
+            borderLeft: '1px solid rgba(255, 82, 82, 0.4)',
+            color: '#ff9e9e',
+            minWidth: '40px',
+            minHeight: '36px',
+            fontSize: '18px',
+            cursor: 'pointer',
+        });
+        dismiss.addEventListener('click', markSeen);
+        chip.append(open, dismiss);
+        document.body.appendChild(chip);
+        uiNodes.button = chip;
     }
-    uiNodes.button.textContent = `Death recap (${recaps.length})`;
+    uiNodes.button.querySelector('[data-role="recap-open"]').textContent = `Death recap (${count})`;
 }
 
 /** @param {number} n @returns {string} HP/MP figure */
@@ -475,7 +553,10 @@ function fmt(n) {
  */
 export function openRecap(id) {
     const recap = id === undefined ? recaps[0] : recaps.find((r) => r.id === id);
-    return recap ? renderRecap(recap) : false;
+    if (!recap) return false;
+    const drawn = renderRecap(recap);
+    if (drawn) markSeen();
+    return drawn;
 }
 
 /** @param {Object} recap A recap object @returns {boolean} Whether it was drawn */
@@ -563,7 +644,10 @@ function renderRecap(recap) {
     close.type = 'button';
     close.textContent = 'Close';
     close.style.marginTop = '8px';
-    close.addEventListener('click', closeModal);
+    close.addEventListener('click', () => {
+        closeModal();
+        markSeen();
+    });
     modal.appendChild(close);
 
     document.body.appendChild(modal);
@@ -598,6 +682,8 @@ function disable() {
     lastPrepared = null;
     lastAtk = null;
     dead = false;
+    seenUpTo = 0;
+    fightInLabyrinth = null;
     seeded = false;
     monsterNames = {};
     takenState = newTakenState();
