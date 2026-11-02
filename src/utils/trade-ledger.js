@@ -213,9 +213,9 @@ export function trimLedger(records, cap = LEDGER_RECORD_CAP) {
  * store) made the same fill be recorded again, at a later time, two to four times over. `caps` names, for
  * listings that have ended, the final `filledQuantity`; a listing whose recorded quantity exceeds it keeps its
  * earliest fills up to the cap and loses the rest. The fill the cap falls inside is trimmed, its coins in
- * proportion, so a price never changes. Fills of the same listing at the same millisecond cannot both be real
- * (one wire object per listing per event), so those collapse first, to the smaller one: that is what a trimmed
- * row looks like when the untrimmed copy comes back from another device.
+ * proportion, so a price never changes, and carries `trimmed: true`. An untrimmed row at the same millisecond
+ * as a trimmed row of its listing is that row's original, back from another device, and is dropped; two
+ * untrimmed rows at one millisecond are both kept, since two real partial fills can land together.
  *
  * Pure, idempotent, and only ever shrinks: a listing at or under its cap, or not named in `caps`, is returned
  * untouched, and the same input folded in again gives the same answer.
@@ -243,14 +243,17 @@ export function repairOverRecorded(records, caps) {
         const total = rows.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
         if (!(cap > 0) || total <= cap) continue;
 
-        const byTime = new Map();
-        for (const row of rows) {
-            const kept = byTime.get(row.t);
-            if (!kept || (Number(row.quantity) || 0) < (Number(kept.quantity) || 0)) byTime.set(row.t, row);
-        }
+        // An untrimmed row sharing a millisecond with a trimmed one of its listing is that row's original,
+        // back from another device. Rows at one millisecond with no trimmed row among them are all real
+        const trimmedTimes = new Set(rows.filter((row) => row.trimmed).map((row) => row.t));
+        const ordered = rows
+            .filter((row) => row.trimmed || !trimmedTimes.has(row.t))
+            .map((row, index) => ({ row, index }))
+            .sort((x, y) => x.row.t - y.row.t || x.index - y.index)
+            .map((x) => x.row);
         const kept = [];
         let remaining = cap;
-        for (const row of [...byTime.values()].sort((a, b) => a.t - b.t)) {
+        for (const row of ordered) {
             if (remaining <= 0) break;
             const quantity = Number(row.quantity) || 0;
             if (quantity <= 0) continue;
@@ -260,6 +263,7 @@ export function repairOverRecorded(records, caps) {
             } else {
                 kept.push({
                     ...row,
+                    trimmed: true,
                     quantity: remaining,
                     coins: Math.round(((row.coins || 0) * remaining) / quantity),
                 });

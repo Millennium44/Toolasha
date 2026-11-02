@@ -68,8 +68,19 @@ registerCharacterScopedPrefix(LEDGER_STORE, RECORD_PREFIX);
  */
 const LISTING_LOG_BASE = 'marketListingTimestamps';
 
-/** Log statuses that mean the listing has ended, so its `filledQuantity` is final */
-const ENDED_LOG_STATUSES = new Set(['filled', 'expired']);
+/**
+ * The one log status the repair trusts. `filled` is the wire's own terminal stamp (a cancel after a partial
+ * fill included). `expired` is not trusted: the history viewer's DOM scrape can stamp it onto an open listing
+ * that looks the same as the one that expired, and the row then keeps a stale, low count.
+ */
+const TRUSTED_LOG_STATUS = 'filled';
+
+/** Wire statuses after which a listing can never fill again */
+const ENDED_WIRE_STATUSES = new Set([
+    '/market_listing_status/cancelled',
+    '/market_listing_status/expired',
+    '/market_listing_status/filled',
+]);
 
 /**
  * Per-character cap floor, `tradeLedgerRecFloor_<charId>_<YYYY-MM-DD>`: the oldest day record the cap still
@@ -177,8 +188,12 @@ export function mergeRecords(base, fresh) {
  */
 function furtherAlong(a, b) {
     const valid = (entry) => entry && typeof entry === 'object' && !Array.isArray(entry);
-    if (!valid(a)) return b;
-    if (!valid(b)) return a;
+    if (!valid(a) || !valid(b)) {
+        if (valid(a)) return a;
+        if (valid(b)) return b;
+        // Neither is a baseline: settle on content, not on which side came first
+        return (JSON.stringify(b) ?? '') > (JSON.stringify(a) ?? '') ? b : a;
+    }
     if (a.done || b.done) return { done: true };
     const filledA = Number(a.filledQuantity) || 0;
     const filledB = Number(b.filledQuantity) || 0;
@@ -463,11 +478,13 @@ class TradeLedgerStore {
         // and treating it as a snapshot would wipe every stored baseline.
         if (dataManager.characterData) {
             this.processListings(dataManager.getMarketListings(), true);
+            this._repairOverRecorded();
         }
 
         this.initHandler = (data) => {
             if (Array.isArray(data?.myMarketListings)) {
                 this.processListings(data.myMarketListings, true);
+                this._repairOverRecorded(data.myMarketListings);
             }
         };
         this.updateHandler = (data) => {
@@ -570,28 +587,64 @@ class TradeLedgerStore {
     }
 
     /**
-     * The final fill count of every ended listing the log or the archive knows, by listing id.
+     * The final fill count of every listing the repair may cut back, by listing id.
      *
-     * Only an ended listing (`filled`, or `expired`; a cancel after a partial fill is stamped `filled` by the
-     * log) with a positive count is named: a still-open listing's log row lags its fills, and a count of zero
-     * is the absence of a figure, not evidence that nothing filled. A log that cannot be read, or holds no
-     * array, names nothing: that is "not loaded", which is not "empty of fills".
+     * A listing is named only when its log (or archive) row says `filled` with a positive count, it is not
+     * among the open listings, and the count is raised to the highest `filledQuantity` this tab's baselines
+     * ever saw for it, so a stale low log count can never cut a fill the baseline already counted. `expired`
+     * rows are ignored (see {@link TRUSTED_LOG_STATUS}). A log that cannot be read, or holds no array, names
+     * nothing: that is "not loaded", which is not "empty of fills". The archive is read only when some
+     * listing with several recorded fills is over its log count or absent from the log (an archive month
+     * costs a read; a ledger with nothing doubled never needs one).
      * @param {string} charId - Whose listings
-     * @returns {Promise<Map<number, number>>} Listing id → final filled quantity
+     * @param {Set<number>} openIds - Listings still open (or not known to have ended)
+     * @returns {Promise<Map<number, number>>} Listing id to final filled quantity
      * @private
      */
-    async _endedFills(charId) {
+    async _endedFills(charId, openIds) {
+        const totals = new Map(); // listing id to {total, rows}
+        for (const record of this.records) {
+            const entry = totals.get(record.listingId) || { total: 0, rows: 0 };
+            entry.total += Number(record.quantity) || 0;
+            entry.rows += 1;
+            totals.set(record.listingId, entry);
+        }
         const caps = new Map();
-        const note = (row) => {
+        const seenInLog = new Set();
+        const note = (row, trackSeen) => {
             const id = Number(row?.id);
+            if (!Number.isFinite(id)) return;
+            if (trackSeen) seenInLog.add(id);
             const filled = Number(row?.filledQuantity);
-            if (!Number.isFinite(id) || !ENDED_LOG_STATUSES.has(row?.status) || !(filled > 0)) return;
+            if (row?.status !== TRUSTED_LOG_STATUS || !(filled > 0)) return;
             if (!(caps.get(id) >= filled)) caps.set(id, filled);
         };
         const probe = await storage.tryGet(charKey(LISTING_LOG_BASE, charId), LEDGER_STORE);
-        if (probe?.found && Array.isArray(probe.value)) probe.value.forEach(note);
-        const archived = await listingArchive.read(charId);
-        if (Array.isArray(archived)) archived.forEach(note);
+        // Unreadable, or not an array: not loaded. Absent: a log with nothing in it, the archive may still know
+        if (probe === null || (probe.found && !Array.isArray(probe.value))) return caps;
+        if (probe.found) probe.value.forEach((row) => note(row, true));
+
+        let needArchive = false;
+        for (const [id, { total, rows }] of totals) {
+            if (rows < 2 || openIds.has(id)) continue;
+            if (!seenInLog.has(id) || total > (caps.get(id) ?? Infinity)) {
+                needArchive = true;
+                break;
+            }
+        }
+        if (needArchive) {
+            const archived = await listingArchive.read(charId);
+            if (Array.isArray(archived)) archived.forEach((row) => note(row, false));
+        }
+
+        for (const id of [...caps.keys()]) {
+            if (openIds.has(id)) {
+                caps.delete(id);
+                continue;
+            }
+            const baseline = Number(this.states[String(id)]?.filledQuantity);
+            if (baseline > caps.get(id)) caps.set(id, baseline);
+        }
         return caps;
     }
 
@@ -609,17 +662,31 @@ class TradeLedgerStore {
      *
      * Serialized with the record saves. Standing down on a character switch, and on a store that is still the
      * single key, which this repair does not handle (the next load that has split it will).
+     * Skipped whole, with nothing cut, until the character's open listings are known: an empty list that
+     * means "not loaded" is not an empty book.
+     * @param {Array<Object>|null} [openListings] - The character's listings, when the caller has them (the
+     *   `character_initialized` payload); otherwise the data manager's, once character data has arrived
      * @returns {Promise<number>} How many listings were cut
      * @private
      */
-    _repairOverRecorded() {
+    _repairOverRecorded(openListings = null) {
         const run = async () => {
             const charId = ledgerCharId();
             const started = this._generation;
             const current = () => this._generation === started && ledgerCharId() === charId;
             try {
                 if (this._legacy || !this.isLoaded) return 0;
-                const caps = await this._endedFills(charId);
+                const listings = Array.isArray(openListings)
+                    ? openListings
+                    : dataManager.characterData
+                      ? dataManager.getMarketListings()
+                      : null;
+                if (!listings) return 0;
+                const openIds = new Set();
+                for (const entry of listings) {
+                    if (entry && !ENDED_WIRE_STATUSES.has(entry.status)) openIds.add(Number(entry.id));
+                }
+                const caps = await this._endedFills(charId, openIds);
                 if (!current() || caps.size === 0) return 0;
 
                 const { records, repairedIds } = repairOverRecorded(this.records, caps);

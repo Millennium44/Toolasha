@@ -432,6 +432,17 @@ describe('repairOverRecorded', () => {
         expect(repairOverRecorded(back, caps([[1, 10]])).repairedIds.size).toBe(0);
     });
 
+    test('the trimmed row is marked, and only an untrimmed row beside a trimmed one is dropped', () => {
+        const trimmed = repairOverRecorded([row(1, 1, 4), row(1, 2, 4), row(1, 3, 4)], caps([[1, 10]])).records;
+        expect(trimmed.map((r) => !!r.trimmed)).toEqual([false, false, true]);
+        // Two real fills sharing a millisecond, nothing trimmed there: both stay
+        const together = repairOverRecorded([row(2, 1, 3), row(2, 1, 3), row(2, 2, 3)], caps([[2, 6]])).records;
+        expect(together.map((r) => [r.t, r.quantity])).toEqual([
+            [1, 3],
+            [1, 3],
+        ]);
+    });
+
     test('is idempotent', () => {
         const c = caps([[1, 7]]);
         const first = repairOverRecorded([row(1, 1, 5), row(1, 2, 5), row(1, 3, 5)], c).records;
