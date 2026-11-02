@@ -764,6 +764,32 @@ describe('hints on the game achievement cards', () => {
         expect(lineOf('Regular').textContent).toContain('[dungeon T1 · 0 / 1 clears · no level requirement]');
     });
 
+    test('Missing Mats is finger-sized on a coarse pointer only', () => {
+        game.inventory = INVENTORY.filter((row) => row.itemHrid !== '/items/bamboo_gloves');
+        const stub = (coarse) =>
+            vi.stubGlobal('matchMedia', (query) => ({
+                matches: coarse && query === '(pointer: coarse)',
+                media: query,
+            }));
+        try {
+            stub(false);
+            achievementsTab();
+            finisher.initialize();
+            expect(matsOf('Dairy Chef').style.minHeight).toBe('');
+            finisher.disable();
+            document.body.replaceChildren();
+
+            stub(true);
+            achievementsTab();
+            finisher.initialize();
+            expect(matsOf('Dairy Chef').style.minHeight).toBe('32px');
+            // Pressing it is unchanged
+            expect(matsOf('Dairy Chef').title).toMatch(/^Will buy: /);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     test('Missing Mats shows only where inputs are short and buyable, and opens the shared bill for one action', () => {
         game.inventory = INVENTORY.filter((row) => row.itemHrid !== '/items/bamboo_gloves');
         achievementsTab();

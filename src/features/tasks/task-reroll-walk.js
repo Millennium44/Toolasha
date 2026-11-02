@@ -77,7 +77,7 @@ import { GAME } from '../../utils/selectors.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import taskSorter from './task-sorter.js';
-import { lacksHover } from '../../utils/mobile.js';
+import { hasCoarsePointer, lacksHover } from '../../utils/mobile.js';
 import { dockWhenNarrow } from '../../utils/responsive-dock.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -108,6 +108,7 @@ const TOOLBAR_BUTTON_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
  * The walk's hover help, kept as text so a device with no hover can read it too: the info control
  * (shown only there) lists these, and the buttons' `title`s still carry the same words.
  */
+const TOUCH_MIN_HEIGHT = '32px';
 const TOGGLE_HELP =
     'Reroll walk: show or hide the walk panel. The walk steps down the board one click at a time, ' +
     'leaves protected tasks alone, and stops rerolling a task once the shield popup would block the ' +
@@ -1941,6 +1942,7 @@ class TaskRerollWalk {
         this._addInfoControl(widget);
         if (docked) this._styleDocked(widget, header);
         else this._mountFloating(widget);
+        this._sizeForTouch(widget);
         this.widget = widget;
         this.widgetMode = mode;
         this._renderSettings();
@@ -2253,6 +2255,21 @@ class TaskRerollWalk {
                     ? `✓ Done — ${this._summaryText()}. Press to walk the board again from the top.`
                     : '';
         return (this.state === 'done' ? guidance : `${detail}${guidance}`).trim();
+    }
+
+    /**
+     * On a touch screen the widget's buttons are 17px tall, too small to hit. Give them a finger-sized
+     * height; the width and look stay as they were. Run after mounting, because docking rewrites the
+     * buttons' inline styles.
+     * @param {Object} widget - The floating-widget parts
+     * @private
+     */
+    _sizeForTouch(widget) {
+        if (!hasCoarsePointer()) return;
+        const sort = widget.extras.querySelector('.mwi-task-reroll-walk-sort');
+        for (const button of [widget.main, sort, widget.info?.button, widget.gear, widget.close]) {
+            if (button) button.style.minHeight = TOUCH_MIN_HEIGHT;
+        }
     }
 
     /**

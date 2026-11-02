@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bigger tap targets on a touch screen
+
+- The reroll walk's buttons, Party Finder's teammate and saved-build rows, and the Achievements Missing Mats button are at least 32 px tall on a touch screen.
+
 ### Reroll walk help on a touch screen
 
 - On a device with no hover, a new ⓘ button next to the walk's settings shows what each control does, without pressing anything.

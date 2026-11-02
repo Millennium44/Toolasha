@@ -1816,3 +1816,28 @@ describe('the mark on a profit built from unpriced items (#651 T02)', () => {
         expect(unpricedMark({ unpriced: ['Gem'] })).toContain('\u2265');
     });
 });
+
+describe('roster buttons on a touch screen', () => {
+    test('a coarse-pointer sheet sizes the row buttons and wraps the row; the inline look is untouched', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        const sheet = tab.root.querySelector('style');
+        expect(sheet.textContent).toContain('@media (pointer: coarse)');
+        expect(sheet.textContent).toMatch(/\[data-pf-member\] button,[^}]*min-height: 32px/);
+        expect(sheet.textContent).toMatch(/\[data-pf-member\],[^}]*flex-wrap: wrap/);
+        expect(sheet.textContent).toMatch(/\[data-pf-name\],[^}]*flex: 1 1 8em !important/);
+        // Desktop: the buttons carry no height of their own, so nothing changes without the media query
+        const buttons = [...tab.root.querySelectorAll('[data-pf-member="a"] button')];
+        expect(buttons.map((b) => b.textContent)).toEqual(['Auras', 'Edit', 'Rename', '×']);
+        for (const b of buttons) expect(b.style.minHeight).toBe('');
+        expect(tab.root.querySelector('[data-pf-member="a"]').style.flexWrap).toBe('');
+    });
+
+    test('the sheet goes with the tab', async () => {
+        await mountTab();
+        const root = tab.root;
+        tab.detach();
+        expect(root.isConnected).toBe(false);
+        expect(container.querySelector('style')).toBeNull();
+    });
+});

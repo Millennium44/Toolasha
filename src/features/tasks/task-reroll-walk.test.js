@@ -2534,3 +2534,34 @@ describe('the walk help without a hover', () => {
         expect(infoPanel().textContent).toContain('Sort the board now');
     });
 });
+
+describe('the walk buttons on a touch screen', () => {
+    const oneCard = () => board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+    const buttons = () => [
+        document.querySelector('.mwi-task-reroll-walk-advance'),
+        document.querySelector('.mwi-task-reroll-walk-sort'),
+        document.querySelector('.mwi-task-reroll-walk-stop'),
+    ];
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    for (const mode of ['floating', 'toolbar']) {
+        test(`a coarse pointer gives Sort, the main button and the close a finger-sized height (${mode})`, async () => {
+            vi.stubGlobal('matchMedia', (query) => ({ matches: query === '(pointer: coarse)', media: query }));
+            settings.values.tasks_rerollWalkBarPosition = mode;
+            oneCard();
+            await walk.start();
+            for (const button of buttons()) expect(button.style.minHeight).toBe('32px');
+        });
+
+        test(`a fine pointer leaves them as they were (${mode})`, async () => {
+            vi.stubGlobal('matchMedia', (query) => ({ matches: false, media: query }));
+            settings.values.tasks_rerollWalkBarPosition = mode;
+            oneCard();
+            await walk.start();
+            for (const button of buttons()) expect(button.style.minHeight).toBe('');
+        });
+    }
+});

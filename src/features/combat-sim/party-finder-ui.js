@@ -106,6 +106,22 @@ const INPUT_STYLE =
 const BTN_STYLE = `background:${ACCENT_BTN_BG}; color:${ACCENT}; border:1px solid ${ACCENT_BTN_BORDER}; border-radius:4px; padding:3px 10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;`;
 const SMALL_BTN_STYLE = `background:transparent; color:#aaa; border:1px solid #444; border-radius:3px; padding:1px 6px; font-size:11px; cursor:pointer; font-family:inherit;`;
 
+/**
+ * Teammate, saved-build and aura-option rows on a touch screen: their buttons are 18-22px tall, so they get
+ * a finger-sized height, and the row wraps instead of squeezing the name to nothing beside five buttons.
+ * Desktop (a fine pointer) never matches, so it keeps its inline look exactly.
+ */
+const TOUCH_CSS = `
+@media (pointer: coarse) {
+    .mwi-csim-party-finder [data-pf-member] button,
+    .mwi-csim-party-finder [data-pf-build] button,
+    .mwi-csim-party-finder [data-pf-auras] button { min-height: 32px; }
+    .mwi-csim-party-finder [data-pf-member],
+    .mwi-csim-party-finder [data-pf-build] { flex-wrap: wrap; }
+    .mwi-csim-party-finder [data-pf-name],
+    .mwi-csim-party-finder [data-pf-build-name] { flex: 1 1 8em !important; }
+}`;
+
 /** What the "Match my build" switch does, for its tooltip */
 const MATCH_BUILD_HELP =
     'A template added as a teammate is tuned to your current build. Combat levels: your own for each stat, except ' +
@@ -341,6 +357,10 @@ export class PartyFinderTab {
         this.root.className = 'mwi-csim-party-finder';
         this.root.style.cssText = 'display:flex; flex-direction:column; gap:8px; padding:10px 14px;';
         this.root.innerHTML = this._skeletonHtml();
+        // Not inline: the media query has to follow the device, and the sheet goes with the root
+        const touchSheet = document.createElement('style');
+        touchSheet.textContent = TOUCH_CSS;
+        this.root.appendChild(touchSheet);
         container.appendChild(this.root);
         this._wire();
         this._unsubscribePull = onSyncPullApplied((written) => {

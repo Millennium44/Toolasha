@@ -45,6 +45,7 @@ import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { buildItemHash } from '../../utils/item-hash.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { formatKMB } from '../../utils/formatters.js';
+import { hasCoarsePointer } from '../../utils/mobile.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import {
     cachedItemVolume,
@@ -465,6 +466,8 @@ export function createMissingMatsButton(res, ready, clientData, ironCow, onPress
         'Missing Mats'
     );
     mats.type = 'button';
+    // A finger cannot hit the 14px desktop button
+    if (hasCoarsePointer()) mats.style.minHeight = '32px';
     mats.className = `${PANEL_CLASS}-mats`;
     mats.title = `Will buy: ${lines.map((m) => `${m.itemName} ×${formatKMB(m.missing)}`).join(', ')}`;
     mats.addEventListener('click', (event) => {
