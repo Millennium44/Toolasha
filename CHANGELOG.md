@@ -11,6 +11,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Toolasha now follows party changes as they happen (not only at login or the next fight) and the server's own stat sheet after gear, level or buff changes, so Combat Sim exports, the party roster and the Labyrinth planner's combat level stay current without a reload.
 - The new-fight check that refreshes your equipped abilities now reads where the game actually sends them; it never matched before.
 
+### Combat readers use the ability bar the game sends
+
+- The damage tracker's class detection, the rotation tracker and party lint now read each fighter's ability bar from where a new fight actually carries it; before, they never found it and fell back to casts or the equipped kit.
+- Guild trial unit sheets and consumable events no longer leak into your own party's combat stats or the monster stat check, and a late older leaderboard no longer overwrites a newer reading.
+
+### Offline XP, sale refusals and scroll buffs from the game's own data
+
+- The Welcome Back economics block reads offline experience from the login data instead of the popup's text, so it works in any language.
+- Bulk sell stops waiting when the server refuses a sale (a locked item, too many listings, a rejected order) and lets you press again, instead of timing out.
+- Treasure lists the buffs scrolls granted this session (e.g. "+60% Rare Find for 1h"), outside the chest totals.
+
 ### More tests read real game messages
 
 - Combat (`new_battle`, `battle_updated`, consumable casts), inventory and market listing and order-book tests now use payloads captured from the game on the test server.

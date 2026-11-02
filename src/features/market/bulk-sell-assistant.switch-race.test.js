@@ -114,6 +114,10 @@ vi.mock('../../utils/dom-observer-helpers.js', () => ({
         };
     },
 }));
+vi.mock('../../utils/server-notices.js', () => ({
+    SALE_REFUSAL_KEYS: [],
+    onServerNotice: () => () => {},
+}));
 vi.mock('../inventory/watchlist.js', () => ({ watchlistEntries: () => [] }));
 
 const bulkSell = (await import('./bulk-sell-assistant.js')).default;

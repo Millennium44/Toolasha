@@ -106,6 +106,12 @@ vi.mock('../../core/data-manager.js', () => ({
             // static client data has loaded, which is what the scroll purge
             // checks before deciding it has seen every scroll there is
             itemDetailMap: dm.items ?? undefined,
+            personalBuffTypeDetailMap: {
+                '/personal_buff_types/rare_find': {
+                    hrid: '/personal_buff_types/rare_find',
+                    buff: { typeHrid: '/buff_types/rare_find', flatBoost: 0.6 },
+                },
+            },
             openableLootDropMap: dm.dropTables,
             shopItemDetailMap: dm.shop,
             labyrinthShopItemDetailMap: dm.labyrinthShop,
@@ -202,6 +208,8 @@ const {
     TREASURE_DETAIL_COLUMNS,
     isScrollItem,
     withoutScrolls,
+    describeGrantedBuffs,
+    formatGrantedBuff,
     default: treasureTracker,
 } = await import('./treasure-tracker.js');
 const { default: config } = await import('../../core/config.js');
@@ -247,6 +255,66 @@ describe('scrolls are not treasure', () => {
         treasureTracker._onLootOpened({ openedItem: { itemHrid: '/items/seal_of_critical_rate', count: 1 } }, null);
 
         expect(treasureTracker.tally['/items/seal_of_critical_rate']).toBeUndefined();
+    });
+
+    // Fixtures below are built from the game's loot_opened handler (grantedBuffs: [{typeHrid, duration}],
+    // duration in nanoseconds); no live capture of a scroll opening exists yet
+    const SCROLL_OPEN = {
+        openedItem: { itemHrid: '/items/seal_of_critical_rate', count: 1 },
+        grantedBuffs: [{ typeHrid: '/personal_buff_types/rare_find', duration: 3600 * 1e9 }],
+    };
+
+    test('the granted buff is described from the client data, not the message', () => {
+        const [buff] = describeGrantedBuffs(SCROLL_OPEN.grantedBuffs);
+        expect(buff).toEqual({ name: 'Rare Find', amount: 0.6, durationSecs: 3600 });
+        expect(formatGrantedBuff(buff)).toBe('+60% Rare Find for 1h');
+    });
+
+    test('absent, empty, unknown and malformed grants never throw', () => {
+        expect(describeGrantedBuffs(undefined)).toEqual([]);
+        expect(describeGrantedBuffs([])).toEqual([]);
+        expect(describeGrantedBuffs([null, {}, { typeHrid: 5 }])).toEqual([]);
+        const [unknown] = describeGrantedBuffs([{ typeHrid: '/personal_buff_types/new_thing', flatBoost: 0.1 }]);
+        expect(unknown).toEqual({ name: 'New Thing', amount: 0.1, durationSecs: null });
+        expect(formatGrantedBuff({ name: 'New Thing', amount: null, durationSecs: null })).toBe('New Thing');
+    });
+
+    test('opening a scroll keeps the granted buffs for the panel and still records nothing in the ledger', () => {
+        treasureTracker.tally = {};
+        treasureTracker.scrollGrants = {};
+        treasureTracker._onLootOpened(SCROLL_OPEN, null);
+        treasureTracker._onLootOpened(SCROLL_OPEN, null);
+
+        expect(treasureTracker.tally['/items/seal_of_critical_rate']).toBeUndefined();
+        expect(treasureTracker.scrollGrants['/items/seal_of_critical_rate'].opened).toBe(2);
+        const text = treasureTracker._scrollSection().textContent;
+        expect(text).toContain('Scroll Of Critical Rate ×2');
+        expect(text).toContain('+60% Rare Find for 1h');
+        treasureTracker.scrollGrants = {};
+    });
+
+    test('the scroll buffs draw even while the panel has no chest rows to list', () => {
+        treasureTracker.scrollGrants = {};
+        treasureTracker.contentEl = document.createElement('div');
+        treasureTracker._summary = () => ({ rows: [], totals: {} });
+        treasureTracker._waitForChestData = () => {};
+        treasureTracker._refreshToggles = () => {};
+        treasureTracker._recordScrollGrant('/items/seal_of_critical_rate', SCROLL_OPEN);
+        treasureTracker.panel = null;
+        treasureTracker._render();
+        expect(treasureTracker.contentEl.textContent).toContain('+60% Rare Find');
+        delete treasureTracker._summary;
+        delete treasureTracker._waitForChestData;
+        delete treasureTracker._refreshToggles;
+        treasureTracker.contentEl = null;
+        treasureTracker.scrollGrants = {};
+    });
+
+    test('a scroll opening with no grantedBuffs adds nothing and the section stays absent', () => {
+        treasureTracker.scrollGrants = {};
+        treasureTracker._onLootOpened({ openedItem: SCROLL_OPEN.openedItem }, null);
+        treasureTracker._onLootOpened({ openedItem: SCROLL_OPEN.openedItem, grantedBuffs: [] }, null);
+        expect(treasureTracker._scrollSection()).toBeNull();
     });
 
     test('opening a chest still records', () => {

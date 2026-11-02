@@ -9,6 +9,7 @@
  */
 
 import { describe, test, expect } from 'vitest';
+import { buildNewBattle } from '../__fixtures__/wire/new-battle.js';
 
 import {
     mergeOwnedAbilities,
@@ -130,6 +131,15 @@ describe('the kit a battle reports', () => {
             { character: { id: 2, name: 'Them' }, combatAbilities: kit(['/abilities/smack', 1]) },
         ],
     };
+
+    test('is read from a captured new_battle, where the kit sits on the player', () => {
+        const captured = buildNewBattle();
+        const me = captured.players[0];
+        expect(me.combatAbilities.length).toBeGreaterThan(0);
+        expect(me.combatDetails.combatAbilities).toBeUndefined();
+        const read = equippedAbilitiesFromBattle(captured, { characterId: me.character.id });
+        expect(read.map((a) => a.abilityHrid)).toEqual(me.combatAbilities.map((a) => a.abilityHrid));
+    });
 
     test('is found by character id', () => {
         expect(equippedAbilitiesFromBattle(battle, { characterId: 2 })[0].abilityHrid).toBe('/abilities/smack');

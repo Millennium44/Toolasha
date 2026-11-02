@@ -509,6 +509,22 @@ describe('battle_unit_fetched classification', () => {
         expect(panel.lastPlayerUnit).toBeNull();
     });
 
+    test('a guild trial sheet is neither a monster to check nor your build', () => {
+        const showFor = vi.spyOn(panel, 'showFor').mockImplementation(() => {});
+        wsHandlers['battle_unit_fetched']({
+            isGuildBattle: true,
+            unit: { hrid: '/monsters/vampire', name: 'Boss', combatDetails: {} },
+        });
+        wsHandlers['battle_unit_fetched']({
+            isGuildBattle: true,
+            unit: { isPlayer: true, character: { id: 'me-id', name: 'Benny' }, combatDetails: {} },
+        });
+        const shown = showFor.mock.calls.length;
+        showFor.mockRestore();
+        expect(shown).toBe(0);
+        expect(panel.lastPlayerUnit).toBeNull();
+    });
+
     test('your own sheet (isPlayer, matching character id) is still remembered for the build check', () => {
         wsHandlers['battle_unit_fetched']({
             unit: {

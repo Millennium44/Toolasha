@@ -286,6 +286,26 @@ function analyzeFunction(fn, fnMap, hops = 0, seen = new Set()) {
     return out;
 }
 
+/** Fewer snake_case `key: this.member` entries than this is some other object, not the handler map. */
+const MIN_HANDLER_MAP_ENTRIES = 10;
+
+/**
+ * Whether a property is a handler-map entry: `snake_case_type: this.someMember`.
+ * @param {Object} n - An AST node
+ * @returns {boolean}
+ */
+function isHandlerEntry(n) {
+    if (n.type !== 'Property' || n.computed || n.kind !== 'init') return false;
+    const key = n.key.type === 'Identifier' ? n.key.name : n.key.type === 'Literal' ? String(n.key.value) : '';
+    return (
+        /^[a-z][a-z0-9]*(_[a-z0-9]+)+$|^[a-z]+$/.test(key) &&
+        n.value.type === 'MemberExpression' &&
+        n.value.object.type === 'ThisExpression' &&
+        !n.value.computed &&
+        n.value.property.type === 'Identifier'
+    );
+}
+
 /**
  * Parse the game's main chunk: message type -> fields its handler reads.
  * @param {string} src
@@ -295,22 +315,23 @@ export function parseGameHandlers(src) {
     const ast = parse(src, false);
     const fnMap = collectFunctions(ast);
     const result = new Map();
+    const addEntry = (n) => {
+        const type = n.key.type === 'Identifier' ? n.key.name : String(n.key.value);
+        const handler = n.value.property.name;
+        const fn = fnMap.get(handler);
+        if (!result.has(type)) {
+            if (fn) result.set(type, { handler, ...analyzeFunction(fn, fnMap) });
+            else result.set(type, { handler, fields: new Set(), dynamic: false, spread: false, escapes: true });
+        }
+    };
     const visit = (n) => {
-        if (
-            n.type === 'Property' &&
-            !n.computed &&
-            n.value.type === 'MemberExpression' &&
-            n.value.object.type === 'ThisExpression' &&
-            !n.value.computed &&
-            /^handleMessage/.test(n.value.property.name)
-        ) {
-            const type = n.key.type === 'Identifier' ? n.key.name : String(n.key.value);
-            const handler = n.value.property.name;
-            const fn = fnMap.get(handler);
-            if (!result.has(type)) {
-                if (fn) result.set(type, { handler, ...analyzeFunction(fn, fnMap) });
-                else result.set(type, { handler, fields: new Set(), dynamic: false, spread: false, escapes: true });
-            }
+        // The game's type -> handler map is one object literal of `type: this.handler` entries. Entries are
+        // recognised by the shape of that object (several snake_case keys bound to `this.<member>`), not by the
+        // handler's name: `handleLabyrinthUpdated` and `handleFeedbackPrompt` sit in it beside the
+        // `handleMessage*` ones.
+        if (n.type === 'ObjectExpression') {
+            const entries = n.properties.filter(isHandlerEntry);
+            if (entries.length >= MIN_HANDLER_MAP_ENTRIES) for (const e of entries) addEntry(e);
         }
         eachChild(n, visit);
     };
@@ -319,14 +340,11 @@ export function parseGameHandlers(src) {
 }
 
 /**
- * Parse one Toolasha source file: `webSocketHook.on('<type>', cb)` subscriptions.
- * @param {string} src
- * @param {string} file
- * @returns {{type:string, file:string, line:number, fields:Set<string>, dynamic:boolean, spread:boolean, escapes:boolean, resolved:boolean}[]}
+ * Top-level `const NAME = 'literal'` declarations (exported or not) of a parsed file.
+ * @param {Object} ast
+ * @returns {Map<string, string>}
  */
-export function parseToolashaSubscriptions(src, file = '') {
-    const ast = parse(src, true);
-    const fnMap = collectFunctions(ast);
+function topLevelStringConsts(ast) {
     const consts = new Map();
     for (const stmt of ast.body) {
         const decl = stmt.type === 'ExportNamedDeclaration' ? stmt.declaration : stmt;
@@ -337,6 +355,45 @@ export function parseToolashaSubscriptions(src, file = '') {
             }
         }
     }
+    return consts;
+}
+
+/**
+ * String constants across the source tree, so a listener registered as `webSocketHook.on(NAME, cb)` with NAME
+ * imported from another file still resolves. A name declared with two different values is dropped as ambiguous.
+ * @param {string[]} sources - File contents
+ * @returns {Map<string, string>}
+ */
+export function collectSharedStringConsts(sources) {
+    const shared = new Map();
+    const ambiguous = new Set();
+    for (const src of sources) {
+        let ast;
+        try {
+            ast = parse(src, true);
+        } catch {
+            continue;
+        }
+        for (const [name, value] of topLevelStringConsts(ast)) {
+            if (shared.has(name) && shared.get(name) !== value) ambiguous.add(name);
+            shared.set(name, value);
+        }
+    }
+    for (const name of ambiguous) shared.delete(name);
+    return shared;
+}
+
+/**
+ * Parse one Toolasha source file: `webSocketHook.on('<type>', cb)` subscriptions.
+ * @param {string} src
+ * @param {string} file
+ * @param {Map<string, string>} [sharedConsts] - Constants from other files, used when the file does not declare the name
+ * @returns {{type:string, file:string, line:number, fields:Set<string>, dynamic:boolean, spread:boolean, escapes:boolean, resolved:boolean}[]}
+ */
+export function parseToolashaSubscriptions(src, file = '', sharedConsts = new Map()) {
+    const ast = parse(src, true);
+    const fnMap = collectFunctions(ast);
+    const consts = topLevelStringConsts(ast);
     const isHook = (o) =>
         (o.type === 'Identifier' && o.name === 'webSocketHook') ||
         (o.type === 'MemberExpression' && !o.computed && o.property.name === 'webSocketHook');
@@ -351,7 +408,12 @@ export function parseToolashaSubscriptions(src, file = '') {
             n.arguments.length >= 2
         ) {
             const [t, cb] = n.arguments;
-            const type = t.type === 'Literal' && typeof t.value === 'string' ? t.value : consts.get(t.name);
+            const type =
+                t.type === 'Literal' && typeof t.value === 'string'
+                    ? t.value
+                    : t.type === 'Identifier'
+                      ? (consts.get(t.name) ?? sharedConsts.get(t.name))
+                      : undefined;
             if (type) {
                 let fn = null;
                 if (isFunction(cb)) fn = cb;
@@ -439,7 +501,9 @@ export function formatReport(report) {
     lines.push('');
     lines.push(
         'Limits: top-level fields only; aliasing (const m = e), e[key], spreads and unresolved calls are flagged "opaque",',
-        'not followed; a listener registered with a non-literal type (loops, arrays) or a callback from another file is skipped.'
+        'not followed; a listener whose type is not a string literal or a top-level string const (loops, arrays,',
+        'computed names) or whose callback is not in the same file is skipped. The game handler map is recognised by',
+        'shape (10+ snake_case `type: this.member` entries), so a handler outside that one object is not seen.'
     );
     return lines.join('\n');
 }
@@ -484,9 +548,12 @@ async function main(argv) {
     console.log(`Game bundle: ${bundle}`);
     const game = parseGameHandlers(fs.readFileSync(bundle, 'utf8'));
     const subs = [];
-    for (const f of listSourceFiles(srcDir)) {
+    const files = listSourceFiles(srcDir);
+    const contents = new Map(files.map((f) => [f, fs.readFileSync(f, 'utf8')]));
+    const sharedConsts = collectSharedStringConsts([...contents.values()]);
+    for (const f of files) {
         try {
-            subs.push(...parseToolashaSubscriptions(fs.readFileSync(f, 'utf8'), f.split(path.sep).join('/')));
+            subs.push(...parseToolashaSubscriptions(contents.get(f), f.split(path.sep).join('/'), sharedConsts));
         } catch (error) {
             console.log(`[skip] ${f}: ${error.message}`);
         }

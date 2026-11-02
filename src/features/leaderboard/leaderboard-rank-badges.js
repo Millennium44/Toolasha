@@ -44,6 +44,7 @@ import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
+import { createRevisionGate } from '../../utils/leaderboard-revision.js';
 import { leaderboardXPTracker } from './leaderboard-xp-tracker.js';
 import {
     RANK_BADGE_ATTR,
@@ -293,6 +294,8 @@ class LeaderboardRankBadges {
         this.opened = {};
         // Whether any leaderboard_updated arrived: a message always outranks inferring the view from the tabs
         this.messageSeen = false;
+        /** The game drops a board older than the revision it holds; so does the cache */
+        this.revisionGate = createRevisionGate();
         this.includeSteam = false;
         this.markSteam = false;
         this.preferStandard = false;
@@ -487,6 +490,8 @@ class LeaderboardRankBadges {
      * @param {Object} data - `leaderboard_updated` message
      */
     onLocalBoard(data) {
+        // The game drops a board older than the last one it holds for the same view
+        if (this.revisionGate.isStale(data)) return;
         this.messageSeen = true;
         // Judged before parsing: a guild board never parses, yet it is what decides whether the bar applies
         if (typeof data?.leaderboardCategory === 'string') {
@@ -881,6 +886,7 @@ class LeaderboardRankBadges {
         // awaiting its read (storage.flushAll cannot see it). The next initialize folds storage under memory.
         this.storedFuture = false;
         this.messageSeen = false;
+        this.revisionGate.reset();
         this.boardType = 'standard';
         this.boardCategory = null;
         this.playerBoardOpen = true;

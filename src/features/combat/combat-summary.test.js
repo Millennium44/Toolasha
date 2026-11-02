@@ -96,6 +96,13 @@ describe('combat summary', () => {
         expect(game.wsHandlers.battle_unit_fetched).toBeUndefined();
     });
 
+    test('a guild trial sheet naming the player’s own character is not a summary', async () => {
+        const { isSessionSummary } = await import('./combat-summary.js');
+        const unit = { character: { id: 'me' }, totalLootMap: { '/items/coin': 5 } };
+        expect(isSessionSummary({ unit }, 'me')).toBe(true);
+        expect(isSessionSummary({ isGuildBattle: true, unit }, 'me')).toBe(false);
+    });
+
     test('an invalid message is ignored rather than throwing', () => {
         expect(() => game.wsHandlers.battle_unit_fetched(null)).not.toThrow();
         expect(() => game.wsHandlers.battle_unit_fetched({})).not.toThrow();
