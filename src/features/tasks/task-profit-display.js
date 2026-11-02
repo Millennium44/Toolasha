@@ -118,6 +118,9 @@ const COMBAT_ESTIMATE_RESULT_CLASS = 'mwi-combat-est-result';
 /** How many times one estimate restarts because the zone's tier changed while it simulated */
 const MAX_RETIER_RERUNS = 2;
 
+/** How many times a tier-change redo cancelled by the player's own simulation is queued again */
+const MAX_RETIER_ATTEMPTS = 3;
+
 /**
  * Fallback tier for a combat task estimate when the zone is nowhere in the
  * player's own action queue — `lastUsedTierForZone` (`utils/combat-actions.js`)
@@ -585,6 +588,10 @@ class TaskProfitDisplay {
         // immediately followed by a re-initialize while the call is still suspended.
         this._renderGeneration = 0;
         this._simQueue = Promise.resolve();
+        /** Automatic tier-change re-simulations waiting their turn, run one at a time */
+        this._retierQueue = [];
+        this._retierRunning = false;
+        this._retierActive = null;
         // One pending refresh per source, so a burst of messages runs it once
         this._questsTimer = null;
         this._actionsTimer = null;
@@ -1790,9 +1797,13 @@ class TaskProfitDisplay {
      * @param {string} mode - 'solo' (single monster) or 'zone' (full spawn table)
      * @param {number} [retierDepth] - How many times this run has already restarted because the zone's
      *   tier changed while it simulated (bounded, so a tier that keeps moving cannot loop)
+     * @param {boolean} [automatic] - Started by Toolasha rather than the player (a tier-change redo): it
+     *   does not preempt other simulations, and being cancelled by one is not a failure; the call
+     *   resolves 'cancelled' (leaving the card on "Simulating...") for the caller to run it again
+     * @returns {Promise<'cancelled'|undefined>}
      * @private
      */
-    async _runCombatSimEstimate(container, taskData, loadoutName, mode = 'solo', retierDepth = 0) {
+    async _runCombatSimEstimate(container, taskData, loadoutName, mode = 'solo', retierDepth = 0, automatic = false) {
         // A new run starting invalidates whatever this card's Go button was
         // primed with — filled only from a currently-valid estimate, never a
         // stale one left over from before a re-run.
@@ -1842,6 +1853,10 @@ class TaskProfitDisplay {
         const estimateTier = resolvedTier.tier;
 
         container.innerHTML = '<span style="color:#888; font-size:11px;">⏳ Simulating…</span>';
+
+        // An automatic run (a tier-change redo) never preempts: it must not kill the run of another card
+        // or of the player, and the player's own run is free to preempt it
+        const simArgs = automatic ? [undefined, { preempt: false }] : [];
 
         try {
             const gameData = buildGameDataPayload();
@@ -1916,22 +1931,25 @@ class TaskProfitDisplay {
                     // long session does not accumulate a sim result per zone per
                     // loadout for the rest of the day
                     this._pruneZoneSimCache();
-                    const promise = runSimulation({
-                        gameData: simGameData,
-                        playerDTOs: players,
-                        zoneHrid,
-                        difficultyTier: estimateTier,
-                        hours: SIM_HOURS,
-                        communityBuffs: getCommunityBuffs(),
-                        // The Tasks panel is a task estimate by definition, so
-                        // it never consults the general task-damage setting —
-                        // an estimate of how long a task takes must model the
-                        // gear you are wearing for it. Zone mode covers the
-                        // whole spawn table, so the honest rule here is the
-                        // per-monster one: the bonus pays on the monsters your
-                        // own board names and on no others.
-                        taskDamageMode: TASK_DAMAGE_PER_MONSTER,
-                    });
+                    const promise = runSimulation(
+                        {
+                            gameData: simGameData,
+                            playerDTOs: players,
+                            zoneHrid,
+                            difficultyTier: estimateTier,
+                            hours: SIM_HOURS,
+                            communityBuffs: getCommunityBuffs(),
+                            // The Tasks panel is a task estimate by definition, so
+                            // it never consults the general task-damage setting —
+                            // an estimate of how long a task takes must model the
+                            // gear you are wearing for it. Zone mode covers the
+                            // whole spawn table, so the honest rule here is the
+                            // per-monster one: the bonus pays on the monsters your
+                            // own board names and on no others.
+                            taskDamageMode: TASK_DAMAGE_PER_MONSTER,
+                        },
+                        ...simArgs
+                    );
                     this._zoneSimCache.set(cacheKey, { promise, t: Date.now() });
                     try {
                         simResult = await promise;
@@ -1941,21 +1959,24 @@ class TaskProfitDisplay {
                     }
                 }
             } else {
-                simResult = await runSimulation({
-                    gameData: simGameData,
-                    playerDTOs: players,
-                    zoneHrid,
-                    difficultyTier: estimateTier,
-                    hours: SIM_HOURS,
-                    communityBuffs: getCommunityBuffs(),
-                    // The same per-monster rule as the zone sim above, and for
-                    // the same reason. Solo mode has already narrowed the spawn
-                    // table to this card's task monster, so "every fight counts"
-                    // would reach the same answer — but only by a different
-                    // route, and it would be wrong the moment the table is not
-                    // narrowed. One code path, and it is the honest one.
-                    taskDamageMode: TASK_DAMAGE_PER_MONSTER,
-                });
+                simResult = await runSimulation(
+                    {
+                        gameData: simGameData,
+                        playerDTOs: players,
+                        zoneHrid,
+                        difficultyTier: estimateTier,
+                        hours: SIM_HOURS,
+                        communityBuffs: getCommunityBuffs(),
+                        // The same per-monster rule as the zone sim above, and for
+                        // the same reason. Solo mode has already narrowed the spawn
+                        // table to this card's task monster, so "every fight counts"
+                        // would reach the same answer — but only by a different
+                        // route, and it would be wrong the moment the table is not
+                        // narrowed. One code path, and it is the honest one.
+                        taskDamageMode: TASK_DAMAGE_PER_MONSTER,
+                    },
+                    ...simArgs
+                );
             }
 
             // The sim took a while, and the card may have progressed under it
@@ -1970,7 +1991,14 @@ class TaskProfitDisplay {
             const latestTier = this._resolveEstimateTier(zoneHrid);
             if (latestTier.tier !== estimateTier) {
                 if (retierDepth < MAX_RETIER_RERUNS) {
-                    return this._runCombatSimEstimate(container, taskData, loadoutName, mode, retierDepth + 1);
+                    return this._runCombatSimEstimate(
+                        container,
+                        taskData,
+                        loadoutName,
+                        mode,
+                        retierDepth + 1,
+                        automatic
+                    );
                 }
                 console.warn('[TaskProfit] The zone tier kept changing while estimating; showing the tier simulated');
             } else {
@@ -2024,6 +2052,8 @@ class TaskProfitDisplay {
             };
             this._drawCachedCombatEstimate(container, cached, liveTaskData, figures);
         } catch (e) {
+            // Cancelled by a simulation the player started: not a failure, and the caller runs it again
+            if (automatic && /cancel/i.test(String(e?.message || ''))) return 'cancelled';
             console.error('[TaskProfit] Combat estimate failed:', e);
             container.innerHTML = '<span style="color:#f87171; font-size:11px;">Estimate failed. </span>';
             const retry = document.createElement('span');
@@ -2191,6 +2221,86 @@ class TaskProfitDisplay {
     }
 
     /**
+     * Queue an open estimate for a tier-change redo. The redos run one at a time, in order, through a
+     * single drain: started together they would be several runs in one zone with nothing to stop them
+     * being cancelled by each other. A card already waiting (or being redone) is not queued twice, so a
+     * second tier change while the queue runs adds to it rather than starting another.
+     * @param {Element} container - The estimate container
+     * @private
+     */
+    _enqueueRetier(container) {
+        if (this._retierQueue.some((entry) => entry.container === container)) return;
+        if (this._retierActive === container) return;
+        // What the redo needs, kept with the entry: a run that is cancelled has already cleared the
+        // card's cached result, so a second attempt could not read it back from the card
+        const cached = container._mwiCombatEstimate;
+        this._retierQueue.push({
+            container,
+            attempts: 0,
+            characterId: dataManager.getCurrentCharacterId(),
+            zoneHrid: cached?.zoneHrid,
+            fromTier: cached?.estimateTier,
+            description: cached?.description,
+            loadoutName: cached?.loadoutName ?? '',
+            mode: cached?.mode ?? 'solo',
+        });
+        if (this._retierRunning) return;
+        this._retierRunning = true;
+        this._drainRetierQueue()
+            .catch((error) => console.error('[TaskProfit] Re-running estimates at the new tier failed:', error))
+            .finally(() => {
+                this._retierRunning = false;
+                this._retierActive = null;
+            });
+    }
+
+    /**
+     * Run the queued tier-change redos, one after another. An entry is dropped when its card has gone,
+     * its task changed, it no longer needs a redo, or the character changed (which ends the queue). A
+     * run cancelled by a simulation the player started goes to the back of the queue, up to
+     * {@link MAX_RETIER_ATTEMPTS} times, and then reports a failure like any other.
+     * @private
+     */
+    async _drainRetierQueue() {
+        while (this._retierQueue.length > 0 && this.isInitialized) {
+            const entry = this._retierQueue.shift();
+            const { container } = entry;
+            if (characterIdentityChanged(entry.characterId)) {
+                this._retierQueue = [];
+                return;
+            }
+            const taskNode = container.isConnected ? container.closest(GAME.TASK_INFO) : null;
+            const taskData = taskNode ? this.parseTaskData(taskNode) : null;
+            if (!entry.zoneHrid || !taskData || taskData.description !== entry.description) continue;
+            if (this._resolveEstimateTier(entry.zoneHrid).tier === entry.fromTier) continue;
+
+            this._retierActive = container;
+            const outcome = await this._runCombatSimEstimate(
+                container,
+                taskData,
+                entry.loadoutName,
+                entry.mode,
+                0,
+                true
+            );
+            this._retierActive = null;
+            if (outcome !== 'cancelled') continue;
+            if (characterIdentityChanged(entry.characterId) || !container.isConnected) continue;
+            entry.attempts += 1;
+            if (entry.attempts < MAX_RETIER_ATTEMPTS) {
+                this._retierQueue.push(entry);
+            } else {
+                container.innerHTML = '<span style="color:#f87171; font-size:11px;">Estimate failed. </span>';
+                const retry = document.createElement('span');
+                retry.textContent = 'Retry';
+                retry.style.cssText = 'color:#4a9eff; cursor:pointer; font-size:11px;';
+                retry.addEventListener('click', () => this._renderCombatEstimateConfig(container, taskData));
+                container.appendChild(retry);
+            }
+        }
+    }
+
+    /**
      * Bring every open combat estimate to the tier it should now use (see `resolveZoneTier`). A different
      * tier is a different fight, so that estimate is simulated again with the loadout and mode it had; a
      * change only in where the same tier came from just redraws the note.
@@ -2208,9 +2318,7 @@ class TaskProfitDisplay {
 
             const now = this._resolveEstimateTier(cached.zoneHrid);
             if (now.tier !== cached.estimateTier) {
-                this._runCombatSimEstimate(container, taskData, cached.loadoutName, cached.mode).catch((error) => {
-                    console.error('[TaskProfit] Re-running an estimate at the remembered tier failed:', error);
-                });
+                this._enqueueRetier(container);
             } else if (now.source !== cached.estimateTierSource || now.pending !== cached.estimateTierPending) {
                 container._mwiCombatEstimate = {
                     ...cached,
@@ -3677,6 +3785,7 @@ class TaskProfitDisplay {
             // calculateTaskProfit() await; it checks this after every await and bails instead of
             // appending a new .mwi-task-profit once every setting is off.
             this._renderGeneration++;
+            this._retierQueue = [];
             // Cancel pending timeouts so they cannot recreate UI after disable
             this.timerRegistry.clearAll();
             this._cardRefreshTimer = null;

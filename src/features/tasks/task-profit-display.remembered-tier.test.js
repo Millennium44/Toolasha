@@ -134,7 +134,9 @@ describe('the estimate tier', () => {
         tierMock.resolved = { tier: 3, known: true, source: 'remembered', pending: false };
         taskProfitDisplay._retierOpenCombatEstimates();
         await vi.waitFor(() => expect(runSimulation).toHaveBeenCalledTimes(1));
-        expect(runSimulation).toHaveBeenCalledWith(expect.objectContaining({ difficultyTier: 3 }));
+        expect(runSimulation).toHaveBeenCalledWith(expect.objectContaining({ difficultyTier: 3 }), undefined, {
+            preempt: false,
+        });
         await vi.waitFor(() => expect(taskProfitDisplay._cardEstimates.get(info)?.tier).toBe(3));
         expect(container.innerHTML).toContain('T3 (the tier you last ran here)');
     });
