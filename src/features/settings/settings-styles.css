@@ -4,16 +4,20 @@
 
 /* CSS Variables */
 :root {
-    --toolasha-accent: #5b8def;
-    --toolasha-accent-hover: #7aa3f3;
-    --toolasha-accent-dim: rgba(91, 141, 239, 0.15);
-    --toolasha-secondary: #8a2be2;
+    /* The game's own look: plain text for headings, quiet divider lines, blue only on buttons and the "on" state.
+       The names are kept so the rules below read the same; "accent" is the plain text color now. */
+    --toolasha-accent: var(--color-text-dark-mode, #e7e7e7);
+    --toolasha-accent-hover: rgba(231, 231, 231, 0.7);
+    --toolasha-accent-dim: rgba(255, 255, 255, 0.12);
+    --toolasha-edge-strong: rgba(231, 231, 231, 0.45);
     --toolasha-text: rgba(255, 255, 255, 0.9);
     --toolasha-text-dim: rgba(255, 255, 255, 0.5);
-    --toolasha-bg: rgba(20, 25, 35, 0.6);
-    --toolasha-border: rgba(91, 141, 239, 0.2);
+    --toolasha-bg: rgba(255, 255, 255, 0.03);
+    --toolasha-border: var(--color-divider, #323450);
     --toolasha-toggle-off: rgba(100, 100, 120, 0.4);
-    --toolasha-toggle-on: var(--toolasha-accent);
+    --toolasha-toggle-on: var(--color-primary, #4357af);
+    --toolasha-button: var(--color-space-800, #273366);
+    --toolasha-button-hover: var(--color-space-700, #35458b);
 }
 
 /* Settings Card Container */
@@ -117,8 +121,8 @@
 }
 
 .toolasha-setting:hover {
-    background: rgba(30, 35, 45, 0.7);
-    border-color: var(--toolasha-accent);
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--toolasha-edge-strong);
 }
 
 .toolasha-setting.disabled {
@@ -198,8 +202,8 @@
 
 .toolasha-switch input:checked + .toolasha-slider {
     background: var(--toolasha-toggle-on);
-    border-color: var(--toolasha-accent-hover);
-    box-shadow: 0 0 6px var(--toolasha-accent-dim);
+    border-color: var(--color-primary-hover, #546ddb);
+    box-shadow: none;
 }
 
 .toolasha-switch input:checked + .toolasha-slider:before {
@@ -207,7 +211,7 @@
 }
 
 .toolasha-switch:hover .toolasha-slider {
-    border-color: var(--toolasha-accent);
+    border-color: var(--toolasha-edge-strong);
 }
 
 /* Text Input */
@@ -224,7 +228,7 @@
 
 .toolasha-text-input:focus {
     outline: none;
-    border-color: var(--toolasha-accent);
+    border-color: var(--toolasha-edge-strong);
     box-shadow: 0 0 0 2px var(--toolasha-accent-dim);
 }
 
@@ -242,7 +246,7 @@
 
 .toolasha-number-input:focus {
     outline: none;
-    border-color: var(--toolasha-accent);
+    border-color: var(--toolasha-edge-strong);
     box-shadow: 0 0 0 2px var(--toolasha-accent-dim);
 }
 
@@ -260,7 +264,7 @@
     -webkit-appearance: none;
     -moz-appearance: none;
     appearance: none;
-    background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20width%3D%2220%22%20height%3D%2220%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20d%3D%22M5%207l5%205%205-5z%22%20fill%3D%22%235b8def%22%2F%3E%3C%2Fsvg%3E');
+    background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20width%3D%2220%22%20height%3D%2220%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20d%3D%22M5%207l5%205%205-5z%22%20fill%3D%22%23e7e7e7%22%2F%3E%3C%2Fsvg%3E');
     background-repeat: no-repeat;
     background-position: right 6px center;
     background-size: 14px;
@@ -270,12 +274,12 @@
 
 .toolasha-select-input:focus {
     outline: none;
-    border-color: var(--toolasha-accent);
+    border-color: var(--toolasha-edge-strong);
     box-shadow: 0 0 0 2px var(--toolasha-accent-dim);
 }
 
 .toolasha-select-input option {
-    background: #1a1a2e;
+    background: rgb(19, 20, 25);
     color: var(--toolasha-text);
     padding: 8px;
 }
@@ -291,39 +295,31 @@
 }
 
 .toolasha-utility-button {
-    background: linear-gradient(135deg, var(--toolasha-secondary), #6a1b9a);
-    border: 1px solid rgba(138, 43, 226, 0.4);
-    color: #ffffff;
+    background: var(--toolasha-button);
+    border: none;
+    color: var(--color-text-dark-mode, #e7e7e7);
     padding: 6px 12px;
     border-radius: 4px;
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .toolasha-utility-button:hover {
-    background: linear-gradient(135deg, #9a4bcf, var(--toolasha-secondary));
-    box-shadow: 0 0 10px rgba(138, 43, 226, 0.3);
-    transform: translateY(-1px);
-}
-
-.toolasha-utility-button:active {
-    transform: translateY(0);
+    background: var(--toolasha-button-hover);
 }
 
 /* Sync button - special styling for prominence */
 .toolasha-sync-button {
-    background: linear-gradient(135deg, #047857, #059669) !important;
-    border: 1px solid rgba(4, 120, 87, 0.4) !important;
+    background: var(--color-primary, #4357af) !important;
+    border: none !important;
     flex: 1 1 auto; /* Allow it to grow and take more space */
     min-width: 200px; /* Ensure it's wide enough for the text */
 }
 
 .toolasha-sync-button:hover {
-    background: linear-gradient(135deg, #059669, #10b981) !important;
-    box-shadow: 0 0 10px rgba(16, 185, 129, 0.3) !important;
+    background: var(--color-primary-hover, #546ddb) !important;
 }
 
 /* Refresh Notice */
@@ -347,8 +343,8 @@
 
 /* Persistent-storage notice */
 .toolasha-persistence-notice {
-    background: rgba(33, 150, 243, 0.1);
-    border: 1px solid rgba(33, 150, 243, 0.3);
+    background: var(--toolasha-bg);
+    border: 1px solid var(--toolasha-border);
     border-radius: 4px;
     padding: 10px 12px;
     margin-top: 10px;
@@ -360,7 +356,7 @@
 
 .toolasha-persistence-notice p {
     margin: 0;
-    color: #90caf9;
+    color: var(--toolasha-text);
     font-size: 11px;
     line-height: 1.5;
 }
@@ -402,4 +398,38 @@
 
 .TabPanel_tabPanel__tXMJF#toolasha-settings.TabPanel_hidden__26UM3 {
     display: none !important;
+}
+
+/* Phone width: let a row wrap so a long label and a wide control stack instead of squeezing each other, and
+   make the fields and buttons taller to tap */
+@media (max-width: 480px) {
+    .toolasha-settings-card {
+        padding: 12px 8px;
+    }
+
+    .toolasha-setting {
+        flex-wrap: wrap;
+    }
+
+    .toolasha-setting-label {
+        flex: 1 1 160px;
+        margin-right: 0;
+    }
+
+    .toolasha-text-input,
+    .toolasha-number-input,
+    .toolasha-select-input {
+        min-height: 36px;
+        box-sizing: border-box;
+        font-size: 14px;
+        max-width: 100%;
+    }
+
+    .toolasha-utility-button {
+        min-height: 36px;
+    }
+
+    .toolasha-sync-button {
+        min-width: 0;
+    }
 }

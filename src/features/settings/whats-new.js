@@ -54,6 +54,7 @@ import {
 import forkChangelog from 'virtual:fork-changelog';
 import forkOverview from 'virtual:fork-overview';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { parseShorthandAmount } from '../../utils/number-parser.js';
 
 const STATE_KEY_PREFIX = 'whatsNew_state';
@@ -100,12 +101,15 @@ export const COPY_FROM_CHARACTER = '__copyFromCharacter';
 /** The first-run answer that leaves every setting exactly as it is. */
 export const NO_CHANGE = '__noChange';
 
+// The game's own panel look: plain frame, white headings, quiet divider lines. `accent` is kept as a name for
+// headings and links, but it is the plain text color now, not a hue.
 const COLORS = {
-    background: 'rgba(10, 10, 20, 0.98)',
-    border: 'rgba(96, 165, 250, 0.5)',
-    accent: '#60a5fa',
-    text: '#e0e0e0',
-    dim: '#888',
+    background: GAME_COLORS.background,
+    border: GAME_COLORS.border,
+    accent: GAME_COLORS.text,
+    text: GAME_COLORS.text,
+    dim: GAME_COLORS.textDim,
+    body: 'rgba(231, 231, 231, 0.8)',
 };
 
 /**
@@ -194,14 +198,14 @@ function renderForkMarkdown(root, markdown) {
         const bullet = line.match(/^-\s+(.+)/);
         if (bullet) {
             const el = document.createElement('div');
-            Object.assign(el.style, { margin: '2px 0', color: '#bbb', lineHeight: '1.4' });
+            Object.assign(el.style, { margin: '2px 0', color: COLORS.body, lineHeight: '1.4' });
             el.appendChild(document.createTextNode('• '));
             appendInline(el, bullet[1]);
             root.appendChild(el);
             continue;
         }
         const paragraph = document.createElement('div');
-        Object.assign(paragraph.style, { margin: '4px 0', color: '#bbb', lineHeight: '1.4' });
+        Object.assign(paragraph.style, { margin: '4px 0', color: COLORS.body, lineHeight: '1.4' });
         appendInline(paragraph, line);
         root.appendChild(paragraph);
     }
@@ -786,9 +790,7 @@ class WhatsNew {
                 maxHeight: 'calc(var(--toolasha-visual-viewport-height, 100vh) * 0.7)',
                 display: 'flex',
                 flexDirection: 'column',
-                background: COLORS.background,
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: '8px',
+                ...GAME_FRAME,
                 color: COLORS.text,
                 fontSize: '13px',
                 padding: '14px 16px 12px',
@@ -819,18 +821,16 @@ class WhatsNew {
             for (const character of candidates) {
                 const row = document.createElement('button');
                 row.textContent = character.name || character.id;
+                styleGameButton(row, 'quiet');
                 Object.assign(row.style, {
                     display: 'block',
                     width: '100%',
                     textAlign: 'left',
-                    background: 'rgba(255,255,255,0.05)',
-                    border: `1px solid ${COLORS.border}`,
-                    borderRadius: '4px',
-                    color: COLORS.text,
-                    cursor: 'pointer',
                     fontSize: '13px',
                     padding: '6px 10px',
                     margin: '3px 2px',
+                    height: 'auto',
+                    minHeight: '1.875rem',
                 });
                 row.addEventListener('click', () => finish(String(character.id)));
                 list.appendChild(row);
@@ -839,15 +839,13 @@ class WhatsNew {
 
             const cancel = document.createElement('button');
             cancel.textContent = 'Cancel';
+            styleGameButton(cancel, 'quiet');
             Object.assign(cancel.style, {
                 marginTop: '10px',
                 alignSelf: 'flex-end',
-                background: 'rgba(255,255,255,0.07)',
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: '4px',
-                color: COLORS.text,
-                cursor: 'pointer',
                 padding: '5px 14px',
+                height: 'auto',
+                minHeight: '1.875rem',
             });
             cancel.addEventListener('click', () => finish(null));
             dialog.appendChild(cancel);
@@ -936,13 +934,10 @@ class WhatsNew {
             maxHeight: 'calc(var(--toolasha-visual-viewport-height, 100vh) * 0.82)',
             display: 'flex',
             flexDirection: 'column',
-            background: COLORS.background,
-            border: `2px solid ${COLORS.border}`,
-            borderRadius: '10px',
+            ...GAME_FRAME,
             color: COLORS.text,
             fontFamily: "'Segoe UI', sans-serif",
             fontSize: '13px',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
         });
 
         const header = document.createElement('div');
@@ -962,12 +957,14 @@ class WhatsNew {
         Object.assign(close.style, {
             background: 'none',
             border: 'none',
-            color: '#aaa',
+            color: COLORS.dim,
             fontSize: '22px',
             cursor: 'pointer',
             lineHeight: '1',
         });
         close.addEventListener('click', () => this.close());
+        close.addEventListener('mouseover', () => (close.style.color = COLORS.text));
+        close.addEventListener('mouseout', () => (close.style.color = COLORS.dim));
         header.appendChild(title);
         header.appendChild(close);
         panel.appendChild(header);
@@ -1012,7 +1009,7 @@ class WhatsNew {
             Object.assign(box.style, {
                 fontSize: '12px',
                 background: 'rgba(255,255,255,0.03)',
-                border: '1px solid #222',
+                border: `1px solid ${COLORS.border}`,
                 borderRadius: '6px',
                 padding: '8px 10px',
                 marginBottom: '12px',
@@ -1044,15 +1041,7 @@ class WhatsNew {
             copyChangelog.type = 'button';
             copyChangelog.className = 'toolasha-whats-new-copy-changelog';
             copyChangelog.textContent = 'Copy changelog';
-            Object.assign(copyChangelog.style, {
-                background: 'rgba(96, 165, 250, 0.1)',
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: '4px',
-                color: COLORS.accent,
-                fontSize: '11px',
-                padding: '2px 8px',
-                cursor: 'pointer',
-            });
+            styleGameButton(copyChangelog, 'quiet', true);
             copyChangelog.addEventListener('click', async () => {
                 const ok = await this._writeClipboard(changelogText);
                 copyChangelog.textContent = ok ? 'Copied ✓' : 'Copy failed';
@@ -1065,9 +1054,9 @@ class WhatsNew {
             const box = document.createElement('div');
             Object.assign(box.style, {
                 fontSize: '12px',
-                color: '#bbb',
+                color: COLORS.body,
                 background: 'rgba(255,255,255,0.03)',
-                border: '1px solid #222',
+                border: `1px solid ${COLORS.border}`,
                 borderRadius: '6px',
                 padding: '8px 10px',
             });
@@ -1105,17 +1094,7 @@ class WhatsNew {
                 next.type = 'button';
                 next.className = 'toolasha-whats-new-page-next';
                 next.textContent = 'Next ›';
-                for (const button of [prev, next]) {
-                    Object.assign(button.style, {
-                        background: 'rgba(96, 165, 250, 0.1)',
-                        border: `1px solid ${COLORS.border}`,
-                        borderRadius: '4px',
-                        color: COLORS.accent,
-                        fontSize: '11px',
-                        padding: '2px 8px',
-                        cursor: 'pointer',
-                    });
-                }
+                for (const button of [prev, next]) styleGameButton(button, 'quiet', true);
                 pager.appendChild(prev);
                 pager.appendChild(pageLabel);
                 pager.appendChild(next);
@@ -1179,14 +1158,7 @@ class WhatsNew {
         optOut.appendChild(document.createTextNode("Don't show this after updates"));
         const ok = document.createElement('button');
         ok.textContent = 'Close';
-        Object.assign(ok.style, {
-            background: 'rgba(96, 165, 250, 0.15)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '4px',
-            color: COLORS.accent,
-            padding: '4px 14px',
-            cursor: 'pointer',
-        });
+        styleGameButton(ok, 'primary');
         ok.addEventListener('click', () => this.close());
         footer.appendChild(optOut);
         footer.appendChild(ok);
@@ -1228,7 +1200,7 @@ class WhatsNew {
             alignItems: 'center',
             gap: '10px',
             padding: '5px 0',
-            borderBottom: '1px solid #1a1a2e',
+            borderBottom: `1px solid ${COLORS.border}`,
         });
 
         const label = document.createElement('div');
@@ -1319,7 +1291,7 @@ class WhatsNew {
                 cursor: 'pointer',
                 textDecoration: 'underline',
             });
-            control.addEventListener('mouseenter', () => (control.style.color = COLORS.text));
+            control.addEventListener('mouseenter', () => (control.style.color = COLORS.dim));
             control.addEventListener('mouseleave', () => (control.style.color = COLORS.accent));
             control.addEventListener('click', () => {
                 this.close();
@@ -1328,9 +1300,9 @@ class WhatsNew {
         }
         if (control.tagName !== 'SPAN' && control.tagName !== 'BUTTON') {
             Object.assign(control.style, {
-                background: '#1a1a2e',
+                background: 'rgba(255,255,255,0.05)',
                 color: COLORS.text,
-                border: '1px solid #444',
+                border: `1px solid ${COLORS.border}`,
                 borderRadius: '3px',
             });
         }
