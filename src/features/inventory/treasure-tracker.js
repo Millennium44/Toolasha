@@ -149,7 +149,10 @@ const DIALOG_RETRY_MS = 60;
  * a game theme change carries over. Green and red are for good and bad verdicts only.
  */
 const COLORS = {
-    background: 'rgba(14, 16, 32, 0.98)',
+    // Measured from the game's Modal_modal: its near-black fill, thin light edge and faint glow
+    background: 'rgb(19, 20, 25)',
+    frame: 'rgb(208, 208, 208)',
+    frameGlow: 'rgba(208, 208, 208, 0.282) 0 0 4px 4px',
     border: 'var(--color-divider, #323450)',
     text: 'var(--color-text-dark-mode, #e7e7e7)',
     textDim: 'rgba(231, 231, 231, 0.6)',
@@ -233,7 +236,7 @@ const SCROLL_VALUE_LABEL = { token: 'Scrolls: token value', zero: 'Scrolls: no v
 const ACTUAL_GRID = '15px 1fr 1fr 54px';
 const EXPECTED_GRID = '1fr 1fr 8px 1fr 1fr';
 /** The popup's one-line item row: icon, qty, value, vs exp., expected qty, expected value */
-const OPENING_GRID = '15px minmax(0, 0.8fr) minmax(0, 1fr) 52px minmax(0, 0.8fr) minmax(0, 1fr)';
+const OPENING_GRID = '15px repeat(2, minmax(0, 1fr)) 46px repeat(2, minmax(0, 1fr))';
 
 /** What each expanded-chest heading's sub-columns mean */
 const COLUMN_HELP = [
@@ -1412,9 +1415,9 @@ class TreasureTracker {
             width: '340px',
             maxWidth: 'calc(100vw - 16px)',
             background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
+            border: `1px solid ${COLORS.frame}`,
             borderRadius: 'var(--radius-sm, 0.25rem)',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
+            boxShadow: COLORS.frameGlow,
             color: COLORS.text,
             fontSize: '11px',
             display: 'flex',
@@ -1589,7 +1592,7 @@ class TreasureTracker {
         Object.assign(band.style, {
             display: 'grid',
             gridTemplateColumns: OPENING_GRID,
-            gap: '4px',
+            gap: '3px',
             fontSize: '10px',
             color: COLORS.textDim,
             paddingBottom: '2px',
@@ -1597,7 +1600,7 @@ class TreasureTracker {
             marginBottom: '2px',
         });
         // Dropped (Qty, Value, vs exp.), then what the drop table owed (Qty, Value)
-        const labels = ['', 'Qty', 'Value', 'vs exp.', 'Exp. qty', 'Exp. value'];
+        const labels = ['', 'Qty', 'Value', 'vs exp.', 'Exp. qty', 'Exp. val'];
         labels.forEach((label, index) => {
             const span = this._span(label);
             span.style.textAlign = index === 1 ? 'left' : 'right';
@@ -1621,7 +1624,7 @@ class TreasureTracker {
         Object.assign(row.style, {
             display: 'grid',
             gridTemplateColumns: OPENING_GRID,
-            gap: '4px',
+            gap: '3px',
             alignItems: 'center',
             padding: '1px 0',
             fontVariantNumeric: 'tabular-nums',
@@ -1706,9 +1709,9 @@ class TreasureTracker {
             width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
             height: panelHeightCap(DEFAULT_PANEL.height),
             background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
+            border: `1px solid ${COLORS.frame}`,
             borderRadius: 'var(--radius-sm, 0.25rem)',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
+            boxShadow: COLORS.frameGlow,
             color: COLORS.text,
             fontSize: '13px',
             display: 'flex',
@@ -2399,6 +2402,8 @@ class TreasureTracker {
         const count = this._span(row.opened ? `×${row.opened}` : '');
         count.style.color = COLORS.textDim;
         count.style.marginLeft = 'auto';
+        // A narrow panel wraps the chest name rather than cutting the count to "×…"
+        count.style.flexShrink = '0';
 
         const verdict = formatReturn(row.ratio);
         const diff = this._span(verdict.text);
