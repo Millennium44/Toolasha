@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trade ledger no longer double-counts fills
+
+- Merging devices could bring back an old fill baseline and record the same fill again, inflating some listings to 2-4x what really filled. The ledger now keeps the copy that got further, and repairs finished listings whose rows exceed what the listing log says filled.
+
 ### Guild trials keep each trial's history for a year
 
 - Each trial's tier and points are now kept per week for about a year (about 120 cycles on the test server), shown as a Trial history block under Past weeks and a Past tiers row on each trial card. Weeks that belonged to another guild are labeled as such and left out.
