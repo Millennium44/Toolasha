@@ -18,7 +18,12 @@ vi.mock('../../../core/config.js', () => ({
     default: { getSetting: (key) => settings[key] },
 }));
 
-const { default: marketHistoryAPI, HISTORY_HOST, normaliseMooket1Rows } = await import('./market-history-api.js');
+const {
+    default: marketHistoryAPI,
+    HISTORY_HOST,
+    normaliseMooket1Rows,
+    REQUEST_PACE_MS,
+} = await import('./market-history-api.js');
 
 /** Every socket this test opened, so "none" can be asserted */
 let sockets = [];
@@ -60,6 +65,10 @@ beforeEach(() => {
     marketHistoryAPI.cooldownStreak = 0;
     marketHistoryAPI.lastFailureAt = 0;
     marketHistoryAPI.backoffSourceKey = null;
+    // The suites below test what a lookup returns, one after another; pacing has its own suite
+    marketHistoryAPI.paceIntervalMs = 0;
+    marketHistoryAPI.paceNextAt?.clear();
+    marketHistoryAPI.paceWaiters?.clear();
 });
 
 afterEach(() => {
@@ -522,6 +531,189 @@ describe('cooldownRemainingMs', () => {
 
         expect(marketHistoryAPI.currentSource().key).toBe('mooket2');
         expect(marketHistoryAPI.cooldownRemainingMs()).toBeGreaterThan(0);
+    });
+});
+
+describe('request pacing', () => {
+    // A bound on requests in flight is not a bound on rate: measured live, one
+    // planner goal sent about 168 requests in about 5 seconds and three failed.
+    // Every request that goes to the network now waits its turn; the clock is
+    // driven by hand so none of this takes real time.
+    const rows = [{ a: 5, b: 4, p: 4.5, v: 10, time: 1 }];
+
+    /** A fetch that answers at once and notes when it was asked */
+    function recordingFetch() {
+        const sentAt = [];
+        const urls = [];
+        const mock = vi.fn(async (url) => {
+            sentAt.push(Date.now());
+            urls.push(url);
+            return { ok: true, json: async () => rows };
+        });
+        return { mock, sentAt, urls };
+    }
+
+    beforeEach(() => {
+        on('www.milkywayidle.com');
+        vi.useFakeTimers();
+        marketHistoryAPI.paceIntervalMs = REQUEST_PACE_MS;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a lone request after a quiet spell goes at once', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+
+        expect(await marketHistoryAPI.fetchHistory('/items/a', 0, 7)).toEqual(rows);
+        expect(mock).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 3);
+        expect(await marketHistoryAPI.fetchHistory('/items/b', 0, 7)).toEqual(rows);
+        expect(mock).toHaveBeenCalledTimes(2);
+    });
+
+    test('a burst is spread out, duplicates and cache hits take no turn on the network', async () => {
+        const { mock, sentAt } = recordingFetch();
+        globalThis.fetch = mock;
+        marketHistoryAPI.remember('mooket2:/items/cached:0:7', rows);
+
+        const keys = ['a', 'b', 'a', 'c', 'cached', 'd', 'b', 'e', 'f', 'g'];
+        const started = Date.now();
+        const done = Promise.all(keys.map((k) => marketHistoryAPI.fetchHistory(`/items/${k}`, 0, 7)));
+        await vi.advanceTimersByTimeAsync(0);
+        // The first request is immediate and the cache hit has already answered
+        expect(mock).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * keys.length);
+        const results = await done;
+
+        expect(results.every((r) => Array.isArray(r))).toBe(true);
+        // 7 distinct uncached keys: a b c d e f g. The repeats find the answer their twin cached.
+        expect(mock).toHaveBeenCalledTimes(7);
+        for (let i = 1; i < sentAt.length; i += 1) {
+            expect(sentAt[i] - sentAt[i - 1]).toBeGreaterThanOrEqual(REQUEST_PACE_MS);
+        }
+        expect(sentAt[0]).toBe(started);
+    });
+
+    test('a failure mid-burst that trips the cool-down ends every wait at once, with nothing more sent', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const mock = vi.fn(async () => {
+            if (mock.mock.calls.length === 1) return { ok: true, json: async () => rows };
+            throw new TypeError('Failed to fetch');
+        });
+        globalThis.fetch = mock;
+
+        const keys = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+        const done = Promise.all(keys.map((k) => marketHistoryAPI.fetchHistory(`/items/${k}`, 0, 7)));
+
+        // a answers; b fails at 200ms; c fails at 400ms and trips the cool-down
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 2);
+        const results = await done;
+
+        expect(mock).toHaveBeenCalledTimes(3);
+        expect(results.slice(0, 1)).toEqual([rows]);
+        expect(results.slice(1)).toEqual(new Array(7).fill(null));
+        expect(marketHistoryAPI.cooldownRemainingMs('mooket2')).toBeGreaterThan(0);
+        // d to h did not sit out their turns, and nothing is left running for them
+        expect(vi.getTimerCount()).toBe(0);
+        expect(marketHistoryAPI.paceWaiters.size).toBe(0);
+    });
+
+    test('a cool-down that begins while requests wait is honored when their turn comes', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+
+        const done = Promise.all(['a', 'b', 'c'].map((k) => marketHistoryAPI.fetchHistory(`/items/${k}`, 0, 7)));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mock).toHaveBeenCalledTimes(1);
+
+        marketHistoryAPI.cooldownUntil = Date.now() + 30_000;
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 3);
+
+        expect(await done).toEqual([rows, null, null]);
+        expect(mock).toHaveBeenCalledTimes(1);
+    });
+
+    test('turning pooled history off while requests wait sends nothing more', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+
+        const done = Promise.all(['a', 'b', 'c'].map((k) => marketHistoryAPI.fetchHistory(`/items/${k}`, 0, 7)));
+        await vi.advanceTimersByTimeAsync(0);
+        settings.market_pooledHistory = false;
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 3);
+
+        expect(await done).toEqual([rows, null, null]);
+        expect(mock).toHaveBeenCalledTimes(1);
+    });
+
+    test('the timeout starts when a request is sent, not while it waits', async () => {
+        const aborted = [];
+        globalThis.fetch = vi.fn(
+            (url, { signal }) =>
+                new Promise((resolve, reject) => {
+                    const index = aborted.length;
+                    aborted.push(false);
+                    signal.addEventListener('abort', () => {
+                        aborted[index] = true;
+                        reject(new DOMException('aborted', 'AbortError'));
+                    });
+                })
+        );
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        // Keep the two failures below the cool-down threshold's reach for this test
+        marketHistoryAPI.consecutiveFailures = -10;
+
+        const done = Promise.all(['a', 'b', 'c'].map((k) => marketHistoryAPI.fetchHistory(`/items/${k}`, 0, 7)));
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 2); // all three are sent: at 0, 200, 400
+
+        await vi.advanceTimersByTimeAsync(10_000 - REQUEST_PACE_MS * 2 + 100); // t = 10_100
+        expect(aborted).toEqual([true, false, false]);
+
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 3);
+        expect(aborted).toEqual([true, true, true]);
+        await done;
+    });
+
+    test('a waiting request follows the source switch to the other pool, which has its own pace', async () => {
+        const { mock, urls } = recordingFetch();
+        globalThis.fetch = mock;
+        mock.mockImplementation(async (url) => {
+            urls.push(url);
+            return { ok: true, json: async () => (url.includes('qi-e') ? { ask: [], bid: [] } : rows) };
+        });
+
+        const done = Promise.all(['a', 'b', 'c'].map((k) => marketHistoryAPI.fetchHistory(`/items/${k}`, 0, 7)));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(urls).toHaveLength(1);
+
+        settings.market_historySource = 'mooket1';
+        // The other pool's first request is not queued behind the first pool's burst
+        const other = marketHistoryAPI.fetchHistory('/items/z', 0, 7);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(urls).toHaveLength(2);
+        expect(urls[1]).toContain('mooket.qi-e.top');
+        await other;
+
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 4);
+        await done;
+        // The two that were waiting went to the pool selected when their turn came
+        expect(urls.slice(2).every((u) => u.includes('mooket.qi-e.top'))).toBe(true);
+        expect(urls).toHaveLength(4);
+    });
+
+    test('nothing wanted means nothing waits', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+
+        expect(await Promise.all([])).toEqual([]);
+        expect(await marketHistoryAPI.fetchHistory('', 0, 7)).toBeNull();
+        expect(mock).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
     });
 });
 

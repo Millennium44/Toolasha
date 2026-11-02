@@ -180,6 +180,30 @@ const COOLDOWN_MAX_MS = 10 * 60 * 1000;
  */
 const FAILURE_WINDOW_MS = COOLDOWN_BASE_MS;
 
+/**
+ * The least time between two requests sent to the same pool: five a second.
+ *
+ * The cool-down above reacts to a refusal after the fact; this is what keeps a
+ * sweep from earning one. Callers bound how many requests are *in flight*
+ * (`VOLUME_CONCURRENCY` in `market-liquidity.js`), but a bound on concurrency is
+ * not a bound on rate: when answers come back quickly, four workers refill their
+ * slots as fast as the answers arrive. Adding one Goal Planner goal measured
+ * about 168 requests in about five seconds against the test server, three of them
+ * failed, and the second failure tripped the thirty-second back-off.
+ *
+ * **This number is a guess.** The pool's real limit is unknown (its 429s carry no
+ * CORS headers, so the status never reaches this code); five a second was chosen
+ * only because it clears the measured burst (about 34 requests a second) by a
+ * wide margin. Raise it if the pool is shown to tolerate more, lower it if it
+ * still refuses.
+ *
+ * The pace is per pool, like the back-off: the two sources are different hosts,
+ * and one host's limit says nothing about the other's. Only a request that
+ * actually goes to the network takes a turn; a cached answer or a cool-down
+ * answer returns at once, and a lone request after a quiet spell is not delayed.
+ */
+export const REQUEST_PACE_MS = 200;
+
 class MarketHistoryAPI {
     constructor() {
         this.cache = new Map();
@@ -208,6 +232,12 @@ class MarketHistoryAPI {
          * window from a server that was never asked.
          */
         this.backoffSourceKey = null;
+        /** Spacing between sends to one pool; see {@link REQUEST_PACE_MS} */
+        this.paceIntervalMs = REQUEST_PACE_MS;
+        /** Source key to the `Date.now()` timestamp the next request to that pool may be sent */
+        this.paceNextAt = new Map();
+        /** Requests waiting for their turn, so a cool-down can end the wait at once */
+        this.paceWaiters = new Set();
     }
 
     /** @returns {boolean} Whether history may be fetched at all */
@@ -261,9 +291,11 @@ class MarketHistoryAPI {
      * @param {boolean} [options.force] - Skip the cached answer and ask the pool
      *   again, e.g. a player-pressed refresh. The fresh answer still overwrites
      *   the cache entry on success, so the *next* ordinary call benefits from it.
+     * @param {string} [options.slotFor] - Internal: the source this call already waited its
+     *   turn for, set when a paced call comes back through the checks after waiting
      * @returns {Promise<Array<Object>|null>} Rows, or null when unavailable
      */
-    async fetchHistory(itemHrid, enhancementLevel, days, { force = false } = {}) {
+    async fetchHistory(itemHrid, enhancementLevel, days, { force = false, slotFor = null } = {}) {
         if (!this.enabled || !itemHrid) return null;
 
         const source = this.currentSource();
@@ -287,6 +319,22 @@ class MarketHistoryAPI {
         // "unknown" rather than "zero traded", which is the correct thing for a
         // cool-down to mean too.
         if (Date.now() < this.cooldownUntil) return null;
+
+        // Pace: a request that is going to the network takes a turn, so a sweep
+        // is spread out instead of landing as one burst (see REQUEST_PACE_MS).
+        // After the wait everything above is decided again from scratch (the
+        // setting, the source, the cache, which a twin queued ahead of this one
+        // may have filled, and the cool-down, which may have begun while this
+        // waited) because none of it is what it was when the turn was taken.
+        // Nothing has been sent at this point, and the timeout below starts
+        // only once the request really is.
+        if (slotFor !== source.key) {
+            const waitMs = this.claimSlot(source.key);
+            if (waitMs > 0) {
+                await this.waitForSlot(source.key, waitMs);
+                return this.fetchHistory(itemHrid, enhancementLevel, days, { force, slotFor: source.key });
+            }
+        }
 
         const url =
             source.key === 'mooket1'
@@ -324,6 +372,55 @@ class MarketHistoryAPI {
     }
 
     /**
+     * Take the next turn to send to one pool.
+     *
+     * @param {string} sourceKey - The pool
+     * @returns {number} Milliseconds to wait before sending; 0 when the pool has been quiet
+     */
+    claimSlot(sourceKey) {
+        const now = Date.now();
+        const at = Math.max(now, this.paceNextAt.get(sourceKey) ?? 0);
+        this.paceNextAt.set(sourceKey, at + this.paceIntervalMs);
+        return at - now;
+    }
+
+    /**
+     * Wait for a turn. Resolves when the time comes or when {@link releasePaceWaiters}
+     * ends the wait early; either way the caller re-checks before sending.
+     *
+     * @param {string} sourceKey - The pool the turn is for
+     * @param {number} ms - How long
+     * @returns {Promise<void>}
+     */
+    waitForSlot(sourceKey, ms) {
+        return new Promise((resolve) => {
+            const waiter = { sourceKey, timer: null, wake: null };
+            waiter.wake = () => {
+                clearTimeout(waiter.timer);
+                this.paceWaiters.delete(waiter);
+                resolve();
+            };
+            waiter.timer = setTimeout(waiter.wake, ms);
+            this.paceWaiters.add(waiter);
+        });
+    }
+
+    /**
+     * End every pending wait for one pool and forget its reserved turns. Called when a
+     * cool-down begins: the waiting requests wake, find the cool-down, and answer
+     * `null` without a request going out and without a timer left running.
+     *
+     * @param {string|null} sourceKey - The pool
+     * @returns {void}
+     */
+    releasePaceWaiters(sourceKey) {
+        for (const waiter of [...this.paceWaiters]) {
+            if (waiter.sourceKey === sourceKey) waiter.wake();
+        }
+        this.paceNextAt.delete(sourceKey);
+    }
+
+    /**
      * Count a failed request toward the shared cool-down, and engage it once
      * {@link FAILURE_THRESHOLD} is reached.
      *
@@ -356,6 +453,7 @@ class MarketHistoryAPI {
         const cooldownMs = Math.min(COOLDOWN_BASE_MS * 2 ** (this.cooldownStreak - 1), COOLDOWN_MAX_MS);
         this.cooldownUntil = now + cooldownMs;
         this.consecutiveFailures = 0;
+        this.releasePaceWaiters(this.backoffSourceKey);
 
         console.error(
             `[MooketHistory] The pool is refusing history requests — backing off for ${Math.round(cooldownMs / 1000)}s.`
