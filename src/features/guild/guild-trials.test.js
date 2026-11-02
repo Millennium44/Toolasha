@@ -751,8 +751,8 @@ describe('a trial you did not join, read off its tier-clear timings', () => {
         // …and the expected tier is back, which is what an unjoined card lost
         expect(html).toContain('Expected');
         expect(html).not.toContain('not projectable');
-        // Two timed badges are one interval: the end is a range, not a tier
-        expect(timing.range).toMatchObject({ state: 'one-interval' });
+        // Two timed badges at T18+: 13 tiers done settles it to a narrow range
+        expect(timing.range).toMatchObject({ state: 'settled' });
         expect(html).toContain(`~T${timing.range.low}–${timing.range.high}`);
         expect(timing.range.low).toBeLessThanOrEqual(timing.expectedTier);
         expect(timing.range.high).toBeGreaterThanOrEqual(timing.expectedTier);
@@ -8395,6 +8395,217 @@ describe('after a reload, before any guild message', () => {
         guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
         expect(guildTrials.currentTrials).toBeNull();
         expect(guildTrials.serverClockOffsetMs).toBeNull();
+    });
+});
+
+describe('a fight you are in: the pace is a range until the damage rate has shown what it does', () => {
+    const HOUR = 3_600_000;
+    /** The shape of a combat tier's health, as the rate evidence is built from it */
+    const shape = (tier) => 1 + 0.1 * (tier - 1);
+
+    /**
+     * Stamps for tiers `from`..: each interval's rate is `factor` times a base rate.
+     * @param {number} from - First stamped tier
+     * @param {number[]} factors - One per later tier
+     * @returns {Object} `{tier: ms}`
+     */
+    const stamps = (from, factors) => {
+        const seen = { [from]: now - HOUR };
+        let at = now - HOUR;
+        factors.forEach((factor, i) => {
+            at += Math.round((shape(from + 1 + i) * 1e9) / (3e5 * factor));
+            seen[from + 1 + i] = at;
+        });
+        return seen;
+    };
+
+    /** A Trial Chameleon fight with `banked` tiers behind it, killing at a steady rate */
+    const fight = (banked, extra = {}) =>
+        analyseTrial(
+            record({
+                name: 'Trial Chameleon',
+                kind: 'combat',
+                tier: banked,
+                pointsByTier: { [banked]: 1200 },
+                samples: [
+                    { t: now - 10_000, readings: [{ current: 640_000, max: 643_500 }] },
+                    { t: now, readings: [{ current: 440_000, max: 643_500 }] },
+                ],
+                ...extra,
+            }),
+            { participants: 17, phase: 'live', timeLeftMs: 56 * 60_000, workBase: 550_000, now }
+        );
+
+    test('the reported fight: T4 with 56 minutes left no longer reads as a sure T21', () => {
+        const analysis = fight(3);
+        expect(analysis.pace.tiersCleared).toBe(21);
+        // One reading of the rate and no clear stamps: six tiers either side
+        expect(analysis.paceRange).toMatchObject({ state: 'one-interval', halfWidth: 6, low: 15, high: 21 });
+        const html = renderTrialBlock(analysis, 17, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).toContain('~T15–21');
+        expect(html).not.toContain('21 tiers → T21');
+        expect(html).toContain('could end anywhere from T15 to T21');
+        // The banked count is real and does not widen
+        expect(analysis.tiersClearedSoFar).toBe(3);
+        expect(html).toMatch(/>Banked<\/span><span[^>]*>3</);
+    });
+
+    test('too few tiers done is plain early wording, with the flat walk in the hover as the most it could be', () => {
+        const analysis = fight(1);
+        expect(analysis.paceRange.early).toBe(true);
+        const html = renderTrialBlock(analysis, 17, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).toContain('too early to say');
+        expect(html).toContain('would reach T21');
+        expect(html).not.toContain('→ T21');
+    });
+
+    test('a damage rate that has stayed flat across timed tiers is three tiers either side', () => {
+        const analysis = fight(5, { tierSeenAt: stamps(1, [1, 1, 1, 1]) });
+        expect(analysis.rangeEvidence).toEqual({ intervals: 4, falling: 0 });
+        expect(analysis.paceRange).toMatchObject({ state: 'flat', halfWidth: 3, low: 18, high: 21 });
+    });
+
+    test('a rate that has fallen for three intervals narrows to one tier either side', () => {
+        const slow = fight(5, { tierSeenAt: stamps(1, [1, 0.8, 0.6, 0.45]) });
+        expect(slow.rangeEvidence.falling).toBe(3);
+        expect(slow.paceRange).toMatchObject({ state: 'settled', halfWidth: 1 });
+        expect(slow.paceRange.high - slow.paceRange.low).toBeLessThanOrEqual(2);
+    });
+
+    test('thirteen tiers done settles it whatever the stamps say', () => {
+        expect(fight(13).paceRange).toMatchObject({ state: 'settled', halfWidth: 1 });
+    });
+
+    test('the last tier: fighting T21 spans the banked 20 to 21, and a finished ladder states no range', () => {
+        expect(fight(20).paceRange).toMatchObject({ low: 20, high: 21 });
+        expect(fight(21).paceRange).toBeNull();
+    });
+
+    test('kill time unknown: no movement in the bar, no pace and no range', () => {
+        const analysis = fight(3, {
+            samples: [
+                { t: now - 10_000, readings: [{ current: 600_000, max: 643_500 }] },
+                { t: now, readings: [{ current: 600_000, max: 643_500 }] },
+            ],
+        });
+        expect(analysis.pace).toBeNull();
+        expect(analysis.paceRange).toBeNull();
+        const html = renderTrialBlock(analysis, 17, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).not.toContain('→ T');
+        expect(html).not.toContain('~T');
+    });
+
+    test('a skilling fight of your own is untouched: no range on a joined skilling pace', () => {
+        const analysis = analyseTrial(
+            record({
+                name: 'Foraging',
+                kind: 'skilling',
+                tier: 4,
+                pointsByTier: { 4: 590 },
+                tiers: [{ tier: 5, total: 57_120 }],
+                samples: [
+                    { t: now, readings: [{ current: 20_000, max: 57_120 }] },
+                    { t: now + 10_000, readings: [{ current: 20_500, max: 57_120 }] },
+                ],
+            }),
+            { participants: 2, timeLeftMs: 20 * 60_000, phase: 'live' }
+        );
+        expect(analysis.paceRange).toBeNull();
+    });
+
+    describe('the forecast row for a fight with a measured party damage', () => {
+        const forecastWith = (range) => ({
+            tier: 21,
+            tiersCleared: 21,
+            source: 'measured',
+            limitedBy: 'time',
+            clears: [],
+            enragedFrom: null,
+            range,
+        });
+        const draw = (range) =>
+            renderTrialBlock(
+                fight(3),
+                17,
+                { measured: false, reason: 'none' },
+                { phase: 'live', forecast: forecastWith(range) }
+            );
+
+        test('a wide range replaces the confident count, with the hover saying why', () => {
+            const html = draw({ low: 15, high: 21, point: 21, halfWidth: 6, state: 'one-interval', early: false });
+            expect(html).toContain('~T15–21');
+            expect(html).not.toContain('21 tiers → T21');
+            expect(html).toContain('could end anywhere from T15 to T21');
+        });
+
+        test('too early reads as plain wording', () => {
+            const html = draw({ low: 3, high: 21, point: 21, halfWidth: 6, state: 'one-interval', early: true });
+            expect(html).toContain('too early to say');
+            expect(html).not.toContain('21 tiers → T21');
+        });
+
+        test('no range keeps the point, as a forecast with none always did', () => {
+            expect(draw(null)).toContain('21 tiers → T21');
+        });
+    });
+
+    describe('the payout that follows the pace', () => {
+        const bonuses = {
+            buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' },
+            treasury: { bonus: 0.3, level: 5 },
+        };
+        const payoutText = (analysis) => {
+            guildTrials.record = {
+                weekStart: 0,
+                tiles: {
+                    'combat::trial chameleon': { name: 'Trial Chameleon', kind: 'combat', samples: [], tiers: [] },
+                },
+            };
+            vi.setSystemTime(now);
+            guildTrials._noteCurrentTrials({
+                guild: {
+                    currentTrialsData: JSON.stringify({
+                        skilling: { status: '', parties: null },
+                        combat: {
+                            status: 'in_progress',
+                            budgetRemainingMs: 1_800_000,
+                            parties: { '/guild_combat/chameleon': { done: false } },
+                        },
+                    }),
+                },
+            });
+            const trials = guildTrials._payoutTrials({ phase: null }, {}, () => analysis);
+            const root = document.createElement('div');
+            document.body.append(root);
+            guildTrials._renderPayout(root, trials, null, bonuses);
+            const text = root.textContent;
+            root.remove();
+            vi.useRealTimers();
+            return { trials, text };
+        };
+
+        test('a wide pace pays a range, with no confident point or gold beside it; banked stays exact', () => {
+            const analysis = { ...fight(3), tiersClearedSoFar: 3 };
+            const { trials, text } = payoutText(analysis);
+            expect(trials[0].projectedRange).toEqual({ low: 15, high: 21 });
+            expect(text).toMatch(/Guild Points on pace~[\d,]+–[\d,]+/);
+            expect(text).toMatch(/Tokens, every eligible member~[\d,]+–[\d,]+/);
+            expect(text).not.toMatch(/Tokens, every eligible member[\d,]+\s*\(/);
+            expect(text).toMatch(/Guild Points banked[\d,]+/);
+            expect(text).not.toMatch(/Guild Points banked~/);
+        });
+
+        test('an early pace pays from what is banked up to the flat walk', () => {
+            const { trials } = payoutText(fight(1));
+            expect(trials[0].projectedRange).toEqual({ low: 1, high: 21 });
+        });
+
+        test('a settled pace with no spread keeps a point payout', () => {
+            const analysis = { ...fight(13), paceRange: { low: 21, high: 21, point: 21, early: false } };
+            const { trials, text } = payoutText(analysis);
+            expect(trials[0].projectedRange).toBeNull();
+            expect(text).not.toMatch(/Guild Points on pace~/);
+        });
     });
 });
 

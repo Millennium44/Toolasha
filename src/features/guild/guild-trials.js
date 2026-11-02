@@ -160,10 +160,13 @@ import { openTrialInputCapture, closeTrialInputCapture } from './guild-trial-inp
 import { openTrialLedgerPanel } from './guild-trial-ledger-view.js';
 import { forecastTrial, trialWave } from './guild-trial-forecast.js';
 import {
+    earlyPaceHover,
+    expectedRange,
     foldServerTierClears,
     INIT_PAYLOAD_FRESH_MS,
     initPayloadAgeMs,
     rangeHover,
+    rateEvidence,
     serverClockOffset,
     tierClearTimes,
     tierTimingAsForecast,
@@ -302,6 +305,19 @@ const LEVEL_LINE_RE = /Lv\.\s*\d+/;
 
 /** Where the folded history sections are remembered (the `settings` store; the `guildTrial` prefix syncs it) */
 const SECTION_FOLDS_KEY = 'guildTrialSectionFolds';
+
+/**
+ * How a fight's walked tier is worded: a range, "too early to say", or null to state it as a point.
+ *
+ * @param {{low: number, high: number, point?: number, early?: boolean}|null|undefined} range - From `expectedRange`
+ * @returns {{text: string, hover: string}|null} Null when the range has no spread and is not early
+ */
+function rangedPace(range) {
+    if (!range) return null;
+    if (range.early) return { text: 'too early to say', hover: `\n${earlyPaceHover(range.point)}` };
+    if (range.high > range.low) return { text: `~T${range.low}–${range.high}`, hover: rangeHover(range) };
+    return null;
+}
 
 /**
  * A history section's heading as a button that folds it.
@@ -932,12 +948,37 @@ export function analyseTrial(
               })
             : null;
 
+    // A combat fight walked at its measured damage is a flat rate held for the
+    // hour. The bosses grow and the party's damage does not always keep up, so
+    // the tier it reaches is stated as the range the shared rule gives, from
+    // what the clear stamps show of the rate (a fight with none is one reading).
+    // The tiers banked, which are real, are never widened.
+    const rangeEvidence =
+        kind === 'combat'
+            ? rateEvidence(record, { kind, now, windowed: isTestServer() })
+            : { intervals: 0, falling: 0 };
+    const paceRange =
+        kind === 'combat' &&
+        pace &&
+        pace.limitedBy !== 'unknown-next-tier' &&
+        base.tiersClearedSoFar < TRIAL_MAX_TIER &&
+        Number.isFinite(pace.tiersCleared)
+            ? expectedRange({
+                  point: pace.tiersCleared,
+                  banked: base.tiersClearedSoFar,
+                  intervals: Math.max(1, rangeEvidence.intervals),
+                  falling: rangeEvidence.falling,
+              })
+            : null;
+
     return {
         ...base,
         rate,
         rateNote,
         remaining,
         total,
+        paceRange,
+        rangeEvidence,
         // A time-to-clear is only as current as the reading it divides
         etaMs: readingStale ? null : etaMs(remaining, rate),
         next,
@@ -1737,13 +1778,16 @@ export function renderTrialBlock(
     // no measured slowdown to replace it; when there is, the Expected row stands
     // alone and the flat walk lives on in its tooltip.
     if (analysis.pace && !slowdown && (!forecast || forecast.tier === null)) {
+        // A fight's flat damage rate is a range, or too early to say; see `rangedPace`
+        const ranged = rangedPace(analysis.paceRange);
         rows.push(
             line(
                 'On pace for',
-                paceCaption(),
-                analysis.pace.limitedBy === 'ladder' ? GOOD : WARN,
+                ranged ? ranged.text : paceCaption(),
+                analysis.pace.limitedBy === 'ladder' && !ranged ? GOOD : WARN,
                 'The rate measured now, held flat for the rest of the hour. A tier only counts when it fits ' +
                     'whole.' +
+                    (ranged ? ranged.hover : '') +
                     (analysis.pace.limitedBy === 'unknown-next-tier'
                         ? '\nThe ladder past that tier is not known yet, so the walk stopped there — “at ' +
                           'least”, because the real pace may be higher.'
@@ -1772,13 +1816,18 @@ export function renderTrialBlock(
         const flat = analysis.pace ? analysis.pace.tiersCleared : null;
         // Until the rate has shown it is falling the end is a range, not a tier
         const range = timing && forecast.range && forecast.range.high > forecast.range.low ? forecast.range : null;
+        // A fight's flat damage rate: a range, or too early to say
+        const combatRanged = !slowdown && !timing ? rangedPace(forecast.range) : null;
+        const combatNote = combatRanged ? combatRanged.hover : '';
         rows.push(
             line(
                 slowdown || timing ? 'Expected' : 'On pace for',
                 slowdown || timing
                     ? `~T${range ? `${range.low}–${range.high}` : cleared}${margin}`
-                    : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
-                forecast.source === 'estimated' ? WARN : GOOD,
+                    : combatRanged
+                      ? `${combatRanged.text}${forecast.range.early ? '' : margin}`
+                      : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
+                forecast.source === 'estimated' || combatRanged ? WARN : GOOD,
                 timing
                     ? 'Walked from what each tier actually needs — derived from the game’s own ladder ' +
                           '— at the rate this guild is measured to be clearing them, taken from the ' +
@@ -1812,10 +1861,12 @@ export function renderTrialBlock(
                               'boss gains a stack a minute to ten, ending at +100% damage and +100% ' +
                               'accuracy. Still killable — but expect deaths to slow this beyond the ' +
                               'projection.'
-                            : '')
+                            : '') +
+                        combatNote
                       : 'Estimated from the loadouts captured so far' +
                         (forecast.coverage ? ` (${forecast.coverage.known} of ${forecast.coverage.of} members)` : '') +
-                        ' — a rough shape rather than a measurement, until the party’s own damage has been seen.'
+                        ' — a rough shape rather than a measurement, until the party’s own damage has been seen.' +
+                        combatNote
             )
         );
     } else if (forecast?.reason) {
@@ -4747,10 +4798,22 @@ class GuildTrials {
                     : null;
             const timing = walked?.limitedBy === 'no-clock' ? null : tierTimingAsForecast(walked);
 
+            // The pace is a range of tiers when its rule says so, and the money
+            // derived from it must not read as surer than the tiers are. A pace
+            // that is too early to state spans from what is banked to the flat
+            // walk, the most it could be. The banked figures are real and never widen.
+            const paceSpan = pace ? analysis.paceRange : (timing?.range ?? null);
+            const projectedRange = !paceSpan
+                ? null
+                : paceSpan.early
+                  ? { low: analysis.tiersClearedSoFar, high: paceSpan.point }
+                  : { low: paceSpan.low, high: paceSpan.high };
+
             trials.push({
                 name: record.name,
                 type: record.kind,
                 banked: analysis.tiersClearedSoFar,
+                projectedRange: projectedRange && projectedRange.high > projectedRange.low ? projectedRange : null,
                 projected: pace?.tiersCleared ?? timing?.tiersCleared ?? analysis.tiersClearedSoFar,
                 // How far into the tier beyond `projected` the forecast reaches by
                 // the hour's end, 0..1; that leftover progress pays out.
@@ -5343,32 +5406,47 @@ class GuildTrials {
         // it from the ladder made "on pace" come out *below* "banked" whenever
         // the cards had stated more than the ladder derives, which reads as the
         // trial going backwards.
-        const projected = payoutProjection({
-            trials: trials.map((trial) => {
-                const extraTiers = Math.max(0, (trial.projected ?? trial.banked) - trial.banked);
-                const step = EXTRA_TIER_POINTS[trial.type] ?? 0;
-                const fromCards = trial.points?.source !== 'ladder';
-                const base = trial.points?.basePoints;
-                const stated = trial.points?.guildPoints;
-                // The pace ends part-way into the tier after `projected`, and that
-                // leftover progress pays out (0.5% per 1%, capped at 50%). Size it
-                // off that tier's marginal points. Live rule since the guild patch.
-                const marginal = tierMarginalPoints(trial.type, (trial.projected ?? 0) + 1) ?? 0;
-                const partialBasePoints = partialTierCredit(trial.partialFraction) * marginal;
-                return {
-                    ...trial,
-                    tiersCleared: trial.projected,
-                    partialBasePoints,
-                    basePointsOverride: fromCards && Number.isFinite(base) ? base + extraTiers * step : undefined,
-                    guildPointsOverride:
-                        fromCards && Number.isFinite(stated)
-                            ? stated + extraTiers * step * (1 + (buildersHallBonus || 0))
-                            : undefined,
-                };
-            }),
-            buildersHallBonus,
-            treasuryBonus,
-        });
+        const projectTrials = (list) =>
+            payoutProjection({
+                trials: list.map((trial) => {
+                    const extraTiers = Math.max(0, (trial.projected ?? trial.banked) - trial.banked);
+                    const step = EXTRA_TIER_POINTS[trial.type] ?? 0;
+                    const fromCards = trial.points?.source !== 'ladder';
+                    const base = trial.points?.basePoints;
+                    const stated = trial.points?.guildPoints;
+                    // The pace ends part-way into the tier after `projected`, and that
+                    // leftover progress pays out (0.5% per 1%, capped at 50%). Size it
+                    // off that tier's marginal points. Live rule since the guild patch.
+                    const marginal = tierMarginalPoints(trial.type, (trial.projected ?? 0) + 1) ?? 0;
+                    const partialBasePoints = partialTierCredit(trial.partialFraction) * marginal;
+                    return {
+                        ...trial,
+                        tiersCleared: trial.projected,
+                        partialBasePoints,
+                        basePointsOverride: fromCards && Number.isFinite(base) ? base + extraTiers * step : undefined,
+                        guildPointsOverride:
+                            fromCards && Number.isFinite(stated)
+                                ? stated + extraTiers * step * (1 + (buildersHallBonus || 0))
+                                : undefined,
+                    };
+                }),
+                buildersHallBonus,
+                treasuryBonus,
+            });
+        const projected = projectTrials(trials);
+        // Where a trial's pace is a range of tiers, the figures it pays are a range too: the low and
+        // high ends of every such trial together, the whole tiers only (no part-tier credit at an end)
+        const spread = trials.some((trial) => trial.projectedRange);
+        const atEnd = (end) =>
+            projectTrials(
+                trials.map((trial) =>
+                    trial.projectedRange
+                        ? { ...trial, projected: trial.projectedRange[end], partialFraction: 0 }
+                        : trial
+                )
+            );
+        const lowEnd = spread ? atEnd('low') : null;
+        const highEnd = spread ? atEnd('high') : null;
 
         // Which of the three states the banked figure is in. They are three
         // different things and they all used to render as `0`, which is the one
@@ -5381,16 +5459,24 @@ class GuildTrials {
             (trial) => trial.banked > 0 || Number.isFinite(trial.points?.quoted?.statedPoints)
         );
 
-        const eligible = tokenPayoutLine(
-            projected.eligibleTokens,
-            'Half the total base points, paid to every member who joined before the week started.',
-            { showGold: !inProgress }
-        );
-        const participant = tokenPayoutLine(
-            projected.participantTokens,
-            'The eligible payout plus a further 50% of it for participating.',
-            { showGold: !inProgress }
-        );
+        const eligibleTitle = 'Half the total base points, paid to every member who joined before the week started.';
+        const participantTitle = 'The eligible payout plus a further 50% of it for participating.';
+        // A wide pace pays a range: the same arithmetic at the low and the high end of the tiers,
+        // without the gold valuation, which would put a confident figure beside an open one
+        const rangeNote =
+            '\nThe pace is a range of tiers, not a tier, so this is the payout at each end of it — ' +
+            'see the pace row for why. What is banked is not a range.';
+        const ranged = (pick, title) => {
+            const low = tokenPayoutLine(pick(lowEnd), title, { showGold: false });
+            const high = tokenPayoutLine(pick(highEnd), title, { showGold: false });
+            return { value: `~${low.value}–${high.value}`, title: `${title}${rangeNote}` };
+        };
+        const eligible = spread
+            ? ranged((end) => end.eligibleTokens, eligibleTitle)
+            : tokenPayoutLine(projected.eligibleTokens, eligibleTitle, { showGold: !inProgress });
+        const participant = spread
+            ? ranged((end) => end.participantTokens, participantTitle)
+            : tokenPayoutLine(projected.participantTokens, participantTitle, { showGold: !inProgress });
 
         const bankedRow = !anyTierKnown
             ? line(
@@ -5413,7 +5499,14 @@ class GuildTrials {
         const rows = [
             `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;">Trial payout</div>`,
             bankedRow,
-            line('Guild Points on pace', exact(projected.guildPoints), ACCENT),
+            spread
+                ? line(
+                      'Guild Points on pace',
+                      `~${exact(lowEnd.guildPoints)}–${exact(highEnd.guildPoints)}`,
+                      ACCENT,
+                      `What the pace would add to what is banked, at each end of its range of tiers.${rangeNote}`
+                  )
+                : line('Guild Points on pace', exact(projected.guildPoints), ACCENT),
             line('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
             line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];

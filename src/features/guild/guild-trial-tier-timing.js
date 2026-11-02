@@ -152,12 +152,12 @@ export function fallingIntervals(rates) {
 export function rangeHalfWidth({ intervals, falling, banked, overdue = false }) {
     let width;
     let why;
-    if (intervals < 2) {
-        width = RANGE_HALF_WIDTH_ONE_INTERVAL;
-        why = 'one-interval';
-    } else if (falling >= RANGE_SETTLED_FALLING_INTERVALS || banked >= RANGE_SETTLED_TIERS_DONE) {
+    if (falling >= RANGE_SETTLED_FALLING_INTERVALS || banked >= RANGE_SETTLED_TIERS_DONE) {
         width = RANGE_HALF_WIDTH_SETTLED;
         why = 'settled';
+    } else if (intervals < 2) {
+        width = RANGE_HALF_WIDTH_ONE_INTERVAL;
+        why = 'one-interval';
     } else {
         width = RANGE_HALF_WIDTH_UNSETTLED;
         why = falling > 0 ? 'falling' : 'flat';
@@ -422,6 +422,62 @@ export function rateAtTier(fit, tier) {
     return Math.max(fit.rate * RATE_FLOOR_FRACTION, projected);
 }
 
+/** Tiers that must be banked before a joined fight's pace is worth a range; fewer reads as too early to say */
+export const RANGE_MIN_TIERS_DONE = 2;
+
+/**
+ * The one rule that turns a walked tier into the range it can end in, shared by
+ * every path that walks a rate up the ladder (a trial nobody here joined, and the
+ * fight this character is in).
+ *
+ * @param {Object} input - The walk and what is known of the rate
+ * @param {number} input.point - The tier the walk reaches
+ * @param {number} input.banked - Tiers already banked: the floor
+ * @param {number} input.intervals - Measured tier intervals (at least 1 when a rate is in hand)
+ * @param {number} input.falling - From {@link fallingIntervals}
+ * @param {boolean} [input.overdue=false] - The tier in hand has run past what its rate says
+ * @param {number|null} [input.ceiling] - The most the rate could carry it to; without one only the ladder caps it
+ * @returns {{low: number, high: number, halfWidth: number, state: string, falling: number, early: boolean}}
+ *   `early`: fewer than {@link RANGE_MIN_TIERS_DONE} tiers banked, so a joined pace says little yet
+ */
+export function expectedRange({ point, banked, intervals, falling, overdue = false, ceiling = null }) {
+    const { halfWidth, state } = rangeHalfWidth({ intervals, falling, banked, overdue });
+    const low = Math.max(banked, point - halfWidth);
+    const cap = Number.isFinite(ceiling) ? Math.max(ceiling, point) : TRIAL_MAX_TIER;
+    const high = Math.min(TRIAL_MAX_TIER, point + halfWidth, cap);
+    return { low, high: Math.max(low, high), point, halfWidth, state, falling, early: banked < RANGE_MIN_TIERS_DONE };
+}
+
+/**
+ * What a record's tier-clear stamps say about the rate: how many intervals, and how long it has been falling.
+ *
+ * @param {Object} record - A tile record
+ * @param {Object} [options] - Context
+ * @param {'skilling'|'combat'} [options.kind] - Which ladder
+ * @param {number|null} [options.now] - Clock
+ * @param {boolean} [options.windowed=true] - For {@link tierClearTimes}
+ * @returns {{intervals: number, falling: number}} Zero intervals when the stamps give none
+ */
+export function rateEvidence(record, { kind = 'skilling', now = null, windowed = true } = {}) {
+    const rates = tierFillRates(record, { kind, now, windowed });
+    return { intervals: rates.length, falling: fallingIntervals(rates) };
+}
+
+/**
+ * The tooltip for a pace that is too early to state: fewer tiers banked than {@link RANGE_MIN_TIERS_DONE}.
+ * @param {number|null} point - The tier the flat-rate walk reaches
+ * @returns {string} Plain text
+ */
+export function earlyPaceHover(point) {
+    return (
+        'Fewer than two tiers have been cleared, so how the party’s damage holds up as the bosses grow is not ' +
+        'known yet.' +
+        (Number.isFinite(point)
+            ? ` Today’s rate held flat would reach T${point}, which is the most it could be, not a forecast.`
+            : '')
+    );
+}
+
 /**
  * The tooltip sentence for an Expected range: why it is that wide.
  *
@@ -675,14 +731,16 @@ export function tierTimingForecast(
         limitedBy !== 'unknown-next-tier'
     ) {
         const overdue = Number.isFinite(shareNow) && shareNow > 0 && Number.isFinite(needNow) && doneShare >= needNow;
-        const falling = fallingIntervals(rates);
-        const { halfWidth, state } = rangeHalfWidth({ intervals: rates.length, falling, banked, overdue });
         // No higher than the fastest rate this trial has measured would carry it in the time left
         const fastest = Math.max(...rates.map((rate) => rate.sharePerMs));
-        const ceiling = flatWalkTier({ kind, currentTier, remainingShare, rate: fastest, timeLeftMs });
-        const low = Math.max(banked, expectedPoint - halfWidth);
-        const high = Math.min(TRIAL_MAX_TIER, expectedPoint + halfWidth, Math.max(ceiling, expectedPoint));
-        range = { low, high: Math.max(low, high), halfWidth, state, falling };
+        range = expectedRange({
+            point: expectedPoint,
+            banked,
+            intervals: rates.length,
+            falling: fallingIntervals(rates),
+            overdue,
+            ceiling: flatWalkTier({ kind, currentTier, remainingShare, rate: fastest, timeLeftMs }),
+        });
     }
 
     // Printed only where the first tier's total is known. The walk above never

@@ -54,6 +54,7 @@ import {
     tierPoolWork,
     TRIAL_MAX_TIER,
 } from './guild-trials-math.js';
+import { expectedRange } from './guild-trial-tier-timing.js';
 
 /** The constant in the game's own health formula, `10 × (10 + level)` */
 export const HEALTH_LEVEL_OFFSET = 10;
@@ -589,11 +590,25 @@ export function forecastTrial({
 
     const banked = Number.isFinite(analysis.tiersClearedSoFar) ? analysis.tiersClearedSoFar : 0;
     const total = banked + walk.tiersCleared;
+    // A flat damage rate held up the ladder is stated as the range the shared
+    // rule gives, from what the clear stamps show of the rate. Not for a walk
+    // that stopped at a tier it could not size, nor for a trial at the top
+    const evidence = analysis.rangeEvidence || { intervals: 0, falling: 0 };
+    const range =
+        total > 0 && walk.limitedBy !== 'unknown-next-tier' && banked < TRIAL_MAX_TIER
+            ? expectedRange({
+                  point: total,
+                  banked,
+                  intervals: Math.max(1, evidence.intervals),
+                  falling: evidence.falling,
+              })
+            : null;
     return {
         ...walk,
         // The tier reached and the count of tiers banked are one number
         tier: total > 0 ? total : null,
         tiersCleared: total,
+        range,
         source: measured === null ? 'estimated' : 'measured',
         coverage: estimate ? { known: estimate.members, of: Math.max(estimate.members, participants) } : null,
         reason: null,
