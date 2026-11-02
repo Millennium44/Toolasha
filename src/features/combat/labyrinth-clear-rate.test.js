@@ -7654,6 +7654,42 @@ describe('auto-path after a beacon reveal', () => {
         expect(pathSpy).not.toHaveBeenCalled();
     });
 
+    test('a reveal path queued behind a room calculation is dropped if the option goes off before it drains', async () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+        expect(labyrinthClearRate._pathQueuedAuto).toBe(true);
+
+        setSettings({ onReveal: false });
+        tileSpy.mockRestore();
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate.roomData = null; // a pass with nothing to calculate settles the queue
+        await labyrinthClearRate.runTileCalculation();
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('the setting-change withdrawal drops a queued reveal path, not a beacon or manual one', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        labyrinthClearRate.withdrawRevealAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(false);
+
+        labyrinthClearRate.onLabyrinthUpdated(update(9, 2));
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+        labyrinthClearRate.withdrawRevealAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+
+        labyrinthClearRate.cancelAutoPath();
+        labyrinthClearRate._pathQueued = true; // a Path press
+        labyrinthClearRate._pathQueuedAuto = false;
+        labyrinthClearRate.withdrawRevealAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
+
     test('a beacon still re-paths with the reveal option off', () => {
         setSettings({ onReveal: false });
         labyrinthClearRate.onLabyrinthUpdated(update(8, 2));

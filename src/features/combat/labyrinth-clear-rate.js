@@ -261,6 +261,10 @@ class LabyrinthClearRate {
                 if (value) return;
                 this.disableLiveProgress();
             }),
+            // Editable from the Settings page as well as the panel button
+            config.onSettingChange('labyrinthAutoPathOnReveal', (value) => {
+                if (!value) this.withdrawRevealAutoPath();
+            }),
             // The four beacon planner settings are also editable from the Settings
             // page, which does not go through the toolbar's handlers
             ...BEACON_PLANNER_SETTINGS.map((key) =>
@@ -3663,7 +3667,7 @@ class LabyrinthClearRate {
         revealPathButton.addEventListener('click', () => {
             config.setSetting('labyrinthAutoPathOnReveal', !revealPathOn());
             // A reveal-triggered path already pending is dropped; a beacon's stays
-            if (!revealPathOn() && this._autoPathReason === 'reveal') this.cancelAutoPath();
+            if (!revealPathOn()) this.withdrawRevealAutoPath();
             syncRevealPath();
         });
         settingsPanel.appendChild(revealPathButton);
@@ -3999,10 +4003,11 @@ class LabyrinthClearRate {
         // while it was pending, or the wait would never be released
         const settledIdle = () => {
             if (!this._pathQueued || this.autoTileTimer) return;
+            const withdrawn = this.revealQueueWithdrawn();
             this._pathQueued = false;
             this._pathQueuedAuto = false;
             this.setPathButtonRunning(false);
-            this.runPathCalculation();
+            if (!withdrawn) this.runPathCalculation();
         };
         if (!this.roomData) {
             if (!auto) this.setTileStatus('No labyrinth data');
@@ -4329,7 +4334,7 @@ class LabyrinthClearRate {
                 const deferred = this._autoCalcDeferred && Boolean(config.getSetting('labyrinthAutoCalcTiles'));
                 this._autoCalcDeferred = false;
                 const followUp = retryScheduled || (deferred && !cancelled);
-                const wantsPath = this._pathQueued && !followUp;
+                const wantsPath = this._pathQueued && !followUp && !this.revealQueueWithdrawn();
                 if (!followUp || cancelled) {
                     this._pathQueued = false;
                     this._pathQueuedAuto = false;
@@ -5587,12 +5592,33 @@ class LabyrinthClearRate {
                 if (!this._pathQueued) {
                     this._pathQueued = true;
                     this._pathQueuedAuto = true;
+                    this._pathQueuedReason = firedFor;
                 }
                 this.setPathButtonRunning(false);
                 return;
             }
             this.runPathCalculation();
         }, AUTO_PATH_DELAY_MS);
+    }
+
+    /**
+     * Whether the path Auto-path queued behind a room calculation was a room-clear reveal's and that
+     * option has been turned off since. A manual press's queue (`_pathQueuedAuto` false) and a
+     * beacon's are never withdrawn by it.
+     */
+    revealQueueWithdrawn() {
+        return (
+            !!this._pathQueuedAuto &&
+            this._pathQueuedReason === 'reveal' &&
+            !config.getSetting('labyrinthAutoPathOnReveal')
+        );
+    }
+
+    /** The reveal option went off: drop a pending or queued reveal-triggered path, keep beacon and manual ones */
+    withdrawRevealAutoPath() {
+        const pendingReveal = this.autoPathTimer && this._autoPathReason === 'reveal';
+        const queuedReveal = this._pathQueuedAuto && this._pathQueuedReason === 'reveal';
+        if (pendingReveal || queuedReveal) this.cancelAutoPath();
     }
 
     /** Drop a pending automatic re-path, and an automatic one queued behind a room calculation */
