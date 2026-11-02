@@ -627,8 +627,10 @@ class TradeLedgerStore {
 
         let needArchive = false;
         for (const [id, { total, rows }] of totals) {
-            if (rows < 2 || openIds.has(id)) continue;
-            if (!seenInLog.has(id) || total > (caps.get(id) ?? Infinity)) {
+            if (openIds.has(id)) continue;
+            // Any row count over its log count, since the repair would trim it. A single fill missing from the
+            // log has no cap to be trimmed to unless something else asks, so it does not cost an archive read
+            if (total > (caps.get(id) ?? Infinity) || (rows >= 2 && !seenInLog.has(id))) {
                 needArchive = true;
                 break;
             }

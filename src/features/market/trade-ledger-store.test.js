@@ -1280,6 +1280,15 @@ describe('fills recorded past what a finished listing filled are cut back', () =
         ).toEqual([9]);
     });
 
+    test('a single recorded fill over a stale log count asks the archive before being trimmed', async () => {
+        seedSplit([fill(5, T1, { quantity: 10, coins: 1000 })]);
+        LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+        archiveMock.rows = [logRow(5, 10)];
+        await loadAndRepair();
+        expect(archiveMock.reads).toBeGreaterThan(0);
+        expect(quantities(5)).toEqual([10]);
+    });
+
     test('an unreadable archive defers the repair; an empty one does not', async () => {
         seedSplit([fill(5, T1), fill(5, T2)]);
         LEDGER().set(LOG_KEY, [logRow(5, 5)]);
