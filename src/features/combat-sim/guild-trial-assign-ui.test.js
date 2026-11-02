@@ -10,6 +10,8 @@ const game = vi.hoisted(() => ({
     testServer: false,
     clientData: null,
     simulate: vi.fn(),
+    views: {},
+    changedAt: {},
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -30,6 +32,10 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     marketDepthCap: () => null,
     guildXpTracker: () => game.tracker,
     guildMemberSkills: () => game.skills,
+}));
+vi.mock('../../utils/view-loadout.js', () => ({
+    VIEW_LOADOUT_CONTEXT: { Party: 'party', GuildTrial: 'guild_trial' },
+    getLoadout: (id, _context, kind) => game.views[id + ':' + kind] ?? null,
 }));
 vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer, liveGameOrigin: (o) => o }));
 vi.mock('../../utils/simple-panel.js', () => ({
@@ -99,6 +105,7 @@ function makeTracker() {
         getCurrentWeekStartAt: () => WEEK,
         getMemberList: () => Object.entries(META).map(([characterID, meta]) => ({ characterID, ...meta })),
         getMemberMeta: (id) => META[id] || null,
+        getLoadoutChangedAt: (id, kind) => game.changedAt[id + ':' + kind] ?? null,
     };
 }
 
@@ -199,6 +206,8 @@ beforeEach(() => {
     game.tracker = makeTracker();
     game.skills = makeSkills();
     game.simulate.mockReset();
+    game.views = {};
+    game.changedAt = {};
 });
 
 afterEach(() => {
@@ -237,6 +246,86 @@ describe('cycle inputs', () => {
         const names = cycleRoster(game.tracker, { now: NOW, testServer: true }).members.map((m) => m.name);
         expect(names).toContain('Newcomer');
         expect(names).toContain('Garbled');
+    });
+
+    describe('signed-up combat trial, role and loadout view', () => {
+        const roster = () => cycleRoster(game.tracker, { now: NOW, testServer: true }).members;
+        const byName = (name) => roster().find((m) => m.name === name);
+
+        test('a current-cycle sign-up shows its combat trial and role; a combat trial with no role says so', () => {
+            META[900002] = {
+                ...META[900002],
+                signedUpCombatRoleHrid: 'tank',
+                trialRolePrefs: { '/guild_combat/badger': 'support' },
+            };
+            expect(byName('Crafter')).toMatchObject({
+                combatTrial: '/guild_combat/badger',
+                role: 'tank',
+                inCombat: true,
+            });
+            META[900002] = { ...META[900002], signedUpCombatRoleHrid: '' };
+            expect(byName('Crafter')).toMatchObject({
+                role: '',
+                rolePref: 'support',
+                combatTrial: '/guild_combat/badger',
+            });
+            const { shell, planner } = makeSim();
+            planner.sim.panel.render();
+            const cell = shell.querySelector('tr[data-member-id="900002"] [data-combat-signup]');
+            expect(cell.textContent).toBe('Badger · no role');
+            expect(cell.title).toContain('Support');
+        });
+
+        test('an old cycle, empty strings and a role beside no combat trial are not sign-ups', () => {
+            META[900003] = {
+                ...META[900003],
+                signupWeekStartAt: '2026-09-25T00:00:00.000Z',
+                signedUpCombatTrialHrid: '/guild_combat/swarm',
+                signedUpCombatRoleHrid: 'support',
+            };
+            META[900005] = {
+                ...META[900005],
+                signupWeekStartAt: WEEK,
+                signedUpCombatTrialHrid: '',
+                signedUpSkillingTrialHrid: '',
+                signedUpCombatRoleHrid: 'tank',
+            };
+            expect(byName('Milker')).toMatchObject({ combatTrial: '', role: '', inCombat: false, current: null });
+            expect(byName('Unknown')).toMatchObject({ combatTrial: '', role: '', inCombat: false, current: null });
+            const { shell, planner } = makeSim();
+            planner.sim.panel.render();
+            expect(shell.querySelector('tr[data-member-id="900005"] [data-combat-signup]').textContent).toBe('—');
+        });
+
+        test('no sign-ups at all, or no tracker data, leaves every member without a combat trial', () => {
+            for (const id of Object.keys(META)) delete META[id].signupWeekStartAt;
+            expect(roster().every((m) => !m.combatTrial && !m.role && m.combatView === 'none')).toBe(true);
+        });
+
+        test('a captured loadout view is stale when the sign-up id changed after it, and only for that kind', () => {
+            game.views['900002:combat'] = { kind: 'combat', capturedAt: 1000 };
+            game.views['900002:skilling'] = { kind: 'skilling', capturedAt: 1000 };
+            expect(byName('Crafter')).toMatchObject({ combatView: 'current', skillingView: 'current' });
+            game.changedAt['900002:combat'] = 2000;
+            expect(byName('Crafter')).toMatchObject({ combatView: 'stale', skillingView: 'current' });
+            // No view taken: nothing to call stale
+            expect(byName('Me').combatView).toBe('none');
+            const { shell, planner } = makeSim();
+            planner.sim.panel.render();
+            expect(shell.querySelector('tr[data-member-id="900002"] [data-loadout-view="stale"]')).not.toBeNull();
+        });
+
+        test('a view for a member signed up for nothing in that kind is not judged', () => {
+            META[900002] = { ...META[900002], signedUpCombatTrialHrid: '' };
+            game.views['900002:combat'] = { kind: 'combat', capturedAt: 1000 };
+            game.changedAt['900002:combat'] = 2000;
+            expect(byName('Crafter').combatView).toBe('none');
+        });
+
+        test('someone who left the guild is gone from the roster', () => {
+            delete META[900002];
+            expect(roster().map((m) => m.name)).not.toContain('Crafter');
+        });
     });
 
     test('trial minimum levels are a JSON string, clamped to 200; empty means none', () => {
