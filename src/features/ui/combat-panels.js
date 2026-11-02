@@ -46,6 +46,7 @@ import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floati
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { fitValueToBox } from '../../utils/wrap-long-value.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { expectedKills, killComparison } from '../../utils/expected-kills.js';
@@ -65,14 +66,12 @@ import { runningCombatAction } from '../../utils/combat-actions.js';
 const REFRESH_MS = 2000;
 
 const COLORS = {
-    background: 'rgba(14, 16, 22, 0.97)',
     card: 'rgba(255, 255, 255, 0.04)',
-    headerBg: 'rgba(24, 24, 34, 0.9)',
-    border: 'rgba(150, 170, 255, 0.32)',
     hairline: 'rgba(255, 255, 255, 0.10)',
-    text: '#e8ecf5',
-    textDim: 'rgba(232, 236, 245, 0.5)',
-    accent: '#8fb4ff',
+    text: GAME_COLORS.text,
+    textDim: GAME_COLORS.textDim,
+    // Marks data (a kill tile, its monster name), never the frame
+    dataAccent: '#8fb4ff',
 };
 
 /**
@@ -438,10 +437,7 @@ class CombatPanel {
             // Clamped so the first open on a phone is not wider than the screen
             width: `min(${this.size.width}px, 92vw)`,
             height: panelHeightCap(this.size.height),
-            background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            ...GAME_FRAME,
             color: COLORS.text,
             fontSize: '12px',
             display: 'flex',
@@ -455,8 +451,7 @@ class CombatPanel {
             alignItems: 'center',
             cursor: 'move',
             padding: '7px 8px 7px 11px',
-            background: COLORS.headerBg,
-            borderBottom: `1px solid ${COLORS.border}`,
+            borderBottom: `1px solid ${GAME_COLORS.border}`,
             userSelect: 'none',
             flex: '0 0 auto',
         });
@@ -464,7 +459,7 @@ class CombatPanel {
         const title = document.createElement('span');
         title.textContent = this.title;
         title.style.fontWeight = 'bold';
-        title.style.color = COLORS.accent;
+        title.style.color = COLORS.text;
         title.style.flex = '1';
 
         const close = document.createElement('button');
@@ -639,7 +634,7 @@ function card(body, title) {
     if (title) {
         const heading = document.createElement('div');
         heading.textContent = title;
-        Object.assign(heading.style, { color: COLORS.accent, fontWeight: 'bold', marginBottom: '3px' });
+        Object.assign(heading.style, { color: COLORS.text, fontWeight: 'bold', marginBottom: '3px' });
         element.appendChild(heading);
     }
     body.appendChild(element);
@@ -1659,7 +1654,7 @@ function drawEncountersAndKills(body, encounters) {
             'hurt:kills',
             'Encounters & Kills:',
             `Encounters: ${formatWithSeparator(encounters)} | Kills: ${formatWithSeparator(total)}`,
-            COLORS.accent,
+            COLORS.dataAccent,
             () => deathsPanel.refresh()
         )
     );
@@ -1675,7 +1670,7 @@ function drawEncountersAndKills(body, encounters) {
     for (const row of rows) {
         const tile = document.createElement('div');
         Object.assign(tile.style, {
-            borderLeft: `3px solid ${COLORS.accent}`,
+            borderLeft: `3px solid ${COLORS.dataAccent}`,
             borderRadius: '4px',
             background: 'rgba(143, 180, 255, 0.08)',
             padding: '5px 8px',
@@ -1688,7 +1683,7 @@ function drawEncountersAndKills(body, encounters) {
 
         const name = document.createElement('div');
         name.textContent = row.name;
-        Object.assign(name.style, { color: COLORS.accent, fontWeight: 'bold', fontSize: '11.5px' });
+        Object.assign(name.style, { color: COLORS.dataAccent, fontWeight: 'bold', fontSize: '11.5px' });
 
         const stats = document.createElement('div');
         Object.assign(stats.style, { display: 'flex', flexWrap: 'wrap', gap: '7px', alignItems: 'baseline' });
@@ -1820,16 +1815,9 @@ function profitBox(body, scenario, tax = 0) {
 function toggleButton(label, on, onClick) {
     const button = document.createElement('button');
     button.textContent = label;
-    Object.assign(button.style, {
-        background: on ? 'rgba(143, 180, 255, 0.22)' : 'rgba(255, 255, 255, 0.05)',
-        border: `1px solid ${on ? COLORS.accent : COLORS.hairline}`,
-        borderRadius: '4px',
-        color: on ? COLORS.accent : COLORS.textDim,
-        cursor: 'pointer',
-        fontSize: '11px',
-        padding: '2px 8px',
-        whiteSpace: 'nowrap',
-    });
+    // Engaged reads as the primary blue, otherwise the quiet blue; each variant carries its own hover fill
+    styleGameButton(button, on ? 'primary' : 'quiet', true);
+    button.style.whiteSpace = 'nowrap';
     button.addEventListener('click', (event) => {
         event.stopPropagation();
         onClick();

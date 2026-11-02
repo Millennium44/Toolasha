@@ -39,6 +39,7 @@ import { showToast } from '../../utils/toast.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { percentOfExpected } from '../../utils/combat-drop-model.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 
 /**
  * Which of the ask/bid-only stats fields (income, dailyIncome, dailyProfit) to
@@ -809,9 +810,10 @@ class CombatStatsUI {
         const popup = document.createElement('div');
         popup.className = 'toolasha-combat-stats-popup';
         popup.style.cssText = `
-            background: #1a1a1a;
-            border: 2px solid #3a3a3a;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
+            box-shadow: ${GAME_FRAME.boxShadow};
             padding: 20px;
             max-width: 90%;
             max-height: 90%;
@@ -829,7 +831,7 @@ class CombatStatsUI {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
-            border-bottom: 2px solid #3a3a3a;
+            border-bottom: 1px solid ${GAME_COLORS.border};
             padding-bottom: 10px;
         `;
 
@@ -889,21 +891,7 @@ class CombatStatsUI {
 
         const resetButton = document.createElement('button');
         resetButton.textContent = 'Reset Consumable Tracking';
-        resetButton.style.cssText = `
-            background: #4a4a4a;
-            border: 1px solid #5a5a5a;
-            color: ${textColor};
-            font-size: 12px;
-            cursor: pointer;
-            padding: 6px 12px;
-            border-radius: 4px;
-        `;
-        resetButton.onmouseover = () => {
-            resetButton.style.background = '#5a5a5a';
-        };
-        resetButton.onmouseout = () => {
-            resetButton.style.background = '#4a4a4a';
-        };
+        styleGameButton(resetButton, 'quiet');
         resetButton.onclick = async () => {
             if (confirm('Reset consumable tracking? This will clear all tracked consumption data and start fresh.')) {
                 await combatStatsDataCollector.resetConsumableTracking();
@@ -952,21 +940,7 @@ class CombatStatsUI {
             copyButton = document.createElement('button');
             copyButton.textContent = '⧉ Copy';
             copyButton.title = 'Copy this session (all players) to the clipboard as text';
-            copyButton.style.cssText = `
-                background: #4a4a4a;
-                border: 1px solid #5a5a5a;
-                color: ${textColor};
-                font-size: 12px;
-                cursor: pointer;
-                padding: 6px 12px;
-                border-radius: 4px;
-            `;
-            copyButton.onmouseover = () => {
-                copyButton.style.background = '#5a5a5a';
-            };
-            copyButton.onmouseout = () => {
-                copyButton.style.background = '#4a4a4a';
-            };
+            styleGameButton(copyButton, 'quiet');
             copyButton.onclick = () => {
                 const priceKey = resolveDisplayPriceKey();
                 const useKMB = isAbbreviationEnabled();
@@ -1087,29 +1061,26 @@ class CombatStatsUI {
         group.className = 'toolasha-combat-chat-controls';
         group.style.cssText = 'position: relative; display: inline-flex;';
 
-        const buttonStyle = `
-            background: #4a4a4a;
-            border: 1px solid #5a5a5a;
-            color: ${textColor};
-            font-size: 12px;
-            cursor: pointer;
-            padding: 6px 10px;
-        `;
-
         const chatButton = document.createElement('button');
         chatButton.className = 'toolasha-combat-chat-btn';
         chatButton.textContent = '💬 Chat';
         chatButton.title =
             `Put ${stats.name}'s stats in the chat box — filled, not sent. ` +
             'Ctrl+click any player card to share that player instead.';
-        chatButton.style.cssText = `${buttonStyle} border-radius: 4px 0 0 4px;`;
+        styleGameButton(chatButton, 'quiet');
+        chatButton.style.borderRadius = 'var(--radius-sm, 0.25rem) 0 0 var(--radius-sm, 0.25rem)';
         chatButton.onclick = () => this.shareStatsToChat(stats, { button: chatButton });
 
         const caret = document.createElement('button');
         caret.className = 'toolasha-combat-chat-caret';
         caret.textContent = '▾';
         caret.title = 'Choose what the chat message includes';
-        caret.style.cssText = `${buttonStyle} border-left: none; border-radius: 0 4px 4px 0; padding: 6px 7px;`;
+        styleGameButton(caret, 'quiet');
+        Object.assign(caret.style, {
+            borderRadius: '0 var(--radius-sm, 0.25rem) var(--radius-sm, 0.25rem) 0',
+            padding: '0 0.5rem',
+            marginLeft: '1px',
+        });
         caret.onclick = (event) => {
             event.stopPropagation();
             if (this.chatPopover) this.closeChatPopover();
@@ -1141,14 +1112,14 @@ class CombatStatsUI {
             z-index: 10001;
             width: 320px;
             max-width: 80vw;
-            background: #202020;
-            border: 1px solid #4a4a4a;
-            border-radius: 6px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             padding: 10px;
             font-size: 12px;
             color: ${textColor};
             text-align: left;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
         popover.onclick = (event) => event.stopPropagation();
 
@@ -1188,9 +1159,8 @@ class CombatStatsUI {
             const reset = document.createElement('button');
             reset.className = 'toolasha-combat-chat-use-fields';
             reset.textContent = 'Use checkboxes instead (resets the template)';
-            reset.style.cssText =
-                'margin-top: 6px; background: #4a4a4a; border: 1px solid #5a5a5a; color: inherit; ' +
-                'font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 4px;';
+            styleGameButton(reset, 'quiet', true);
+            reset.style.marginTop = '6px';
             reset.onclick = () => {
                 config.setSettingValue('combatStatsChatMessage', chatTemplateDefault());
                 // The flag, not today's text equality, is what keeps the checkboxes
