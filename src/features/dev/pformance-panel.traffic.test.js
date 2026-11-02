@@ -21,7 +21,8 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     unregisterFloatingPanel: () => {},
     bringPanelToFront: () => {},
 }));
-vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
+const download = vi.hoisted(() => vi.fn());
+vi.mock('../../utils/csv-export.js', () => ({ downloadFile: download }));
 
 const { default: pformancePanel } = await import('./pformance-panel.js');
 const { getSettingDefinition } = await import('../../core/settings-schema.js');
@@ -32,6 +33,7 @@ const text = () => onScreen()?.textContent || '';
 
 const monitor = {
     enabled: false,
+    timerCounters: { interval: 2, timeout: 7, domRearm: 3, named: 1 },
     getAllStats: () => new Map(),
     getSnapshots: () => new Map(),
     getSpans: () => [],
@@ -55,6 +57,7 @@ class FakeChannel {
 }
 
 beforeEach(() => {
+    download.mockClear();
     vi.useFakeTimers();
     window.Toolasha = {
         Core: {
@@ -194,5 +197,106 @@ describe('the extras setting', () => {
     test('is declared in the settings schema, hidden and off by default, so the toggle can persist', () => {
         const definition = getSettingDefinition('pformanceAttribution');
         expect(definition).toMatchObject({ type: 'checkbox', default: false, hidden: true });
+    });
+});
+
+describe('the exported report', () => {
+    /** Press the save button and return the text and parsed JSON that were written */
+    const saved = async () => {
+        await pformancePanel._exportReport('file');
+        const text = download.mock.calls.find((call) => call[0].endsWith('.txt'))[1];
+        const json = JSON.parse(download.mock.calls.find((call) => call[0].endsWith('.json'))[1]);
+        return { text, json };
+    };
+
+    test('carries timer counters, and says the extras are off when they are', async () => {
+        pformancePanel.initialize();
+        pformancePanel.show();
+        const { text, json } = await saved();
+
+        expect(text).toContain('9 created (7 timeout, 2 interval), 3 observer debounce re-arms, 1 named');
+        expect(json.timerCounters.counters).toEqual(monitor.timerCounters);
+        expect(json.leak.canary).toMatchObject({ rows: null, reason: expect.stringContaining('extras are off') });
+        expect(json.leak.heap.reason).toContain('extras are off');
+        expect(json.tabs.reason).toContain('only this tab is listed');
+        expect(json.tabs.tabs).toHaveLength(1);
+        // Traffic is always counted, so it is present whether or not the extras are on
+        expect(json.traffic.snapshot.totals.writeCalls).toBe(0);
+        expect(text).toContain('extras are off');
+    });
+
+    test('with the extras on: traffic, tabs, canary and heap, with nothing private in them', async () => {
+        settings.pformanceAttribution = true;
+        window.Toolasha.Core.performanceMonitor = {
+            ...monitor,
+            heapMemorySupported: () => true,
+            createLeakCanary: () => ({
+                sample: () => {},
+                getReport: () => [
+                    { source: 'timers:interval', latest: 3, lowest: 1, samples: 9, decreases: 0, growing: false },
+                ],
+                reset: () => {},
+            }),
+            createHeapTrend: () => ({
+                sample: () => {},
+                getTrend: () => ({ usedMb: 80, changeMb: 2, perMinuteMb: 1, samples: 5, spanMs: 120000 }),
+                reset: () => {},
+            }),
+        };
+        gmSetValue('toolasha_init_client_data', 'x'.repeat(2048));
+        vi.stubGlobal('GM_xmlhttpRequest', () => {});
+        gmRequest({ url: 'https://api.github.com/gists/0123456789abcdef0123456789abcdef?access_token=SECRET' });
+
+        const other = new FakeChannel('toolasha-tab-census');
+        other.onmessage = (event) => {
+            if (event.data.type !== 'poll') return;
+            other.postMessage({
+                v: 1,
+                type: 'summary',
+                tabId: 'zzz',
+                replyTo: event.data.tabId,
+                round: event.data.round,
+                summary: { characterName: 'Other', uptimeMs: 7200000, traffic: null, heapMb: 512, stalls: null },
+            });
+        };
+        pformancePanel.initialize();
+        pformancePanel.show();
+        const { text, json } = await saved();
+
+        expect(json.leak.canary.rows[0].source).toBe('timers:interval');
+        expect(json.leak.heap.trend.usedMb).toBe(80);
+        expect(json.traffic.snapshot.writesByKey[0]).toMatchObject({ name: 'toolasha_init_client_data', bytes: 2048 });
+        expect(json.traffic.snapshot.requestsByHost[0].name).toBe('api.github.com');
+        expect(json.tabs.tabs.map((tab) => tab.tabId)).toContain('zzz');
+        expect(json.tabs.reason).toBe(null);
+        expect(text).toContain('zzz: up 2h 0m');
+        for (const output of [text, JSON.stringify(json)]) {
+            expect(output).not.toContain('SECRET');
+            expect(output).not.toContain('0123456789abcdef');
+            expect(output).not.toContain('Tester');
+            expect(output).not.toContain('Other');
+        }
+    });
+
+    test('says why when the heap is unreadable and the census cannot hear anyone', async () => {
+        vi.stubGlobal('BroadcastChannel', undefined);
+        settings.pformanceAttribution = true;
+        pformancePanel.initialize();
+        pformancePanel.show();
+        const { json } = await saved();
+
+        expect(json.leak.canary.reason).toContain('no canary yet');
+        expect(json.leak.heap.reason).toContain('does not expose heap size');
+        expect(json.tabs.reason).toContain('no BroadcastChannel');
+    });
+
+    test('a monitor with none of the optional methods still exports', async () => {
+        window.Toolasha.Core.performanceMonitor = { ...monitor, timerCounters: undefined };
+        settings.pformanceAttribution = true;
+        pformancePanel.show();
+
+        await expect(pformancePanel._exportReport('file')).resolves.not.toThrow();
+        const json = JSON.parse(download.mock.calls.find((call) => call[0].endsWith('.json'))[1]);
+        expect(json.timerCounters.reason).toContain('no timer counters');
     });
 });

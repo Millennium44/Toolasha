@@ -337,3 +337,155 @@ describe('panel delays and in-flight work in the trace', () => {
         expect(text).not.toContain('nothing instrumented');
     });
 });
+
+describe('the diagnostic extras in the report', () => {
+    const counters = { interval: 3, timeout: 9, domRearm: 5, named: 2 };
+    const snapshot = {
+        uptimeMs: 7200000,
+        rateWindowMs: 3600000,
+        totals: {
+            writeCalls: 4,
+            writeBytes: 4096,
+            deleteCalls: 0,
+            readCalls: 2,
+            readBytes: 100,
+            requestCalls: 1,
+            requestBytes: 10,
+            responseBytes: 20,
+            pageRequestCalls: 1,
+            pageRequestBytes: 5,
+            pageResponseBytes: 6,
+        },
+        perHour: { writeCalls: 2, writeBytes: 2048, readCalls: 1, requestCalls: 0 },
+        writeErrors: 0,
+        unsizedWrites: 0,
+        // Two characters' bridge slots, a query string and a token-shaped name: all must be masked
+        writesByKey: [
+            { name: 'toolasha_new_battle:1234567', calls: 1, bytes: 300, errors: 0 },
+            { name: 'toolasha_new_battle:7654321', calls: 2, bytes: 200, errors: 0 },
+            { name: 'toolasha_init_client_data', calls: 1, bytes: 4000, errors: 0 },
+        ],
+        readsByKey: [],
+        requestsByHost: [
+            { name: 'api.github.com?token=ghp_abcdefghijklmnopqrstuvwxyz0123456789', calls: 1, bytes: 20, errors: 1 },
+        ],
+        pageRequestsByHost: [{ name: 'gist.githubusercontent.com', calls: 1, bytes: 6, errors: 0 }],
+    };
+    const leak = {
+        canary: {
+            rows: [{ source: 'timers:interval', latest: 40, lowest: 10, samples: 30, decreases: 0, growing: true }],
+            reason: null,
+        },
+        heap: { trend: { usedMb: 120, changeMb: 6, perMinuteMb: 3, samples: 120, spanMs: 120000 }, reason: null },
+    };
+    const tabs = {
+        tabs: [
+            {
+                self: true,
+                tabId: 'self1',
+                summary: {
+                    characterId: 99,
+                    characterName: 'SecretName',
+                    uptimeMs: 60000,
+                    heapMb: 100,
+                    stalls: null,
+                    traffic: {
+                        totals: { writeCalls: 1, writeBytes: 2048, requestCalls: 1, pageRequestCalls: 2 },
+                        perHour: {},
+                    },
+                },
+            },
+            { self: false, tabId: 'other2', summary: { characterName: null, uptimeMs: 7200000, traffic: null } },
+        ],
+        reason: null,
+    };
+    const full = { timerCounters: counters, leak, traffic: { snapshot, reason: null }, tabs };
+
+    test('timer counters appear in the text and the JSON', () => {
+        expect(formatReport(full)).toContain(
+            '12 created (9 timeout, 3 interval), 5 observer debounce re-arms, 2 named'
+        );
+        expect(reportData(full).timerCounters.counters).toEqual(counters);
+    });
+
+    test('the leak canary and heap trend appear in both', () => {
+        const text = formatReport(full);
+        expect(text).toContain('timers:interval');
+        expect(text).toContain('GROWING');
+        expect(text).toContain('Tab heap: 120.0MB, +6.0MB over 120s');
+        const data = reportData(full);
+        expect(data.leak.canary.rows[0].source).toBe('timers:interval');
+        expect(data.leak.heap.trend.usedMb).toBe(120);
+    });
+
+    test('traffic appears in both, with names masked and merged', () => {
+        const text = formatReport(full);
+        expect(text).toContain('Writes: 4 calls, 4.0 KB');
+        expect(text).toContain('toolasha_init_client_data: 1x');
+        expect(text).toContain('toolasha_new_battle:#: 3x, 500 B');
+        expect(text).toContain('api.github.com: 1x, 20 B, 1 failed');
+        const json = JSON.stringify(reportData(full));
+        expect(json).not.toContain('1234567');
+        expect(json).not.toContain('ghp_');
+        expect(json).not.toContain('token=');
+        expect(text).not.toContain('ghp_');
+    });
+
+    test('the tab list appears in both and carries no character name or id', () => {
+        const text = formatReport(full);
+        expect(text).toContain('> this tab');
+        expect(text).toContain('other2 (no character yet): up 2h 0m');
+        expect(text).toContain('requests 3');
+        const json = JSON.stringify(reportData(full));
+        expect(json).not.toContain('SecretName');
+        expect(json).not.toContain('characterId');
+        expect(reportData(full).tabs.tabs).toHaveLength(2);
+    });
+
+    test('empty sections are present with their reason, in the text and the JSON', () => {
+        const empty = {
+            timerCounters: null,
+            leak: {
+                canary: { rows: null, reason: 'attribution extras are off' },
+                heap: { trend: null, reason: 'this browser does not expose heap size' },
+            },
+            traffic: { snapshot: null, reason: 'the traffic counters could not be read' },
+            tabs: { tabs: [], reason: 'this tab has not joined the census channel' },
+        };
+        const text = formatReport(empty);
+        expect(text).toContain('None: the monitor publishes no timer counters');
+        expect(text).toContain('None: attribution extras are off');
+        expect(text).toContain('Tab heap: none: this browser does not expose heap size');
+        expect(text).toContain('None: the traffic counters could not be read');
+        expect(text).toContain('None: this tab has not joined the census channel');
+
+        const data = reportData(empty);
+        expect(data.timerCounters).toEqual({ counters: null, reason: expect.stringContaining('no timer counters') });
+        expect(data.leak.canary).toEqual({ rows: null, reason: 'attribution extras are off' });
+        expect(data.traffic).toEqual({ snapshot: null, reason: 'the traffic counters could not be read' });
+        expect(data.tabs).toEqual({ tabs: [], reason: 'this tab has not joined the census channel' });
+    });
+
+    test('a section the caller did not build says it was not collected rather than going missing', () => {
+        const data = reportData({ timerCounters: counters });
+        expect(data.leak.canary.reason).toContain('not collected');
+        expect(data.traffic.reason).toContain('not collected');
+        expect(data.tabs.reason).toContain('not collected');
+        expect(formatReport({ timerCounters: counters })).toContain('not collected');
+    });
+
+    test('a caller that passes none of the extras gets the plain startup trace', () => {
+        expect(formatReport({ marks: MARKS })).toContain('Toolasha startup trace');
+        expect(reportData({ marks: MARKS })).not.toHaveProperty('leak');
+        expect(formatReport(full)).toContain('Toolasha performance report');
+    });
+
+    test('rolling stats beyond the text limit say how many were left out', () => {
+        const stats = new Map();
+        for (let i = 0; i < 20; i++) {
+            stats.set(`dom:H${i}`, { calls: 1, totalMs: 20 - i, avgMs: 1, cpuPercent: 1, wallPercent: 1 });
+        }
+        expect(formatReport({ stats })).toContain('...and 5 more');
+        expect(Object.keys(reportData({ stats }).rolling)).toHaveLength(20);
+    });
+});
