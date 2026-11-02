@@ -16,6 +16,8 @@
 
 import { describe, test, expect } from 'vitest';
 
+import { buildLabyrinthUpdated } from '../../__fixtures__/wire/labyrinth.js';
+
 import {
     SUPPLY_HRIDS,
     SUPPLY_SOURCE,
@@ -168,6 +170,20 @@ describe('reading the stock a run is carrying', () => {
     test('a payload that names no supply is unknown, so the caller can look elsewhere', () => {
         expect(readRunSupplyCounts({ roomData: grid }).known).toBe(false);
         expect(readRunSupplyCounts(null).known).toBe(false);
+    });
+
+    test('reads the real message: flat <kind>ItemHrid + <kind>Count pairs', () => {
+        // Captured shape: torchItemHrid/torchCount, shroudItemHrid/shroudCount, beaconItemHrid/beaconCount
+        const counts = readRunSupplyCounts(buildLabyrinthUpdated('beaconReveal').labyrinth);
+        expect(counts).toMatchObject({ torch: 114, shroud: 6, beacon: 3, known: true, source: SUPPLY_SOURCE.run });
+        expect(counts.byTier.beacon['/items/expert_beacon']).toBe(3);
+        const entry = readRunSupplyCounts(buildLabyrinthUpdated('entry').labyrinth);
+        expect(entry).toMatchObject({ torch: 400, shroud: 12, beacon: 15, known: true });
+    });
+
+    test('a spent-out stock in the real message is a known zero, not unknown', () => {
+        const counts = readRunSupplyCounts(buildLabyrinthUpdated('exit').labyrinth);
+        expect(counts).toMatchObject({ torch: 0, shroud: 0, beacon: 0, known: true });
     });
 });
 
