@@ -5695,18 +5695,21 @@ class LabyrinthClearRate {
         // (text-size-adjust), so pin the inflation off and drop the fonts a step. The box is capped at the
         // room's width, and on one line "100% 19s" (30 px of text) spilled out of its left side. An ellipsis
         // was tried and rejected (it cut the seconds down to a stray digit), and two rows were rejected as
-        // untidy. So on a phone the "%" sign is dropped and the padding and gap tightened: "100 125s" is
-        // about 29 px, inside the 30 px box, on one line with nothing clipped. The number beside a colored
-        // box is still read as a percent, and the room's hover preview shows the full "%" reading.
-        // Desktop is unchanged.
+        // untidy. So on a phone the badge is a strip across the room's full width, with the "%" sign
+        // dropped and a "|" between the numbers, since at this size "100 7s" read as "1007s". The widest
+        // reading, "100|999+", measured 30 px in the 32 px strip. The room's hover preview shows the full
+        // "%" reading. Desktop is unchanged.
         const mobile = isMobileMode();
         const badge = document.createElement('div');
         badge.className = TILE_BADGE_CLASS;
         badge.style.cssText =
-            `position:absolute; right:1px; bottom:1px; z-index:9; max-width:calc(100% - 2px); ` +
-            `padding:${mobile ? '1px' : '1px 3px'}; ` +
-            `border-radius:3px; box-sizing:border-box; display:flex; align-items:baseline; justify-content:flex-end; ` +
-            'gap:2px; ' +
+            (mobile
+                ? 'position:absolute; left:0; right:0; bottom:0; z-index:9; width:100%; max-width:100%; padding:1px; ' +
+                  'border-radius:0 0 3px 3px; box-sizing:border-box; display:flex; align-items:baseline; ' +
+                  'justify-content:center; gap:1px; '
+                : 'position:absolute; right:1px; bottom:1px; z-index:9; max-width:calc(100% - 2px); padding:1px 3px; ' +
+                  'border-radius:3px; box-sizing:border-box; display:flex; align-items:baseline; ' +
+                  'justify-content:flex-end; gap:2px; ') +
             'white-space:nowrap; color:#fff; text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
             '-webkit-text-size-adjust:100%; text-size-adjust:100%; ' +
             `background:${this.getTileBadgeColor(chance)};`;
@@ -5720,6 +5723,12 @@ class LabyrinthClearRate {
         etaSpan.textContent = this.formatEtaSeconds(result.expectedSeconds ?? result.avgFightSeconds, pct);
 
         badge.appendChild(chanceSpan);
+        if (mobile) {
+            const separator = document.createElement('span');
+            separator.style.cssText = 'font-size:6px; line-height:1; opacity:0.7; flex:0 0 auto;';
+            separator.textContent = '|';
+            badge.appendChild(separator);
+        }
         badge.appendChild(etaSpan);
 
         // Rich preview for every tile type, triggered from anywhere in the tile

@@ -8274,27 +8274,35 @@ describe('phone-sized room overlays', () => {
         [{ clearChance: 0.88, expectedSeconds: 125 }, '88', '125s'],
         [{ clearChance: 1, expectedSeconds: 5000 }, '100', '999+'],
         [{ clearChance: 0, expectedSeconds: Infinity }, '0', '999+'],
-    ])('on a phone the badge for %j is one line with no percent sign', (result, pct, eta) => {
-        setMobile(true);
-        const badge = badgeOf(result);
-        expect(badge.style.flexWrap).toBe('');
-        expect(badge.style.padding).toBe('1px');
-        expect(badge.style.gap).toBe('2px');
-        expect(badge.style.maxWidth).toBe('calc(100% - 2px)');
-        expect(badge.style.overflow).toBe('');
-        expect(badge.style.textOverflow).toBe('');
-        expect([...badge.children].map((c) => c.textContent)).toEqual([pct, eta]);
-        // The floor is 6 px; the fix must not go lower
-        expect(Number.parseFloat(badge.children[1].style.fontSize)).toBeGreaterThanOrEqual(6);
-    });
+    ])(
+        'on a phone the badge for %j is a full-width strip, split by a bar, with no percent sign',
+        (result, pct, eta) => {
+            setMobile(true);
+            const badge = badgeOf(result);
+            expect(badge.style.flexWrap).toBe('');
+            expect(badge.style.padding).toBe('1px');
+            expect(badge.style.gap).toBe('1px');
+            expect(badge.style.width).toBe('100%');
+            expect(badge.style.maxWidth).toBe('100%');
+            expect(badge.style.left).toBe('0px');
+            expect(badge.style.right).toBe('0px');
+            expect(badge.style.overflow).toBe('');
+            expect(badge.style.textOverflow).toBe('');
+            expect([...badge.children].map((c) => c.textContent)).toEqual([pct, '|', eta]);
+            // The floor is 6 px; the fix must not go lower
+            expect(Number.parseFloat(badge.children[2].style.fontSize)).toBeGreaterThanOrEqual(6);
+        }
+    );
 
     test('on desktop the badge keeps its percent sign, padding and fonts', () => {
         setMobile(false);
         const badge = badgeOf({ clearChance: 1, expectedSeconds: 19 });
         expect(badge.style.flexWrap).toBe('');
         expect(badge.children[0].textContent).toBe('100%');
+        expect(badge.children).toHaveLength(2);
         expect(badge.style.padding).toBe('1px 3px');
         expect(badge.style.gap).toBe('2px');
+        expect(badge.style.maxWidth).toBe('calc(100% - 2px)');
         expect(badge.children[0].style.fontSize).toBe('9px');
         expect(badge.children[1].style.fontSize).toBe('8px');
     });

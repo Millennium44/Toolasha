@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Labyrinth rooms fit a phone
 
-- On a phone the clear badge is one line without the % sign ("100 19s"), so longer times no longer run out of the room; the hover preview keeps the full reading. Shroud labels are smaller, so neighbors no longer overlap.
+- On a phone the clear badge is a strip across the whole room, reading "100|19s" without the % sign, so longer times no longer run out of the room; the hover preview keeps the full reading. Shroud labels are smaller, so neighbors no longer overlap.
 
 ### Market history requests are paced
 
