@@ -529,6 +529,26 @@ describe('the game’s totals after a reload between the end and the click (real
         expect(report.reported.FixtureCharacter).toBeDefined();
     });
 
+    test('a stale read finishing under a newer start leaves the newer start’s held stats alone', async () => {
+        swarmEndedAndSaved();
+        guildTrialDamage.cleanup();
+        guildTrialDamage.statsScope = { guildName: null, characterId: null };
+        guildTrialDamage.storedRoster = null;
+        let release;
+        game.gate = new Promise((resolve) => (release = resolve));
+        // Disabled and re-enabled while the first read is still out
+        open();
+        guildTrialDamage.cleanup();
+        open();
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        expect(guildTrialDamage.breakdown().reported).toBe(null);
+
+        release();
+        game.gate = null;
+        await settle();
+        expect(guildTrialDamage.breakdown().reported.FixtureCharacter).toBeDefined();
+    });
+
     test('a stats message held across a character switch is dropped, not paired with the new character', async () => {
         swarmEndedAndSaved();
         guildTrialDamage.cleanup();

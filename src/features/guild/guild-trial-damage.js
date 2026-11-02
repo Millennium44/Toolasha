@@ -3248,9 +3248,11 @@ class GuildTrialDamage {
         await this._readLive(generation);
         // A stats message that came in mid-read is paired now that the read has decided, if
         // it is still the same page, the same character and nothing reset the module since
+        // A stale read leaves the slot alone: it holds the newer start's message, not its own
+        if (generation !== this._liveGeneration) return;
         const held = this.heldStats;
         this.heldStats = null;
-        if (!held || generation !== this._liveGeneration) return;
+        if (!held) return;
         const current = dataManager.getCurrentCharacterId?.() ?? null;
         if (String(held.characterId ?? '') !== String(current ?? '')) return;
         this._onTrialStats(held.data, { replay: true });
