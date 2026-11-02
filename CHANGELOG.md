@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth reads the run the way the game sends it
+
+- Run supplies (torches, shrouds, beacons) are read from the fields the game actually sends, so path planning knows your stock and a beacon is told apart from a room clear.
+- Auto-path re-pathing when a room clear reveals rooms is now its own switch ("Path on reveal"), next to Auto-path; existing players keep both on.
+- Route marks for a room update as soon as it is revealed, instead of waiting for the next Path press.
+- A run keeps one identity when the game changes its start-time precision mid-run, so the ledger no longer files a phantom ended run and the damage trackers and room log no longer reset.
+
 ### Live party and stat sheet
 
 - Toolasha now follows party changes as they happen (not only at login or the next fight) and the server's own stat sheet after gear, level or buff changes, so Combat Sim exports, the party roster and the Labyrinth planner's combat level stay current without a reload.
