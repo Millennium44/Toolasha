@@ -1101,6 +1101,46 @@ function latestServerTier(a, b) {
 }
 
 /**
+ * Two archives of the same week, reason and cycle, as one.
+ *
+ * The copy that states more is kept whole ({@link statesAsMuch}), but the guild
+ * payload can go on writing into an archived week after it is put away — the
+ * last hour of a cycle that ran past the rollover — and those statements are
+ * not what `statesAsMuch` weighs. So each tile takes the newer server
+ * statement of the two ({@link latestServerTier}) and both sides' clear
+ * stamps, and a tile only the other copy holds is kept.
+ *
+ * @param {Object} kept - The archive that states more
+ * @param {Object} other - The other copy
+ * @returns {Object} The archive
+ */
+function foldArchivedCycle(kept, other) {
+    const otherTiles = other?.tiles || {};
+    if (!Object.keys(otherTiles).length) return kept;
+    const tiles = { ...(kept.tiles || {}) };
+    let changed = false;
+    for (const [key, tile] of Object.entries(otherTiles)) {
+        const held = tiles[key];
+        if (!held) {
+            tiles[key] = tile;
+            changed = true;
+            continue;
+        }
+        const server = latestServerTier(held, tile);
+        const tierSeenAt = mergeTierSeenAt(held.tierSeenAt, tile.tierSeenAt);
+        const same =
+            held.serverTier === server.serverTier &&
+            held.serverTierAt === server.serverTierAt &&
+            Boolean(held.serverDone) === Boolean(server.serverDone) &&
+            JSON.stringify(held.tierSeenAt || {}) === JSON.stringify(tierSeenAt || {});
+        if (same) continue;
+        tiles[key] = { ...held, ...server, tierSeenAt };
+        changed = true;
+    }
+    return changed ? { ...kept, tiles } : kept;
+}
+
+/**
  * Fold two records for the same week into one.
  *
  * Needed because the guild's name arrives *after* this feature starts. The
@@ -1172,7 +1212,8 @@ export function mergeTrialRecords(base, incoming) {
                     (held.cycleFrom ?? null) === (cycle.cycleFrom ?? null)
             );
             if (same === -1) history.push(cycle);
-            else if (!statesAsMuch(history[same], cycle)) history[same] = cycle;
+            else if (statesAsMuch(history[same], cycle)) history[same] = foldArchivedCycle(history[same], cycle);
+            else history[same] = foldArchivedCycle(cycle, history[same]);
             continue;
         }
         const mark = `${cycle.archivedAt ?? ''}:${cycle.weekStart ?? ''}:${cycle.reason ?? ''}:${cycle.cycleFrom ?? ''}`;

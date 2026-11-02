@@ -462,6 +462,51 @@ describe('loading and saving', () => {
             expect(Object.keys(merged.tiles).sort()).toEqual(['combat::trial badger', 'skilling::alchemy']);
         });
 
+        test('a server tier filed into the archived week after the rollover survives a merge with the stored copy', () => {
+            // The last hour ran past Friday 00:00: the payload moved Alchemy from 9 to 11 in the archive
+            const stored = rollRecordToWeek(lastWeeksRecord(), thisWeek);
+            const updated = structuredClone(stored);
+            Object.assign(updated.history[0].tiles['skilling::alchemy'], {
+                serverTier: 11,
+                serverTierAt: thisWeek + 5 * 60_000,
+                tierSeenAt: { 11: thisWeek + 5 * 60_000 },
+            });
+
+            for (const merged of [mergeTrialRecords(stored, updated), mergeTrialRecords(updated, stored)]) {
+                expect(merged.history).toHaveLength(1);
+                const tiles = merged.history[0].tiles;
+                expect(tiles['skilling::alchemy']).toMatchObject({
+                    serverTier: 11,
+                    serverTierAt: thisWeek + 5 * 60_000,
+                });
+                expect(tiles['skilling::alchemy'].tierSeenAt[11]).toBe(thisWeek + 5 * 60_000);
+                // The card read in it is untouched
+                expect(tiles['combat::trial badger']).toMatchObject({ tier: 6, points: 2240 });
+            }
+        });
+
+        test('the copy that states more keeps a payload-only trial the other copy filed into the archive', () => {
+            // The stored copy holds a fuller card (more samples); the other heard one more party
+            const stored = rollRecordToWeek(lastWeeksRecord(), thisWeek);
+            stored.history[0].tiles['combat::trial badger'].samples.push({
+                t: thisWeek - 60_000,
+                readings: [{ current: 6, max: 10 }],
+            });
+            const updated = rollRecordToWeek(lastWeeksRecord(), thisWeek);
+            delete updated.history[0].tiles['combat::trial badger'];
+            updated.history[0].tiles['skilling::brewing'] = {
+                name: 'Brewing',
+                kind: 'skilling',
+                samples: [],
+                tiers: [],
+                serverTier: 0,
+                serverTierAt: thisWeek + 5 * 60_000,
+            };
+            const tiles = mergeTrialRecords(stored, updated).history[0].tiles;
+            expect(tiles['combat::trial badger'].samples).toHaveLength(2);
+            expect(tiles['skilling::brewing']).toMatchObject({ serverTier: 0 });
+        });
+
         test('the archive keeps the history cap', () => {
             const held = Array.from({ length: MAX_ARCHIVED_CYCLES }, (unused, index) => ({
                 archivedAt: lastWeek - (index + 1) * 7 * 24 * 3600_000,
