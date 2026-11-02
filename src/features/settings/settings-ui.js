@@ -1360,12 +1360,14 @@ class SettingsUI {
         // at a time is busywork in both directions
         const buttonStyle = changedButton.style.cssText;
         const collapseAllButton = document.createElement('button');
-        collapseAllButton.textContent = '▸ All';
+        collapseAllButton.textContent = '⊟';
+        collapseAllButton.setAttribute('aria-label', 'Collapse every settings group');
         collapseAllButton.className = 'toolasha-collapse-all';
         collapseAllButton.title = 'Collapse every settings group';
         collapseAllButton.style.cssText = buttonStyle;
         const expandAllButton = document.createElement('button');
-        expandAllButton.textContent = '▾ All';
+        expandAllButton.textContent = '⊞';
+        expandAllButton.setAttribute('aria-label', 'Expand every settings group');
         expandAllButton.className = 'toolasha-expand-all';
         expandAllButton.title = 'Expand every settings group';
         expandAllButton.style.cssText = buttonStyle;
