@@ -8108,3 +8108,89 @@ describe('labyrinth toolbar layout', () => {
         expect(Number.parseFloat(panel().style.left)).toBeGreaterThanOrEqual(8);
     });
 });
+
+/**
+ * A path mark on an unrevealed room is a guess ("Shroud?"); the message that reveals the room has to settle it
+ * without another Path press.
+ */
+describe('path marks follow a reveal', () => {
+    let judge;
+
+    /** Index of a skilling room the beacon message lights up that the message before it did not show */
+    const newlyShownSkillingIndex = () => {
+        const before = buildLabyrinthUpdated('torchSpent').labyrinth.roomData.flat();
+        const after = buildLabyrinthUpdated('beaconReveal').labyrinth.roomData.flat();
+        return after.findIndex((room, i) => room?.skillHrid && !before[i]);
+    };
+
+    const markAt = (index, label) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'mwi-labyrinth-path-overlay';
+        overlay.dataset.tileIndex = String(index);
+        overlay.dataset.pending = '1';
+        const tag = document.createElement('div');
+        tag.textContent = label;
+        overlay.appendChild(tag);
+        document.body.appendChild(overlay);
+        return overlay;
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.innerHTML = '';
+        judge = vi.spyOn(labyrinthClearRate, 'computeSkillingRoomClear');
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('torchSpent'));
+        labyrinthClearRate._pathThreshold = 0.7;
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.cancelAutoPath();
+        clearTimeout(labyrinthClearRate.pruneTileTimer);
+        clearTimeout(labyrinthClearRate.autoTileTimer);
+        labyrinthClearRate.pruneTileTimer = null;
+        labyrinthClearRate.autoTileTimer = null;
+        judge.mockRestore();
+        vi.useRealTimers();
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._labyrinth = null;
+        labyrinthClearRate._pathThreshold = null;
+        document.body.innerHTML = '';
+    });
+
+    test('a "Shroud?" on a room the beacon reveals as clearable turns into a plain clear mark', () => {
+        const index = newlyShownSkillingIndex();
+        expect(index).toBeGreaterThanOrEqual(0);
+        judge.mockReturnValue({ clearChance: 0.95 });
+        const overlay = markAt(index, 'Shroud?');
+
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('beaconReveal'));
+
+        expect(overlay.textContent).toBe('');
+        expect(overlay.dataset.pending).toBeUndefined();
+        expect(overlay.style.border).toContain('2px solid');
+    });
+
+    test('a room the beacon reveals as unclearable is marked "Shroud", no longer a guess', () => {
+        const index = newlyShownSkillingIndex();
+        judge.mockReturnValue({ clearChance: 0.1 });
+        const overlay = markAt(index, 'Shroud?');
+
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('beaconReveal'));
+
+        expect(overlay.textContent).toBe('Shroud');
+        expect(overlay.dataset.pending).toBeUndefined();
+    });
+
+    test('a mark whose room is still unrevealed keeps its guess', () => {
+        const stillDark = buildLabyrinthUpdated('beaconReveal')
+            .labyrinth.roomData.flat()
+            .findIndex((r) => r === null);
+        expect(stillDark).toBeGreaterThanOrEqual(0);
+        const overlay = markAt(stillDark, 'Shroud?');
+
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('beaconReveal'));
+
+        expect(overlay.textContent).toBe('Shroud?');
+        expect(overlay.dataset.pending).toBe('1');
+    });
+});

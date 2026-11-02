@@ -959,6 +959,8 @@ class LabyrinthClearRate {
             this.injectOverlays();
             this.pruneClearedPathOverlays();
             this.pruneUsedBeaconOverlays();
+            // Not on a floor change: the overlays are about to be wiped with the old floor
+            if (previousFloor === this.currentFloor) this.refreshRevealedPathOverlays();
             if (previousFloor !== this.currentFloor) {
                 this.clearPathOverlays();
                 this.clearBeaconOverlays();
@@ -4782,6 +4784,7 @@ class LabyrinthClearRate {
             for (const key of skillingResults.keys()) chances.delete(key);
             skillingResults.clear();
             const { tiles } = this.buildPathTiles(fresh, { threshold, unknownMode, chanceOf });
+            this._pathThreshold = threshold;
             this.syncSkillingTileBadges(fresh, cells, cols, skillingResults);
 
             const path = computeLabyrinthPath(tiles, cols);
@@ -4859,7 +4862,11 @@ class LabyrinthClearRate {
                     color = '#57d08a';
                 }
                 if (tile.isUnknown && !tile.isExit) unknownCount++;
-                this.appendPathOverlay(cell, color, label);
+                // An unrevealed room's mark is a guess; onLabyrinthUpdated redraws it once the room is shown
+                this.appendPathOverlay(cell, color, label, {
+                    index: idx,
+                    pending: tile.isUnknown && !tile.isExit && !tile.isTreasure,
+                });
             }
 
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -4929,7 +4936,7 @@ class LabyrinthClearRate {
     /**
      * Outline a run-grid tile as part of the computed route
      */
-    appendPathOverlay(cell, color, label, { approach = false } = {}) {
+    appendPathOverlay(cell, color, label, { approach = false, index = null, pending = false } = {}) {
         const cellStyle = window.getComputedStyle(cell);
         if (cellStyle.position === 'static') {
             cell.style.position = 'relative';
@@ -4940,6 +4947,8 @@ class LabyrinthClearRate {
         // so it reads as the same highlight turned down: dashed, faded, and
         // underneath the steps it leads to
         if (approach) overlay.dataset.approach = '1';
+        if (index !== null) overlay.dataset.tileIndex = String(index);
+        if (pending) overlay.dataset.pending = '1';
         overlay.style.cssText = approach
             ? `position:absolute; inset:0; border:2px dashed ${color}; border-radius:6px; opacity:0.45; ` +
               'pointer-events:none; z-index:7; box-sizing:border-box;'
@@ -4958,6 +4967,58 @@ class LabyrinthClearRate {
 
     clearPathOverlays() {
         document.querySelectorAll(`.${PATH_OVERLAY_CLASS}`).forEach((el) => el.remove());
+    }
+
+    /**
+     * Redraw the "Shroud?" / "?" marks of path rooms that a `labyrinth_updated` has since revealed.
+     *
+     * The route marks an unrevealed room as a guess (a shroud, or a presumed clear). A beacon or a room
+     * clear then reveals it - its cell goes from `null` to `{ roomType, skillHrid|monsterHrid, ... }` -
+     * but the mark stayed a guess until the Path was pressed again. A skilling room is judged on the spot;
+     * a fight only from a clear chance already simulated (the next Path press sims the rest). A room that
+     * cannot be judged yet keeps its guess.
+     */
+    refreshRevealedPathOverlays() {
+        const threshold = this._pathThreshold;
+        if (!this.roomData || !(threshold > 0)) return;
+        const flat = this.roomData.flat();
+        document.querySelectorAll(`.${PATH_OVERLAY_CLASS}[data-pending]`).forEach((overlay) => {
+            const room = flat[Number(overlay.dataset.tileIndex)];
+            if (!room || !isRoomRevealed(room)) return;
+            if (room.isCleared) {
+                overlay.remove();
+                return;
+            }
+            const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+            let chance;
+            if (room.skillHrid && roomLevel > 0) {
+                const result = this.computeSkillingRoomClear(room.skillHrid, roomLevel);
+                chance = result ? result.clearChance : 1;
+            } else if (room.monsterHrid && roomLevel > 0) {
+                const cached = this.getCachedCombatResult(
+                    room.monsterHrid,
+                    roomLevel,
+                    this.getAutomationSimPrecisionPct()
+                );
+                chance = cached ? cached.clearChance : null;
+            } else {
+                chance = 1;
+            }
+            if (chance === null || chance === undefined) return;
+            const needsShroud = chance < threshold;
+            const color = needsShroud ? '#ff5252' : '#57d08a';
+            overlay.style.border = `2px solid ${color}`;
+            overlay.querySelector('div')?.remove();
+            if (needsShroud) {
+                const tag = document.createElement('div');
+                tag.style.cssText =
+                    `position:absolute; top:1px; left:1px; padding:0 3px; border-radius:3px; background:${color}; ` +
+                    'color:#000; font-size:8px; font-weight:700; line-height:1.4;';
+                tag.textContent = 'Shroud';
+                overlay.appendChild(tag);
+            }
+            delete overlay.dataset.pending;
+        });
     }
 
     /**
