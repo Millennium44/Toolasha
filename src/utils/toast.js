@@ -19,6 +19,7 @@
  * player is trying to answer.
  */
 
+import { GAME_COLORS, GAME_FRAME } from './game-look.js';
 import { PANEL_Z_CAP } from './panel-z-index.js';
 
 /** The stack's container, looked up by id so a stale copy is never orphaned */
@@ -33,10 +34,14 @@ const FADE_MS = 180;
 /** Default lifetime; `duration: 0` means it stays until dismissed */
 const DEFAULT_DURATION_MS = 6000;
 
+/**
+ * Severity shows as the edge and the text hue only; the fill is always the game's plain frame.
+ * Info is the neutral frame with white text.
+ */
 const KINDS = {
-    info: { border: 'rgba(74, 158, 255, 0.75)', background: 'rgba(12, 22, 38, 0.97)', text: '#cfe6ff' },
-    warn: { border: 'rgba(255, 152, 0, 0.75)', background: 'rgba(30, 22, 10, 0.97)', text: '#ffcc80' },
-    error: { border: 'rgba(255, 82, 82, 0.8)', background: 'rgba(36, 14, 14, 0.97)', text: '#ff9e9e' },
+    info: { border: GAME_COLORS.frame, text: GAME_COLORS.text },
+    warn: { border: 'rgba(255, 152, 0, 0.75)', text: '#ffcc80' },
+    error: { border: 'rgba(255, 82, 82, 0.8)', text: '#ff9e9e' },
 };
 
 /** Live toasts, oldest first */
@@ -132,10 +137,8 @@ export function showToast(message, { kind = 'info', duration, action } = {}) {
         display: 'flex',
         alignItems: 'flex-start',
         gap: '10px',
-        background: palette.background,
+        ...GAME_FRAME,
         border: `1px solid ${palette.border}`,
-        borderRadius: '8px',
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.5)',
         padding: '10px 12px',
         color: palette.text,
         fontFamily: "'Segoe UI', sans-serif",

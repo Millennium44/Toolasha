@@ -297,8 +297,9 @@ export function showModeNotice({ mode, onDownload, env }) {
     el.id = NOTICE_ID;
     el.style.cssText =
         'position:fixed; bottom:12px; left:12px; z-index:2147483647; max-width:min(92vw,360px); padding:10px 14px; ' +
-        'border-radius:8px; background:#1a1a2e; border:1px solid #4a4a6a; color:#e0e0e0; ' +
-        'font:13px/1.5 system-ui,sans-serif; box-shadow:0 6px 24px rgba(0,0,0,0.5);';
+        // The game's plain frame (values from utils/game-look.js; core cannot import utils)
+        'border-radius:0.25rem; background:rgb(19, 20, 25); border:1px solid #323450; color:#e7e7e7; ' +
+        'font:13px/1.5 system-ui,sans-serif; box-shadow:0 4px 12px rgba(0, 0, 0, 0.4);';
     const text = doc.createElement('div');
     text.textContent =
         mode === MODES.SAFE
@@ -310,7 +311,10 @@ export function showModeNotice({ mode, onDownload, env }) {
         const b = doc.createElement('button');
         b.type = 'button';
         b.textContent = label;
-        b.style.cssText = 'margin:6px 8px 0 0; padding:3px 10px; cursor:pointer;';
+        // The game's primary blue button (values from utils/game-look.js)
+        b.style.cssText =
+            'margin:6px 8px 0 0; padding:3px 10px; cursor:pointer; border:none; border-radius:0.25rem; ' +
+            'background:#4357af; color:#e7e7e7; font:inherit; font-weight:600;';
         b.addEventListener('click', handler);
         el.appendChild(b);
     };

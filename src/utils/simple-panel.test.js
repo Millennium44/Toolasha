@@ -67,6 +67,7 @@ vi.mock('./panel-minimize.js', () => ({
 }));
 
 const { createPanel, panelCard, panelLine, panelNote } = await import('./simple-panel.js');
+const { GAME_COLORS, GAME_FRAME } = await import('./game-look.js');
 const { restoreGeometry } = await import('./panel-geometry.js');
 const { holdEscapeWhile } = await import('./panel-escape.js');
 const { bringPanelToFront, cascadedPanelPosition } = await import('./panel-z-index.js');
@@ -96,6 +97,49 @@ describe('createPanel', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+    });
+
+    test('the frame is the game look, and a passed accent colors nothing', () => {
+        const panel = createPanel({
+            id: 'look',
+            title: 'Look',
+            size: SIZE,
+            accent: '#ff0000',
+            draw: (body) => panelCard(body, 'Heading'),
+        });
+        panel.show();
+        const frame = panel.panel;
+        const header = frame.firstElementChild;
+        const heading = header.firstElementChild;
+
+        expect(frame.style.background).toBe(GAME_FRAME.background);
+        // happy-dom drops a var() from the border shorthand, so this checks the width and that no light edge is left
+        expect(frame.style.border).toContain('1px solid');
+        expect(frame.style.border).not.toContain('208');
+        expect(frame.style.boxShadow).toBe(GAME_FRAME.boxShadow);
+        // No tinted header, a plain divider, a white title
+        expect(header.style.background).toBe('');
+        expect(header.style.borderBottom).toContain('--color-divider');
+        expect(heading.style.color).toBe(GAME_COLORS.text);
+        expect(frame.children[1].firstElementChild.firstElementChild.style.color).toBe(GAME_COLORS.text);
+        // Nothing carries the accent
+        expect(frame.outerHTML.toLowerCase()).not.toContain('ff0000');
+        expect(frame.outerHTML).not.toContain('rgb(255, 0, 0)');
+        panel.hide();
+    });
+
+    test('with no accent the frame is the same', () => {
+        const panel = createPanel({ id: 'look-none', title: 'Look', size: SIZE, draw: () => {} });
+        panel.show();
+        expect(panel.panel.style.border).toContain('1px solid');
+        expect(panel.panel.firstElementChild.firstElementChild.style.color).toBe(GAME_COLORS.text);
+        panel.hide();
+    });
+
+    test('a card heading ignores a passed accent', () => {
+        const body = document.createElement('div');
+        const card = panelCard(body, 'Heading', '#00ff00');
+        expect(card.firstElementChild.style.color).toBe(GAME_COLORS.text);
     });
 
     test('toggle opens and closes', () => {
