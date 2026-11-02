@@ -30,6 +30,7 @@ import { visibleTabsContainer, navigateToMarketplace, insertTabInOrder } from '.
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 /** Stable key for persisting the modal's minimized state; there is no geometry to key off. */
 const PANEL_KEY = 'staleCapitalModal';
@@ -278,16 +279,16 @@ class StaleCapitalView {
         const content = document.createElement('div');
         content.className = 'mwi-stale-capital-content';
         content.style.cssText = `
-            background: rgba(10, 10, 20, 0.97);
-            border: 1px solid rgba(74, 158, 255, 0.5);
-            border-radius: 8px;
+            background: ${GAME_COLORS.background};
+            border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 20px;
             max-width: ${CONTENT_MAX_WIDTH};
             max-height: 90%;
             min-width: ${CONTENT_MIN_WIDTH};
             overflow: auto;
-            color: #e8ecf5;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            color: ${GAME_COLORS.text};
+            box-shadow: ${GAME_COLORS.frameGlow};
         `;
 
         const header = document.createElement('div');
@@ -297,7 +298,7 @@ class StaleCapitalView {
             align-items: center;
             margin-bottom: 15px;
             padding-bottom: 12px;
-            border-bottom: 1px solid rgba(74, 158, 255, 0.3);
+            border-bottom: 1px solid ${GAME_COLORS.border};
         `;
 
         const title = document.createElement('h2');
@@ -305,7 +306,7 @@ class StaleCapitalView {
         title.title = "What of yours isn't moving, ranked by coins tied up.";
         title.style.cssText = `
             margin: 0;
-            color: #8fb4ff;
+            color: ${GAME_COLORS.text};
         `;
 
         const closeBtn = document.createElement('button');
@@ -313,7 +314,7 @@ class StaleCapitalView {
         closeBtn.style.cssText = `
             background: none;
             border: none;
-            color: #e8ecf5;
+            color: ${GAME_COLORS.text};
             font-size: 24px;
             cursor: pointer;
             padding: 0;
@@ -330,7 +331,7 @@ class StaleCapitalView {
         totalsContainer.style.cssText = `
             margin-bottom: 15px;
             font-size: 13px;
-            color: #aaa;
+            color: ${GAME_COLORS.textDim};
             line-height: 1.6;
         `;
 
@@ -406,7 +407,7 @@ class StaleCapitalView {
 
         const headingEl = document.createElement('div');
         headingEl.textContent = heading;
-        headingEl.style.cssText = 'font-size: 14px; color: #8fb4ff; margin-bottom: 8px; font-weight: 500;';
+        headingEl.style.cssText = `font-size: 14px; color: ${GAME_COLORS.text}; margin-bottom: 8px; font-weight: 500;`;
         container.appendChild(headingEl);
 
         if (rows.length === 0) {
@@ -418,11 +419,11 @@ class StaleCapitalView {
         }
 
         const table = document.createElement('table');
-        table.style.cssText = 'width: 100%; border-collapse: collapse; color: #fff;';
+        table.style.cssText = `width: 100%; border-collapse: collapse; color: ${GAME_COLORS.text};`;
 
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        headerRow.style.cssText = 'background: #1a1a1a;';
+        headerRow.style.cssText = 'background: transparent;';
         const headers = [
             { label: 'Item' },
             { label: 'Enh' },
@@ -436,7 +437,7 @@ class StaleCapitalView {
             const th = document.createElement('th');
             th.textContent = header.label;
             if (header.title) th.title = header.title;
-            th.style.cssText = 'padding: 6px 10px; text-align: left; border-bottom: 2px solid #555; user-select: none;';
+            th.style.cssText = `padding: 6px 10px; text-align: left; border-bottom: 2px solid ${GAME_COLORS.border}; user-select: none;`;
             headerRow.appendChild(th);
         }
         thead.appendChild(headerRow);
@@ -445,7 +446,7 @@ class StaleCapitalView {
         const tbody = document.createElement('tbody');
         rows.forEach((row, index) => {
             const tr = document.createElement('tr');
-            tr.style.cssText = `border-bottom: 1px solid #333; background: ${index % 2 === 0 ? '#2a2a2a' : '#252525'};`;
+            tr.style.cssText = `border-bottom: 1px solid ${GAME_COLORS.border}; background: ${index % 2 === 0 ? 'rgba(255, 255, 255, 0.04)' : 'transparent'};`;
 
             const itemCell = document.createElement('td');
             itemCell.textContent = this.getItemName(row.itemHrid);
@@ -481,7 +482,7 @@ class StaleCapitalView {
 
             const ageCell = document.createElement('td');
             ageCell.textContent = row.ageMs !== null ? formatRelativeTime(row.ageMs) : 'unknown';
-            ageCell.style.cssText = 'padding: 4px 10px; color: #aaa;';
+            ageCell.style.cssText = `padding: 4px 10px; color: ${GAME_COLORS.textDim};`;
             if (row.ageMs !== null) {
                 ageCell.title = `Created ${formatDateTime(new Date(Date.now() - row.ageMs))}`;
             }

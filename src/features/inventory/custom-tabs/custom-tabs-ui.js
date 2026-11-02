@@ -30,6 +30,7 @@ function getLoadoutSnapshot() {
 }
 import { formatKMB } from '../../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../../utils/panel-z-index.js';
+import { GAME_COLORS, BUTTON_LOOK } from '../../../utils/game-look.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../../utils/init-ownership.js';
 import { onSyncPullApplied } from '../../../utils/sync-merge-registry.js';
 import {
@@ -169,15 +170,15 @@ export const PANEL_CSS = `
     gap: 4px;
 }
 .toolasha-ct-add-btn {
-    background: #444;
-    color: #aaa;
+    background: ${BUTTON_LOOK.quiet.rest};
+    color: ${GAME_COLORS.text};
     border: none;
     border-radius: 4px;
     padding: 2px 8px;
     cursor: pointer;
     font-size: 12px;
 }
-.toolasha-ct-add-btn:hover { background: #555; }
+.toolasha-ct-add-btn:hover { background: ${BUTTON_LOOK.quiet.hover}; }
 /* Expand/Collapse all: same look, icon-sized */
 .toolasha-ct-add-btn.toolasha-ct-icon-btn {
     padding: 0 5px;
@@ -336,16 +337,17 @@ export const PANEL_CSS = `
     justify-content: center;
 }
 .toolasha-ct-modal {
-    background: #1a1a2e;
-    border: 1px solid #444;
-    border-radius: 8px;
+    background: ${GAME_COLORS.background};
+    border: 1px solid ${GAME_COLORS.frame};
+    box-shadow: ${GAME_COLORS.frameGlow};
+    border-radius: var(--radius-sm, 0.25rem);
     padding: 16px;
     width: min(380px, 92vw);
     max-height: 80vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    color: #d4d4d4;
+    color: ${GAME_COLORS.text};
 }
 .toolasha-ct-modal-body {
     overflow-y: auto;
@@ -356,22 +358,22 @@ export const PANEL_CSS = `
 .toolasha-ct-modal h3 {
     margin: 0 0 12px;
     font-size: 15px;
-    color: #e0e0e0;
+    color: ${GAME_COLORS.text};
 }
 .toolasha-ct-modal label {
     display: block;
     font-size: 12px;
-    color: #aaa;
+    color: ${GAME_COLORS.textDim};
     margin-bottom: 4px;
 }
 .toolasha-ct-modal input[type="text"],
 .toolasha-ct-modal input[type="search"] {
     width: 100%;
     padding: 6px 8px;
-    border: 1px solid #444;
+    border: 1px solid ${GAME_COLORS.border};
     border-radius: 4px;
     background: #111;
-    color: #ddd;
+    color: ${GAME_COLORS.text};
     font-size: 13px;
     margin-bottom: 8px;
 }
@@ -492,7 +494,7 @@ export const PANEL_CSS = `
     justify-content: space-between;
     margin-top: 12px;
     padding-top: 8px;
-    border-top: 1px solid #333;
+    border-top: 1px solid ${GAME_COLORS.border};
 }
 .toolasha-ct-delete-btn {
     background: #5a1a1a;
@@ -505,15 +507,15 @@ export const PANEL_CSS = `
 }
 .toolasha-ct-delete-btn:hover { background: #7a2a2a; }
 .toolasha-ct-close-btn {
-    background: #333;
-    color: #ccc;
-    border: 1px solid #555;
+    background: ${BUTTON_LOOK.quiet.rest};
+    color: ${GAME_COLORS.text};
+    border: none;
     border-radius: 4px;
     padding: 4px 10px;
     cursor: pointer;
     font-size: 12px;
 }
-.toolasha-ct-close-btn:hover { background: #444; }
+.toolasha-ct-close-btn:hover { background: ${BUTTON_LOOK.quiet.hover}; }
 .toolasha-ct-clear-btn {
     background: #3a2a0a;
     color: #f0b040;
@@ -538,16 +540,16 @@ export const PANEL_CSS = `
     margin-bottom: 10px;
 }
 .toolasha-ct-cat-btn {
-    background: #1e2a3a;
-    color: #8ab4f0;
-    border: 1px solid #2a4060;
+    background: ${BUTTON_LOOK.quiet.rest};
+    color: ${GAME_COLORS.text};
+    border: 1px solid transparent;
     border-radius: 4px;
     padding: 3px 8px;
     cursor: pointer;
     font-size: 11px;
     white-space: nowrap;
 }
-.toolasha-ct-cat-btn:hover { background: #2a4060; }
+.toolasha-ct-cat-btn:hover { background: ${BUTTON_LOOK.quiet.hover}; }
 .toolasha-ct-cat-btn--added {
     background: #1a3a2a;
     color: #6c6;
@@ -555,6 +557,16 @@ export const PANEL_CSS = `
     cursor: pointer;
 }
 .toolasha-ct-cat-btn--added:hover { background: #2a5a3a; }
+.toolasha-ct-add-linebreak-btn {
+    background: ${BUTTON_LOOK.quiet.rest};
+    color: ${GAME_COLORS.text};
+    border: none;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 11px;
+}
+.toolasha-ct-add-linebreak-btn:hover { background: ${BUTTON_LOOK.quiet.hover}; }
 
 /* ---------- Category filter ---------- */
 .toolasha-ct-search-row {
@@ -568,10 +580,10 @@ export const PANEL_CSS = `
 }
 .toolasha-ct-cat-filter {
     padding: 4px 6px;
-    border: 1px solid #444;
+    border: 1px solid ${GAME_COLORS.border};
     border-radius: 4px;
     background: #111;
-    color: #ddd;
+    color: ${GAME_COLORS.text};
     font-size: 12px;
     min-width: 100px;
 }
@@ -2486,12 +2498,12 @@ export default class CustomTabsUI {
             position: fixed;
             z-index: ${config.Z_POPUP};
             flex-direction: column;
-            background: var(--color-surface, #1e1e2e);
-            border: 1px solid rgba(255,255,255,0.15);
-            border-radius: 6px;
+            background: ${GAME_COLORS.background};
+            border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem);
             overflow-x: hidden;
             overflow-y: auto;
-            box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+            box-shadow: ${GAME_COLORS.frameGlow};
             padding: 4px;
             gap: 3px;
             box-sizing: border-box;
@@ -3556,7 +3568,7 @@ export default class CustomTabsUI {
                 <div class="toolasha-ct-search-results"></div>
                 <div class="toolasha-ct-assigned-list"></div>
                 <div style="margin-top:6px;">
-                    <button class="toolasha-ct-add-linebreak-btn" style="background:#2a2a3a;color:#888;border:1px solid #444;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;">+ Line Break</button>
+                    <button class="toolasha-ct-add-linebreak-btn">+ Line Break</button>
                 </div>
             </div>
 
@@ -4635,12 +4647,12 @@ export default class CustomTabsUI {
             position: fixed;
             z-index: ${config.Z_POPUP};
             flex-direction: column;
-            background: var(--color-surface, #1e1e2e);
-            border: 1px solid rgba(255,255,255,0.15);
-            border-radius: 6px;
+            background: ${GAME_COLORS.background};
+            border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem);
             overflow-x: hidden;
             overflow-y: auto;
-            box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+            box-shadow: ${GAME_COLORS.frameGlow};
             padding: 4px;
             gap: 3px;
             box-sizing: border-box;

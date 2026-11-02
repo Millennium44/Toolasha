@@ -49,6 +49,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
+import { styleGameButton, GAME_COLORS } from '../../utils/game-look.js';
 import { itemIcon, linkToMarketplace, row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
@@ -80,13 +81,14 @@ const MENU_BUTTON_SETTING = 'watchlist_menuButton';
 const DOTS_SETTING = 'watchlist_inventoryDots';
 
 const COLORS = {
-    background: 'rgba(14, 16, 22, 0.97)',
+    background: GAME_COLORS.background,
     card: 'rgba(255, 255, 255, 0.04)',
-    headerBg: 'rgba(20, 30, 24, 0.9)',
-    border: 'rgba(120, 210, 150, 0.32)',
+    headerBg: 'transparent',
+    border: GAME_COLORS.border,
     hairline: 'rgba(255, 255, 255, 0.10)',
-    text: '#e8ecf5',
-    textDim: 'rgba(232, 236, 245, 0.5)',
+    text: GAME_COLORS.text,
+    textDim: GAME_COLORS.textDim,
+    // Only the corner dot on an inventory tile: a mark on the game's own grid, not panel chrome
     accent: '#7fd6a3',
 };
 
@@ -443,8 +445,8 @@ class WatchlistPanel {
             height: panelHeightCap(DEFAULT_PANEL.height),
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            borderRadius: 'var(--radius-sm, 0.25rem)',
+            boxShadow: GAME_COLORS.frameGlow,
             color: COLORS.text,
             fontSize: '12px',
             display: 'flex',
@@ -516,7 +518,7 @@ class WatchlistPanel {
         const title = document.createElement('span');
         title.textContent = 'Watchlist';
         title.style.fontWeight = 'bold';
-        title.style.color = COLORS.accent;
+        title.style.color = COLORS.text;
 
         this.headerCount = document.createElement('span');
         this.headerCount.style.color = COLORS.textDim;
@@ -591,14 +593,11 @@ class WatchlistPanel {
         button.textContent = 'Export CSV';
         button.title =
             'Save every tracked item as a spreadsheet — held, listed, unclaimed and both prices, raw numbers.';
+        styleGameButton(button, 'quiet', true);
         Object.assign(button.style, {
-            background: 'rgba(255, 255, 255, 0.06)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
             color: COLORS.textDim,
-            cursor: 'pointer',
             fontSize: '10px',
-            padding: '2px 7px',
+            padding: '0 7px',
             whiteSpace: 'nowrap',
         });
         button.addEventListener('click', (event) => {
@@ -627,15 +626,8 @@ class WatchlistPanel {
         button.title = title;
         button.dataset.setting = setting;
         button._label = label;
-        Object.assign(button.style, {
-            background: 'rgba(255, 255, 255, 0.06)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            cursor: 'pointer',
-            fontSize: '10px',
-            padding: '2px 7px',
-            whiteSpace: 'nowrap',
-        });
+        styleGameButton(button, 'quiet', true);
+        Object.assign(button.style, { fontSize: '10px', padding: '0 7px', whiteSpace: 'nowrap' });
         button.addEventListener('click', (event) => {
             event.stopPropagation();
             config.setSetting(setting, !config.getSetting(setting));
@@ -657,7 +649,7 @@ class WatchlistPanel {
             if (!button?._label) continue;
             button.textContent = button._label();
             const on = Boolean(config.getSetting(button.dataset.setting));
-            button.style.color = on ? COLORS.accent : COLORS.textDim;
+            button.style.color = on ? COLORS.text : COLORS.textDim;
             button.style.opacity = on ? '1' : '0.7';
         }
     }
@@ -723,7 +715,7 @@ class WatchlistPanel {
 
         const heading = document.createElement('div');
         Object.assign(heading.style, {
-            color: COLORS.accent,
+            color: COLORS.text,
             fontWeight: 'bold',
             cursor: 'pointer',
             userSelect: 'none',
@@ -915,7 +907,7 @@ class WatchlistPanel {
         const active = state.sortBy === by;
         header.textContent = active ? `${text} ${state.direction === 'asc' ? '▲' : '▼'}` : text;
         Object.assign(header.style, { cursor: 'pointer', textAlign: align, userSelect: 'none' });
-        if (active) header.style.color = COLORS.accent;
+        if (active) header.style.color = COLORS.text;
 
         header.addEventListener('click', () => {
             if (state.sortBy === by) state.direction = state.direction === 'asc' ? 'desc' : 'asc';
@@ -1254,7 +1246,7 @@ registerRow({
 
         row(container, [
             { text: 'Watch', color: ROW_COLORS.dim },
-            { text: `${totals.held}/${totals.items}`, color: COLORS.accent, bold: true },
+            { text: `${totals.held}/${totals.items}`, color: COLORS.text, bold: true },
             { text: formatKMB(totals.ask), color: ROW_COLORS.gold, push: true },
             // The one thing on this list that is a call to action rather than a
             // figure, so it earns the space when there is any

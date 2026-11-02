@@ -67,6 +67,7 @@ import { attachMinimize } from '../../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../../utils/command-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../../utils/init-ownership.js';
 import { markToolashaSurface } from '../../../utils/surface-marker.js';
+import { styleGameButton, GAME_COLORS } from '../../../utils/game-look.js';
 
 const PANEL_ID = 'mwi-market-history-panel';
 const TAB_ID = 'mwi-market-history-tab';
@@ -472,9 +473,9 @@ class MarketHistoryPanel {
         panel.style.cssText = `
             position: fixed; left: ${this.prefs.x}px; top: ${this.prefs.y}px;
             width: ${this.prefs.w}px; z-index: 9000; display: none;
-            flex-direction: column; background: #282844; border: 1px solid #90a6eb;
-            border-radius: 4px; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
-            font-size: 12px; color: #e7e7e7; user-select: none; resize: both; overflow: hidden;
+            flex-direction: column; background: ${GAME_COLORS.background}; border: 1px solid ${GAME_COLORS.frame};
+            border-radius: var(--radius-sm, 0.25rem); box-shadow: ${GAME_COLORS.frameGlow};
+            font-size: 12px; color: ${GAME_COLORS.text}; user-select: none; resize: both; overflow: hidden;
             min-width: 260px; min-height: 60px; max-width: calc(100vw - 16px);
         `;
 
@@ -500,7 +501,7 @@ class MarketHistoryPanel {
         this.historyStatusEl = document.createElement('div');
         this.historyStatusEl.style.cssText =
             'flex:1; min-height:0; display:none; align-items:center; justify-content:center; ' +
-            'padding:12px; text-align:center; color:#9aa4c0; font-size:12px;';
+            `padding:12px; text-align:center; color:${GAME_COLORS.textDim}; font-size:12px;`;
         panel.appendChild(this.historyStatusEl);
 
         // What happened after this item's target fired, when it has fired. Its
@@ -508,8 +509,7 @@ class MarketHistoryPanel {
         // computed from the same history rows the chart was just drawn from, so
         // this is the one place in the script where it costs nothing.
         this.aftermathEl = document.createElement('div');
-        this.aftermathEl.style.cssText =
-            'padding:1px 6px 3px; font-size:11px; color:#9aa4c0; display:none; cursor:help;';
+        this.aftermathEl.style.cssText = `padding:1px 6px 3px; font-size:11px; color:${GAME_COLORS.textDim}; display:none; cursor:help;`;
         panel.appendChild(this.aftermathEl);
 
         this.makeDraggable(panel);
@@ -617,15 +617,14 @@ class MarketHistoryPanel {
 
     buildToolbar() {
         const bar = document.createElement('div');
-        bar.style.cssText = 'display:flex; align-items:center; gap:4px; padding:3px 4px; background:rgba(0,0,0,0.25);';
+        bar.style.cssText = `display:flex; align-items:center; gap:4px; padding:3px 4px; border-bottom:1px solid ${GAME_COLORS.border};`;
 
         const button = (text, title, onClick) => {
             const element = document.createElement('button');
             element.textContent = text;
             element.title = title;
-            element.style.cssText =
-                'background:rgba(255,255,255,0.08); border:1px solid #4a5a8a; color:#e7e7e7; ' +
-                'border-radius:3px; cursor:pointer; font-size:12px; line-height:1; padding:3px 6px;';
+            styleGameButton(element, 'quiet', true);
+            Object.assign(element.style, { fontSize: '12px', padding: '0 6px' });
             element.addEventListener('click', onClick);
             bar.appendChild(element);
             return element;
@@ -653,7 +652,7 @@ class MarketHistoryPanel {
         range.classList.add('toolasha-select');
         range.title = 'How far back to chart';
         range.style.cssText =
-            'background:#1a1a2e; color:#e7e7e7; border:1px solid #4a5a8a; border-radius:3px; ' +
+            `background:#1a1a1a; color:${GAME_COLORS.text}; border:1px solid ${GAME_COLORS.border}; border-radius:3px; ` +
             'font-size:12px; padding:2px 4px; cursor:pointer;';
         for (const days of HISTORY_RANGES) {
             const option = document.createElement('option');
@@ -791,7 +790,7 @@ class MarketHistoryPanel {
             const chip = document.createElement('div');
             chip.style.cssText =
                 'display:inline-flex; align-items:center; gap:3px; padding:1px 3px; cursor:pointer; ' +
-                `border:1px ${stale ? 'dashed #6a6a7a' : 'solid #4a5a8a'}; border-radius:3px; ` +
+                `border:1px ${stale ? 'dashed #6a6a7a' : `solid ${GAME_COLORS.border}`}; border-radius:3px; ` +
                 `background:rgba(0,0,0,0.2); white-space:nowrap; opacity:${stale ? '0.6' : '1'};`;
             chip.title =
                 `${this.itemName(itemHrid)}${Number(level) > 0 ? ` +${level}` : ''}\n` +
@@ -852,7 +851,7 @@ class MarketHistoryPanel {
             if (target) {
                 const flag = document.createElement('span');
                 flag.textContent = mode === 'icon' || mode === 'iconChange' ? '◎' : `◎${formatKMB(target.price)}`;
-                flag.style.color = met ? '#67c23a' : '#8fa0c8';
+                flag.style.color = met ? '#67c23a' : GAME_COLORS.textDim;
                 flag.style.opacity = met ? '1' : '0.8';
                 chip.appendChild(flag);
             }
@@ -876,8 +875,8 @@ class MarketHistoryPanel {
 
             const arrows = document.createElement('span');
             arrows.style.cssText = coarse
-                ? 'display:flex; flex-direction:column; line-height:0.9; font-size:13px; color:#8fa0c8; gap:2px;'
-                : 'display:flex; flex-direction:column; line-height:0.7; font-size:8px; color:#8fa0c8;';
+                ? `display:flex; flex-direction:column; line-height:0.9; font-size:13px; color:${GAME_COLORS.textDim}; gap:2px;`
+                : `display:flex; flex-direction:column; line-height:0.7; font-size:8px; color:${GAME_COLORS.textDim};`;
             for (const [glyph, direction] of [
                 ['▲', -1],
                 ['▼', 1],
@@ -906,8 +905,8 @@ class MarketHistoryPanel {
                 ? `Target ${describeTarget(target)} — click to change or clear it`
                 : 'Set a price target for this item';
             edit.style.cssText = coarse
-                ? 'cursor:pointer; padding:2px 6px; font-size:14px; line-height:1; color:#8fa0c8;'
-                : 'cursor:pointer; padding:0 2px; font-size:10px; line-height:1; color:#8fa0c8;';
+                ? `cursor:pointer; padding:2px 6px; font-size:14px; line-height:1; color:${GAME_COLORS.textDim};`
+                : `cursor:pointer; padding:0 2px; font-size:10px; line-height:1; color:${GAME_COLORS.textDim};`;
             edit.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.editTarget(chip, entry, price);
@@ -967,14 +966,14 @@ class MarketHistoryPanel {
         editor.style.cssText = 'display:inline-flex; align-items:center; gap:2px;';
 
         const sideButton = document.createElement('span');
-        sideButton.style.cssText = 'cursor:pointer; font-size:10px; color:#8fa0c8; padding:0 2px;';
+        sideButton.style.cssText = `cursor:pointer; font-size:10px; color:${GAME_COLORS.textDim}; padding:0 2px;`;
 
         const input = document.createElement('input');
         input.type = 'text';
         input.inputMode = 'numeric';
         input.style.cssText =
-            'width:72px; font-size:10px; padding:0 3px; background:rgba(0,0,0,0.35); color:#e7e7e7; ' +
-            'border:1px solid #4a5a8a; border-radius:2px;';
+            `width:72px; font-size:10px; padding:0 3px; background:rgba(0,0,0,0.35); color:${GAME_COLORS.text}; ` +
+            `border:1px solid ${GAME_COLORS.border}; border-radius:2px;`;
 
         const paint = () => {
             sideButton.textContent = side === 'bid' ? 'over bid' : 'under ask';

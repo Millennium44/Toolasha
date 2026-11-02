@@ -55,6 +55,7 @@ import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floati
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { shortDuration, row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import {
     COMBAT_SKILLS,
     OFFENSE_SKILLS,
@@ -110,14 +111,13 @@ const BAR_SEGMENTS = 10;
 const TARGET_SETTLE_MS = 400;
 
 const COLORS = {
-    background: 'rgba(14, 16, 22, 0.97)',
+    background: GAME_COLORS.background,
     card: 'rgba(255, 255, 255, 0.04)',
-    headerBg: 'rgba(28, 20, 34, 0.9)',
-    border: 'rgba(190, 150, 255, 0.32)',
     hairline: 'rgba(255, 255, 255, 0.10)',
     track: 'rgba(255, 255, 255, 0.08)',
-    text: '#e8ecf5',
-    textDim: 'rgba(232, 236, 245, 0.5)',
+    text: GAME_COLORS.text,
+    textDim: GAME_COLORS.textDim,
+    // Marks data (an answer, an ETA, a bonus), never the frame
     accent: '#c9a0ff',
     combat: '#f0a030',
 };
@@ -616,10 +616,7 @@ class CombatLevelPanel {
             // Clamped so the first open on a phone is not wider than the screen
             width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
             height: panelHeightCap(DEFAULT_PANEL.height),
-            background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            ...GAME_FRAME,
             color: COLORS.text,
             fontSize: '12px',
             display: 'flex',
@@ -690,8 +687,7 @@ class CombatLevelPanel {
             gap: '10px',
             cursor: 'move',
             padding: '7px 8px 7px 11px',
-            background: COLORS.headerBg,
-            borderBottom: `1px solid ${COLORS.border}`,
+            borderBottom: `1px solid ${GAME_COLORS.border}`,
             userSelect: 'none',
             flex: '0 0 auto',
         });
@@ -699,7 +695,7 @@ class CombatLevelPanel {
         const title = document.createElement('span');
         title.textContent = 'Combat Level';
         title.style.fontWeight = 'bold';
-        title.style.color = COLORS.accent;
+        title.style.color = COLORS.text;
 
         // The two figures worth having on the title bar when the rest is scrolled
         // away: what the run is earning, and when the next level lands
@@ -1815,15 +1811,7 @@ class CombatLevelPanel {
     _button(text, onClick) {
         const button = document.createElement('button');
         button.textContent = text;
-        Object.assign(button.style, {
-            background: 'rgba(255, 255, 255, 0.1)',
-            border: `1px solid ${COLORS.hairline}`,
-            borderRadius: '3px',
-            color: COLORS.text,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '2px 10px',
-        });
+        styleGameButton(button, 'quiet', true);
         button.addEventListener('click', onClick);
         return button;
     }

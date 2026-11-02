@@ -29,6 +29,7 @@ import { addStyles, removeStyles } from '../../utils/dom.js';
 import { ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE } from '../../utils/all-zones-snapshot.js';
 import { characterKey } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 
@@ -263,7 +264,7 @@ class PinnedActionsPage {
             align-items: center;
             gap: 6px;
             font-size: 0.85em;
-            color: ${config.COLOR_ACCENT};
+            color: ${GAME_COLORS.text};
             border-left: 3px solid transparent;
             transition: background 0.15s, border-color 0.15s;
             user-select: none;
@@ -622,7 +623,7 @@ class PinnedActionsPage {
             btn.style.cssText = `
                 background: none;
                 border: none;
-                border-bottom: 2px solid ${isActive ? config.COLOR_ACCENT : 'transparent'};
+                border-bottom: 2px solid ${isActive ? GAME_COLORS.text : 'transparent'};
                 color: ${isActive ? '#fff' : '#888'};
                 padding: 6px 16px;
                 cursor: pointer;
@@ -637,7 +638,7 @@ class PinnedActionsPage {
                 // Update tab button styles
                 tabBar.querySelectorAll('button').forEach((b) => {
                     const active = b.dataset.tab === tab;
-                    b.style.borderBottomColor = active ? config.COLOR_ACCENT : 'transparent';
+                    b.style.borderBottomColor = active ? GAME_COLORS.text : 'transparent';
                     b.style.color = active ? '#fff' : '#888';
                     b.style.fontWeight = active ? '600' : '400';
                 });
@@ -1316,7 +1317,7 @@ class PinnedActionsPage {
     updateNavButtonState(active) {
         if (!this.navButton) return;
         if (active) {
-            this.navButton.style.borderLeftColor = config.COLOR_ACCENT;
+            this.navButton.style.borderLeftColor = GAME_COLORS.text;
             this.navButton.style.background = 'rgba(255, 255, 255, 0.08)';
         } else {
             this.navButton.style.borderLeftColor = 'transparent';

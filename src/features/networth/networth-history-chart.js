@@ -12,6 +12,7 @@ import { networthFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createForecastSection } from './networth-forecast-section.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../utils/game-look.js';
 import { openMoversPanel } from './networth-movers-panel.js';
 import { stepsAfter, growthNote, describeChanges } from './networth-markers.js';
 
@@ -177,9 +178,11 @@ class NetworthHistoryChart {
             max-width: 1200px;
             height: 80%;
             max-height: 750px;
-            background: #1a1a1a;
-            border: 2px solid #555;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
+            box-shadow: ${GAME_FRAME.boxShadow};
+            color: ${GAME_COLORS.text};
             padding: 20px;
             z-index: ${PANEL_Z_CAP - 2};
             display: flex;
@@ -197,20 +200,13 @@ class NetworthHistoryChart {
 
         const title = document.createElement('h3');
         title.textContent = 'Net Worth History';
-        title.style.cssText = 'color: #ccc; margin: 0; font-size: 18px;';
+        title.style.cssText = `color: ${GAME_COLORS.text}; margin: 0; font-size: 18px;`;
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '\u2715';
-        closeBtn.style.cssText = `
-            background: #a33;
-            color: #fff;
-            border: none;
-            cursor: pointer;
-            font-size: 20px;
-            padding: 4px 12px;
-            border-radius: 4px;
-            font-weight: bold;
-        `;
+        styleGameButton(closeBtn, 'icon');
+        closeBtn.style.fontSize = '1.1rem';
+        closeBtn.style.padding = '0 0.75rem';
         closeBtn.addEventListener('click', () => this.closeModal());
 
         header.appendChild(title);
@@ -231,15 +227,7 @@ class NetworthHistoryChart {
             btn.textContent = range === 'all' ? 'All' : range.toUpperCase();
             btn.dataset.range = range;
             btn.className = 'mwi-nw-range-btn';
-            btn.style.cssText = `
-                background: ${range === this.activeRange ? '#444' : '#2a2a2a'};
-                color: ${range === this.activeRange ? '#fff' : '#999'};
-                border: 1px solid #555;
-                cursor: pointer;
-                padding: 4px 14px;
-                border-radius: 4px;
-                font-size: 13px;
-            `;
+            styleGameButton(btn, range === this.activeRange ? 'primary' : 'quiet', true);
             btn.addEventListener('click', () => {
                 this._selectPresetRange(btn, rangeRow, range);
             });
@@ -251,17 +239,10 @@ class NetworthHistoryChart {
         gapToggle.textContent = 'Connect Gaps';
         gapToggle.className = 'mwi-nw-gap-toggle';
         const updateGapToggleStyle = () => {
-            gapToggle.style.cssText = `
-                background: ${this.connectGaps ? '#444' : '#2a2a2a'};
-                color: ${this.connectGaps ? '#fff' : '#999'};
-                border: 1px solid #555;
-                cursor: pointer;
-                padding: 4px 14px;
-                border-radius: 4px;
-                font-size: 13px;
-                margin-left: 4px;
-            `;
+            setButtonRest(gapToggle, this.connectGaps ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
         };
+        styleGameButton(gapToggle, 'quiet', true);
+        gapToggle.style.marginLeft = '4px';
         updateGapToggleStyle();
         gapToggle.addEventListener('click', () => {
             this.connectGaps = !this.connectGaps;
@@ -276,17 +257,10 @@ class NetworthHistoryChart {
         barToggle.textContent = 'Show Bars';
         barToggle.className = 'mwi-nw-bar-toggle';
         const updateBarToggleStyle = () => {
-            barToggle.style.cssText = `
-                background: ${this.showBars ? '#444' : '#2a2a2a'};
-                color: ${this.showBars ? '#fff' : '#999'};
-                border: 1px solid #555;
-                cursor: pointer;
-                padding: 4px 14px;
-                border-radius: 4px;
-                font-size: 13px;
-                margin-left: 4px;
-            `;
+            setButtonRest(barToggle, this.showBars ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
         };
+        styleGameButton(barToggle, 'quiet', true);
+        barToggle.style.marginLeft = '4px';
         updateBarToggleStyle();
         barToggle.addEventListener('click', () => {
             this.showBars = !this.showBars;
@@ -306,10 +280,10 @@ class NetworthHistoryChart {
         maSelect.className = 'mwi-nw-ma-select';
         maSelect.classList.add('toolasha-select');
         maSelect.style.cssText = `
-            background: #2a2a2a;
-            color: #ccc;
-            border: 1px solid #555;
-            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.06);
+            color: ${GAME_COLORS.text};
+            border: 1px solid ${GAME_COLORS.border};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 3px 6px;
             font-size: 13px;
             cursor: pointer;
@@ -372,10 +346,10 @@ class NetworthHistoryChart {
 
         // Date input styles (shared)
         const dateInputStyle = `
-            background: #2a2a2a;
-            color: #ccc;
-            border: 1px solid #555;
-            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.06);
+            color: ${GAME_COLORS.text};
+            border: 1px solid ${GAME_COLORS.border};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 3px 8px;
             font-size: 12px;
             color-scheme: dark;
@@ -557,7 +531,7 @@ class NetworthHistoryChart {
             gap: 24px;
             margin-bottom: 12px;
             font-size: 13px;
-            color: #ccc;
+            color: ${GAME_COLORS.text};
         `;
 
         // Canvas container
@@ -637,11 +611,9 @@ class NetworthHistoryChart {
     _selectPresetRange(btn, rangeRow, range) {
         // Highlight selected button, deselect others
         for (const sibling of rangeRow.querySelectorAll('.mwi-nw-range-btn')) {
-            sibling.style.background = '#2a2a2a';
-            sibling.style.color = '#999';
+            setButtonRest(sibling, BUTTON_LOOK.quiet.rest);
         }
-        btn.style.background = '#444';
-        btn.style.color = '#fff';
+        setButtonRest(btn, BUTTON_LOOK.primary.rest);
 
         // Clear date inputs
         const fromInput = document.getElementById('mwi-nw-date-from');
@@ -668,8 +640,7 @@ class NetworthHistoryChart {
 
         // Deselect all preset buttons
         for (const btn of rangeRow.querySelectorAll('.mwi-nw-range-btn')) {
-            btn.style.background = '#2a2a2a';
-            btn.style.color = '#999';
+            setButtonRest(btn, BUTTON_LOOK.quiet.rest);
         }
 
         // Parse dates (from = start of day, to = end of day)
@@ -1152,9 +1123,9 @@ class NetworthHistoryChart {
         container.id = 'mwi-nw-24h-breakdown';
         container.style.cssText = `
             position: absolute;
-            background: #222;
-            border: 1px solid #444;
-            border-radius: 6px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             padding: 10px 14px;
             max-height: 300px;
             width: min(360px, 92vw);
@@ -1579,9 +1550,9 @@ class NetworthHistoryChart {
             tooltipEl.id = 'mwi-nw-chart-tooltip';
             tooltipEl.style.cssText = `
                 position: absolute;
-                background: rgba(0, 0, 0, 0.92);
-                border: 1px solid #555;
-                border-radius: 4px;
+                background: ${GAME_FRAME.background};
+                border: ${GAME_FRAME.border};
+                border-radius: ${GAME_FRAME.borderRadius};
                 padding: 8px 12px;
                 pointer-events: none;
                 font-size: 12px;
@@ -1720,9 +1691,9 @@ class NetworthHistoryChart {
         popup.style.cssText = `
             position: fixed;
             z-index: ${PANEL_Z_CAP};
-            background: #1e1e2e;
-            border: 1px solid #555;
-            border-radius: 6px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             padding: 10px 12px;
             font-size: 12px;
             color: #ccc;
@@ -1737,9 +1708,9 @@ class NetworthHistoryChart {
         popup.innerHTML = `
             <div style="margin-bottom:4px;font-weight:500;color:#fff;">${date}</div>
             <div style="margin-bottom:10px;color:${config.COLOR_ACCENT};">${networthFormatter(snapshot.total)}</div>
-            <button id="mwi-nw-movers-btn" style="background:#3b4a8f;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin:0 6px 6px 0;">What moved</button>
+            <button id="mwi-nw-movers-btn" style="background:${BUTTON_LOOK.primary.rest};color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin:0 6px 6px 0;">What moved</button>
             <button id="mwi-nw-delete-confirm" style="background:#ef4444;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin-right:6px;">Delete point</button>
-            <button id="mwi-nw-delete-cancel" style="background:#2a2a2a;color:#999;border:1px solid #444;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;">Cancel</button>
+            <button id="mwi-nw-delete-cancel" style="background:${BUTTON_LOOK.quiet.rest};color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;">Cancel</button>
         `;
 
         markToolashaSurface(popup, 'popover');

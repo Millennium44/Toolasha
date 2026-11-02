@@ -658,7 +658,7 @@ class SettingsUI {
                 const summary = document.createElement('div');
                 summary.id = 'enhanceSim-stats-summary';
                 summary.style.cssText =
-                    'padding:8px 12px; margin-bottom:8px; background:#1a1a2e; border:1px solid #333; border-radius:4px; font-size:12px; color:#aaa; line-height:1.6;';
+                    'padding:8px 12px; margin-bottom:8px; background:rgba(255,255,255,0.03); border:1px solid var(--color-divider, #323450); border-radius:4px; font-size:12px; color:rgba(231,231,231,0.7); line-height:1.6;';
                 summary.innerHTML = this.buildEnhanceSimSummaryHTML();
                 content.appendChild(summary);
             }
@@ -981,7 +981,7 @@ class SettingsUI {
             case 'checkbox': {
                 const checked = currentSetting?.isTrue ?? settingDef.default ?? false;
                 return `
-                    <input type="checkbox" id="${settingId}" ${checked ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer; accent-color:#6b9fff;">
+                    <input type="checkbox" id="${settingId}" ${checked ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer; accent-color:var(--color-primary, #4357af);">
                 `;
             }
 
@@ -1018,8 +1018,8 @@ class SettingsUI {
                             class="toolasha-text-vars-btn"
                             data-setting-id="${settingId}"
                             style="
-                                background: #4a7c59;
-                                border: 1px solid #5a8c69;
+                                background: var(--color-primary, #4357af);
+                                border: none;
                                 border-radius: 4px;
                                 padding: 6px 12px;
                                 color: #e0e0e0;
@@ -1066,8 +1066,8 @@ class SettingsUI {
                         class="toolasha-template-edit-btn"
                         data-setting-id="${settingId}"
                         style="
-                            background: #4a7c59;
-                            border: 1px solid #5a8c69;
+                            background: var(--color-primary, #4357af);
+                            border: none;
                             border-radius: 4px;
                             padding: 6px 12px;
                             color: #e0e0e0;
@@ -1176,7 +1176,7 @@ class SettingsUI {
                     <div style="display:flex; align-items:center; gap:6px;" data-checked-means-auto="${checkedMeansAuto}">
                         <input type="checkbox" id="${settingId}_enabled" ${enabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
                         ${tierHTML}
-                        <input type="number" id="${settingId}_level" value="${level}" min="0" max="20" style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px; text-align:center; ${disabledStyle}">
+                        <input type="number" id="${settingId}_level" value="${level}" min="0" max="20" style="width:48px; background:rgba(255,255,255,0.05); color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px; text-align:center; ${disabledStyle}">
                     </div>
                 `;
             }
@@ -1209,8 +1209,8 @@ class SettingsUI {
                         class="toolasha-custom-price-edit-btn"
                         data-setting-id="${settingId}"
                         style="
-                            background: #4a7c59;
-                            border: 1px solid #5a8c69;
+                            background: var(--color-primary, #4357af);
+                            border: none;
                             border-radius: 4px;
                             padding: 6px 12px;
                             color: #e0e0e0;
@@ -1233,8 +1233,8 @@ class SettingsUI {
                             class="toolasha-scroll-defaults-btn"
                             data-setting-id="${settingId}"
                             style="
-                                background: #4a7c59;
-                                border: 1px solid #5a8c69;
+                                background: var(--color-primary, #4357af);
+                                border: none;
                                 border-radius: 4px;
                                 padding: 4px 10px;
                                 color: #e0e0e0;
@@ -1266,8 +1266,8 @@ class SettingsUI {
                         class="toolasha-setting-action-btn"
                         data-setting-id="${settingId}"
                         style="
-                            background: #4a7c59;
-                            border: 1px solid #5a8c69;
+                            background: var(--color-primary, #4357af);
+                            border: none;
                             border-radius: 4px;
                             padding: 4px 10px;
                             color: #e0e0e0;
@@ -1316,7 +1316,7 @@ class SettingsUI {
             padding: 8px 12px;
             background: #2a2a2a;
             color: white;
-            border: 1px solid #555;
+            border: 1px solid var(--color-divider, #323450);
             border-radius: 4px;
             font-size: 14px;
         `;
@@ -1327,9 +1327,9 @@ class SettingsUI {
         clearButton.className = 'toolasha-search-clear';
         clearButton.style.cssText = `
             padding: 8px 16px;
-            background: #444;
+            background: var(--color-space-800, #273366);
             color: white;
-            border: 1px solid #555;
+            border: 1px solid transparent;
             border-radius: 4px;
             cursor: pointer;
             font-size: 14px;
@@ -1346,9 +1346,9 @@ class SettingsUI {
         changedButton.setAttribute('aria-pressed', 'false');
         changedButton.style.cssText = `
             padding: 8px 16px;
-            background: #444;
+            background: var(--color-space-800, #273366);
             color: white;
-            border: 1px solid #555;
+            border: 1px solid transparent;
             border-radius: 4px;
             cursor: pointer;
             font-size: 14px;
@@ -1360,12 +1360,14 @@ class SettingsUI {
         // at a time is busywork in both directions
         const buttonStyle = changedButton.style.cssText;
         const collapseAllButton = document.createElement('button');
-        collapseAllButton.textContent = '▸ All';
+        collapseAllButton.textContent = '⊟';
+        collapseAllButton.setAttribute('aria-label', 'Collapse every settings group');
         collapseAllButton.className = 'toolasha-collapse-all';
         collapseAllButton.title = 'Collapse every settings group';
         collapseAllButton.style.cssText = buttonStyle;
         const expandAllButton = document.createElement('button');
-        expandAllButton.textContent = '▾ All';
+        expandAllButton.textContent = '⊞';
+        expandAllButton.setAttribute('aria-label', 'Expand every settings group');
         expandAllButton.className = 'toolasha-expand-all';
         expandAllButton.title = 'Expand every settings group';
         expandAllButton.style.cssText = buttonStyle;
@@ -1468,8 +1470,10 @@ class SettingsUI {
         const button = this.changedOnlyButton;
         if (!button) return;
         button.setAttribute('aria-pressed', String(this.changedOnly));
-        button.style.background = this.changedOnly ? '#2f5d8a' : '#444';
-        button.style.borderColor = this.changedOnly ? '#6b9fff' : '#555';
+        button.style.background = this.changedOnly
+            ? 'var(--color-primary, #4357af)'
+            : 'var(--color-space-800, #273366)';
+        button.style.borderColor = 'transparent';
     }
 
     /**
@@ -1541,7 +1545,7 @@ class SettingsUI {
             if (!chip) continue;
             const matched = Boolean(query) && `${mode.label} ${mode.description}`.toLowerCase().includes(query);
             chip.dataset.searchMatch = String(matched);
-            chip.style.outline = matched ? '2px solid #6b9fff' : '';
+            chip.style.outline = matched ? '2px solid rgba(231, 231, 231, 0.8)' : '';
             chip.style.outlineOffset = matched ? '2px' : '';
         }
     }
@@ -2950,7 +2954,7 @@ class SettingsUI {
             const params = getEnhancingParams();
             const fmt = (v) => (typeof v === 'number' ? v.toFixed(2).replace(/\.?0+$/, '') : v);
             return `
-                <span style="color:#6b9fff; font-weight:bold;">Computed Stats</span><br>
+                <span style="color:var(--color-text-dark-mode, #e7e7e7); font-weight:bold;">Computed Stats</span><br>
                 Effective Level: <span style="color:#e0e0e0;">${fmt(params.enhancingLevel)}</span> &nbsp;|&nbsp;
                 Tool Success: <span style="color:#e0e0e0;">${fmt(params.toolBonus)}%</span> &nbsp;|&nbsp;
                 Speed: <span style="color:#e0e0e0;">${fmt(params.speedBonus)}%</span><br>
@@ -3062,10 +3066,10 @@ class SettingsUI {
 
         const dialog = document.createElement('div');
         dialog.className = 'toolasha-copy-settings-dialog';
-        dialog.style.cssText = `background:#1a1a2e;border:1px solid rgba(74,158,255,0.5);border-radius:10px;padding:20px;min-width:280px;font-family:'Segoe UI',sans-serif;color:#e0e0e0;`;
+        dialog.style.cssText = `background:rgb(19, 20, 25);border:1px solid var(--color-divider, #323450);border-radius:var(--radius-sm, 0.25rem);box-shadow:0 4px 12px rgba(0,0,0,0.4);padding:20px;min-width:280px;font-family:'Segoe UI',sans-serif;color:#e0e0e0;`;
 
         const title = document.createElement('div');
-        title.style.cssText = `font-size:14px;font-weight:700;color:#4a9eff;margin-bottom:12px;`;
+        title.style.cssText = `font-size:14px;font-weight:700;color:var(--color-text-dark-mode, #e7e7e7);margin-bottom:12px;`;
         title.textContent = titleText;
         dialog.appendChild(title);
 
@@ -3101,7 +3105,7 @@ class SettingsUI {
 
         const copyBtn = document.createElement('button');
         copyBtn.textContent = 'Copy Settings';
-        copyBtn.style.cssText = `padding:6px 14px;background:#4a9eff;border:none;color:#fff;border-radius:4px;cursor:pointer;font-weight:600;`;
+        copyBtn.style.cssText = `padding:6px 14px;background:var(--color-primary, #4357af);border:none;color:#fff;border-radius:4px;cursor:pointer;font-weight:600;`;
 
         btnRow.appendChild(cancelBtn);
         btnRow.appendChild(copyBtn);
@@ -3398,8 +3402,8 @@ class SettingsUI {
 
         const modal = document.createElement('div');
         modal.style.cssText = `
-            background: #1a1a1a;
-            border: 2px solid #3a3a3a;
+            background: rgb(19, 20, 25);
+            border: 1px solid var(--color-divider, #323450);
             border-radius: 8px;
             padding: 20px;
             max-width: 500px;
@@ -3413,7 +3417,7 @@ class SettingsUI {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 16px;
-            border-bottom: 2px solid #3a3a3a;
+            border-bottom: 1px solid var(--color-divider, #323450);
             padding-bottom: 10px;
         `;
         header.innerHTML = `
@@ -3454,8 +3458,8 @@ class SettingsUI {
             const chip = document.createElement('button');
             chip.type = 'button';
             chip.style.cssText = `
-                background: #2a4a7c;
-                border: 1px solid #3a5a8c;
+                background: var(--color-space-800, #273366);
+                border: none;
                 border-radius: 4px;
                 color: #e0e0e0;
                 padding: 4px 10px;
@@ -3482,7 +3486,7 @@ class SettingsUI {
         cancelBtn.type = 'button';
         cancelBtn.textContent = 'Cancel';
         cancelBtn.style.cssText = `
-            background: #3a3a3a; border: 1px solid #5a5a5a;
+            background: var(--color-space-800, #273366); border: none;
             border-radius: 4px; color: #e0e0e0;
             padding: 8px 16px; cursor: pointer; font-size: 13px;
         `;
@@ -3492,7 +3496,7 @@ class SettingsUI {
         saveBtn.type = 'button';
         saveBtn.textContent = 'Save';
         saveBtn.style.cssText = `
-            background: #4a7c59; border: 1px solid #5a8c69;
+            background: var(--color-primary, #4357af); border: none;
             border-radius: 4px; color: #e0e0e0;
             padding: 8px 16px; cursor: pointer; font-size: 13px;
         `;
@@ -3572,8 +3576,8 @@ class SettingsUI {
         const modal = document.createElement('div');
         modal.className = 'toolasha-template-editor-modal';
         modal.style.cssText = `
-            background: #1a1a1a;
-            border: 2px solid #3a3a3a;
+            background: rgb(19, 20, 25);
+            border: 1px solid var(--color-divider, #323450);
             border-radius: 8px;
             padding: 20px;
             max-width: 700px;
@@ -3590,7 +3594,7 @@ class SettingsUI {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
-            border-bottom: 2px solid #3a3a3a;
+            border-bottom: 1px solid var(--color-divider, #323450);
             padding-bottom: 10px;
         `;
         header.innerHTML = `
@@ -3771,8 +3775,8 @@ class SettingsUI {
         saveBtn.type = 'button';
         saveBtn.textContent = 'Save';
         saveBtn.style.cssText = `
-            background: #4a7c59;
-            border: 1px solid #5a8c69;
+            background: var(--color-primary, #4357af);
+            border: none;
             border-radius: 4px;
             padding: 8px 16px;
             color: #e0e0e0;
@@ -3844,7 +3848,7 @@ class SettingsUI {
             `;
             const modal = document.createElement('div');
             modal.style.cssText = `
-                background: #1a1a1a; border: 2px solid #3a3a3a; border-radius: 8px; padding: 16px;
+                background: rgb(19, 20, 25); border: 1px solid var(--color-divider, #323450); border-radius: 8px; padding: 16px;
                 max-width: 420px; width: 90%; max-height: 80%; overflow-y: auto; color: #e0e0e0;
             `;
             overlay.appendChild(modal);
@@ -4021,8 +4025,8 @@ class SettingsUI {
         // Create modal
         const modal = document.createElement('div');
         modal.style.cssText = `
-            background: #1a1a1a;
-            border: 2px solid #3a3a3a;
+            background: rgb(19, 20, 25);
+            border: 1px solid var(--color-divider, #323450);
             border-radius: 8px;
             padding: 20px;
             max-width: 700px;
@@ -4039,7 +4043,7 @@ class SettingsUI {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
-            border-bottom: 2px solid #3a3a3a;
+            border-bottom: 1px solid var(--color-divider, #323450);
             padding-bottom: 10px;
         `;
         header.innerHTML = `
@@ -4151,8 +4155,8 @@ class SettingsUI {
         addBtn.type = 'button';
         addBtn.textContent = '+';
         addBtn.style.cssText = `
-            background: #4a7c59;
-            border: 1px solid #5a8c69;
+            background: var(--color-primary, #4357af);
+            border: none;
             border-radius: 4px;
             padding: 6px 12px;
             color: #e0e0e0;
@@ -4472,8 +4476,8 @@ class SettingsUI {
         saveBtn.type = 'button';
         saveBtn.textContent = 'Save';
         saveBtn.style.cssText = `
-            background: #4a7c59;
-            border: 1px solid #5a8c69;
+            background: var(--color-primary, #4357af);
+            border: none;
             border-radius: 4px;
             padding: 8px 16px;
             color: #e0e0e0;
@@ -4577,7 +4581,7 @@ class SettingsUI {
         content.style.cssText = 'flex: 1; color: #e0e0e0; font-size: 13px;';
 
         if (item.type === 'variable') {
-            content.innerHTML = `<strong style="color: #4a9eff;">${item.label}</strong> <span style="color: #666; font-family: monospace;">${item.key}</span>`;
+            content.innerHTML = `<strong style="color: var(--color-text-dark-mode, #e7e7e7);">${item.label}</strong> <span style="color: #666; font-family: monospace;">${item.key}</span>`;
         } else {
             // Editable text
             const textInput = document.createElement('input');
@@ -4639,7 +4643,7 @@ class SettingsUI {
         itemEl.ondragover = (e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
-            itemEl.style.borderColor = '#4a9eff';
+            itemEl.style.borderColor = 'rgba(231, 231, 231, 0.6)';
         };
 
         itemEl.ondragleave = () => {

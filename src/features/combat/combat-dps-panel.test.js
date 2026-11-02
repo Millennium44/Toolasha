@@ -676,7 +676,7 @@ describe('the rotation tab', () => {
         const session = body.querySelector('[data-scope="session"]');
         expect(session).toBeTruthy();
         session.click();
-        expect(body.querySelector('[data-scope="session"]').outerHTML).toContain('#8fd3ff');
+        expect(body.querySelector('[data-scope="session"]').outerHTML).toContain('--color-primary');
     });
 
     test('copies as text rather than as HTML', () => {

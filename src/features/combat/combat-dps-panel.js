@@ -100,6 +100,7 @@ import { formatKMB, formatWithSeparator, formatDateTime } from '../../utils/form
 import { GAME } from '../../utils/selectors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { dockWhenNarrow } from '../../utils/responsive-dock.js';
+import { BUTTON_LOOK, GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 
 /**
  * How often the opener is re-offered when the observer missed the panel.
@@ -705,10 +706,11 @@ export function rotationHTML(audit, which) {
         `<div style="display:flex; gap:6px; margin:6px 0;">` +
         ROTATION_SCOPES.map((entry) => {
             const on = entry.key === which;
-            const color = on ? BOARD_COLORS.accent : dim;
+            // The game's blue: the primary fill when selected, the quiet one otherwise
+            const fill = on ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest;
             return (
                 `<button data-scope="${entry.key}" style="flex:1; cursor:pointer; padding:2px 0; border-radius:4px;` +
-                ` border:1px solid ${color}66; background:${on ? `${color}22` : 'transparent'}; color:${color};` +
+                ` border:none; background:${fill}; color:${GAME_COLORS.text};` +
                 ` font-size:10px;">${entry.label}</button>`
             );
         }).join('') +
@@ -1210,7 +1212,6 @@ export function getPanel() {
         id: PANEL_ID,
         title: 'Party damage',
         size: { width: 320, height: 360 },
-        accent: BOARD_COLORS.accent,
         draw: (body) => {
             // The shell's body is a flex column with a gap; the board is one
             // block that manages its own spacing, as it does in the trial panel
@@ -1297,10 +1298,8 @@ function inject() {
     button.id = BUTTON_ID;
     button.textContent = 'Per-player';
     button.title = 'Damage, damage taken with healing received, and healing done per party member, ranked.';
-    button.style.cssText =
-        'position:absolute; top:2px; right:2px; z-index:5; padding:1px 6px; border-radius:4px;' +
-        `border:1px solid ${BOARD_COLORS.accent}66; background:rgba(18,20,28,0.85); color:${BOARD_COLORS.accent};` +
-        'font-size:10px; line-height:1.4; cursor:pointer;';
+    styleGameButton(button, 'quiet', true);
+    Object.assign(button.style, { position: 'absolute', top: '2px', right: '2px', zIndex: '5', fontSize: '10px' });
     button.addEventListener('click', (event) => {
         event.stopPropagation();
         getPanel().toggle();

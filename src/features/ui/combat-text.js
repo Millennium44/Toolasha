@@ -377,7 +377,6 @@ export const combatLogPanel = createPanel({
     id: 'combatLog',
     title: 'Combat Log',
     size: { width: 320, height: 420 },
-    accent: '#ffd166',
     refreshMs: 1000,
     draw: (body) => {
         if (!config.getSetting(SCROLLING_SETTING)) {
@@ -392,7 +391,7 @@ export const combatLogPanel = createPanel({
             return;
         }
 
-        const card = panelCard(body, `Last ${Math.min(entries.length, 80)} events`, '#ffd166');
+        const card = panelCard(body, `Last ${Math.min(entries.length, 80)} events`);
         for (const event of entries.slice(0, 80)) {
             card.appendChild(
                 panelLine(

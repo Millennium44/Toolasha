@@ -50,6 +50,7 @@ import {
     widgetCheckboxRow,
 } from '../../utils/floating-widget.js';
 import { shortDuration, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { showToast } from '../../utils/toast.js';
 import { currentTarget, cycleTarget, loadTarget } from '../../utils/consumable-target.js';
@@ -298,12 +299,13 @@ const KEY_PRICING_LABELS = {
 };
 
 const COLORS = {
-    background: 'rgba(8, 10, 20, 0.97)',
-    headerBg: 'rgba(20, 30, 24, 0.9)',
-    border: 'rgba(120, 200, 150, 0.32)',
-    text: '#e8ecf5',
-    textDim: 'rgba(232, 236, 245, 0.55)',
-    accent: '#7fd6a3',
+    background: GAME_COLORS.background,
+    border: GAME_COLORS.border,
+    text: GAME_COLORS.text,
+    textDim: GAME_COLORS.textDim,
+    // Chrome (titles, headings, controls) is neutral; the green marks data worth noticing
+    accent: GAME_COLORS.text,
+    dataAccent: '#7fd6a3',
 };
 
 /**
@@ -852,15 +854,7 @@ class ConsumablesPanel {
     _keyPricingChip() {
         const mode = this._keyPricingMode();
         const chip = document.createElement('button');
-        Object.assign(chip.style, {
-            background: 'rgba(255, 255, 255, 0.07)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.accent,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '1px 8px',
-        });
+        styleGameButton(chip, 'quiet', true);
         chip.textContent = `⚙ keys: ${KEY_PRICING_LABELS[mode] || mode}`;
         chip.title =
             `Key pricing: ${KEY_PRICING_LABELS[mode] || mode}. Click to cycle.\n\n` +
@@ -1265,15 +1259,7 @@ class ConsumablesPanel {
         name.style.color = COLORS.accent;
 
         const runsBtn = document.createElement('button');
-        Object.assign(runsBtn.style, {
-            background: 'rgba(255, 255, 255, 0.07)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.accent,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '1px 8px',
-        });
+        styleGameButton(runsBtn, 'quiet', true);
         runsBtn.textContent = `${formatWithSeparator(model.runsPlanned)} run${model.runsPlanned === 1 ? '' : 's'}`;
         runsBtn.title = 'How many runs to check against. Click to cycle the presets.';
         runsBtn.addEventListener('click', (event) => {
@@ -1575,7 +1561,7 @@ class ConsumablesPanel {
         return this._readinessNote(
             `${formatWithSeparator(plan.shortfall)} short: ${craft} vs ${buy}, both at ${basis} — ` +
                 `${verdict}${saved}${time}.`,
-            plan.saves > 0 ? COLORS.accent : COLORS.textDim
+            plan.saves > 0 ? COLORS.dataAccent : COLORS.textDim
         );
     }
 
@@ -1887,11 +1873,6 @@ class ConsumablesPanel {
                 id: BUY_CHIP_ID,
                 top: '160px',
                 right: '24px',
-                accent: COLORS.accent,
-                background: COLORS.background,
-                border: COLORS.border,
-                text: COLORS.text,
-                dim: COLORS.textDim,
                 zIndex: config.Z_FLOATING_PANEL,
                 positionKey: BUY_WIDGET_POSITION_KEY,
                 position: this._buyWidgetPosition,
@@ -1999,14 +1980,8 @@ class ConsumablesPanel {
         });
         const nextButton = document.createElement('button');
         nextButton.className = 'toolasha-consumables-inline-next';
+        styleGameButton(nextButton, 'quiet', true);
         Object.assign(nextButton.style, {
-            background: 'rgba(255, 255, 255, 0.07)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.accent,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '3px 8px',
             whiteSpace: 'nowrap',
             flex: '0 0 auto',
         });
@@ -2127,10 +2102,7 @@ class ConsumablesPanel {
             // Clamped so the first open on a phone is not wider than the screen
             width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
             height: panelHeightCap(DEFAULT_PANEL.height),
-            background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            ...GAME_FRAME,
             color: COLORS.text,
             fontSize: '12px',
             display: 'flex',
@@ -2217,7 +2189,6 @@ class ConsumablesPanel {
             gap: '8px',
             cursor: 'move',
             padding: '7px 8px 7px 11px',
-            background: COLORS.headerBg,
             borderBottom: `1px solid ${COLORS.border}`,
             userSelect: 'none',
             flex: '0 0 auto',
@@ -2231,15 +2202,7 @@ class ConsumablesPanel {
         // The duration everything is measured against, on its own face rather
         // than behind a menu — every figure below it changes when it changes
         this.targetBtn = document.createElement('button');
-        Object.assign(this.targetBtn.style, {
-            background: 'rgba(255, 255, 255, 0.07)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.accent,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '2px 8px',
-        });
+        styleGameButton(this.targetBtn, 'quiet', true);
         this.targetBtn.title = 'How long the stock should last. Every shortfall below is measured against this.';
         this.targetBtn.addEventListener('click', (event) => {
             event.stopPropagation();
@@ -2553,7 +2516,7 @@ class ConsumablesPanel {
             background: 'rgba(255, 255, 255, 0.07)',
             border: `1px solid ${COLORS.border}`,
             borderRadius: '3px',
-            color: COLORS.accent,
+            color: COLORS.text,
             cursor: 'pointer',
             fontSize: '11px',
             padding: '1px 4px',
@@ -2697,15 +2660,7 @@ class ConsumablesPanel {
         name.style.color = COLORS.accent;
 
         const runsBtn = document.createElement('button');
-        Object.assign(runsBtn.style, {
-            background: 'rgba(255, 255, 255, 0.07)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.accent,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '1px 8px',
-        });
+        styleGameButton(runsBtn, 'quiet', true);
         runsBtn.textContent = `${this.labRuns} run${this.labRuns === 1 ? '' : 's'}`;
         runsBtn.title =
             'How many runs to stock for, at full consumption: the whole torch/shroud/beacon capacity and one ' +
@@ -2720,15 +2675,7 @@ class ConsumablesPanel {
         // whole question the block answers
         const basis = config.getSettingValue('consumables_labPerRunBasis', 'measured') || 'measured';
         const basisBtn = document.createElement('button');
-        Object.assign(basisBtn.style, {
-            background: 'rgba(255, 255, 255, 0.07)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.textDim,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '1px 8px',
-        });
+        styleGameButton(basisBtn, 'quiet', true);
         basisBtn.textContent = basis === 'capacity' ? 'full capacity' : 'measured';
         basisBtn.title =
             basis === 'capacity'
@@ -3209,7 +3156,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const name = document.createElement('span');
         name.textContent = player.isCurrent ? `${player.name} (you)` : player.name;
         name.style.fontWeight = 'bold';
-        name.style.color = player.isCurrent ? COLORS.accent : COLORS.text;
+        name.style.color = player.isCurrent ? COLORS.dataAccent : COLORS.text;
 
         const stops = document.createElement('span');
         stops.style.marginLeft = 'auto';

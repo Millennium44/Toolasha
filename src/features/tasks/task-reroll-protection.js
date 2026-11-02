@@ -22,6 +22,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { buildSkillGroups, toggleSkillGroup, renderSkillBar } from './task-skill-groups.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 const STORAGE_KEY_PREFIX = 'taskProtectedHrids';
 
@@ -607,9 +608,9 @@ class TaskRerollProtection {
             left: 50%;
             transform: translate(-50%, -50%);
             z-index: ${PANEL_Z_CAP + 2};
-            background: rgba(10, 10, 20, 0.97);
-            border: 2px solid rgba(74, 158, 255, 0.5);
-            border-radius: 10px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             width: 400px;
             max-width: calc(100vw - 20px);
             max-height: 500px;
@@ -618,7 +619,7 @@ class TaskRerollProtection {
             font-family: 'Segoe UI', sans-serif;
             color: #e0e0e0;
             font-size: 13px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         // Header
@@ -628,11 +629,11 @@ class TaskRerollProtection {
             justify-content: space-between;
             align-items: center;
             padding: 10px 14px;
-            border-bottom: 1px solid rgba(74, 158, 255, 0.3);
+            border-bottom: 1px solid ${GAME_COLORS.border};
             flex-shrink: 0;
         `;
         header.innerHTML = `
-            <span style="font-weight:700; font-size:14px; color:#4a9eff;">Protected Tasks</span>
+            <span style="font-weight:700; font-size:14px; color:${GAME_COLORS.text};">Protected Tasks</span>
             <button id="mwi-task-protection-close" style="
                 background:none; border:none; color:#aaa; font-size:22px;
                 cursor:pointer; padding:0; line-height:1;">×</button>
@@ -773,8 +774,8 @@ class TaskRerollProtection {
         capRow.style.cssText = `
             display: flex; align-items: center; gap: 8px;
             padding: 7px 14px;
-            border-bottom: 1px solid rgba(74, 158, 255, 0.2);
-            border-top: 1px solid rgba(74, 158, 255, 0.2);
+            border-bottom: 1px solid ${GAME_COLORS.border};
+            border-top: 1px solid ${GAME_COLORS.border};
             cursor: pointer;
             flex-shrink: 0;
         `;
