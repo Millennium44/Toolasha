@@ -165,3 +165,48 @@ describe('the estimate tier', () => {
         expect(runSimulation).toHaveBeenLastCalledWith(expect.objectContaining({ difficultyTier: 3 }));
     });
 });
+
+describe('a tier that moves while the estimate is simulating', () => {
+    test('is simulated again at the new tier (login with Tasks open: the record lands mid-run)', async () => {
+        tierMock.resolved = { tier: 0, known: false, source: 'default', pending: true };
+        runSimulation.mockImplementationOnce(async () => {
+            tierMock.resolved = { tier: 3, known: true, source: 'remembered', pending: false };
+            return { deaths: { '/monsters/stabby': 100, '/monsters/smashy': 60 }, encounters: 120 };
+        });
+        const { container, info } = mountCard();
+
+        const record = await estimate(container, info);
+
+        expect(runSimulation).toHaveBeenCalledTimes(2);
+        expect(runSimulation).toHaveBeenLastCalledWith(expect.objectContaining({ difficultyTier: 3 }));
+        expect(record.tier).toBe(3);
+        expect(container.innerHTML).toContain('T3 (the tier you last ran here)');
+    });
+
+    test('the same tier arriving with a better note only updates the note, with no second simulation', async () => {
+        tierMock.resolved = { tier: 0, known: false, source: 'default', pending: true };
+        runSimulation.mockImplementationOnce(async () => {
+            tierMock.resolved = { tier: 0, known: false, source: 'default', pending: false };
+            return { deaths: { '/monsters/stabby': 100, '/monsters/smashy': 60 }, encounters: 120 };
+        });
+        const { container, info } = mountCard();
+        await estimate(container, info);
+
+        expect(runSimulation).toHaveBeenCalledTimes(1);
+        expect(container.innerHTML).not.toContain('yet');
+    });
+
+    test('a tier that keeps moving cannot loop: the re-runs are bounded', async () => {
+        let tier = 0;
+        runSimulation.mockImplementation(async () => {
+            tier += 1;
+            tierMock.resolved = { tier, known: true, source: 'remembered', pending: false };
+            return { deaths: { '/monsters/stabby': 100, '/monsters/smashy': 60 }, encounters: 120 };
+        });
+        const { container, info } = mountCard();
+        await estimate(container, info);
+
+        expect(runSimulation.mock.calls.length).toBeLessThanOrEqual(3);
+        expect(taskProfitDisplay._cardEstimates.get(info)).toBeTruthy();
+    });
+});

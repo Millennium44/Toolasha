@@ -42,6 +42,16 @@ const storageMock = vi.hoisted(() => {
             map.set(key, structuredClone(folded === undefined ? value : folded));
             return true;
         }),
+        update: vi.fn(async (key, mutate, store = 'settings') => {
+            if (storageMock.unavailable || storageMock.failWrites) return null;
+            await Promise.resolve();
+            const map = storeFor(store);
+            const found = map.has(key) && map.get(key) != null;
+            const next = mutate(found ? structuredClone(map.get(key)) : undefined, found);
+            if (next === undefined) return { written: false, value: map.get(key) };
+            map.set(key, structuredClone(next));
+            return { written: true, value: next };
+        }),
         delete: vi.fn(async () => true),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
         flushAll: vi.fn(async () => {}),
@@ -83,6 +93,7 @@ vi.mock('./adoption-consent.js', () => ({
 }));
 
 const mem = await import('./zone-tier-memory.js');
+const { announceSyncPullApplied } = await import('./sync-merge-registry.js');
 
 const GOBO = '/actions/combat/gobo_planet';
 const FLY = '/actions/combat/fly';
@@ -391,5 +402,90 @@ describe('mergeZoneTiers: the later change wins per zone', () => {
         });
         expect(merged).toEqual({});
         expect(mem.mergeZoneTiers([], 'junk')).toEqual({});
+    });
+});
+
+describe('a sync pull', () => {
+    test('the zone running now is stamped with its real tier over a pulled newer stamp', async () => {
+        dm.actions = [combat(GOBO, 3)];
+        mem.startZoneTierMemory();
+        await settle();
+        expect(mem.rememberedTier(GOBO)).toBe(3);
+
+        // Another device's later record says T1 for the zone this character is running at T3 right now
+        storageMock.storeFor('settings').set('combatZoneTiers_char-a', { [GOBO]: { tier: 1, at: 9_000 } });
+        await announceSyncPullApplied({ settings: ['combatZoneTiers_char-a'] });
+        await settle();
+
+        expect(mem.rememberedTier(GOBO)).toBe(3);
+        expect(stored()[GOBO].tier).toBe(3);
+        expect(stored()[GOBO].at).toBeGreaterThan(9_000);
+    });
+
+    test('a pull that agrees with what is running writes nothing', async () => {
+        dm.actions = [combat(GOBO, 3)];
+        mem.startZoneTierMemory();
+        await settle();
+        const writes = storageMock.update.mock.calls.length;
+
+        storageMock.storeFor('settings').set('combatZoneTiers_char-a', { [GOBO]: { tier: 3, at: 9_000 } });
+        await announceSyncPullApplied({ settings: ['combatZoneTiers_char-a'] });
+        await settle();
+
+        expect(storageMock.update.mock.calls.length).toBe(writes);
+        expect(mem.rememberedTier(GOBO)).toBe(3);
+    });
+});
+
+describe('a record that could not be read', () => {
+    test('is read again on a later observation, never taken for empty', async () => {
+        storageMock.unavailable = true;
+        dm.actions = [combat(GOBO, 3)];
+        mem.startZoneTierMemory();
+        await settle();
+        expect(mem.isReady()).toBe(false);
+
+        storageMock.unavailable = false;
+        sendActions([combat(GOBO, 3)]);
+        await settle();
+
+        expect(mem.isReady()).toBe(true);
+        expect(mem.rememberedTier(GOBO)).toBe(3);
+        expect(stored()[GOBO].tier).toBe(3);
+    });
+
+    test('the retries are bounded', async () => {
+        storageMock.unavailable = true;
+        mem.startZoneTierMemory();
+        await settle();
+        const first = storageMock.tryGet.mock.calls.length;
+        dm.actions = [combat(GOBO, 3)];
+        for (let i = 0; i < 12; i += 1) {
+            sendActions([combat(GOBO, 3)]);
+            await settle();
+        }
+        expect(storageMock.tryGet.mock.calls.length - first).toBeLessThanOrEqual(3);
+        expect(mem.isReady()).toBe(false);
+    });
+});
+
+describe('a change in flight across a character switch', () => {
+    test('lands under the departing character, not lost and not written to the arriving one', async () => {
+        dm.actions = [combat(FLY, 1)];
+        mem.startZoneTierMemory();
+        await settle();
+
+        // The change and the switch in the same tick, before the save has started
+        sendActions([combat(GOBO, 2)]);
+        dm.emit('character_switching', {});
+        dm.characterId = 'char-b';
+        dm.actions = [];
+        dm.emit('character_initialized', {});
+        await settle();
+
+        expect(stored('char-a')[GOBO]).toMatchObject({ tier: 2 });
+        expect(stored('char-a')[FLY]).toMatchObject({ tier: 1 });
+        expect(mem.rememberedTier(GOBO)).toBeNull();
+        expect(stored('char-b') ?? {}).not.toHaveProperty(GOBO);
     });
 });

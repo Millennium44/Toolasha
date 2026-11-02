@@ -16,6 +16,8 @@
 import { describe, test, expect, afterEach, beforeEach, vi } from 'vitest';
 import taskProfitDisplay from './task-profit-display.js';
 import dataManager from '../../core/data-manager.js';
+import config from '../../core/config.js';
+import { paddedZoneFights } from './task-zone-estimate-percentile.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import { buildAllPlayerDTOs, buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
 import { fightsForKillConfidence } from '../../utils/fight-confidence.js';
@@ -255,5 +257,91 @@ describe('Go fills the fights the zone summary quotes', () => {
     test('solo mode never carries a zone figure', async () => {
         const { estimate } = await runCardEstimate(BOARD, SIM, 'solo');
         expect(estimate.zoneFights).toBeNull();
+    });
+});
+
+/**
+ * The quoted zone figure follows `taskCombatEstimatePercentile` (the median is an option), so Go also
+ * pads the zone from the means by the confidence setting and keeps the flat buffer as a floor, and fills
+ * the larger of the two: never less than the card says, nor less than the player's confidence asks.
+ */
+describe('Go pads the zone count as well as quoting it', () => {
+    const BOARD = [
+        ['Defeat - Stabby', 0, 65],
+        ['Defeat - Smashy', 4, 30],
+        ['Defeat - Smashy', 0, 30],
+        ['Defeat - Gobo Chieftain', 0, 2],
+    ];
+
+    function settings({ percentile = '90', confidence = 90, buffer = 5 } = {}) {
+        const real = config.getSettingValue.bind(config);
+        vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) => {
+            if (key === 'taskCombatEstimatePercentile') return percentile;
+            if (key === 'combatFightConfidence') return confidence;
+            if (key === 'taskCombatGoBuffer') return buffer;
+            return real(key, fallback);
+        });
+    }
+
+    async function goFill(percentile, extra = {}) {
+        settings({ percentile, ...extra });
+        dataManager.characterActions = [{ actionHrid: ZONE, difficultyTier: 3, isDone: false, ordinal: 0 }];
+        const { container, estimate } = await runCardEstimate(BOARD, SIM);
+        const { input } = detailPanel('Gobo Planet', 3);
+        await taskProfitDisplay._applyGoEstimate(estimate);
+        return { quoted: quotedFights(container), filled: Number(input.value), estimate };
+    }
+
+    test('at Median the card quotes the 50% figure but Go still covers the confidence setting', async () => {
+        const { quoted, filled, estimate } = await goFill('50');
+        const padded = paddedZoneFights({
+            thresholds: estimate.zoneThresholds,
+            meanFloor: estimate.zoneMeanFights,
+            confidencePercent: 90,
+            bufferPercent: 5,
+        });
+        expect(padded).toBeGreaterThan(quoted);
+        expect(filled).toBe(padded);
+    });
+
+    test('a higher confidence setting fills more than the card quotes at 90%', async () => {
+        const { quoted, filled } = await goFill('90', { confidence: 99 });
+        expect(filled).toBeGreaterThan(quoted);
+    });
+
+    test('the flat buffer is kept as a floor', async () => {
+        const { quoted, filled, estimate } = await goFill('90', { buffer: 60 });
+        const limiting = Math.max(
+            ...estimate.zoneThresholds.map((t) => (Number.isFinite(t.meanFights) ? t.meanFights : 0))
+        );
+        expect(filled).toBeGreaterThanOrEqual(Math.ceil(limiting * 1.6) - 1);
+        expect(filled).toBeGreaterThan(quoted);
+    });
+
+    test('at default settings Go never fills less than the card, and not much more', async () => {
+        const { quoted, filled } = await goFill('90');
+        expect(filled).toBeGreaterThanOrEqual(quoted);
+        expect(filled).toBeLessThanOrEqual(Math.ceil(quoted * 1.06));
+    });
+
+    test('the Task Statistics row pads the same way, from the same helper', async () => {
+        const { estimate } = await goFill('90');
+        const row = {
+            fightsNeeded: estimate.zoneMeanFights,
+            estimate: { fightsNeeded: estimate.zoneFights },
+            monsterThresholds: estimate.zoneThresholds,
+        };
+        const { default: statistics } = await import('./task-statistics.js');
+        const fromRow = statistics.paddedZoneFightCount(row);
+        const fromCard = Math.max(
+            estimate.zoneFights,
+            paddedZoneFights({
+                thresholds: estimate.zoneThresholds,
+                meanFloor: estimate.zoneMeanFights,
+                confidencePercent: 90,
+                bufferPercent: 5,
+            })
+        );
+        expect(fromRow).toBe(fromCard);
     });
 });

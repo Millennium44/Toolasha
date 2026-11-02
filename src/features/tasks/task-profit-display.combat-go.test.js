@@ -621,7 +621,10 @@ describe('_resolveEstimateTier: the tier a combat estimate simulates at, and Go 
     test('a zone the player queues at T0 is a known T0, not "unknown"', () => {
         dataManager.characterActions = [{ actionHrid: '/actions/combat/fly_zone', isDone: false, ordinal: 0 }];
 
-        expect(taskProfitDisplay._resolveEstimateTier('/actions/combat/fly_zone')).toMatchObject({ tier: 0, known: true });
+        expect(taskProfitDisplay._resolveEstimateTier('/actions/combat/fly_zone')).toMatchObject({
+            tier: 0,
+            known: true,
+        });
     });
 
     test('the zone is nowhere in the queue: falls back to T0 and says so, never a guessed tier', () => {

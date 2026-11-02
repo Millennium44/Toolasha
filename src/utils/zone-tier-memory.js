@@ -75,12 +75,20 @@ const record = createPersistedRecord({
     empty: () => ({}),
     merge: mergeZoneTiers,
     label: 'ZoneTierMemory',
+    // One readwrite transaction, written at once: a switch right after a change still lands the
+    // departing character's change under its own key (`reset()` writes an unwritten atomic save),
+    // and a second tab's change is folded in rather than overwritten
+    atomic: true,
+    immediate: true,
     // A pull wrote this character's key under the running page: fold it under what is held
     onPulled: async (rec) => {
         if (!ownerId || ownerId !== dataManager.getCurrentCharacterId?.()) return;
         const token = epoch;
         await rec.load();
         if (token !== epoch) return;
+        // The pulled tiers may be older than what is running now: stamp the zone running now with its
+        // real tier (no write when unchanged)
+        observeRunningZone();
         announce();
     },
 });
@@ -102,6 +110,14 @@ let epoch = 0;
 /** What was seen running before the record loaded: `{ ownerId, zoneHrid, tier }` */
 let pending = null;
 let started = false;
+/** The character whose record could not be read, so a later observation may try again */
+let failedFor = null;
+/** Reads retried for `failedFor` since it last loaded or changed; bounded */
+let retries = 0;
+/** A read is in flight, so no other starts */
+let loading = false;
+/** How many times an unreadable record is read again, one per observation */
+const MAX_LOAD_RETRIES = 3;
 
 function announce(detail = {}) {
     dataManager.emit?.(ZONE_TIER_MEMORY_EVENT, { characterId: ownerId, ...detail });
@@ -170,6 +186,11 @@ export function observeRunningZone() {
     if (!isReady() || ownerId !== who) {
         // Not loaded yet: written once the record arrives, for the same character only
         pending = { ownerId: who, zoneHrid: running.actionHrid, tier };
+        // A read that failed is tried again, a few times, on a later observation — never treated as empty
+        if (failedFor === who && !loading && retries < MAX_LOAD_RETRIES) {
+            retries += 1;
+            adopt();
+        }
         return;
     }
     applyObservation(running.actionHrid, tier);
@@ -178,7 +199,9 @@ export function observeRunningZone() {
 function applyObservation(zoneHrid, tier) {
     const current = record.get()?.[zoneHrid];
     if (validEntry(current) && current.tier === tier) return;
-    const at = Date.now();
+    // Later than anything the entry already says, so a pulled copy with a newer stamp cannot win back
+    // a tier that is running right now
+    const at = Math.max(Date.now(), validEntry(current) ? Number(current.at) + 1 : 0);
     record.set({ ...record.get(), [zoneHrid]: { tier, at } });
     announce({ zoneHrid });
     record
@@ -205,14 +228,28 @@ async function adopt() {
     epoch += 1;
     const token = epoch;
     ownerId = null;
+    if (failedFor !== who) {
+        failedFor = null;
+        retries = 0;
+    }
+    // Flushes the departing character's unwritten change first (atomic record), then empties memory
     record.reset();
-    const ok = await record.load();
+    loading = true;
+    let ok;
+    try {
+        ok = await record.load();
+    } finally {
+        if (token === epoch) loading = false;
+    }
     // A switch or a stop landed during the read: this is not that character's record any more
     if (token !== epoch || dataManager.getCurrentCharacterId?.() !== who) return;
     if (!ok) {
+        failedFor = who;
         console.warn('[ZoneTierMemory] The remembered tiers could not be read; estimates fall back to T0');
         return;
     }
+    failedFor = null;
+    retries = 0;
     ownerId = who;
     announce();
     // What was seen while the record loaded first, then what is running now (the later one wins)
@@ -225,6 +262,9 @@ function onSwitching() {
     epoch += 1;
     ownerId = null;
     pending = null;
+    failedFor = null;
+    retries = 0;
+    loading = false;
     record.reset();
 }
 
@@ -259,6 +299,9 @@ export function _resetZoneTierMemoryForTests() {
     started = false;
     ownerId = null;
     pending = null;
+    failedFor = null;
+    retries = 0;
+    loading = false;
     epoch += 1;
     record.reset();
 }
