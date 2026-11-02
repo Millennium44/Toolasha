@@ -565,7 +565,7 @@ describe('_resolveGoEstimate: what a Go click on this card would do', () => {
         expect(taskProfitDisplay._resolveGoEstimate(taskNode)).toBe(null);
     });
 
-    test("defers to taskGoMerge's exact total when it is about to combine several in-progress tasks", () => {
+    test("keeps the estimate's zone but carries taskGoMerge's exact total when several in-progress tasks share the monster", () => {
         const taskNode = document.createElement('div');
         taskProfitDisplay._cardEstimates.set(taskNode, {
             zoneHrid: '/actions/combat/fly',
@@ -578,15 +578,22 @@ describe('_resolveGoEstimate: what a Go click on this card would do', () => {
                 status: '/quest_status/in_progress',
                 category: '/quest_category/random_task',
                 monsterHrid: '/monsters/fly',
+                goalCount: 50,
+                currentCount: 10,
             },
             {
                 status: '/quest_status/in_progress',
                 category: '/quest_category/random_task',
                 monsterHrid: '/monsters/fly',
+                goalCount: 50,
+                currentCount: 10,
             },
         ];
 
-        expect(taskProfitDisplay._resolveGoEstimate(taskNode)).toBe(null);
+        expect(taskProfitDisplay._resolveGoEstimate(taskNode)).toMatchObject({
+            zoneHrid: '/actions/combat/fly',
+            mergedCount: 80,
+        });
     });
 
     test('a single matching task does not defer, even with taskGoMerge on', () => {
