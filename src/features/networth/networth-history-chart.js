@@ -1010,7 +1010,7 @@ class NetworthHistoryChart {
 
             // Steps that setting changes caused after the first point are left out of growth; the line and the
             // All-Time High stay as recorded
-            const steps = stepsAfter(networthHistory.getHistory(), first.t);
+            const steps = stepsAfter(networthHistory.getHistory(), first.t, last.t);
             const rangeChange = currentTotal - first.total - steps.step;
             const rangePercent = first.total > 0 ? (rangeChange / first.total) * 100 : 0;
 
@@ -1071,7 +1071,7 @@ class NetworthHistoryChart {
         if (this.categoryVisibility.showNonExcluded && hasNonExclStats) {
             const currentNE = this.networthFeature?.currentData?.totalNetworth ?? last.nonExcluded ?? last.total;
             const firstNE = first.nonExcluded ?? first.total;
-            const neSteps = stepsAfter(networthHistory.getHistory(), first.t).stepCounted;
+            const neSteps = stepsAfter(networthHistory.getHistory(), first.t, last.t).stepCounted;
             const neRate = hoursElapsed > 0 ? (currentNE - firstNE - neSteps) / hoursElapsed : 0;
 
             let neStatHtml = `<span style="color: #a78bfa;">Non-Excl</span>: <strong style="color: #a78bfa;">${networthFormatter(Math.round(currentNE))}</strong>`;
@@ -1101,7 +1101,8 @@ class NetworthHistoryChart {
                 firstVal -= first.gold ?? 0;
                 lastVal -= last.gold ?? 0;
             }
-            const catStep = cat.key === 'inventory' ? stepsAfter(networthHistory.getHistory(), first.t).stepCounted : 0;
+            const catStep =
+                cat.key === 'inventory' ? stepsAfter(networthHistory.getHistory(), first.t, last.t).stepCounted : 0;
             const catChange = lastVal - firstVal - catStep;
             const rate = hoursElapsed > 0 ? catChange / hoursElapsed : 0;
             const rateColor = rate >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;

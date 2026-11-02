@@ -406,3 +406,16 @@ describe('sync ownership', () => {
         expect(ownsKey('networthHistory', 'networthDetail_c1_1000')).toBe(true);
     });
 });
+
+describe('a listing that partly filled', () => {
+    test('is a value change with no made-up unit price', () => {
+        const row = (count, value) => ['b', H('a'), 0, count, value];
+        const prev = record([row(10, 1000)], { total: 1000, nonExcluded: 1000 });
+        const cur = record([row(5, 1100)], { total: 1100, nonExcluded: 1100 });
+        const change = diffRecords(prev, cur).top[0];
+        expect(change.unitBefore).toBeNull();
+        expect(change.unitAfter).toBeNull();
+        expect(change.cause).toBe('price');
+        expect(change.pricePart).toBe(100);
+    });
+});

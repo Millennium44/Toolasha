@@ -244,6 +244,7 @@ export function diffRecords(prev, cur, limit = TOP_COUNT) {
         const delta = v1 - v0;
         // Only a move in value or count is listed; a flag flip on an unchanged figure changes nothing
         if (delta === 0 && c0 === c1) continue;
+        const listing = ref[0] === 's' || ref[0] === 'b';
 
         const change = {
             kind: ref[0],
@@ -252,8 +253,10 @@ export function diffRecords(prev, cur, limit = TOP_COUNT) {
             delta,
             countBefore: a ? c0 : null,
             countAfter: b ? c1 : null,
-            unitBefore: a && c0 > 0 ? v0 / c0 : null,
-            unitAfter: b && c1 > 0 ? v1 / c1 : null,
+            // A listing's value also holds unclaimed fills while its count is the order left, so a unit
+            // price worked out from the two would be made up
+            unitBefore: !listing && a && c0 > 0 ? v0 / c0 : null,
+            unitAfter: !listing && b && c1 > 0 ? v1 / c1 : null,
             unpricedBefore: (f0 & FLAG_UNPRICED) !== 0,
             unpricedAfter: (f1 & FLAG_UNPRICED) !== 0,
             partialBefore: (f0 & FLAG_PARTIAL) !== 0,

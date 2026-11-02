@@ -52,8 +52,9 @@ export function explainChange(change) {
             lines.push(`Quantity: ${count}`);
             break;
         case 'price':
-            if (change.countBefore === change.countAfter) lines.push(`Price: ${each}, same quantity`);
-            else lines.push(`Value changed: ${networthFormatter(change.delta)}`);
+            if (change.countBefore === change.countAfter && change.unitBefore !== null) {
+                lines.push(`Price: ${each}, same quantity`);
+            } else lines.push(`Value changed: ${networthFormatter(change.delta)}`);
             break;
         case 'both':
             lines.push(`Quantity: ${count}`);

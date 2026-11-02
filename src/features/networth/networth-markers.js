@@ -370,7 +370,7 @@ export function countedMarkerTimes(history) {
  *   the separated steps (total, and the non-excluded part), how many markers carried one, how many carried
  *   only an unseparated change that mattered (left in), and how many steps are only a floor
  */
-export function stepsAfter(history, afterT) {
+export function stepsAfter(history, afterT, untilT = Infinity) {
     const counted = countedMarkerTimes(history);
     let step = 0;
     let stepCounted = 0;
@@ -379,7 +379,7 @@ export function stepsAfter(history, afterT) {
     let floor = 0;
     for (const point of history || []) {
         const marker = point?.marker;
-        if (!marker || !(point.t > afterT) || !counted.has(point.t)) continue;
+        if (!marker || !(point.t > afterT) || point.t > untilT || !counted.has(point.t)) continue;
         if (Number.isFinite(marker.step)) {
             step += marker.step;
             stepCounted += Number.isFinite(marker.stepCounted) ? marker.stepCounted : marker.step;

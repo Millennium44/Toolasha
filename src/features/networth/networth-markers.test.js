@@ -547,3 +547,20 @@ describe('rebasedWithoutSteps', () => {
         expect(switchedOff[0].total).toBe(1000);
     });
 });
+
+describe('stepsAfter with an end', () => {
+    const history = [
+        { t: 1, total: 1000 },
+        { t: 2, total: 1010 },
+        { t: 3, total: 1510, marker: { step: 500, changes: [{ setting: 'a', from: false, to: true }] } },
+    ];
+
+    test('a step after the range is left out', () => {
+        expect(stepsAfter(history, 1, 2).step).toBe(0);
+    });
+
+    test('a step inside the range counts, and with no end it counts as before', () => {
+        expect(stepsAfter(history, 1, 3).step).toBe(500);
+        expect(stepsAfter(history, 1).step).toBe(500);
+    });
+});
