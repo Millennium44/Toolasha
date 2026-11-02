@@ -598,7 +598,8 @@ class TradeLedgerStore {
      * costs a read; a ledger with nothing doubled never needs one).
      * @param {string} charId - Whose listings
      * @param {Set<number>} openIds - Listings still open (or not known to have ended)
-     * @returns {Promise<Map<number, number>>} Listing id to final filled quantity
+     * @returns {Promise<Map<number, number>|null>} Listing id to final filled quantity; null when the archive
+     *   was needed and could not be read, which defers the whole repair
      * @private
      */
     async _endedFills(charId, openIds) {
@@ -634,7 +635,10 @@ class TradeLedgerStore {
         }
         if (needArchive) {
             const archived = await listingArchive.read(charId);
-            if (Array.isArray(archived)) archived.forEach((row) => note(row, false));
+            // `read` answers null when the archive could not be read and an array (possibly empty) when it
+            // could: an unreadable archive may hold a higher count than the log, so the repair waits
+            if (!Array.isArray(archived)) return null;
+            archived.forEach((row) => note(row, false));
         }
 
         for (const id of [...caps.keys()]) {
@@ -687,7 +691,7 @@ class TradeLedgerStore {
                     if (entry && !ENDED_WIRE_STATUSES.has(entry.status)) openIds.add(Number(entry.id));
                 }
                 const caps = await this._endedFills(charId, openIds);
-                if (!current() || caps.size === 0) return 0;
+                if (!current() || caps === null || caps.size === 0) return 0;
 
                 const { records, repairedIds } = repairOverRecorded(this.records, caps);
                 if (repairedIds.size === 0) return 0;
@@ -707,20 +711,24 @@ class TradeLedgerStore {
                         ...stored.filter((record) => !mine(record)),
                         ...records.filter((r) => belongs(r, day)),
                     ];
-                    if (next.length === 0) {
-                        if (probe.found) await storage.delete(key, LEDGER_STORE);
-                        continue;
-                    }
+                    // Nothing stored and nothing to put: nothing to do
+                    if (next.length === 0 && !probe.found) continue;
                     // Immediate and awaited: a debounced write still pending when the next save reads would let that
-                    // save fold the removed rows straight back in
+                    // save fold the removed rows straight back in. Emptiness is judged inside the write's own
+                    // transaction, on what is stored when it lands: the key is deleted (the storage layer's fold
+                    // delete) only if nothing is left there, so a fill another tab stored after the read above
+                    // survives, and a day record that is gone is read as no fills, as before
                     await storage.set(key, next, LEDGER_STORE, true, {
-                        fold: (now, held) =>
-                            Array.isArray(now) && Array.isArray(held)
-                                ? mergeRecords(
-                                      now.filter((record) => !mine(record)),
-                                      held
-                                  )
-                                : held,
+                        fold: (now, held) => {
+                            const merged =
+                                Array.isArray(now) && Array.isArray(held)
+                                    ? mergeRecords(
+                                          now.filter((record) => !mine(record)),
+                                          held
+                                      )
+                                    : held;
+                            return merged.length === 0 && storage.FOLD_DELETE ? storage.FOLD_DELETE : merged;
+                        },
                     });
                 }
                 return repairedIds.size;

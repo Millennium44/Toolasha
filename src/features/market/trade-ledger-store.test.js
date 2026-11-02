@@ -30,6 +30,7 @@ const storageMock = vi.hoisted(() => {
         // A read that says whether it worked; tests flip `unavailable` to
         // stand in for a dropped IndexedDB connection
         unavailable: false,
+        FOLD_DELETE: Symbol('fold-delete'),
         tryGet: vi.fn(async (key, store = 'settings') => {
             if (storageMock.unavailable) return null;
             const map = storeFor(store);
@@ -47,6 +48,10 @@ const storageMock = vi.hoisted(() => {
             intervening?.();
             const map = storeFor(store);
             const folded = options?.fold ? (options.fold(map.get(key), value) ?? value) : value;
+            if (folded === storageMock.FOLD_DELETE) {
+                map.delete(key);
+                return true;
+            }
             map.set(key, structuredClone(folded));
             return true;
         }),
@@ -1244,5 +1249,53 @@ describe('fills recorded past what a finished listing filled are cut back', () =
             [T1, 3],
             [T1, 3],
         ]);
+    });
+    test('a fill another tab stores in an emptied day after the read survives', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        // Re-open the case: day 3 holds only the doomed row, in memory and in storage
+        LEDGER().set(REC(T3), [fill(5, T3)]);
+        tradeLedgerStore.records = [fill(5, T1), fill(5, T2), fill(5, T3)];
+        const real = storageMock.tryGet.getMockImplementation();
+        let fired = false;
+        storageMock.tryGet.mockImplementation(async (key, store) => {
+            const result = await real(key, store);
+            if (key === REC(T3) && !fired) {
+                fired = true;
+                storageMock.storeFor(store).set(key, [fill(5, T3), fill(9, T3 + 10)]);
+            }
+            return result;
+        });
+        try {
+            await tradeLedgerStore._repairOverRecorded();
+        } finally {
+            storageMock.tryGet.mockImplementation(real);
+        }
+
+        expect(
+            LEDGER()
+                .get(REC(T3))
+                ?.map((r) => r.listingId)
+        ).toEqual([9]);
+    });
+
+    test('an unreadable archive defers the repair; an empty one does not', async () => {
+        seedSplit([fill(5, T1), fill(5, T2)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+        archiveMock.rows = null;
+        await loadAndRepair();
+        expect(quantities(5)).toEqual([5, 5]);
+        expect(storedQuantity(5)).toBe(10);
+
+        // The archive comes back holding a higher count than the stale log: nothing to cut
+        archiveMock.rows = [logRow(5, 10)];
+        await tradeLedgerStore._repairOverRecorded();
+        expect(quantities(5)).toEqual([5, 5]);
+
+        // An archive that is readable and empty is an archive with nothing in it
+        archiveMock.rows = [];
+        await tradeLedgerStore._repairOverRecorded();
+        expect(quantities(5)).toEqual([5]);
     });
 });
