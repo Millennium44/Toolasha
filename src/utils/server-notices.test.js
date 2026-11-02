@@ -22,9 +22,11 @@ vi.mock('../core/data-manager.js', () => ({
 }));
 
 const { normalizeServerNotice, onServerNotice } = await import('./server-notices.js');
+const { buildInfoNotices } = await import('../__fixtures__/wire/labyrinth.js');
 
-// Fixtures are built from the game's handleMessageError / handleMessageInfo (no live capture exists):
-// { type, message: i18nKey, variables: [{ name, data }] }
+// Inline fixtures follow the game's handleMessageError / handleMessageInfo:
+// { type, message: i18nKey, variables: [{ name, data }] }. A captured info notice
+// (party flow, test server 2026-11-01) has `variables: null` — see buildInfoNotices.
 const emit = (type, data) => (hook.handlers.get(type) || []).slice().forEach((h) => h(data, { socket: {} }));
 
 describe('normalizeServerNotice', () => {
@@ -39,6 +41,15 @@ describe('normalizeServerNotice', () => {
             key: 'infoNotification.guildTrialSignupRemoved',
             variables: { trialHrid: '/guild_trials/x', 1: 'Bob' },
         });
+    });
+
+    test('the captured info notices carry variables: null and normalize to an empty map', () => {
+        const notices = buildInfoNotices();
+        expect(notices.length).toBeGreaterThan(0);
+        for (const raw of notices) {
+            expect(raw.variables).toBeNull();
+            expect(normalizeServerNotice(raw)).toMatchObject({ level: 'info', key: raw.message, variables: {} });
+        }
     });
 
     test('tolerates absent, empty and malformed variables', () => {

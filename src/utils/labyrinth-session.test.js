@@ -4,7 +4,34 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { newLabyrinthSessionState, noteLabyrinthUpdate, labyrinthSessionKey } from './labyrinth-session.js';
+import {
+    newLabyrinthSessionState,
+    noteLabyrinthUpdate,
+    labyrinthSessionKey,
+    labyrinthRunStamp,
+} from './labyrinth-session.js';
+import { buildLabyrinthUpdated } from '../__fixtures__/wire/labyrinth.js';
+
+describe('naming a run from startedAt', () => {
+    test('the nanosecond and millisecond forms the server sends name the same run', () => {
+        const opening = buildLabyrinthUpdated('entry').labyrinth.startedAt;
+        const later = buildLabyrinthUpdated('roomClearReveal').labyrinth.startedAt;
+        expect(opening).not.toBe(later);
+        expect(labyrinthRunStamp(opening)).toBe(labyrinthRunStamp(later));
+        const state = newLabyrinthSessionState();
+        noteLabyrinthUpdate(state, buildLabyrinthUpdated('entry'));
+        const key = labyrinthSessionKey(state, null);
+        noteLabyrinthUpdate(state, buildLabyrinthUpdated('roomClearReveal'));
+        expect(labyrinthSessionKey(state, null)).toBe(key);
+    });
+
+    test('a different run is a different name; no stamp is no name; a non-date stamp is kept as is', () => {
+        expect(labyrinthRunStamp('2026-10-12T21:36:06.404Z')).not.toBe(labyrinthRunStamp('2026-11-02T00:09:55.006Z'));
+        expect(labyrinthRunStamp(undefined)).toBe('');
+        expect(labyrinthRunStamp('')).toBe('');
+        expect(labyrinthRunStamp('t1')).toBe('t1');
+    });
+});
 
 describe('tracking whether a run is active', () => {
     test('not in a labyrinth falls back to the roster-based key', () => {

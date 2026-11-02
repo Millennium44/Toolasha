@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { buildLabyrinthUpdated } from '../../__fixtures__/wire/labyrinth.js';
 
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
@@ -132,6 +133,20 @@ describe('foldSighting', () => {
         ...over,
     });
     const start = { phase: 'unknown', run: null };
+
+    test('the real run-opening message and its successors are one run, not a run and its inferred end', () => {
+        // startedAt is nanosecond-precision on the opening messages and millisecond after
+        const opening = buildLabyrinthUpdated('entry').labyrinth;
+        const later = buildLabyrinthUpdated('roomClearReveal').labyrinth;
+        expect(opening.startedAt).not.toBe(later.startedAt);
+        const a = foldSighting(start, opening, 1000);
+        const b = foldSighting(a.state, later, 2000);
+        expect(b.ended).toBeNull();
+        expect(b.state.run.key).toBe(a.state.run.key);
+        expect(b.state.run.start.torch).toBe(400);
+        const done = foldSighting(b.state, buildLabyrinthUpdated('exit').labyrinth, 3000);
+        expect(done.ended).toMatchObject({ key: a.state.run.key });
+    });
 
     test('a run joined mid-way keeps its floor-of-a-measurement out of the average', () => {
         // First seen on floor 3 (a reload): its start is just where we came

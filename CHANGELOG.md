@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth reads the run the way the game sends it
+
+- Run supplies (torches, shrouds, beacons) are read from the fields the game actually sends, so path planning knows your stock and a beacon is told apart from a room clear.
+- Auto-path re-pathing when a room clear reveals rooms is now its own switch ("Path on reveal"), next to Auto-path; existing players keep both on.
+- Route marks for a room update as soon as it is revealed, instead of waiting for the next Path press.
+- A run keeps one identity when the game changes its start-time precision mid-run, so the ledger no longer files a phantom ended run and the damage trackers and room log no longer reset.
+
 ### Guild trial results are recorded without opening the Trials tab
 
 - Each trial's banked tier is now recorded from the guild data the server sends (including at login), so results land and Past weeks can show them (points derived from the tier, marked ~) even if the Trials tab was never open.

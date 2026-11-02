@@ -58,6 +58,7 @@ import dataManager from '../../core/data-manager.js';
 import { isFromActiveSocket } from './labyrinth-activity.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
+import { labyrinthRunStamp } from '../../utils/labyrinth-session.js';
 import { labyrinthRunState } from '../notifications/notification-predicates.js';
 
 const STORAGE_KEY = 'labyrinthRunLedger';
@@ -131,7 +132,17 @@ export function foldSighting(state, labyrinth, nowMs) {
         // spend. The same invention duplicated a run across a reload, since
         // the second load minted a different name for the same run. No run is
         // the safe answer: a stamped payload that follows opens it properly.
-        const key = labyrinth?.startedAt ? String(labyrinth.startedAt) : (state.run?.key ?? null);
+        // The run keeps the stamp text it was first seen with (it is persisted and merged by key); the
+        // server's later messages spell the same instant at another precision, which is the same run
+        const stamp = labyrinthRunStamp(labyrinth?.startedAt);
+        const sameRun = (known) => !!stamp && !!known && labyrinthRunStamp(known) === stamp;
+        const key = stamp
+            ? sameRun(state.run?.key)
+                ? state.run.key
+                : sameRun(state.endedKey)
+                  ? state.endedKey
+                  : String(labyrinth.startedAt)
+            : (state.run?.key ?? null);
         if (!key) return { state, ended: null };
         // The run that just ended is not a new run. The server re-sends
         // labyrinth messages after a run ends, and a re-send that omits

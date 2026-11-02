@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { buildLabyrinthUpdated } from '../../__fixtures__/wire/labyrinth.js';
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => false, getSettingValue: (_k, d) => d, Z_FLOATING_PANEL: 1100 },
@@ -225,6 +226,22 @@ describe('skilling attempts are logged one per retry', () => {
     test('a missing actionTimeMs is recorded as null, not guessed', () => {
         labyrinthRoomLogs.onRoomProgress(msg(0, 0, { actionTimeMs: undefined }));
         expect(labyrinthRoomLogs.activeSession.attempts[0].actionTimeMs).toBeNull();
+    });
+});
+
+describe("a run keeps one name across the server's two startedAt precisions", () => {
+    afterEach(() => {
+        labyrinthRoomLogs.activeSession = null;
+        labyrinthRoomLogs.labContext = null;
+    });
+
+    test('the run-opening message (nanoseconds) and the next one (milliseconds) share a runKey', () => {
+        labyrinthRoomLogs.activeSession = null;
+        labyrinthRoomLogs.onLabyrinthUpdated(buildLabyrinthUpdated('entry'));
+        const first = labyrinthRoomLogs.labContext.runKey;
+        labyrinthRoomLogs.onLabyrinthUpdated(buildLabyrinthUpdated('roomClearReveal'));
+        expect(labyrinthRoomLogs.labContext.runKey).toBe(first);
+        expect(first.endsWith('|1')).toBe(true);
     });
 });
 

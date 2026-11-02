@@ -29,6 +29,7 @@ import { createPersistedRecord } from '../../utils/persisted-record.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { CLEAR_FOLD_LIMIT } from '../../utils/cleared-record.js';
+import { labyrinthRunStamp } from '../../utils/labyrinth-session.js';
 
 /**
  * Deciding a side needs far fewer fights than measuring a rate
@@ -378,7 +379,7 @@ export const outcomeMethods = {
      * @returns {string}
      */
     outcomeScope(labyrinth) {
-        return `${labyrinth?.startedAt || ''}|${Math.floor(Number(labyrinth?.currentFloor) || 0)}`;
+        return `${labyrinthRunStamp(labyrinth?.startedAt)}|${Math.floor(Number(labyrinth?.currentFloor) || 0)}`;
     },
 
     /**

@@ -286,6 +286,11 @@ export function readRunSupplyCounts(labyrinth, hrids = SUPPLY_HRIDS) {
                 record(key, entry);
                 continue;
             }
+            // The shape the server really sends: { torchItemHrid: '/items/expert_torch', torchCount: 114 }
+            if (key.endsWith('ItemHrid') && kindOf.has(entry)) {
+                record(entry, value[`${key.slice(0, -'ItemHrid'.length)}Count`]);
+                continue;
+            }
             if (NOT_SUPPLY_KEYS.has(key)) continue;
             visit(entry, depth + 1);
         }

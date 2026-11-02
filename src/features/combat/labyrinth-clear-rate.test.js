@@ -6,6 +6,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
+import { buildLabyrinthUpdated } from '../../__fixtures__/wire/labyrinth.js';
 import { SUPPLY_HRIDS } from './labyrinth-supplies.js';
 import { roomXpPerHour } from './labyrinth-formulas.js';
 
@@ -7526,15 +7527,27 @@ describe('auto-path after a beacon reveal', () => {
     let pathSpy;
     let tileSpy;
 
-    const setSettings = ({ autoPath = true } = {}) =>
-        configMock.getSetting.mockImplementation((key) => (key === 'labyrinthAutoPath' ? autoPath : false));
+    const setSettings = ({ autoPath = true, onReveal = true } = {}) =>
+        configMock.getSetting.mockImplementation((key) => {
+            if (key === 'labyrinthAutoPath') return autoPath;
+            if (key === 'labyrinthAutoPathOnReveal') return onReveal;
+            return false;
+        });
 
-    /** A labyrinth update for floor 3 with `revealed` rooms lit and `beacons` left in the run */
+    /**
+     * A labyrinth update for floor 3 with `revealed` rooms lit and `beacons` left in the run, on the
+     * captured message (flat beaconItemHrid/beaconCount); null beacons drops the stock fields
+     */
     const update = (revealed, beacons, floor = 3) => {
         const flat = Array.from({ length: 16 }, (_, i) => (i < revealed ? revealedRoom : null));
         const roomData = [flat.slice(0, 4), flat.slice(4, 8), flat.slice(8, 12), flat.slice(12, 16)];
-        const labyrinth = { currentFloor: floor, roomData };
-        if (beacons != null) labyrinth.supplyItemCountMap = { '/items/advanced_beacon': beacons };
+        const labyrinth = { ...buildLabyrinthUpdated('entry').labyrinth, currentFloor: floor, roomData };
+        if (beacons == null) {
+            delete labyrinth.beaconItemHrid;
+            delete labyrinth.beaconCount;
+        } else {
+            labyrinth.beaconCount = beacons;
+        }
         return { labyrinth };
     };
 
@@ -7617,11 +7630,125 @@ describe('auto-path after a beacon reveal', () => {
         expect(pathSpy).not.toHaveBeenCalled();
     });
 
-    test('a reveal that spent no beacon (a cleared room) does not re-path', () => {
+    test('a reveal that spent no beacon (a cleared room) does not re-path with the reveal option off', () => {
+        setSettings({ onReveal: false });
         labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
         vi.advanceTimersByTime(2000);
 
         expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a reveal that spent no beacon re-paths once with the reveal option on', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        labyrinthClearRate.onLabyrinthUpdated(update(6, 3));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('the reveal option needs Auto-path itself: with Auto-path off a room-clear reveal does nothing', () => {
+        setSettings({ autoPath: false, onReveal: true });
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a reveal path queued behind a room calculation is dropped if the option goes off before it drains', async () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+        expect(labyrinthClearRate._pathQueuedAuto).toBe(true);
+
+        setSettings({ onReveal: false });
+        tileSpy.mockRestore();
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate.roomData = null; // a pass with nothing to calculate settles the queue
+        await labyrinthClearRate.runTileCalculation();
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('the setting-change withdrawal drops a queued reveal path, not a beacon or manual one', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        labyrinthClearRate.withdrawRevealAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(false);
+
+        labyrinthClearRate.onLabyrinthUpdated(update(9, 2));
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+        labyrinthClearRate.withdrawRevealAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+
+        labyrinthClearRate.cancelAutoPath();
+        labyrinthClearRate._pathQueued = true; // a Path press
+        labyrinthClearRate._pathQueuedAuto = false;
+        labyrinthClearRate.withdrawRevealAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+    });
+
+    test('a beacon absorbed into a queued reveal path makes it a beacon path the reveal option cannot withdraw', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueuedReason).toBe('reveal');
+
+        labyrinthClearRate.onLabyrinthUpdated(update(9, 2));
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueuedReason).toBe('beacon');
+
+        setSettings({ onReveal: false });
+        labyrinthClearRate.withdrawRevealAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+        expect(labyrinthClearRate.revealQueueWithdrawn()).toBe(false);
+    });
+
+    test('a beacon still re-paths with the reveal option off', () => {
+        setSettings({ onReveal: false });
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('turning the reveal option off drops a pending reveal re-path but not a beacon one', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        setSettings({ onReveal: false });
+        vi.advanceTimersByTime(2000);
+        expect(pathSpy).not.toHaveBeenCalled();
+
+        setSettings({ onReveal: true });
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 3));
+        labyrinthClearRate.onLabyrinthUpdated(update(12, 2));
+        setSettings({ onReveal: false });
+        vi.advanceTimersByTime(2000);
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('real messages: the room clear that lights two rooms re-paths only with the reveal option, a beacon always', () => {
+        const run = (name, opts) => {
+            setSettings(opts);
+            labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('entry'));
+            labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated(name));
+            vi.advanceTimersByTime(2000);
+        };
+        run('roomClearReveal', { onReveal: false });
+        expect(pathSpy).not.toHaveBeenCalled();
+
+        labyrinthClearRate.roomData = null;
+        run('roomClearReveal', { onReveal: true });
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+
+        pathSpy.mockClear();
+        labyrinthClearRate.roomData = null;
+        setSettings({ onReveal: false });
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('torchSpent'));
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('beaconReveal'));
+        vi.advanceTimersByTime(2000);
+        expect(pathSpy).toHaveBeenCalledTimes(1);
     });
 
     test('a room calculation in progress gets the path queued behind it, not run beside it', () => {
@@ -7707,6 +7834,21 @@ describe('auto-path after a beacon reveal', () => {
         expect(isBeaconReveal({ revealed: 1, beacons: null }, { revealed: 2, beacons: null })).toBe(false);
         expect(isBeaconReveal({ revealed: 1, beacons: null }, { revealed: 3, beacons: 2 })).toBe(true);
         expect(isBeaconReveal(null, { revealed: 3, beacons: 2 })).toBe(false);
+    });
+
+    test('the real messages: a room clear that lights two rooms is no beacon, a beacon is', () => {
+        const snap = (name) => labyrinthClearRate.revealSnapshot(...snapArgs(name));
+        const snapArgs = (name) => {
+            const { labyrinth } = buildLabyrinthUpdated(name);
+            return [labyrinth.roomData, labyrinth];
+        };
+        expect(isBeaconReveal(snap('entry'), snap('roomClearReveal'))).toBe(false);
+        expect(isBeaconReveal(snap('torchSpent'), snap('beaconReveal'))).toBe(true);
+    });
+
+    test('a run is scoped by the same name across the nanosecond and millisecond startedAt', () => {
+        const scope = (name) => outcomeMethods.outcomeScope(buildLabyrinthUpdated(name).labyrinth);
+        expect(scope('entry')).toBe(scope('roomClearReveal'));
     });
 });
 
@@ -8016,5 +8158,91 @@ describe('labyrinth toolbar layout', () => {
 
         expect(panel().style.top).toBe('34px');
         expect(Number.parseFloat(panel().style.left)).toBeGreaterThanOrEqual(8);
+    });
+});
+
+/**
+ * A path mark on an unrevealed room is a guess ("Shroud?"); the message that reveals the room has to settle it
+ * without another Path press.
+ */
+describe('path marks follow a reveal', () => {
+    let judge;
+
+    /** Index of a skilling room the beacon message lights up that the message before it did not show */
+    const newlyShownSkillingIndex = () => {
+        const before = buildLabyrinthUpdated('torchSpent').labyrinth.roomData.flat();
+        const after = buildLabyrinthUpdated('beaconReveal').labyrinth.roomData.flat();
+        return after.findIndex((room, i) => room?.skillHrid && !before[i]);
+    };
+
+    const markAt = (index, label) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'mwi-labyrinth-path-overlay';
+        overlay.dataset.tileIndex = String(index);
+        overlay.dataset.pending = '1';
+        const tag = document.createElement('div');
+        tag.textContent = label;
+        overlay.appendChild(tag);
+        document.body.appendChild(overlay);
+        return overlay;
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.innerHTML = '';
+        judge = vi.spyOn(labyrinthClearRate, 'computeSkillingRoomClear');
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('torchSpent'));
+        labyrinthClearRate._pathThreshold = 0.7;
+    });
+
+    afterEach(() => {
+        labyrinthClearRate.cancelAutoPath();
+        clearTimeout(labyrinthClearRate.pruneTileTimer);
+        clearTimeout(labyrinthClearRate.autoTileTimer);
+        labyrinthClearRate.pruneTileTimer = null;
+        labyrinthClearRate.autoTileTimer = null;
+        judge.mockRestore();
+        vi.useRealTimers();
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._labyrinth = null;
+        labyrinthClearRate._pathThreshold = null;
+        document.body.innerHTML = '';
+    });
+
+    test('a "Shroud?" on a room the beacon reveals as clearable turns into a plain clear mark', () => {
+        const index = newlyShownSkillingIndex();
+        expect(index).toBeGreaterThanOrEqual(0);
+        judge.mockReturnValue({ clearChance: 0.95 });
+        const overlay = markAt(index, 'Shroud?');
+
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('beaconReveal'));
+
+        expect(overlay.textContent).toBe('');
+        expect(overlay.dataset.pending).toBeUndefined();
+        expect(overlay.style.border).toContain('2px solid');
+    });
+
+    test('a room the beacon reveals as unclearable is marked "Shroud", no longer a guess', () => {
+        const index = newlyShownSkillingIndex();
+        judge.mockReturnValue({ clearChance: 0.1 });
+        const overlay = markAt(index, 'Shroud?');
+
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('beaconReveal'));
+
+        expect(overlay.textContent).toBe('Shroud');
+        expect(overlay.dataset.pending).toBeUndefined();
+    });
+
+    test('a mark whose room is still unrevealed keeps its guess', () => {
+        const stillDark = buildLabyrinthUpdated('beaconReveal')
+            .labyrinth.roomData.flat()
+            .findIndex((r) => r === null);
+        expect(stillDark).toBeGreaterThanOrEqual(0);
+        const overlay = markAt(stillDark, 'Shroud?');
+
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('beaconReveal'));
+
+        expect(overlay.textContent).toBe('Shroud?');
+        expect(overlay.dataset.pending).toBe('1');
     });
 });

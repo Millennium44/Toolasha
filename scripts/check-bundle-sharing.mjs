@@ -255,6 +255,12 @@ const ALLOWLIST = new Map([
         'stateless single-function JSON serializer; no module state to share',
     ],
     [
+        'src/utils/labyrinth-session.js',
+        // Pure functions over a state object the caller owns (the damage trackers each hold their own) and
+        // the run-stamp normalizer; nothing is kept in the module, so a second copy computes the same name.
+        'stateless labyrinth run-session folds and run-stamp normalizer; no module state to share',
+    ],
+    [
         'src/utils/yield-to-browser.js',
         // One exported function, closes over nothing: a duplicated copy
         // behaves identically to a shared one.
