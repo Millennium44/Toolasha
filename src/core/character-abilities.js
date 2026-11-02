@@ -190,6 +190,49 @@ export function equippedAbilitiesFromBattle(battle, identity = {}) {
 }
 
 /**
+ * Give a battle's kit the slot numbers it does not carry.
+ *
+ * A real `new_battle` lists each player's abilities without `slotNumber`, in server order. The
+ * slots matter afterwards: `reconcileEquippedAbilities` displaces a slot's occupant only by
+ * comparing slot numbers, so an unslotted kit lets a later "C into B's slot" delta leave both
+ * equipped. Slots already known for an ability (the stored kit first, then the learned list)
+ * are kept; an ability with no known slot takes the lowest free one, which for a kit nobody has
+ * numbered is its position in the server's order.
+ *
+ * @param {Array<Object>} kit - Battle rows (not mutated)
+ * @param {...Array<Object>} known - Lists to look slots up in, most trusted first
+ * @returns {Array<Object>} Kit with every row slotted
+ */
+export function slotBattleKit(kit, ...known) {
+    const slotOf = (hrid) => {
+        for (const list of known) {
+            const slot = Number((Array.isArray(list) ? list : []).find((e) => e?.abilityHrid === hrid)?.slotNumber);
+            if (slot > 0) return slot;
+        }
+        return 0;
+    };
+    const rows = kit.map((entry) => ({ ...entry }));
+    const used = new Set();
+    for (const row of rows) {
+        const own = Number(row.slotNumber) > 0 ? Number(row.slotNumber) : slotOf(row.abilityHrid);
+        if (own > 0 && !used.has(own)) {
+            row.slotNumber = own;
+            used.add(own);
+        } else {
+            delete row.slotNumber;
+        }
+    }
+    let next = 1;
+    for (const row of rows) {
+        if (row.slotNumber) continue;
+        while (used.has(next)) next++;
+        row.slotNumber = next;
+        used.add(next);
+    }
+    return rows;
+}
+
+/**
  * Whether two equipped kits differ in anything worth telling a listener about.
  * @param {Array<Object>} a - One kit
  * @param {Array<Object>} b - The other

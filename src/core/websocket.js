@@ -100,6 +100,9 @@ const SKIP_DEDUP_TYPES = new Set([
     'profile_shared',
     'battle_consumable_ability_updated',
     'abilities_updated',
+    // Both open with a stable block (party id / the character object), so a genuine repeat would match the prefix.
+    'party_updated',
+    'character_stats_updated',
     'battle_unit_fetched',
     'battle_updated',
     'new_battle',

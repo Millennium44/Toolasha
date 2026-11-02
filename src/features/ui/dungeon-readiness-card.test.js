@@ -67,6 +67,9 @@ vi.mock('../../core/data-manager.js', () => ({
         get characterData() {
             return game.characterData;
         },
+        get partyInfoSource() {
+            return game.partyInfoSource;
+        },
         getItemDetails: (hrid) => game.items[hrid] || null,
         getActionDetails: () => game.actionDetail,
         getInventory: () => game.inventory,
@@ -345,6 +348,20 @@ describe('what the lobby cannot see', () => {
         // but your food is still unmeasured and the line says so
         expect(body).toContain('4 keys · food unknown');
         expect(body.match(/unknown — not in party data/g)).toHaveLength(2);
+    });
+
+    test('the login party block is footnoted as stale; a party_updated one is not', async () => {
+        inParty();
+        game.actions = [];
+        game.partyInfoSource = 'login';
+        await render();
+        expect(text()).toContain('no party update has arrived since');
+
+        document.body.replaceChildren();
+        game.partyInfoSource = 'party';
+        await render();
+        expect(text()).not.toContain('no party update has arrived since');
+        game.partyInfoSource = undefined;
     });
 
     test('the reason is footnoted, not left to be inferred', async () => {
