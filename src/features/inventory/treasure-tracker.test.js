@@ -717,6 +717,60 @@ describe('the popup’s header is the panel’s header', () => {
     });
 });
 
+describe('the popup’s item rows', () => {
+    const item = (extra) => ({
+        itemHrid: '/items/coin',
+        actualCount: 3,
+        actualValue: 300,
+        expectedCount: 2.5,
+        expectedValue: 250,
+        unpriced: false,
+        ...extra,
+    });
+    const build = (items) =>
+        treasureTracker._buildPopup(
+            '/items/known',
+            { opened: 1, ratio: 1.1, actualValue: 300, items },
+            { opened: 3, ratio: 1, actualValue: 900 }
+        );
+
+    afterEach(() => {
+        treasureTracker._removePopup();
+    });
+
+    test('each item is one row, and the column headings appear once above them', () => {
+        const popup = build([
+            item(),
+            item({ itemHrid: '/items/cowbell' }),
+            item({ itemHrid: '/items/mirror_of_protection' }),
+        ]);
+
+        expect(popup.querySelectorAll('[data-role="opening-labels"]').length).toBe(1);
+        expect(popup.textContent.match(/expected/gi) || []).toEqual([]);
+        const labels = popup.querySelector('[data-role="opening-labels"]');
+        const rows = [...labels.parentElement.children].filter((el) => el.style.gridTemplateColumns && el !== labels);
+        expect(rows.length).toBe(3);
+        for (const row of rows) expect(row.children.length).toBe(labels.children.length);
+    });
+
+    test('an unpriced item keeps its dash and its “no price”, on the same row', () => {
+        const popup = build([item({ unpriced: true })]);
+        const labels = popup.querySelector('[data-role="opening-labels"]');
+        const row = labels.nextElementSibling;
+
+        expect(row.textContent).toContain('—');
+        expect(row.textContent).toContain('no price');
+        expect(row.children.length).toBe(labels.children.length);
+    });
+
+    test('with nothing to list there are still no stray rows and the stats button is there', () => {
+        const popup = build([]);
+
+        expect(popup.querySelector('[data-role="opening-labels"]').nextElementSibling.tagName).toBe('DIV');
+        expect([...popup.querySelectorAll('button')].some((b) => b.textContent === 'View full stats')).toBe(true);
+    });
+});
+
 describe('the button in settings', () => {
     afterEach(() => {
         treasureTracker.panel = null;

@@ -143,16 +143,68 @@ const EDGE_MARGIN = 8;
 const DIALOG_TRIES = 12;
 const DIALOG_RETRY_MS = 60;
 
+/**
+ * The look of the panel and the popup, in one place: the game's own plain dark frame, white text, its blue
+ * buttons and its divider line. Every color comes from the game's CSS variables with a measured fallback, so
+ * a game theme change carries over. Green and red are for good and bad verdicts only.
+ */
 const COLORS = {
-    background: 'rgba(8, 10, 20, 0.96)',
-    headerBg: 'rgba(30, 22, 8, 0.8)',
-    border: 'rgba(255, 207, 92, 0.35)',
-    text: '#e8e6df',
-    textDim: 'rgba(232, 230, 223, 0.55)',
-    accent: '#ffcf5c',
+    background: 'rgba(14, 16, 32, 0.98)',
+    border: 'var(--color-divider, #323450)',
+    text: 'var(--color-text-dark-mode, #e7e7e7)',
+    textDim: 'rgba(231, 231, 231, 0.6)',
     good: '#4ade80',
     bad: '#f87171',
 };
+
+/** Button fills: primary blue, the quieter secondary blue, and the selected state */
+const BUTTON_LOOK = {
+    primary: { rest: 'var(--color-primary, #4357af)', hover: 'var(--color-primary-hover, #546ddb)' },
+    quiet: { rest: 'var(--color-space-800, #273366)', hover: 'var(--color-space-700, #35458b)' },
+    icon: { rest: 'transparent', hover: 'var(--color-space-800, #273366)' },
+};
+
+/**
+ * Make a button look like the game's.
+ *
+ * `primary` is the full blue button, `quiet` the secondary blue for rows of controls, `icon` a bare glyph
+ * that only shows a fill on hover. `compact` is the same button at a smaller height, for controls that sit
+ * inline in a header or a row.
+ *
+ * @param {HTMLButtonElement} button - The button
+ * @param {'primary'|'quiet'|'icon'} variant - Which fill
+ * @param {boolean} [compact] - Smaller height and text
+ * @returns {HTMLButtonElement} The same button
+ */
+function styleGameButton(button, variant, compact = false) {
+    const look = BUTTON_LOOK[variant];
+    button._restBg = look.rest;
+    Object.assign(button.style, {
+        background: look.rest,
+        border: 'none',
+        borderRadius: 'var(--radius-sm, 0.25rem)',
+        color: 'var(--color-text-dark-mode, #e7e7e7)',
+        cursor: 'pointer',
+        fontWeight: '600',
+        fontFamily: 'inherit',
+        fontSize: compact ? '0.75rem' : 'var(--font-size-base, 0.875rem)',
+        height: compact
+            ? 'calc(var(--button-height-normal, 1.875rem) - 0.375rem)'
+            : 'var(--button-height-normal, 1.875rem)',
+        padding: compact ? '0 0.5rem' : '0 0.75rem',
+        lineHeight: '1',
+        boxSizing: 'border-box',
+    });
+    button.addEventListener('mouseover', () => (button.style.background = look.hover));
+    button.addEventListener('mouseout', () => (button.style.background = button._restBg));
+    return button;
+}
+
+/** Change the fill a styled button returns to when the pointer leaves */
+function setButtonRest(button, background) {
+    button._restBg = background;
+    button.style.background = background;
+}
 
 /** Beyond this far from expectation, a chest is worth remarking on */
 const NOTABLE_RATIO = 0.05;
@@ -180,6 +232,8 @@ const SCROLL_VALUE_LABEL = { token: 'Scrolls: token value', zero: 'Scrolls: no v
 /** The sub-grids of an item row, shared with the label row above the rows */
 const ACTUAL_GRID = '15px 1fr 1fr 54px';
 const EXPECTED_GRID = '1fr 1fr 8px 1fr 1fr';
+/** The popup's one-line item row: icon, qty, value, vs exp., expected qty, expected value */
+const OPENING_GRID = '15px minmax(0, 0.8fr) minmax(0, 1fr) 52px minmax(0, 0.8fr) minmax(0, 1fr)';
 
 /** What each expanded-chest heading's sub-columns mean */
 const COLUMN_HELP = [
@@ -821,7 +875,7 @@ class TreasureTracker {
         Object.assign(section.style, { marginTop: '8px', paddingTop: '6px', borderTop: `1px solid ${COLORS.border}` });
         const heading = document.createElement('div');
         heading.textContent = 'Scroll buffs this session (not counted in the totals)';
-        heading.style.color = COLORS.accent;
+        heading.style.fontWeight = '600';
         heading.style.marginBottom = '3px';
         section.appendChild(heading);
 
@@ -1355,11 +1409,12 @@ class TreasureTracker {
             top: '80px',
             right: '40px',
             zIndex: String(config.Z_FLOATING_PANEL),
-            width: '288px',
+            width: '340px',
+            maxWidth: 'calc(100vw - 16px)',
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            borderRadius: 'var(--radius-sm, 0.25rem)',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
             color: COLORS.text,
             fontSize: '11px',
             display: 'flex',
@@ -1383,15 +1438,13 @@ class TreasureTracker {
             // outside the flow below
             paddingRight: `${touch ? CLOSE_GUTTER.touch : CLOSE_GUTTER.pointer}px`,
             position: 'relative',
-            background: COLORS.headerBg,
             borderBottom: `1px solid ${COLORS.border}`,
             cursor: 'move',
             userSelect: 'none',
         });
         const title = document.createElement('span');
         title.textContent = `Treasure — ${itemName(chestHrid)}`;
-        title.style.fontWeight = 'bold';
-        title.style.color = COLORS.accent;
+        title.style.fontWeight = '600';
         header.appendChild(title);
 
         // Out of the flow entirely and pinned to the popup's top right corner,
@@ -1417,7 +1470,7 @@ class TreasureTracker {
 
         const subtitle = document.createElement('div');
         subtitle.textContent = `Last opening (×${opening.opened})`;
-        subtitle.style.color = COLORS.accent;
+        subtitle.style.fontWeight = '600';
         subtitle.style.marginBottom = '3px';
         body.appendChild(subtitle);
 
@@ -1446,6 +1499,7 @@ class TreasureTracker {
         summary.appendChild(pct);
         body.appendChild(summary);
 
+        body.appendChild(this._openingLabelRow());
         for (const item of worthShowing(opening.items)) body.appendChild(this._openingRow(item));
 
         const total = document.createElement('div');
@@ -1468,17 +1522,8 @@ class TreasureTracker {
 
         const full = document.createElement('button');
         full.textContent = 'View full stats';
-        Object.assign(full.style, {
-            marginTop: '8px',
-            width: '100%',
-            padding: '5px',
-            background: 'rgba(255, 207, 92, 0.12)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '4px',
-            color: COLORS.accent,
-            cursor: 'pointer',
-            fontSize: '12px',
-        });
+        styleGameButton(full, 'primary');
+        Object.assign(full.style, { marginTop: '8px', width: '100%' });
         full.addEventListener('click', (event) => {
             // The popup stays. It is the thing you were reading when you decided
             // you wanted more, and closing it to answer that is taking away the
@@ -1535,27 +1580,57 @@ class TreasureTracker {
     }
 
     /**
-     * One item: what came out on top, what was owed underneath.
-     *
-     * Two lines rather than one because the comparison is the point — a count on
-     * its own says nothing, and putting expected beside actual on a single line
-     * makes eight of them unreadable.
+     * The column headings of the popup's item rows, once, above the first row. Same grid as the rows.
+     * @returns {HTMLElement}
+     */
+    _openingLabelRow() {
+        const band = document.createElement('div');
+        band.dataset.role = 'opening-labels';
+        Object.assign(band.style, {
+            display: 'grid',
+            gridTemplateColumns: OPENING_GRID,
+            gap: '4px',
+            fontSize: '10px',
+            color: COLORS.textDim,
+            paddingBottom: '2px',
+            borderBottom: `1px solid ${COLORS.border}`,
+            marginBottom: '2px',
+        });
+        // Dropped (Qty, Value, vs exp.), then what the drop table owed (Qty, Value)
+        const labels = ['', 'Qty', 'Value', 'vs exp.', 'Exp. qty', 'Exp. value'];
+        labels.forEach((label, index) => {
+            const span = this._span(label);
+            span.style.textAlign = index === 1 ? 'left' : 'right';
+            band.appendChild(span);
+        });
+        band.title =
+            'Left of the bar: what dropped, what it was worth, and how that compares with what was owed. ' +
+            'Right of it: what the drop table owed for this opening.';
+        return band;
+    }
+
+    /**
+     * One item on one line: what dropped, what it was worth, how that compares, then what was owed.
+     * The headings are in `_openingLabelRow`, once above the rows.
      *
      * @param {Object} item - From `chestPerformance`
      * @returns {HTMLElement} The row
      */
     _openingRow(item) {
         const row = document.createElement('div');
-        Object.assign(row.style, { display: 'flex', gap: '6px', alignItems: 'flex-start', padding: '1px 0' });
+        Object.assign(row.style, {
+            display: 'grid',
+            gridTemplateColumns: OPENING_GRID,
+            gap: '4px',
+            alignItems: 'center',
+            padding: '1px 0',
+            fontVariantNumeric: 'tabular-nums',
+        });
         if (item.unpriced) {
             row.title =
                 'Nothing will price this, so it counts towards neither side of the total — but the count against ' +
                 'what was owed still holds, and that is what the percentage here is.';
         }
-        row.appendChild(this._icon(item.itemHrid));
-
-        const columns = document.createElement('div');
-        Object.assign(columns.style, { flex: '1', display: 'flex', flexDirection: 'column', lineHeight: '1.35' });
 
         // Value where there is a price, counts where there is not. An item
         // nothing will price still has a drop rate, and "four when you were owed
@@ -1570,53 +1645,31 @@ class TreasureTracker {
               : null;
         const verdict = formatReturn(ratio);
 
-        const actual = document.createElement('div');
-        Object.assign(actual.style, { display: 'flex', justifyContent: 'space-between', gap: '6px' });
-        const actualCount = document.createElement('span');
-        actualCount.textContent = formatLargeNumber(item.actualCount);
-        const actualValue = document.createElement('span');
+        const actualCount = this._span(formatLargeNumber(item.actualCount));
         // An item nothing can price gets a row and no figure. A dash says "this
         // came out and is not counted"; a zero would say the chest gave you
         // something worthless, which is a different and wrong claim.
-        actualValue.textContent = item.unpriced ? '—' : formatLargeNumber(Math.round(item.actualValue));
+        const actualValue = this._span(item.unpriced ? '—' : formatLargeNumber(Math.round(item.actualValue)));
         actualValue.style.color = item.unpriced ? COLORS.textDim : COLORS.good;
-        actualValue.style.marginLeft = 'auto';
-        const diff = document.createElement('span');
-        diff.textContent = verdict.text;
+        actualValue.style.textAlign = 'right';
+        const diff = this._span(verdict.text);
         diff.style.color = verdict.color;
-        diff.style.minWidth = '62px';
         diff.style.textAlign = 'right';
-        actual.appendChild(actualCount);
-        actual.appendChild(actualValue);
-        actual.appendChild(diff);
 
-        const expected = document.createElement('div');
-        Object.assign(expected.style, {
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: '6px',
-            color: COLORS.textDim,
-        });
-        const expectedCount = document.createElement('span');
         // Small expectations are the interesting ones — a rare owed 0.02 of
         // itself rounds to nothing and would read as owing zero
-        expectedCount.textContent =
-            item.expectedCount < 10 ? item.expectedCount.toFixed(2) : formatLargeNumber(Math.round(item.expectedCount));
-        const expectedValue = document.createElement('span');
-        expectedValue.textContent = item.unpriced ? 'no price' : formatLargeNumber(Math.round(item.expectedValue));
-        if (item.unpriced) expectedValue.style.color = COLORS.textDim;
-        expectedValue.style.marginLeft = 'auto';
-        const word = document.createElement('span');
-        word.textContent = 'expected';
-        word.style.minWidth = '62px';
-        word.style.textAlign = 'right';
-        expected.appendChild(expectedCount);
-        expected.appendChild(expectedValue);
-        expected.appendChild(word);
+        const expectedCount = this._span(
+            item.expectedCount < 10 ? item.expectedCount.toFixed(2) : formatLargeNumber(Math.round(item.expectedCount))
+        );
+        expectedCount.style.color = COLORS.textDim;
+        expectedCount.style.textAlign = 'right';
+        const expectedValue = this._span(
+            item.unpriced ? 'no price' : formatLargeNumber(Math.round(item.expectedValue))
+        );
+        expectedValue.style.color = COLORS.textDim;
+        expectedValue.style.textAlign = 'right';
 
-        columns.appendChild(actual);
-        columns.appendChild(expected);
-        row.appendChild(columns);
+        row.append(this._icon(item.itemHrid), actualCount, actualValue, diff, expectedCount, expectedValue);
         return row;
     }
 
@@ -1654,8 +1707,8 @@ class TreasureTracker {
             height: panelHeightCap(DEFAULT_PANEL.height),
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            borderRadius: 'var(--radius-sm, 0.25rem)',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
             color: COLORS.text,
             fontSize: '13px',
             display: 'flex',
@@ -1715,7 +1768,6 @@ class TreasureTracker {
             // outside the flow below
             paddingRight: `${touch ? CLOSE_GUTTER.touch : CLOSE_GUTTER.pointer}px`,
             position: 'relative',
-            background: COLORS.headerBg,
             borderBottom: `1px solid ${COLORS.border}`,
             userSelect: 'none',
         });
@@ -1723,8 +1775,7 @@ class TreasureTracker {
 
         const title = document.createElement('span');
         title.textContent = 'Treasure';
-        title.style.fontWeight = 'bold';
-        title.style.color = COLORS.accent;
+        title.style.fontWeight = '600';
         title.style.marginRight = '4px';
 
         // Both toggles change what every figure in the panel means, so they sit
@@ -1768,7 +1819,7 @@ class TreasureTracker {
 
         const gear = this._headerButton('⚙', () => {
             this.configMode = !this.configMode;
-            gear.style.background = this.configMode ? 'rgba(255, 207, 92, 0.25)' : 'none';
+            setButtonRest(gear, this.configMode ? BUTTON_LOOK.quiet.hover : BUTTON_LOOK.icon.rest);
             this._render();
         });
         gear.title = 'Show or hide chests, and import or export your history';
@@ -1817,13 +1868,15 @@ class TreasureTracker {
             'How to order the chests. Luck answers "which one let me down"; ' +
             'the alphabet answers "where is the one I am looking for".';
         Object.assign(picker.style, {
-            background: 'rgba(255, 255, 255, 0.06)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.textDim,
+            background: BUTTON_LOOK.quiet.rest,
+            border: 'none',
+            borderRadius: 'var(--radius-sm, 0.25rem)',
+            color: COLORS.text,
             cursor: 'pointer',
-            fontSize: '10px',
-            padding: '2px 4px',
+            fontWeight: '600',
+            fontSize: '0.75rem',
+            height: 'calc(var(--button-height-normal, 1.875rem) - 0.375rem)',
+            padding: '0 4px',
             maxWidth: '130px',
         });
 
@@ -1863,16 +1916,8 @@ class TreasureTracker {
     _toggleButton(label, title, onClick) {
         const button = document.createElement('button');
         button.title = title;
-        Object.assign(button.style, {
-            background: 'rgba(255, 255, 255, 0.06)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.textDim,
-            cursor: 'pointer',
-            fontSize: '10px',
-            padding: '2px 7px',
-            whiteSpace: 'nowrap',
-        });
+        styleGameButton(button, 'quiet', true);
+        button.style.whiteSpace = 'nowrap';
         button._label = label;
         button.addEventListener('click', (event) => {
             event.stopPropagation();
@@ -1889,7 +1934,6 @@ class TreasureTracker {
             // Dimmed when the setting means "count this as nothing", so the
             // panel says at a glance that something is being left out
             const counting = !/zero|no value/i.test(button.textContent);
-            button.style.color = counting ? COLORS.accent : COLORS.textDim;
             button.style.opacity = counting ? '1' : '0.7';
         }
 
@@ -1912,14 +1956,13 @@ class TreasureTracker {
         Object.assign(section.style, {
             padding: '7px 8px',
             marginBottom: '6px',
-            background: 'rgba(255, 207, 92, 0.07)',
             border: `1px solid ${COLORS.border}`,
-            borderRadius: '4px',
+            borderRadius: 'var(--radius-sm, 0.25rem)',
         });
 
         const hint = document.createElement('div');
         hint.textContent = 'Click 👁 to show or hide a chest. Hidden chests are still tracked.';
-        hint.style.color = COLORS.accent;
+        hint.style.color = COLORS.textDim;
         hint.style.marginBottom = '6px';
         hint.style.fontSize = '11px';
         section.appendChild(hint);
@@ -1999,15 +2042,7 @@ class TreasureTracker {
     _actionButton(text, onClick) {
         const button = document.createElement('button');
         button.textContent = text;
-        Object.assign(button.style, {
-            background: 'rgba(255, 255, 255, 0.06)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.text,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '3px 8px',
-        });
+        styleGameButton(button, 'quiet', true);
         button.addEventListener('click', (event) => {
             event.stopPropagation();
             onClick();
@@ -2189,17 +2224,8 @@ class TreasureTracker {
     _headerButton(text, onClick) {
         const button = document.createElement('button');
         button.textContent = text;
-        Object.assign(button.style, {
-            background: 'none',
-            border: 'none',
-            color: COLORS.text,
-            cursor: 'pointer',
-            fontSize: '14px',
-            padding: '2px 6px',
-            borderRadius: '3px',
-        });
-        button.addEventListener('mouseover', () => (button.style.background = 'rgba(255, 207, 92, 0.15)'));
-        button.addEventListener('mouseout', () => (button.style.background = 'none'));
+        styleGameButton(button, 'icon', true);
+        button.style.fontSize = '14px';
         button.addEventListener('click', (event) => {
             event.stopPropagation();
             onClick();
@@ -2310,7 +2336,7 @@ class TreasureTracker {
             padding: '6px 4px 8px',
             borderBottom: `1px solid ${COLORS.border}`,
             marginBottom: '6px',
-            fontWeight: 'bold',
+            fontWeight: '600',
         });
 
         const left = document.createElement('span');
@@ -2350,18 +2376,18 @@ class TreasureTracker {
             padding: '4px 5px',
             cursor: 'pointer',
             borderRadius: '3px',
-            background: 'rgba(255, 255, 255, 0.03)',
+            background: 'transparent',
         });
         header.addEventListener('mouseover', () => (header.style.background = 'rgba(255, 255, 255, 0.08)'));
-        header.addEventListener('mouseout', () => (header.style.background = 'rgba(255, 255, 255, 0.03)'));
+        header.addEventListener('mouseout', () => (header.style.background = 'transparent'));
 
         const isExpanded = this.expanded.has(row.chestHrid);
         const caret = this._span(isExpanded ? '−' : '+');
-        caret.style.color = COLORS.accent;
+        caret.style.color = COLORS.textDim;
         caret.style.width = '9px';
 
         const name = document.createElement('span');
-        name.style.fontWeight = 'bold';
+        name.style.fontWeight = '600';
         name.append(itemName(row.chestHrid) + ' ');
         // What one chest is worth on average, beside its name — the figure the
         // rest of the row is measured against
@@ -2382,15 +2408,7 @@ class TreasureTracker {
 
         const reset = document.createElement('button');
         reset.textContent = 'Reset';
-        Object.assign(reset.style, {
-            background: 'rgba(255, 255, 255, 0.06)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: COLORS.textDim,
-            cursor: 'pointer',
-            fontSize: '10px',
-            padding: '1px 6px',
-        });
+        styleGameButton(reset, 'quiet', true);
         reset.title = `Forget every ${itemName(row.chestHrid)} opening`;
         reset.addEventListener('click', (event) => {
             // Without this the click also toggles the row it sits in
@@ -2449,15 +2467,10 @@ class TreasureTracker {
         const button = document.createElement('button');
         button.textContent = isHidden ? '🚫' : '👁';
         button.title = isHidden ? 'Show this chest in the list' : 'Hide this chest from the list';
-        Object.assign(button.style, {
-            background: isHidden ? 'rgba(120, 60, 60, 0.35)' : 'rgba(60, 140, 90, 0.35)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '1px 6px',
-            marginLeft: '6px',
-        });
+        // Hidden reads as the plain fill, shown as the selected one
+        styleGameButton(button, 'quiet', true);
+        setButtonRest(button, isHidden ? BUTTON_LOOK.quiet.rest : BUTTON_LOOK.quiet.hover);
+        button.style.marginLeft = '6px';
         button.addEventListener('click', (event) => {
             event.stopPropagation();
             const hidden = new Set(this.settings.hiddenChests || []);
@@ -2489,8 +2502,7 @@ class TreasureTracker {
         const wrap = document.createElement('div');
         Object.assign(wrap.style, {
             padding: '5px 5px 8px',
-            background: 'rgba(0, 0, 0, 0.25)',
-            borderRadius: '0 0 3px 3px',
+            borderRadius: '0 0 var(--radius-sm, 0.25rem) var(--radius-sm, 0.25rem)',
             // Every figure is a number in a column; proportional digits make
             // columns of them jitter as the values change
             fontVariantNumeric: 'tabular-nums',
@@ -2515,7 +2527,7 @@ class TreasureTracker {
      */
     _headerBand(titles, hovers = []) {
         const band = this._threeColumns();
-        Object.assign(band.style, { fontSize: '10px', fontWeight: 'bold', color: '#7fb3ff', padding: '1px 0' });
+        Object.assign(band.style, { fontSize: '10px', fontWeight: '600', color: COLORS.textDim, padding: '1px 0' });
         titles.forEach((title, index) => {
             const cell = document.createElement('div');
             cell.textContent = title;
