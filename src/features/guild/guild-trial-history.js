@@ -92,7 +92,7 @@ export function describeCycleAge(cycle, now = Date.now()) {
  * @param {Object} tile - An archived tile
  * @returns {number|null} Tiers cleared, or null when the tile does not say
  */
-function clearedTier(tile) {
+export function clearedTier(tile) {
     const card = cardClearedTier(tile);
     const server = serverClearedTier(tile);
     if (card === null) return server;
@@ -104,7 +104,7 @@ function clearedTier(tile) {
  * @param {Object} tile - An archived tile
  * @returns {number|null} `serverTier`, or null when the payload never stated one
  */
-function serverClearedTier(tile) {
+export function serverClearedTier(tile) {
     return Number.isFinite(tile?.serverTier) && tile.serverTier >= 0 ? tile.serverTier : null;
 }
 
@@ -126,7 +126,7 @@ function serverAhead(tile) {
  * @param {Object} tile - An archived tile
  * @returns {number|null} Tiers cleared, or null when the card did not say
  */
-function cardClearedTier(tile) {
+export function cardClearedTier(tile) {
     if (Number.isFinite(tile?.tier)) return tile.tier;
 
     const quoted = Object.keys(tile?.pointsByTier || {})
@@ -149,7 +149,7 @@ function cardClearedTier(tile) {
  * @param {Object} tile - An archived tile
  * @returns {boolean}
  */
-function statesPoints(tile) {
+export function statesPoints(tile) {
     if (!Number.isFinite(tile?.points)) return false;
     if (tile.points > 0) return true;
     if (clearedTier(tile) !== null) return true;

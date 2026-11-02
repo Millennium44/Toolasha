@@ -124,6 +124,7 @@ const { NOTICE_BOARD_KEY, NOTICE_BOARD_NAME, NOTICE_BOARD_PERSONAL, NOTICE_BOARD
 const { parseCurrentTrialsData, TRIAL_MAX_TIER, trialWeekStart } = await import('./guild-trials-math.js');
 const { tierTimingForecast } = await import('./guild-trial-tier-timing.js');
 const CLEARS = await import('./guild-trial-tier-clears.fixture.js');
+const { trialResultsOf } = await import('./guild-trial-results.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
 const thisWeek = trialWeekStart(now);
@@ -1915,6 +1916,32 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         history: [],
     });
 
+    test('a tile archived later under the same cycle keeps its result when the first copy stands', () => {
+        const first = archiveEarlierCycles(record(), read(), { offset, at: CLEARS.CAPTURED_AT });
+        const late = {
+            'skilling::alchemy': {
+                name: 'Alchemy',
+                kind: 'skilling',
+                serverTier: 7,
+                serverTierAt: lastCycle,
+                serverDone: true,
+                samples: [],
+                tiers: [],
+            },
+        };
+        const second = archiveEarlierCycles({ ...first, tiles: { ...first.tiles, ...late } }, read(), {
+            offset,
+            at: CLEARS.CAPTURED_AT + 1000,
+        });
+
+        // One cycle's archive, still the first copy…
+        expect(second.history).toHaveLength(1);
+        expect(second.history[0].tiles['skilling::alchemy']).toBeUndefined();
+        // …and Alchemy's result, read before that dedupe
+        expect(second.trialResults.find((result) => result.trial === 'alchemy')).toMatchObject({ serverTier: 7 });
+        expect(second.trialResults.some((result) => result.trial === 'badger')).toBe(true);
+    });
+
     test('the last cycle is archived and this one’s clears stay', () => {
         const held = record();
         const next = archiveEarlierCycles(held, read(), { offset, at: CLEARS.CAPTURED_AT });
@@ -2339,5 +2366,261 @@ describe('trial stats — one cycle at a time on the test server', () => {
         expect((await loadTrialStats(now, { ...scope, cycleAt: first })).trials).toEqual({ badger: pair(first, 10) });
         // …and without a cycle to compare against, it reads as it always did
         expect((await loadTrialStats(now, scope)).trials).toEqual({ badger: pair(first, 10) });
+    });
+});
+
+describe('trial results — each trial’s tier kept after its week leaves the archive', () => {
+    const WEEK = 7 * 24 * 3600_000;
+    const weekOf = (n) => thisWeek - n * WEEK;
+
+    /**
+     * A finished live week as it is left on disk: the captured skilling tiles
+     * (tier clears and payload statements off a real trial), plus a Badger card
+     * read on the Trials tab.
+     * @param {number} weekStart - The week
+     * @param {number} badgerTier - What the Badger card read
+     * @param {Object} [extra] - Record fields
+     * @returns {Object} The record
+     */
+    const finishedWeek = (weekStart, badgerTier, extra = {}) => {
+        const tiles = {};
+        for (const [skill, timing] of Object.entries(CLEARS.TILES)) {
+            const name = skill[0].toUpperCase() + skill.slice(1);
+            tiles[`skilling::${skill}`] = {
+                name,
+                kind: 'skilling',
+                samples: [],
+                tiers: [],
+                pointsByTier: {},
+                ...timing,
+            };
+        }
+        tiles['combat::trial badger'] = {
+            name: 'Trial Badger',
+            kind: 'combat',
+            level: 150,
+            tier: badgerTier,
+            points: 2240,
+            pointsByTier: { [badgerTier]: 2240 },
+            completed: true,
+            samples: [{ t: weekStart + 1000, readings: [{ current: 5, max: 10 }] }],
+            tiers: [],
+        };
+        return { weekStart, guildName: 'Milky Way', guildId: 'g1', tiles, history: [], ...extra };
+    };
+
+    /**
+     * A record that has rolled through `count` finished weeks up to this one.
+     * @param {number} count - How many weeks
+     * @returns {Object} This week's record
+     */
+    const rolledThrough = (count) => {
+        let record = finishedWeek(weekOf(count), 1);
+        for (let n = count - 1; n >= 0; n -= 1) {
+            record = rollRecordToWeek(record, weekOf(n));
+            if (n > 0) record = { ...record, tiles: finishedWeek(weekOf(n), (n % 20) + 1).tiles };
+        }
+        return record;
+    };
+
+    test('a week rolled over files a result per trial, from the captured tiles', () => {
+        const rolled = rollRecordToWeek(finishedWeek(weekOf(1), 6), thisWeek);
+        const byTrial = Object.fromEntries(rolled.trialResults.map((r) => [r.trial, r]));
+        expect(byTrial.badger).toMatchObject({ weekStart: weekOf(1), cardTier: 6, points: 2240 });
+        expect(byTrial.milking).toMatchObject({ weekStart: weekOf(1), serverTier: CLEARS.TILES.milking.serverTier });
+        expect(rolled.trialResults).toHaveLength(Object.keys(CLEARS.TILES).length + 1);
+    });
+
+    test('a week the four-cycle archive drops keeps its results', () => {
+        const record = rolledThrough(6);
+        expect(record.history).toHaveLength(MAX_ARCHIVED_CYCLES);
+        const badgerWeeks = record.trialResults.filter((r) => r.trial === 'badger').map((r) => r.weekStart);
+        expect(badgerWeeks).toEqual([6, 5, 4, 3, 2, 1].map(weekOf));
+    });
+
+    test('a record written before results existed shows its archived weeks on load', async () => {
+        const rolled = rollRecordToWeek(finishedWeek(weekOf(1), 6), thisWeek);
+        const legacy = { ...rolled };
+        delete legacy.trialResults;
+        game.store['guildTrials_Milky Way'] = legacy;
+        const record = await loadTrialRecord('Milky Way', now, null, { guildId: 'g1' });
+        expect(record.trialResults.filter((r) => r.trial === 'badger')).toHaveLength(1);
+    });
+
+    test('an as-is write carries the results its archive states', async () => {
+        const archived = archiveCycle(finishedWeek(thisWeek, 6), 'a new cycle is scheduled', now);
+        const withoutResults = { ...archived };
+        delete withoutResults.trialResults;
+        await saveTrialRecord('Milky Way', withoutResults, null, { overwrite: true });
+        expect(game.store['guildTrials_Milky Way'].trialResults.length).toBeGreaterThan(0);
+    });
+
+    test('a stale device’s old record merged in never drops the newer weeks', () => {
+        const current = rolledThrough(60);
+        // The oldest weeks only, from a device last seen long ago, merged in last
+        const oldest = current.trialResults.filter((r) => r.weekStart <= weekOf(50));
+        const stale = { weekStart: weekOf(48), guildId: 'g1', tiles: {}, history: [], trialResults: oldest };
+        for (const merged of [mergeTrialRecords(current, stale), mergeTrialRecords(stale, current)]) {
+            const weeks = [...new Set(merged.trialResults.map((r) => r.weekStart))];
+            expect(weeks).toHaveLength(52);
+            expect(weeks[weeks.length - 1]).toBe(weekOf(1));
+            expect(weeks[0]).toBe(weekOf(52));
+        }
+    });
+
+    test('another guild’s record contributes no results to this guild’s', () => {
+        const own = rollRecordToWeek(finishedWeek(weekOf(1), 6), thisWeek);
+        const foreign = rollRecordToWeek(finishedWeek(weekOf(2), 9, { guildId: 'g2', guildName: 'Other' }), thisWeek);
+        const merged = mergeTrialRecords(own, foreign);
+        expect(merged.trialResults.length).toBeGreaterThan(0);
+        expect(merged.trialResults.some((r) => r.weekStart === weekOf(2))).toBe(false);
+        // …nor its archive, which the next fold would read them back off
+        expect(merged.history.some((cycle) => cycle.weekStart === weekOf(2))).toBe(false);
+        expect(trialResultsOf(merged).some((r) => r.weekStart === weekOf(2))).toBe(false);
+    });
+
+    test('a save never folds in a stored copy naming another guild', async () => {
+        game.store['guildTrials_Milky Way'] = rollRecordToWeek(
+            finishedWeek(weekOf(2), 9, { guildId: 'g2', guildName: 'Other' }),
+            thisWeek
+        );
+        const own = rollRecordToWeek(finishedWeek(weekOf(1), 6), thisWeek);
+        await saveTrialRecord('Milky Way', own, null, { guildId: 'g1' });
+
+        const stored = game.store['guildTrials_Milky Way'];
+        expect(stored.guildId).toBe('g1');
+        expect(trialResultsOf(stored).map((r) => r.weekStart)).not.toContain(weekOf(2));
+        expect(trialResultsOf(stored).filter((r) => r.trial === 'badger')).toMatchObject([{ cardTier: 6 }]);
+    });
+
+    describe('a re-archive of one cycle the whole-cycle dedupe drops', () => {
+        const CYCLE = 'an earlier cycle of this week';
+        const cycleFrom = thisWeek + 3600_000;
+        const cardBadger = (extra = {}) => ({
+            name: 'Trial Badger',
+            kind: 'combat',
+            tier: 5,
+            points: 2000,
+            pointsByTier: { 5: 2000 },
+            completed: true,
+            samples: [],
+            tiers: [],
+            ...extra,
+        });
+        const serverOnly = (name, kind, tier, at) => ({
+            name,
+            kind,
+            samples: [],
+            tiers: [],
+            pointsByTier: {},
+            tierSeenAt: {},
+            serverTier: tier,
+            serverTierAt: at,
+            serverDone: true,
+        });
+        const archive = (record, tiles, at) => archiveCycle({ ...record, tiles }, CYCLE, at, { cycleFrom });
+        const start = () => ({ weekStart: thisWeek, guildId: 'g1', guildName: 'Milky Way', tiles: {}, history: [] });
+
+        test('another trial’s statement keeps its result', () => {
+            const first = archive(start(), { 'combat::trial badger': cardBadger() }, now);
+            const second = archive(
+                first,
+                { 'skilling::alchemy': serverOnly('Alchemy', 'skilling', 7, now + 1000) },
+                now + 1000
+            );
+
+            // The archive keeps the copy worth more whole…
+            expect(Object.keys(second.history[0].tiles)).toEqual(['combat::trial badger']);
+            // …and each trial's result stands
+            const byTrial = Object.fromEntries(second.trialResults.map((result) => [result.trial, result]));
+            expect(byTrial.badger).toMatchObject({ cardTier: 5, points: 2000 });
+            expect(byTrial.alchemy).toMatchObject({ serverTier: 7, cardTier: null, cycleFrom });
+        });
+
+        test('a newer statement of the same trial raises its result', () => {
+            const first = archive(
+                start(),
+                { 'combat::trial badger': cardBadger({ serverTier: 5, serverTierAt: now }) },
+                now
+            );
+            const second = archive(
+                first,
+                { 'combat::trial badger': serverOnly('Trial Badger', 'combat', 7, now + 1000) },
+                now + 1000
+            );
+
+            expect(second.trialResults).toHaveLength(1);
+            expect(second.trialResults[0]).toMatchObject({
+                cardTier: 5,
+                points: 2000,
+                serverTier: 7,
+                serverTierAt: now + 1000,
+            });
+        });
+
+        test('a copy the re-archive replaces keeps its results, on a record not folded before', () => {
+            const held = archive(start(), { 'skilling::alchemy': serverOnly('Alchemy', 'skilling', 7, now) }, now);
+            const legacy = { ...held };
+            delete legacy.trialResults;
+            const next = archive(legacy, { 'combat::trial badger': cardBadger() }, now + 1000);
+
+            expect(Object.keys(next.history[0].tiles)).toEqual(['combat::trial badger']);
+            expect(next.trialResults.map((result) => result.trial).sort()).toEqual(['alchemy', 'badger']);
+        });
+
+        test('the results survive the save and load that follow', async () => {
+            const first = archive(start(), { 'combat::trial badger': cardBadger() }, now);
+            const second = archive(
+                first,
+                { 'skilling::alchemy': serverOnly('Alchemy', 'skilling', 7, now + 1000) },
+                now + 1000
+            );
+            await saveTrialRecord('Milky Way', second, null, { guildId: 'g1', overwrite: true });
+
+            const loaded = await loadTrialRecord('Milky Way', now + 2000, null, { guildId: 'g1' });
+            expect(loaded.trialResults.map((result) => result.trial).sort()).toEqual(['alchemy', 'badger']);
+        });
+
+        test('a foreign archive folds neither the new tiles nor what was kept', () => {
+            const first = archive(start(), { 'combat::trial badger': cardBadger() }, now);
+            const foreign = archiveCycle(
+                { ...first, tiles: { 'skilling::alchemy': serverOnly('Alchemy', 'skilling', 7, now + 1000) } },
+                'belongs to another guild',
+                now + 1000
+            );
+
+            expect(foreign.trialResults).toEqual([]);
+            expect(trialResultsOf(foreign)).toEqual([]);
+        });
+    });
+
+    test('a cycle archived off another guild’s record files no results', () => {
+        const archived = archiveCycle(finishedWeek(thisWeek, 6), 'belongs to another guild', now);
+        expect(archived.history).toHaveLength(1);
+        expect(archived.trialResults).toEqual([]);
+    });
+
+    test('a late payload statement written into an archived week reaches its result', () => {
+        const rolled = rollRecordToWeek(finishedWeek(weekOf(1), 6), thisWeek);
+        const history = rolled.history.map((cycle) => ({
+            ...cycle,
+            tiles: {
+                ...cycle.tiles,
+                'combat::trial badger': {
+                    ...cycle.tiles['combat::trial badger'],
+                    serverTier: 8,
+                    serverTierAt: thisWeek + 60_000,
+                },
+            },
+        }));
+        const merged = mergeTrialRecords(rolled, { ...rolled, history });
+        expect(merged.trialResults.find((r) => r.trial === 'badger')).toMatchObject({ cardTier: 6, serverTier: 8 });
+    });
+
+    test('one week of results is small enough to keep a year of', () => {
+        const rolled = rollRecordToWeek(finishedWeek(weekOf(1), 6), thisWeek);
+        const bytes = JSON.stringify(rolled.trialResults).length;
+        // Measured: 5 trials, 1,082 bytes — about 56 KB for a year of weeks
+        expect(bytes / rolled.trialResults.length).toBeLessThan(300);
     });
 });

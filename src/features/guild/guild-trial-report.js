@@ -231,6 +231,8 @@ export function casterReportLines(breakdown) {
  * @param {Object} [input.estimate] - From `estimateDamageSplit`, used when nothing was measured
  * @param {Array<Object>} [input.pastWeeks] - Archived-cycle summaries from
  *   `summariseArchivedCycle`, newest first; appended as a short tail when present
+ * @param {Array<string>} [input.trialHistory] - One line per trial, its tier each finished
+ *   cycle and its best (`trialHistoryCells` in guild-trial-results.js); a tail after the past weeks
  * @param {Array<Object>|null} [input.gameStats] - From `modalStatsForBreakdown`: the game's
  *   own end-of-trial totals, preferred over the stream whenever present
  * @returns {string} The report
@@ -243,6 +245,7 @@ export function buildGuildReport({
     shortfall,
     estimate = null,
     pastWeeks = [],
+    trialHistory = [],
     gameStats = null,
 } = {}) {
     const players = breakdown?.players || [];
@@ -256,7 +259,10 @@ export function buildGuildReport({
     // The archived cycles, one line each, at the very bottom of whichever shape
     // the report takes — a guild judging this week's result wants last week's
     // beside it, and this is the only place those figures can still be read
-    const history = (pastWeeks || []).length ? ['Past weeks:', ...pastWeeks.map((week) => pastWeekLine(week))] : [];
+    const history = [
+        ...((pastWeeks || []).length ? ['Past weeks:', ...pastWeeks.map((week) => pastWeekLine(week))] : []),
+        ...((trialHistory || []).length ? ['Trial history:', ...trialHistory] : []),
+    ];
 
     // The game's own totals are what the table beside the Copy button shows,
     // and a pasted report must not disagree with it

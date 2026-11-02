@@ -420,4 +420,20 @@ describe('buildGuildReport', () => {
         // A failed week is a result and prints its zeros
         expect(report).toContain('Last week · combat T0 · skilling — · 0 pts · — tokens each');
     });
+
+    test('each trial’s tier history follows the past weeks, and is absent when there is none', () => {
+        const report = buildGuildReport({
+            breakdown: breakdown(),
+            pastWeeks: [{ when: 'last week', combatTier: 5, skillingTier: 6, points: 1800, tokens: null }],
+            trialHistory: ['Trial Badger: T7 · — · T9 · best T9 (3 weeks ago)', 'Alchemy: T5 · best T5 (last week)'],
+        });
+        const lines = report.split('\n');
+        expect(lines.slice(-3)).toEqual([
+            'Trial history:',
+            'Trial Badger: T7 · — · T9 · best T9 (3 weeks ago)',
+            'Alchemy: T5 · best T5 (last week)',
+        ]);
+        expect(lines.indexOf('Past weeks:')).toBeLessThan(lines.indexOf('Trial history:'));
+        expect(buildGuildReport({ breakdown: breakdown(), trialHistory: [] })).not.toContain('Trial history:');
+    });
 });

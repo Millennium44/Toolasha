@@ -205,6 +205,14 @@ import {
     tilePersonalStats,
 } from './guild-trials-store.js';
 import { FOREIGN_CYCLE_REASON, pastCycles, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
+import {
+    historyRowFor,
+    resultCycleCap,
+    trialHistoryCells,
+    trialHistoryDetail,
+    trialResultsHistory,
+    trialResultsOf,
+} from './guild-trial-results.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** Class every injected element carries, so cleanup is one query */
@@ -1126,6 +1134,37 @@ const VALUE_MAX_CHARS = 16;
  * letter on the second line.
  */
 const LABEL_MAX_CHARS = 12;
+
+/**
+ * Text made safe to place between tags.
+ * @param {*} text - Plain text
+ * @returns {string} Escaped
+ */
+function escapeText(text) {
+    return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+/**
+ * Text made safe for a double-quoted attribute.
+ * @param {*} text - Plain text
+ * @returns {string} Escaped
+ */
+function escapeAttr(text) {
+    return escapeText(text).replace(/"/g, '&quot;');
+}
+
+/**
+ * A trial card's "Past tiers" row: its last cycles' tiers and best, every cycle in the hover.
+ * @param {Object|null} row - The trial's row from `trialResultsHistory`, or null when it has none
+ * @returns {string} HTML, empty when the trial has no finished cycle yet
+ */
+export function pastTiersLine(row) {
+    if (!row || !row.weeks.some((week) => Number.isFinite(week.tier))) return '';
+    return line('Past tiers', escapeText(trialHistoryCells(row, 4)), DIM, trialHistoryDetail(row));
+}
 
 /**
  * A row of label and value, or a label with a caption under it.
@@ -4386,10 +4425,13 @@ class GuildTrials {
                 // The archive still has last cycles' figures to show — a trial
                 // tab between weeks is exactly when they are asked for
                 if (this._renderHistory(root, now, bonuses)) drawn.add('history');
+                if (this._renderTrialHistory(root, now, bonuses)) drawn.add('trial-history');
                 this._reapBlocks(root, drawn);
                 return;
             }
 
+            // Once a pass: every card's "Past tiers" line is read off it
+            const pastTiers = this._trialHistory(now, bonuses);
             for (const tile of tiles) {
                 const record = this.record.tiles[tileKey(tile)];
                 if (!record) continue;
@@ -4450,14 +4492,15 @@ class GuildTrials {
                     anchored: (block) => blockNearAnchor(block, tile.element, root),
                     // Scoped to this tile's encounter: one measurement must
                     // not dress every combat card
-                    html: renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
-                        participating: ownParticipation(tile.name),
-                        phase: tilePhase,
-                        startsInMs: status?.startsInMs ?? null,
-                        forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
-                        looseForecast: timing,
-                        deadlineMs: this._trialBudgetMs(tile.kind, now, tile.name),
-                    }),
+                    html:
+                        renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
+                            participating: ownParticipation(tile.name),
+                            phase: tilePhase,
+                            startsInMs: status?.startsInMs ?? null,
+                            forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
+                            looseForecast: timing,
+                            deadlineMs: this._trialBudgetMs(tile.kind, now, tile.name),
+                        }) + pastTiersLine(historyRowFor(pastTiers, tile.name)),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
                     // screenshot was this block one card wide and a mile tall
@@ -4491,6 +4534,7 @@ class GuildTrials {
                 drawn.add('payout');
             }
             if (this._renderHistory(root, now, bonuses)) drawn.add('history');
+            if (this._renderTrialHistory(root, now, bonuses, pastTiers)) drawn.add('trial-history');
             this._reapBlocks(root, drawn);
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
@@ -4739,6 +4783,10 @@ class GuildTrials {
                     // The archived cycles, already summarised, so the report's
                     // "Past weeks:" tail needs neither the record nor the store
                     pastWeeks: this._pastWeekSummaries(Date.now()),
+                    // …and each trial's tier across them, for its "Trial history:" tail
+                    trialHistory: this._trialHistory(Date.now()).rows.map(
+                        (row) => `${row.name}: ${trialHistoryCells(row)}`
+                    ),
                 });
             }
             return forecast;
@@ -5567,6 +5615,61 @@ class GuildTrials {
 
         this._placeBlock(root, 'history', {
             html: rows.join(''),
+            style:
+                'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
+                'border-radius:6px; font-size:12px; line-height:1.7;',
+            place: (block) => root.insertAdjacentElement('beforeend', block),
+        });
+        return true;
+    }
+
+    /**
+     * Every trial's tier across the finished cycles, from the record's results.
+     * @param {number} [now] - Clock
+     * @param {Object} [bonuses] - From {@link _payoutBonuses}; resolved here when omitted
+     * @returns {{cycles: Array<Object>, rows: Array<Object>}} From `trialResultsHistory`
+     */
+    _trialHistory(now = Date.now(), bonuses = null) {
+        const resolved = bonuses || this._payoutBonuses();
+        return trialResultsHistory(trialResultsOf(this.record), {
+            now,
+            buildersHallBonus: resolved?.buildersHall?.bonus ?? null,
+        });
+    }
+
+    /**
+     * The "Trial history" block: one line per trial, its tier each finished
+     * cycle, newest first, and its best. Drawn under "Past weeks", and not at
+     * all before any cycle has finished.
+     *
+     * @param {Element} root - The trials content element
+     * @param {number} [now] - Clock
+     * @param {Object} [bonuses] - From {@link _payoutBonuses}; resolved here when omitted
+     * @param {Object|null} [history] - This pass's {@link _trialHistory}, so the fold runs once a pass
+     * @returns {boolean} Whether the block is on screen
+     */
+    _renderTrialHistory(root, now = Date.now(), bonuses = null, history = null) {
+        if (isInProgressView(root)) return false;
+        const { rows } = history || this._trialHistory(now, bonuses);
+        // The cap of the server this is on: a cycle is a week on live, a few hours on the test server
+        const kept = isTestServer() ? `the last ${resultCycleCap()} cycles` : `${resultCycleCap()} weeks`;
+        if (!rows.length) return false;
+
+        const html = [
+            `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
+                'title="The tier each trial reached in every finished cycle this client saw, newest first, and ' +
+                `its best. Kept for ${kept}, after the full cycle archive above is gone. &quot;—&quot; is a ` +
+                'cycle with no result for that trial; T0 is a real result. Hover a trial for every cycle.">' +
+                'Trial history</div>',
+            ...rows.map(
+                (row) =>
+                    `<div style="color:${DIM};" title="${escapeAttr(trialHistoryDetail(row))}">` +
+                    `<span style="color:#e8ecf5;">${escapeText(row.name)}</span> · ${escapeText(trialHistoryCells(row))}</div>`
+            ),
+        ].join('');
+
+        this._placeBlock(root, 'trial-history', {
+            html,
             style:
                 'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
                 'border-radius:6px; font-size:12px; line-height:1.7;',

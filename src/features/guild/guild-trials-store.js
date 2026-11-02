@@ -53,7 +53,8 @@ import {
     trialWeekStart,
 } from './guild-trials-math.js';
 import { isPlausibleReading } from './guild-trials-scrape.js';
-import { statesAsMuch } from './guild-trial-history.js';
+import { FOREIGN_CYCLE_REASON, statesAsMuch } from './guild-trial-history.js';
+import { mergeResults, resultsFromHistory, trialResultsOf, withTrialResults } from './guild-trial-results.js';
 
 /** Object store the records live in — shared with the guild XP history */
 const STORE_NAME = 'guildHistory';
@@ -231,7 +232,7 @@ export function adoptPersonalStats(record, characterId) {
  * @returns {{weekStart: number, tiles: Object, guildId: string|null, guildName: string|null}} Fresh record
  */
 export function emptyRecord(weekStart, { guildId = null, guildName = null } = {}) {
-    return { weekStart, tiles: {}, guildId, guildName, history: [] };
+    return { weekStart, tiles: {}, guildId, guildName, history: [], trialResults: [] };
 }
 
 /**
@@ -300,10 +301,25 @@ export function recordProvenance(record, { guildId = null, guildName = null } = 
  */
 export function archiveCycle(record, reason, at = Date.now(), { accuracy = null, cycleFrom = null } = {}) {
     const tiles = record?.tiles && typeof record.tiles === 'object' ? record.tiles : {};
-    const history = Array.isArray(record?.history) ? [...record.history] : [];
+    const foreign = reason === FOREIGN_CYCLE_REASON;
+    // A record put away as another guild's brings its earlier archive with it,
+    // and that archive is the other guild's weeks too: marked as such, so Past
+    // weeks labels them and no trial result is read off them. What they were
+    // archived for is kept beside the mark
+    const history = (Array.isArray(record?.history) ? record.history : []).map((cycle) =>
+        foreign && cycle && typeof cycle === 'object' && cycle.reason !== FOREIGN_CYCLE_REASON
+            ? { ...cycle, reason: FOREIGN_CYCLE_REASON, archivedReason: cycle.reason ?? null }
+            : cycle
+    );
+
+    // Read before the dedupe below, which keeps one copy of a cycle whole by its
+    // total: a copy it drops can hold the only statement of another trial, or a
+    // newer tier of the same one. Results are per trial, so every copy is folded
+    const cyclesToFold = [...history];
 
     if (Object.keys(tiles).length) {
         const entry = { archivedAt: at, reason, weekStart: record?.weekStart ?? null, tiles };
+        cyclesToFold.push(entry);
         // Additive: written only when there is something to write, so an entry
         // with no `accuracy` key is an archive from before this existed rather
         // than a cycle that attributed nothing. `archivedAccuracyTrend` keeps
@@ -331,6 +347,12 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
         weekStart: record?.weekStart ?? trialWeekStart(at),
         tiles: {},
         history: capHistory(history),
+        // Read off the whole archive before the dedupe and the cap, so a copy
+        // either drops has its results kept here first (see guild-trial-results.js). A
+        // record put away as another guild's takes its results with it: they
+        // were folded off that guild's weeks, and kept they would draw and save
+        // as this guild's
+        trialResults: foreign ? [] : mergeResults(record?.trialResults, resultsFromHistory(cyclesToFold)),
     };
 }
 
@@ -418,6 +440,7 @@ export function rollRecordToWeek(record, weekStart, { guildId = null, guildName 
         guildId: record.guildId ?? guildId ?? null,
         guildName: record.guildName ?? guildName ?? null,
         history: archived.history,
+        trialResults: archived.trialResults,
     };
 }
 
@@ -1223,6 +1246,7 @@ export function mergeTrialRecords(base, incoming) {
         guildId: record.guildId ?? null,
         guildName: record.guildName ?? null,
         history: Array.isArray(record.history) ? record.history : [],
+        trialResults: trialResultsOf(record),
         ...cycleStartField(record.cycleStart, record.cycleStartAt),
     });
     if (baseWeek === null) return incoming ? whole(incoming) : emptyRecord(0);
@@ -1240,9 +1264,18 @@ export function mergeTrialRecords(base, incoming) {
     // entry per week, reason and cycle, as `archiveCycle` keeps them — the copy
     // that states more wins — so two sides archiving the same week at different
     // moments are one archive, not two
+    //
+    // A side naming another guild than the record's brings no archive and no
+    // results: its finished weeks are that guild's, and folded in here they
+    // would be filed as this guild's results on every later save. The record
+    // in hand is the base, as it is in every caller that knows which side is
+    // its own (a save drops a stored copy naming another guild before this —
+    // see `saveTrialRecord`)
+    const guild = { guildId: base.guildId ?? null, guildName: base.guildName ?? null };
+    const incomingForeign = recordProvenance(incoming, guild) === 'foreign';
     const history = [];
     const seenCycles = new Set();
-    for (const cycle of [...(base.history || []), ...(incoming.history || [])]) {
+    for (const cycle of [...(base.history || []), ...(incomingForeign ? [] : incoming.history || [])]) {
         if (!cycle) continue;
         if (Number.isFinite(cycle.weekStart)) {
             const same = history.findIndex(
@@ -1261,10 +1294,14 @@ export function mergeTrialRecords(base, incoming) {
         seenCycles.add(mark);
         history.push(cycle);
     }
+    // Each side's results with its own archive folded in. Known limit: the
+    // foreign check above trusts the base, and sync calls this in both orders,
+    // so of two sides naming different guilds the base's stands either way
     const provenance = {
         guildId: base.guildId ?? incoming.guildId ?? null,
         guildName: base.guildName ?? incoming.guildName ?? null,
         history: capHistory(history),
+        trialResults: mergeResults(trialResultsOf(base), incomingForeign ? [] : trialResultsOf(incoming)),
     };
     const tiles = { ...(base.tiles || {}) };
     for (const [key, tile] of Object.entries(incoming.tiles || {})) {
@@ -1448,6 +1485,7 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             weekStart: record.weekStart,
             tiles: record.tiles || {},
             history: Array.isArray(record.history) ? record.history : [],
+            trialResults: Array.isArray(record.trialResults) ? record.trialResults : [],
             guildId: record.guildId ?? guildId,
             guildName: record.guildName ?? guildName,
             ...cycleStartField(record.cycleStart, record.cycleStartAt),
@@ -1474,7 +1512,9 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             await saveTrialRecord(guildName, adopted.record, characterId, { guildId, overwrite: true });
         }
         // Not written here: the next save merges the stored copy, which rolls it the same way
-        return rollRecordToWeek(adopted.record, weekStart, { guildId, guildName });
+        // The results are brought up to date with the archive on the way in, so a
+        // record written before they existed shows its archived weeks at once
+        return withTrialResults(rollRecordToWeek(adopted.record, weekStart, { guildId, guildName }));
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial samples:', error);
         return null;
@@ -1690,15 +1730,21 @@ export async function saveTrialRecord(
     { guildId = null, overwrite = false, scrub = null } = {}
 ) {
     // Stamped on the way out, so the next session can tell whose it is
+    // …with its results folded from its archive, so an as-is write carries them too
     const stamped = {
-        ...record,
+        ...withTrialResults(record),
         guildId: record?.guildId ?? guildId ?? null,
         guildName: record?.guildName ?? guildName ?? null,
     };
     const fold = (stored, memory) => {
+        // A stored copy naming another guild is not folded in, as a load
+        // discards it: merged under this record, its archive and results
+        // would be filed as this guild's weeks
+        const foreign =
+            recordProvenance(stored, { guildId: stamped.guildId, guildName: stamped.guildName }) === 'foreign';
         // The merge is a union, so anything retired in memory would come
         // straight back from the stored copy without this
-        const unioned = mergeTrialRecords(stored, memory);
+        const unioned = foreign ? mergeTrialRecords(memory, null) : mergeTrialRecords(stored, memory);
         const merged = typeof scrub === 'function' ? scrub(unioned) : unioned;
         return {
             ...merged,

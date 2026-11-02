@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trials keep each trial's history for a year
+
+- Each trial's tier and points are now kept per week for about a year (about 120 cycles on the test server), shown as a Trial history block under Past weeks and a Past tiers row on each trial card. Weeks that belonged to another guild are labeled as such and left out.
+
 ### Labyrinth reads the run the way the game sends it
 
 - Run supplies (torches, shrouds, beacons) are read from the fields the game actually sends, so path planning knows your stock and a beacon is told apart from a room clear.
