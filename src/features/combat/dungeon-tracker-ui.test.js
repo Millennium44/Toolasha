@@ -80,6 +80,10 @@ vi.mock('./dungeon-key-runway.js', async (importOriginal) => ({
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
+        // The real store has both; this one answers the OrNull read from the same mock
+        getAllRunsOrNull(...args) {
+            return this.getAllRuns(...args);
+        },
         getAllRuns: vi.fn(async () => world.runs),
         getAverageBaselines: vi.fn(async () => world.baselines),
         getStats: vi.fn(async () => ({ totalRuns: 0, avgTime: 0, fastestTime: 0, slowestTime: 0, avgWaveTime: 0 })),

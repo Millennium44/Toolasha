@@ -75,6 +75,10 @@ vi.mock('./dungeon-roi-board-ui.js', stubModule);
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
+        // The real store has both; this one answers the OrNull read from the same mock
+        getAllRunsOrNull(...args) {
+            return this.getAllRuns(...args);
+        },
         getAllRuns: vi.fn(async () => {
             if (world.runGate) await world.runGate;
             return [];

@@ -1309,8 +1309,21 @@ class DungeonTrackerStorage {
      * @returns {Promise<Array>} Runs, newest first
      */
     async getAllRuns({ includeAttempts = false } = {}) {
+        return (await this.getAllRunsOrNull({ includeAttempts })) ?? [];
+    }
+
+    /**
+     * {@link DungeonTrackerStorage#getAllRuns}, but null when the store could
+     * not be read. For a display that must not say "No runs yet" about history
+     * it never actually saw.
+     *
+     * @param {Object} [options]
+     * @param {boolean} [options.includeAttempts] - Failed and canceled attempts too
+     * @returns {Promise<Array<Object>|null>} The runs, or null on a failed read
+     */
+    async getAllRunsOrNull({ includeAttempts = false } = {}) {
         const runs = await this._loadRuns();
-        if (!runs) return [];
+        if (!runs) return null;
         // A copy either way: the list held here is what the next save appends
         // to, and a caller that sorted or spliced the live one would reorder the store
         return includeAttempts ? [...runs] : runs.filter(isClearRun);

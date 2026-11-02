@@ -191,9 +191,16 @@ class DungeonTrackerUI {
 
             if (completedRun && !dungeonTracker.getPendingDungeon()?.betweenRuns) {
                 // The dungeon action is over: its last run just finished
+                this.dismissed = null;
                 this.hide();
             } else if (currentRun) {
                 // Dungeon in progress
+                if (this.isDismissedFor(currentRun)) {
+                    // Closed by the player: stay closed for this action, but keep
+                    // the hidden panel drawn so Ctrl+K reopens it current
+                    this.update(currentRun);
+                    return;
+                }
                 this.show();
                 this.update(currentRun);
             } else {
@@ -203,9 +210,16 @@ class DungeonTrackerUI {
                 // the thirty-odd seconds until the next wave starts.
                 const pending = dungeonTracker.getPendingDungeon();
                 if (pending) {
+                    // Between two runs of a repeating dungeon is the same action:
+                    // a dismissal holds through the gap
+                    if (this.isDismissedFor(pending)) {
+                        this.showPending(pending);
+                        return;
+                    }
                     this.show();
                     this.showPending(pending);
                 } else {
+                    this.dismissed = null;
                     this.hide();
                 }
             }
@@ -283,6 +297,18 @@ class DungeonTrackerUI {
                             padding: 0 4px;
                             line-height: 1;
                         " title="Collapse/Expand">▼</button>
+                        <button id="mwi-dt-close-btn" style="
+                            background: none;
+                            border: none;
+                            color: #aaa;
+                            cursor: pointer;
+                            font-size: 16px;
+                            padding: 0 4px;
+                            line-height: 1;
+                            flex-shrink: 0;
+                            min-width: 28px;
+                            min-height: 28px;
+                        " title="Close (reopen from Ctrl+K)">×</button>
                     </div>
                 </div>
 
@@ -592,6 +618,13 @@ class DungeonTrackerUI {
         // Add to page
         document.body.appendChild(this.container);
         registerFloatingPanel(this.container);
+
+        // The × sits in the draggable header, so it must not start a drag (the
+        // drag handler skips it by id) or reach the header's own handlers
+        this.container.querySelector('#mwi-dt-close-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.close();
+        });
 
         // Setup all interactions with callbacks
         this.interactions.setupAll(this.container, {
@@ -969,7 +1002,10 @@ class DungeonTrackerUI {
         // attempts come too when they are being recorded, for the fail figures
         // alone: every other figure here is a clear's.
         const withAttempts = recordingAttempts();
-        const storedRuns = await dungeonTrackerStorage.getAllRuns({ includeAttempts: withAttempts });
+        const readRuns = await dungeonTrackerStorage.getAllRunsOrNull({ includeAttempts: withAttempts });
+        // null is a store that could not be read, which is not "no runs"
+        const readFailed = readRuns === null;
+        const storedRuns = readRuns ?? [];
         const allRuns = withAttempts ? storedRuns.filter(isClearRun) : storedRuns;
         // A switch landing inside that read has already torn the panel down —
         // `this.container`, `this.history` and `this.roiBoard` are null and the
@@ -1059,7 +1095,7 @@ class DungeonTrackerUI {
 
         const headerRuns = this.container.querySelector('#mwi-dt-header-runs');
         if (headerRuns) {
-            headerRuns.textContent = stats.totalRuns.toString();
+            headerRuns.textContent = readFailed ? '--' : stats.totalRuns.toString();
         }
 
         // Update run-level stats in content area (2x2 grid)
@@ -1421,8 +1457,111 @@ class DungeonTrackerUI {
      */
     toggle() {
         if (!this.container) return;
-        if (this.container.style.display === 'none') this.show();
-        else this.hide();
+        if (this.container.style.display !== 'none') {
+            this.close();
+            return;
+        }
+        // Asked for by hand: a dismissal no longer applies
+        this.dismissed = null;
+        this.show();
+        // A dungeon running (or about to be tracked) is drawn by its own events
+        // and 1 Hz tick; with none, nothing else will ever draw the panel
+        if (dungeonTracker.getCurrentRun()) return;
+        const pending = dungeonTracker.getPendingDungeon();
+        if (pending) {
+            this.showPending(pending);
+            return;
+        }
+        this.showIdle();
+    }
+
+    /**
+     * Draw the panel for a player who opened it with no dungeon running: the
+     * card and Keys line read as idle rather than as the build-time
+     * placeholders (or the last run's figures), and the header stats, run list
+     * and its Export/Import bar come from stored history, which until now only
+     * a live run or a filter change ever drew.
+     *
+     * The card is written before the first await so a run starting meanwhile
+     * simply draws over it; what the awaits draw is stored history, true either way.
+     *
+     * @returns {Promise<void>}
+     */
+    async showIdle() {
+        if (!this.container) return;
+        const ticket = captureOwner(this);
+        const character = currentCharacter();
+
+        const setText = (selector, text) => {
+            const element = this.container.querySelector(selector);
+            if (element) element.textContent = text;
+        };
+        setText('#mwi-dt-dungeon-name', 'No dungeon running');
+        setText('#mwi-dt-wave-counter', '');
+        setText('#mwi-dt-time-label', 'Elapsed: ');
+        setText('#mwi-dt-current-time', '--:--');
+        setText('#mwi-dt-progress-text', '');
+        const waveCounter = this.container.querySelector('#mwi-dt-wave-counter');
+        if (waveCounter) waveCounter.title = '';
+        const timeLabel = this.container.querySelector('#mwi-dt-time-label');
+        if (timeLabel) timeLabel.title = '';
+        const progressBar = this.container.querySelector('#mwi-dt-progress-bar');
+        if (progressBar) progressBar.style.width = '0%';
+        const paceElement = this.container.querySelector('#mwi-dt-pace');
+        if (paceElement) paceElement.style.display = 'none';
+
+        // Keys are only ever known from a run's party, so an idle panel claims none
+        const characterName = dataManager.characterData?.character?.name || character?.name || 'You';
+        setText('#mwi-dt-character-name', characterName);
+        this.updateKeysDisplay({}, characterName);
+        setText('#mwi-dt-self-keys', '--');
+        setText('#mwi-dt-header-keys', '--');
+        this.keyRunwayClears = null;
+        this.drawKeyRunway({}, characterName);
+
+        try {
+            const drawn = await this.drawHistoryStats(ticket, character);
+            if (!drawn) return;
+            await this.updateRunHistory(ticket, character);
+            if (!stillOurs(ticket)) return;
+            await this.updateRoiBoard();
+        } catch (error) {
+            console.error('[Toolasha Dungeon Tracker UI] Idle history failed to draw:', error);
+        }
+    }
+
+    /**
+     * What a dismissal is keyed on: the dungeon and tier of the action running.
+     * @param {{dungeonName?: string, tier?: number|null}} run - A run or the pending card
+     * @returns {string}
+     */
+    dismissalKey(run) {
+        return `${run?.dungeonName ?? ''}|${run?.tier ?? ''}`;
+    }
+
+    /**
+     * Whether the player closed the panel for the action this run belongs to.
+     * A different dungeon or tier is a new action and clears the dismissal.
+     * @param {{dungeonName?: string, tier?: number|null}} run - A run or the pending card
+     * @returns {boolean}
+     */
+    isDismissedFor(run) {
+        if (!this.dismissed) return false;
+        if (this.dismissed.key === this.dismissalKey(run)) return true;
+        this.dismissed = null;
+        return false;
+    }
+
+    /**
+     * The player closing the panel (the × or Ctrl+K on an open panel). With a
+     * dungeon running the panel stays closed until that action ends or the
+     * player opens it again; recording is not the panel's and never stops.
+     * Held in memory only: a reload or character switch starts fresh.
+     */
+    close() {
+        const live = dungeonTracker.getCurrentRun() || dungeonTracker.getPendingDungeon();
+        this.dismissed = live ? { key: this.dismissalKey(live) } : null;
+        this.hide();
     }
 
     /**
@@ -1463,6 +1602,7 @@ class DungeonTrackerUI {
         try {
             unregisterCommand('Dungeon Tracker');
             this.keyRunwayClears = null;
+            this.dismissed = null;
             // Immediately hide UI to prevent visual artifacts during character switch
             this.hide();
 
