@@ -322,7 +322,9 @@ describe('trialResultsHistory', () => {
         ]);
         const { rows, cycles } = trialResultsHistory(results, { now });
         expect(cycles).toHaveLength(2);
-        expect(cycles[0].label).toMatch(/^This week \(ended /);
+        // The plain end time leads on the test server, and a finished cycle is never "This week"
+        expect(cycles[0].label).toMatch(/^[A-Z][a-z]{2} \d{1,2}:\d{2} [AP]M$/);
+        expect(cycles[0].label).not.toMatch(/this week/i);
         expect(trialHistoryCells(rows[0])).toMatch(/^T4 · T2 · best T4/);
     });
 

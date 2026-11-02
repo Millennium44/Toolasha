@@ -3573,7 +3573,15 @@ describe('the panel, end to end', () => {
             tiers: [],
         });
 
-        test('one line per trial, newest week first, a dash for a week it has no result, and its best', () => {
+        /** The Trial history table's cells: the header's, or one trial's row */
+        const historyCells = (name = null) => {
+            const block = document.querySelector('[data-mwi-block="trial-history"]');
+            const rows = [...block.children].filter((node) => node.style.display === 'grid');
+            const row = name === null ? rows[0] : rows.find((node) => node.children[0].textContent === name);
+            return row ? [...row.children].map((cell) => cell.textContent) : null;
+        };
+
+        test('one table row per trial, newest week first, a dash for a week it has no result, and its best', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             guildTrials.record = {
                 ...guildTrials.record,
@@ -3586,16 +3594,24 @@ describe('the panel, end to end', () => {
             fire(root);
 
             expect(text()).toContain('Trial history');
-            expect(text()).toContain('Alchemy · T7 · — · T9 · best T9 (3 weeks ago)');
-            expect(text()).toContain('Trial Chameleon · — · T5 · — · best T5 (2 weeks ago)');
+            // A header naming the cycles, then a name, one cell per cycle, and the best
+            expect(historyCells()).toEqual(['', 'Last week', '2 weeks ago', '3 weeks ago', 'Best']);
+            expect(historyCells('Alchemy')).toEqual(['Alchemy', 'T7', '—', 'T9', 'T9']);
+            expect(historyCells('Trial Chameleon')).toEqual(['Trial Chameleon', '—', 'T5', '—', 'T5']);
             // Below Past weeks
             expect(text().indexOf('Past weeks')).toBeLessThan(text().indexOf('Trial history'));
-            // …and on the Alchemy card, its own recent tiers, every week in the hover
-            const pastTiers = [...document.querySelectorAll('[title]')].find((node) =>
-                node.textContent.includes('Past tiers')
+            // The card carries no row of its own for it: the best rides on Banked, with no date
+            const banked = [...document.querySelectorAll('[title]')].find(
+                (node) => node.firstElementChild?.textContent === 'Banked'
             );
-            expect(pastTiers.textContent).toContain('T7 · — · T9 · best T9');
-            expect(pastTiers.getAttribute('title')).toContain('3 weeks ago: T9 · 1,500 pts');
+            expect(text()).not.toContain('Past tiers');
+            expect(banked.lastElementChild.textContent).toMatch(/ · Best T9$/);
+            expect(banked.lastElementChild.textContent).not.toMatch(/week|ago|AM|PM/);
+            // …and the cycles, with their points and the best's date, are in its hover
+            expect(banked.getAttribute('title')).toContain('Past tiers: T7 · — · T9');
+            expect(banked.getAttribute('title')).toContain('3 weeks ago: T9 · 1,500 pts');
+            expect(banked.getAttribute('title')).toContain('Best: T9, 3 weeks ago.');
+            expect(text()).not.toContain('could not be drawn');
         });
 
         test('no finished cycle yet: no block and no card line', () => {
@@ -3626,7 +3642,7 @@ describe('the panel, end to end', () => {
                 ],
             };
             fire(root);
-            expect(text()).toContain('Alchemy · T11 · best T11 (10 weeks ago)');
+            expect(historyCells('Alchemy')).toEqual(['Alchemy', 'T11', 'T11']);
         });
 
         test('a week archived off another guild’s record is never in it', () => {
@@ -3681,7 +3697,7 @@ describe('the panel, end to end', () => {
                 trialResults: [result('alchemy', 'Alchemy'), result('milking', null)],
             };
             fire(root);
-            expect(text()).toContain('Alchemy · T5 · best T5 (2 weeks ago)');
+            expect(historyCells('Alchemy')).toEqual(['Alchemy', 'T5', 'T5']);
         });
 
         test('the results are folded once a render pass, for the cards and the block alike', () => {
@@ -4347,9 +4363,9 @@ describe('the panel, end to end', () => {
         );
         fire(root);
 
-        expect(text()).toContain('0 tiers — fell before tier 1');
+        expect(text()).toMatch(/Banked0 · fell before T1/);
         expect(text()).not.toContain('in progress');
-        expect(text()).not.toContain('tier not seen yet');
+        expect(text()).not.toContain('Banked—');
     });
 
     test('a guild notice board makes no tile, no stats and no recording', async () => {
@@ -4428,8 +4444,8 @@ describe('the panel, end to end', () => {
         // …paired with the pool it was stated for, so it can expire when the
         // bar's target moves on to the next tier's
         expect(guildTrials.record.tiles['skilling::crafting'].liveTierTarget).toBe(49_920);
-        expect(text()).not.toContain('tier not seen yet');
-        expect(text()).toContain('2 tiers');
+        expect(text()).not.toContain('Banked—');
+        expect(text()).toMatch(/Banked2(\D|$)/);
     });
 
     test('a spectated combat trial’s stated tier persists the same way', async () => {
@@ -4446,8 +4462,8 @@ describe('the panel, end to end', () => {
         const tile = guildTrials.record.tiles['combat::trial chameleon'];
         expect(tile.liveTier).toBe(2);
         expect(tile.liveTierTarget).toBe(572_000);
-        expect(text()).not.toContain('tier not seen yet');
-        expect(text()).toContain('1 tier');
+        expect(text()).not.toContain('Banked—');
+        expect(text()).toMatch(/Banked1(\D|$)/);
     });
 
     test('a card the game is drawing a bar on keeps its own numbers', async () => {
@@ -5729,8 +5745,8 @@ describe('the two trial tabs, as the game draws them', () => {
         // The reading files under the tier the target identifies, and the
         // panel states the tier instead of "tier not seen yet"
         expect(guildTrials.record.tiles['skilling::alchemy'].tiers).toContainEqual({ tier: 7, total: 65_280 });
-        expect(document.body.textContent).not.toContain('tier not seen yet');
-        expect(document.body.textContent).toContain('6 tiers');
+        expect(document.body.textContent).not.toContain('Banked—');
+        expect(document.body.textContent).toMatch(/Banked6(\D|$)/);
     });
 
     test('a seeded base serves a completely cold store — the second character’s first look', async () => {
@@ -5756,8 +5772,8 @@ describe('the two trial tabs, as the game draws them', () => {
         fire();
 
         expect(guildTrials.record.tiles['skilling::crafting'].tiers).toContainEqual({ tier: 3, total: 51_360 });
-        expect(document.body.textContent).not.toContain('tier not seen yet');
-        expect(document.body.textContent).toContain('2 tiers');
+        expect(document.body.textContent).not.toContain('Banked—');
+        expect(document.body.textContent).toMatch(/Banked2(\D|$)/);
     });
 
     test('the In Progress tab stays correct on its own as tiers clear under it', async () => {
@@ -5788,7 +5804,7 @@ describe('the two trial tabs, as the game draws them', () => {
         // T14's pool with 2 signed up: 40,000 × 2.3 × 1.02
         buildInProgressTab('90,000 / 93,840');
         fire();
-        expect(document.body.textContent).toContain('13 tiers');
+        expect(document.body.textContent).toMatch(/Banked13(\D|$)/);
 
         // The tier clears while the tab sits open: the bar resets onto T15's
         // target, 40,000 × 2.4 × 1.02
@@ -5796,8 +5812,8 @@ describe('the two trial tabs, as the game draws them', () => {
         buildInProgressTab('1,200 / 97,920');
         fire();
 
-        expect(document.body.textContent).toContain('14 tiers');
-        expect(document.body.textContent).not.toContain('13 tiers');
+        expect(document.body.textContent).toMatch(/Banked14(\D|$)/);
+        expect(document.body.textContent).not.toMatch(/Banked13(\D|$)/);
         // And both pools were filed under the tier their own target names
         expect(guildTrials.record.tiles['skilling::alchemy'].tiers).toContainEqual({ tier: 14, total: 93_840 });
         expect(guildTrials.record.tiles['skilling::alchemy'].tiers).toContainEqual({ tier: 15, total: 97_920 });
@@ -5846,8 +5862,8 @@ describe('zero is a claim, and usually the wrong one', () => {
         expect(analysis.tiersClearedSoFar).toBe(0);
 
         const html = renderTrialBlock(analysis, 0, { measured: false, reason: 'nothing' });
-        expect(html).toContain('tier not seen yet');
-        expect(html).not.toContain('0 tiers');
+        expect(html).toMatch(/>Banked<\/span><span[^>]*>—<\/span>/);
+        expect(html).not.toContain('0 · ');
     });
 
     test('a live spectator tier floors the count past a stale badge (In Progress after refresh)', () => {
@@ -5912,7 +5928,7 @@ describe('zero is a claim, and usually the wrong one', () => {
         );
 
         expect(analysis.tier).toBe(1);
-        expect(renderTrialBlock(analysis, 0)).toContain('nothing yet');
+        expect(renderTrialBlock(analysis, 0)).toContain('0 · on T1');
     });
 
     test('a pace that cannot be projected says which of the four things is missing', () => {
@@ -5932,6 +5948,9 @@ describe('zero is a claim, and usually the wrong one', () => {
         expect(renderTrialBlock(oneSample, 0)).toContain('measuring');
     });
 });
+
+/** A readout row: label and value on the one two-column grid */
+const GRID_ROW = /display:grid; grid-template-columns:minmax\(0,45%\) minmax\(0,1fr\)/;
 
 describe('the side block’s shape', () => {
     // Reported from a screenshot: the two-column rows wrapped badly on a narrow
@@ -5962,7 +5981,7 @@ describe('the side block’s shape', () => {
         );
         const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' });
 
-        expect(html).toMatch(/justify-content:space-between/);
+        expect(html).toMatch(GRID_ROW);
         expect(html).toContain('Fill rate');
         expect(html).toContain('\u00a0work/s');
     });
@@ -6002,7 +6021,7 @@ describe('the first tier of a running trial', () => {
         expect(analysis.pace).not.toBeNull();
         const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { phase: 'live' });
         expect(html).not.toContain('tier not known yet');
-        expect(html).not.toContain('tier not seen yet');
+        expect(html).not.toMatch(/>Banked<\/span><span[^>]*>—<\/span>/);
     });
 
     test('a card that already states points is not assumed to be on tier one', () => {
@@ -6134,7 +6153,7 @@ describe('the tier from the bar alone', () => {
         const html = renderTrialBlock(analysis, 4, { measured: false, reason: 'none' }, { phase: 'live' });
 
         expect(html).toContain('derived from the tier’s work total');
-        expect(html).not.toContain('tier not seen yet');
+        expect(html).not.toMatch(/>Banked<\/span><span[^>]*>—<\/span>/);
     });
 
     test('the observed trial end to end: known at once, and paced far past T3', () => {
@@ -6161,9 +6180,9 @@ describe('the tier from the bar alone', () => {
 
         const html = renderTrialBlock(analysis, 4, { measured: false, reason: 'none' }, { phase: 'live' });
         expect(html).toContain('18 tiers → T18 (Lv.270)');
-        expect(html).toContain('Next tier work (T4)');
+        expect(html).toContain('Next T4 work');
         expect(html).toContain('54.1K');
-        expect(html).toContain('2 tiers');
+        expect(html).toMatch(/>Banked<\/span><span[^>]*>2<\/span>/);
     });
 
     test('a walk still cut short by an unknown ladder reads “at least”, never a verdict', () => {
@@ -6369,7 +6388,7 @@ describe('the ladder only climbs — the IC screen, in full', () => {
         const html = renderTrialBlock(analysis, 7, { measured: false, reason: 'none' }, { phase: 'live' });
         expect(html).toContain('19 tiers → T19');
         expect(html).not.toContain('→ T10');
-        expect(html).toContain('10 tiers');
+        expect(html).toMatch(/>Banked<\/span><span[^>]*>10<\/span>/);
     });
 });
 
@@ -6509,7 +6528,7 @@ describe('the combat tier from the card alone', () => {
         const html = renderTrialBlock(analysis, 4, { measured: false, reason: 'none' }, { phase: 'live' });
 
         expect(html).toContain('derived from the boss’s full health');
-        expect(html).not.toContain('tier not seen yet');
+        expect(html).not.toMatch(/>Banked<\/span><span[^>]*>—<\/span>/);
     });
 });
 
@@ -6781,7 +6800,7 @@ describe('the badge counts what is banked', () => {
         const analysis = analyseTrial(record({ kind: 'skilling', tier: 2 }), { phase: 'live' });
         const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { phase: 'live' });
 
-        expect(html).toContain('2 tiers');
+        expect(html).toMatch(/>Banked<\/span><span[^>]*>2<\/span>/);
     });
 });
 
@@ -6810,7 +6829,7 @@ describe('the narrow block beside a card', () => {
         // with an orphan letter under it was the reported result of the last fix
         expect(html).not.toContain('text-overflow:ellipsis');
         expect(html).not.toContain('overflow-wrap:anywhere');
-        expect(html).toContain('word-break:normal');
+        expect(html).toMatch(GRID_ROW);
         for (const row of rowsOf(html)) expect(row).not.toMatch(/white-space:nowrap;">[^<]{1,4}…/);
 
         // And the labels are whole words
@@ -6842,9 +6861,10 @@ describe('the narrow block beside a card', () => {
         const pace = html.split('</div>').find((part) => part.includes('→'));
         expect(pace).toBeTruthy();
         // Stacked: the value is its own full-width line, not a squeezed column
-        expect(pace).not.toContain('justify-content:space-between');
-        // With the whole label above it
-        expect(html).toContain('>On pace for</div>');
+        // Same two-column row as a short figure: the value wraps inside its own
+        // column and never takes another layout, so the rows line up on every card
+        expect(pace).toMatch(GRID_ROW);
+        expect(html).toMatch(/>On pace for<\/span><span[^>]*>5 tiers/);
     });
 
     test('a short figure still sits beside its label', () => {
@@ -6861,7 +6881,7 @@ describe('the narrow block beside a card', () => {
         const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { phase: 'live' });
 
         const rate = html.split('</div>').find((part) => part.includes('Fill rate'));
-        expect(rate).toContain('justify-content:space-between');
+        expect(rate).toMatch(GRID_ROW);
         expect(rate).toContain('\u00a0work/s');
     });
 });
@@ -6932,7 +6952,7 @@ describe('one row set per phase', () => {
         expect(html).not.toContain('only trials you join');
         // What is known is still shown
         expect(html).toContain('Banked');
-        expect(html).toContain('4 tiers');
+        expect(html).toMatch(/>Banked<\/span><span[^>]*>4 · finished<\/span>/);
     });
 
     test('a live card keeps the full set', () => {
@@ -6969,7 +6989,8 @@ describe('one row set per phase', () => {
         // Non-breaking space between the number and its unit, and a value
         // column that does not wrap or shrink
         expect(html).toContain('\u00a0dmg/s');
-        expect(html).toMatch(/white-space:nowrap; *flex:0 0 auto;/);
+        // Joined to its figure by a no-break space, so a wrap never strands it
+        expect(html).not.toMatch(/dmg\/s[^<]*\s[^<]*<\/span>/);
     });
 });
 
@@ -7414,7 +7435,9 @@ describe('renderTrialPlayers', () => {
         expect(finished.tiersClearedSoFar).toBe(3);
         expect(finished.points.guildPoints).toBe(960);
         expect(finished.points.basePoints).toBeCloseTo(800, 6);
-        expect(renderTrialBlock(finished, 3, { measured: false, reason: 'none' })).toContain('3 tiers · finished');
+        expect(renderTrialBlock(finished, 3, { measured: false, reason: 'none' })).toMatch(
+            />Banked<\/span><span[^>]*>3 · finished<\/span>/
+        );
 
         // Still an inference while the trial runs, and it does not claim the
         // tier the party is currently fighting
@@ -7643,7 +7666,7 @@ describe('the payout block, audited', () => {
         fire();
 
         expect(guildTrials.record.tiles['combat::trial chameleon'].completed).toBe(true);
-        expect(text()).toContain('3 tiers · finished');
+        expect(text()).toContain('Banked3 · finished');
         expect(text()).toContain('Guild Points banked960');
         // 800 of base, half of it at the Treasury's +10%
         expect(text()).toContain('Tokens, every eligible member440');

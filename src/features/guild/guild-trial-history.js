@@ -28,6 +28,7 @@
 
 import { eligibleMemberTokens, guildPoints, trialBasePoints, trialWeekStart } from './guild-trials-math.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
+import { isTestServer } from '../../utils/game-server.js';
 
 /** One trial week, in ms */
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -282,7 +283,11 @@ export function summariseArchivedCycle(
     let pointsDerived = false;
     let pointsMissing = false;
     for (const tile of tiles) {
-        if (!serverAhead(tile)) {
+        // A card zeroed by the cycle's roll keeps its tier and reads 0 points: a
+        // tier above 0 always paid something, so that zero is a missing figure,
+        // not a result, and is priced like a payload-only tier below
+        const zeroedCard = tile?.points === 0 && (clearedTier(tile) ?? 0) > 0;
+        if (!serverAhead(tile) && !zeroedCard) {
             if (statesPoints(tile)) points = (points ?? 0) + tile.points;
             continue;
         }
@@ -301,7 +306,7 @@ export function summariseArchivedCycle(
             continue;
         }
         const kind = tile?.kind === 'combat' ? 'combat' : 'skilling';
-        points = (points ?? 0) + guildPoints(trialBasePoints(kind, serverClearedTier(tile)), buildersHallBonus);
+        points = (points ?? 0) + guildPoints(trialBasePoints(kind, clearedTier(tile)), buildersHallBonus);
         pointsDerived = true;
     }
     // A sum missing one trial is not the cycle's total
@@ -347,14 +352,9 @@ export function summariseArchivedCycle(
 export function pastWeekLine(summary) {
     const dash = '—';
     const tier = (value) => (Number.isFinite(value) ? `T${value}` : dash);
-    const when = summary?.when ? summary.when.charAt(0).toUpperCase() + summary.when.slice(1) : dash;
-
-    const ended = Number.isFinite(summary?.endedAt)
-        ? ` (ended ${new Date(summary.endedAt).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })})`
-        : '';
 
     const parts = [
-        `${when}${ended}`,
+        cycleEndLabel(summary?.when, summary?.endedAt),
         `combat ${tier(summary?.combatTier)}`,
         `skilling ${tier(summary?.skillingTier)}`,
         `${Number.isFinite(summary?.points) ? `${summary.pointsDerived ? '~' : ''}${formatWithSeparator(Math.round(summary.points))}` : dash} pts`,
@@ -362,4 +362,29 @@ export function pastWeekLine(summary) {
     ];
     if (summary?.foreign) parts.push('another guild’s week');
     return parts.join(' · ');
+}
+
+/**
+ * When a finished cycle ended, as a label.
+ *
+ * Every cycle this labels is over, so it is never "This week": a live week's
+ * own cycle is the running one and is never listed, and the test server runs
+ * several cycles a week, which "This week" cannot tell apart. The test server
+ * leads with the plain end time ("Mon 3:00 PM"), since its cycles repeat daily;
+ * live, a cycle is a week, so it reads "Last week", "2 weeks ago", with the end
+ * time after it where one was stamped.
+ *
+ * @param {string|null} age - From {@link describeCycleAge} ("last week"), null when unknown
+ * @param {number|null} [endedAt] - When the cycle ended, ms; null on a live week
+ * @returns {string} e.g. `Mon 3:00 PM`, `Last week`, `Last week (ended Mon 3:00 PM)`, `—`
+ */
+export function cycleEndLabel(age, endedAt = null) {
+    const ended = Number.isFinite(endedAt)
+        ? new Date(endedAt).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+        : null;
+    if (ended && isTestServer()) return ended;
+    const base = age === 'this week' ? 'earlier this week' : age;
+    const when = base ? base.charAt(0).toUpperCase() + base.slice(1) : null;
+    if (ended) return when ? `${when} (ended ${ended})` : ended;
+    return when ?? '—';
 }
