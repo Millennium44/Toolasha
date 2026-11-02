@@ -45,6 +45,7 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
 import { isMobileMode } from '../../utils/mobile.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../utils/game-look.js';
 import {
     restoreGeometry,
     saveGeometry,
@@ -143,71 +144,7 @@ const EDGE_MARGIN = 8;
 const DIALOG_TRIES = 12;
 const DIALOG_RETRY_MS = 60;
 
-/**
- * The look of the panel and the popup, in one place: the game's own plain dark frame, white text, its blue
- * buttons and its divider line. Every color comes from the game's CSS variables with a measured fallback, so
- * a game theme change carries over. Green and red are for good and bad verdicts only.
- */
-const COLORS = {
-    // Measured from the game's Modal_modal: its near-black fill, thin light edge and faint glow
-    background: 'rgb(19, 20, 25)',
-    frame: 'rgb(208, 208, 208)',
-    frameGlow: 'rgba(208, 208, 208, 0.282) 0 0 4px 4px',
-    border: 'var(--color-divider, #323450)',
-    text: 'var(--color-text-dark-mode, #e7e7e7)',
-    textDim: 'rgba(231, 231, 231, 0.6)',
-    good: '#4ade80',
-    bad: '#f87171',
-};
-
-/** Button fills: primary blue, the quieter secondary blue, and the selected state */
-const BUTTON_LOOK = {
-    primary: { rest: 'var(--color-primary, #4357af)', hover: 'var(--color-primary-hover, #546ddb)' },
-    quiet: { rest: 'var(--color-space-800, #273366)', hover: 'var(--color-space-700, #35458b)' },
-    icon: { rest: 'transparent', hover: 'var(--color-space-800, #273366)' },
-};
-
-/**
- * Make a button look like the game's.
- *
- * `primary` is the full blue button, `quiet` the secondary blue for rows of controls, `icon` a bare glyph
- * that only shows a fill on hover. `compact` is the same button at a smaller height, for controls that sit
- * inline in a header or a row.
- *
- * @param {HTMLButtonElement} button - The button
- * @param {'primary'|'quiet'|'icon'} variant - Which fill
- * @param {boolean} [compact] - Smaller height and text
- * @returns {HTMLButtonElement} The same button
- */
-function styleGameButton(button, variant, compact = false) {
-    const look = BUTTON_LOOK[variant];
-    button._restBg = look.rest;
-    Object.assign(button.style, {
-        background: look.rest,
-        border: 'none',
-        borderRadius: 'var(--radius-sm, 0.25rem)',
-        color: 'var(--color-text-dark-mode, #e7e7e7)',
-        cursor: 'pointer',
-        fontWeight: '600',
-        fontFamily: 'inherit',
-        fontSize: compact ? '0.75rem' : 'var(--font-size-base, 0.875rem)',
-        height: compact
-            ? 'calc(var(--button-height-normal, 1.875rem) - 0.375rem)'
-            : 'var(--button-height-normal, 1.875rem)',
-        padding: compact ? '0 0.5rem' : '0 0.75rem',
-        lineHeight: '1',
-        boxSizing: 'border-box',
-    });
-    button.addEventListener('mouseover', () => (button.style.background = look.hover));
-    button.addEventListener('mouseout', () => (button.style.background = button._restBg));
-    return button;
-}
-
-/** Change the fill a styled button returns to when the pointer leaves */
-function setButtonRest(button, background) {
-    button._restBg = background;
-    button.style.background = background;
-}
+const COLORS = GAME_COLORS;
 
 /** Beyond this far from expectation, a chest is worth remarking on */
 const NOTABLE_RATIO = 0.05;
@@ -1414,10 +1351,7 @@ class TreasureTracker {
             zIndex: String(config.Z_FLOATING_PANEL),
             width: '340px',
             maxWidth: 'calc(100vw - 16px)',
-            background: COLORS.background,
-            border: `1px solid ${COLORS.frame}`,
-            borderRadius: 'var(--radius-sm, 0.25rem)',
-            boxShadow: COLORS.frameGlow,
+            ...GAME_FRAME,
             color: COLORS.text,
             fontSize: '11px',
             display: 'flex',
@@ -1526,7 +1460,8 @@ class TreasureTracker {
         const full = document.createElement('button');
         full.textContent = 'View full stats';
         styleGameButton(full, 'primary');
-        Object.assign(full.style, { marginTop: '8px', width: '100%' });
+        // On a touch screen the resize handle is 26 px, so the button sits clear above it
+        Object.assign(full.style, { marginTop: '8px', marginBottom: touch ? '18px' : '0', width: '100%' });
         full.addEventListener('click', (event) => {
             // The popup stays. It is the thing you were reading when you decided
             // you wanted more, and closing it to answer that is taking away the
@@ -1708,10 +1643,7 @@ class TreasureTracker {
             // Clamped so the first open on a phone is not wider than the screen
             width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
             height: panelHeightCap(DEFAULT_PANEL.height),
-            background: COLORS.background,
-            border: `1px solid ${COLORS.frame}`,
-            borderRadius: 'var(--radius-sm, 0.25rem)',
-            boxShadow: COLORS.frameGlow,
+            ...GAME_FRAME,
             color: COLORS.text,
             fontSize: '13px',
             display: 'flex',
