@@ -207,6 +207,7 @@ import {
 import { FOREIGN_CYCLE_REASON, pastCycles, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
 import {
     historyRowFor,
+    resultCycleCap,
     trialHistoryCells,
     trialHistoryDetail,
     trialResultsHistory,
@@ -4533,7 +4534,7 @@ class GuildTrials {
                 drawn.add('payout');
             }
             if (this._renderHistory(root, now, bonuses)) drawn.add('history');
-            if (this._renderTrialHistory(root, now, bonuses)) drawn.add('trial-history');
+            if (this._renderTrialHistory(root, now, bonuses, pastTiers)) drawn.add('trial-history');
             this._reapBlocks(root, drawn);
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
@@ -5644,17 +5645,20 @@ class GuildTrials {
      * @param {Element} root - The trials content element
      * @param {number} [now] - Clock
      * @param {Object} [bonuses] - From {@link _payoutBonuses}; resolved here when omitted
+     * @param {Object|null} [history] - This pass's {@link _trialHistory}, so the fold runs once a pass
      * @returns {boolean} Whether the block is on screen
      */
-    _renderTrialHistory(root, now = Date.now(), bonuses = null) {
+    _renderTrialHistory(root, now = Date.now(), bonuses = null, history = null) {
         if (isInProgressView(root)) return false;
-        const { rows } = this._trialHistory(now, bonuses);
+        const { rows } = history || this._trialHistory(now, bonuses);
+        // The cap of the server this is on: a cycle is a week on live, a few hours on the test server
+        const kept = isTestServer() ? `the last ${resultCycleCap()} cycles` : `${resultCycleCap()} weeks`;
         if (!rows.length) return false;
 
         const html = [
             `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
                 'title="The tier each trial reached in every finished cycle this client saw, newest first, and ' +
-                'its best. Kept for a year (120 cycles on the test server) after the full cycle archive above is gone. &quot;—&quot; is a ' +
+                `its best. Kept for ${kept}, after the full cycle archive above is gone. &quot;—&quot; is a ` +
                 'cycle with no result for that trial; T0 is a real result. Hover a trial for every cycle.">' +
                 'Trial history</div>',
             ...rows.map(

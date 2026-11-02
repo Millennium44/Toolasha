@@ -327,6 +327,7 @@ const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial-tier-timing.js');
 const { badgeText } = await import('./guild-trial-tier-badge.js');
 const { parseCurrentTrialsData, tierPoolWork, trialWeekStart } = await import('./guild-trials-math.js');
+const { trialResultsOf } = await import('./guild-trial-results.js');
 const { emptyRecord, saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
 const { TRIAL_GAME_DATA } = await import('../combat-sim/engine/guild-trial-game-data.fixture.js');
 
@@ -3638,6 +3639,60 @@ describe('the panel, end to end', () => {
             expect(text()).toContain('another guild’s week');
             expect(text()).not.toContain('Trial history');
             expect(text()).not.toContain('Past tiers');
+        });
+
+        test('a record healed off as another guild’s takes its results with it', () => {
+            guildTrials.guildName = 'New Guild';
+            guildTrials.record = {
+                weekStart: trialWeekStart(now),
+                guildName: 'Old Guild',
+                tiles: { 'skilling::alchemy': { ...alchemy(4, 600), completed: false } },
+                // The left guild's weeks, already folded off its own archive
+                history: [archivedWeek({ weekStart: weekAgo(1), tiles: { 'skilling::alchemy': alchemy(9, 1500) } })],
+            };
+            guildTrials.record.trialResults = trialResultsOf(guildTrials.record);
+            expect(guildTrials._trialHistory(now).rows).toHaveLength(1);
+
+            guildTrials._healStaleRecord({ phase: 'live' }, [], now);
+
+            expect(guildTrials.record.history.at(-1).reason).toBe('belongs to another guild');
+            expect(guildTrials.record.trialResults).toEqual([]);
+            expect(guildTrials._trialHistory(now).rows).toEqual([]);
+        });
+
+        test('a trial history row with no name is dropped rather than stopping the panel', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            const result = (trial, name) => ({
+                weekStart: weekAgo(2),
+                cycleFrom: null,
+                archivedAt: weekAgo(1),
+                trial,
+                kind: 'skilling',
+                name,
+                cardTier: 5,
+                points: 900,
+                completed: true,
+                serverTier: null,
+                serverTierAt: null,
+            });
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [],
+                trialResults: [result('alchemy', 'Alchemy'), result('milking', null)],
+            };
+            fire(root);
+            expect(text()).toContain('Alchemy · T5 · best T5 (2 weeks ago)');
+        });
+
+        test('the history block’s hover states the cap for the server it is on', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
+            fire(root);
+            const header = [...document.querySelectorAll('[title]')].find(
+                (node) => node.textContent === 'Trial history'
+            );
+            expect(header.getAttribute('title')).toContain('52 weeks');
+            expect(header.getAttribute('title')).not.toContain('test server');
         });
 
         test('the In Progress view draws no trial history block', () => {
