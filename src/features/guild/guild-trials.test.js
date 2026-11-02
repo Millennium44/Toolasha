@@ -3684,6 +3684,34 @@ describe('the panel, end to end', () => {
             expect(text()).toContain('Alchemy · T5 · best T5 (2 weeks ago)');
         });
 
+        test('the results are folded once a render pass, for the cards and the block alike', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
+            const fold = vi.spyOn(guildTrials, '_trialHistory');
+            try {
+                fire(root);
+                expect(text()).toContain('Trial history');
+                expect(fold).toHaveBeenCalledTimes(1);
+            } finally {
+                fold.mockRestore();
+            }
+        });
+
+        test('on the test server the hover states that server’s cap', () => {
+            game.testServer = true;
+            try {
+                const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+                guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
+                fire(root);
+                const header = [...document.querySelectorAll('[title]')].find(
+                    (node) => node.textContent === 'Trial history'
+                );
+                expect(header.getAttribute('title')).toContain('the last 120 cycles');
+            } finally {
+                game.testServer = false;
+            }
+        });
+
         test('the history block’s hover states the cap for the server it is on', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
