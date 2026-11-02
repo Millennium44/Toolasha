@@ -1416,6 +1416,8 @@ export async function calculateNetworth() {
                 enhancementLevel,
                 name: itemName,
                 isSell: true,
+                // Units the figure stands for, so the history's mover view can split a change into units and price
+                count: ended ? listing.unclaimedItemCount || 0 : quantity,
                 value: listingValue,
                 partial: listingPartial && value > 0,
             });
@@ -1440,6 +1442,7 @@ export async function calculateNetworth() {
                 enhancementLevel,
                 name: itemName,
                 isSell: false,
+                count: quantity,
                 value: listingValue,
                 partial: unclaimedPartial && unclaimedValue > 0,
             });

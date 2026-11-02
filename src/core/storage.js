@@ -32,8 +32,9 @@ const STORE_KEY_BUDGETS = {
     // Per character: ~25 item-level detail snapshots plus one series record per
     // calendar month, capped by a year of full retention beneath the thinning,
     // up to 100 day records of combat loot readings (combat-loot-recorder.js),
-    // and up to 100 day records of inventory movements (item-flow-recorder.js)
-    networthHistory: 600,
+    // and up to 100 day records of inventory movements (item-flow-recorder.js),
+    // and up to 44 per-reading item maps plus their index (networth-movers.js)
+    networthHistory: 650,
     // Per character: one record per hour of play, and the log keeps 2,000
     // entries (`MAX_ENTRIES` in loot-log-history.js). Typical play puts several
     // entries in an hour, so the real count is a few hundred; the budget matches

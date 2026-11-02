@@ -698,3 +698,44 @@ describe('detail snapshots a sync pull wrote', () => {
         expect(networthHistory.detailHistory).toEqual([]);
     });
 });
+
+describe('the item maps behind the "what moved" view', () => {
+    const moverWrites = () => storageMock.set.mock.calls.filter(([key]) => String(key).startsWith('networthMovers_'));
+
+    test('a snapshot also keeps the reading item map, from the breakdown already calculated', async () => {
+        const { default: networthMovers } = await import('./networth-movers.js');
+        await networthMovers.load('char-1');
+        networthHistory.networthFeature = { currentData: fakeNetworthData() };
+
+        await networthHistory.takeSnapshot();
+
+        expect(moverWrites()).toHaveLength(1);
+        expect(moverWrites()[0][1].rows).toEqual([['h', '/items/milk', 0, 3, 30]]);
+        networthMovers.reset();
+    });
+
+    test('a map write that throws leaves the history point written', async () => {
+        const { default: networthMovers } = await import('./networth-movers.js');
+        await networthMovers.load('char-1');
+        storageMock.set.mockImplementation((key) => {
+            if (String(key).startsWith('networthMovers')) throw new Error('quota');
+        });
+        networthHistory.networthFeature = { currentData: fakeNetworthData() };
+
+        await expect(networthHistory.takeSnapshot()).resolves.toBeUndefined();
+
+        expect(networthHistory.history).toHaveLength(1);
+        // The detail snapshot, written before the maps, still landed
+        expect(storageMock.set.mock.calls.some(([key]) => String(key).startsWith('networthDetail_'))).toBe(true);
+        storageMock.set.mockReset();
+        networthMovers.reset();
+    });
+
+    test('disable forgets the maps of the character being left', async () => {
+        const { default: networthMovers } = await import('./networth-movers.js');
+        await networthMovers.load('char-1');
+        networthHistory.disable();
+        expect(networthMovers.characterId).toBe(null);
+        expect(networthMovers.ready).toBe(false);
+    });
+});

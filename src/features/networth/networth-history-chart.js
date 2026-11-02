@@ -12,6 +12,7 @@ import { networthFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createForecastSection } from './networth-forecast-section.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { openMoversPanel } from './networth-movers-panel.js';
 
 const RANGE_MS = {
     '24h': 24 * 60 * 60 * 1000,
@@ -82,6 +83,7 @@ class NetworthHistoryChart {
         this._deletePopup = null;
         this._deletePopupOutsideHandler = null;
         this._deletePopupOutsideTimer = null;
+        this._moversPanel = null;
         this._outsideClickTimer = null;
         this.forecastSection = null;
     }
@@ -605,6 +607,7 @@ class NetworthHistoryChart {
             if (
                 !modal.contains(e.target) &&
                 !this._deletePopup?.contains(e.target) &&
+                !this._moversPanel?.element?.contains(e.target) &&
                 !breakdownPopout?.contains(e.target) &&
                 !e.target?.closest?.(`#${CHART_BUTTON_ID}`)
             ) {
@@ -1663,6 +1666,7 @@ class NetworthHistoryChart {
         popup.innerHTML = `
             <div style="margin-bottom:4px;font-weight:500;color:#fff;">${date}</div>
             <div style="margin-bottom:10px;color:${config.COLOR_ACCENT};">${networthFormatter(snapshot.total)}</div>
+            <button id="mwi-nw-movers-btn" style="background:#3b4a8f;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin:0 6px 6px 0;">What moved</button>
             <button id="mwi-nw-delete-confirm" style="background:#ef4444;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;margin-right:6px;">Delete point</button>
             <button id="mwi-nw-delete-cancel" style="background:#2a2a2a;color:#999;border:1px solid #444;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;">Cancel</button>
         `;
@@ -1679,6 +1683,20 @@ class NetworthHistoryChart {
 
         popup.querySelector('#mwi-nw-delete-cancel').addEventListener('click', () => {
             this._dismissDeletePopup();
+        });
+
+        // Opens the items-that-moved panel where the popup was, then retires the popup
+        popup.querySelector('#mwi-nw-movers-btn').addEventListener('click', () => {
+            const at = { x: left, y: top };
+            this._dismissDeletePopup();
+            this._closeMoversPanel();
+            this._moversPanel = openMoversPanel({
+                snapshot,
+                at,
+                onClose: () => {
+                    this._moversPanel = null;
+                },
+            });
         });
 
         // Dismiss on outside click (defer to avoid catching the current click)
@@ -1712,8 +1730,18 @@ class NetworthHistoryChart {
         }
     }
 
+    /**
+     * Close the items-that-moved panel if one is open.
+     */
+    _closeMoversPanel() {
+        const panel = this._moversPanel;
+        this._moversPanel = null;
+        panel?.close();
+    }
+
     closeModal() {
         this._dismissDeletePopup();
+        this._closeMoversPanel();
 
         // Dropped with the modal it lived in; a stale reference would keep the
         // detached fan and its listeners alive across the next open

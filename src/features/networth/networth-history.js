@@ -10,6 +10,7 @@ import connectionState from '../../core/connection-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createChunkedHistory, registerCharacterScopedPrefix, timeChunkId } from '../../utils/chunked-history.js';
 import { onSyncPullApplied, registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
+import networthMovers from './networth-movers.js';
 
 const STORE_NAME = 'networthHistory';
 const SNAPSHOT_INTERVAL = 60 * 60 * 1000; // 1 hour
@@ -275,6 +276,10 @@ class NetworthHistory {
         if (this._generation !== generation) return;
         this.detailHistory = detailHistory;
 
+        // The per-item maps behind the "what moved" view; a failure there costs that view and nothing else
+        await networthMovers.load(this.characterId);
+        if (this._generation !== generation) return;
+
         // Take an immediate first snapshot
         await this.takeSnapshot();
         if (this._generation !== generation) return;
@@ -408,6 +413,10 @@ class NetworthHistory {
         // Compaction and thinning can still take points out of an older month —
         // the store's per-chunk entry count catches that despite the hint.
         seriesStore.save(this.characterId, this.history, { changedChunks: pointChunkId(snapshot) });
+
+        // The item map of this reading, from the breakdown just calculated. Local to this device, written
+        // after the history point is on its way, and never throws
+        networthMovers.record({ characterId: this.characterId, snapshot, data });
     }
 
     /**
@@ -666,6 +675,7 @@ class NetworthHistory {
         seriesStore.forget();
         this.history = [];
         this.detailHistory = [];
+        networthMovers.reset();
         this.characterId = null;
         this.networthFeature = null;
     }

@@ -97,6 +97,9 @@ export const DEVICE_ONLY_STORES = ['actionProgress'];
  * - `combatStats` `latestCombatRun`: the live snapshot of the fight in
  *   progress, rewritten every battle and meaningful only on the device that is
  *   fighting (`features/combat-stats/combat-stats-data-collector.js`).
+ * - `networthHistory` `networthMovers`: the per-item value maps behind the
+ *   chart's "what moved" view, and their index. Large, and only useful beside
+ *   the readings this device took (`features/networth/networth-movers.js`).
  * - `combatExport` `spawnCensus`: this machine's running tally of wave
  *   rosters. It is rewritten on every flush, and a pull replaces the key
  *   whole, so the two devices' tallies would overwrite each other rather than
@@ -108,6 +111,9 @@ export const DEVICE_ONLY_STORES = ['actionProgress'];
 export const DEVICE_ONLY_STORE_KEY_PREFIXES = {
     combatStats: ['latestCombatRun'],
     combatExport: ['spawnCensus'],
+    // The per-item maps behind the net worth chart's "what moved" view (networthMovers_<id>_<t> and the
+    // index networthMoversIndex_<id>): up to ~1 MB a character, rebuilt by playing, and meant for one device
+    networthHistory: ['networthMovers'],
 };
 
 /**
