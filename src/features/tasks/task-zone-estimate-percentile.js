@@ -12,14 +12,15 @@
  * The quantile comes from the same exact engine the fight-count pre-fills use
  * (`fightsForKillConfidence`, utils/fight-confidence.js), including its spawn-slot model for a
  * zone whose monster can fill more than one slot of a fight. This module only shapes the
- * *displayed* figure; it never feeds a pre-fill. Go on a task card and a click on a zone row
- * still pad the *mean* count with `padFightCount` and their own `combatFightConfidence` plus the
- * flat `taskCombatGoBuffer` floor, so the two never compound: both start from the unpadded mean.
+ * *displayed* figure. Go on a zone-mode task card and a click on a zone row fill the LARGER of that
+ * figure and the count padded from the *mean* with `padFightCount` and their own
+ * `combatFightConfidence` plus the flat `taskCombatGoBuffer` floor ({@link paddedZoneFights}), so
+ * they never fill less than the figure shown nor less than the player's confidence setting asks.
  */
 
 import config from '../../core/config.js';
 import { getSettingDefinition } from '../../core/settings-schema.js';
-import { fightsForKillConfidence } from '../../utils/fight-confidence.js';
+import { fightsForKillConfidence, padFightCount } from '../../utils/fight-confidence.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { fightsPerHour as simFightsPerHour, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
 
@@ -180,4 +181,58 @@ export function createMedianHint(estimate) {
         'margin-left: 4px; border: 1px solid currentColor; border-radius: 50%; font-size: 9px; line-height: 1; ' +
         'cursor: help; opacity: 0.8;';
     return hint;
+}
+
+/**
+ * Every task monster's own inputs for padding a zone fight count, from a finished zone sim.
+ * The mean bottleneck is not always the monster that needs the most fights at a chosen coverage,
+ * so each is kept and padded on its own.
+ * @param {Object} input
+ * @param {Array<{hrid: string, remaining: number}>} input.entries - Task monsters (duplicates summed)
+ * @param {Object} input.simResult - Sim result for the zone
+ * @param {number} [input.simHours] - Hours the sim covered
+ * @param {number|null} [input.slotsPerFight] - Monster slots per fight (`maxSpawnCount`), if known
+ * @param {(hrid: string) => boolean} [input.isBoss] - Whether a monster arrives on a fixed wave
+ * @returns {Array<{hrid: string, meanFights: number, killsNeeded: number, killsPerFight: number|null,
+ *   slotsPerFight: number|null, deterministic: boolean}>}
+ */
+export function zoneMonsterThresholds({ entries, simResult, simHours = ZONE_SIM_HOURS, slotsPerFight = null, isBoss }) {
+    const fph = simFightsPerHour(simResult, simHours);
+    return entries.map((entry) => {
+        const killsPerHour = (simResult?.deaths?.[entry.hrid] ?? 0) / simHours;
+        return {
+            hrid: entry.hrid,
+            meanFights: killsPerHour > 0 ? Math.round((fph * entry.remaining) / killsPerHour) : Infinity,
+            killsNeeded: entry.remaining,
+            killsPerFight: fph > 0 && killsPerHour > 0 ? killsPerHour / fph : null,
+            slotsPerFight,
+            deterministic: Boolean(isBoss?.(entry.hrid)),
+        };
+    });
+}
+
+/**
+ * The fights to fill in for a zone: each task monster padded from its mean by the confidence setting
+ * (the flat buffer kept as a floor, except for a fixed wave), the largest taken. The one rule for the
+ * zone rows in Task Statistics and Go on a zone-mode task card.
+ * @param {Object} input
+ * @param {Array<Object>} input.thresholds - From {@link zoneMonsterThresholds}
+ * @param {number} [input.meanFloor] - The mean bottleneck's fights; the count never falls below it
+ * @param {number} input.confidencePercent - `combatFightConfidence`
+ * @param {number} input.bufferPercent - `taskCombatGoBuffer`
+ * @returns {number} Fights
+ */
+export function paddedZoneFights({ thresholds, meanFloor = 0, confidencePercent, bufferPercent }) {
+    let best = Math.ceil(Number(meanFloor) || 0);
+    for (const monster of thresholds || []) {
+        if (!Number.isFinite(monster.meanFights)) continue;
+        const { fights } = padFightCount({
+            unpaddedFights: monster.meanFights,
+            thresholds: Number.isFinite(monster.killsPerFight) ? [monster] : [],
+            confidencePercent,
+            floorPercent: monster.deterministic ? 0 : bufferPercent,
+        });
+        best = Math.max(best, fights);
+    }
+    return best;
 }

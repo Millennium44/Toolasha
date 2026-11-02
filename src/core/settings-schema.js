@@ -3564,8 +3564,10 @@ export const settingsGroups = {
                 help:
                     'How many fights the zone estimates (the zone line on a combat task card and the Zone Task ' +
                     'Progress rows in Task Statistics) plan for. At 90% the slowest task in the zone is finished ' +
-                    'by then nine times in ten; the median is shown on hover. The counts Go and a zone row fill ' +
-                    'in are padded separately, by the Combat pre-fill confidence setting.',
+                    'by then nine times in ten; the median is shown on hover. Go on a zone task card and a zone ' +
+                    'row fill in the larger of this figure and the zone padded by the Combat pre-fill ' +
+                    'confidence setting (with the Go count buffer as a floor), so they never fill less than ' +
+                    'either.',
             },
             taskEfficiencyRating: {
                 id: 'taskEfficiencyRating',

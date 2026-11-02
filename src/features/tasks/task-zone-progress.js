@@ -15,10 +15,14 @@ import dataManager from '../../core/data-manager.js';
 import { buildAllPlayerDTOs, buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import { TASK_DAMAGE_PER_MONSTER } from '../combat-sim/engine/task-damage-mode.js';
-import { lastUsedTierForZone } from '../../utils/combat-actions.js';
+import { resolveZoneTier } from '../../utils/zone-tier-memory.js';
 import { characterIdentityChanged } from '../../utils/combat-zone-open.js';
-import { computeZoneBottleneck, fightsPerHour, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
-import { getZoneEstimatePercent, zoneBottleneckEstimate } from './task-zone-estimate-percentile.js';
+import { computeZoneBottleneck, ZONE_SIM_HOURS } from './task-zone-bottleneck.js';
+import {
+    getZoneEstimatePercent,
+    zoneBottleneckEstimate,
+    zoneMonsterThresholds,
+} from './task-zone-estimate-percentile.js';
 
 /**
  * Active combat tasks, grouped zone -> monster, the way the task card's zone summary counts them:
@@ -126,7 +130,7 @@ export async function computeAllZoneProgress({
     }
 
     for (const [zoneHrid, monsters] of byZone) {
-        const tier = lastUsedTierForZone(dataManager.getCurrentActions?.() || [], zoneHrid) ?? 0;
+        const tier = resolveZoneTier(zoneHrid).tier;
 
         let simResult;
         try {
@@ -173,17 +177,12 @@ export async function computeAllZoneProgress({
             const deterministic = Boolean(dataManager.isBossMonster?.(bottleneck.bottleneckHrid));
             // Every task monster's own inputs, so a click can pad each one and take the largest: the
             // mean bottleneck is not always the monster that needs the most fights at the chosen coverage
-            const fph = fightsPerHour(simResult, ZONE_SIM_HOURS);
-            const monsterThresholds = entries.map((entry) => {
-                const killsPerHour = (simResult?.deaths?.[entry.hrid] ?? 0) / ZONE_SIM_HOURS;
-                return {
-                    hrid: entry.hrid,
-                    meanFights: killsPerHour > 0 ? Math.round((fph * entry.remaining) / killsPerHour) : Infinity,
-                    killsNeeded: entry.remaining,
-                    killsPerFight: fph > 0 && killsPerHour > 0 ? killsPerHour / fph : null,
-                    slotsPerFight,
-                    deterministic: Boolean(dataManager.isBossMonster?.(entry.hrid)),
-                };
+            const monsterThresholds = zoneMonsterThresholds({
+                entries,
+                simResult,
+                simHours: ZONE_SIM_HOURS,
+                slotsPerFight,
+                isBoss: (hrid) => Boolean(dataManager.isBossMonster?.(hrid)),
             });
             rows.push({
                 zoneHrid,

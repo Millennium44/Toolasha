@@ -77,6 +77,7 @@ await import('../features/networth/combat-loot-recorder.js');
 await import('../features/networth/item-flow-recorder.js');
 await import('../features/networth/production-income-recorder.js');
 await import('../features/tasks/task-completion-tracker.js');
+await import('./zone-tier-memory.js');
 await import('../features/tasks/task-reroll-tracker.js');
 await import('../features/alchemy/transmute-history-tracker.js');
 await import('../features/alchemy/decompose-history-tracker.js');
@@ -288,6 +289,9 @@ const corpus = [
     // networth/production-income-recorder.js — chunked
     { store: 'networthHistory', key: `prodIncomeRec_${CHAR}_2026-01-15`, label: 'ProductionIncome records' },
     { store: 'networthHistory', key: `prodIncome_${CHAR}`, label: 'ProductionIncome legacy key' },
+
+    // utils/zone-tier-memory.js — the tier last run in each combat zone
+    { store: 'settings', key: `combatZoneTiers_${CHAR}`, label: 'Zone tiers last run' },
 
     // tasks/task-completion-tracker.js — chunked, weekly buckets
     { store: 'rerollSpending', key: `taskCompletionRec_${CHAR}_2026-W03`, label: 'TaskCompletionTracker records' },

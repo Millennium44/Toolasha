@@ -290,6 +290,8 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/bestiary.js')), 'Toolasha.Utils.bestiary'],
     // The planner (sim bundle) writes the target the alert (ui bundle) reads
     [normalize(join(__dirname, 'src/utils/bestiary-target.js')), 'Toolasha.Utils.bestiaryTarget'],
+    // The recorder (ui bundle) writes the record the task cards and Task Statistics rows read
+    [normalize(join(__dirname, 'src/utils/zone-tier-memory.js')), 'Toolasha.Utils.zoneTierMemory'],
     [normalize(join(__dirname, 'src/utils/game-text.js')), 'Toolasha.Utils.gameText'],
     [normalize(join(__dirname, 'src/utils/guild-credit-pricing.js')), 'Toolasha.Utils.guildCreditPricing'],
     [normalize(join(__dirname, 'src/utils/item-icon.js')), 'Toolasha.Utils.itemIcon'],
