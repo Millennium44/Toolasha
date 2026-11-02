@@ -94,7 +94,13 @@ class DungeonTrackerUIInteractions {
         header.style.touchAction = 'none';
         header.addEventListener('pointerdown', (e) => {
             // Don't drag if clicking collapse or reset-position buttons
-            if (e.target.id === 'mwi-dt-collapse-btn' || e.target.id === 'mwi-dt-reset-position-btn') return;
+            if (
+                e.target.id === 'mwi-dt-collapse-btn' ||
+                e.target.id === 'mwi-dt-reset-position-btn' ||
+                e.target.id === 'mwi-dt-close-btn'
+            ) {
+                return;
+            }
 
             bringPanelToFront(this.container);
             this.isDragging = true;

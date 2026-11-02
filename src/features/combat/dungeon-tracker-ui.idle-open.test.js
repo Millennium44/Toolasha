@@ -308,3 +308,95 @@ describe('"This character" for runs imported from an older build', () => {
         expect(filterRunsForCharacter([run], 'mine', me)).toEqual([]);
     });
 });
+
+describe('the close button', () => {
+    const live = (overrides = {}) => ({
+        dungeonName: 'Pirate Cove',
+        tier: 1,
+        currentWave: 3,
+        maxWaves: 65,
+        totalElapsed: 30_000,
+        keyCountsMap: {},
+        ...overrides,
+    });
+    const tick = (run = world.currentRun, completed = null) => ui.dungeonUpdateHandler(run, completed);
+    const closeButton = () => ui.container.querySelector('#mwi-dt-close-btn');
+    const isOpen = () => ui.container.style.display !== 'none';
+
+    test('closing while idle stays closed', () => {
+        ui.toggle();
+        expect(isOpen()).toBe(true);
+        closeButton().click();
+        expect(isOpen()).toBe(false);
+        tick(null);
+        expect(isOpen()).toBe(false);
+    });
+
+    test('closing during a run survives further ticks', () => {
+        world.currentRun = live();
+        tick();
+        expect(isOpen()).toBe(true);
+        closeButton().click();
+        tick();
+        tick(live({ currentWave: 4 }));
+        expect(isOpen()).toBe(false);
+    });
+
+    test('a new dungeon action opens the panel again', () => {
+        world.currentRun = live();
+        tick();
+        closeButton().click();
+        // The action ends...
+        world.currentRun = null;
+        tick(null, { dungeonName: 'Pirate Cove' });
+        expect(isOpen()).toBe(false);
+        // ...and the next one starts
+        world.currentRun = live({ currentWave: 1 });
+        tick();
+        expect(isOpen()).toBe(true);
+    });
+
+    test('a different dungeon opens the panel even if the end was never seen', () => {
+        world.currentRun = live();
+        tick();
+        closeButton().click();
+        world.currentRun = live({ dungeonName: 'Chimerical Den' });
+        tick();
+        expect(isOpen()).toBe(true);
+    });
+
+    test('the gap between runs of a repeating action stays closed', () => {
+        world.currentRun = live();
+        tick();
+        closeButton().click();
+        world.currentRun = null;
+        world.pending = { dungeonName: 'Pirate Cove', tier: 1, betweenRuns: true };
+        tick(null, { dungeonName: 'Pirate Cove' });
+        expect(isOpen()).toBe(false);
+        world.pending = null;
+        world.currentRun = live({ currentWave: 1 });
+        tick();
+        expect(isOpen()).toBe(false);
+    });
+
+    test('Ctrl+K during a dismissed run reopens it and clears the dismissal', () => {
+        world.currentRun = live();
+        tick();
+        closeButton().click();
+        ui.toggle();
+        expect(isOpen()).toBe(true);
+        tick();
+        expect(isOpen()).toBe(true);
+    });
+
+    test('a character switch clears the dismissal', async () => {
+        world.currentRun = live();
+        tick();
+        closeButton().click();
+        ui.cleanup();
+        expect(ui.dismissed).toBe(null);
+        await freshPanel();
+        tick();
+        expect(isOpen()).toBe(true);
+    });
+});
