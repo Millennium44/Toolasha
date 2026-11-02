@@ -6,6 +6,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
+import { buildLabyrinthUpdated } from '../../__fixtures__/wire/labyrinth.js';
 import { SUPPLY_HRIDS } from './labyrinth-supplies.js';
 import { roomXpPerHour } from './labyrinth-formulas.js';
 
@@ -7529,12 +7530,20 @@ describe('auto-path after a beacon reveal', () => {
     const setSettings = ({ autoPath = true } = {}) =>
         configMock.getSetting.mockImplementation((key) => (key === 'labyrinthAutoPath' ? autoPath : false));
 
-    /** A labyrinth update for floor 3 with `revealed` rooms lit and `beacons` left in the run */
+    /**
+     * A labyrinth update for floor 3 with `revealed` rooms lit and `beacons` left in the run, on the
+     * captured message (flat beaconItemHrid/beaconCount); null beacons drops the stock fields
+     */
     const update = (revealed, beacons, floor = 3) => {
         const flat = Array.from({ length: 16 }, (_, i) => (i < revealed ? revealedRoom : null));
         const roomData = [flat.slice(0, 4), flat.slice(4, 8), flat.slice(8, 12), flat.slice(12, 16)];
-        const labyrinth = { currentFloor: floor, roomData };
-        if (beacons != null) labyrinth.supplyItemCountMap = { '/items/advanced_beacon': beacons };
+        const labyrinth = { ...buildLabyrinthUpdated('entry').labyrinth, currentFloor: floor, roomData };
+        if (beacons == null) {
+            delete labyrinth.beaconItemHrid;
+            delete labyrinth.beaconCount;
+        } else {
+            labyrinth.beaconCount = beacons;
+        }
         return { labyrinth };
     };
 
@@ -7707,6 +7716,21 @@ describe('auto-path after a beacon reveal', () => {
         expect(isBeaconReveal({ revealed: 1, beacons: null }, { revealed: 2, beacons: null })).toBe(false);
         expect(isBeaconReveal({ revealed: 1, beacons: null }, { revealed: 3, beacons: 2 })).toBe(true);
         expect(isBeaconReveal(null, { revealed: 3, beacons: 2 })).toBe(false);
+    });
+
+    test('the real messages: a room clear that lights two rooms is no beacon, a beacon is', () => {
+        const snap = (name) => labyrinthClearRate.revealSnapshot(...snapArgs(name));
+        const snapArgs = (name) => {
+            const { labyrinth } = buildLabyrinthUpdated(name);
+            return [labyrinth.roomData, labyrinth];
+        };
+        expect(isBeaconReveal(snap('entry'), snap('roomClearReveal'))).toBe(false);
+        expect(isBeaconReveal(snap('torchSpent'), snap('beaconReveal'))).toBe(true);
+    });
+
+    test('a run is scoped by the same name across the nanosecond and millisecond startedAt', () => {
+        const scope = (name) => outcomeMethods.outcomeScope(buildLabyrinthUpdated(name).labyrinth);
+        expect(scope('entry')).toBe(scope('roomClearReveal'));
     });
 });
 

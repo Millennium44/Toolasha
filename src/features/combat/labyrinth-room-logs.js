@@ -24,6 +24,7 @@
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import { characterKey } from '../../utils/character-key.js';
+import { labyrinthRunStamp } from '../../utils/labyrinth-session.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
@@ -668,7 +669,7 @@ class LabyrinthRoomLogs {
         if (labyrinth.roomData) this.roomData = labyrinth.roomData;
 
         const floor = Math.floor(Number(labyrinth.currentFloor) || 0);
-        const runKey = `${labyrinth.startedAt || ''}|${floor}`;
+        const runKey = `${labyrinthRunStamp(labyrinth.startedAt)}|${floor}`;
         const path = this.parsePathData(labyrinth.pathData);
         const head = path?.[0];
         const roomKey = head && Number.isInteger(head.x) && Number.isInteger(head.y) ? `${head.x},${head.y}` : '';

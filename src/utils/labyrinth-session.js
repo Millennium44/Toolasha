@@ -40,7 +40,7 @@ export function noteLabyrinthUpdate(state, data) {
     // read from the same field every room's message carries, so there is
     // nothing to preserve by not recomputing it, and no room in which
     // `startedAt` is expected to change while `isActive` stays true.
-    state.key = `labyrinth|${labyrinth.startedAt || ''}`;
+    state.key = `labyrinth|${labyrinthRunStamp(labyrinth.startedAt)}`;
 }
 
 /**
@@ -52,4 +52,23 @@ export function noteLabyrinthUpdate(state, data) {
  */
 export function labyrinthSessionKey(state, fallbackKey) {
     return state?.active && state.key ? state.key : fallbackKey;
+}
+
+/**
+ * The name a labyrinth run is known by, from its `startedAt` stamp.
+ *
+ * The server writes the stamp at two precisions: the message that opens a run
+ * carries the in-memory nanosecond time (`...55.00649767Z`) and every later one
+ * the stored millisecond time (`...55.006Z`). Keyed on the raw string, a run
+ * became a different run on its third message, so the ledger filed a phantom
+ * ended run, the trackers reset their session and the room log closed its room.
+ * Epoch milliseconds are the same for both.
+ *
+ * @param {string|number|null|undefined} startedAt - The labyrinth payload's `startedAt`
+ * @returns {string} The run's name, or '' when the payload has no stamp
+ */
+export function labyrinthRunStamp(startedAt) {
+    if (startedAt === null || startedAt === undefined || startedAt === '') return '';
+    const ms = Date.parse(String(startedAt));
+    return Number.isFinite(ms) ? String(ms) : String(startedAt);
 }
