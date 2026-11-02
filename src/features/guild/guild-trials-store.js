@@ -54,6 +54,7 @@ import {
 } from './guild-trials-math.js';
 import { isPlausibleReading } from './guild-trials-scrape.js';
 import { statesAsMuch } from './guild-trial-history.js';
+import { mergeResults, resultsFromHistory, trialResultsOf, withTrialResults } from './guild-trial-results.js';
 
 /** Object store the records live in — shared with the guild XP history */
 const STORE_NAME = 'guildHistory';
@@ -231,7 +232,7 @@ export function adoptPersonalStats(record, characterId) {
  * @returns {{weekStart: number, tiles: Object, guildId: string|null, guildName: string|null}} Fresh record
  */
 export function emptyRecord(weekStart, { guildId = null, guildName = null } = {}) {
-    return { weekStart, tiles: {}, guildId, guildName, history: [] };
+    return { weekStart, tiles: {}, guildId, guildName, history: [], trialResults: [] };
 }
 
 /**
@@ -331,6 +332,9 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
         weekStart: record?.weekStart ?? trialWeekStart(at),
         tiles: {},
         history: capHistory(history),
+        // Read off the whole archive before the cap, so a cycle the cap drops
+        // has its results kept here first (see guild-trial-results.js)
+        trialResults: mergeResults(record?.trialResults, resultsFromHistory(history)),
     };
 }
 
@@ -418,6 +422,7 @@ export function rollRecordToWeek(record, weekStart, { guildId = null, guildName 
         guildId: record.guildId ?? guildId ?? null,
         guildName: record.guildName ?? guildName ?? null,
         history: archived.history,
+        trialResults: archived.trialResults,
     };
 }
 
@@ -1223,6 +1228,7 @@ export function mergeTrialRecords(base, incoming) {
         guildId: record.guildId ?? null,
         guildName: record.guildName ?? null,
         history: Array.isArray(record.history) ? record.history : [],
+        trialResults: trialResultsOf(record),
         ...cycleStartField(record.cycleStart, record.cycleStartAt),
     });
     if (baseWeek === null) return incoming ? whole(incoming) : emptyRecord(0);
@@ -1261,10 +1267,15 @@ export function mergeTrialRecords(base, incoming) {
         seenCycles.add(mark);
         history.push(cycle);
     }
+    // Each side's results with its own archive folded in. A side naming another
+    // guild than the record's contributes none: its weeks are not this guild's
+    const guild = { guildId: base.guildId ?? null, guildName: base.guildName ?? null };
+    const incomingForeign = recordProvenance(incoming, guild) === 'foreign';
     const provenance = {
         guildId: base.guildId ?? incoming.guildId ?? null,
         guildName: base.guildName ?? incoming.guildName ?? null,
         history: capHistory(history),
+        trialResults: mergeResults(trialResultsOf(base), incomingForeign ? [] : trialResultsOf(incoming)),
     };
     const tiles = { ...(base.tiles || {}) };
     for (const [key, tile] of Object.entries(incoming.tiles || {})) {
@@ -1448,6 +1459,7 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             weekStart: record.weekStart,
             tiles: record.tiles || {},
             history: Array.isArray(record.history) ? record.history : [],
+            trialResults: Array.isArray(record.trialResults) ? record.trialResults : [],
             guildId: record.guildId ?? guildId,
             guildName: record.guildName ?? guildName,
             ...cycleStartField(record.cycleStart, record.cycleStartAt),
@@ -1474,7 +1486,9 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             await saveTrialRecord(guildName, adopted.record, characterId, { guildId, overwrite: true });
         }
         // Not written here: the next save merges the stored copy, which rolls it the same way
-        return rollRecordToWeek(adopted.record, weekStart, { guildId, guildName });
+        // The results are brought up to date with the archive on the way in, so a
+        // record written before they existed shows its archived weeks at once
+        return withTrialResults(rollRecordToWeek(adopted.record, weekStart, { guildId, guildName }));
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial samples:', error);
         return null;
@@ -1690,8 +1704,9 @@ export async function saveTrialRecord(
     { guildId = null, overwrite = false, scrub = null } = {}
 ) {
     // Stamped on the way out, so the next session can tell whose it is
+    // …with its results folded from its archive, so an as-is write carries them too
     const stamped = {
-        ...record,
+        ...withTrialResults(record),
         guildId: record?.guildId ?? guildId ?? null,
         guildName: record?.guildName ?? guildName ?? null,
     };

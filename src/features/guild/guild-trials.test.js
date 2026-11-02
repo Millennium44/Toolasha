@@ -3552,6 +3552,98 @@ describe('the panel, end to end', () => {
         expect(text()).not.toContain('Past weeks');
     });
 
+    describe('Trial history', () => {
+        const weekAgo = (n) => trialWeekStart(now) - n * 7 * 24 * 60 * 60 * 1000;
+        const alchemy = (tier, points) => ({
+            name: 'Alchemy',
+            kind: 'skilling',
+            tier,
+            points,
+            pointsByTier: { [tier]: points },
+            completed: true,
+            samples: [],
+            tiers: [],
+        });
+
+        test('one line per trial, newest week first, a dash for a week it has no result, and its best', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [
+                    archivedWeek({ weekStart: weekAgo(3), tiles: { 'skilling::alchemy': alchemy(9, 1500) } }),
+                    archivedWeek({ weekStart: weekAgo(2), tiles: archivedWeek().tiles }),
+                    archivedWeek({ weekStart: weekAgo(1), tiles: { 'skilling::alchemy': alchemy(7, 1200) } }),
+                ],
+            };
+            fire(root);
+
+            expect(text()).toContain('Trial history');
+            expect(text()).toContain('Alchemy · T7 · — · T9 · best T9 (3 weeks ago)');
+            expect(text()).toContain('Trial Chameleon · — · T5 · — · best T5 (2 weeks ago)');
+            // Below Past weeks
+            expect(text().indexOf('Past weeks')).toBeLessThan(text().indexOf('Trial history'));
+            // …and on the Alchemy card, its own recent tiers, every week in the hover
+            const pastTiers = [...document.querySelectorAll('[title]')].find((node) =>
+                node.textContent.includes('Past tiers')
+            );
+            expect(pastTiers.textContent).toContain('T7 · — · T9 · best T9');
+            expect(pastTiers.getAttribute('title')).toContain('3 weeks ago: T9 · 1,500 pts');
+        });
+
+        test('no finished cycle yet: no block and no card line', () => {
+            fire(buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]));
+            expect(text()).not.toContain('Trial history');
+            expect(text()).not.toContain('Past tiers');
+        });
+
+        test('weeks the four-cycle archive has dropped still show, from the kept results', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [],
+                trialResults: [
+                    {
+                        weekStart: weekAgo(10),
+                        cycleFrom: null,
+                        archivedAt: weekAgo(9),
+                        trial: 'alchemy',
+                        kind: 'skilling',
+                        name: 'Alchemy',
+                        cardTier: 11,
+                        points: 2000,
+                        completed: true,
+                        serverTier: null,
+                        serverTierAt: null,
+                    },
+                ],
+            };
+            fire(root);
+            expect(text()).toContain('Alchemy · T11 · best T11 (10 weeks ago)');
+        });
+
+        test('a week archived off another guild’s record is never in it', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [archivedWeek({ reason: 'belongs to another guild' })],
+            };
+            fire(root);
+            expect(text()).toContain('another guild’s week');
+            expect(text()).not.toContain('Trial history');
+            expect(text()).not.toContain('Past tiers');
+        });
+
+        test('the In Progress view draws no trial history block', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            const challenge = document.createElement('div');
+            challenge.className = 'SkillingInstancePanel_challengeArea__x';
+            root.appendChild(challenge);
+            guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
+            fire(root);
+            expect(text()).not.toContain('Trial history');
+        });
+    });
+
     test('a finished cycle stops projecting a future', () => {
         document.body.innerHTML = '';
         const root = document.createElement('div');
