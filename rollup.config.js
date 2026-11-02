@@ -224,6 +224,7 @@ const utilsExternalGlobals = new Map([
     // Stateless, but the dialogs, toasts and widgets in this library and the Treasure panel all draw with it,
     // so one copy keeps the game's look in one place
     [normalize(join(__dirname, 'src/utils/game-look.js')), 'Toolasha.Utils.gameLook'],
+    [normalize(join(__dirname, 'src/utils/guild-credit-hrids.js')), 'Toolasha.Utils.guildCreditHrids'],
     // One stack for the whole script: a second copy in another bundle would put
     // up a second container, and two overlapping stacks in the same corner is
     // exactly the mess the shared toast replaced

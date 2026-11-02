@@ -86,6 +86,7 @@ import * as panelZIndex from '../utils/panel-z-index.js';
 // core bundle (which loads first) and is shared as Toolasha.Core.performanceMonitor.
 import * as gameLook from '../utils/game-look.js';
 import * as gameLookups from '../utils/game-lookups.js';
+import * as guildCreditHrids from '../utils/guild-credit-hrids.js';
 import * as productionIndex from '../utils/production-index.js';
 import * as itemNavigation from '../utils/item-navigation.js';
 // The shared "open a combat zone at a tier" helper — see the matching
@@ -296,6 +297,7 @@ toolashaRoot.Utils = {
     panelZIndex,
     gameLook,
     gameLookups,
+    guildCreditHrids,
     productionIndex,
     itemNavigation,
     combatZoneOpen,
